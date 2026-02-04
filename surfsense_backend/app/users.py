@@ -237,11 +237,13 @@ def create_test_user() -> User:
     """
     Create a test user for when authentication is disabled.
     This user has a fixed UUID to ensure consistency across requests.
+    
+    WARNING: This should ONLY be used in testing/development mode.
     """
     return User(
         id=uuid.UUID('00000000-0000-0000-0000-000000000000'),
         email="test@example.com",
-        hashed_password="",
+        hashed_password="TEST_MODE_NO_PASSWORD",  # Explicit marker for test mode
         is_active=True,
         is_verified=True,
         is_superuser=False,

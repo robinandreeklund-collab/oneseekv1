@@ -50,8 +50,17 @@ python -m vllm.entrypoints.openai.api_server \
 #### Alternative: Use Ollama
 
 ```bash
-# Install and start Ollama
-curl https://ollama.ai/install.sh | sh
+# Download and review the installation script first
+curl -fsSL https://ollama.ai/install.sh -o install-ollama.sh
+less install-ollama.sh  # Review the script
+
+# After reviewing, install Ollama
+sh install-ollama.sh
+
+# Or on macOS, use Homebrew (recommended)
+brew install ollama
+
+# Start Ollama
 ollama serve
 
 # Pull a model

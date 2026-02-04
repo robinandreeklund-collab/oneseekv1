@@ -1502,6 +1502,20 @@ async def create_db_and_tables():
 
 
 # Mock session for testing without database
+class MockResult:
+    """Mock result object for testing mode"""
+    def scalar(self):
+        return None
+    def scalars(self):
+        return self
+    def first(self):
+        return None
+    def all(self):
+        return []
+    def __iter__(self):
+        return iter([])
+
+
 class MockSession:
     """Mock database session for testing mode when DATABASE_REQUIRED=FALSE"""
     async def __aenter__(self):
@@ -1515,11 +1529,11 @@ class MockSession:
     async def close(self):
         pass
     async def execute(self, *args, **kwargs):
-        return None
+        return MockResult()
     async def scalar(self, *args, **kwargs):
         return None
     async def scalars(self, *args, **kwargs):
-        return []
+        return MockResult()
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:

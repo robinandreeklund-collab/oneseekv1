@@ -15,9 +15,47 @@ if [ ! -d "surfsense_backend" ]; then
     exit 1
 fi
 
-# Create minimal .env file
-echo "📝 Creating minimal .env configuration..."
-cat > surfsense_backend/.env << 'EOF'
+# Check if .env already exists
+if [ -f "surfsense_backend/.env" ]; then
+    echo "⚠️  Warning: .env file already exists at surfsense_backend/.env"
+    echo "Do you want to:"
+    echo "  1) Backup and overwrite (creates .env.backup)"
+    echo "  2) Skip .env creation (use existing)"
+    echo "  3) Cancel"
+    read -p "Enter choice (1/2/3): " choice
+    
+    case $choice in
+        1)
+            echo "📦 Creating backup..."
+            cp surfsense_backend/.env surfsense_backend/.env.backup
+            echo "✅ Backup created at surfsense_backend/.env.backup"
+            # Continue to create new .env
+            ;;
+        2)
+            echo "ℹ️  Using existing .env file"
+            echo ""
+            echo "⚠️  Make sure it contains:"
+            echo "  DATABASE_REQUIRED=FALSE"
+            echo "  AUTH_REQUIRED=FALSE"
+            echo ""
+            # Skip to LLM config
+            skip_env_creation=true
+            ;;
+        3)
+            echo "❌ Cancelled"
+            exit 0
+            ;;
+        *)
+            echo "❌ Invalid choice, cancelled"
+            exit 1
+            ;;
+    esac
+fi
+
+# Create minimal .env file if not skipped
+if [ "$skip_env_creation" != "true" ]; then
+    echo "📝 Creating minimal .env configuration..."
+    cat > surfsense_backend/.env << 'EOF'
 # Testing mode - no database or authentication required
 DATABASE_REQUIRED=FALSE
 AUTH_REQUIRED=FALSE
@@ -37,7 +75,8 @@ ETL_SERVICE=DOCLING
 # CELERY_RESULT_BACKEND=redis://localhost:6379/0
 EOF
 
-echo "✅ Configuration file created at surfsense_backend/.env"
+    echo "✅ Configuration file created at surfsense_backend/.env"
+fi
 echo ""
 
 # Copy example LLM config if it doesn't exist
