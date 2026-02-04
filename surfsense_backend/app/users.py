@@ -257,12 +257,10 @@ async def get_current_user_optional(
 ) -> User | None:
     """
     Get current user with optional authentication.
-    If AUTH_REQUIRED is False, returns a test user for testing.
+    If AUTH_REQUIRED is False and no user is authenticated, returns a test user.
     """
-    if not config.AUTH_REQUIRED:
-        # Return a test user for testing
-        if user is None:
-            return create_test_user()
+    if not config.AUTH_REQUIRED and user is None:
+        return create_test_user()
     return user
 
 
@@ -273,12 +271,13 @@ async def get_current_user_or_test(
     """
     Get current user or return a test user if AUTH_REQUIRED is False.
     Always returns a User object.
+    
+    This dependency should be used when an endpoint requires a User object.
+    When AUTH_REQUIRED is False, it returns a test user.
+    When AUTH_REQUIRED is True but no user is authenticated, raises 401.
     """
-    if user is None and not config.AUTH_REQUIRED:
-        return create_test_user()
-    elif user is None:
-        # If auth is required but no user, this shouldn't happen due to dependency
-        # but provide a fallback
+    if user is None:
+        # Auth is required but no user - should not happen with proper dependency chain
         from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
