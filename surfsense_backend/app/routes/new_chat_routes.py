@@ -364,6 +364,7 @@ async def create_thread(
         # Skip database operations when DATABASE_REQUIRED is False
         if not config.DATABASE_REQUIRED:
             now = datetime.now(UTC)
+            # Return mock thread with ID 1 (test mode)
             return NewChatThreadRead(
                 id=1,
                 title=thread.title,
@@ -886,6 +887,7 @@ async def append_message(
         # Skip database operations when DATABASE_REQUIRED is False
         if not config.DATABASE_REQUIRED:
             now = datetime.now(UTC)
+            # Return mock message with ID 1 (test mode)
             return NewChatMessageRead(
                 id=1,
                 thread_id=thread_id,
