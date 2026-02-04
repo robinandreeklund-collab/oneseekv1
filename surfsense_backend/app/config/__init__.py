@@ -135,6 +135,8 @@ class Config:
 
     # Database
     DATABASE_URL = os.getenv("DATABASE_URL")
+    # Optional: Disable database requirement for testing
+    DATABASE_REQUIRED = os.getenv("DATABASE_REQUIRED", "TRUE").upper() == "TRUE"
 
     NEXT_FRONTEND_URL = os.getenv("NEXT_FRONTEND_URL")
     # Backend URL to override the http to https in the OAuth redirect URI
@@ -143,6 +145,8 @@ class Config:
     # Auth
     AUTH_TYPE = os.getenv("AUTH_TYPE")
     REGISTRATION_ENABLED = os.getenv("REGISTRATION_ENABLED", "TRUE").upper() == "TRUE"
+    # Optional: Disable authentication requirement for testing
+    AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "TRUE").upper() == "TRUE"
 
     # Google OAuth
     GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")

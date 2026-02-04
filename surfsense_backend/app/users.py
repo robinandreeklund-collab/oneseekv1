@@ -230,3 +230,52 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])
 
 current_active_user = fastapi_users.current_user(active=True)
 current_optional_user = fastapi_users.current_user(active=True, optional=True)
+
+
+# Create a dependency for optional authentication mode
+async def get_current_user_optional(
+    user: User | None = Depends(current_optional_user)
+) -> User | None:
+    """
+    Get current user with optional authentication.
+    If AUTH_REQUIRED is False, returns a mock user for testing.
+    """
+    if not config.AUTH_REQUIRED:
+        # Return a mock user for testing
+        if user is None:
+            return User(
+                id=uuid.UUID('00000000-0000-0000-0000-000000000000'),
+                email="test@example.com",
+                hashed_password="",
+                is_active=True,
+                is_verified=True,
+                is_superuser=False,
+                display_name="Test User",
+            )
+    return user
+
+
+# Create a dependency that returns a user (required or test user)
+async def get_current_user_or_test(
+    user: User | None = Depends(get_current_user_optional)
+) -> User:
+    """
+    Get current user or return a test user if AUTH_REQUIRED is False.
+    Always returns a User object.
+    """
+    if user is None and not config.AUTH_REQUIRED:
+        return User(
+            id=uuid.UUID('00000000-0000-0000-0000-000000000000'),
+            email="test@example.com",
+            hashed_password="",
+            is_active=True,
+            is_verified=True,
+            is_superuser=False,
+            display_name="Test User",
+        )
+    elif user is None:
+        # If auth is required but no user, this shouldn't happen due to dependency
+        # but provide a fallback
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user

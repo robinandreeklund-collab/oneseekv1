@@ -1427,8 +1427,14 @@ else:
         avatar_url = Column(String, nullable=True)
 
 
-engine = create_async_engine(DATABASE_URL)
-async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
+# Create engine only if database is required
+if config.DATABASE_REQUIRED and DATABASE_URL:
+    engine = create_async_engine(DATABASE_URL)
+    async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
+else:
+    # Mock mode: no database connection
+    engine = None
+    async_session_maker = None
 
 
 async def setup_indexes():
@@ -1483,6 +1489,11 @@ async def setup_indexes():
 
 
 async def create_db_and_tables():
+    if not config.DATABASE_REQUIRED or not engine:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Database is not required, skipping table creation")
+        return
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
@@ -1491,8 +1502,29 @@ async def create_db_and_tables():
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
-    async with async_session_maker() as session:
-        yield session
+    if not config.DATABASE_REQUIRED or not async_session_maker:
+        # Return a mock session that does nothing
+        class MockSession:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+            async def commit(self):
+                pass
+            async def rollback(self):
+                pass
+            async def close(self):
+                pass
+            async def execute(self, *args, **kwargs):
+                return None
+            async def scalar(self, *args, **kwargs):
+                return None
+            async def scalars(self, *args, **kwargs):
+                return []
+        yield MockSession()
+    else:
+        async with async_session_maker() as session:
+            yield session
 
 
 if config.AUTH_TYPE == "GOOGLE":
