@@ -1,0 +1,204 @@
+# Global LLM Configuration
+# 
+# SETUP INSTRUCTIONS:
+# 1. For production: Copy this file to global_llm_config.yaml and add your real API keys
+# 2. For testing: The system will use this example file automatically if global_llm_config.yaml doesn't exist
+#
+# NOTE: The example API keys below are placeholders and won't work.
+# Replace them with your actual API keys to enable global configurations.
+#
+# These configurations will be available to all users as a convenient option
+# Users can choose to use these global configs or add their own
+#
+# AUTO MODE (Recommended):
+# - Auto mode (ID: 0) uses LiteLLM Router to automatically load balance across all global configs
+# - This helps avoid rate limits by distributing requests across multiple providers
+# - New users are automatically assigned Auto mode by default
+# - Configure router_settings below to customize the load balancing behavior
+#
+# Structure matches NewLLMConfig:
+# - LLM model configuration (provider, model_name, api_key, etc.)
+# - Prompt configuration (system_instructions, citations_enabled)
+
+# Router Settings for Auto Mode
+# These settings control how the LiteLLM Router distributes requests across models
+router_settings:
+  # Routing strategy options:
+  # - "usage-based-routing": Routes to deployment with lowest current usage (recommended for rate limits)
+  # - "simple-shuffle": Random distribution with optional RPM/TPM weighting
+  # - "least-busy": Routes to least busy deployment
+  # - "latency-based-routing": Routes based on response latency
+  routing_strategy: "usage-based-routing"
+  
+  # Number of retries before failing
+  num_retries: 3
+  
+  # Number of failures allowed before cooling down a deployment
+  allowed_fails: 3
+  
+  # Cooldown time in seconds after allowed_fails is exceeded
+  cooldown_time: 60
+  
+  # Fallback models (optional) - when primary fails, try these
+  # Format: [{"primary_model": ["fallback1", "fallback2"]}]
+  # fallbacks: []
+
+global_llm_configs:
+  # Example: OpenAI GPT-4 Turbo with citations enabled
+  - id: -1
+    name: "Global GPT-4 Turbo"
+    description: "OpenAI's GPT-4 Turbo with default prompts and citations"
+    provider: "OPENAI"
+    model_name: "gpt-4-turbo-preview"
+    api_key: "sk-your-openai-api-key-here"
+    api_base: ""
+    # Rate limits for load balancing (requests/tokens per minute)
+    rpm: 500  # Requests per minute
+    tpm: 100000  # Tokens per minute
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 4000
+    # Prompt Configuration
+    system_instructions: ""  # Empty = use default SURFSENSE_SYSTEM_INSTRUCTIONS
+    use_default_system_instructions: true
+    citations_enabled: true
+
+  # Example: Anthropic Claude 3 Opus
+  - id: -2
+    name: "Global Claude 3 Opus"
+    description: "Anthropic's most capable model with citations"
+    provider: "ANTHROPIC"
+    model_name: "claude-3-opus-20240229"
+    api_key: "sk-ant-your-anthropic-api-key-here"
+    api_base: ""
+    rpm: 1000
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 4000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: true
+
+  # Example: Fast model - GPT-3.5 Turbo (citations disabled for speed)
+  - id: -3
+    name: "Global GPT-3.5 Turbo (Fast)"
+    description: "Fast responses without citations for quick queries"
+    provider: "OPENAI"
+    model_name: "gpt-3.5-turbo"
+    api_key: "sk-your-openai-api-key-here"
+    api_base: ""
+    rpm: 3500  # GPT-3.5 has higher rate limits
+    tpm: 200000
+    litellm_params:
+      temperature: 0.5
+      max_tokens: 2000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false  # Disabled for faster responses
+
+  # Example: Chinese LLM - DeepSeek with custom instructions
+  - id: -4
+    name: "Global DeepSeek Chat (Chinese)"
+    description: "DeepSeek optimized for Chinese language responses"
+    provider: "DEEPSEEK"
+    model_name: "deepseek-chat"
+    api_key: "your-deepseek-api-key-here"
+    api_base: "https://api.deepseek.com/v1"
+    rpm: 60
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 4000
+    # Custom system instructions for Chinese responses
+    system_instructions: |
+      <system_instruction>
+      You are SurfSense, a reasoning and acting AI agent designed to answer user questions using the user's personal knowledge base.
+      
+      Today's date (UTC): {resolved_today}
+      
+      IMPORTANT: Please respond in Chinese (简体中文) unless the user specifically requests another language.
+      </system_instruction>
+    use_default_system_instructions: false
+    citations_enabled: true
+
+  # Example: Azure OpenAI GPT-4o
+  # IMPORTANT: For Azure deployments, always include 'base_model' in litellm_params
+  # to enable accurate token counting, cost tracking, and max token limits
+  - id: -5
+    name: "Global Azure GPT-4o"
+    description: "Azure OpenAI GPT-4o deployment"
+    provider: "AZURE"
+    # model_name format for Azure: azure/<your-deployment-name>
+    model_name: "azure/gpt-4o-deployment"
+    api_key: "your-azure-api-key-here"
+    api_base: "https://your-resource.openai.azure.com"
+    api_version: "2024-02-15-preview"  # Azure API version
+    rpm: 1000
+    tpm: 150000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 4000
+      # REQUIRED for Azure: Specify the underlying OpenAI model
+      # This fixes "Could not identify azure model" warnings
+      # Common base_model values: gpt-4, gpt-4-turbo, gpt-4o, gpt-4o-mini, gpt-3.5-turbo
+      base_model: "gpt-4o"
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: true
+
+  # Example: Azure OpenAI GPT-4 Turbo
+  - id: -6
+    name: "Global Azure GPT-4 Turbo"
+    description: "Azure OpenAI GPT-4 Turbo deployment"
+    provider: "AZURE"
+    model_name: "azure/gpt-4-turbo-deployment"
+    api_key: "your-azure-api-key-here"
+    api_base: "https://your-resource.openai.azure.com"
+    api_version: "2024-02-15-preview"
+    rpm: 500
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 4000
+      base_model: "gpt-4-turbo"  # Maps to gpt-4-turbo-preview
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: true
+
+  # Example: Groq - Fast inference
+  - id: -7
+    name: "Global Groq Llama 3"
+    description: "Ultra-fast Llama 3 70B via Groq"
+    provider: "GROQ"
+    model_name: "llama3-70b-8192"
+    api_key: "your-groq-api-key-here"
+    api_base: ""
+    rpm: 30  # Groq has lower rate limits on free tier
+    tpm: 14400
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 8000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: true
+
+# Notes:
+# - ID 0 is reserved for "Auto" mode - uses LiteLLM Router for load balancing
+# - Use negative IDs to distinguish global configs from user configs (NewLLMConfig in DB)
+# - IDs should be unique and sequential (e.g., -1, -2, -3, etc.)
+# - The 'api_key' field will not be exposed to users via API
+# - system_instructions: Custom prompt or empty string to use defaults
+# - use_default_system_instructions: true = use SURFSENSE_SYSTEM_INSTRUCTIONS when system_instructions is empty
+# - citations_enabled: true = include citation instructions, false = include anti-citation instructions
+# - All standard LiteLLM providers are supported
+# - rpm/tpm: Optional rate limits for load balancing (requests/tokens per minute)
+#   These help the router distribute load evenly and avoid rate limit errors
+#
+# AZURE-SPECIFIC NOTES:
+# - Always add 'base_model' in litellm_params for Azure deployments
+# - This fixes "Could not identify azure model 'X'" warnings
+# - base_model should match the underlying OpenAI model (e.g., gpt-4o, gpt-4-turbo, gpt-3.5-turbo)
+# - model_name format: "azure/<your-deployment-name>"
+# - api_version: Use a recent Azure API version (e.g., "2024-02-15-preview")
+# - See: https://docs.litellm.ai/docs/proxy/cost_tracking#spend-tracking-for-azure-openai-models

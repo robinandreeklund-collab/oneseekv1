@@ -1,0 +1,24 @@
+{
+	"title": "Connectors",
+	"pages": [
+		"google-drive",
+		"gmail",
+		"google-calendar",
+		"notion",
+		"slack",
+		"discord",
+		"jira",
+		"linear",
+		"microsoft-teams",
+		"confluence",
+		"airtable",
+		"clickup",
+		"github",
+		"luma",
+		"circleback",
+		"elasticsearch",
+		"bookstack",
+		"obsidian"
+	],
+	"defaultOpen": false
+}
