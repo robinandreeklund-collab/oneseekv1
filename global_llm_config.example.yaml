@@ -1,0 +1,86 @@
+# Example global LLM configuration for testing with local models
+# Place this file at: surfsense_backend/app/config/global_llm_config.yaml
+
+global_llm_configs:
+  # Configuration for vLLM (OpenAI-compatible API)
+  - id: -1
+    name: "Local vLLM (Llama-2-7B)"
+    description: "Local LLM running via vLLM with OpenAI-compatible API"
+    provider: "OLLAMA"  # OLLAMA provider works with any OpenAI-compatible endpoint
+    model_name: "meta-llama/Llama-2-7b-chat-hf"
+    api_base: "http://localhost:8001/v1"
+    api_key: "EMPTY"  # vLLM doesn't require authentication by default
+    system_instructions: "You are a helpful AI assistant."
+    citations_enabled: false
+    
+  # Configuration for Ollama
+  - id: -2
+    name: "Local Ollama (Llama2)"
+    description: "Local LLM via Ollama"
+    provider: "OLLAMA"
+    model_name: "llama2"
+    api_base: "http://localhost:11434"
+    api_key: "EMPTY"
+    system_instructions: "You are a helpful AI assistant."
+    citations_enabled: false
+    
+  # Configuration for Ollama with different model
+  - id: -3
+    name: "Local Ollama (Mistral)"
+    description: "Mistral model via Ollama"
+    provider: "OLLAMA"
+    model_name: "mistral"
+    api_base: "http://localhost:11434"
+    api_key: "EMPTY"
+    system_instructions: "You are a helpful AI assistant."
+    citations_enabled: false
+
+# Router settings for Auto mode (ID: 0)
+# This allows load balancing across multiple models
+router_settings:
+  routing_strategy: "usage-based-routing"  # or "simple-shuffle", "least-busy", "latency-based-routing"
+  num_retries: 3
+  allowed_fails: 3
+  cooldown_time: 60
+
+# How to use this configuration:
+# 
+# 1. Save this file as: surfsense_backend/app/config/global_llm_config.yaml
+# 
+# 2. Start your local LLM server(s):
+#    
+#    For vLLM:
+#    ```bash
+#    python -m vllm.entrypoints.openai.api_server \
+#      --model meta-llama/Llama-2-7b-chat-hf \
+#      --port 8001
+#    ```
+#    
+#    For Ollama:
+#    ```bash
+#    ollama serve
+#    ollama pull llama2
+#    ollama pull mistral
+#    ```
+# 
+# 3. Set environment variables in your .env file:
+#    ```
+#    DATABASE_REQUIRED=FALSE
+#    AUTH_REQUIRED=FALSE
+#    SECRET_KEY=test-secret-key
+#    NEXT_FRONTEND_URL=http://localhost:3000
+#    EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+#    ETL_SERVICE=DOCLING
+#    ```
+# 
+# 4. Start SurfSense:
+#    ```bash
+#    cd surfsense_backend
+#    python main.py
+#    ```
+# 
+# 5. The models will be available with these IDs:
+#    - ID -1: vLLM Llama-2-7B
+#    - ID -2: Ollama Llama2
+#    - ID -3: Ollama Mistral
+#    - ID 0: Auto mode (load balanced across all models)

@@ -55,6 +55,7 @@ https://github.com/user-attachments/assets/a0a16566-6967-4374-ac51-9b3e07fbecd7
 - Connect virtually any inference provider via the OpenAI spec and LiteLLM.
 ### 🔔 **Privacy & Local LLM Support**
 - Works Flawlessly with local LLMs like vLLM and Ollama.
+- **NEW**: Test mode available - run without database/auth for local LLM testing (see [TESTING_WITHOUT_DATABASE.md](TESTING_WITHOUT_DATABASE.md))
 ### 🏠 **Self Hostable**
 - Open source and easy to deploy locally.
 ### 👥 **Team Collaboration with RBAC**
@@ -137,6 +138,38 @@ Check out our public roadmap and contribute your ideas or feedback:
 
 
 ## How to get started?
+
+### Testing Mode (No Database/Auth Required) 🧪
+
+For quick testing and development with local LLMs:
+
+```bash
+# 1. Create minimal .env file
+cat > surfsense_backend/.env << EOF
+DATABASE_REQUIRED=FALSE
+AUTH_REQUIRED=FALSE
+SECRET_KEY=test-secret-key
+NEXT_FRONTEND_URL=http://localhost:3000
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+ETL_SERVICE=DOCLING
+EOF
+
+# 2. Start your local LLM (vLLM example)
+pip install vllm
+python -m vllm.entrypoints.openai.api_server \
+  --model meta-llama/Llama-2-7b-chat-hf \
+  --port 8001
+
+# 3. Start SurfSense backend
+cd surfsense_backend
+python main.py
+```
+
+**📖 Full Testing Guide**: See [TESTING_WITHOUT_DATABASE.md](TESTING_WITHOUT_DATABASE.md) for detailed instructions on:
+- Configuring local LLMs (vLLM, Ollama)
+- Available features in testing mode
+- LLM configuration examples
+- Troubleshooting tips
 
 ### Quick Start with Docker 🐳
 
