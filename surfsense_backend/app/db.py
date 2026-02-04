@@ -1501,26 +1501,30 @@ async def create_db_and_tables():
     await setup_indexes()
 
 
+# Mock session for testing without database
+class MockSession:
+    """Mock database session for testing mode when DATABASE_REQUIRED=FALSE"""
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *args):
+        pass
+    async def commit(self):
+        pass
+    async def rollback(self):
+        pass
+    async def close(self):
+        pass
+    async def execute(self, *args, **kwargs):
+        return None
+    async def scalar(self, *args, **kwargs):
+        return None
+    async def scalars(self, *args, **kwargs):
+        return []
+
+
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     if not config.DATABASE_REQUIRED or not async_session_maker:
         # Return a mock session that does nothing
-        class MockSession:
-            async def __aenter__(self):
-                return self
-            async def __aexit__(self, *args):
-                pass
-            async def commit(self):
-                pass
-            async def rollback(self):
-                pass
-            async def close(self):
-                pass
-            async def execute(self, *args, **kwargs):
-                return None
-            async def scalar(self, *args, **kwargs):
-                return None
-            async def scalars(self, *args, **kwargs):
-                return []
         yield MockSession()
     else:
         async with async_session_maker() as session:
