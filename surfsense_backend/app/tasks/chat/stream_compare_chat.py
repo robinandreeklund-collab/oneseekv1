@@ -245,48 +245,68 @@ async def stream_compare_chat(
                 )
 
         answers: dict[str, str] = {}
-        tasks: dict[asyncio.Task, str] = {}
-        start_times: dict[str, float] = {}
+        results_queue: asyncio.Queue[
+            tuple[str, str | None, Exception | None, float]
+        ] = asyncio.Queue()
+        tasks: list[asyncio.Task] = []
+
+        async def run_call(provider_key: str, llm) -> None:
+            start_time = time.monotonic()
+            try:
+                result = await _call_external_llm(
+                    llm, query_with_context, COMPARE_TIMEOUT_SECONDS
+                )
+                await results_queue.put(
+                    (provider_key, result, None, time.monotonic() - start_time)
+                )
+            except Exception as exc:
+                await results_queue.put(
+                    (provider_key, None, exc, time.monotonic() - start_time)
+                )
 
         for provider_key, llm in provider_llms.items():
-            start_times[provider_key] = time.monotonic()
-            task = asyncio.create_task(
-                _call_external_llm(llm, query_with_context, COMPARE_TIMEOUT_SECONDS)
-            )
-            tasks[task] = provider_key
+            tasks.append(asyncio.create_task(run_call(provider_key, llm)))
 
-        for task in asyncio.as_completed(tasks):
-            provider_key = tasks[task]
-            step_info = provider_steps.get(provider_key, {})
-            step_id = str(step_info.get("id"))
-            title = str(step_info.get("title"))
-            base_items = list(step_info.get("items") or [])
+        try:
+            for _ in range(len(tasks)):
+                provider_key, result, error, elapsed = await results_queue.get()
+                step_info = provider_steps.get(provider_key, {})
+                step_id = str(step_info.get("id"))
+                title = str(step_info.get("title"))
+                base_items = list(step_info.get("items") or [])
 
-            try:
-                result = await task
-                result = result.strip()
-                if not result:
-                    raise RuntimeError("Empty response")
-                answers[provider_key] = _truncate_text(result, MAX_EXTERNAL_ANSWER_CHARS)
-                elapsed = time.monotonic() - start_times.get(provider_key, time.monotonic())
-                completed_items = [
-                    *base_items,
-                    f"Response length: {len(result)} chars",
-                    f"Elapsed: {elapsed:.1f}s",
-                ]
-            except Exception as exc:
-                error_msg = str(exc)
-                completed_items = [
-                    *base_items,
-                    f"Error: {_truncate_text(error_msg, 120)}",
-                ]
+                if error is None and result:
+                    result = result.strip()
+                    if not result:
+                        error = RuntimeError("Empty response")
+                    else:
+                        answers[provider_key] = _truncate_text(
+                            result, MAX_EXTERNAL_ANSWER_CHARS
+                        )
+                        completed_items = [
+                            *base_items,
+                            f"Response length: {len(result)} chars",
+                            f"Elapsed: {elapsed:.1f}s",
+                        ]
+                if error is not None or not result:
+                    error_msg = str(error) if error else "Empty response"
+                    completed_items = [
+                        *base_items,
+                        f"Error: {_truncate_text(error_msg, 120)}",
+                    ]
 
-            yield streaming_service.format_thinking_step(
-                step_id=step_id,
-                title=title,
-                status="completed",
-                items=completed_items,
-            )
+                yield streaming_service.format_thinking_step(
+                    step_id=step_id,
+                    title=title,
+                    status="completed",
+                    items=completed_items,
+                )
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
         if not answers:
             yield streaming_service.format_error(
