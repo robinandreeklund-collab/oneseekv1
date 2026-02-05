@@ -102,6 +102,213 @@ function getValue(value: unknown): number | undefined {
 	return typeof value === "number" ? value : undefined;
 }
 
+type WeatherCondition =
+	| "clear"
+	| "partly_cloudy"
+	| "cloudy"
+	| "fog"
+	| "rain"
+	| "snow"
+	| "thunder";
+
+function resolveWeatherCondition(symbol: number | undefined): WeatherCondition {
+	if (symbol === undefined) return "cloudy";
+	if (symbol <= 2) return "clear";
+	if (symbol <= 4) return "partly_cloudy";
+	if (symbol <= 6) return "cloudy";
+	if (symbol === 7) return "fog";
+	if (symbol <= 12) return "rain";
+	if (symbol <= 19) return "snow";
+	if (symbol <= 23) return "snow";
+	return "thunder";
+}
+
+function resolveConditionLabel(condition: WeatherCondition, isDaytime: boolean): string {
+	switch (condition) {
+		case "clear":
+			return isDaytime ? "Clear sky" : "Clear night";
+		case "partly_cloudy":
+			return "Partly cloudy";
+		case "cloudy":
+			return "Overcast";
+		case "fog":
+			return "Foggy";
+		case "rain":
+			return "Rain";
+		case "snow":
+			return "Snow";
+		case "thunder":
+			return "Thunder";
+		default:
+			return "Cloudy";
+	}
+}
+
+function isDaytimeFromIso(value: string | undefined): boolean {
+	if (!value) return true;
+	const dt = new Date(value);
+	if (Number.isNaN(dt.getTime())) return true;
+	const hours = dt.getHours();
+	return hours >= 6 && hours < 19;
+}
+
+function resolveSceneClasses(condition: WeatherCondition, isDaytime: boolean): string {
+	if (condition === "clear") {
+		return isDaytime
+			? "from-sky-300 via-sky-200 to-amber-200"
+			: "from-slate-900 via-indigo-900 to-slate-800";
+	}
+	if (condition === "partly_cloudy") {
+		return isDaytime
+			? "from-sky-300 via-blue-200 to-slate-200"
+			: "from-slate-800 via-slate-900 to-indigo-900";
+	}
+	if (condition === "cloudy") {
+		return isDaytime
+			? "from-slate-300 via-slate-200 to-slate-100"
+			: "from-slate-800 via-slate-900 to-slate-700";
+	}
+	if (condition === "fog") {
+		return "from-slate-300 via-slate-200 to-slate-100";
+	}
+	if (condition === "snow") {
+		return isDaytime ? "from-sky-200 via-slate-200 to-white" : "from-slate-900 via-slate-800 to-slate-700";
+	}
+	if (condition === "thunder") {
+		return "from-slate-800 via-slate-900 to-indigo-950";
+	}
+	return isDaytime ? "from-sky-300 via-blue-200 to-slate-200" : "from-slate-900 via-slate-800 to-indigo-900";
+}
+
+function WeatherScene({
+	condition,
+	isDaytime,
+}: {
+	condition: WeatherCondition;
+	isDaytime: boolean;
+}) {
+	const showRain = condition === "rain" || condition === "thunder";
+	const showSnow = condition === "snow";
+	const showClouds = condition !== "clear";
+	const sunClass = isDaytime ? "bg-amber-300 shadow-amber-200/60" : "bg-slate-200 shadow-slate-200/50";
+	const gradient = resolveSceneClasses(condition, isDaytime);
+
+	return (
+		<div className={`relative h-28 w-full overflow-hidden rounded-xl bg-gradient-to-br ${gradient}`}>
+			<div className={`absolute right-6 top-4 size-12 rounded-full shadow-xl ${sunClass} weather-float`} />
+
+			{showClouds && (
+				<>
+					<div className="absolute left-4 top-10 h-10 w-20 rounded-full bg-white/70 blur-sm weather-drift" />
+					<div className="absolute left-16 top-6 h-8 w-14 rounded-full bg-white/60 blur-sm weather-drift-alt" />
+				</>
+			)}
+
+			{showRain && (
+				<div className="absolute inset-0">
+					{Array.from({ length: 10 }).map((_, idx) => (
+						<span
+							key={`rain-${idx}`}
+							className="weather-rain"
+							style={{
+								left: `${8 + idx * 8}%`,
+								animationDelay: `${idx * 0.12}s`,
+							}}
+						/>
+					))}
+				</div>
+			)}
+
+			{showSnow && (
+				<div className="absolute inset-0">
+					{Array.from({ length: 8 }).map((_, idx) => (
+						<span
+							key={`snow-${idx}`}
+							className="weather-snow"
+							style={{
+								left: `${12 + idx * 10}%`,
+								animationDelay: `${idx * 0.25}s`,
+							}}
+						/>
+					))}
+				</div>
+			)}
+
+			<style jsx>{`
+				.weather-float {
+					animation: float 6s ease-in-out infinite;
+				}
+				.weather-drift {
+					animation: drift 8s ease-in-out infinite;
+				}
+				.weather-drift-alt {
+					animation: drift 9s ease-in-out infinite;
+					animation-delay: 0.6s;
+				}
+				.weather-rain {
+					position: absolute;
+					top: 50%;
+					width: 2px;
+					height: 18px;
+					background: rgba(255, 255, 255, 0.7);
+					border-radius: 9999px;
+					animation: rain 1.3s linear infinite;
+				}
+				.weather-snow {
+					position: absolute;
+					top: 50%;
+					width: 6px;
+					height: 6px;
+					background: rgba(255, 255, 255, 0.9);
+					border-radius: 9999px;
+					animation: snow 2.8s ease-in-out infinite;
+				}
+				@keyframes float {
+					0%,
+					100% {
+						transform: translateY(0);
+					}
+					50% {
+						transform: translateY(-6px);
+					}
+				}
+				@keyframes drift {
+					0%,
+					100% {
+						transform: translateX(0);
+					}
+					50% {
+						transform: translateX(12px);
+					}
+				}
+				@keyframes rain {
+					0% {
+						transform: translateY(0);
+						opacity: 0.6;
+					}
+					100% {
+						transform: translateY(24px);
+						opacity: 0;
+					}
+				}
+				@keyframes snow {
+					0% {
+						transform: translateY(0);
+						opacity: 0.8;
+					}
+					50% {
+						opacity: 0.4;
+					}
+					100% {
+						transform: translateY(20px);
+						opacity: 0;
+					}
+				}
+			`}</style>
+		</div>
+	);
+}
+
 // ============================================================================
 // Tool UI
 // ============================================================================
@@ -155,14 +362,24 @@ export const SmhiWeatherToolUI = makeAssistantToolUI<SmhiWeatherArgs, SmhiWeathe
 			getValue(summary.relative_humidity) ?? getValue(parameters.r as unknown);
 		const pressure =
 			getValue(summary.pressure_hpa) ?? getValue(parameters.msl as unknown);
+		const symbol =
+			getValue(summary.weather_symbol) ?? getValue(parameters.Wsymb2 as unknown);
+		const isDaytime = isDaytimeFromIso(result.current?.valid_time || undefined);
+		const condition = resolveWeatherCondition(symbol);
+		const conditionLabel = resolveConditionLabel(condition, isDaytime);
 		const updatedAt = result.current?.valid_time;
 
 		return (
 			<Card className="my-4 w-full max-w-md">
 				<CardContent className="p-4">
+					<div className="mb-4">
+						<WeatherScene condition={condition} isDaytime={isDaytime} />
+					</div>
 					<div className="flex items-start justify-between gap-4">
 						<div>
-							<div className="text-sm text-muted-foreground">SMHI weather</div>
+							<div className="text-sm text-muted-foreground">
+								SMHI weather · {conditionLabel}
+							</div>
 							<h3 className="mt-1 text-lg font-semibold">{locationName}</h3>
 							{updatedAt && (
 								<p className="text-xs text-muted-foreground mt-1">Updated: {updatedAt}</p>

@@ -833,10 +833,6 @@ async def stream_new_chat(
                         )
                         temperature = summary.get("temperature_c")
                         completed_items = [*last_active_step_items]
-                        if location_name:
-                            completed_items.append(
-                                f"Location: {location_name[:60]}{'...' if len(location_name) > 60 else ''}"
-                            )
                         if temperature is not None:
                             completed_items.append(f"Temperature: {temperature} C")
                     else:
