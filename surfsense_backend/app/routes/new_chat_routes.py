@@ -52,9 +52,8 @@ from app.schemas.new_chat import (
     ThreadListItem,
     ThreadListResponse,
 )
-from app.config import config
 from app.tasks.chat.stream_new_chat import stream_new_chat
-from app.users import get_current_user_or_test
+from app.users import current_active_user
 from app.utils.rbac import check_permission
 
 router = APIRouter()
@@ -87,10 +86,6 @@ async def check_thread_access(
     Raises:
         HTTPException: If access is denied
     """
-    # Skip access checks when DATABASE_REQUIRED is False
-    if not config.DATABASE_REQUIRED:
-        return True
-    
     is_owner = thread.created_by_id == user.id
     is_legacy = thread.created_by_id is None
 
@@ -147,7 +142,7 @@ async def list_threads(
     search_space_id: int,
     limit: int | None = None,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     List all accessible threads for the current user in a search space.
@@ -165,10 +160,6 @@ async def list_threads(
     Requires CHATS_READ permission.
     """
     try:
-        # Return empty list when DATABASE_REQUIRED is False
-        if not config.DATABASE_REQUIRED:
-            return ThreadListResponse(threads=[], archived_threads=[])
-        
         await check_permission(
             session,
             user,
@@ -258,7 +249,7 @@ async def search_threads(
     search_space_id: int,
     title: str,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Search accessible threads by title in a search space.
@@ -350,7 +341,7 @@ async def search_threads(
 async def create_thread(
     thread: NewChatThreadCreate,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Create a new chat thread.
@@ -361,21 +352,6 @@ async def create_thread(
     Requires CHATS_CREATE permission.
     """
     try:
-        # Skip database operations when DATABASE_REQUIRED is False
-        if not config.DATABASE_REQUIRED:
-            now = datetime.now(UTC)
-            # Return mock thread with ID 1 (test mode)
-            return NewChatThreadRead(
-                id=1,
-                title=thread.title,
-                archived=thread.archived,
-                visibility=thread.visibility,
-                search_space_id=thread.search_space_id,
-                created_by_id=user.id,
-                created_at=now,
-                updated_at=now,
-            )
-        
         await check_permission(
             session,
             user,
@@ -423,7 +399,7 @@ async def create_thread(
 async def get_thread_messages(
     thread_id: int,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Get a thread with all its messages.
@@ -436,23 +412,6 @@ async def get_thread_messages(
     Requires CHATS_READ permission.
     """
     try:
-        # Return empty thread when DATABASE_REQUIRED is False
-        if not config.DATABASE_REQUIRED:
-            now = datetime.now(UTC)
-            return ThreadHistoryLoadResponse(
-                thread=NewChatThreadRead(
-                    id=thread_id,
-                    title="Test Thread",
-                    archived=False,
-                    visibility=ChatVisibility.PRIVATE,
-                    search_space_id=1,
-                    created_by_id=user.id,
-                    created_at=now,
-                    updated_at=now,
-                ),
-                messages=[],
-            )
-        
         # Get thread first
         result = await session.execute(
             select(NewChatThread).filter(NewChatThread.id == thread_id)
@@ -517,7 +476,7 @@ async def get_thread_messages(
 async def get_thread_full(
     thread_id: int,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Get full thread details with all messages.
@@ -582,7 +541,7 @@ async def update_thread(
     thread_id: int,
     thread_update: NewChatThreadUpdate,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Update a thread (title, archived status).
@@ -651,7 +610,7 @@ async def update_thread(
 async def delete_thread(
     thread_id: int,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Delete a thread and all its messages.
@@ -712,7 +671,7 @@ async def update_thread_visibility(
     thread_id: int,
     visibility_update: NewChatThreadVisibilityUpdate,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Update the visibility/sharing settings of a thread.
@@ -783,7 +742,7 @@ async def update_thread_visibility(
 async def create_thread_snapshot(
     thread_id: int,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Create a public snapshot of the thread.
@@ -805,7 +764,7 @@ async def create_thread_snapshot(
 async def list_thread_snapshots(
     thread_id: int,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     List all public snapshots for this thread.
@@ -828,7 +787,7 @@ async def delete_thread_snapshot(
     thread_id: int,
     snapshot_id: int,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Delete a specific snapshot.
@@ -856,7 +815,7 @@ async def append_message(
     thread_id: int,
     request: Request,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Append a message to a thread.
@@ -883,21 +842,6 @@ async def append_message(
 
         # Create message object manually
         message = NewChatMessageAppend(role=role, content=content)
-        
-        # Skip database operations when DATABASE_REQUIRED is False
-        if not config.DATABASE_REQUIRED:
-            now = datetime.now(UTC)
-            # Return mock message with ID 1 (test mode)
-            return NewChatMessageRead(
-                id=1,
-                thread_id=thread_id,
-                role=message.role,
-                content=message.content,
-                created_at=now,
-                author_id=user.id,
-                author_email=user.email,
-            )
-        
         # Get thread
         result = await session.execute(
             select(NewChatThread).filter(NewChatThread.id == thread_id)
@@ -998,7 +942,7 @@ async def list_messages(
     skip: int = 0,
     limit: int = 100,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     List messages in a thread with pagination.
@@ -1064,7 +1008,7 @@ async def list_messages(
 async def handle_new_chat(
     request: NewChatRequest,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Stream chat responses from the deep agent.
@@ -1079,32 +1023,6 @@ async def handle_new_chat(
     Requires CHATS_CREATE permission.
     """
     try:
-        # When DATABASE_REQUIRED is False, skip permission and thread checks
-        if not config.DATABASE_REQUIRED:
-            # Use default LLM config
-            llm_config_id = -1
-            
-            return StreamingResponse(
-                stream_new_chat(
-                    user_query=request.user_query,
-                    search_space_id=request.search_space_id,
-                    chat_id=request.chat_id,
-                    session=session,
-                    user_id=str(user.id),
-                    llm_config_id=llm_config_id,
-                    attachments=request.attachments,
-                    mentioned_document_ids=request.mentioned_document_ids,
-                    mentioned_surfsense_doc_ids=request.mentioned_surfsense_doc_ids,
-                    needs_history_bootstrap=False,
-                ),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
-            )
-        
         # Verify thread exists and user has permission
         result = await session.execute(
             select(NewChatThread).filter(NewChatThread.id == request.chat_id)
@@ -1183,7 +1101,7 @@ async def regenerate_response(
     thread_id: int,
     request: RegenerateRequest,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Regenerate the AI response for a chat thread.
@@ -1444,7 +1362,7 @@ async def regenerate_response(
 async def process_attachment(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user_or_test),
+    user: User = Depends(current_active_user),
 ):
     """
     Process an attachment file and extract its content as markdown.

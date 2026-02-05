@@ -1427,14 +1427,8 @@ else:
         avatar_url = Column(String, nullable=True)
 
 
-# Create engine only if database is required
-if config.DATABASE_REQUIRED and DATABASE_URL:
-    engine = create_async_engine(DATABASE_URL)
-    async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
-else:
-    # Mock mode: no database connection
-    engine = None
-    async_session_maker = None
+engine = create_async_engine(DATABASE_URL)
+async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def setup_indexes():
@@ -1489,11 +1483,6 @@ async def setup_indexes():
 
 
 async def create_db_and_tables():
-    if not config.DATABASE_REQUIRED or not engine:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info("Database is not required, skipping table creation")
-        return
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
@@ -1501,48 +1490,9 @@ async def create_db_and_tables():
     await setup_indexes()
 
 
-# Mock session for testing without database
-class MockResult:
-    """Mock result object for testing mode"""
-    def scalar(self):
-        return None
-    def scalars(self):
-        return self
-    def first(self):
-        return None
-    def all(self):
-        return []
-    def __iter__(self):
-        return iter([])
-
-
-class MockSession:
-    """Mock database session for testing mode when DATABASE_REQUIRED=FALSE"""
-    async def __aenter__(self):
-        return self
-    async def __aexit__(self, *args):
-        pass
-    async def commit(self):
-        pass
-    async def rollback(self):
-        pass
-    async def close(self):
-        pass
-    async def execute(self, *args, **kwargs):
-        return MockResult()
-    async def scalar(self, *args, **kwargs):
-        return None
-    async def scalars(self, *args, **kwargs):
-        return MockResult()
-
-
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
-    if not config.DATABASE_REQUIRED or not async_session_maker:
-        # Return a mock session that does nothing
-        yield MockSession()
-    else:
-        async with async_session_maker() as session:
-            yield session
+    async with async_session_maker() as session:
+        yield session
 
 
 if config.AUTH_TYPE == "GOOGLE":

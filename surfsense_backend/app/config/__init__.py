@@ -135,8 +135,6 @@ class Config:
 
     # Database
     DATABASE_URL = os.getenv("DATABASE_URL")
-    # Optional: Disable database requirement for testing
-    DATABASE_REQUIRED = os.getenv("DATABASE_REQUIRED", "TRUE").upper() == "TRUE"
 
     NEXT_FRONTEND_URL = os.getenv("NEXT_FRONTEND_URL")
     # Backend URL to override the http to https in the OAuth redirect URI
@@ -145,19 +143,6 @@ class Config:
     # Auth
     AUTH_TYPE = os.getenv("AUTH_TYPE")
     REGISTRATION_ENABLED = os.getenv("REGISTRATION_ENABLED", "TRUE").upper() == "TRUE"
-    # Optional: Disable authentication requirement for testing
-    AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "TRUE").upper() == "TRUE"
-    
-    # Production safety check: warn if testing mode is enabled with production indicators
-    if not DATABASE_REQUIRED or not AUTH_REQUIRED:
-        import logging
-        logger = logging.getLogger(__name__)
-        if BACKEND_URL and ("https://" in BACKEND_URL or "production" in BACKEND_URL.lower()):
-            logger.warning(
-                "⚠️  WARNING: Testing mode (DATABASE_REQUIRED=FALSE or AUTH_REQUIRED=FALSE) "
-                "appears to be enabled in a production environment. "
-                "This is INSECURE and should only be used for development/testing!"
-            )
 
     # Google OAuth
     GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
