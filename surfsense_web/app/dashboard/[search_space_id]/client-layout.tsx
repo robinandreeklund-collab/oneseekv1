@@ -23,17 +23,20 @@ import { useGlobalLoadingEffect } from "@/hooks/use-global-loading";
 export function DashboardClientLayout({
 	children,
 	searchSpaceId,
+	isPublicChat: isPublicChatProp = false,
 }: {
 	children: React.ReactNode;
 	searchSpaceId: string;
 	navSecondary?: any[];
 	navMain?: any[];
+	isPublicChat?: boolean;
 }) {
 	const t = useTranslations("dashboard");
 	const router = useRouter();
 	const pathname = usePathname();
 	const { search_space_id } = useParams();
 	const setActiveSearchSpaceIdState = useSetAtom(activeSearchSpaceIdAtom);
+	const isPublicChat = isPublicChatProp || searchSpaceId === "public";
 
 	const {
 		data: preferences = {},
@@ -64,6 +67,11 @@ export function DashboardClientLayout({
 	const isOwner = access?.is_owner ?? false;
 
 	useEffect(() => {
+		if (isPublicChat) {
+			setHasCheckedOnboarding(true);
+			return;
+		}
+
 		if (isOnboardingPage) {
 			setHasCheckedOnboarding(true);
 			return;
@@ -126,6 +134,7 @@ export function DashboardClientLayout({
 			setHasCheckedOnboarding(true);
 		}
 	}, [
+		isPublicChat,
 		loading,
 		accessLoading,
 		globalConfigsLoading,
@@ -142,6 +151,11 @@ export function DashboardClientLayout({
 	]);
 
 	useEffect(() => {
+		if (isPublicChat) {
+			setActiveSearchSpaceIdState(null);
+			return;
+		}
+
 		const activeSeacrhSpaceId =
 			typeof search_space_id === "string"
 				? search_space_id
@@ -150,14 +164,15 @@ export function DashboardClientLayout({
 					: "";
 		if (!activeSeacrhSpaceId) return;
 		setActiveSearchSpaceIdState(activeSeacrhSpaceId);
-	}, [search_space_id, setActiveSearchSpaceIdState]);
+	}, [isPublicChat, search_space_id, setActiveSearchSpaceIdState]);
 
 	// Determine if we should show loading
 	const shouldShowLoading =
-		(!hasCheckedOnboarding &&
+		!isPublicChat &&
+		((!hasCheckedOnboarding &&
 			(loading || accessLoading || globalConfigsLoading) &&
 			!isOnboardingPage) ||
-		isAutoConfiguring;
+			isAutoConfiguring);
 
 	// Use global loading screen - spinner animation won't reset
 	useGlobalLoadingEffect(shouldShowLoading);
@@ -188,8 +203,12 @@ export function DashboardClientLayout({
 
 	return (
 		<DocumentUploadDialogProvider>
-			<OnboardingTour />
-			<LayoutDataProvider searchSpaceId={searchSpaceId} breadcrumb={<DashboardBreadcrumb />}>
+			{!isPublicChat && <OnboardingTour />}
+			<LayoutDataProvider
+				searchSpaceId={searchSpaceId}
+				breadcrumb={<DashboardBreadcrumb />}
+				isPublicChat={isPublicChat}
+			>
 				{children}
 			</LayoutDataProvider>
 		</DocumentUploadDialogProvider>

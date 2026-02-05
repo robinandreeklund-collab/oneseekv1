@@ -217,14 +217,22 @@ export default function NewChatPage() {
 	useMessagesElectric(threadId, handleElectricMessagesUpdate);
 
 	// Create the attachment adapter for file processing
-	const attachmentAdapter = useMemo(() => createAttachmentAdapter(), []);
+	const rawSearchSpaceId = params.search_space_id;
+	const isPublicChat = rawSearchSpaceId === "public";
+	const attachmentAdapter = useMemo(
+		() => (isPublicChat ? undefined : createAttachmentAdapter()),
+		[isPublicChat]
+	);
 
 	// Extract search_space_id from URL params
 	const searchSpaceId = useMemo(() => {
+		if (isPublicChat) {
+			return 0;
+		}
 		const id = params.search_space_id;
 		const parsed = typeof id === "string" ? Number.parseInt(id, 10) : 0;
 		return Number.isNaN(parsed) ? 0 : parsed;
-	}, [params.search_space_id]);
+	}, [params.search_space_id, isPublicChat]);
 
 	// Extract chat_id from URL params
 	const urlChatId = useMemo(() => {
@@ -257,6 +265,11 @@ export default function NewChatPage() {
 		clearPlanOwnerRegistry(); // Reset plan ownership for new chat
 
 		try {
+			if (isPublicChat) {
+				setIsInitializing(false);
+				return;
+			}
+
 			if (urlChatId > 0) {
 				// Thread exists - load thread data and messages
 				setThreadId(urlChatId);
@@ -314,6 +327,7 @@ export default function NewChatPage() {
 			setIsInitializing(false);
 		}
 	}, [
+		isPublicChat,
 		urlChatId,
 		setMessageDocumentsMap,
 		setMentionedDocumentIds,
@@ -419,6 +433,136 @@ export default function NewChatPage() {
 			}
 
 			if (!userQuery.trim() && messageAttachments.length === 0) return;
+
+			if (isPublicChat) {
+				if (!userQuery.trim()) return;
+
+				const userMsgId = `msg-user-${Date.now()}`;
+				const assistantMsgId = `msg-assistant-${Date.now()}`;
+
+				const userMessage: ThreadMessageLike = {
+					id: userMsgId,
+					role: "user",
+					content: message.content,
+					createdAt: new Date(),
+					attachments: [],
+				};
+
+				setMessages((prev) => [
+					...prev,
+					userMessage,
+					{
+						id: assistantMsgId,
+						role: "assistant",
+						content: [{ type: "text", text: "" }],
+						createdAt: new Date(),
+					},
+				]);
+
+				setIsRunning(true);
+
+				const backendUrl =
+					process.env.NEXT_PUBLIC_FASTAPI_BACKEND_URL || "http://localhost:8000";
+
+				// Build message history for context
+				const messageHistory = messages
+					.filter((m) => m.role === "user" || m.role === "assistant")
+					.map((m) => {
+						let text = "";
+						for (const part of m.content) {
+							if (typeof part === "object" && part.type === "text" && "text" in part) {
+								text += part.text;
+							}
+						}
+						return { role: m.role, content: text };
+					})
+					.filter((m) => m.content.length > 0);
+
+				try {
+					const controller = new AbortController();
+					abortControllerRef.current = controller;
+
+					const response = await fetch(`${backendUrl}/api/v1/public/global/chat`, {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+						},
+						credentials: "include",
+						body: JSON.stringify({
+							user_query: userQuery.trim(),
+							messages: messageHistory,
+						}),
+						signal: controller.signal,
+					});
+
+					if (!response.ok) {
+						throw new Error(`Backend error: ${response.status}`);
+					}
+
+					if (!response.body) {
+						throw new Error("No response body");
+					}
+
+					const reader = response.body.getReader();
+					const decoder = new TextDecoder();
+					let buffer = "";
+
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) break;
+
+						buffer += decoder.decode(value, { stream: true });
+						const events = buffer.split(/\r?\n\r?\n/);
+						buffer = events.pop() || "";
+
+						for (const event of events) {
+							const lines = event.split(/\r?\n/);
+							for (const line of lines) {
+								if (!line.startsWith("data: ")) continue;
+								const data = line.slice(6).trim();
+								if (!data || data === "[DONE]") continue;
+
+								try {
+									const parsed = JSON.parse(data);
+									if (parsed.type === "text-delta" && typeof parsed.delta === "string") {
+										setMessages((prev) =>
+											prev.map((msg) => {
+												if (msg.id !== assistantMsgId) return msg;
+												let existingText = "";
+												if (Array.isArray(msg.content)) {
+													for (const part of msg.content) {
+														if (part.type === "text" && "text" in part) {
+															existingText += part.text;
+														}
+													}
+												}
+												return {
+													...msg,
+													content: [{ type: "text", text: existingText + parsed.delta }],
+												};
+											})
+										);
+									}
+									if (parsed.type === "error") {
+										toast.error(parsed.errorText || "Public chat failed.");
+									}
+								} catch {
+									// ignore malformed chunks
+								}
+							}
+						}
+					}
+				} catch (error) {
+					if (!(error instanceof DOMException && error.name === "AbortError")) {
+						toast.error("Failed to get response. Please try again.");
+					}
+				} finally {
+					setIsRunning(false);
+					abortControllerRef.current = null;
+				}
+
+				return;
+			}
 
 			// Check if podcast is already generating
 			if (isPodcastGenerating() && looksLikePodcastRequest(userQuery)) {
@@ -971,6 +1115,10 @@ export default function NewChatPage() {
 	 */
 	const handleRegenerate = useCallback(
 		async (newUserQuery?: string | null) => {
+			if (isPublicChat) {
+				toast.info("Sign in to edit or regenerate responses.");
+				return;
+			}
 			if (!threadId) {
 				toast.error("Cannot regenerate: no active chat thread");
 				return;
@@ -1347,7 +1495,7 @@ export default function NewChatPage() {
 				abortControllerRef.current = null;
 			}
 		},
-		[threadId, searchSpaceId, messages, setMessageThinkingSteps]
+		[isPublicChat, threadId, searchSpaceId, messages, setMessageThinkingSteps]
 	);
 
 	// Handle editing a message - truncates history and regenerates with new query
@@ -1388,9 +1536,7 @@ export default function NewChatPage() {
 		onReload,
 		convertMessage,
 		onCancel: cancelRun,
-		adapters: {
-			attachments: attachmentAdapter,
-		},
+		adapters: attachmentAdapter ? { attachments: attachmentAdapter } : undefined,
 	});
 
 	// Show loading state only when loading an existing thread
@@ -1455,17 +1601,18 @@ export default function NewChatPage() {
 
 	return (
 		<AssistantRuntimeProvider runtime={runtime}>
-			<GeneratePodcastToolUI />
+			{!isPublicChat && <GeneratePodcastToolUI />}
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
 			<ScrapeWebpageToolUI />
-			<SaveMemoryToolUI />
-			<RecallMemoryToolUI />
+			{!isPublicChat && <SaveMemoryToolUI />}
+			{!isPublicChat && <RecallMemoryToolUI />}
 			{/* <WriteTodosToolUI /> Disabled for now */}
 			<div className="flex flex-col h-[calc(100vh-64px)] overflow-hidden">
 				<Thread
 					messageThinkingSteps={messageThinkingSteps}
-					header={<ChatHeader searchSpaceId={searchSpaceId} />}
+					isPublicChat={isPublicChat}
+					header={<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />}
 				/>
 			</div>
 		</AssistantRuntimeProvider>

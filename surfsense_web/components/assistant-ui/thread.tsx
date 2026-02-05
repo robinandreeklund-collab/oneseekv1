@@ -78,17 +78,25 @@ const CYCLING_PLACEHOLDERS = [
 interface ThreadProps {
 	messageThinkingSteps?: Map<string, ThinkingStep[]>;
 	header?: React.ReactNode;
+	isPublicChat?: boolean;
 }
 
-export const Thread: FC<ThreadProps> = ({ messageThinkingSteps = new Map(), header }) => {
+export const Thread: FC<ThreadProps> = ({
+	messageThinkingSteps = new Map(),
+	header,
+	isPublicChat = false,
+}) => {
 	return (
 		<ThinkingStepsContext.Provider value={messageThinkingSteps}>
-			<ThreadContent header={header} />
+			<ThreadContent header={header} isPublicChat={isPublicChat} />
 		</ThinkingStepsContext.Provider>
 	);
 };
 
-const ThreadContent: FC<{ header?: React.ReactNode }> = ({ header }) => {
+const ThreadContent: FC<{ header?: React.ReactNode; isPublicChat: boolean }> = ({
+	header,
+	isPublicChat,
+}) => {
 	const showGutter = useAtomValue(showCommentsGutterAtom);
 
 	return (
@@ -124,7 +132,7 @@ const ThreadContent: FC<{ header?: React.ReactNode }> = ({ header }) => {
 					<ThreadScrollToBottom />
 					<AssistantIf condition={({ thread }) => !thread.isEmpty}>
 						<div className="fade-in slide-in-from-bottom-4 animate-in duration-500 ease-out fill-mode-both">
-							<Composer />
+							<Composer isPublicChat={isPublicChat} />
 						</div>
 					</AssistantIf>
 				</ThreadPrimitive.ViewportFooter>
@@ -222,7 +230,7 @@ const ThreadWelcome: FC = () => {
 	);
 };
 
-const Composer: FC = () => {
+const Composer: FC<{ isPublicChat: boolean }> = ({ isPublicChat }) => {
 	// Document mention state (atoms persist across component remounts)
 	const [mentionedDocuments, setMentionedDocuments] = useAtom(mentionedDocumentsAtom);
 	const [showDocumentPopover, setShowDocumentPopover] = useState(false);
@@ -311,18 +319,23 @@ const Composer: FC = () => {
 	);
 
 	// Open document picker when @ mention is triggered
-	const handleMentionTrigger = useCallback((query: string) => {
-		setShowDocumentPopover(true);
-		setMentionQuery(query);
-	}, []);
+	const handleMentionTrigger = useCallback(
+		(query: string) => {
+			if (isPublicChat) return;
+			setShowDocumentPopover(true);
+			setMentionQuery(query);
+		},
+		[isPublicChat]
+	);
 
 	// Close document picker and reset query
 	const handleMentionClose = useCallback(() => {
+		if (isPublicChat) return;
 		if (showDocumentPopover) {
 			setShowDocumentPopover(false);
 			setMentionQuery("");
 		}
-	}, [showDocumentPopover]);
+	}, [isPublicChat, showDocumentPopover]);
 
 	// Keyboard navigation for document picker (arrow keys, Enter, Escape)
 	const handleKeyDown = useCallback(
@@ -399,6 +412,7 @@ const Composer: FC = () => {
 	// Add selected documents from picker, insert chips, and sync IDs to atom
 	const handleDocumentsMention = useCallback(
 		(documents: Pick<Document, "id" | "title" | "document_type">[]) => {
+			if (isPublicChat) return;
 			const existingKeys = new Set(mentionedDocuments.map((d) => `${d.document_type}:${d.id}`));
 			const newDocs = documents.filter(
 				(doc) => !existingKeys.has(`${doc.document_type}:${doc.id}`)
@@ -427,7 +441,7 @@ const Composer: FC = () => {
 
 			setMentionQuery("");
 		},
-		[mentionedDocuments, setMentionedDocuments, setMentionedDocumentIds]
+		[isPublicChat, mentionedDocuments, setMentionedDocuments, setMentionedDocumentIds]
 	);
 
 	return (
@@ -438,8 +452,8 @@ const Composer: FC = () => {
 				currentUserId={currentUser?.id ?? null}
 				members={members ?? []}
 			/>
-			<ComposerPrimitive.AttachmentDropzone className="aui-composer-attachment-dropzone flex w-full flex-col rounded-2xl border-input bg-muted px-1 pt-2 outline-none transition-shadow data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50">
-				<ComposerAttachments />
+		<ComposerPrimitive.AttachmentDropzone className="aui-composer-attachment-dropzone flex w-full flex-col rounded-2xl border-input bg-muted px-1 pt-2 outline-none transition-shadow data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50">
+			{!isPublicChat && <ComposerAttachments />}
 				{/* Inline editor with @mention support */}
 				<div ref={editorContainerRef} className="aui-composer-input-wrapper px-3 pt-3 pb-6">
 					<InlineMentionEditor
@@ -456,7 +470,8 @@ const Composer: FC = () => {
 				</div>
 
 				{/* Document picker popover (portal to body for proper z-index stacking) */}
-				{showDocumentPopover &&
+			{!isPublicChat &&
+				showDocumentPopover &&
 					typeof document !== "undefined" &&
 					createPortal(
 						<DocumentMentionPicker
@@ -480,7 +495,7 @@ const Composer: FC = () => {
 						/>,
 						document.body
 					)}
-				<ComposerAction isBlockedByOtherUser={isBlockedByOtherUser} />
+			<ComposerAction isBlockedByOtherUser={isBlockedByOtherUser} isPublicChat={isPublicChat} />
 			</ComposerPrimitive.AttachmentDropzone>
 		</ComposerPrimitive.Root>
 	);
@@ -488,9 +503,13 @@ const Composer: FC = () => {
 
 interface ComposerActionProps {
 	isBlockedByOtherUser?: boolean;
+	isPublicChat?: boolean;
 }
 
-const ComposerAction: FC<ComposerActionProps> = ({ isBlockedByOtherUser = false }) => {
+const ComposerAction: FC<ComposerActionProps> = ({
+	isBlockedByOtherUser = false,
+	isPublicChat = false,
+}) => {
 	// Check if any attachments are still being processed (running AND progress < 100)
 	// When progress is 100, processing is done but waiting for send()
 	const hasProcessingAttachments = useAssistantState(({ composer }) =>
@@ -514,6 +533,7 @@ const ComposerAction: FC<ComposerActionProps> = ({ isBlockedByOtherUser = false 
 	const { data: preferences } = useAtomValue(llmPreferencesAtom);
 
 	const hasModelConfigured = useMemo(() => {
+		if (isPublicChat) return true;
 		if (!preferences) return false;
 		const agentLlmId = preferences.agent_llm_id;
 		if (agentLlmId === null || agentLlmId === undefined) return false;
@@ -524,17 +544,17 @@ const ComposerAction: FC<ComposerActionProps> = ({ isBlockedByOtherUser = false 
 			return globalConfigs?.some((c) => c.id === agentLlmId) ?? false;
 		}
 		return userConfigs?.some((c) => c.id === agentLlmId) ?? false;
-	}, [preferences, globalConfigs, userConfigs]);
+	}, [isPublicChat, preferences, globalConfigs, userConfigs]);
 
 	const isSendDisabled =
 		hasProcessingAttachments || isComposerEmpty || !hasModelConfigured || isBlockedByOtherUser;
 
 	return (
 		<div className="aui-composer-action-wrapper relative mx-2 mb-2 flex items-center justify-between">
-			<div className="flex items-center gap-1">
-				<ComposerAddAttachment />
-				<ConnectorIndicator />
-			</div>
+		<div className="flex items-center gap-1">
+			{!isPublicChat && <ComposerAddAttachment />}
+			{!isPublicChat && <ConnectorIndicator />}
+		</div>
 
 			{/* Show processing indicator when attachments are being processed */}
 			{hasProcessingAttachments && (
@@ -545,7 +565,7 @@ const ComposerAction: FC<ComposerActionProps> = ({ isBlockedByOtherUser = false 
 			)}
 
 			{/* Show warning when no model is configured */}
-			{!hasModelConfigured && !hasProcessingAttachments && (
+		{!hasModelConfigured && !hasProcessingAttachments && !isPublicChat && (
 				<div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-xs">
 					<AlertCircle className="size-3" />
 					<span>Select a model</span>

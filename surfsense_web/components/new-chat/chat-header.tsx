@@ -10,15 +10,26 @@ import { ModelSelector } from "./model-selector";
 
 interface ChatHeaderProps {
 	searchSpaceId: number;
+	isPublicChat?: boolean;
 }
 
-export function ChatHeader({ searchSpaceId }: ChatHeaderProps) {
+export function ChatHeader({ searchSpaceId, isPublicChat = false }: ChatHeaderProps) {
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [selectedConfig, setSelectedConfig] = useState<
 		NewLLMConfigPublic | GlobalNewLLMConfig | null
 	>(null);
 	const [isGlobal, setIsGlobal] = useState(false);
 	const [sidebarMode, setSidebarMode] = useState<"create" | "edit" | "view">("view");
+
+	if (isPublicChat) {
+		return (
+			<div className="flex items-center gap-2">
+				<div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted px-3 py-1 text-sm text-muted-foreground">
+					Global model (public)
+				</div>
+			</div>
+		);
+	}
 
 	const handleEditConfig = useCallback(
 		(config: NewLLMConfigPublic | GlobalNewLLMConfig, global: boolean) => {
