@@ -234,6 +234,8 @@ export default function NewChatPage() {
 		return Number.isNaN(parsed) ? 0 : parsed;
 	}, [params.search_space_id, isPublicChat]);
 
+	const searchParams = useSearchParams();
+
 	// Extract chat_id from URL params
 	const urlChatId = useMemo(() => {
 		const id = params.chat_id;
@@ -242,9 +244,14 @@ export default function NewChatPage() {
 			parsed = Number.parseInt(id[0], 10);
 		} else if (typeof id === "string") {
 			parsed = Number.parseInt(id, 10);
+		} else {
+			const queryId = searchParams.get("chat_id");
+			if (queryId) {
+				parsed = Number.parseInt(queryId, 10);
+			}
 		}
 		return Number.isNaN(parsed) ? 0 : parsed;
-	}, [params.chat_id]);
+	}, [params.chat_id, searchParams]);
 
 	// Initialize thread and load messages
 	// For new chats (no urlChatId), we use lazy creation - thread is created on first message
@@ -368,7 +375,6 @@ export default function NewChatPage() {
 	}, [searchSpaceId, queryClient]);
 
 	// Handle scroll to comment from URL query params (e.g., from inbox item click)
-	const searchParams = useSearchParams();
 	const targetCommentIdParam = searchParams.get("commentId");
 
 	// Set target comment ID from URL param - the AssistantMessage and CommentItem
@@ -596,7 +602,7 @@ export default function NewChatPage() {
 					window.history.replaceState(
 						null,
 						"",
-						`/dashboard/${searchSpaceId}/new-chat/${currentThreadId}`
+						`/dashboard/${searchSpaceId}/new-chat?chat_id=${currentThreadId}`
 					);
 				} catch (error) {
 					console.error("[NewChatPage] Failed to create thread:", error);

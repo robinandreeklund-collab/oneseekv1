@@ -361,8 +361,8 @@ export function InboxSidebar({
 						}
 
 						const url = commentId
-							? `/dashboard/${searchSpaceId}/new-chat/${threadId}?commentId=${commentId}`
-							: `/dashboard/${searchSpaceId}/new-chat/${threadId}`;
+							? `/dashboard/${searchSpaceId}/new-chat?chat_id=${threadId}&commentId=${commentId}`
+							: `/dashboard/${searchSpaceId}/new-chat?chat_id=${threadId}`;
 						onOpenChange(false);
 						onCloseMobileSidebar?.();
 						router.push(url);

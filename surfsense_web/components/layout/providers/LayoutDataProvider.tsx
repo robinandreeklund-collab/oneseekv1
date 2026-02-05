@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AlertTriangle, Inbox, LogOut, SquareLibrary, Trash2 } from "lucide-react";
-import { useParams, usePathname, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -64,6 +64,7 @@ export function LayoutDataProvider({
 	const router = useRouter();
 	const params = useParams();
 	const pathname = usePathname();
+	const searchParams = useSearchParams();
 	const queryClient = useQueryClient();
 	const { theme, setTheme } = useTheme();
 	const isPublicChat = isPublicChatProp || searchSpaceId === "public";
@@ -78,10 +79,26 @@ export function LayoutDataProvider({
 	// State for handling new chat navigation when router is out of sync
 	const [pendingNewChat, setPendingNewChat] = useState(false);
 
+	const urlChatId = useMemo(() => {
+		const id = params?.chat_id;
+		if (Array.isArray(id) && id.length > 0) {
+			return id[0];
+		}
+		if (typeof id === "string") {
+			return id;
+		}
+		const queryId = searchParams.get("chat_id");
+		return queryId ?? null;
+	}, [params?.chat_id, searchParams]);
+
 	// Current IDs from URL, with fallback to atom for replaceState updates
-	const currentChatId = params?.chat_id
-		? Number(Array.isArray(params.chat_id) ? params.chat_id[0] : params.chat_id)
-		: currentThreadState.id;
+	const currentChatId = useMemo(() => {
+		if (urlChatId) {
+			const parsed = Number.parseInt(urlChatId, 10);
+			return Number.isNaN(parsed) ? currentThreadState.id : parsed;
+		}
+		return currentThreadState.id;
+	}, [urlChatId, currentThreadState.id]);
 
 	// Fetch current search space (for caching purposes)
 	useQuery({
@@ -222,13 +239,13 @@ export function LayoutDataProvider({
 	// Effect to complete new chat navigation after router syncs
 	// This runs when handleNewChat detected an out-of-sync state and triggered a sync
 	useEffect(() => {
-		if (pendingNewChat && params?.chat_id) {
+		if (pendingNewChat && urlChatId) {
 			// Router is now synced (chat_id is in params), complete navigation to new-chat
 			resetCurrentThread();
 			router.push(`/dashboard/${searchSpaceId}/new-chat`);
 			setPendingNewChat(false);
 		}
-	}, [pendingNewChat, params?.chat_id, router, searchSpaceId, resetCurrentThread]);
+	}, [pendingNewChat, urlChatId, router, searchSpaceId, resetCurrentThread]);
 
 	const searchSpaces: SearchSpace[] = useMemo(() => {
 		if (isPublicChat) return [];
@@ -262,7 +279,7 @@ export function LayoutDataProvider({
 			const chatItem: ChatItem = {
 				id: thread.id,
 				name: thread.title || `Chat ${thread.id}`,
-				url: `/dashboard/${searchSpaceId}/new-chat/${thread.id}`,
+				url: `/dashboard/${searchSpaceId}/new-chat?chat_id=${thread.id}`,
 				visibility: thread.visibility,
 				isOwnThread: thread.is_own_thread,
 				archived: thread.archived,
@@ -405,19 +422,19 @@ export function LayoutDataProvider({
 
 	const handleNewChat = useCallback(() => {
 		// Check if router is out of sync (thread created via replaceState but params don't have chat_id)
-		const isOutOfSync = currentThreadState.id !== null && !params?.chat_id;
+		const isOutOfSync = currentThreadState.id !== null && !urlChatId;
 
 		if (isOutOfSync) {
 			// First sync Next.js router by navigating to the current chat's actual URL
 			// This updates the router's internal state to match the browser URL
-			router.replace(`/dashboard/${searchSpaceId}/new-chat/${currentThreadState.id}`);
+			router.replace(`/dashboard/${searchSpaceId}/new-chat?chat_id=${currentThreadState.id}`);
 			// Set flag to trigger navigation to new-chat after params update
 			setPendingNewChat(true);
 		} else {
 			// Normal navigation - router is in sync
 			router.push(`/dashboard/${searchSpaceId}/new-chat`);
 		}
-	}, [router, searchSpaceId, currentThreadState.id, params?.chat_id]);
+	}, [router, searchSpaceId, currentThreadState.id, urlChatId]);
 
 	const handleChatSelect = useCallback(
 		(chat: ChatItem) => {

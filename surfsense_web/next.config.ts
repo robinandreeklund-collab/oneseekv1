@@ -48,6 +48,10 @@ const nextConfig: NextConfig = {
 				source: "/ingest/decide",
 				destination: "https://us.i.posthog.com/decide",
 			},
+			{
+				source: "/dashboard/:search_space_id/new-chat/:chat_id",
+				destination: "/dashboard/:search_space_id/new-chat?chat_id=:chat_id",
+			},
 		];
 	},
 	// Required for PostHog reverse proxy to work correctly
