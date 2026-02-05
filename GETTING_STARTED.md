@@ -1,0 +1,1687 @@
+# Getting Started with SurfSense
+
+Welcome to SurfSense! This guide will help you create an account, log in, and start using the platform.
+
+## ⚠️ CRITICAL: ElectricSQL Must Be Running
+
+**If you see 404 errors, login doesn't persist, or pages won't load**, ElectricSQL is probably not running.
+
+**ElectricSQL is REQUIRED** for the frontend to work. It synchronizes data from PostgreSQL to the frontend.
+
+**Quick Fix:**
+```bash
+cd electric
+docker compose up -d
+
+# Verify it's running:
+curl http://localhost:5133
+# Should return: {"version":"..."}
+```
+
+**Without ElectricSQL:**
+- ❌ 404 errors on all routes
+- ❌ Login state lost on page reload
+- ❌ Dashboard won't load
+- ❌ Frontend is broken
+
+See [Required Services](#required-services) section for details.
+
+---
+
+## ⚠️ IMPORTANT: 404 Error Fix
+
+**If you experience 404 errors after login**, this is a known Turbopack issue with dynamic routes. 
+
+**Quick Fix:**
+```bash
+cd surfsense_web
+npm run dev:webpack  # Use stable webpack mode instead of Turbopack
+```
+
+See [Turbopack Dynamic Route Bug](#turbopack-dynamic-route-bug-404-fix) section for details.
+
+---
+
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+  - [Required Services](#required-services)
+- [Accessing the Platform](#accessing-the-platform)
+- [Creating an Account](#creating-an-account)
+- [Logging In](#logging-in)
+- [First Time Setup](#first-time-setup)
+- [Using SurfSense](#using-surfsense)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Prerequisites
+
+Before getting started, make sure you have:
+
+✅ **SurfSense is running** - Follow the [Installation Guide](INSTALLATION.md) if not already installed
+✅ **Know your authentication method** - Either LOCAL (email/password) or GOOGLE (OAuth)
+
+### Check if SurfSense is Running
+
+```bash
+# Check if services are running
+curl http://localhost:8000/docs
+# Should return the API documentation page
+
+curl http://localhost:3000
+# Should return the frontend
+```
+
+If you get connection errors, refer to the [Installation Guide](INSTALLATION.md) or [Troubleshooting](#troubleshooting) section.
+
+### Required Services
+
+SurfSense requires multiple services to run. Here's what's needed:
+
+| Service | Port | Required | Purpose | Verification |
+|---------|------|----------|---------|--------------|
+| **PostgreSQL** | 5432 | ✅ Yes | Database storage | `psql -U surfsense -d surfsense -c "SELECT 1"` |
+| **Backend** | 8000/8001 | ✅ Yes | API server | `curl http://localhost:8001/docs` |
+| **ElectricSQL** | 5133 | ✅ **Yes** | **Real-time sync** | `curl http://localhost:5133` |
+| **Frontend** | 3000 | ✅ Yes | Web interface | Open http://localhost:3000 |
+| Redis | 6379 | ⚠️ Optional | Task queue | Only needed for document processing |
+| Celery Worker | - | ⚠️ Optional | Background jobs | Only needed for document processing |
+| Celery Flower | 5555 | ⚠️ Optional | Task monitoring | Only needed for monitoring |
+
+**Critical:** ElectricSQL **must** be running for the frontend to work. Without it:
+- ❌ All routes return 404 errors
+- ❌ Login state doesn't persist
+- ❌ Dashboard won't load
+- ❌ Frontend cannot access data
+
+**Start ElectricSQL:**
+```bash
+cd electric
+docker compose up -d
+```
+
+### How to Install and Start ElectricSQL
+
+Since ElectricSQL is critical, here's a complete installation guide:
+
+#### Prerequisites: Docker
+
+ElectricSQL runs via Docker. Check if Docker is installed:
+
+```bash
+docker --version
+docker compose version
+```
+
+**If Docker is not installed:**
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install docker.io docker-compose-plugin
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER  # Log out and back in after this
+```
+
+**macOS:**
+Download and install [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/)
+
+**Windows (WSL2):**
+1. Install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
+2. Enable WSL2 integration in Docker Desktop settings
+
+#### Step-by-Step Installation
+
+**1. Navigate to the electric directory:**
+```bash
+cd electric
+```
+
+**2. Start ElectricSQL:**
+```bash
+docker compose up -d
+```
+
+This will:
+- Pull the Electric Docker image (first time only)
+- Start the Electric service in the background
+- Expose port 5133
+
+**3. Verify it's running:**
+```bash
+# Check if service responds
+curl http://localhost:5133
+# Expected: {"version":"0.x.x",...}
+
+# Check Docker container
+docker ps | grep electric
+# Expected: Container running on port 5133
+```
+
+#### Troubleshooting ElectricSQL
+
+**Port 5133 already in use:**
+```bash
+# Find what's using the port
+sudo lsof -i :5133
+# OR
+sudo netstat -tulpn | grep 5133
+
+# Stop conflicting service, then:
+cd electric
+docker compose down
+docker compose up -d
+```
+
+**Container won't start:**
+```bash
+# Check logs
+cd electric
+docker compose logs
+
+# Common fixes:
+# - Ensure PostgreSQL is running
+# - Restart Docker: sudo systemctl restart docker
+```
+
+**Connection refused (WSL users):**
+If running backend in WSL but frontend in Windows, ElectricSQL must run in WSL. See [WSL Issues](#wsl-and-windows-mixed-environment-issues).
+
+---
+
+## Accessing the Platform
+
+Once SurfSense is running, access it through your web browser:
+
+### Default URLs
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| **Frontend** | http://localhost:3000 | Main application interface |
+| **Backend API** | http://localhost:8000 | API server |
+| **API Docs** | http://localhost:8000/docs | Interactive API documentation |
+| **Flower** | http://localhost:5555 | Task queue monitor (if running) |
+| **pgAdmin** | http://localhost:5050 | Database admin (if using Docker Compose) |
+
+**Primary URL**: Open your browser and go to **http://localhost:3000**
+
+---
+
+## Creating an Account
+
+SurfSense supports two authentication methods:
+
+### Method 1: Local Authentication (Email/Password)
+
+This is the default method if `AUTH_TYPE=LOCAL` in your `.env` file.
+
+#### Steps:
+
+1. **Open SurfSense** in your browser: http://localhost:3000
+
+2. **Click "Sign Up" or "Register"** (usually in the top-right corner or on the login page)
+
+3. **Fill in the registration form**:
+   - **Email**: Your email address (e.g., user@example.com)
+   - **Password**: Choose a strong password (minimum 8 characters recommended)
+   - **Confirm Password**: Re-enter your password
+
+4. **Click "Create Account" or "Register"**
+
+5. **Check your email** (if email verification is enabled):
+   - Look for a verification email from SurfSense
+   - Click the verification link
+   - If email is not configured, your account may be active immediately
+
+6. **Login** with your new credentials
+
+#### Example Registration Form
+
+```
+┌─────────────────────────────────────┐
+│     Create Your SurfSense Account   │
+├─────────────────────────────────────┤
+│                                     │
+│  Email:    [                      ] │
+│  Password: [                      ] │
+│  Confirm:  [                      ] │
+│                                     │
+│  [ Create Account ]                 │
+│                                     │
+│  Already have an account? [Login]   │
+└─────────────────────────────────────┘
+```
+
+### Method 2: Google OAuth
+
+If `AUTH_TYPE=GOOGLE` is configured in your `.env` file.
+
+#### Prerequisites:
+- Google OAuth must be configured with valid `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`
+- See [Installation Guide - Authentication Configuration](INSTALLATION.md#authentication-configuration) for setup
+
+#### Steps:
+
+1. **Open SurfSense** in your browser: http://localhost:3000
+
+2. **Click "Sign in with Google"** button
+
+3. **Select your Google account** in the popup window
+
+4. **Grant permissions** to SurfSense when prompted
+
+5. **You're logged in!** Your account is automatically created on first login
+
+#### What Happens:
+- Your Google account (email, name, profile picture) is used
+- No password needed - Google handles authentication
+- Automatic account creation on first sign-in
+
+---
+
+## Logging In
+
+### Local Authentication Login
+
+1. Go to http://localhost:3000
+
+2. If not already logged in, you'll see the login page
+
+3. Enter your credentials:
+   - **Email**: The email you registered with
+   - **Password**: Your password
+
+4. Click **"Login"** or **"Sign In"**
+
+5. You're in! The dashboard will load
+
+### Google OAuth Login
+
+1. Go to http://localhost:3000
+
+2. Click **"Sign in with Google"**
+
+3. Select your Google account (or enter credentials)
+
+4. You're automatically logged in
+
+### Staying Logged In
+
+- SurfSense uses JWT tokens that expire after 24 hours
+- Your session will persist across browser restarts
+- You'll need to log in again after token expiration
+
+---
+
+## First Time Setup
+
+After logging in for the first time, you'll need to set up your workspace:
+
+### 1. Welcome Screen
+
+You may see a welcome or onboarding screen. Follow the prompts to:
+- Set up your profile
+- Choose your preferences
+- Take a quick tour (optional)
+
+### 2. Configuring Your vLLM Server (If Using Local LLM)
+
+If you're running a vLLM server locally (like Qwen3, Llama, etc.), you can add it to SurfSense:
+
+#### Via Web Interface (Recommended)
+
+1. **Navigate to LLM Settings**
+   - Click on your profile/settings icon
+   - Go to "LLM Configuration" or "Settings"
+
+2. **Add New LLM Configuration**
+   - Click "Add LLM Configuration" or "+"
+   - Fill in the form:
+     - **Name**: Give it a descriptive name (e.g., "My Local vLLM (Qwen3-30B)")
+     - **Provider**: Select **OPENAI** (vLLM uses OpenAI-compatible API)
+     - **Model Name**: Your model name from vLLM (e.g., `Qwen3-30B-A3B-Instruct-2507-AWQ-4bit`)
+     - **API Base**: `http://localhost:8000/v1` (your vLLM server URL)
+     - **API Key**: Enter `dummy-key` (required field but not validated for local vLLM)
+
+3. **Save and Test**
+   - Click "Save" or "Create"
+   - Test the connection
+   - Set as default if desired
+
+#### Getting Your Model Name
+
+To find the exact model name from your vLLM server:
+
+```bash
+curl http://localhost:8000/v1/models
+```
+
+You'll get a response like:
+```json
+{
+  "data": [{
+    "id": "/models/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit",
+    ...
+  }]
+}
+```
+
+**Use the model name WITHOUT the `/models/` prefix**: `Qwen3-30B-A3B-Instruct-2507-AWQ-4bit`
+
+#### Via Global Configuration (For Administrators)
+
+If you want to make your vLLM server available to all users, add it to `global_llm_config.yaml`:
+
+```yaml
+global_llm_configs:
+  - id: -10
+    name: "Local vLLM Qwen3-30B"
+    description: "Local vLLM server with Qwen3-30B AWQ model"
+    provider: "OPENAI"
+    model_name: "Qwen3-30B-A3B-Instruct-2507-AWQ-4bit"
+    api_key: "dummy-key"  # vLLM doesn't require real key
+    api_base: "http://localhost:8000/v1"
+    rpm: 1000
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 4000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: true
+```
+
+Then restart the backend:
+```bash
+cd surfsense_backend
+# Restart your backend service (Ctrl+C and run python main.py again)
+```
+
+#### Benefits of Using Local vLLM
+
+- ✅ **No API Costs**: Run models locally on your GPU
+- ✅ **Privacy**: All data stays on your machine
+- ✅ **Speed**: Fast inference with vLLM's optimizations
+- ✅ **Flexibility**: Use any model (Llama, Qwen, Mistral, etc.)
+- ✅ **Quantization Support**: Run larger models with AWQ/GPTQ
+
+#### Troubleshooting vLLM Configuration
+
+**Issue: "Connection refused" or "Cannot connect"**
+```bash
+# Check if vLLM is running
+curl http://localhost:8000/v1/models
+
+# If not running, start vLLM:
+python -m vllm.entrypoints.openai.api_server \
+  --model /path/to/your/model \
+  --port 8000 \
+  --host 0.0.0.0
+```
+
+**Issue: "Model not found"**
+- Make sure model name matches exactly (case-sensitive)
+- Don't include `/models/` prefix in the model name
+- Use the ID from `/v1/models` endpoint
+
+**Issue: "Invalid provider" or "Ollama_chatException - Not Found"**
+- Use **OPENAI** as provider (vLLM implements OpenAI-compatible API)
+- **NOT** OLLAMA (Ollama uses different API protocol)
+- Ensure API Base includes `/v1` suffix: `http://localhost:8000/v1`
+- OLLAMA provider works with any OpenAI-compatible API
+
+**Issue: "API Base URL format"**
+- Must include `/v1` at the end: `http://localhost:8000/v1`
+- Use `http://` not `https://` for local servers
+- Check port number (8000 for vLLM, 8001 for SurfSense backend)
+
+### 3. Create Your First Search Space
+
+**Search Spaces** are workspaces where you organize documents and chats.
+
+#### Steps:
+
+1. **Look for "Create Search Space"** button or menu option
+
+2. **Enter details**:
+   - **Name**: Give it a meaningful name (e.g., "My Research", "Work Documents")
+   - **Description**: Optional description of what you'll use it for
+
+3. **Click "Create"**
+
+4. Your search space is now ready!
+
+### 3. Configure LLM Settings (Optional)
+
+To use AI chat features, you need to configure a Large Language Model.
+
+#### Option A: Use Global LLM Config
+
+If your admin has set up global LLM configurations in `global_llm_config.yaml`, you can select from pre-configured models.
+
+#### Option B: Add Your Own LLM
+
+1. Go to **Settings** or **Search Space Settings**
+
+2. Navigate to **LLM Configurations**
+
+3. Click **"Add LLM Configuration"**
+
+4. Fill in the details:
+
+**For OpenAI:**
+```
+Provider: OpenAI
+Model Name: gpt-4 (or gpt-3.5-turbo)
+API Key: sk-your-api-key-here
+```
+
+**For Local LLM (Ollama):**
+```
+Provider: Ollama
+Model Name: llama2
+API Base: http://localhost:11434
+API Key: (leave empty)
+```
+
+**For vLLM:**
+```
+Provider: Ollama (works with OpenAI-compatible endpoints)
+Model Name: your-model-name
+API Base: http://localhost:8001/v1
+API Key: EMPTY
+```
+
+5. Click **"Test Configuration"** to verify it works
+
+6. Click **"Save"**
+
+### 4. Set Default LLM
+
+1. Go to **Search Space Settings**
+
+2. Under **LLM Settings**, select:
+   - **Agent LLM**: For chat and agent operations
+   - **Document Summary LLM**: For document summarization
+
+3. Click **"Save"**
+
+---
+
+## Using SurfSense
+
+Now you're ready to use the platform!
+
+### Upload Documents
+
+1. **Navigate to your Search Space**
+
+2. **Click "Upload" or "Add Document"**
+
+3. **Choose your upload method**:
+   - **File Upload**: Upload PDFs, Word docs, images, etc. (50+ formats supported)
+   - **Web URL**: Enter a URL to crawl and index
+   - **YouTube Video**: Paste a YouTube URL to index the transcript
+
+4. **Wait for processing**: Documents are processed in the background
+
+5. **View your documents** in the documents list
+
+### Start Chatting
+
+1. **Click "New Chat" or "Start Conversation"**
+
+2. **Type your question** in the chat box
+
+3. **Press Enter or click Send**
+
+4. SurfSense will:
+   - Search your documents
+   - Use the configured LLM
+   - Provide answers with citations
+
+### Example Chat
+
+```
+You: What are the key findings in my research documents?
+
+SurfSense: Based on your documents, here are the key findings:
+1. [Finding 1] - Source: Document A, Page 5
+2. [Finding 2] - Source: Document B, Page 12
+3. [Finding 3] - Source: Document C, Page 8
+...
+```
+
+### Advanced Features
+
+#### Generate Podcasts
+
+1. Have a conversation in chat
+2. Click **"Generate Podcast"** button
+3. Wait for generation (usually under 30 seconds)
+4. Listen to your AI-generated podcast!
+
+#### Connect External Sources
+
+Add connectors to integrate external data:
+
+1. Go to **Settings** → **Connectors**
+
+2. Choose a connector (Slack, Google Drive, Notion, GitHub, etc.)
+
+3. Follow the OAuth flow to connect
+
+4. Your data will be indexed automatically
+
+#### Team Collaboration
+
+If you have team members:
+
+1. Go to **Search Space Settings** → **Members**
+
+2. Click **"Invite Member"**
+
+3. Enter their email and choose a role:
+   - **Owner**: Full control
+   - **Admin**: Manage settings and members
+   - **Editor**: Edit documents and chats
+   - **Viewer**: Read-only access
+
+4. They'll receive an invitation email
+
+---
+
+## Troubleshooting
+
+### Changing Backend Port (Port Conflict with vLLM)
+
+**Problem**: You have vLLM (or another service) running on port 8000 and need to run SurfSense backend on a different port.
+
+**Quick Solution:**
+
+```bash
+# 1. Update backend port in surfsense_backend/.env
+UVICORN_PORT=8001  # Choose any available port
+
+# 2. Update frontend URL in surfsense_web/.env.local
+NEXT_PUBLIC_FASTAPI_BACKEND_URL=http://localhost:8001
+
+# 3. Restart services
+```
+
+**Complete Steps:**
+
+1. **Stop all running services** (Press Ctrl+C in backend and frontend terminals)
+
+2. **Change backend port** - Edit or add to `surfsense_backend/.env`:
+   ```bash
+   UVICORN_PORT=8001  # Or 8080, 9000, or any available port
+   ```
+
+3. **Update frontend configuration** - Edit `surfsense_web/.env.local`:
+   ```bash
+   NEXT_PUBLIC_FASTAPI_BACKEND_URL=http://localhost:8001
+   ```
+
+4. **Update OAuth redirect URIs** (skip if not using OAuth connectors) - In `surfsense_backend/.env`, update all redirect URIs:
+   ```bash
+   # Example: Change port 8000 → 8001 in all redirect URIs
+   GOOGLE_CALENDAR_REDIRECT_URI=http://localhost:8001/api/v1/auth/google/calendar/connector/callback
+   GOOGLE_GMAIL_REDIRECT_URI=http://localhost:8001/api/v1/auth/google/gmail/connector/callback
+   GOOGLE_DRIVE_REDIRECT_URI=http://localhost:8001/api/v1/auth/google/drive/connector/callback
+   SLACK_REDIRECT_URI=http://localhost:8001/api/v1/auth/slack/connector/callback
+   GITHUB_REDIRECT_URI=http://localhost:8001/api/v1/auth/github/connector/callback
+   # Update all other connector redirect URIs similarly
+   ```
+
+5. **Restart backend:**
+   ```bash
+   cd surfsense_backend
+   python main.py
+   ```
+   
+   You should see: `Uvicorn running on http://0.0.0.0:8001`
+
+6. **Clear frontend cache and restart:**
+   ```bash
+   cd surfsense_web
+   rm -rf .next node_modules/.cache
+   npm run dev
+   ```
+
+7. **Verify the connection:**
+   ```bash
+   # Test backend is accessible on new port
+   curl http://localhost:8001/docs
+   # Should return HTML for API documentation
+   
+   # Check health endpoint
+   curl http://localhost:8001/health
+   # Should return {"status": "healthy"}
+   ```
+
+8. **Test login:** Open http://localhost:3000 and try logging in
+
+**Common Port Configurations:**
+
+| Service | Default Port | Alternative | Notes |
+|---------|-------------|-------------|-------|
+| vLLM Server | 8000 | - | Your local LLM (keep on 8000) |
+| **SurfSense Backend** | **8000** | **8001, 8080, 9000** | **Change this to avoid conflict** |
+| Frontend | 3000 | - | Next.js dev server |
+| ElectricSQL | 5133 | - | Database sync service |
+| PostgreSQL | 5432 | - | Database |
+| Redis | 6379 | - | Cache & Celery broker |
+| Celery Flower | 5555 | - | Task monitor (optional) |
+
+**Using vLLM with SurfSense:**
+
+After changing the backend port, configure vLLM in the SurfSense web UI:
+
+1. Navigate to Search Space Settings → LLM Configurations
+2. Add new LLM configuration:
+   - **Provider**: OLLAMA
+   - **Model Name**: your-model-name (e.g., "llama-2-7b-chat")
+   - **API Base**: `http://localhost:8000/v1` (your vLLM server port)
+   - **API Key**: (leave empty or use "EMPTY")
+
+**Example vLLM Server Command:**
+```bash
+# Start vLLM on port 8000 (default)
+python -m vllm.entrypoints.openai.api_server \
+  --model meta-llama/Llama-2-7b-chat-hf \
+  --port 8000 \
+  --host 0.0.0.0
+```
+
+**Production Setup with Reverse Proxy:**
+
+For production, use nginx to handle port routing (see INSTALLATION.md for full config):
+```nginx
+# Backend API (internal port 8001, external /api)
+location /api {
+    proxy_pass http://localhost:8001;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+# Frontend (internal port 3000, external /)
+location / {
+    proxy_pass http://localhost:3000;
+}
+```
+
+This way, users access everything through standard ports (80/443), and you can run services on any internal ports.
+
+### NPM Install Dependency Conflicts
+
+**Problem**: `npm install` fails with dependency resolution errors like "ERESOLVE unable to resolve dependency tree"
+
+**Common errors**:
+```
+# Assistant-ui packages conflict
+Could not resolve dependency:
+peer @assistant-ui/react@"^0.12.6" from @assistant-ui/react-ai-sdk@1.3.5
+
+# Fumadocs/Zod conflict
+Conflicting peer dependency: zod@4.3.6
+peerOptional zod@"4.x.x" from fumadocs-core@16.5.0
+
+# AI SDK / Zod version conflict
+Could not resolve dependency:
+peer zod@"^3.23.8" from ai@4.3.19
+(Requires upgrading to ai@6.x which supports zod 4.x)
+
+# React 19 / emblor conflict
+Could not resolve dependency:
+peer react@"^18.0.0" from emblor@1.4.8
+(Fixed with .npmrc legacy-peer-deps=true)
+
+# Other peer dependency conflicts
+Could not resolve dependency: peer X from Y
+```
+
+**Solutions**:
+
+1. **Clear npm cache and reinstall** (try this first):
+   ```bash
+   cd surfsense_web
+   rm -rf node_modules package-lock.json
+   npm cache clean --force
+   npm install
+   ```
+
+2. **Use legacy peer deps** (for React 19 compatibility):
+   
+   If you get errors about packages requiring React 18 (like emblor@1.4.8):
+   ```bash
+   # The repository includes an .npmrc file with legacy-peer-deps=true
+   # This allows React 19 to work with packages that haven't updated yet
+   
+   # If .npmrc is missing, create it:
+   echo "legacy-peer-deps=true" > .npmrc
+   
+   # Then install:
+   npm install
+   ```
+   
+   This is safe because React 19 is backward compatible with React 18 components.
+
+3. **Check Node.js version**:
+   ```bash
+   node --version
+   # Should be v20.x.x or higher
+   ```
+   
+   If using older Node.js, update it:
+   ```bash
+   # Using nvm
+   nvm install 20
+   nvm use 20
+   ```
+
+4. **WSL-specific: Clear Windows npm cache**:
+   If you previously ran npm in Windows PowerShell:
+   ```bash
+   # In WSL
+   rm -rf node_modules package-lock.json
+   
+   # Clear global cache
+   npm cache clean --force
+   
+   # Install fresh
+   npm install
+   ```
+
+5. **Verify package.json is up to date**:
+   Make sure you have the latest version from the repository:
+   ```bash
+   git pull origin main
+   ```
+
+**If none of these work**, check the [GitHub Issues](https://github.com/MODSetter/SurfSense/issues) for known dependency conflicts.
+
+
+### Cannot Access http://localhost:3000
+
+**Problem**: Browser shows "Connection refused" or "This site can't be reached"
+
+**Solutions**:
+
+1. Check if frontend is running:
+   ```bash
+   # If using Docker
+   docker ps | grep surfsense
+   
+   # If running manually
+   ps aux | grep "npm\|node"
+   ```
+
+2. Start the frontend if not running:
+   ```bash
+   # Docker
+   docker-compose up -d
+   
+   # Manual
+   cd surfsense_web
+   npm start
+   ```
+
+3. Check logs for errors:
+   ```bash
+   # Docker
+   docker-compose logs frontend
+   
+   # Manual
+   # Check terminal where you ran npm start
+   ```
+
+### Cannot Create Account
+
+**Problem**: Registration form doesn't work or shows errors
+
+**Solutions**:
+
+1. **Check if registration is enabled**:
+   ```bash
+   # In surfsense_backend/.env
+   grep REGISTRATION_ENABLED .env
+   # Should show: REGISTRATION_ENABLED=TRUE
+   ```
+
+2. **Check backend is running**:
+   ```bash
+   curl http://localhost:8000/docs
+   ```
+
+3. **Check database connection**:
+   ```bash
+   # Docker
+   docker-compose ps db
+   
+   # Manual
+   sudo systemctl status postgresql
+   ```
+
+4. **Check backend logs**:
+   ```bash
+   # Docker
+   docker-compose logs backend
+   
+   # Manual
+   tail -f surfsense_backend/logs/*.log
+   ```
+
+### Login Fails
+
+**Problem**: Correct credentials but login doesn't work
+
+**Solutions**:
+
+1. **Clear browser cache and cookies**:
+   - Press Ctrl+Shift+Delete (or Cmd+Shift+Delete on Mac)
+   - Clear cache and cookies
+   - Try logging in again
+
+2. **Check if email verification is required**:
+   - Look for verification email in your inbox/spam
+   - Click the verification link
+
+3. **Reset password** (LOCAL auth):
+   - Click "Forgot Password" on login page
+   - Follow the reset process
+
+4. **Check backend API**:
+   ```bash
+   curl -X POST http://localhost:8000/auth/jwt/login \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "username=your@email.com&password=yourpassword"
+   ```
+
+### Cannot Stay Logged In / "Unauthorized" Error
+
+**Symptoms:**
+- After logging in, you're redirected but homepage still shows "Sign In"
+- API requests return `{"detail": "Unauthorized"}`
+- Each page reload loses your login session
+- Login works once, then immediately resets
+
+**🔧 SOLUTION 1: Check ElectricSQL is Running** (MOST COMMON CAUSE):
+
+ElectricSQL manages state persistence. Without it, login state is lost on every page load.
+
+```bash
+# Check if ElectricSQL is running
+curl http://localhost:5133
+
+# If you get "connection refused", start it:
+cd electric
+docker compose up -d
+
+# Verify running:
+curl http://localhost:5133
+docker ps | grep electric
+```
+
+**After starting ElectricSQL:**
+- Refresh browser
+- Log in again
+- Login should now persist
+
+**🔧 SOLUTION 2: Check Browser LocalStorage** (If ElectricSQL is running):
+
+Open browser console (F12) and test:
+```javascript
+localStorage.setItem('test', 'value')
+localStorage.getItem('test')
+// Should return 'value'
+```
+
+If this fails, check:
+- ❌ Browser is NOT in Private/Incognito mode (localStorage disabled)
+- ✅ Browser settings allow localStorage for `localhost`
+- ❌ No browser extensions clearing storage (ad blockers, privacy tools)
+- ✅ Not using Firefox containers or similar isolation features
+
+**Fix**: Use normal browser window, disable extensions, check site settings.
+
+#### 2. Clear Browser Data and Service Workers
+
+```javascript
+// In browser console (F12):
+
+// 1. Unregister service workers
+navigator.serviceWorker.getRegistrations().then(registrations => {
+  registrations.forEach(r => r.unregister())
+  console.log('Service workers cleared')
+})
+
+// 2. Clear storage
+localStorage.clear()
+sessionStorage.clear()
+```
+
+Then:
+- Close browser completely
+- Reopen and navigate to `http://localhost:3000`
+- Log in again
+
+#### 3. Verify Token Flow
+
+After logging in, check each step:
+
+```javascript
+// 1. Check if token was set (in console, F12)
+localStorage.getItem('surfsense_bearer_token')
+// Should show: "eyJhbGci..." (long JWT token)
+
+// 2. If missing, check Network tab:
+// - Look for /auth/jwt/login request
+// - Response should include "access_token"
+// - Look for /auth/callback?token=... navigation
+// - URL should contain the token
+
+// 3. Check for errors:
+// - Console tab for JavaScript errors
+// - Network tab for failed requests
+```
+
+#### 4. WSL/Windows Cross-Boundary Issue
+
+If running backend in WSL but accessing from Windows browser:
+
+**Problem**: Browser localStorage on Windows is separate from WSL
+**Solution**: Access frontend from the same environment as backend
+
+```bash
+# Option A: Run frontend in WSL too
+cd surfsense_web
+npm run dev
+# Access from WSL browser or Windows browser at http://localhost:3000
+
+# Option B: Use WSL IP from Windows
+# See "WSL and Windows Mixed Environment Issues" section below
+```
+
+#### 5. Manually Test Backend Authentication
+
+Verify backend auth is working:
+
+```bash
+# Get a token via API
+curl -X POST http://localhost:8000/auth/jwt/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=your@email.com&password=yourpassword"
+
+# Response should include:
+# {"access_token": "eyJhbGci...", "token_type": "bearer"}
+
+# Copy the access_token and test:
+curl http://localhost:8000/users/me \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+
+# Should return user info, NOT {"detail": "Unauthorized"}
+```
+
+If backend auth works via curl but not browser:
+- ✅ Backend is fine
+- ❌ Frontend token storage is broken
+
+#### 6. Nuclear Option: Complete Reset
+
+```bash
+# 1. Stop all services
+# Press Ctrl+C in all terminal windows
+
+# 2. Clear all frontend caches
+cd surfsense_web
+rm -rf .next node_modules package-lock.json
+npm cache clean --force
+npm install
+npm run dev
+
+# 3. In browser:
+# - Open DevTools (F12)
+# - Application tab → Storage → Clear site data
+# - Close and reopen browser
+
+# 4. Try logging in again
+```
+
+**After Fixing:**
+- ✅ Log in at `http://localhost:3000/login`
+- ✅ Should redirect to `/dashboard`
+- ✅ Reloading page keeps you logged in
+- ✅ `localStorage.getItem('surfsense_bearer_token')` shows token
+- ✅ Backend API calls work without "Unauthorized"
+
+---
+
+### Turbopack/Next.js Error After Login
+
+**Problem**: After successful login, you see "Runtime Error: An unexpected Turbopack error occurred" on the dashboard
+
+**This is a common issue with Next.js 16+ and can have several causes:**
+
+**Solutions**:
+
+1. **Check frontend environment variables**:
+   ```bash
+   cd surfsense_web
+   
+   # Ensure .env.local exists with proper values
+   cat .env.local
+   
+   # Should contain:
+   # NEXT_PUBLIC_FASTAPI_BACKEND_URL=http://localhost:8000
+   # NEXT_PUBLIC_FASTAPI_BACKEND_AUTH_TYPE=LOCAL  (or GOOGLE)
+   # NEXT_PUBLIC_ETL_SERVICE=DOCLING
+   # NEXT_PUBLIC_ELECTRIC_URL=http://localhost:5133
+   # NEXT_PUBLIC_ELECTRIC_AUTH_MODE=insecure
+   # NEXT_PUBLIC_DEPLOYMENT_MODE=self-hosted
+   ```
+
+2. **Restart frontend with clean cache**:
+   ```bash
+   cd surfsense_web
+   
+   # Stop the dev server (Ctrl+C)
+   # Clear Next.js cache
+   rm -rf .next
+   
+   # Reinstall dependencies (if needed)
+   npm install
+   
+   # Start fresh
+   npm run dev
+   ```
+
+3. **Check ElectricSQL is running**:
+   ```bash
+   # ElectricSQL must be running for the frontend to work
+   curl http://localhost:5133
+   
+   # If not running, start it:
+   # Docker:
+   docker-compose up -d electric
+   
+   # Manual: check INSTALLATION.md for ElectricSQL setup
+   ```
+
+4. **Check backend API is accessible**:
+   ```bash
+   # Test backend connection
+   curl http://localhost:8000/api/v1/search-spaces
+   
+   # Should return search spaces data or 401 (both are OK)
+   ```
+
+5. **Check browser console for detailed errors**:
+   - Press F12 to open Developer Tools
+   - Go to Console tab
+   - Look for specific error messages
+   - Common issues:
+     - CORS errors (check NEXT_FRONTEND_URL in backend .env)
+     - API connection failures (check backend is running)
+     - Environment variable missing (check .env.local)
+
+6. **Try production build**:
+   ```bash
+   cd surfsense_web
+   npm run build
+   npm start
+   ```
+
+7. **Check if you have a default search space**:
+   ```bash
+   # Query database to see if user has search spaces
+   sudo -u postgres psql surfsense
+   SELECT id, name, owner_id FROM search_spaces;
+   \q
+   ```
+   
+   If no search spaces exist, the dashboard should redirect to create one. If this doesn't happen, check frontend logs.
+
+8. **Verify Node.js version**:
+   ```bash
+   node --version
+   # Should be v20.x.x or higher
+   
+   # If lower, upgrade Node.js
+   ```
+
+9. **Check for port conflicts**:
+   ```bash
+   # Make sure ports aren't already in use
+   lsof -i :3000  # Frontend
+   lsof -i :8000  # Backend
+   lsof -i :5133  # ElectricSQL
+   ```
+
+10. **Review terminal output**:
+    - Look at the terminal where you ran `npm run dev`
+    - Turbopack errors often show more details there
+    - Look for compilation errors or module resolution issues
+
+
+### WSL and Windows Mixed Environment Issues
+
+**Problem**: Backend runs in WSL, frontend runs in Windows PowerShell - Turbopack errors or connection failures
+
+**This is a common networking issue!** WSL and Windows have different network stacks. When backend runs in WSL and frontend in Windows:
+- `localhost` in Windows ≠ `localhost` in WSL
+- Frontend cannot reach backend at `localhost:8000`
+- ElectricSQL in WSL is not accessible from Windows
+
+**Solutions**:
+
+#### Solution 1: Run Everything in WSL (Recommended)
+
+Run the frontend in WSL alongside the backend:
+
+```bash
+# In WSL terminal
+cd /path/to/surfsense/surfsense_web
+npm run dev
+```
+
+Access from Windows browser: `http://localhost:3000` (WSL forwards ports automatically)
+
+#### Solution 2: Use WSL IP Address in Frontend
+
+If you must run frontend in Windows PowerShell:
+
+1. **Find WSL IP address**:
+   ```bash
+   # In WSL terminal
+   ip addr show eth0 | grep "inet " | awk '{print $2}' | cut -d/ -f1
+   # Example output: 172.24.144.1
+   ```
+
+2. **Update frontend environment variables** (in Windows):
+   ```bash
+   # In PowerShell, edit surfsense_web\.env.local
+   NEXT_PUBLIC_FASTAPI_BACKEND_URL=http://172.24.144.1:8000
+   NEXT_PUBLIC_ELECTRIC_URL=http://172.24.144.1:5133
+   ```
+
+3. **Update backend CORS settings**:
+   ```bash
+   # In WSL, edit surfsense_backend/.env
+   NEXT_FRONTEND_URL=http://localhost:3000
+   # Or use Windows IP if needed
+   ```
+
+4. **Restart both services**:
+   ```bash
+   # In WSL - restart backend
+   cd surfsense_backend
+   python main.py
+   
+   # In PowerShell - restart frontend
+   cd surfsense_web
+   npm run dev
+   ```
+
+#### Solution 3: Port Forwarding (Alternative)
+
+Configure WSL to forward ports to Windows:
+
+```powershell
+# In PowerShell (Administrator)
+netsh interface portproxy add v4tov4 listenport=8000 listenaddress=0.0.0.0 connectport=8000 connectaddress=172.24.144.1
+netsh interface portproxy add v4tov4 listenport=5133 listenaddress=0.0.0.0 connectport=5133 connectaddress=172.24.144.1
+
+# View current port forwarding
+netsh interface portproxy show all
+
+# Remove forwarding (if needed)
+netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=0.0.0.0
+```
+
+**Note**: WSL IP address changes on restart, so Solution 1 is most reliable.
+
+#### Solution 4: Use Docker (Best for Windows)
+
+Run everything in Docker to avoid WSL/Windows networking issues:
+
+```powershell
+# In PowerShell
+cd surfsense
+docker-compose up -d
+```
+
+Access at `http://localhost:3000`
+
+#### Verify the Setup
+
+After applying a solution, verify connectivity:
+
+```bash
+# From Windows PowerShell
+curl http://localhost:8000/docs
+# Should return HTML (backend accessible)
+
+curl http://localhost:5133
+# Should return response (ElectricSQL accessible)
+
+curl http://localhost:3000
+# Should return HTML (frontend accessible)
+```
+
+#### Common WSL IP Addresses
+
+WSL typically uses IPs in these ranges:
+- `172.x.x.x` (most common)
+- `192.168.x.x`
+- Changes after Windows/WSL restart
+
+**Best Practice**: Always run all services in the same environment (all WSL or all Docker) to avoid networking complexity.
+
+### Google OAuth Not Working
+
+**Problem**: "Sign in with Google" button doesn't work or shows errors
+
+**Solutions**:
+
+1. **Verify OAuth configuration**:
+   ```bash
+   # Check .env file
+   grep GOOGLE_OAUTH surfsense_backend/.env
+   ```
+
+2. **Check redirect URIs** in Google Cloud Console:
+   - Must include: `http://localhost:8000/auth/google/callback`
+   - Or your production URL: `https://yourdomain.com/auth/google/callback`
+
+3. **Enable Google+ API** in Google Cloud Console
+
+4. **Check browser console** for JavaScript errors:
+   - Press F12 to open developer tools
+   - Check Console tab for errors
+
+### No LLM Available
+
+**Problem**: Can't chat because no LLM is configured
+
+**Solutions**:
+
+1. **Add an LLM configuration** (see [Configure LLM Settings](#3-configure-llm-settings-optional))
+
+2. **Use global LLM config**:
+   ```bash
+   # Create config file
+   mkdir -p surfsense_backend/app/config
+   nano surfsense_backend/app/config/global_llm_config.yaml
+   ```
+
+   Add:
+   ```yaml
+   global_llm_configs:
+     - id: -1
+       name: "Local Ollama"
+       provider: "OLLAMA"
+       model_name: "llama2"
+       api_base: "http://localhost:11434"
+   ```
+
+3. **Start local LLM** (Ollama example):
+   ```bash
+   ollama serve
+   ollama pull llama2
+   ```
+
+### Documents Not Processing
+
+**Problem**: Uploaded documents stuck in processing
+
+**Solutions**:
+
+1. **Check Celery worker is running**:
+   ```bash
+   # Docker
+   docker-compose ps worker
+   
+   # Manual
+   ps aux | grep celery
+   ```
+
+2. **Start Celery worker** if not running:
+   ```bash
+   cd surfsense_backend
+   source venv/bin/activate
+   celery -A celery_worker.celery_app worker --loglevel=info
+   ```
+
+3. **Check Flower** (task monitor):
+   - Open http://localhost:5555
+   - Look for failed tasks
+   - Check error messages
+
+4. **Check file format is supported**:
+   - See [Supported File Extensions](README.md#-supported-file-extensions)
+   - Try a different file format
+
+
+### 404 Error After Login (Dashboard Route)
+
+**Problem**: After logging in, you see a 404 error at `/dashboard/[number]/new-chat`
+
+**Symptoms You May See**:
+- Login works (token is stored, backend returns 200 OK)
+- `/dashboard` page loads successfully  
+- Backend logs show: `GET /api/v1/searchspaces?limit=10&skip=0&owned_only=false HTTP/1.1" 200 OK`
+- But `/dashboard/1/new-chat` shows 404 "This page could not be found"
+- Frontend logs: `GET /dashboard/1/new-chat 404 in XXms`
+
+**🔧 SOLUTION 1: Check ElectricSQL is Running** (MOST COMMON CAUSE):
+
+ElectricSQL is REQUIRED for the frontend to work. Check if it's running:
+
+```bash
+# Check if ElectricSQL is running
+curl http://localhost:5133
+
+# If you get "connection refused", start it:
+cd electric
+docker compose up -d
+
+# Verify it's running:
+curl http://localhost:5133
+# Should return: {"version":"..."}
+
+docker ps | grep electric
+# Should show container running
+```
+
+**After starting ElectricSQL:**
+- Refresh your browser at http://localhost:3000
+- Log in again
+- Should now work correctly
+
+**🔧 SOLUTION 2: Use Webpack Instead of Turbopack**:
+
+If ElectricSQL is running and you still see 404, this is a Turbopack bug with dynamic routes.
+
+```bash
+cd surfsense_web
+# Stop current dev server (Ctrl+C)
+npm run dev:webpack  # Use stable webpack mode
+```
+
+**🔧 SOLUTION 3: Complete Frontend Reset** (Last Resort):
+
+If both above solutions don't work, try a complete cache reset:
+
+```bash
+# From repository root
+./reset-frontend-cache.sh
+```
+
+**Root Cause**: 
+1. **Most Common**: ElectricSQL not running - frontend cannot sync data from PostgreSQL
+2. **Second Most Common**: Turbopack bug with complex dynamic routes
+3. **Rare**: Next.js cache corruption after package updates
+
+```bash
+# 1. STOP the frontend dev server completely (Ctrl+C)
+
+cd surfsense_web
+
+# 2. KILL any lingering Next.js processes
+pkill -f "next dev" || true
+
+# 3. DELETE all cache directories
+rm -rf .next
+rm -rf node_modules/.cache
+rm -f package-lock.json
+
+# 4. CLEAR npm cache aggressively
+npm cache clean --force
+npm cache verify
+
+# 5. REINSTALL all dependencies fresh
+npm install
+
+# 6. START dev server
+npm run dev
+```
+
+**Then in your browser:**
+
+```
+1. Open DevTools (F12)
+2. Go to Application → Storage → "Clear site data" button
+3. Close browser completely (all tabs, all windows)
+4. Wait 10 seconds
+5. Reopen browser
+6. Navigate to http://localhost:3000
+7. Log in again
+```
+
+**Why This Happens**:
+
+Next.js 16 with Turbopack aggressively caches compiled routes. When you:
+- Update npm packages (we upgraded AI SDK, assistant-ui, etc.)
+- Perform git operations (pulls, checkouts, reverts)
+- Restart dev server multiple times
+
+The `.next/cache` directory can become corrupted and fail to recognize routes that exist in your filesystem.
+
+**Verification Steps**:
+
+After the reset, you should see in frontend terminal:
+```
+✓ Ready in Xms
+○ Compiling / ...
+✓ Compiled /dashboard in Xms
+✓ Compiled /dashboard/[search_space_id]/new-chat/[[...chat_id]] in Xms
+```
+
+If you still see 404, check:
+
+**Additional Troubleshooting**:
+
+1. **Verify the route file exists**:
+   ```bash
+   ls -la surfsense_web/app/dashboard/[search_space_id]/new-chat/[[...chat_id]]/page.tsx
+   # Should show the file exists
+   ```
+
+2. **Check Next.js is using the correct port**:
+   ```bash
+   # Frontend should be on port 3000
+   netstat -tlnp | grep :3000
+   # Should show node/next process
+   ```
+
+3. **Try accessing dashboard root first**:
+   ```bash
+   # In your browser, go to:
+   http://localhost:3000/dashboard
+   
+   # This should show you the welcome screen to create your first Search Space
+   ```
+
+3. **Check if backend is running**:
+   ```bash
+   # Test backend API
+   curl http://localhost:8000/api/v1/search_space/
+   
+   # Should return JSON with your search spaces (might be empty array if none exist)
+   ```
+
+3. **Check browser console for errors**:
+   - Open browser DevTools (F12)
+   - Look for network errors or API failures
+   - Check if authentication token is being sent
+
+4. **Verify database has search spaces**:
+   ```bash
+   # In your backend terminal, check database
+   cd surfsense_backend
+   python -c "from app.db import get_session; from app.models import SearchSpace; session = next(get_session()); print(f'Search spaces: {session.query(SearchSpace).count()}')"
+   ```
+
+5. **Create a Search Space via API** (if UI doesn't work):
+   ```bash
+   # Get your auth token from browser localStorage or login response
+   TOKEN="your_token_here"
+   
+   curl -X POST http://localhost:8000/api/v1/search_space/ \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "My First Space",
+       "description": "Testing space"
+     }'
+   ```
+
+6. **Clear browser cache and restart**:
+   ```bash
+   # Sometimes old routing cache causes issues
+   # In browser: Ctrl+Shift+R (hard refresh)
+   # Or clear site data in DevTools
+   ```
+
+**Expected Flow for New Users**:
+1. Register/Login → Redirected to `/dashboard`
+2. `/dashboard` shows welcome screen if no search spaces
+3. Click "Create First Search Space" button
+4. Fill in name and create
+5. Automatically redirected to `/dashboard/[id]/new-chat`
+
+If you're stuck at a 404, manually navigate to `http://localhost:3000/dashboard` to start the proper flow.
+
+### Slow Performance
+
+**Problem**: Platform is slow or unresponsive
+
+**Solutions**:
+
+1. **Check system resources**:
+   ```bash
+   # Memory usage
+   free -h
+   
+   # CPU usage
+   top
+   
+   # Docker stats
+   docker stats
+   ```
+
+2. **Reduce worker concurrency** if low on memory:
+   ```bash
+   celery -A celery_worker.celery_app worker --concurrency=2
+   ```
+
+3. **Reduce PostgreSQL memory** in `postgresql.conf`:
+   ```conf
+   shared_buffers = 128MB  # Instead of 256MB
+   ```
+
+4. **Close unused browser tabs** and refresh the page
+
+---
+
+## Next Steps
+
+Now that you're set up, explore more features:
+
+📚 **Learn More**:
+- [Installation Guide](INSTALLATION.md) - Complete installation details
+- [Testing Without Database](TESTING_WITHOUT_DATABASE.md) - Testing mode
+- [Documentation Guide](DOCUMENTATION_GUIDE.md) - Navigate all docs
+
+🔧 **Advanced Configuration**:
+- Configure external connectors (Slack, GitHub, Notion)
+- Set up team collaboration with RBAC
+- Configure custom LLM providers
+- Enable podcast generation
+- Set up speech-to-text and text-to-speech
+
+🎓 **Video Tutorials**:
+- Check the [README](README.md) for video demonstrations
+- Join [Discord](https://discord.gg/ejRNvftDp9) for community support
+- Visit [SurfSense Cloud](https://www.surfsense.com/) for hosted version
+
+---
+
+## Getting Help
+
+If you encounter issues not covered here:
+
+### Check Documentation
+- [Installation Guide](INSTALLATION.md) - Comprehensive setup and troubleshooting
+- [README](README.md) - Overview and quick start
+- [GitHub Issues](https://github.com/MODSetter/SurfSense/issues) - Known issues and solutions
+
+### Community Support
+- **Discord**: [Join SurfSense Discord](https://discord.gg/ejRNvftDp9)
+- **Reddit**: [r/SurfSense](https://www.reddit.com/r/SurfSense/)
+- **GitHub Discussions**: [Ask questions](https://github.com/MODSetter/SurfSense/discussions)
+
+### Report Bugs
+- [Create an issue](https://github.com/MODSetter/SurfSense/issues/new) on GitHub
+- Include:
+  - What you were trying to do
+  - What happened instead
+  - Error messages (check browser console and backend logs)
+  - Your setup (Docker/manual, OS, versions)
+
+---
+
+## Quick Reference
+
+### Common Commands
+
+```bash
+# Check if services are running
+curl http://localhost:3000  # Frontend
+curl http://localhost:8000/docs  # Backend
+
+# Docker commands
+docker-compose up -d        # Start all services
+docker-compose down         # Stop all services
+docker-compose logs -f      # View logs
+docker-compose restart      # Restart services
+
+# Manual commands
+cd surfsense_backend && python main.py  # Start backend
+cd surfsense_web && npm start           # Start frontend
+celery -A celery_worker.celery_app worker  # Start worker
+```
+
+### Default Credentials
+
+If you're using the Docker quick-start with pre-seeded data:
+
+- **Email**: Check the seeding script or logs
+- **Password**: Check the seeding script or logs
+
+For fresh installations, you create your own account!
+
+### Important URLs
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000 |
+| API Docs | http://localhost:8000/docs |
+| Flower (Tasks) | http://localhost:5555 |
+| pgAdmin (DB) | http://localhost:5050 |
+
+---
+
+**Welcome to SurfSense!** 🎉
+
+Start exploring your documents, chatting with AI, and collaborating with your team. If you have questions, our community is here to help!
+
+---
+
+**Last Updated**: February 2026
+
+For the latest updates, visit: https://github.com/MODSetter/SurfSense
