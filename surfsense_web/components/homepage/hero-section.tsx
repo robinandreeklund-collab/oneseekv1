@@ -89,20 +89,18 @@ export function HeroSection() {
 			<h2 className="relative z-50 mx-auto mb-4 mt-4 max-w-4xl text-balance text-center text-3xl font-semibold tracking-tight text-gray-700 md:text-7xl dark:text-neutral-300">
 				<Balancer>
 					{isNotebookLMVariant ? (
-						<div className="relative mx-auto inline-block w-max filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
+						<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
 							<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
 								<span className="">{t("notebooklm_title")}</span>
 							</div>
 						</div>
 					) : (
-						<>
-							{t("hero_title_part1")}{" "}
-							<div className="relative mx-auto inline-block w-max filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
-								<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
-									<span className="">{t("hero_title_part2")}</span>
-								</div>
+						<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
+							<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
+								<span>{t("hero_title_part1")}</span>
+								{t("hero_title_part2") && <span> {t("hero_title_part2")}</span>}
 							</div>
-						</>
+						</div>
 					)}
 				</Balancer>
 			</h2>
@@ -112,7 +110,8 @@ export function HeroSection() {
 			</p>
 			<div className="mb-10 mt-8 flex w-full flex-col items-center justify-center gap-4 px-8 sm:flex-row md:mb-20">
 				<GetStartedButton />
-				<ContactSalesButton />
+				{/* Contact Sales button hidden per requirements */}
+				{/* <ContactSalesButton /> */}
 			</div>
 			<div
 				ref={containerRef}
