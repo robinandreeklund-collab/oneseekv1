@@ -705,7 +705,6 @@ export default function NewChatPage() {
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
 			let compareSummary: unknown | null = null;
-			let compareSummary: unknown | null = null;
 
 			// Ordered content parts to preserve inline tool call positions
 			// Each part is either a text segment or a tool call
