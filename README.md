@@ -139,6 +139,23 @@ Check out our public roadmap and contribute your ideas or feedback:
 
 ## How to get started?
 
+### 📚 Installation Guides
+
+Choose the guide that fits your needs:
+
+- **[INSTALLATION.md](INSTALLATION.md)** - **⭐ Complete Installation Guide** (Recommended)
+  - PostgreSQL setup and configuration
+  - Redis installation
+  - Manual installation steps for all platforms
+  - Database management and migrations
+  - Production deployment guide
+  - Comprehensive troubleshooting
+
+- **[TESTING_WITHOUT_DATABASE.md](TESTING_WITHOUT_DATABASE.md)** - Testing Mode Guide
+  - Quick testing without database
+  - Local LLM integration (vLLM, Ollama)
+  - Development without authentication
+
 ### Testing Mode (No Database/Auth Required) 🧪
 
 For quick testing and development with local LLMs:
@@ -164,12 +181,6 @@ python -m vllm.entrypoints.openai.api_server \
 cd surfsense_backend
 python main.py
 ```
-
-**📖 Full Testing Guide**: See [TESTING_WITHOUT_DATABASE.md](TESTING_WITHOUT_DATABASE.md) for detailed instructions on:
-- Configuring local LLMs (vLLM, Ollama)
-- Available features in testing mode
-- LLM configuration examples
-- Troubleshooting tips
 
 ### Quick Start with Docker 🐳
 
@@ -237,27 +248,37 @@ docker rm surfsense           # Remove (data preserved in volume)
 
 SurfSense provides multiple options to get started:
 
-1. **[SurfSense Cloud](https://www.surfsense.com/login)** - The easiest way to try SurfSense without any setup.
+1. **[Complete Installation Guide](INSTALLATION.md)** ⭐ - Comprehensive setup instructions
+   - **PostgreSQL** installation and configuration for all platforms
+   - **Redis** setup and configuration
+   - **Manual installation** with detailed steps
+   - **Database management** and migrations
+   - **Production deployment** guide
+   - **Troubleshooting** common issues
+   - Perfect for production deployments or complete control
+
+2. **[SurfSense Cloud](https://www.surfsense.com/login)** - The easiest way to try SurfSense without any setup.
    - No installation required
    - Instant access to all features
    - Perfect for getting started quickly
 
-2. **Quick Start Docker (Above)** - Single command to get SurfSense running locally.
+3. **Quick Start Docker (Above)** - Single command to get SurfSense running locally.
    - All-in-one image with PostgreSQL, Redis, and all services bundled
    - Perfect for evaluation, development, and small deployments
    - Data persisted via Docker volume
 
-3. **[Docker Compose (Production)](https://www.surfsense.com/docs/docker-installation)** - Full stack deployment with separate services.
+4. **[Docker Compose (Production)](https://www.surfsense.com/docs/docker-installation)** - Full stack deployment with separate services.
    - Includes pgAdmin for database management through a web UI
    - Supports environment variable customization via `.env` file
    - Flexible deployment options (full stack or core services only)
    - Better for production with separate scaling of services
 
-4. **[Manual Installation](https://www.surfsense.com/docs/manual-installation)** - For users who prefer more control over their setup or need to customize their deployment.
+5. **[Testing Mode](TESTING_WITHOUT_DATABASE.md)** - For testing with local LLMs without database.
+   - No PostgreSQL or authentication required
+   - Perfect for LLM integration testing
+   - Quick setup for development
 
-Docker and manual installation guides include detailed OS-specific instructions for Windows, macOS, and Linux.
-
-Before self-hosting installation, make sure to complete the [prerequisite setup steps](https://www.surfsense.com/docs/) including:
+Before self-hosting installation, refer to the **[Complete Installation Guide](INSTALLATION.md)** for:
 - Auth setup (optional - defaults to LOCAL auth)
 - **File Processing ETL Service** (optional - defaults to Docling):
   - Docling (default, local processing, no API key required, supports PDF, Office docs, images, HTML, CSV)
