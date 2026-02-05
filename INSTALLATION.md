@@ -39,6 +39,24 @@ SurfSense consists of several components:
 - **Storage**: 20GB+ free space
 - **OS**: Linux, macOS, or Windows (WSL2 recommended for Windows)
 
+### ⚠️ Important for Windows Users
+
+If using Windows, we **strongly recommend** running all services in WSL2 or Docker:
+
+**WSL2 (Recommended)**:
+- Install WSL2: `wsl --install` in PowerShell (Administrator)
+- Run all commands (backend AND frontend) inside WSL
+- Access from Windows browser: `http://localhost:3000`
+
+**Docker (Alternative)**:
+- Run entire stack in Docker
+- Avoids WSL/Windows networking issues
+
+**❌ NOT Recommended**: 
+- Running backend in WSL and frontend in Windows PowerShell
+- This causes networking issues where frontend cannot reach backend
+- See [WSL Troubleshooting](GETTING_STARTED.md#wsl-and-windows-mixed-environment-issues) if you encounter this
+
 ### Required Software
 
 | Software | Version | Purpose |

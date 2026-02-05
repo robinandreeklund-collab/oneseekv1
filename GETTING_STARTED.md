@@ -531,6 +531,121 @@ If you have team members:
     - Turbopack errors often show more details there
     - Look for compilation errors or module resolution issues
 
+
+### WSL and Windows Mixed Environment Issues
+
+**Problem**: Backend runs in WSL, frontend runs in Windows PowerShell - Turbopack errors or connection failures
+
+**This is a common networking issue!** WSL and Windows have different network stacks. When backend runs in WSL and frontend in Windows:
+- `localhost` in Windows ≠ `localhost` in WSL
+- Frontend cannot reach backend at `localhost:8000`
+- ElectricSQL in WSL is not accessible from Windows
+
+**Solutions**:
+
+#### Solution 1: Run Everything in WSL (Recommended)
+
+Run the frontend in WSL alongside the backend:
+
+```bash
+# In WSL terminal
+cd /path/to/surfsense/surfsense_web
+npm run dev
+```
+
+Access from Windows browser: `http://localhost:3000` (WSL forwards ports automatically)
+
+#### Solution 2: Use WSL IP Address in Frontend
+
+If you must run frontend in Windows PowerShell:
+
+1. **Find WSL IP address**:
+   ```bash
+   # In WSL terminal
+   ip addr show eth0 | grep "inet " | awk '{print $2}' | cut -d/ -f1
+   # Example output: 172.24.144.1
+   ```
+
+2. **Update frontend environment variables** (in Windows):
+   ```bash
+   # In PowerShell, edit surfsense_web\.env.local
+   NEXT_PUBLIC_FASTAPI_BACKEND_URL=http://172.24.144.1:8000
+   NEXT_PUBLIC_ELECTRIC_URL=http://172.24.144.1:5133
+   ```
+
+3. **Update backend CORS settings**:
+   ```bash
+   # In WSL, edit surfsense_backend/.env
+   NEXT_FRONTEND_URL=http://localhost:3000
+   # Or use Windows IP if needed
+   ```
+
+4. **Restart both services**:
+   ```bash
+   # In WSL - restart backend
+   cd surfsense_backend
+   python main.py
+   
+   # In PowerShell - restart frontend
+   cd surfsense_web
+   npm run dev
+   ```
+
+#### Solution 3: Port Forwarding (Alternative)
+
+Configure WSL to forward ports to Windows:
+
+```powershell
+# In PowerShell (Administrator)
+netsh interface portproxy add v4tov4 listenport=8000 listenaddress=0.0.0.0 connectport=8000 connectaddress=172.24.144.1
+netsh interface portproxy add v4tov4 listenport=5133 listenaddress=0.0.0.0 connectport=5133 connectaddress=172.24.144.1
+
+# View current port forwarding
+netsh interface portproxy show all
+
+# Remove forwarding (if needed)
+netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=0.0.0.0
+```
+
+**Note**: WSL IP address changes on restart, so Solution 1 is most reliable.
+
+#### Solution 4: Use Docker (Best for Windows)
+
+Run everything in Docker to avoid WSL/Windows networking issues:
+
+```powershell
+# In PowerShell
+cd surfsense
+docker-compose up -d
+```
+
+Access at `http://localhost:3000`
+
+#### Verify the Setup
+
+After applying a solution, verify connectivity:
+
+```bash
+# From Windows PowerShell
+curl http://localhost:8000/docs
+# Should return HTML (backend accessible)
+
+curl http://localhost:5133
+# Should return response (ElectricSQL accessible)
+
+curl http://localhost:3000
+# Should return HTML (frontend accessible)
+```
+
+#### Common WSL IP Addresses
+
+WSL typically uses IPs in these ranges:
+- `172.x.x.x` (most common)
+- `192.168.x.x`
+- Changes after Windows/WSL restart
+
+**Best Practice**: Always run all services in the same environment (all WSL or all Docker) to avoid networking complexity.
+
 ### Google OAuth Not Working
 
 **Problem**: "Sign in with Google" button doesn't work or shows errors

@@ -148,6 +148,8 @@ Check out our public roadmap and contribute your ideas or feedback:
 - 💬 **Start chatting** with your documents
 - ❓ **Troubleshooting** common issues
 
+**⚠️ Windows Users**: Run everything in WSL2 or Docker. Don't mix WSL (backend) + PowerShell (frontend) - this causes networking issues. See [WSL Troubleshooting](GETTING_STARTED.md#wsl-and-windows-mixed-environment-issues).
+
 ### 📚 Installation Guides
 
 Choose the guide that fits your needs:
