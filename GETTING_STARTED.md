@@ -329,6 +329,125 @@ If you have team members:
 
 ## Troubleshooting
 
+### Changing Backend Port (Port Conflict with vLLM)
+
+**Problem**: You have vLLM (or another service) running on port 8000 and need to run SurfSense backend on a different port.
+
+**Quick Solution:**
+
+```bash
+# 1. Update backend port in surfsense_backend/.env
+UVICORN_PORT=8001  # Choose any available port
+
+# 2. Update frontend URL in surfsense_web/.env.local
+NEXT_PUBLIC_FASTAPI_BACKEND_URL=http://localhost:8001
+
+# 3. Restart services
+```
+
+**Complete Steps:**
+
+1. **Stop all running services** (Press Ctrl+C in backend and frontend terminals)
+
+2. **Change backend port** - Edit or add to `surfsense_backend/.env`:
+   ```bash
+   UVICORN_PORT=8001  # Or 8080, 9000, or any available port
+   ```
+
+3. **Update frontend configuration** - Edit `surfsense_web/.env.local`:
+   ```bash
+   NEXT_PUBLIC_FASTAPI_BACKEND_URL=http://localhost:8001
+   ```
+
+4. **Update OAuth redirect URIs** (skip if not using OAuth connectors) - In `surfsense_backend/.env`, update all redirect URIs:
+   ```bash
+   # Example: Change port 8000 → 8001 in all redirect URIs
+   GOOGLE_CALENDAR_REDIRECT_URI=http://localhost:8001/api/v1/auth/google/calendar/connector/callback
+   GOOGLE_GMAIL_REDIRECT_URI=http://localhost:8001/api/v1/auth/google/gmail/connector/callback
+   GOOGLE_DRIVE_REDIRECT_URI=http://localhost:8001/api/v1/auth/google/drive/connector/callback
+   SLACK_REDIRECT_URI=http://localhost:8001/api/v1/auth/slack/connector/callback
+   GITHUB_REDIRECT_URI=http://localhost:8001/api/v1/auth/github/connector/callback
+   # Update all other connector redirect URIs similarly
+   ```
+
+5. **Restart backend:**
+   ```bash
+   cd surfsense_backend
+   python main.py
+   ```
+   
+   You should see: `Uvicorn running on http://0.0.0.0:8001`
+
+6. **Clear frontend cache and restart:**
+   ```bash
+   cd surfsense_web
+   rm -rf .next node_modules/.cache
+   npm run dev
+   ```
+
+7. **Verify the connection:**
+   ```bash
+   # Test backend is accessible on new port
+   curl http://localhost:8001/docs
+   # Should return HTML for API documentation
+   
+   # Check health endpoint
+   curl http://localhost:8001/health
+   # Should return {"status": "healthy"}
+   ```
+
+8. **Test login:** Open http://localhost:3000 and try logging in
+
+**Common Port Configurations:**
+
+| Service | Default Port | Alternative | Notes |
+|---------|-------------|-------------|-------|
+| vLLM Server | 8000 | - | Your local LLM (keep on 8000) |
+| **SurfSense Backend** | **8000** | **8001, 8080, 9000** | **Change this to avoid conflict** |
+| Frontend | 3000 | - | Next.js dev server |
+| ElectricSQL | 5133 | - | Database sync service |
+| PostgreSQL | 5432 | - | Database |
+| Redis | 6379 | - | Cache & Celery broker |
+| Celery Flower | 5555 | - | Task monitor (optional) |
+
+**Using vLLM with SurfSense:**
+
+After changing the backend port, configure vLLM in the SurfSense web UI:
+
+1. Navigate to Search Space Settings → LLM Configurations
+2. Add new LLM configuration:
+   - **Provider**: OLLAMA
+   - **Model Name**: your-model-name (e.g., "llama-2-7b-chat")
+   - **API Base**: `http://localhost:8000/v1` (your vLLM server port)
+   - **API Key**: (leave empty or use "EMPTY")
+
+**Example vLLM Server Command:**
+```bash
+# Start vLLM on port 8000 (default)
+python -m vllm.entrypoints.openai.api_server \
+  --model meta-llama/Llama-2-7b-chat-hf \
+  --port 8000 \
+  --host 0.0.0.0
+```
+
+**Production Setup with Reverse Proxy:**
+
+For production, use nginx to handle port routing (see INSTALLATION.md for full config):
+```nginx
+# Backend API (internal port 8001, external /api)
+location /api {
+    proxy_pass http://localhost:8001;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+# Frontend (internal port 3000, external /)
+location / {
+    proxy_pass http://localhost:3000;
+}
+```
+
+This way, users access everything through standard ports (80/443), and you can run services on any internal ports.
 
 ### NPM Install Dependency Conflicts
 
