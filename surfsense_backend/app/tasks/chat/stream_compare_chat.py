@@ -20,11 +20,13 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.agents.new_chat.llm_config import (
+    PROVIDER_MAP,
     create_chat_litellm_from_agent_config,
     create_chat_litellm_from_config,
     load_agent_config,
     load_llm_config_from_yaml,
 )
+import litellm
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
 from app.db import Document, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
@@ -93,6 +95,43 @@ def _apply_provider_env(provider: str, api_key: str) -> None:
         os.environ.setdefault("OPENROUTER_API_KEY", api_key)
     elif provider_key == "OPENAI":
         os.environ.setdefault("OPENAI_API_KEY", api_key)
+
+
+def _build_model_string(config: dict) -> str:
+    if config.get("custom_provider"):
+        return f"{config['custom_provider']}/{config['model_name']}"
+    provider = str(config.get("provider") or "").upper()
+    provider_prefix = PROVIDER_MAP.get(provider, provider.lower())
+    return f"{provider_prefix}/{config['model_name']}"
+
+
+async def _call_external_llm_with_litellm(
+    config: dict,
+    query: str,
+    timeout_seconds: int,
+) -> str:
+    model_string = _build_model_string(config)
+    api_key = str(config.get("api_key") or "").strip()
+    api_base = str(config.get("api_base") or "").strip()
+    litellm_params = config.get("litellm_params") or {}
+
+    async def _run():
+        response = await litellm.acompletion(
+            model=model_string,
+            messages=[
+                {"role": "system", "content": EXTERNAL_SYSTEM_PROMPT},
+                {"role": "user", "content": query},
+            ],
+            api_key=api_key,
+            api_base=api_base or None,
+            **litellm_params,
+        )
+        message = response.choices[0].message
+        if hasattr(message, "content"):
+            return str(message.content or "").strip()
+        return str(message.get("content", "")).strip()
+
+    return await asyncio.wait_for(_run(), timeout=timeout_seconds)
 
 
 def is_compare_request(user_query: str) -> bool:
@@ -226,6 +265,8 @@ async def stream_compare_chat(
         provider_errors: dict[str, str] = {}
         provider_llms: dict[str, object] = {}
         provider_model_strings: dict[str, str] = {}
+        provider_configs: dict[str, dict] = {}
+        provider_labels: dict[str, str] = {}
 
         for provider in COMPARE_MODELS:
             config = load_llm_config_from_yaml(provider["config_id"])
@@ -244,6 +285,8 @@ async def stream_compare_chat(
                     provider_label = str(config.get("provider") or "").strip()
                     if provider_label:
                         _apply_provider_env(provider_label, api_key)
+                        provider_labels[provider["key"]] = provider_label
+                    provider_configs[provider["key"]] = config
                     llm = create_chat_litellm_from_config(config)
                     if llm is None:
                         provider_errors[provider["key"]] = "Failed to initialize model"
@@ -258,7 +301,7 @@ async def stream_compare_chat(
             if model_name:
                 items.append(f"Model: {model_name}")
             if config:
-                provider_label = str(config.get("provider") or "").strip()
+                provider_label = provider_labels.get(provider["key"], "").strip()
                 if provider_label:
                     items.append(f"Provider: {provider_label}")
                 api_base_value = config.get("api_base")
@@ -306,9 +349,17 @@ async def stream_compare_chat(
         async def run_call(provider_key: str, llm) -> None:
             start_time = time.monotonic()
             try:
-                result = await _call_external_llm(
-                    llm, query_with_context, COMPARE_TIMEOUT_SECONDS
-                )
+                provider_label = provider_labels.get(provider_key, "").upper()
+                if provider_label == "DEEPSEEK" and provider_key in provider_configs:
+                    result = await _call_external_llm_with_litellm(
+                        provider_configs[provider_key],
+                        query_with_context,
+                        COMPARE_TIMEOUT_SECONDS,
+                    )
+                else:
+                    result = await _call_external_llm(
+                        llm, query_with_context, COMPARE_TIMEOUT_SECONDS
+                    )
                 await results_queue.put(
                     (provider_key, result, None, time.monotonic() - start_time)
                 )
