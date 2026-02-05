@@ -3,9 +3,10 @@
 import type React from "react";
 import { createContext, useContext, useEffect, useState } from "react";
 import enMessages from "../messages/en.json";
+import svMessages from "../messages/sv.json";
 import zhMessages from "../messages/zh.json";
 
-type Locale = "en" | "zh";
+type Locale = "sv" | "en" | "zh";
 
 interface LocaleContextType {
 	locale: Locale;
@@ -18,21 +19,21 @@ const LocaleContext = createContext<LocaleContextType | undefined>(undefined);
 const LOCALE_STORAGE_KEY = "surfsense-locale";
 
 export function LocaleProvider({ children }: { children: React.ReactNode }) {
-	// Always start with 'en' to avoid hydration mismatch
+	// Always start with 'sv' to avoid hydration mismatch
 	// Then sync with localStorage after mount
-	const [locale, setLocaleState] = useState<Locale>("en");
+	const [locale, setLocaleState] = useState<Locale>("sv");
 	const [mounted, setMounted] = useState(false);
 
 	// Get messages based on current locale
-	const messages = locale === "zh" ? zhMessages : enMessages;
+	const messages = locale === "zh" ? zhMessages : locale === "en" ? enMessages : svMessages;
 
 	// Load locale from localStorage after component mounts (client-side only)
 	useEffect(() => {
 		setMounted(true);
 		if (typeof window !== "undefined") {
 			const stored = localStorage.getItem(LOCALE_STORAGE_KEY);
-			if (stored === "zh") {
-				setLocaleState("zh");
+			if (stored === "sv" || stored === "en" || stored === "zh") {
+				setLocaleState(stored);
 			}
 		}
 	}, []);

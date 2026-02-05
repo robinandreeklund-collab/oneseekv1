@@ -6,10 +6,25 @@ import { useEffect, useRef, useState } from "react";
 import { clearTargetCommentIdAtom, targetCommentIdAtom } from "@/atoms/chat/current-thread.atom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { useLocaleContext } from "@/contexts/LocaleContext";
 import { cn } from "@/lib/utils";
 import { CommentComposer } from "../comment-composer/comment-composer";
 import { CommentActions } from "./comment-actions";
 import type { CommentItemProps } from "./types";
+
+const LOCALE_MAP = {
+	sv: "sv-SE",
+	en: "en-US",
+	zh: "zh-CN",
+} as const;
+
+const SWEDISH_STRINGS = {
+	justNow: "Nyss",
+	minutesAgo: (minutes: number) => `${minutes} min sedan`,
+	todayAt: (time: string) => `Idag kl. ${time}`,
+	yesterdayAt: (time: string) => `Igår kl. ${time}`,
+	at: "kl.",
+} as const;
 
 function getInitials(name: string | null, email: string): string {
 	if (name) {
@@ -23,49 +38,53 @@ function getInitials(name: string | null, email: string): string {
 	return email[0].toUpperCase();
 }
 
-function formatTimestamp(dateString: string): string {
+function formatTimestamp(dateString: string, locale: keyof typeof LOCALE_MAP): string {
 	const date = new Date(dateString);
 	const now = new Date();
 	const diffMs = now.getTime() - date.getTime();
 	const diffMins = Math.floor(diffMs / 60000);
 	const diffHours = Math.floor(diffMs / 3600000);
 	const diffDays = Math.floor(diffMs / 86400000);
+	const resolvedLocale = LOCALE_MAP[locale] ?? LOCALE_MAP.sv;
+	const isSwedish = locale === "sv";
+	const hour12 = !isSwedish;
 
-	const timeStr = date.toLocaleTimeString("en-US", {
+	const timeStr = date.toLocaleTimeString(resolvedLocale, {
 		hour: "numeric",
 		minute: "2-digit",
-		hour12: true,
+		hour12,
 	});
 
 	if (diffMins < 1) {
-		return "Just now";
+		return isSwedish ? SWEDISH_STRINGS.justNow : "Just now";
 	}
 
 	if (diffMins < 60) {
-		return `${diffMins}m ago`;
+		return isSwedish ? SWEDISH_STRINGS.minutesAgo(diffMins) : `${diffMins}m ago`;
 	}
 
 	if (diffHours < 24 && date.getDate() === now.getDate()) {
-		return `Today at ${timeStr}`;
+		return isSwedish ? SWEDISH_STRINGS.todayAt(timeStr) : `Today at ${timeStr}`;
 	}
 
 	const yesterday = new Date(now);
 	yesterday.setDate(yesterday.getDate() - 1);
 	if (date.getDate() === yesterday.getDate() && diffDays < 2) {
-		return `Yesterday at ${timeStr}`;
+		return isSwedish ? SWEDISH_STRINGS.yesterdayAt(timeStr) : `Yesterday at ${timeStr}`;
 	}
 
 	if (diffDays < 7) {
-		const dayName = date.toLocaleDateString("en-US", { weekday: "long" });
-		return `${dayName} at ${timeStr}`;
+		const dayName = date.toLocaleDateString(resolvedLocale, { weekday: "long" });
+		return isSwedish ? `${dayName} ${SWEDISH_STRINGS.at} ${timeStr}` : `${dayName} at ${timeStr}`;
 	}
 
+	const atLabel = isSwedish ? SWEDISH_STRINGS.at : "at";
 	return (
-		date.toLocaleDateString("en-US", {
+		date.toLocaleDateString(resolvedLocale, {
 			month: "short",
 			day: "numeric",
 			year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-		}) + ` at ${timeStr}`
+		}) + ` ${atLabel} ${timeStr}`
 	);
 }
 
@@ -117,6 +136,7 @@ export function CommentItem({
 }: CommentItemProps) {
 	const commentRef = useRef<HTMLDivElement>(null);
 	const [isHighlighted, setIsHighlighted] = useState(false);
+	const { locale } = useLocaleContext();
 
 	// Target comment navigation
 	const targetCommentId = useAtomValue(targetCommentIdAtom);
@@ -176,7 +196,7 @@ export function CommentItem({
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{displayName}</span>
 					<span className="shrink-0 text-xs text-muted-foreground">
-						{formatTimestamp(comment.createdAt)}
+						{formatTimestamp(comment.createdAt, locale)}
 					</span>
 					{comment.isEdited && (
 						<span className="shrink-0 text-xs text-muted-foreground">(edited)</span>

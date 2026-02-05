@@ -21,8 +21,9 @@ import type { User } from "../../types/layout.types";
 
 // Supported languages configuration
 const LANGUAGES = [
-	{ code: "en" as const, name: "English", flag: "🇺🇸" },
-	{ code: "zh" as const, name: "简体中文", flag: "🇨🇳" },
+	{ code: "sv" as const, name: "Svenska", flag: "🇸🇪" },
+	{ code: "en" as const, name: "Engelska", flag: "🇺🇸" },
+	{ code: "zh" as const, name: "Förenklad kinesiska", flag: "🇨🇳" },
 ];
 
 // Supported themes configuration
@@ -128,7 +129,7 @@ export function SidebarUserProfile({
 	const initials = getInitials(user.email);
 	const displayName = user.name || user.email.split("@")[0];
 
-	const handleLanguageChange = (newLocale: "en" | "zh") => {
+	const handleLanguageChange = (newLocale: "sv" | "en" | "zh") => {
 		setLocale(newLocale);
 	};
 
