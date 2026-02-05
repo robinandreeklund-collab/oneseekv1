@@ -326,7 +326,116 @@ You may see a welcome or onboarding screen. Follow the prompts to:
 - Choose your preferences
 - Take a quick tour (optional)
 
-### 2. Create Your First Search Space
+### 2. Configuring Your vLLM Server (If Using Local LLM)
+
+If you're running a vLLM server locally (like Qwen3, Llama, etc.), you can add it to SurfSense:
+
+#### Via Web Interface (Recommended)
+
+1. **Navigate to LLM Settings**
+   - Click on your profile/settings icon
+   - Go to "LLM Configuration" or "Settings"
+
+2. **Add New LLM Configuration**
+   - Click "Add LLM Configuration" or "+"
+   - Fill in the form:
+     - **Name**: Give it a descriptive name (e.g., "My Local vLLM (Qwen3-30B)")
+     - **Provider**: Select **OLLAMA** (vLLM is OpenAI-compatible, OLLAMA provider works)
+     - **Model Name**: Your model name from vLLM (e.g., `Qwen3-30B-A3B-Instruct-2507-AWQ-4bit`)
+     - **API Base**: `http://localhost:8000/v1` (your vLLM server URL)
+     - **API Key**: Leave empty or enter "dummy" (not needed for local)
+
+3. **Save and Test**
+   - Click "Save" or "Create"
+   - Test the connection
+   - Set as default if desired
+
+#### Getting Your Model Name
+
+To find the exact model name from your vLLM server:
+
+```bash
+curl http://localhost:8000/v1/models
+```
+
+You'll get a response like:
+```json
+{
+  "data": [{
+    "id": "/models/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit",
+    ...
+  }]
+}
+```
+
+**Use the model name WITHOUT the `/models/` prefix**: `Qwen3-30B-A3B-Instruct-2507-AWQ-4bit`
+
+#### Via Global Configuration (For Administrators)
+
+If you want to make your vLLM server available to all users, add it to `global_llm_config.yaml`:
+
+```yaml
+global_llm_configs:
+  - id: -10
+    name: "Local vLLM Qwen3-30B"
+    description: "Local vLLM server with Qwen3-30B AWQ model"
+    provider: "OLLAMA"
+    model_name: "Qwen3-30B-A3B-Instruct-2507-AWQ-4bit"
+    api_key: "dummy-key"  # vLLM doesn't require real key
+    api_base: "http://localhost:8000/v1"
+    rpm: 1000
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 4000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: true
+```
+
+Then restart the backend:
+```bash
+cd surfsense_backend
+# Restart your backend service (Ctrl+C and run python main.py again)
+```
+
+#### Benefits of Using Local vLLM
+
+- ✅ **No API Costs**: Run models locally on your GPU
+- ✅ **Privacy**: All data stays on your machine
+- ✅ **Speed**: Fast inference with vLLM's optimizations
+- ✅ **Flexibility**: Use any model (Llama, Qwen, Mistral, etc.)
+- ✅ **Quantization Support**: Run larger models with AWQ/GPTQ
+
+#### Troubleshooting vLLM Configuration
+
+**Issue: "Connection refused" or "Cannot connect"**
+```bash
+# Check if vLLM is running
+curl http://localhost:8000/v1/models
+
+# If not running, start vLLM:
+python -m vllm.entrypoints.openai.api_server \
+  --model /path/to/your/model \
+  --port 8000 \
+  --host 0.0.0.0
+```
+
+**Issue: "Model not found"**
+- Make sure model name matches exactly (case-sensitive)
+- Don't include `/models/` prefix in the model name
+- Use the ID from `/v1/models` endpoint
+
+**Issue: "Invalid provider"**
+- Use **OLLAMA** as provider (not OPENAI or CUSTOM)
+- OLLAMA provider works with any OpenAI-compatible API
+
+**Issue: "API Base URL format"**
+- Must include `/v1` at the end: `http://localhost:8000/v1`
+- Use `http://` not `https://` for local servers
+- Check port number (8000 for vLLM, 8001 for SurfSense backend)
+
+### 3. Create Your First Search Space
 
 **Search Spaces** are workspaces where you organize documents and chats.
 
