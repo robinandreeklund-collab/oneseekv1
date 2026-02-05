@@ -2,6 +2,32 @@
 
 Welcome to SurfSense! This guide will help you create an account, log in, and start using the platform.
 
+## ⚠️ CRITICAL: ElectricSQL Must Be Running
+
+**If you see 404 errors, login doesn't persist, or pages won't load**, ElectricSQL is probably not running.
+
+**ElectricSQL is REQUIRED** for the frontend to work. It synchronizes data from PostgreSQL to the frontend.
+
+**Quick Fix:**
+```bash
+cd electric
+docker compose up -d
+
+# Verify it's running:
+curl http://localhost:5133
+# Should return: {"version":"..."}
+```
+
+**Without ElectricSQL:**
+- ❌ 404 errors on all routes
+- ❌ Login state lost on page reload
+- ❌ Dashboard won't load
+- ❌ Frontend is broken
+
+See [Required Services](#required-services) section for details.
+
+---
+
 ## ⚠️ IMPORTANT: 404 Error Fix
 
 **If you experience 404 errors after login**, this is a known Turbopack issue with dynamic routes. 
@@ -19,6 +45,7 @@ See [Turbopack Dynamic Route Bug](#turbopack-dynamic-route-bug-404-fix) section 
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
+  - [Required Services](#required-services)
 - [Accessing the Platform](#accessing-the-platform)
 - [Creating an Account](#creating-an-account)
 - [Logging In](#logging-in)
@@ -47,6 +74,32 @@ curl http://localhost:3000
 ```
 
 If you get connection errors, refer to the [Installation Guide](INSTALLATION.md) or [Troubleshooting](#troubleshooting) section.
+
+### Required Services
+
+SurfSense requires multiple services to run. Here's what's needed:
+
+| Service | Port | Required | Purpose | Verification |
+|---------|------|----------|---------|--------------|
+| **PostgreSQL** | 5432 | ✅ Yes | Database storage | `psql -U surfsense -d surfsense -c "SELECT 1"` |
+| **Backend** | 8000/8001 | ✅ Yes | API server | `curl http://localhost:8001/docs` |
+| **ElectricSQL** | 5133 | ✅ **Yes** | **Real-time sync** | `curl http://localhost:5133` |
+| **Frontend** | 3000 | ✅ Yes | Web interface | Open http://localhost:3000 |
+| Redis | 6379 | ⚠️ Optional | Task queue | Only needed for document processing |
+| Celery Worker | - | ⚠️ Optional | Background jobs | Only needed for document processing |
+| Celery Flower | 5555 | ⚠️ Optional | Task monitoring | Only needed for monitoring |
+
+**Critical:** ElectricSQL **must** be running for the frontend to work. Without it:
+- ❌ All routes return 404 errors
+- ❌ Login state doesn't persist
+- ❌ Dashboard won't load
+- ❌ Frontend cannot access data
+
+**Start ElectricSQL:**
+```bash
+cd electric
+docker compose up -d
+```
 
 ---
 
@@ -654,14 +707,31 @@ Could not resolve dependency: peer X from Y
 - After logging in, you're redirected but homepage still shows "Sign In"
 - API requests return `{"detail": "Unauthorized"}`
 - Each page reload loses your login session
-- Browser localStorage test fails
+- Login works once, then immediately resets
 
-**Root Cause:**
-The JWT token is not being persisted in browser localStorage, or localStorage is being cleared/blocked.
+**🔧 SOLUTION 1: Check ElectricSQL is Running** (MOST COMMON CAUSE):
 
-**Solutions:**
+ElectricSQL manages state persistence. Without it, login state is lost on every page load.
 
-#### 1. Check Browser LocalStorage is Working
+```bash
+# Check if ElectricSQL is running
+curl http://localhost:5133
+
+# If you get "connection refused", start it:
+cd electric
+docker compose up -d
+
+# Verify running:
+curl http://localhost:5133
+docker ps | grep electric
+```
+
+**After starting ElectricSQL:**
+- Refresh browser
+- Log in again
+- Login should now persist
+
+**🔧 SOLUTION 2: Check Browser LocalStorage** (If ElectricSQL is running):
 
 Open browser console (F12) and test:
 ```javascript
@@ -1107,19 +1177,54 @@ WSL typically uses IPs in these ranges:
 - But `/dashboard/1/new-chat` shows 404 "This page could not be found"
 - Frontend logs: `GET /dashboard/1/new-chat 404 in XXms`
 
-**Root Cause**: 
-This is a Next.js 16 + Turbopack dev server cache issue. After package updates or git operations, the dev server cache becomes stale and doesn't recognize existing dynamic routes, even though they exist in the codebase at `app/dashboard/[search_space_id]/new-chat/[[...chat_id]]/page.tsx`.
+**🔧 SOLUTION 1: Check ElectricSQL is Running** (MOST COMMON CAUSE):
 
-**🔧 SOLUTION - Complete Frontend Reset** (USE THIS SCRIPT):
+ElectricSQL is REQUIRED for the frontend to work. Check if it's running:
 
-We've created an automated script to completely reset the frontend:
+```bash
+# Check if ElectricSQL is running
+curl http://localhost:5133
+
+# If you get "connection refused", start it:
+cd electric
+docker compose up -d
+
+# Verify it's running:
+curl http://localhost:5133
+# Should return: {"version":"..."}
+
+docker ps | grep electric
+# Should show container running
+```
+
+**After starting ElectricSQL:**
+- Refresh your browser at http://localhost:3000
+- Log in again
+- Should now work correctly
+
+**🔧 SOLUTION 2: Use Webpack Instead of Turbopack**:
+
+If ElectricSQL is running and you still see 404, this is a Turbopack bug with dynamic routes.
+
+```bash
+cd surfsense_web
+# Stop current dev server (Ctrl+C)
+npm run dev:webpack  # Use stable webpack mode
+```
+
+**🔧 SOLUTION 3: Complete Frontend Reset** (Last Resort):
+
+If both above solutions don't work, try a complete cache reset:
 
 ```bash
 # From repository root
 ./reset-frontend-cache.sh
 ```
 
-**OR Manual Reset** (if script doesn't work):
+**Root Cause**: 
+1. **Most Common**: ElectricSQL not running - frontend cannot sync data from PostgreSQL
+2. **Second Most Common**: Turbopack bug with complex dynamic routes
+3. **Rare**: Next.js cache corruption after package updates
 
 ```bash
 # 1. STOP the frontend dev server completely (Ctrl+C)
