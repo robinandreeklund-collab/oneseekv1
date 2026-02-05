@@ -2,6 +2,20 @@
 
 Welcome to SurfSense! This guide will help you create an account, log in, and start using the platform.
 
+## ⚠️ IMPORTANT: 404 Error Fix
+
+**If you experience 404 errors after login**, this is a known Turbopack issue with dynamic routes. 
+
+**Quick Fix:**
+```bash
+cd surfsense_web
+npm run dev:webpack  # Use stable webpack mode instead of Turbopack
+```
+
+See [Turbopack Dynamic Route Bug](#turbopack-dynamic-route-bug-404-fix) section for details.
+
+---
+
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
