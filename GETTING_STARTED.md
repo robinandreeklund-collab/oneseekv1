@@ -515,6 +515,148 @@ Could not resolve dependency: peer X from Y
      -d "username=your@email.com&password=yourpassword"
    ```
 
+### Cannot Stay Logged In / "Unauthorized" Error
+
+**Symptoms:**
+- After logging in, you're redirected but homepage still shows "Sign In"
+- API requests return `{"detail": "Unauthorized"}`
+- Each page reload loses your login session
+- Browser localStorage test fails
+
+**Root Cause:**
+The JWT token is not being persisted in browser localStorage, or localStorage is being cleared/blocked.
+
+**Solutions:**
+
+#### 1. Check Browser LocalStorage is Working
+
+Open browser console (F12) and test:
+```javascript
+localStorage.setItem('test', 'value')
+localStorage.getItem('test')
+// Should return 'value'
+```
+
+If this fails, check:
+- ❌ Browser is NOT in Private/Incognito mode (localStorage disabled)
+- ✅ Browser settings allow localStorage for `localhost`
+- ❌ No browser extensions clearing storage (ad blockers, privacy tools)
+- ✅ Not using Firefox containers or similar isolation features
+
+**Fix**: Use normal browser window, disable extensions, check site settings.
+
+#### 2. Clear Browser Data and Service Workers
+
+```javascript
+// In browser console (F12):
+
+// 1. Unregister service workers
+navigator.serviceWorker.getRegistrations().then(registrations => {
+  registrations.forEach(r => r.unregister())
+  console.log('Service workers cleared')
+})
+
+// 2. Clear storage
+localStorage.clear()
+sessionStorage.clear()
+```
+
+Then:
+- Close browser completely
+- Reopen and navigate to `http://localhost:3000`
+- Log in again
+
+#### 3. Verify Token Flow
+
+After logging in, check each step:
+
+```javascript
+// 1. Check if token was set (in console, F12)
+localStorage.getItem('surfsense_bearer_token')
+// Should show: "eyJhbGci..." (long JWT token)
+
+// 2. If missing, check Network tab:
+// - Look for /auth/jwt/login request
+// - Response should include "access_token"
+// - Look for /auth/callback?token=... navigation
+// - URL should contain the token
+
+// 3. Check for errors:
+// - Console tab for JavaScript errors
+// - Network tab for failed requests
+```
+
+#### 4. WSL/Windows Cross-Boundary Issue
+
+If running backend in WSL but accessing from Windows browser:
+
+**Problem**: Browser localStorage on Windows is separate from WSL
+**Solution**: Access frontend from the same environment as backend
+
+```bash
+# Option A: Run frontend in WSL too
+cd surfsense_web
+npm run dev
+# Access from WSL browser or Windows browser at http://localhost:3000
+
+# Option B: Use WSL IP from Windows
+# See "WSL and Windows Mixed Environment Issues" section below
+```
+
+#### 5. Manually Test Backend Authentication
+
+Verify backend auth is working:
+
+```bash
+# Get a token via API
+curl -X POST http://localhost:8000/auth/jwt/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=your@email.com&password=yourpassword"
+
+# Response should include:
+# {"access_token": "eyJhbGci...", "token_type": "bearer"}
+
+# Copy the access_token and test:
+curl http://localhost:8000/users/me \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+
+# Should return user info, NOT {"detail": "Unauthorized"}
+```
+
+If backend auth works via curl but not browser:
+- ✅ Backend is fine
+- ❌ Frontend token storage is broken
+
+#### 6. Nuclear Option: Complete Reset
+
+```bash
+# 1. Stop all services
+# Press Ctrl+C in all terminal windows
+
+# 2. Clear all frontend caches
+cd surfsense_web
+rm -rf .next node_modules package-lock.json
+npm cache clean --force
+npm install
+npm run dev
+
+# 3. In browser:
+# - Open DevTools (F12)
+# - Application tab → Storage → Clear site data
+# - Close and reopen browser
+
+# 4. Try logging in again
+```
+
+**After Fixing:**
+- ✅ Log in at `http://localhost:3000/login`
+- ✅ Should redirect to `/dashboard`
+- ✅ Reloading page keeps you logged in
+- ✅ `localStorage.getItem('surfsense_bearer_token')` shows token
+- ✅ Backend API calls work without "Unauthorized"
+
+---
+
 ### Turbopack/Next.js Error After Login
 
 **Problem**: After successful login, you see "Runtime Error: An unexpected Turbopack error occurred" on the dashboard
