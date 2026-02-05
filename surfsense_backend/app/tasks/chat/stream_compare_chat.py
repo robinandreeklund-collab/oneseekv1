@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -70,7 +71,8 @@ COMPARE_CITATION_INSTRUCTIONS = (
     "When using information from the <sources> section, include citations in the "
     "format [citation:chunk_id] using chunk ids from <chunk id='...'> tags. "
     "MODEL_ANSWER documents represent other model outputs; only cite them when "
-    "explicitly referencing those outputs. Prefer Tavily sources for factual claims."
+    "explicitly referencing those outputs. Prefer Tavily sources for factual claims. "
+    "Do not use numbered brackets like [1]. Do not include a separate references list."
 )
 
 
@@ -211,6 +213,41 @@ def _build_model_answer_documents(answers: dict[str, str]) -> list[dict]:
             }
         )
     return documents
+
+
+def _collect_chunk_ids(documents: list[dict]) -> set[str]:
+    chunk_ids: set[str] = set()
+    for doc in documents:
+        chunks = doc.get("chunks") if isinstance(doc, dict) else None
+        if not isinstance(chunks, list):
+            continue
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_id = chunk.get("chunk_id") or chunk.get("id")
+            if chunk_id is None:
+                continue
+            chunk_ids.add(str(chunk_id))
+    return chunk_ids
+
+
+def _normalize_citations(text: str, valid_chunk_ids: set[str]) -> str:
+    if not text or not valid_chunk_ids:
+        return text
+
+    def replace_match(match: re.Match) -> str:
+        token = match.group(1).strip()
+        if not token:
+            return match.group(0)
+        parts = [p.strip() for p in token.split(",") if p.strip()]
+        if not parts:
+            return match.group(0)
+        if all(part in valid_chunk_ids for part in parts):
+            return ", ".join([f"[citation:{part}]" for part in parts])
+        return match.group(0)
+
+    pattern = re.compile(r"\[(?!citation:)([^\]]+)\]")
+    return pattern.sub(replace_match, text)
 
 
 async def _build_query_with_context(
@@ -575,6 +612,7 @@ async def stream_compare_chat(
             if source_documents
             else ""
         )
+        valid_chunk_ids = _collect_chunk_ids(source_documents)
 
         prompt_parts = [
             f"<user_query>\n{query_with_context}\n</user_query>",
@@ -617,6 +655,8 @@ async def stream_compare_chat(
             return
         if not final_answer:
             final_answer = "I could not generate a response."
+        else:
+            final_answer = _normalize_citations(final_answer, valid_chunk_ids)
 
         analysis_items.append(f"Final answer length: {len(final_answer)} chars")
         yield streaming_service.format_thinking_step(
