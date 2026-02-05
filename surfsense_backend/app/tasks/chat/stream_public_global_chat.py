@@ -1,42 +1,40 @@
 from collections.abc import AsyncGenerator
-from typing import Any
-
-from langchain_core.messages import BaseMessage
 
 from app.services.new_streaming_service import VercelStreamingService
 
 
-def _extract_chunk_text(chunk: Any) -> str:
-    if hasattr(chunk, "content") and isinstance(chunk.content, str):
-        return chunk.content
-    message = getattr(chunk, "message", None)
-    if message is not None:
-        content = getattr(message, "content", None)
-        if isinstance(content, str):
-            return content
-    return ""
-
-
 async def stream_public_global_chat(
-    llm: Any,
-    messages: list[BaseMessage],
-    llm_kwargs: dict[str, Any] | None = None,
+    agent,
+    input_state: dict,
+    stream_config: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     streaming_service = VercelStreamingService()
-    text_id = streaming_service.generate_text_id()
-    llm_kwargs = llm_kwargs or {}
+    current_text_id: str | None = None
+    stream_config = stream_config or {}
 
     yield streaming_service.format_message_start()
-    yield streaming_service.format_text_start(text_id)
 
     try:
-        async for chunk in llm.astream(messages, **llm_kwargs):
-            delta = _extract_chunk_text(chunk)
-            if delta:
-                yield streaming_service.format_text_delta(text_id, delta)
-        yield streaming_service.format_text_end(text_id)
-        yield streaming_service.format_finish()
+        async for event in agent.astream_events(
+            input_state, config=stream_config, version="v2"
+        ):
+            event_type = event.get("event", "")
+            if event_type == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                content = getattr(chunk, "content", None) if chunk else None
+                if content and isinstance(content, str):
+                    if current_text_id is None:
+                        current_text_id = streaming_service.generate_text_id()
+                        yield streaming_service.format_text_start(current_text_id)
+                    yield streaming_service.format_text_delta(current_text_id, content)
+            elif event_type == "on_tool_start":
+                if current_text_id is not None:
+                    yield streaming_service.format_text_end(current_text_id)
+                    current_text_id = None
     except Exception as exc:
         yield streaming_service.format_error(f"Public chat failed: {exc!s}")
     finally:
+        if current_text_id is not None:
+            yield streaming_service.format_text_end(current_text_id)
+        yield streaming_service.format_finish()
         yield streaming_service.format_done()

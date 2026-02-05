@@ -7,8 +7,8 @@ from fastapi.testclient import TestClient
 from app.config import config
 from app.routes.new_llm_config_routes import router as llm_config_router
 from app.routes.public_global_chat_routes import (
+    get_public_agent,
     get_public_chat_rate_limiter,
-    get_public_llm,
     router as public_global_router,
 )
 from app.services.anonymous_session_service import ANON_SESSION_COOKIE_NAME
@@ -20,17 +20,28 @@ class FakeChunk:
         self.content = content
 
 
-class FakeLLM:
-    async def astream(self, messages, **kwargs):
-        yield FakeChunk("Hello")
-        yield FakeChunk(" world")
+class FakeAgent:
+    async def astream_events(self, input_state, config=None, version=None):
+        yield {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": FakeChunk("Hello")},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": FakeChunk(" world")},
+        }
 
 
 def build_app():
     app = FastAPI()
     app.include_router(public_global_router, prefix="/api/v1")
     app.include_router(llm_config_router, prefix="/api/v1")
-    app.dependency_overrides[get_public_llm] = lambda: (FakeLLM(), None, 0)
+    app.dependency_overrides[get_public_agent] = lambda: (
+        FakeAgent(),
+        None,
+        0,
+        ["search_web"],
+    )
     app.dependency_overrides[current_optional_user] = lambda: None
     return app
 

@@ -1,16 +1,23 @@
 import logging
 from datetime import UTC, datetime
 
+from deepagents import create_deep_agent
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage
+try:
+    from langgraph.checkpoint.memory import MemorySaver
+except ImportError:  # pragma: no cover - fallback for older langgraph layouts
+    from langgraph.checkpoint import MemorySaver
 
+from app.agents.new_chat.context import SurfSenseContextSchema
 from app.agents.new_chat.llm_config import (
     AgentConfig,
     create_chat_litellm_from_agent_config,
     create_chat_litellm_from_config,
     load_llm_config_from_yaml,
 )
+from app.agents.new_chat.tools.registry import get_tool_by_name, build_tools_async
 from app.config import config
 from app.schemas.public_global_chat import PublicGlobalChatRequest
 from app.services.anonymous_session_service import (
@@ -36,7 +43,10 @@ PUBLIC_SYSTEM_PROMPT = (
     "Do not access or imply access to any private user data, connectors, or saved "
     "chats. If a request needs personal data or account-specific actions, ask the "
     "user to sign in."
+    "\n\nToday's date (UTC): {resolved_today}"
 )
+
+PUBLIC_TOOL_HINT = "Only use tools that are available in your tool list."
 
 
 def get_public_chat_rate_limiter() -> SlidingWindowRateLimiter:
@@ -74,15 +84,31 @@ def _resolve_llm_config_id(requested_id: int | None) -> int:
     return llm_config_id
 
 
-def _build_system_prompt(llm_config: dict | None) -> str:
+def _build_tool_instructions(enabled_tools: list[str]) -> str:
+    lines = ["<tools>", "You have access to the following public tools:"]
+    for tool_name in enabled_tools:
+        tool_def = get_tool_by_name(tool_name)
+        description = tool_def.description if tool_def else "No description."
+        lines.append(f"- {tool_name}: {description}")
+    lines.append(PUBLIC_TOOL_HINT)
+    lines.append("</tools>")
+    return "\n".join(lines)
+
+
+def _build_system_prompt(
+    llm_config: dict | None,
+    enabled_tools: list[str],
+) -> str:
     today = datetime.now(UTC).date().isoformat()
-    base_prompt = f"{PUBLIC_SYSTEM_PROMPT}\n\nToday's date (UTC): {today}"
+    base_prompt = PUBLIC_SYSTEM_PROMPT.format(resolved_today=today)
 
     if llm_config:
         extra = llm_config.get("system_instructions") or ""
         if extra.strip():
-            return f"{base_prompt}\n\n{extra.strip()}"
-    return base_prompt
+            base_prompt = f"{base_prompt}\n\n{extra.strip()}"
+
+    tool_instructions = _build_tool_instructions(enabled_tools)
+    return f"{base_prompt}\n\n{tool_instructions}".strip()
 
 
 def _get_first_global_config() -> dict | None:
@@ -92,13 +118,13 @@ def _get_first_global_config() -> dict | None:
     return None
 
 
-def _build_messages(request: PublicGlobalChatRequest, system_prompt: str) -> list:
+def _build_messages(request: PublicGlobalChatRequest) -> list:
     history_limit = max(config.ANON_CHAT_MAX_HISTORY_MESSAGES, 0)
     history = request.messages or []
     if history_limit > 0:
         history = history[-history_limit:]
 
-    messages = [SystemMessage(content=system_prompt)]
+    messages = []
     for message in history:
         if message.role == "assistant":
             messages.append(AIMessage(content=message.content))
@@ -151,17 +177,59 @@ async def get_public_llm(
     return llm, llm_config, llm_config_id
 
 
+def _resolve_public_tools() -> list[str]:
+    dependencies = {"firecrawl_api_key": config.FIRECRAWL_API_KEY}
+    enabled_tools: list[str] = []
+    for tool_name in config.ANON_CHAT_ENABLED_TOOLS:
+        tool_def = get_tool_by_name(tool_name)
+        if not tool_def:
+            logger.warning("Unknown public tool configured: %s", tool_name)
+            continue
+        missing_deps = [dep for dep in tool_def.requires if dep not in dependencies]
+        if missing_deps:
+            logger.warning(
+                "Skipping public tool '%s' due to missing deps: %s",
+                tool_name,
+                ", ".join(missing_deps),
+            )
+            continue
+        enabled_tools.append(tool_name)
+    return enabled_tools
+
+
+async def get_public_agent(
+    llm_bundle=Depends(get_public_llm),
+):
+    llm, llm_config, llm_config_id = llm_bundle
+    dependencies = {"firecrawl_api_key": config.FIRECRAWL_API_KEY}
+    enabled_tools = _resolve_public_tools()
+    tools = await build_tools_async(
+        dependencies=dependencies,
+        enabled_tools=enabled_tools,
+    )
+    system_prompt = _build_system_prompt(llm_config, enabled_tools)
+    checkpointer = MemorySaver()
+    agent = create_deep_agent(
+        model=llm,
+        tools=tools,
+        system_prompt=system_prompt,
+        context_schema=SurfSenseContextSchema,
+        checkpointer=checkpointer,
+    )
+    return agent, llm_config, llm_config_id, enabled_tools
+
+
 @router.post("/chat")
 async def public_global_chat(
     request: PublicGlobalChatRequest,
     http_request: Request,
-    llm_bundle=Depends(get_public_llm),
+    agent_bundle=Depends(get_public_agent),
     user=Depends(current_optional_user),
 ):
     if not config.ANON_ACCESS_ENABLED:
         raise HTTPException(status_code=403, detail="Public chat is disabled.")
 
-    llm, llm_config, llm_config_id = llm_bundle
+    agent, llm_config, llm_config_id, enabled_tools = agent_bundle
     cookie_value = http_request.cookies.get(ANON_SESSION_COOKIE_NAME)
     anon_session = get_or_create_anonymous_session(cookie_value)
 
@@ -183,16 +251,20 @@ async def public_global_chat(
 
     client_host = http_request.client.host if http_request.client else "unknown"
     logger.info(
-        "Public chat request from %s (user=%s, session=%s, llm_config=%s)",
+        "Public chat request from %s (user=%s, session=%s, llm_config=%s, tools=%s)",
         client_host,
         getattr(user, "id", None),
         anon_session.session_id,
         llm_config_id,
+        ",".join(enabled_tools),
     )
 
-    system_prompt = _build_system_prompt(llm_config)
-    messages = _build_messages(request, system_prompt)
-    llm_kwargs = {"temperature": config.ANON_CHAT_TEMPERATURE}
+    messages = _build_messages(request)
+    input_state = {
+        "messages": messages,
+        "search_space_id": 0,
+    }
+    stream_config = {"recursion_limit": config.ANON_CHAT_RECURSION_LIMIT}
 
     headers = VercelStreamingService.get_response_headers()
     headers.update(
@@ -204,7 +276,11 @@ async def public_global_chat(
     )
 
     response = StreamingResponse(
-        stream_public_global_chat(llm=llm, messages=messages, llm_kwargs=llm_kwargs),
+        stream_public_global_chat(
+            agent=agent,
+            input_state=input_state,
+            stream_config=stream_config,
+        ),
         headers=headers,
         media_type="text/event-stream",
     )

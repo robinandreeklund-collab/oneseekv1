@@ -48,6 +48,7 @@ from .knowledge_base import create_search_knowledge_base_tool
 from .link_preview import create_link_preview_tool
 from .mcp_tool import load_mcp_tools
 from .podcast import create_generate_podcast_tool
+from .public_web_search import create_public_web_search_tool
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
 from .user_memory import create_recall_memory_tool, create_save_memory_tool
@@ -133,6 +134,13 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
             firecrawl_api_key=deps.get("firecrawl_api_key"),
         ),
         requires=[],  # firecrawl_api_key is optional
+    ),
+    ToolDefinition(
+        name="search_web",
+        description="Search the public web using globally configured providers",
+        factory=lambda deps: create_public_web_search_tool(),
+        requires=[],
+        enabled_by_default=False,
     ),
     # Note: write_todos is now provided by TodoListMiddleware from deepagents
     # Surfsense documentation search tool

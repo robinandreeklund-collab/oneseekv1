@@ -161,6 +161,23 @@ class Config:
         int(_ANON_CHAT_DEFAULT_LLM_ID) if _ANON_CHAT_DEFAULT_LLM_ID else None
     )
     ANON_CHAT_TEMPERATURE = float(os.getenv("ANON_CHAT_TEMPERATURE", "0.2"))
+    ANON_CHAT_RECURSION_LIMIT = int(os.getenv("ANON_CHAT_RECURSION_LIMIT", "40"))
+    _ANON_CHAT_ENABLED_TOOLS = os.getenv(
+        "ANON_CHAT_ENABLED_TOOLS",
+        "link_preview,display_image,scrape_webpage,search_web",
+    )
+    ANON_CHAT_ENABLED_TOOLS = [
+        tool.strip()
+        for tool in _ANON_CHAT_ENABLED_TOOLS.split(",")
+        if tool.strip()
+    ]
+
+    # Public web search configuration (global tools)
+    PUBLIC_TAVILY_API_KEY = os.getenv("PUBLIC_TAVILY_API_KEY")
+    PUBLIC_WEB_SEARCH_MAX_RESULTS = int(
+        os.getenv("PUBLIC_WEB_SEARCH_MAX_RESULTS", "5")
+    )
+    FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
 
     # Google OAuth
     GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
