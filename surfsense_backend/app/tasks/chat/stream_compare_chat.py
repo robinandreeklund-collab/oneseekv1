@@ -62,6 +62,21 @@ LOCAL_ANALYSIS_SYSTEM_PROMPT = (
 )
 
 
+def _describe_key_format(api_key: str) -> str:
+    key = api_key.strip()
+    if key.startswith("xai-"):
+        return "xAI"
+    if key.startswith("AIza"):
+        return "Google AI Studio"
+    if key.startswith("sk-or-"):
+        return "OpenRouter"
+    if key.startswith("sk-ant-"):
+        return "Anthropic"
+    if key.startswith("sk-"):
+        return "OpenAI-like"
+    return "Unknown"
+
+
 def is_compare_request(user_query: str) -> bool:
     """Check if the user query activates compare mode."""
     return user_query.strip().lower().startswith(COMPARE_PREFIX)
@@ -192,6 +207,7 @@ async def stream_compare_chat(
         provider_steps: dict[str, dict[str, str | list[str] | None]] = {}
         provider_errors: dict[str, str] = {}
         provider_llms: dict[str, object] = {}
+        provider_model_strings: dict[str, str] = {}
 
         for provider in COMPARE_MODELS:
             config = load_llm_config_from_yaml(provider["config_id"])
@@ -212,6 +228,9 @@ async def stream_compare_chat(
                         provider_errors[provider["key"]] = "Failed to initialize model"
                     else:
                         provider_llms[provider["key"]] = llm
+                        model_string = str(getattr(llm, "model", "") or "").strip()
+                        if model_string:
+                            provider_model_strings[provider["key"]] = model_string
 
             step_id = f"compare-{provider['key']}-{uuid.uuid4().hex[:8]}"
             items: list[str] = []
@@ -224,6 +243,12 @@ async def stream_compare_chat(
                 api_base_value = config.get("api_base")
                 if api_base_value:
                     items.append(f"API base: {api_base_value}")
+                api_key_value = str(config.get("api_key") or "").strip()
+                if api_key_value:
+                    items.append(f"Key format: {_describe_key_format(api_key_value)}")
+                model_string = provider_model_strings.get(provider["key"], "")
+                if model_string:
+                    items.append(f"Model string: {model_string}")
             items.append(f"Query: {short_query}")
             provider_steps[provider["key"]] = {
                 "id": step_id,
