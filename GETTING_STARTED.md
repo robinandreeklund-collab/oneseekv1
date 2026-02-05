@@ -425,6 +425,112 @@ If you have team members:
      -d "username=your@email.com&password=yourpassword"
    ```
 
+### Turbopack/Next.js Error After Login
+
+**Problem**: After successful login, you see "Runtime Error: An unexpected Turbopack error occurred" on the dashboard
+
+**This is a common issue with Next.js 16+ and can have several causes:**
+
+**Solutions**:
+
+1. **Check frontend environment variables**:
+   ```bash
+   cd surfsense_web
+   
+   # Ensure .env.local exists with proper values
+   cat .env.local
+   
+   # Should contain:
+   # NEXT_PUBLIC_FASTAPI_BACKEND_URL=http://localhost:8000
+   # NEXT_PUBLIC_FASTAPI_BACKEND_AUTH_TYPE=LOCAL  (or GOOGLE)
+   # NEXT_PUBLIC_ETL_SERVICE=DOCLING
+   # NEXT_PUBLIC_ELECTRIC_URL=http://localhost:5133
+   # NEXT_PUBLIC_ELECTRIC_AUTH_MODE=insecure
+   # NEXT_PUBLIC_DEPLOYMENT_MODE=self-hosted
+   ```
+
+2. **Restart frontend with clean cache**:
+   ```bash
+   cd surfsense_web
+   
+   # Stop the dev server (Ctrl+C)
+   # Clear Next.js cache
+   rm -rf .next
+   
+   # Reinstall dependencies (if needed)
+   npm install
+   
+   # Start fresh
+   npm run dev
+   ```
+
+3. **Check ElectricSQL is running**:
+   ```bash
+   # ElectricSQL must be running for the frontend to work
+   curl http://localhost:5133
+   
+   # If not running, start it:
+   # Docker:
+   docker-compose up -d electric
+   
+   # Manual: check INSTALLATION.md for ElectricSQL setup
+   ```
+
+4. **Check backend API is accessible**:
+   ```bash
+   # Test backend connection
+   curl http://localhost:8000/api/v1/search-spaces
+   
+   # Should return search spaces data or 401 (both are OK)
+   ```
+
+5. **Check browser console for detailed errors**:
+   - Press F12 to open Developer Tools
+   - Go to Console tab
+   - Look for specific error messages
+   - Common issues:
+     - CORS errors (check NEXT_FRONTEND_URL in backend .env)
+     - API connection failures (check backend is running)
+     - Environment variable missing (check .env.local)
+
+6. **Try production build**:
+   ```bash
+   cd surfsense_web
+   npm run build
+   npm start
+   ```
+
+7. **Check if you have a default search space**:
+   ```bash
+   # Query database to see if user has search spaces
+   sudo -u postgres psql surfsense
+   SELECT id, name, owner_id FROM search_spaces;
+   \q
+   ```
+   
+   If no search spaces exist, the dashboard should redirect to create one. If this doesn't happen, check frontend logs.
+
+8. **Verify Node.js version**:
+   ```bash
+   node --version
+   # Should be v20.x.x or higher
+   
+   # If lower, upgrade Node.js
+   ```
+
+9. **Check for port conflicts**:
+   ```bash
+   # Make sure ports aren't already in use
+   lsof -i :3000  # Frontend
+   lsof -i :8000  # Backend
+   lsof -i :5133  # ElectricSQL
+   ```
+
+10. **Review terminal output**:
+    - Look at the terminal where you ran `npm run dev`
+    - Turbopack errors often show more details there
+    - Look for compilation errors or module resolution issues
+
 ### Google OAuth Not Working
 
 **Problem**: "Sign in with Google" button doesn't work or shows errors

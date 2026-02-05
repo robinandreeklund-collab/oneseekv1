@@ -572,11 +572,28 @@ nano .env.local
 
 ```bash
 # Backend API URL
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_FASTAPI_BACKEND_URL=http://localhost:8000
+
+# Authentication type (must match backend)
+NEXT_PUBLIC_FASTAPI_BACKEND_AUTH_TYPE=LOCAL
+# Or: NEXT_PUBLIC_FASTAPI_BACKEND_AUTH_TYPE=GOOGLE
+
+# ETL Service (must match backend)
+NEXT_PUBLIC_ETL_SERVICE=DOCLING
+# Or: UNSTRUCTURED, LLAMACLOUD
 
 # ElectricSQL
-ELECTRIC_URL=http://localhost:5133
+NEXT_PUBLIC_ELECTRIC_URL=http://localhost:5133
+NEXT_PUBLIC_ELECTRIC_AUTH_MODE=insecure
+
+# Deployment mode
+NEXT_PUBLIC_DEPLOYMENT_MODE=self-hosted
 ```
+
+**Important**: 
+- All `NEXT_PUBLIC_*` variables must be set BEFORE building/starting the frontend
+- If you change these variables, restart the dev server or rebuild
+- The `AUTH_TYPE` must match between frontend and backend
 
 #### Start Development Server
 
