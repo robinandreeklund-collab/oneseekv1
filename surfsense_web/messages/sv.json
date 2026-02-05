@@ -794,12 +794,12 @@
     "integrations_subtitle": "Integrera med ditt teams viktigaste verktyg",
     "features_title": "AI kommer att svara på allt. Den verkliga utmaningen är att veta vilket svar man kan lita på.",
     "features_subtitle": "OneSeek är inte till för att ge snabbare svar. Det handlar om att ge bättre svar. Och med tiden – sannare svar.",
-    "feature_workflow_title": "Effektiviserat arbetsflöde",
-    "feature_workflow_desc": "Samla all din kunskap och dina resurser i en intelligent arbetsyta. Hitta det du behöver direkt och snabba upp beslutsfattandet.",
-    "feature_collaboration_title": "Sömlöst samarbete",
-    "feature_collaboration_desc": "Arbeta tillsammans utan ansträngning med samarbetsverktyg i realtid som håller hela teamet synkroniserat.",
-    "feature_customizable_title": "Helt anpassningsbart",
-    "feature_customizable_desc": "Välj bland 100+ ledande LLM:er och anropa valfri modell vid behov.",
+    "feature_workflow_title": "OneSeek Search™ - Compare",
+    "feature_workflow_desc": "Fråga en fråga. Få svar från flera AI-modeller såsom: GPT, Grok, Gemini, DeepSeek och OneSeek.",
+    "feature_collaboration_title": "OneSeek Debate Mode™",
+    "feature_collaboration_desc": "En realtids-AI-debattarena: Flera AI-modeller debatterar en fråga under 3 omgångar, Slumpmässig talarordning (Chain-of-Agents). OneSeek deltar både som debattör och som samlare/syntetisera av debatten",
+    "feature_customizable_title": "Den Radikala Transparensen",
+    "feature_customizable_desc": "OneSeek visar hela sitt tänkande: Resonemangsträd / Chain-of-Thought, Klickbara steg: fråga → API-anrop → analys → svar, all rådata och mellansteg synliga.",
     "cta_transform": "Förvandla hur ditt team",
     "cta_transform_bold": "upptäcker och samarbetar",
     "cta_unite_start": "Förena",
@@ -809,16 +809,16 @@
     "cta_talk_to_us": "Prata med oss",
     "features": {
       "find_ask_act": {
-        "title": "Hitta, fråga, agera",
-        "description": "Få omedelbar information, detaljerade uppdateringar och källhänvisade svar över företagets och personlig kunskap."
+        "title": "Realtidsdata, Alltid aktuell, alltid verifierbar.",
+        "description": "väljer dynamiskt relevanta realtids-API:er:\n• Statliga myndighetsdata\n• Klimat & väder\n• Forskningsdatabaser\n• Statistiska centralbyråer och motsvarande\nResultaten är:\n• Fakta-baserade\n• Aktuella\n• Med direkta källlänkar\nAI-svar ska aldrig vara föråldrade gissningar."
       },
       "real_time_collab": {
         "title": "Arbeta tillsammans i realtid",
         "description": "Förvandla era företagsdokument till flerspelarutrymmen med live-redigeringar, synkat innehåll och närvaro."
       },
       "beyond_text": {
-        "title": "Samarbeta bortom text",
-        "description": "Skapa podcasts och multimedia som ditt team kan kommentera, dela och förbättra tillsammans."
+        "title": "OneSeek Podcast Mode™",
+        "description": "vilken fråga som helst till en mångsidig, multi-perspektiv-podcast\nMed OneSeek blir din nyfikenhet till en levande diskussion:\nStäll en fråga – och låt flera avancerade AI-modeller mötas i en podcast-liknande konversation. Olika röster, olika infallsvinklar, olika slutsatser – allt presenterat som en riktig podd du kan lyssna på eller läsa."
       },
       "context_counts": {
         "title": "Kontext där det räknas",
