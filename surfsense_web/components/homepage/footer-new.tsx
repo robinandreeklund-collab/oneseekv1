@@ -44,7 +44,11 @@ export function FooterNew() {
 	];
 
 	// Social icons hidden per requirements
-	const socials: any[] = [
+	const socials: Array<{
+		title: string;
+		href: string;
+		icon: any;
+	}> = [
 		// {
 		// 	title: "Twitter",
 		// 	href: "https://x.com/mod_setter",
@@ -67,7 +71,10 @@ export function FooterNew() {
 		// },
 	];
 	// Legal links hidden per requirements
-	const legals: any[] = [
+	const legals: Array<{
+		title: string;
+		href: string;
+	}> = [
 		// {
 		// 	title: tAuth("privacy_policy"),
 		// 	href: "/privacy",

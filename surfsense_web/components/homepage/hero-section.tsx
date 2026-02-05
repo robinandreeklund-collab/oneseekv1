@@ -98,8 +98,8 @@ export function HeroSection() {
 						<>
 							<div className="relative mx-auto inline-block w-max filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
 								<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
-									<span className="">{t("hero_title_part1")}</span>
-									{t("hero_title_part2") && <span className=""> {t("hero_title_part2")}</span>}
+									<span>{t("hero_title_part1")}</span>
+									{t("hero_title_part2") && <span> {t("hero_title_part2")}</span>}
 								</div>
 							</div>
 						</>
