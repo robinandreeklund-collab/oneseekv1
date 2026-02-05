@@ -2,10 +2,13 @@
 
 import { useAtomValue, useSetAtom } from "jotai";
 import { MessageSquare } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { clearTargetCommentIdAtom, targetCommentIdAtom } from "@/atoms/chat/current-thread.atom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { useLocaleContext } from "@/contexts/LocaleContext";
+import { DEFAULT_LOCALE, LOCALE_MAP, type LocaleCode } from "@/lib/locale";
 import { cn } from "@/lib/utils";
 import { CommentComposer } from "../comment-composer/comment-composer";
 import { CommentActions } from "./comment-actions";
@@ -23,49 +26,59 @@ function getInitials(name: string | null, email: string): string {
 	return email[0].toUpperCase();
 }
 
-function formatTimestamp(dateString: string): string {
+function formatTimestamp(
+	dateString: string,
+	locale: LocaleCode,
+	t: ReturnType<typeof useTranslations>
+): string {
 	const date = new Date(dateString);
 	const now = new Date();
 	const diffMs = now.getTime() - date.getTime();
 	const diffMins = Math.floor(diffMs / 60000);
 	const diffHours = Math.floor(diffMs / 3600000);
 	const diffDays = Math.floor(diffMs / 86400000);
+	const resolvedLocale = LOCALE_MAP[locale] ?? LOCALE_MAP[DEFAULT_LOCALE];
+	const hour12 = locale !== "sv";
 
-	const timeStr = date.toLocaleTimeString("en-US", {
+	const timeStr = date.toLocaleTimeString(resolvedLocale, {
 		hour: "numeric",
 		minute: "2-digit",
-		hour12: true,
+		hour12,
 	});
 
 	if (diffMins < 1) {
-		return "Just now";
+		return t("just_now");
 	}
 
 	if (diffMins < 60) {
-		return `${diffMins}m ago`;
+		return t("minutes_ago", { count: diffMins });
 	}
 
 	if (diffHours < 24 && date.getDate() === now.getDate()) {
-		return `Today at ${timeStr}`;
+		return t("today_at", { time: timeStr });
 	}
 
 	const yesterday = new Date(now);
 	yesterday.setDate(yesterday.getDate() - 1);
 	if (date.getDate() === yesterday.getDate() && diffDays < 2) {
-		return `Yesterday at ${timeStr}`;
+		return t("yesterday_at", { time: timeStr });
 	}
 
 	if (diffDays < 7) {
-		const dayName = date.toLocaleDateString("en-US", { weekday: "long" });
-		return `${dayName} at ${timeStr}`;
+		const dayName = date.toLocaleDateString(resolvedLocale, { weekday: "long" });
+		return t("day_at", { day: dayName, time: timeStr });
 	}
 
+	const formattedDate = date.toLocaleDateString(resolvedLocale, {
+		month: "short",
+		day: "numeric",
+		year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+	});
 	return (
-		date.toLocaleDateString("en-US", {
-			month: "short",
-			day: "numeric",
-			year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-		}) + ` at ${timeStr}`
+		t("date_at", {
+			date: formattedDate,
+			time: timeStr,
+		})
 	);
 }
 
@@ -117,6 +130,8 @@ export function CommentItem({
 }: CommentItemProps) {
 	const commentRef = useRef<HTMLDivElement>(null);
 	const [isHighlighted, setIsHighlighted] = useState(false);
+	const { locale } = useLocaleContext();
+	const t = useTranslations("timestamps");
 
 	// Target comment navigation
 	const targetCommentId = useAtomValue(targetCommentIdAtom);
@@ -176,7 +191,7 @@ export function CommentItem({
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{displayName}</span>
 					<span className="shrink-0 text-xs text-muted-foreground">
-						{formatTimestamp(comment.createdAt)}
+						{formatTimestamp(comment.createdAt, locale, t)}
 					</span>
 					{comment.isEdited && (
 						<span className="shrink-0 text-xs text-muted-foreground">(edited)</span>

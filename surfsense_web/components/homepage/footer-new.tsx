@@ -1,3 +1,5 @@
+"use client";
+
 import {
 	IconBrandDiscord,
 	IconBrandGithub,
@@ -5,9 +7,14 @@ import {
 	IconBrandTwitter,
 } from "@tabler/icons-react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { Logo } from "@/components/Logo";
 
 export function FooterNew() {
+	const tNav = useTranslations("navigation");
+	const tAuth = useTranslations("auth");
+	const tFooter = useTranslations("footer");
+
 	const pages = [
 		// {
 		//   title: "All Products",
@@ -22,15 +29,15 @@ export function FooterNew() {
 		//   href: "#",
 		// },
 		{
-			title: "Pricing",
+			title: tNav("pricing"),
 			href: "/pricing",
 		},
 		{
-			title: "Docs",
+			title: tNav("docs"),
 			href: "/docs",
 		},
 		{
-			title: "Contact Us",
+			title: tNav("contact"),
 			href: "/contact",
 		},
 	];
@@ -59,11 +66,11 @@ export function FooterNew() {
 	];
 	const legals = [
 		{
-			title: "Privacy Policy",
+			title: tAuth("privacy_policy"),
 			href: "/privacy",
 		},
 		{
-			title: "Terms of Service",
+			title: tAuth("terms_of_service"),
 			href: "/terms",
 		},
 		// {
@@ -74,7 +81,7 @@ export function FooterNew() {
 
 	const signups = [
 		{
-			title: "Sign In",
+			title: tAuth("sign_in"),
 			href: "/login",
 		},
 		// {
@@ -95,14 +102,12 @@ export function FooterNew() {
 						<span className="dark:text-white/90 text-gray-800 text-lg font-bold">SurfSense</span>
 					</div>
 
-					<div className="mt-2 ml-2">
-						&copy; SurfSense {new Date().getFullYear()}. All rights reserved.
-					</div>
+					<div className="mt-2 ml-2">{tFooter("rights_reserved", { year: new Date().getFullYear() })}</div>
 				</div>
 				<div className="grid grid-cols-2 lg:grid-cols-4 gap-10 items-start mt-10 sm:mt-0 md:mt-0">
 					<div className="flex justify-center space-y-4 flex-col w-full">
 						<p className="transition-colors hover:text-text-neutral-800 text-neutral-600 dark:text-neutral-300 font-bold">
-							Pages
+							{tFooter("pages")}
 						</p>
 						<ul className="transition-colors hover:text-text-neutral-800 text-neutral-600 dark:text-neutral-300 list-none space-y-4">
 							{pages.map((page, idx) => (
@@ -117,7 +122,7 @@ export function FooterNew() {
 
 					<div className="flex justify-center space-y-4 flex-col">
 						<p className="transition-colors hover:text-text-neutral-800 text-neutral-600 dark:text-neutral-300 font-bold">
-							Socials
+							{tFooter("socials")}
 						</p>
 						<ul className="transition-colors hover:text-text-neutral-800 text-neutral-600 dark:text-neutral-300 list-none space-y-4">
 							{socials.map((social, idx) => {
@@ -141,7 +146,7 @@ export function FooterNew() {
 
 					<div className="flex justify-center space-y-4 flex-col">
 						<p className="transition-colors hover:text-text-neutral-800 text-neutral-600 dark:text-neutral-300 font-bold">
-							Legal
+							{tFooter("legal")}
 						</p>
 						<ul className="transition-colors hover:text-text-neutral-800 text-neutral-600 dark:text-neutral-300 list-none space-y-4">
 							{legals.map((legal, idx) => (
@@ -158,7 +163,7 @@ export function FooterNew() {
 					</div>
 					<div className="flex justify-center space-y-4 flex-col">
 						<p className="transition-colors hover:text-text-neutral-800 text-neutral-600 dark:text-neutral-300 font-bold">
-							Register
+							{tFooter("register")}
 						</p>
 						<ul className="transition-colors hover:text-text-neutral-800 text-neutral-600 dark:text-neutral-300 list-none space-y-4">
 							{signups.map((auth, idx) => (

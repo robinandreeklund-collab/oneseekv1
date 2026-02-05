@@ -190,7 +190,15 @@
 		"register": "Register",
 		"dashboard": "Dashboard",
 		"sign_in": "Sign In",
+		"changelog": "Changelog",
 		"book_a_call": "Book a call"
+	},
+	"footer": {
+		"pages": "Pages",
+		"socials": "Socials",
+		"legal": "Legal",
+		"register": "Register",
+		"rights_reserved": "© SurfSense {year}. All rights reserved."
 	},
 	"nav_menu": {
 		"settings": "Settings",
@@ -216,10 +224,14 @@
 		"title": "SurfSense Pricing",
 		"subtitle": "Choose that works for you",
 		"community_name": "COMMUNITY",
+		"cloud_name": "CLOUD",
 		"enterprise_name": "ENTERPRISE",
 		"forever": "forever",
+		"cloud_period": "in beta",
 		"contact_us": "Contact Us",
+		"community_support": "Community support",
 		"feature_llms": "Supports 100+ LLMs",
+		"openai_litellm_support": "Supports OpenAI spec and LiteLLM",
 		"feature_ollama": "Supports local Ollama or vLLM setups",
 		"feature_embeddings": "6000+ Embedding Models",
 		"feature_files": "50+ File extensions supported.",
@@ -230,14 +242,30 @@
 		"upcoming_notes": "Upcoming: Note Management",
 		"community_desc": "Open source version with powerful features",
 		"get_started": "Get Started",
+		"cloud_desc": "Instant access for individuals and teams",
 		"everything_community": "Everything in Community",
+		"email_support": "Email support",
+		"get_started_seconds": "Get started in seconds",
+		"instant_access": "Instant access to new features",
+		"easy_access_anywhere": "Easy access from anywhere",
+		"remote_team_management": "Remote team management and collaboration",
 		"priority_support": "Priority Support",
 		"access_controls": "Access Controls",
 		"collaboration": "Collaboration and multiplayer features",
+		"white_glove_setup": "White-glove setup and deployment",
+		"managed_updates": "Monthly managed updates and maintenance",
+		"on_prem_vpc": "On-prem or VPC deployment",
+		"audit_logs": "Audit logs and compliance",
+		"sso": "SSO, OIDC & SAML",
+		"sla_guarantee": "SLA guarantee",
+		"uptime_guarantee": "Uptime guarantee on VPC",
 		"video_gen": "Video generation",
 		"advanced_security": "Advanced security features",
 		"enterprise_desc": "For large organizations with specific needs",
-		"contact_sales": "Contact Sales"
+		"contact_sales": "Contact Sales",
+		"popular": "Popular",
+		"billed_monthly": "billed monthly",
+		"billed_annually": "billed annually"
 	},
 	"contact": {
 		"title": "Contact",
@@ -252,6 +280,9 @@
 		"email_placeholder": "john.doe@example.com",
 		"company_placeholder": "Example Inc.",
 		"message_placeholder": "Type your message here",
+		"schedule_description": "Schedule a meeting with our Head of Product, Eric Lammertsma, or send us an email.",
+		"schedule_meeting": "Schedule a Meeting",
+		"or": "or",
 		"submit": "Submit",
 		"submitting": "Submitting...",
 		"name_required": "Name is required",
@@ -720,6 +751,14 @@
 		"server_error": "Server error",
 		"network_error": "Network error"
 	},
+	"timestamps": {
+		"just_now": "Just now",
+		"minutes_ago": "{count}m ago",
+		"today_at": "Today at {time}",
+		"yesterday_at": "Yesterday at {time}",
+		"day_at": "{day} at {time}",
+		"date_at": "{date} at {time}"
+	},
 	"searchSpaceSettings": {
 		"title": "Search Space Settings",
 		"back_to_app": "Back to app",
@@ -747,6 +786,7 @@
 	"homepage": {
 		"hero_title_part1": "The AI Workspace",
 		"hero_title_part2": "Built for Teams",
+		"notebooklm_title": "NotebookLM for Teams",
 		"hero_description": "Connect any LLM to your internal knowledge sources and chat with it in real time alongside your team.",
 		"cta_start_trial": "Start Free Trial",
 		"cta_explore": "Explore",
@@ -801,5 +841,9 @@
 		"not_found_title": "This chat has been deleted.",
 		"click_here": "Click here",
 		"sign_in_prompt": "to log in to SurfSense and start your own."
+	},
+	"changelog": {
+		"title": "Changelog",
+		"subtitle": "Stay up to date with the latest updates and improvements to SurfSense."
 	}
 }

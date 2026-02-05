@@ -7,10 +7,10 @@ import { defineRouting } from "next-intl/routing";
  */
 export const routing = defineRouting({
 	// A list of all locales that are supported
-	locales: ["en", "zh"],
+	locales: ["sv", "en", "zh"],
 
 	// Used when no locale matches
-	defaultLocale: "en",
+	defaultLocale: "sv",
 
 	// The `localePrefix` setting controls whether the locale is included in the pathname
 	// 'as-needed': Only add locale prefix when not using the default locale

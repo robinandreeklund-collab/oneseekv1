@@ -63,7 +63,7 @@ export const metadata: Metadata = {
 				alt: "SurfSense AI Research Assistant",
 			},
 		],
-		locale: "en_US",
+		locale: "sv_SE",
 	},
 	twitter: {
 		card: "summary_large_image",
@@ -92,7 +92,7 @@ export default function RootLayout({
 	// Language can be switched dynamically through LanguageSwitcher component
 	// Locale state is managed by LocaleContext and persisted in localStorage
 	return (
-		<html lang="en" suppressHydrationWarning>
+		<html lang="sv" suppressHydrationWarning>
 			<body className={cn(roboto.className, "bg-white dark:bg-black antialiased h-full w-full ")}>
 				<PostHogProvider>
 					<LocaleProvider>

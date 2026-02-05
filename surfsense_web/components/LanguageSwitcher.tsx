@@ -9,6 +9,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { useLocaleContext } from "@/contexts/LocaleContext";
+import { DEFAULT_LOCALE } from "@/lib/locale";
 
 /**
  * Language switcher component
@@ -20,16 +21,19 @@ export function LanguageSwitcher() {
 
 	// Supported languages configuration
 	const languages = [
+		{ code: "sv" as const, name: "Svenska", flag: "🇸🇪" },
 		{ code: "en" as const, name: "English", flag: "🇺🇸" },
 		{ code: "zh" as const, name: "简体中文", flag: "🇨🇳" },
 	];
+	const defaultLanguageName =
+		languages.find((lang) => lang.code === DEFAULT_LOCALE)?.name ?? "Svenska";
 
 	/**
 	 * Handle language change
 	 * Updates locale in context and localStorage
 	 */
 	const handleLanguageChange = (newLocale: string) => {
-		setLocale(newLocale as "en" | "zh");
+		setLocale(newLocale as "sv" | "en" | "zh");
 	};
 
 	return (
@@ -37,7 +41,7 @@ export function LanguageSwitcher() {
 			<SelectTrigger className="w-[110px] sm:w-[160px] h-8 sm:h-10 text-xs sm:text-sm px-2 sm:px-3 gap-1 sm:gap-2">
 				<Globe className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
 				<SelectValue>
-					{languages.find((lang) => lang.code === locale)?.name || "English"}
+					{languages.find((lang) => lang.code === locale)?.name ?? defaultLanguageName}
 				</SelectValue>
 			</SelectTrigger>
 			<SelectContent>

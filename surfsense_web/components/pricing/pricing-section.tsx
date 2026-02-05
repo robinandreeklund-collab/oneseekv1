@@ -1,75 +1,81 @@
 "use client";
 
+import { useMemo } from "react";
+import { useTranslations } from "next-intl";
 import { Pricing } from "@/components/pricing";
 
-const demoPlans = [
-	{
-		name: "COMMUNITY",
-		price: "0",
-		yearlyPrice: "0",
-		period: "forever",
-		features: [
-			"Community support",
-			"Supports 100+ LLMs",
-			"Supports OpenAI spec and LiteLLM",
-			"Supports local vLLM or Ollama setups",
-			"6000+ embedding models",
-			"50+ File extensions supported.",
-			"Podcasts support with local TTS providers.",
-			"Connects with 15+ external sources, like Drive and Notion.",
-			"Cross-Browser Extension for dynamic webpages including authenticated content",
-			"Role-based access control (RBAC)",
-			"Collaboration and team features",
-		],
-		description: "Open source version with powerful features",
-		buttonText: "Dive In",
-		href: "/docs",
-		isPopular: false,
-	},
-	{
-		name: "CLOUD",
-		price: "0",
-		yearlyPrice: "0",
-		period: "in beta",
-		features: [
-			"Everything in Community",
-			"Email support",
-			"Get started in seconds",
-			"Instant access to new features",
-			"Easy access from anywhere",
-			"Remote team management and collaboration",
-		],
-		description: "Instant access for individuals and teams",
-		buttonText: "Get Started",
-		href: "/",
-		isPopular: true,
-	},
-	{
-		name: "ENTERPRISE",
-		price: "Contact Us",
-		yearlyPrice: "Contact Us",
-		period: "",
-		features: [
-			"Everything in Community",
-			"Priority support",
-			"White-glove setup and deployment",
-			"Monthly managed updates and maintenance",
-			"On-prem or VPC deployment",
-			"Audit logs and compliance",
-			"SSO, OIDC & SAML",
-			"SLA guarantee",
-			"Uptime guarantee on VPC",
-		],
-		description: "Professional, customized setup for large organizations",
-		buttonText: "Contact Sales",
-		href: "/contact",
-		isPopular: false,
-	},
-];
-
 function PricingBasic() {
+	const t = useTranslations("pricing");
+	const demoPlans = useMemo(
+		() => [
+			{
+				name: t("community_name"),
+				price: "0",
+				yearlyPrice: "0",
+				period: t("forever"),
+				features: [
+					t("community_support"),
+					t("feature_llms"),
+					t("openai_litellm_support"),
+					t("feature_ollama"),
+					t("feature_embeddings"),
+					t("feature_files"),
+					t("feature_podcasts"),
+					t("feature_sources"),
+					t("feature_extension"),
+					t("access_controls"),
+					t("collaboration"),
+				],
+				description: t("community_desc"),
+				buttonText: t("get_started"),
+				href: "/docs",
+				isPopular: false,
+			},
+			{
+				name: t("cloud_name"),
+				price: "0",
+				yearlyPrice: "0",
+				period: t("cloud_period"),
+				features: [
+					t("everything_community"),
+					t("email_support"),
+					t("get_started_seconds"),
+					t("instant_access"),
+					t("easy_access_anywhere"),
+					t("remote_team_management"),
+				],
+				description: t("cloud_desc"),
+				buttonText: t("get_started"),
+				href: "/",
+				isPopular: true,
+			},
+			{
+				name: t("enterprise_name"),
+				price: t("contact_us"),
+				yearlyPrice: t("contact_us"),
+				period: "",
+				features: [
+					t("everything_community"),
+					t("priority_support"),
+					t("white_glove_setup"),
+					t("managed_updates"),
+					t("on_prem_vpc"),
+					t("audit_logs"),
+					t("sso"),
+					t("sla_guarantee"),
+					t("uptime_guarantee"),
+				],
+				description: t("enterprise_desc"),
+				buttonText: t("contact_sales"),
+				href: "/contact",
+				isPopular: false,
+			},
+		],
+		[t]
+	);
+
 	return (
-		<Pricing plans={demoPlans} title="SurfSense Pricing" description="Choose what works for you" />
+		<Pricing plans={demoPlans} title={t("title")} description={t("subtitle")} />
 	);
 }
 
