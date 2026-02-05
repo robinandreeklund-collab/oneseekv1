@@ -135,8 +135,8 @@ def _build_messages(request: PublicGlobalChatRequest) -> list:
     return messages
 
 
-async def get_public_llm(
-    request: PublicGlobalChatRequest = Depends(),
+async def resolve_public_llm(
+    request: PublicGlobalChatRequest,
 ):
     if not config.GLOBAL_LLM_CONFIGS:
         raise HTTPException(
@@ -197,10 +197,10 @@ def _resolve_public_tools() -> list[str]:
     return enabled_tools
 
 
-async def get_public_agent(
-    llm_bundle=Depends(get_public_llm),
+async def build_public_agent(
+    request: PublicGlobalChatRequest,
 ):
-    llm, llm_config, llm_config_id = llm_bundle
+    llm, llm_config, llm_config_id = await resolve_public_llm(request)
     dependencies = {"firecrawl_api_key": config.FIRECRAWL_API_KEY}
     enabled_tools = _resolve_public_tools()
     tools = await build_tools_async(
@@ -223,13 +223,13 @@ async def get_public_agent(
 async def public_global_chat(
     request: PublicGlobalChatRequest,
     http_request: Request,
-    agent_bundle=Depends(get_public_agent),
+    # Avoid Depends() on body to prevent 422 validation issues.
     user=Depends(current_optional_user),
 ):
     if not config.ANON_ACCESS_ENABLED:
         raise HTTPException(status_code=403, detail="Public chat is disabled.")
 
-    agent, llm_config, llm_config_id, enabled_tools = agent_bundle
+    agent, llm_config, llm_config_id, enabled_tools = await build_public_agent(request)
     cookie_value = http_request.cookies.get(ANON_SESSION_COOKIE_NAME)
     anon_session = get_or_create_anonymous_session(cookie_value)
 
