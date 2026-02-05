@@ -336,8 +336,16 @@ If you have team members:
 
 **Common errors**:
 ```
+# Assistant-ui packages conflict
 Could not resolve dependency:
 peer @assistant-ui/react@"^0.12.6" from @assistant-ui/react-ai-sdk@1.3.5
+
+# Fumadocs/Zod conflict
+Conflicting peer dependency: zod@4.3.6
+peerOptional zod@"4.x.x" from fumadocs-core@16.5.0
+
+# Other peer dependency conflicts
+Could not resolve dependency: peer X from Y
 ```
 
 **Solutions**:
