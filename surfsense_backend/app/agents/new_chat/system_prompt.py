@@ -171,9 +171,9 @@ You have access to the following tools:
     - lat: Latitude (decimal degrees)
     - lon: Longitude (decimal degrees)
     - country_code: Optional ISO country code (e.g., "se") to bias geocoding
-    - include_raw: Include full SMHI response (default: True)
-    - max_hours: Optional limit for forecast hours returned from now
-  - Returns: Weather data including current conditions and forecast time series
+    - include_raw: Include raw SMHI response (default: False)
+    - max_hours: Optional limit for forecast hours returned from now (default: 48, capped)
+  - Returns: Weather data including current conditions and forecast time series (truncated to max_hours)
   - NOTE: Include attribution when using the data (e.g., "Data from SMHI").
 
 9. trafiklab_route: Find public transport departures using Trafiklab realtime APIs.

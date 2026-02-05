@@ -22,6 +22,8 @@ SMHI_BASE_URL = (
     "https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2"
 )
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+DEFAULT_SMHI_MAX_HOURS = 48
+MAX_SMHI_MAX_HOURS = 120
 
 
 def _parse_iso_datetime(value: str) -> datetime | None:
@@ -143,8 +145,8 @@ def create_smhi_weather_tool():
         lat: float | None = None,
         lon: float | None = None,
         country_code: str | None = None,
-        include_raw: bool = True,
-        max_hours: int | None = None,
+        include_raw: bool = False,
+        max_hours: int | None = DEFAULT_SMHI_MAX_HOURS,
     ) -> dict[str, Any]:
         """
         Fetch weather data from SMHI for a location or coordinates.
@@ -158,8 +160,8 @@ def create_smhi_weather_tool():
             lat: Latitude in decimal degrees.
             lon: Longitude in decimal degrees.
             country_code: Optional ISO country code to bias geocoding (e.g., "se").
-            include_raw: Include full raw SMHI response (default: True).
-            max_hours: Optional limit for forecast hours returned from now.
+            include_raw: Include raw SMHI response (default: False, truncated to max_hours).
+            max_hours: Optional limit for forecast hours returned from now (default: 48, capped).
 
         Returns:
             A dictionary containing location info, current conditions,
@@ -234,6 +236,11 @@ def create_smhi_weather_tool():
                 "location": resolved_location,
             }
 
+        if max_hours is None:
+            max_hours = DEFAULT_SMHI_MAX_HOURS
+        if max_hours > MAX_SMHI_MAX_HOURS:
+            max_hours = MAX_SMHI_MAX_HOURS
+
         now = datetime.now(UTC)
         parsed_series: list[tuple[datetime, dict[str, Any]]] = []
         for entry in time_series:
@@ -258,10 +265,9 @@ def create_smhi_weather_tool():
         )
         current_summary = _build_summary(current_params)
 
-        limit_time = (
-            now + timedelta(hours=max_hours) if max_hours is not None else None
-        )
+        limit_time = now + timedelta(hours=max_hours)
         timeseries_out: list[dict[str, Any]] = []
+        raw_time_series: list[dict[str, Any]] = []
         for valid_time, entry in parsed_series:
             if limit_time and valid_time > limit_time:
                 continue
@@ -272,6 +278,7 @@ def create_smhi_weather_tool():
                     "parameters": params_map,
                 }
             )
+            raw_time_series.append(entry)
 
         source_url = (
             f"{SMHI_BASE_URL}/geotype/point/lon/{_format_coord(smhi_lon, smhi_decimals)}"
@@ -306,10 +313,14 @@ def create_smhi_weather_tool():
                 "units": current_units,
             },
             "timeseries": timeseries_out,
+            "max_hours": max_hours,
         }
 
         if include_raw:
-            result["raw"] = forecast
+            raw_payload = dict(forecast) if isinstance(forecast, dict) else {}
+            raw_payload["timeSeries"] = raw_time_series
+            raw_payload["raw_truncated"] = True
+            result["raw"] = raw_payload
 
         return result
 
