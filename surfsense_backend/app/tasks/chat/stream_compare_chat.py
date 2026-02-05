@@ -9,6 +9,7 @@ using a local LLM and Tavily.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -75,6 +76,23 @@ def _describe_key_format(api_key: str) -> str:
     if key.startswith("sk-"):
         return "OpenAI-like"
     return "Unknown"
+
+
+def _apply_provider_env(provider: str, api_key: str) -> None:
+    provider_key = provider.strip().upper()
+    if not api_key:
+        return
+    if provider_key == "XAI":
+        os.environ.setdefault("XAI_API_KEY", api_key)
+    elif provider_key == "DEEPSEEK":
+        os.environ.setdefault("DEEPSEEK_API_KEY", api_key)
+    elif provider_key == "GOOGLE":
+        os.environ.setdefault("GEMINI_API_KEY", api_key)
+        os.environ.setdefault("GOOGLE_API_KEY", api_key)
+    elif provider_key == "OPENROUTER":
+        os.environ.setdefault("OPENROUTER_API_KEY", api_key)
+    elif provider_key == "OPENAI":
+        os.environ.setdefault("OPENAI_API_KEY", api_key)
 
 
 def is_compare_request(user_query: str) -> bool:
@@ -219,10 +237,13 @@ async def stream_compare_chat(
                 )
             else:
                 model_name = str(config.get("model_name") or "")
-                api_key = config.get("api_key") or ""
+                api_key = str(config.get("api_key") or "").strip()
                 if not api_key:
                     provider_errors[provider["key"]] = "Missing API key"
                 else:
+                    provider_label = str(config.get("provider") or "").strip()
+                    if provider_label:
+                        _apply_provider_env(provider_label, api_key)
                     llm = create_chat_litellm_from_config(config)
                     if llm is None:
                         provider_errors[provider["key"]] = "Failed to initialize model"
