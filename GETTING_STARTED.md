@@ -349,6 +349,11 @@ Could not resolve dependency:
 peer zod@"^3.23.8" from ai@4.3.19
 (Requires upgrading to ai@6.x which supports zod 4.x)
 
+# React 19 / emblor conflict
+Could not resolve dependency:
+peer react@"^18.0.0" from emblor@1.4.8
+(Fixed with .npmrc legacy-peer-deps=true)
+
 # Other peer dependency conflicts
 Could not resolve dependency: peer X from Y
 ```
@@ -363,10 +368,21 @@ Could not resolve dependency: peer X from Y
    npm install
    ```
 
-2. **Use legacy peer deps** (temporary workaround):
+2. **Use legacy peer deps** (for React 19 compatibility):
+   
+   If you get errors about packages requiring React 18 (like emblor@1.4.8):
    ```bash
-   npm install --legacy-peer-deps
+   # The repository includes an .npmrc file with legacy-peer-deps=true
+   # This allows React 19 to work with packages that haven't updated yet
+   
+   # If .npmrc is missing, create it:
+   echo "legacy-peer-deps=true" > .npmrc
+   
+   # Then install:
+   npm install
    ```
+   
+   This is safe because React 19 is backward compatible with React 18 components.
 
 3. **Check Node.js version**:
    ```bash
