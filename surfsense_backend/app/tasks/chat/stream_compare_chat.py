@@ -71,7 +71,9 @@ COMPARE_CITATION_INSTRUCTIONS = (
     "When using information from the <sources> section, include citations in the "
     "format [citation:chunk_id] using chunk ids from <chunk id='...'> tags. "
     "MODEL_ANSWER documents represent other model outputs; only cite them when "
-    "explicitly referencing those outputs. Prefer Tavily sources for factual claims. "
+    "explicitly referencing those outputs. For model answers, the chunk ids are "
+    "Grok, DeepSeek, Gemini, and ChatGPT (e.g. [citation:Grok]). Prefer Tavily "
+    "sources for factual claims. "
     "Do not use numbered brackets like [1]. Do not include a separate references list."
 )
 
@@ -187,6 +189,7 @@ def _build_model_answer_documents(answers: dict[str, str]) -> list[dict]:
         provider_key = provider["key"]
         if provider_key not in answers:
             continue
+        provider_label = provider["display"]
         answer_text = _truncate_text(
             answers[provider_key], COMPARE_SUMMARY_ANSWER_CHARS
         )
@@ -196,16 +199,16 @@ def _build_model_answer_documents(answers: dict[str, str]) -> list[dict]:
             {
                 "document": {
                     "id": f"model-{provider_key}",
-                    "title": f"{provider['display']} response",
+                    "title": f"{provider_label} response",
                     "document_type": "MODEL_ANSWER",
                     "metadata": {
                         "source": "MODEL_ANSWER",
-                        "provider": provider["display"],
+                        "provider": provider_label,
                     },
                 },
                 "chunks": [
                     {
-                        "chunk_id": f"model-{provider_key}-1",
+                        "chunk_id": provider_label,
                         "content": answer_text,
                     }
                 ],
