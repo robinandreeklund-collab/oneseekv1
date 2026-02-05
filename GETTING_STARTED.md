@@ -820,6 +820,83 @@ WSL typically uses IPs in these ranges:
    - See [Supported File Extensions](README.md#-supported-file-extensions)
    - Try a different file format
 
+
+### 404 Error After Login (Dashboard Route)
+
+**Problem**: After logging in, you see a 404 error at `/dashboard/[number]/new-chat`
+
+**Common Causes**:
+
+1. **No Search Space created yet** (most common for new users)
+   - When you first log in, you need to create a Search Space
+   - The dashboard tries to redirect to `/dashboard/[search_space_id]/new-chat`
+   - If no search spaces exist, you may see a 404
+
+2. **Search Space query failing**
+   - Backend API not accessible
+   - Database connection issues
+   - Authentication token issues
+
+**Solutions**:
+
+1. **Navigate to dashboard root to create Search Space**:
+   ```bash
+   # In your browser, go to:
+   http://localhost:3000/dashboard
+   
+   # This should show you the welcome screen to create your first Search Space
+   ```
+
+2. **Check if backend is running**:
+   ```bash
+   # Test backend API
+   curl http://localhost:8000/api/v1/search_space/
+   
+   # Should return JSON with your search spaces (might be empty array if none exist)
+   ```
+
+3. **Check browser console for errors**:
+   - Open browser DevTools (F12)
+   - Look for network errors or API failures
+   - Check if authentication token is being sent
+
+4. **Verify database has search spaces**:
+   ```bash
+   # In your backend terminal, check database
+   cd surfsense_backend
+   python -c "from app.db import get_session; from app.models import SearchSpace; session = next(get_session()); print(f'Search spaces: {session.query(SearchSpace).count()}')"
+   ```
+
+5. **Create a Search Space via API** (if UI doesn't work):
+   ```bash
+   # Get your auth token from browser localStorage or login response
+   TOKEN="your_token_here"
+   
+   curl -X POST http://localhost:8000/api/v1/search_space/ \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "My First Space",
+       "description": "Testing space"
+     }'
+   ```
+
+6. **Clear browser cache and restart**:
+   ```bash
+   # Sometimes old routing cache causes issues
+   # In browser: Ctrl+Shift+R (hard refresh)
+   # Or clear site data in DevTools
+   ```
+
+**Expected Flow for New Users**:
+1. Register/Login → Redirected to `/dashboard`
+2. `/dashboard` shows welcome screen if no search spaces
+3. Click "Create First Search Space" button
+4. Fill in name and create
+5. Automatically redirected to `/dashboard/[id]/new-chat`
+
+If you're stuck at a 404, manually navigate to `http://localhost:3000/dashboard` to start the proper flow.
+
 ### Slow Performance
 
 **Problem**: Platform is slow or unresponsive
