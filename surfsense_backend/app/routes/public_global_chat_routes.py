@@ -44,11 +44,9 @@ _rate_limiter = SlidingWindowRateLimiter(
 )
 
 PUBLIC_SYSTEM_PROMPT = (
-    "You are SurfSense's public assistant. "
-    "Do not access or imply access to any private user data, connectors, or saved "
-    "chats. If a request needs personal data or account-specific actions, ask the "
-    "user to sign in."
-    "\n\nToday's date (UTC): {resolved_today}"
+    "Public chat constraints:\n"
+    "- Do not access or imply access to any private user data, connectors, or saved chats.\n"
+    "- If a request needs personal data or account-specific actions, ask the user to sign in."
 )
 
 PUBLIC_TOOL_HINT = "Only use tools that are available in your tool list."
@@ -117,7 +115,7 @@ def _build_system_prompt(
     enabled_tools: list[str],
 ) -> str:
     today = datetime.now(UTC).date().isoformat()
-    public_guard = PUBLIC_SYSTEM_PROMPT.format(resolved_today=today).strip()
+    public_guard = PUBLIC_SYSTEM_PROMPT.strip()
 
     system_instructions = ""
     citations_enabled = True
