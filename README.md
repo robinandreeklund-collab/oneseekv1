@@ -193,6 +193,44 @@ cd surfsense_backend
 python main.py
 ```
 
+### Anonymous Access (Public Global Chat)
+
+SurfSense can expose a read-only public chat endpoint that does not require login.
+This is intended for the global model only and does not access user data or saved chats.
+
+**Public endpoints (no auth required):**
+- `POST /api/v1/public/global/chat` - Basic chat with the global model
+- `GET /api/v1/global-new-llm-configs` - Public model list (safe metadata only)
+- `GET /api/v1/public/{share_token}` - Public chat snapshots
+
+Public chat requires global LLM configs (see `app/config/global_llm_config.yaml`).
+
+**Restricted endpoints (login required):**
+- Search spaces, connectors, documents, and saved chats
+- Personalized settings, premium models, data export, and admin tools
+
+**Security notes:**
+- Anonymous sessions use a signed cookie (`surfsense_anon_session`) for rate limiting.
+- Rate limiting is enforced per anonymous session or per authenticated user.
+- Public chat is read-only and does not use personal knowledge sources.
+- Public endpoints can be abused if left unbounded; use rate limits or disable via `ANON_ACCESS_ENABLED`.
+
+**Auth flow overview:**
+- Authentication is handled by FastAPI Users with JWT bearer tokens and optional Google OAuth.
+- Protected routes require the `current_active_user` dependency at the route level.
+- Public routes may use `current_optional_user` to support both anonymous and logged-in access.
+
+**Configuration (backend `.env`):**
+```
+ANON_ACCESS_ENABLED=TRUE
+ANON_SESSION_TTL_SECONDS=86400
+ANON_CHAT_RATE_LIMIT_MAX_REQUESTS=20
+ANON_CHAT_RATE_LIMIT_WINDOW_SECONDS=60
+ANON_CHAT_MAX_HISTORY_MESSAGES=10
+ANON_CHAT_DEFAULT_LLM_ID=0
+ANON_CHAT_TEMPERATURE=0.2
+```
+
 ### Quick Start with Docker 🐳
 
 > [!TIP]

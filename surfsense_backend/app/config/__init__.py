@@ -144,6 +144,24 @@ class Config:
     AUTH_TYPE = os.getenv("AUTH_TYPE")
     REGISTRATION_ENABLED = os.getenv("REGISTRATION_ENABLED", "TRUE").upper() == "TRUE"
 
+    # Anonymous public access
+    ANON_ACCESS_ENABLED = os.getenv("ANON_ACCESS_ENABLED", "TRUE").upper() == "TRUE"
+    ANON_SESSION_TTL_SECONDS = int(os.getenv("ANON_SESSION_TTL_SECONDS", "86400"))
+    ANON_CHAT_RATE_LIMIT_MAX_REQUESTS = int(
+        os.getenv("ANON_CHAT_RATE_LIMIT_MAX_REQUESTS", "20")
+    )
+    ANON_CHAT_RATE_LIMIT_WINDOW_SECONDS = int(
+        os.getenv("ANON_CHAT_RATE_LIMIT_WINDOW_SECONDS", "60")
+    )
+    ANON_CHAT_MAX_HISTORY_MESSAGES = int(
+        os.getenv("ANON_CHAT_MAX_HISTORY_MESSAGES", "10")
+    )
+    _ANON_CHAT_DEFAULT_LLM_ID = os.getenv("ANON_CHAT_DEFAULT_LLM_ID")
+    ANON_CHAT_DEFAULT_LLM_ID = (
+        int(_ANON_CHAT_DEFAULT_LLM_ID) if _ANON_CHAT_DEFAULT_LLM_ID else None
+    )
+    ANON_CHAT_TEMPERATURE = float(os.getenv("ANON_CHAT_TEMPERATURE", "0.2"))
+
     # Google OAuth
     GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
     GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")

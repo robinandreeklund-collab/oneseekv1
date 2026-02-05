@@ -15,12 +15,7 @@ from sqlalchemy.future import select
 
 from app.agents.new_chat.system_prompt import get_default_system_instructions
 from app.config import config
-from app.db import (
-    NewLLMConfig,
-    Permission,
-    User,
-    get_async_session,
-)
+from app.db import NewLLMConfig, Permission, User, get_async_session
 from app.schemas import (
     DefaultSystemInstructionsResponse,
     GlobalNewLLMConfigRead,
@@ -43,12 +38,13 @@ logger = logging.getLogger(__name__)
 
 @router.get("/global-new-llm-configs", response_model=list[GlobalNewLLMConfigRead])
 async def get_global_new_llm_configs(
-    user: User = Depends(current_active_user),
 ):
     """
     Get all available global NewLLMConfig configurations.
     These are pre-configured by the system administrator and available to all users.
     API keys are not exposed through this endpoint.
+
+    No authentication is required for this public read-only endpoint.
 
     Includes:
     - Auto mode (ID 0): Uses LiteLLM Router for automatic load balancing
