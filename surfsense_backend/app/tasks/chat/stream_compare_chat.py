@@ -42,6 +42,8 @@ COMPARE_PREFIX = "/compare"
 COMPARE_TIMEOUT_SECONDS = 90
 MAX_EXTERNAL_ANSWER_CHARS = 8000
 MAX_TAVILY_RESULTS = 6
+COMPARE_SUMMARY_ANSWER_CHARS = 600
+COMPARE_SUMMARY_FINAL_CHARS = 700
 
 COMPARE_MODELS = [
     {"key": "grok", "display": "Grok", "config_id": -20},
@@ -154,6 +156,20 @@ def _truncate_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "..."
+
+
+def _build_compare_summary(
+    query: str,
+    provider_summaries: dict[str, dict[str, str]],
+    final_answer: str,
+) -> dict:
+    return {
+        "query": query,
+        "providers": provider_summaries,
+        "final_answer": _truncate_text(final_answer, COMPARE_SUMMARY_FINAL_CHARS)
+        if final_answer
+        else "",
+    }
 
 
 async def _build_query_with_context(
@@ -274,6 +290,7 @@ async def stream_compare_chat(
 
         provider_steps: dict[str, dict[str, str | list[str] | None]] = {}
         provider_errors: dict[str, str] = {}
+        provider_summaries: dict[str, dict[str, str]] = {}
         provider_llms: dict[str, object] = {}
         provider_model_strings: dict[str, str] = {}
         provider_configs: dict[str, dict] = {}
@@ -350,6 +367,10 @@ async def stream_compare_chat(
                     status="completed",
                     items=completed_items,
                 )
+                provider_summaries[provider["key"]] = {
+                    "status": "error",
+                    "error": _truncate_text(error_msg, 200),
+                }
 
         answers: dict[str, str] = {}
         results_queue: asyncio.Queue[
@@ -398,6 +419,12 @@ async def stream_compare_chat(
                         answers[provider_key] = _truncate_text(
                             result, MAX_EXTERNAL_ANSWER_CHARS
                         )
+                        provider_summaries[provider_key] = {
+                            "status": "success",
+                            "answer": _truncate_text(
+                                result, COMPARE_SUMMARY_ANSWER_CHARS
+                            ),
+                        }
                         completed_items = [
                             *base_items,
                             f"Response length: {len(result)} chars",
@@ -409,6 +436,10 @@ async def stream_compare_chat(
                         *base_items,
                         f"Error: {_truncate_text(error_msg, 120)}",
                     ]
+                    provider_summaries[provider_key] = {
+                        "status": "error",
+                        "error": _truncate_text(error_msg, 200),
+                    }
 
                 yield streaming_service.format_thinking_step(
                     step_id=step_id,
@@ -548,6 +579,13 @@ async def stream_compare_chat(
             status="completed",
             items=analysis_items,
         )
+
+        compare_summary = _build_compare_summary(
+            query=compare_query,
+            provider_summaries=provider_summaries,
+            final_answer=final_answer,
+        )
+        yield streaming_service.format_data("compare-summary", compare_summary)
 
         text_id = streaming_service.generate_text_id()
         yield streaming_service.format_text_start(text_id)
