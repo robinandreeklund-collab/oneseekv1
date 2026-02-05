@@ -66,6 +66,13 @@ LOCAL_ANALYSIS_SYSTEM_PROMPT = (
     "models unless the user explicitly asks."
 )
 
+COMPARE_CITATION_INSTRUCTIONS = (
+    "When using information from the <sources> section, include citations in the "
+    "format [citation:chunk_id] using chunk ids from <chunk id='...'> tags. "
+    "MODEL_ANSWER documents represent other model outputs; only cite them when "
+    "explicitly referencing those outputs. Prefer Tavily sources for factual claims."
+)
+
 
 def _describe_key_format(api_key: str) -> str:
     key = api_key.strip()
@@ -170,6 +177,40 @@ def _build_compare_summary(
         if final_answer
         else "",
     }
+
+
+def _build_model_answer_documents(answers: dict[str, str]) -> list[dict]:
+    documents: list[dict] = []
+    for provider in COMPARE_MODELS:
+        provider_key = provider["key"]
+        if provider_key not in answers:
+            continue
+        answer_text = _truncate_text(
+            answers[provider_key], COMPARE_SUMMARY_ANSWER_CHARS
+        )
+        if not answer_text:
+            continue
+        documents.append(
+            {
+                "document": {
+                    "id": f"model-{provider_key}",
+                    "title": f"{provider['display']} response",
+                    "document_type": "MODEL_ANSWER",
+                    "metadata": {
+                        "source": "MODEL_ANSWER",
+                        "provider": provider["display"],
+                    },
+                },
+                "chunks": [
+                    {
+                        "chunk_id": f"model-{provider_key}-1",
+                        "content": answer_text,
+                    }
+                ],
+                "source": "MODEL_ANSWER",
+            }
+        )
+    return documents
 
 
 async def _build_query_with_context(
@@ -480,8 +521,6 @@ async def stream_compare_chat(
             search_space_id=search_space_id,
             top_k=MAX_TAVILY_RESULTS,
         )
-        tavily_context = format_documents_for_context(tavily_documents)
-
         if tavily_documents:
             analysis_items.append(f"Tavily results: {len(tavily_documents)}")
         else:
@@ -529,25 +568,32 @@ async def stream_compare_chat(
             ]
         )
 
+        model_answer_documents = _build_model_answer_documents(answers)
+        source_documents = [*model_answer_documents, *tavily_documents]
+        sources_context = (
+            format_documents_for_context(source_documents)
+            if source_documents
+            else ""
+        )
+
         prompt_parts = [
             f"<user_query>\n{query_with_context}\n</user_query>",
             "<external_answers>",
             answers_block,
             "</external_answers>",
+            "<sources>",
+            sources_context or "None",
+            "</sources>",
         ]
-        if tavily_context:
-            prompt_parts.append("<tavily_results>")
-            prompt_parts.append(tavily_context)
-            prompt_parts.append("</tavily_results>")
-        else:
-            prompt_parts.append("<tavily_results>None</tavily_results>")
 
         analysis_prompt = "\n".join(prompt_parts)
 
         try:
             local_response = await local_llm.ainvoke(
                 [
-                    SystemMessage(content=LOCAL_ANALYSIS_SYSTEM_PROMPT),
+                    SystemMessage(
+                        content=f"{LOCAL_ANALYSIS_SYSTEM_PROMPT}\n\n{COMPARE_CITATION_INSTRUCTIONS}"
+                    ),
                     HumanMessage(content=analysis_prompt),
                 ]
             )
