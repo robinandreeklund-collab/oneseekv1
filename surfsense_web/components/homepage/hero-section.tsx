@@ -112,7 +112,8 @@ export function HeroSection() {
 			</p>
 			<div className="mb-10 mt-8 flex w-full flex-col items-center justify-center gap-4 px-8 sm:flex-row md:mb-20">
 				<GetStartedButton />
-				<ContactSalesButton />
+				{/* Contact Sales button hidden per requirements */}
+				{/* <ContactSalesButton /> */}
 			</div>
 			<div
 				ref={containerRef}

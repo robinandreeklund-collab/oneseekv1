@@ -21,10 +21,10 @@ export const Navbar = () => {
 	const t = useTranslations("navigation");
 
 	const navItems = [
-		{ name: t("pricing"), link: "/pricing" },
+		// { name: t("pricing"), link: "/pricing" }, // Hidden per requirements
 		{ name: t("contact"), link: "/contact" },
 		{ name: t("changelog"), link: "/changelog" },
-		{ name: t("docs"), link: "/docs" },
+		// { name: t("docs"), link: "/docs" }, // Hidden per requirements
 	];
 
 	useEffect(() => {
@@ -67,7 +67,7 @@ const DesktopNav = ({ navItems, isScrolled }: any) => {
 				className="flex flex-1 flex-row items-center gap-0.5 hover:opacity-80 transition-opacity"
 			>
 				<Logo className="h-8 w-8 rounded-md" />
-				<span className="dark:text-white/90 text-gray-800 text-lg font-bold">SurfSense</span>
+				<span className="dark:text-white/90 text-gray-800 text-lg font-bold">Oneseek</span>
 			</Link>
 			<div className="hidden flex-1 flex-row items-center justify-center space-x-2 text-sm font-medium text-zinc-600 transition duration-200 hover:text-zinc-800 lg:flex lg:space-x-2">
 				{navItems.map((navItem: any, idx: number) => (
@@ -89,7 +89,8 @@ const DesktopNav = ({ navItems, isScrolled }: any) => {
 				))}
 			</div>
 			<div className="flex flex-1 items-center justify-end gap-2">
-				<Link
+				{/* Social links hidden per requirements */}
+				{/* <Link
 					href="https://discord.gg/ejRNvftDp9"
 					target="_blank"
 					rel="noopener noreferrer"
@@ -119,7 +120,7 @@ const DesktopNav = ({ navItems, isScrolled }: any) => {
 							{githubStars}
 						</span>
 					)}
-				</Link>
+				</Link> */}
 				<ThemeTogglerComponent />
 				<SignInButton variant="desktop" />
 			</div>
@@ -148,7 +149,7 @@ const MobileNav = ({ navItems, isScrolled }: any) => {
 					className="flex flex-row items-center gap-2 hover:opacity-80 transition-opacity"
 				>
 					<Logo className="h-8 w-8 rounded-md" />
-					<span className="dark:text-white/90 text-gray-800 text-lg font-bold">SurfSense</span>
+					<span className="dark:text-white/90 text-gray-800 text-lg font-bold">Oneseek</span>
 				</Link>
 				<button
 					type="button"
@@ -183,7 +184,8 @@ const MobileNav = ({ navItems, isScrolled }: any) => {
 							</Link>
 						))}
 						<div className="flex w-full items-center gap-2 pt-2">
-							<Link
+							{/* Social links hidden per requirements */}
+							{/* <Link
 								href="https://discord.gg/ejRNvftDp9"
 								target="_blank"
 								rel="noopener noreferrer"
@@ -213,7 +215,7 @@ const MobileNav = ({ navItems, isScrolled }: any) => {
 										{githubStars}
 									</span>
 								)}
-							</Link>
+							</Link> */}
 							<ThemeTogglerComponent />
 						</div>
 						<SignInButton variant="mobile" />
