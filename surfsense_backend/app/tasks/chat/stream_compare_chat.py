@@ -217,6 +217,13 @@ async def stream_compare_chat(
             items: list[str] = []
             if model_name:
                 items.append(f"Model: {model_name}")
+            if config:
+                provider_label = str(config.get("provider") or "").strip()
+                if provider_label:
+                    items.append(f"Provider: {provider_label}")
+                api_base_value = config.get("api_base")
+                if api_base_value:
+                    items.append(f"API base: {api_base_value}")
             items.append(f"Query: {short_query}")
             provider_steps[provider["key"]] = {
                 "id": step_id,

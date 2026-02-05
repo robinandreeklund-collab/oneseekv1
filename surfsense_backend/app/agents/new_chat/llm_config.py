@@ -60,6 +60,14 @@ PROVIDER_MAP = {
 }
 
 
+def _sanitize_config_value(value: object | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
 @dataclass
 class AgentConfig:
     """
@@ -352,13 +360,14 @@ def create_chat_litellm_from_config(llm_config: dict) -> ChatLiteLLM | None:
     # Create ChatLiteLLM instance with streaming enabled
     litellm_kwargs = {
         "model": model_string,
-        "api_key": llm_config.get("api_key"),
+        "api_key": _sanitize_config_value(llm_config.get("api_key")),
         "streaming": True,  # Enable streaming for real-time token streaming
     }
 
     # Add optional parameters
-    if llm_config.get("api_base"):
-        litellm_kwargs["api_base"] = llm_config["api_base"]
+    api_base = _sanitize_config_value(llm_config.get("api_base"))
+    if api_base:
+        litellm_kwargs["api_base"] = api_base
 
     # Add any additional litellm parameters
     if llm_config.get("litellm_params"):
@@ -405,13 +414,14 @@ def create_chat_litellm_from_agent_config(
     # Create ChatLiteLLM instance with streaming enabled
     litellm_kwargs = {
         "model": model_string,
-        "api_key": agent_config.api_key,
+        "api_key": _sanitize_config_value(agent_config.api_key),
         "streaming": True,  # Enable streaming for real-time token streaming
     }
 
     # Add optional parameters
-    if agent_config.api_base:
-        litellm_kwargs["api_base"] = agent_config.api_base
+    api_base = _sanitize_config_value(agent_config.api_base)
+    if api_base:
+        litellm_kwargs["api_base"] = api_base
 
     # Add any additional litellm parameters
     if agent_config.litellm_params:
