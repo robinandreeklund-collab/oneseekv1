@@ -797,7 +797,7 @@
     "feature_workflow_title": "OneSeek Search™ - Compare",
     "feature_workflow_desc": "Fråga en fråga. Få svar från flera AI-modeller såsom: GPT, Grok, Gemini, DeepSeek och OneSeek.",
     "feature_collaboration_title": "OneSeek Debate Mode™",
-    "feature_collaboration_desc": "En realtids-AI-debattarena: Flera AI-modeller debatterar en fråga under 3 omgångar, Slumpmässig talarordning (Chain-of-Agents). OneSeek deltar både som debattör och som samlare/syntetisera av debatten",
+    "feature_collaboration_desc": "En realtids-AI-debattarena: Flera AI-modeller debatterar en fråga under 3 omgångar, Slumpmässig talarordning (Chain-of-Agents). OneSeek deltar både som debattör och som samlare/syntetiserare av debatten",
     "feature_customizable_title": "Den Radikala Transparensen",
     "feature_customizable_desc": "OneSeek visar hela sitt tänkande: Resonemangsträd / Chain-of-Thought, Klickbara steg: fråga → API-anrop → analys → svar, all rådata och mellansteg synliga.",
     "cta_transform": "Förvandla hur ditt team",
@@ -810,7 +810,7 @@
     "features": {
       "find_ask_act": {
         "title": "Realtidsdata, Alltid aktuell, alltid verifierbar.",
-        "description": "väljer dynamiskt relevanta realtids-API:er:\n• Statliga myndighetsdata\n• Klimat & väder\n• Forskningsdatabaser\n• Statistiska centralbyråer och motsvarande\nResultaten är:\n• Fakta-baserade\n• Aktuella\n• Med direkta källlänkar\nAI-svar ska aldrig vara föråldrade gissningar."
+        "description": "OneSeek väljer dynamiskt relevanta realtids-API:er:\n• Statliga myndighetsdata\n• Klimat & väder\n• Forskningsdatabaser\n• Statistiska centralbyråer och motsvarande\nResultaten är:\n• Fakta-baserade\n• Aktuella\n• Med direkta källlänkar\nAI-svar ska aldrig vara föråldrade gissningar."
       },
       "real_time_collab": {
         "title": "Arbeta tillsammans i realtid",
@@ -818,7 +818,7 @@
       },
       "beyond_text": {
         "title": "OneSeek Podcast Mode™",
-        "description": "vilken fråga som helst till en mångsidig, multi-perspektiv-podcast\nMed OneSeek blir din nyfikenhet till en levande diskussion:\nStäll en fråga – och låt flera avancerade AI-modeller mötas i en podcast-liknande konversation. Olika röster, olika infallsvinklar, olika slutsatser – allt presenterat som en riktig podd du kan lyssna på eller läsa."
+        "description": "Förvandla vilken fråga som helst till en mångsidig, multi-perspektiv-podcast.\nMed OneSeek blir din nyfikenhet till en levande diskussion:\nStäll en fråga – och låt flera avancerade AI-modeller mötas i en podcast-liknande konversation. Olika röster, olika infallsvinklar, olika slutsatser – allt presenterat som en riktig podd du kan lyssna på eller läsa."
       },
       "context_counts": {
         "title": "Kontext där det räknas",
