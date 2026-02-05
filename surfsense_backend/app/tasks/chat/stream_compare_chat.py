@@ -1,0 +1,431 @@
+"""
+Streaming task for SurfSense compare mode.
+
+Compare mode runs the same query across multiple external LLMs in parallel,
+streams thinking steps for each call, then synthesizes an optimized answer
+using a local LLM and Tavily.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+from collections.abc import AsyncGenerator
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+
+from app.agents.new_chat.llm_config import (
+    create_chat_litellm_from_agent_config,
+    create_chat_litellm_from_config,
+    load_agent_config,
+    load_llm_config_from_yaml,
+)
+from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
+from app.db import Document, SurfsenseDocsDocument
+from app.schemas.new_chat import ChatAttachment
+from app.services.connector_service import ConnectorService
+from app.services.new_streaming_service import VercelStreamingService
+from app.tasks.chat.context_formatters import (
+    format_attachments_as_context,
+    format_mentioned_documents_as_context,
+    format_mentioned_surfsense_docs_as_context,
+)
+
+COMPARE_PREFIX = "/compare"
+COMPARE_TIMEOUT_SECONDS = 90
+MAX_EXTERNAL_ANSWER_CHARS = 8000
+MAX_TAVILY_RESULTS = 6
+
+COMPARE_MODELS = [
+    {"key": "grok", "display": "Grok", "config_id": -20},
+    {"key": "deepseek", "display": "DeepSeek", "config_id": -21},
+    {"key": "gemini", "display": "Gemini", "config_id": -22},
+    {"key": "chatgpt", "display": "ChatGPT", "config_id": -23},
+]
+
+EXTERNAL_SYSTEM_PROMPT = (
+    "You are a helpful assistant. Answer the user's question clearly and concisely."
+)
+
+LOCAL_ANALYSIS_SYSTEM_PROMPT = (
+    "You are SurfSense Compare Analyzer. You will receive the user query, multiple "
+    "draft answers from external models, and Tavily web snippets. Your task is to "
+    "evaluate correctness, resolve conflicts, fill gaps, and produce a high-quality "
+    "optimized response. Use your own knowledge where appropriate. If information "
+    "is uncertain or conflicting, mention the uncertainty. Respond in the same "
+    "language as the user. Do not mention model names or that you compared multiple "
+    "models unless the user explicitly asks."
+)
+
+
+def is_compare_request(user_query: str) -> bool:
+    """Check if the user query activates compare mode."""
+    return user_query.strip().lower().startswith(COMPARE_PREFIX)
+
+
+def extract_compare_query(user_query: str) -> str:
+    """Strip the /compare prefix and return the actual query."""
+    trimmed = user_query.strip()
+    if not trimmed.lower().startswith(COMPARE_PREFIX):
+        return ""
+    remainder = trimmed[len(COMPARE_PREFIX) :].strip()
+    if remainder.startswith(":"):
+        remainder = remainder[1:].strip()
+    return remainder
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
+async def _build_query_with_context(
+    user_query: str,
+    session: AsyncSession,
+    search_space_id: int,
+    attachments: list[ChatAttachment] | None,
+    mentioned_document_ids: list[int] | None,
+    mentioned_surfsense_doc_ids: list[int] | None,
+) -> str:
+    mentioned_documents: list[Document] = []
+    if mentioned_document_ids:
+        result = await session.execute(
+            select(Document)
+            .options(selectinload(Document.chunks))
+            .filter(
+                Document.id.in_(mentioned_document_ids),
+                Document.search_space_id == search_space_id,
+            )
+        )
+        mentioned_documents = list(result.scalars().all())
+
+    mentioned_surfsense_docs: list[SurfsenseDocsDocument] = []
+    if mentioned_surfsense_doc_ids:
+        result = await session.execute(
+            select(SurfsenseDocsDocument)
+            .options(selectinload(SurfsenseDocsDocument.chunks))
+            .filter(SurfsenseDocsDocument.id.in_(mentioned_surfsense_doc_ids))
+        )
+        mentioned_surfsense_docs = list(result.scalars().all())
+
+    context_parts: list[str] = []
+    if attachments:
+        context_parts.append(format_attachments_as_context(attachments))
+    if mentioned_documents:
+        context_parts.append(format_mentioned_documents_as_context(mentioned_documents))
+    if mentioned_surfsense_docs:
+        context_parts.append(
+            format_mentioned_surfsense_docs_as_context(mentioned_surfsense_docs)
+        )
+
+    if context_parts:
+        context = "\n\n".join(context_parts)
+        return f"{context}\n\n<user_query>{user_query}</user_query>"
+
+    return user_query
+
+
+async def _call_external_llm(
+    llm,
+    query: str,
+    timeout_seconds: int,
+) -> str:
+    response = await asyncio.wait_for(
+        llm.ainvoke(
+            [
+                SystemMessage(content=EXTERNAL_SYSTEM_PROMPT),
+                HumanMessage(content=query),
+            ]
+        ),
+        timeout=timeout_seconds,
+    )
+    content = getattr(response, "content", None)
+    if content is None:
+        return ""
+    return str(content).strip()
+
+
+async def stream_compare_chat(
+    user_query: str,
+    search_space_id: int,
+    chat_id: int,
+    session: AsyncSession,
+    user_id: str | None = None,
+    llm_config_id: int = -1,
+    attachments: list[ChatAttachment] | None = None,
+    mentioned_document_ids: list[int] | None = None,
+    mentioned_surfsense_doc_ids: list[int] | None = None,
+) -> AsyncGenerator[str, None]:
+    streaming_service = VercelStreamingService()
+
+    compare_query = extract_compare_query(user_query)
+    if not compare_query:
+        yield streaming_service.format_error(
+            "Compare mode requires a question after /compare."
+        )
+        yield streaming_service.format_finish()
+        yield streaming_service.format_done()
+        return
+
+    try:
+        query_with_context = await _build_query_with_context(
+            user_query=compare_query,
+            session=session,
+            search_space_id=search_space_id,
+            attachments=attachments,
+            mentioned_document_ids=mentioned_document_ids,
+            mentioned_surfsense_doc_ids=mentioned_surfsense_doc_ids,
+        )
+
+        connector_service = ConnectorService(session, search_space_id=search_space_id)
+
+        yield streaming_service.format_message_start()
+        yield streaming_service.format_start_step()
+
+        short_query = _truncate_text(compare_query, 80)
+
+        provider_steps: dict[str, dict[str, str | list[str] | None]] = {}
+        provider_errors: dict[str, str] = {}
+        provider_llms: dict[str, object] = {}
+
+        for provider in COMPARE_MODELS:
+            config = load_llm_config_from_yaml(provider["config_id"])
+            display = provider["display"]
+            model_name = ""
+            if not config:
+                provider_errors[provider["key"]] = (
+                    f"Missing global config id {provider['config_id']}"
+                )
+            else:
+                model_name = str(config.get("model_name") or "")
+                api_key = config.get("api_key") or ""
+                if not api_key:
+                    provider_errors[provider["key"]] = "Missing API key"
+                else:
+                    llm = create_chat_litellm_from_config(config)
+                    if llm is None:
+                        provider_errors[provider["key"]] = "Failed to initialize model"
+                    else:
+                        provider_llms[provider["key"]] = llm
+
+            step_id = f"compare-{provider['key']}-{uuid.uuid4().hex[:8]}"
+            items: list[str] = []
+            if model_name:
+                items.append(f"Model: {model_name}")
+            items.append(f"Query: {short_query}")
+            provider_steps[provider["key"]] = {
+                "id": step_id,
+                "title": f"Asking {display}",
+                "items": items,
+            }
+
+            yield streaming_service.format_thinking_step(
+                step_id=step_id,
+                title=f"Asking {display}",
+                status="in_progress",
+                items=items,
+            )
+
+            if provider["key"] not in provider_llms:
+                error_msg = provider_errors.get(provider["key"], "Unavailable")
+                completed_items = [
+                    *items,
+                    f"Error: {_truncate_text(error_msg, 120)}",
+                ]
+                yield streaming_service.format_thinking_step(
+                    step_id=step_id,
+                    title=f"Asking {display}",
+                    status="completed",
+                    items=completed_items,
+                )
+
+        answers: dict[str, str] = {}
+        tasks: dict[asyncio.Task, str] = {}
+        start_times: dict[str, float] = {}
+
+        for provider_key, llm in provider_llms.items():
+            start_times[provider_key] = time.monotonic()
+            task = asyncio.create_task(
+                _call_external_llm(llm, query_with_context, COMPARE_TIMEOUT_SECONDS)
+            )
+            tasks[task] = provider_key
+
+        for task in asyncio.as_completed(tasks):
+            provider_key = tasks[task]
+            step_info = provider_steps.get(provider_key, {})
+            step_id = str(step_info.get("id"))
+            title = str(step_info.get("title"))
+            base_items = list(step_info.get("items") or [])
+
+            try:
+                result = await task
+                result = result.strip()
+                if not result:
+                    raise RuntimeError("Empty response")
+                answers[provider_key] = _truncate_text(result, MAX_EXTERNAL_ANSWER_CHARS)
+                elapsed = time.monotonic() - start_times.get(provider_key, time.monotonic())
+                completed_items = [
+                    *base_items,
+                    f"Response length: {len(result)} chars",
+                    f"Elapsed: {elapsed:.1f}s",
+                ]
+            except Exception as exc:
+                error_msg = str(exc)
+                completed_items = [
+                    *base_items,
+                    f"Error: {_truncate_text(error_msg, 120)}",
+                ]
+
+            yield streaming_service.format_thinking_step(
+                step_id=step_id,
+                title=title,
+                status="completed",
+                items=completed_items,
+            )
+
+        if not answers:
+            yield streaming_service.format_error(
+                "Compare mode failed: no external answers were retrieved."
+            )
+            yield streaming_service.format_finish_step()
+            yield streaming_service.format_finish()
+            yield streaming_service.format_done()
+            return
+
+        analysis_step_id = f"compare-analysis-{uuid.uuid4().hex[:8]}"
+        analysis_items = [
+            f"Responses received: {len(answers)}/{len(COMPARE_MODELS)}"
+        ]
+
+        yield streaming_service.format_thinking_step(
+            step_id=analysis_step_id,
+            title="Analyzing and validating responses",
+            status="in_progress",
+            items=analysis_items,
+        )
+
+        _, tavily_documents = await connector_service.search_tavily(
+            user_query=compare_query,
+            search_space_id=search_space_id,
+            top_k=MAX_TAVILY_RESULTS,
+        )
+        tavily_context = format_documents_for_context(tavily_documents)
+
+        if tavily_documents:
+            analysis_items.append(f"Tavily results: {len(tavily_documents)}")
+        else:
+            analysis_items.append("Tavily results: 0")
+
+        agent_config = await load_agent_config(
+            session=session,
+            config_id=llm_config_id,
+            search_space_id=search_space_id,
+        )
+        if not agent_config:
+            analysis_items.append("Error: Failed to load local LLM configuration")
+            yield streaming_service.format_thinking_step(
+                step_id=analysis_step_id,
+                title="Analyzing and validating responses",
+                status="completed",
+                items=analysis_items,
+            )
+            yield streaming_service.format_error("Failed to load local LLM configuration.")
+            yield streaming_service.format_finish_step()
+            yield streaming_service.format_finish()
+            yield streaming_service.format_done()
+            return
+
+        local_llm = create_chat_litellm_from_agent_config(agent_config)
+        if not local_llm:
+            analysis_items.append("Error: Failed to create local LLM instance")
+            yield streaming_service.format_thinking_step(
+                step_id=analysis_step_id,
+                title="Analyzing and validating responses",
+                status="completed",
+                items=analysis_items,
+            )
+            yield streaming_service.format_error("Failed to create local LLM instance.")
+            yield streaming_service.format_finish_step()
+            yield streaming_service.format_finish()
+            yield streaming_service.format_done()
+            return
+
+        answers_block = "\n".join(
+            [
+                f"<answer provider='{provider['key']}'>\n{answers[provider['key']]}\n</answer>"
+                for provider in COMPARE_MODELS
+                if provider["key"] in answers
+            ]
+        )
+
+        prompt_parts = [
+            f"<user_query>\n{query_with_context}\n</user_query>",
+            "<external_answers>",
+            answers_block,
+            "</external_answers>",
+        ]
+        if tavily_context:
+            prompt_parts.append("<tavily_results>")
+            prompt_parts.append(tavily_context)
+            prompt_parts.append("</tavily_results>")
+        else:
+            prompt_parts.append("<tavily_results>None</tavily_results>")
+
+        analysis_prompt = "\n".join(prompt_parts)
+
+        try:
+            local_response = await local_llm.ainvoke(
+                [
+                    SystemMessage(content=LOCAL_ANALYSIS_SYSTEM_PROMPT),
+                    HumanMessage(content=analysis_prompt),
+                ]
+            )
+            final_answer = str(getattr(local_response, "content", "") or "").strip()
+        except Exception as exc:
+            analysis_items.append(
+                f"Error: {_truncate_text(str(exc), 120)}"
+            )
+            yield streaming_service.format_thinking_step(
+                step_id=analysis_step_id,
+                title="Analyzing and validating responses",
+                status="completed",
+                items=analysis_items,
+            )
+            yield streaming_service.format_error(
+                "Failed to generate the final answer."
+            )
+            yield streaming_service.format_finish_step()
+            yield streaming_service.format_finish()
+            yield streaming_service.format_done()
+            return
+        if not final_answer:
+            final_answer = "I could not generate a response."
+
+        analysis_items.append(f"Final answer length: {len(final_answer)} chars")
+        yield streaming_service.format_thinking_step(
+            step_id=analysis_step_id,
+            title="Analyzing and validating responses",
+            status="completed",
+            items=analysis_items,
+        )
+
+        text_id = streaming_service.generate_text_id()
+        yield streaming_service.format_text_start(text_id)
+        for part in streaming_service.stream_text(text_id, final_answer, chunk_size=24):
+            yield part
+        yield streaming_service.format_text_end(text_id)
+
+        yield streaming_service.format_finish_step()
+        yield streaming_service.format_finish()
+        yield streaming_service.format_done()
+
+    except Exception as exc:
+        yield streaming_service.format_error(f"Error during compare mode: {exc!s}")
+        yield streaming_service.format_finish_step()
+        yield streaming_service.format_finish()
+        yield streaming_service.format_done()

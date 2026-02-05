@@ -183,6 +183,71 @@ global_llm_configs:
     use_default_system_instructions: true
     citations_enabled: true
 
+  # Compare Mode Defaults (used by /compare)
+  - id: -20
+    name: "Compare Grok"
+    description: "xAI Grok for compare mode"
+    provider: "XAI"
+    model_name: "grok-2-latest"
+    api_key: "your-xai-api-key-here"
+    api_base: "https://api.x.ai/v1"
+    rpm: 60
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 3000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false
+
+  - id: -21
+    name: "Compare DeepSeek"
+    description: "DeepSeek Chat for compare mode"
+    provider: "DEEPSEEK"
+    model_name: "deepseek-chat"
+    api_key: "your-deepseek-api-key-here"
+    api_base: "https://api.deepseek.com/v1"
+    rpm: 60
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 3000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false
+
+  - id: -22
+    name: "Compare Gemini"
+    description: "Gemini for compare mode"
+    provider: "GOOGLE"
+    model_name: "gemini-1.5-pro"
+    api_key: "your-gemini-api-key-here"
+    api_base: ""
+    rpm: 60
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 3000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false
+
+  - id: -23
+    name: "Compare ChatGPT"
+    description: "OpenAI ChatGPT for compare mode"
+    provider: "OPENAI"
+    model_name: "gpt-4o"
+    api_key: "sk-your-openai-api-key-here"
+    api_base: ""
+    rpm: 500
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 3000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false
+
 # Notes:
 # - ID 0 is reserved for "Auto" mode - uses LiteLLM Router for load balancing
 # - Use negative IDs to distinguish global configs from user configs (NewLLMConfig in DB)
