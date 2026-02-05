@@ -101,6 +101,94 @@ cd electric
 docker compose up -d
 ```
 
+### How to Install and Start ElectricSQL
+
+Since ElectricSQL is critical, here's a complete installation guide:
+
+#### Prerequisites: Docker
+
+ElectricSQL runs via Docker. Check if Docker is installed:
+
+```bash
+docker --version
+docker compose version
+```
+
+**If Docker is not installed:**
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install docker.io docker-compose-plugin
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER  # Log out and back in after this
+```
+
+**macOS:**
+Download and install [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/)
+
+**Windows (WSL2):**
+1. Install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
+2. Enable WSL2 integration in Docker Desktop settings
+
+#### Step-by-Step Installation
+
+**1. Navigate to the electric directory:**
+```bash
+cd electric
+```
+
+**2. Start ElectricSQL:**
+```bash
+docker compose up -d
+```
+
+This will:
+- Pull the Electric Docker image (first time only)
+- Start the Electric service in the background
+- Expose port 5133
+
+**3. Verify it's running:**
+```bash
+# Check if service responds
+curl http://localhost:5133
+# Expected: {"version":"0.x.x",...}
+
+# Check Docker container
+docker ps | grep electric
+# Expected: Container running on port 5133
+```
+
+#### Troubleshooting ElectricSQL
+
+**Port 5133 already in use:**
+```bash
+# Find what's using the port
+sudo lsof -i :5133
+# OR
+sudo netstat -tulpn | grep 5133
+
+# Stop conflicting service, then:
+cd electric
+docker compose down
+docker compose up -d
+```
+
+**Container won't start:**
+```bash
+# Check logs
+cd electric
+docker compose logs
+
+# Common fixes:
+# - Ensure PostgreSQL is running
+# - Restart Docker: sudo systemctl restart docker
+```
+
+**Connection refused (WSL users):**
+If running backend in WSL but frontend in Windows, ElectricSQL must run in WSL. See [WSL Issues](#wsl-and-windows-mixed-environment-issues).
+
 ---
 
 ## Accessing the Platform
