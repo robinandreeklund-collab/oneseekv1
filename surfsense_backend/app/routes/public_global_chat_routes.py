@@ -114,7 +114,9 @@ def _build_system_prompt(
     llm_config: dict | None,
     enabled_tools: list[str],
 ) -> str:
-    today = datetime.now(UTC).date().isoformat()
+    now = datetime.now(UTC).astimezone(UTC)
+    resolved_today = now.date().isoformat()
+    resolved_time = now.strftime("%H:%M:%S")
     public_guard = PUBLIC_SYSTEM_PROMPT.strip()
 
     system_instructions = ""
@@ -125,15 +127,18 @@ def _build_system_prompt(
         citations_enabled = llm_config.get("citations_enabled", True)
         if custom_instructions.strip():
             system_instructions = custom_instructions.format(
-                resolved_today=today
+                resolved_today=resolved_today,
+                resolved_time=resolved_time,
             ).strip()
         elif use_default:
             system_instructions = SURFSENSE_SYSTEM_INSTRUCTIONS.format(
-                resolved_today=today
+                resolved_today=resolved_today,
+                resolved_time=resolved_time,
             ).strip()
     else:
         system_instructions = SURFSENSE_SYSTEM_INSTRUCTIONS.format(
-            resolved_today=today
+            resolved_today=resolved_today,
+            resolved_time=resolved_time,
         ).strip()
 
     tool_instructions = _build_tool_instructions(enabled_tools)

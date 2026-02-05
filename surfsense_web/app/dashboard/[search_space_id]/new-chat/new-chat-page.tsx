@@ -445,6 +445,7 @@ export default function NewChatPage() {
 
 				const userMsgId = `msg-user-${Date.now()}`;
 				const assistantMsgId = `msg-assistant-${Date.now()}`;
+				const currentThinkingSteps = new Map<string, ThinkingStepData>();
 
 				const userMessage: ThreadMessageLike = {
 					id: userMsgId,
@@ -548,6 +549,17 @@ export default function NewChatPage() {
 												};
 											})
 										);
+									}
+									if (parsed.type === "data-thinking-step") {
+										const stepData = parsed.data as ThinkingStepData;
+										if (stepData?.id) {
+											currentThinkingSteps.set(stepData.id, stepData);
+											setMessageThinkingSteps((prev) => {
+												const newMap = new Map(prev);
+												newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
+												return newMap;
+											});
+										}
 									}
 									if (parsed.type === "error") {
 										toast.error(parsed.errorText || "Public chat failed.");
