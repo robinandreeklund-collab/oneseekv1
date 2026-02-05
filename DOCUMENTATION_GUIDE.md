@@ -6,6 +6,14 @@ Welcome to SurfSense! This document helps you navigate the documentation based o
 
 ### Choose Your Path
 
+#### 👤 **I just installed SurfSense and want to start using it**
+→ **[GETTING_STARTED.md](GETTING_STARTED.md)** ⭐ **START HERE**
+- Create your account
+- Log in to the platform
+- First-time setup
+- Upload documents and start chatting
+- Troubleshoot common user issues
+
 #### 🚀 **I want to try SurfSense quickly**
 → **[README.md](README.md)** - Quick Start section
 - Use Docker one-liner
@@ -13,7 +21,7 @@ Welcome to SurfSense! This document helps you navigate the documentation based o
 - Pre-configured environment
 
 #### 🔧 **I want to install SurfSense properly**
-→ **[INSTALLATION.md](INSTALLATION.md)** ⭐ **RECOMMENDED**
+→ **[INSTALLATION.md](INSTALLATION.md)**
 - Complete installation guide
 - PostgreSQL + pgvector setup
 - Redis configuration
@@ -46,7 +54,27 @@ Welcome to SurfSense! This document helps you navigate the documentation based o
 - Installation options overview
 - Tech stack overview
 
-### INSTALLATION.md ⭐
+### GETTING_STARTED.md ⭐
+**User guide for new users (500+ lines)**
+
+**Covers:**
+- How to access the platform
+- Creating an account (LOCAL and Google OAuth)
+- Logging in for the first time
+- First-time setup walkthrough
+- Creating search spaces
+- Configuring LLM settings
+- Uploading documents
+- Starting your first chat
+- Troubleshooting user issues
+
+**Best for:**
+- New users after installation
+- First-time platform access
+- Understanding basic features
+- Getting productive quickly
+
+### INSTALLATION.md
 **Complete installation guide (1300+ lines)**
 
 **Covers:**
@@ -108,18 +136,35 @@ Welcome to SurfSense! This document helps you navigate the documentation based o
 
 ### By Use Case
 
-| Use Case | Guide | Time to Setup |
-|----------|-------|---------------|
+| Use Case | Guide | Time to Complete |
+|----------|-------|------------------|
+| **I just installed, now what?** | **GETTING_STARTED.md** ⭐ | **5-10 minutes** |
 | Quick evaluation | README.md (Docker) | 5 minutes |
 | Testing with local LLMs | TESTING_WITHOUT_DATABASE.md | 15 minutes |
 | Development setup | INSTALLATION.md (Manual) | 1-2 hours |
 | Production deployment | INSTALLATION.md (Production) | 2-4 hours |
 | Understanding architecture | IMPLEMENTATION_SUMMARY.md | - |
 
+### By Stage
+
+| Stage | Documentation |
+|-------|---------------|
+| **Before Installation** | README.md → Installation Options |
+| **During Installation** | INSTALLATION.md |
+| **After Installation** | **GETTING_STARTED.md** ⭐ |
+| **Using the Platform** | GETTING_STARTED.md |
+| **Development/Testing** | TESTING_WITHOUT_DATABASE.md |
+| **Production Deployment** | INSTALLATION.md → Production |
+| **Technical Deep-Dive** | IMPLEMENTATION_SUMMARY.md |
+
 ### By Component
 
 | Component | Documentation |
 |-----------|---------------|
+| **Account Creation** | **GETTING_STARTED.md** → Creating an Account |
+| **Login** | **GETTING_STARTED.md** → Logging In |
+| **First-Time Setup** | **GETTING_STARTED.md** → First Time Setup |
+| **Using the Platform** | **GETTING_STARTED.md** → Using SurfSense |
 | PostgreSQL | INSTALLATION.md → PostgreSQL Setup |
 | pgvector | INSTALLATION.md → PostgreSQL Setup |
 | Redis | INSTALLATION.md → Redis Setup |
@@ -129,7 +174,7 @@ Welcome to SurfSense! This document helps you navigate the documentation based o
 | Production | INSTALLATION.md → Production Deployment |
 | Local LLMs | TESTING_WITHOUT_DATABASE.md |
 | Configuration | INSTALLATION.md → Configuration |
-| Troubleshooting | INSTALLATION.md → Troubleshooting |
+| Troubleshooting | INSTALLATION.md or GETTING_STARTED.md → Troubleshooting |
 
 ### By Operating System
 

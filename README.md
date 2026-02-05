@@ -139,11 +139,20 @@ Check out our public roadmap and contribute your ideas or feedback:
 
 ## How to get started?
 
+### 🚀 New to SurfSense?
+
+**Start here**: **[GETTING_STARTED.md](GETTING_STARTED.md)** - User Guide
+- 👤 **Create your account** (LOCAL or Google OAuth)
+- 🔐 **Log in** to the platform
+- 📝 **First-time setup** walkthrough
+- 💬 **Start chatting** with your documents
+- ❓ **Troubleshooting** common issues
+
 ### 📚 Installation Guides
 
 Choose the guide that fits your needs:
 
-- **[INSTALLATION.md](INSTALLATION.md)** - **⭐ Complete Installation Guide** (Recommended)
+- **[INSTALLATION.md](INSTALLATION.md)** - **⭐ Complete Installation Guide**
   - PostgreSQL setup and configuration
   - Redis installation
   - Manual installation steps for all platforms
