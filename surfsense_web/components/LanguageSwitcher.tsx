@@ -21,8 +21,8 @@ export function LanguageSwitcher() {
 	// Supported languages configuration
 	const languages = [
 		{ code: "sv" as const, name: "Svenska", flag: "🇸🇪" },
-		{ code: "en" as const, name: "Engelska", flag: "🇺🇸" },
-		{ code: "zh" as const, name: "Förenklad kinesiska", flag: "🇨🇳" },
+		{ code: "en" as const, name: "English", flag: "🇺🇸" },
+		{ code: "zh" as const, name: "简体中文", flag: "🇨🇳" },
 	];
 
 	/**

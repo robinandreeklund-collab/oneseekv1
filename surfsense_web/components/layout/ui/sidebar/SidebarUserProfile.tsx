@@ -22,8 +22,8 @@ import type { User } from "../../types/layout.types";
 // Supported languages configuration
 const LANGUAGES = [
 	{ code: "sv" as const, name: "Svenska", flag: "🇸🇪" },
-	{ code: "en" as const, name: "Engelska", flag: "🇺🇸" },
-	{ code: "zh" as const, name: "Förenklad kinesiska", flag: "🇨🇳" },
+	{ code: "en" as const, name: "English", flag: "🇺🇸" },
+	{ code: "zh" as const, name: "简体中文", flag: "🇨🇳" },
 ];
 
 // Supported themes configuration
