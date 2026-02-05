@@ -329,6 +329,67 @@ If you have team members:
 
 ## Troubleshooting
 
+
+### NPM Install Dependency Conflicts
+
+**Problem**: `npm install` fails with dependency resolution errors like "ERESOLVE unable to resolve dependency tree"
+
+**Common errors**:
+```
+Could not resolve dependency:
+peer @assistant-ui/react@"^0.12.6" from @assistant-ui/react-ai-sdk@1.3.5
+```
+
+**Solutions**:
+
+1. **Clear npm cache and reinstall** (try this first):
+   ```bash
+   cd surfsense_web
+   rm -rf node_modules package-lock.json
+   npm cache clean --force
+   npm install
+   ```
+
+2. **Use legacy peer deps** (temporary workaround):
+   ```bash
+   npm install --legacy-peer-deps
+   ```
+
+3. **Check Node.js version**:
+   ```bash
+   node --version
+   # Should be v20.x.x or higher
+   ```
+   
+   If using older Node.js, update it:
+   ```bash
+   # Using nvm
+   nvm install 20
+   nvm use 20
+   ```
+
+4. **WSL-specific: Clear Windows npm cache**:
+   If you previously ran npm in Windows PowerShell:
+   ```bash
+   # In WSL
+   rm -rf node_modules package-lock.json
+   
+   # Clear global cache
+   npm cache clean --force
+   
+   # Install fresh
+   npm install
+   ```
+
+5. **Verify package.json is up to date**:
+   Make sure you have the latest version from the repository:
+   ```bash
+   git pull origin main
+   ```
+
+**If none of these work**, check the [GitHub Issues](https://github.com/MODSetter/SurfSense/issues) for known dependency conflicts.
+
+
 ### Cannot Access http://localhost:3000
 
 **Problem**: Browser shows "Connection refused" or "This site can't be reached"
