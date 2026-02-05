@@ -4,4 +4,6 @@
 node_modules/
 .ruff_cache/
 .venv
+venv/
+venv
 .pnpm-store
