@@ -35,6 +35,10 @@ def _parse_iso_datetime(value: str) -> datetime | None:
         return None
 
 
+def _format_coord(value: float, decimals: int) -> str:
+    return f"{value:.{decimals}f}"
+
+
 def _params_to_maps(parameters: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, str]]:
     values: dict[str, Any] = {}
     units: dict[str, str] = {}
@@ -97,12 +101,33 @@ async def _geocode_location(
     return results[0]
 
 
-async def _fetch_smhi_forecast(lat: float, lon: float) -> dict[str, Any]:
-    url = f"{SMHI_BASE_URL}/geotype/point/lon/{lon}/lat/{lat}/data.json"
+async def _fetch_smhi_forecast(
+    lat: float, lon: float
+) -> tuple[dict[str, Any], float, float, int]:
+    rounding_steps = [6, 5, 4, 3]
+    last_error: Exception | None = None
     async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        return response.json()
+        for decimals in rounding_steps:
+            lat_str = _format_coord(lat, decimals)
+            lon_str = _format_coord(lon, decimals)
+            url = f"{SMHI_BASE_URL}/geotype/point/lon/{lon_str}/lat/{lat_str}/data.json"
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                payload = response.json()
+                return payload, float(lat_str), float(lon_str), decimals
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if exc.response is not None and exc.response.status_code == 404:
+                    continue
+                raise
+            except Exception as exc:
+                last_error = exc
+                raise
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("SMHI request failed without response.")
 
 
 def create_smhi_weather_tool():
@@ -190,7 +215,9 @@ def create_smhi_weather_tool():
             }
 
         try:
-            forecast = await _fetch_smhi_forecast(lat=lat, lon=lon)
+            forecast, smhi_lat, smhi_lon, smhi_decimals = await _fetch_smhi_forecast(
+                lat=lat, lon=lon
+            )
         except Exception as exc:
             logger.error("SMHI forecast fetch failed: %s", exc)
             return {
@@ -246,12 +273,30 @@ def create_smhi_weather_tool():
                 }
             )
 
+        source_url = (
+            f"{SMHI_BASE_URL}/geotype/point/lon/{_format_coord(smhi_lon, smhi_decimals)}"
+            f"/lat/{_format_coord(smhi_lat, smhi_decimals)}/data.json"
+        )
+        geometry = forecast.get("geometry") if isinstance(forecast, dict) else None
+        grid_point = None
+        if isinstance(geometry, dict):
+            coords = geometry.get("coordinates")
+            if (
+                isinstance(coords, list)
+                and coords
+                and isinstance(coords[0], list)
+                and len(coords[0]) >= 2
+            ):
+                grid_point = {"lon": coords[0][0], "lat": coords[0][1]}
+
         result: dict[str, Any] = {
             "status": "ok",
             "attribution": "Data from SMHI",
             "source": {
                 "provider": "SMHI",
-                "url": f"{SMHI_BASE_URL}/geotype/point/lon/{lon}/lat/{lat}/data.json",
+                "url": source_url,
+                "requested_point": {"lat": smhi_lat, "lon": smhi_lon},
+                "grid_point": grid_point,
             },
             "location": resolved_location,
             "current": {
