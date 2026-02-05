@@ -34,141 +34,15 @@ from app.services.chat_session_state_service import (
 )
 from app.services.connector_service import ConnectorService
 from app.services.new_streaming_service import VercelStreamingService
+from app.tasks.chat.stream_compare_chat import is_compare_request, stream_compare_chat
+from app.tasks.chat.context_formatters import (
+    format_attachments_as_context,
+    format_mentioned_documents_as_context,
+    format_mentioned_surfsense_docs_as_context,
+)
 from app.utils.content_utils import bootstrap_history_from_db
 
 
-def format_attachments_as_context(attachments: list[ChatAttachment]) -> str:
-    """Format attachments as context for the agent."""
-    if not attachments:
-        return ""
-
-    context_parts = ["<user_attachments>"]
-    for i, attachment in enumerate(attachments, 1):
-        context_parts.append(
-            f"<attachment index='{i}' name='{attachment.name}' type='{attachment.type}'>"
-        )
-        context_parts.append(f"<![CDATA[{attachment.content}]]>")
-        context_parts.append("</attachment>")
-    context_parts.append("</user_attachments>")
-
-    return "\n".join(context_parts)
-
-
-def format_mentioned_documents_as_context(documents: list[Document]) -> str:
-    """
-    Format mentioned documents as context for the agent.
-
-    Uses the same XML structure as knowledge_base.format_documents_for_context
-    to ensure citations work properly with chunk IDs.
-    """
-    if not documents:
-        return ""
-
-    context_parts = ["<mentioned_documents>"]
-    context_parts.append(
-        "The user has explicitly mentioned the following documents from their knowledge base. "
-        "These documents are directly relevant to the query and should be prioritized as primary sources. "
-        "Use [citation:CHUNK_ID] format for citations (e.g., [citation:123])."
-    )
-    context_parts.append("")
-
-    for doc in documents:
-        # Build metadata JSON
-        metadata = doc.document_metadata or {}
-        metadata_json = json.dumps(metadata, ensure_ascii=False)
-
-        # Get URL from metadata
-        url = (
-            metadata.get("url")
-            or metadata.get("source")
-            or metadata.get("page_url")
-            or ""
-        )
-
-        context_parts.append("<document>")
-        context_parts.append("<document_metadata>")
-        context_parts.append(f"  <document_id>{doc.id}</document_id>")
-        context_parts.append(
-            f"  <document_type>{doc.document_type.value}</document_type>"
-        )
-        context_parts.append(f"  <title><![CDATA[{doc.title}]]></title>")
-        context_parts.append(f"  <url><![CDATA[{url}]]></url>")
-        context_parts.append(
-            f"  <metadata_json><![CDATA[{metadata_json}]]></metadata_json>"
-        )
-        context_parts.append("</document_metadata>")
-        context_parts.append("")
-        context_parts.append("<document_content>")
-
-        # Use chunks if available (preferred for proper citations)
-        if hasattr(doc, "chunks") and doc.chunks:
-            for chunk in doc.chunks:
-                context_parts.append(
-                    f"  <chunk id='{chunk.id}'><![CDATA[{chunk.content}]]></chunk>"
-                )
-        else:
-            # Fallback to document content if chunks not loaded
-            # Use document ID as chunk ID prefix for consistency
-            context_parts.append(
-                f"  <chunk id='{doc.id}'><![CDATA[{doc.content}]]></chunk>"
-            )
-
-        context_parts.append("</document_content>")
-        context_parts.append("</document>")
-        context_parts.append("")
-
-    context_parts.append("</mentioned_documents>")
-
-    return "\n".join(context_parts)
-
-
-def format_mentioned_surfsense_docs_as_context(
-    documents: list[SurfsenseDocsDocument],
-) -> str:
-    """Format mentioned SurfSense documentation as context for the agent."""
-    if not documents:
-        return ""
-
-    context_parts = ["<mentioned_surfsense_docs>"]
-    context_parts.append(
-        "The user has explicitly mentioned the following SurfSense documentation pages. "
-        "These are official documentation about how to use SurfSense and should be used to answer questions about the application. "
-        "Use [citation:CHUNK_ID] format for citations (e.g., [citation:doc-123])."
-    )
-
-    for doc in documents:
-        metadata_json = json.dumps({"source": doc.source}, ensure_ascii=False)
-
-        context_parts.append("<document>")
-        context_parts.append("<document_metadata>")
-        context_parts.append(f"  <document_id>doc-{doc.id}</document_id>")
-        context_parts.append("  <document_type>SURFSENSE_DOCS</document_type>")
-        context_parts.append(f"  <title><![CDATA[{doc.title}]]></title>")
-        context_parts.append(f"  <url><![CDATA[{doc.source}]]></url>")
-        context_parts.append(
-            f"  <metadata_json><![CDATA[{metadata_json}]]></metadata_json>"
-        )
-        context_parts.append("</document_metadata>")
-        context_parts.append("")
-        context_parts.append("<document_content>")
-
-        if hasattr(doc, "chunks") and doc.chunks:
-            for chunk in doc.chunks:
-                context_parts.append(
-                    f"  <chunk id='doc-{chunk.id}'><![CDATA[{chunk.content}]]></chunk>"
-                )
-        else:
-            context_parts.append(
-                f"  <chunk id='doc-0'><![CDATA[{doc.content}]]></chunk>"
-            )
-
-        context_parts.append("</document_content>")
-        context_parts.append("</document>")
-        context_parts.append("")
-
-    context_parts.append("</mentioned_surfsense_docs>")
-
-    return "\n".join(context_parts)
 
 
 def extract_todos_from_deepagents(command_output) -> dict:
@@ -239,6 +113,21 @@ async def stream_new_chat(
         # Mark AI as responding to this user for live collaboration
         if user_id:
             await set_ai_responding(session, chat_id, UUID(user_id))
+
+        if is_compare_request(user_query):
+            async for chunk in stream_compare_chat(
+                user_query=user_query,
+                search_space_id=search_space_id,
+                chat_id=chat_id,
+                session=session,
+                user_id=user_id,
+                llm_config_id=llm_config_id,
+                attachments=attachments,
+                mentioned_document_ids=mentioned_document_ids,
+                mentioned_surfsense_doc_ids=mentioned_surfsense_doc_ids,
+            ):
+                yield chunk
+            return
         # Load LLM config - supports both YAML (negative IDs) and database (positive IDs)
         agent_config: AgentConfig | None = None
 

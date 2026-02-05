@@ -14,6 +14,38 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+def format_compare_summary_for_memory(summary: object) -> str:
+    """Format stored compare summary for LLM memory."""
+    if not isinstance(summary, dict):
+        return ""
+
+    lines: list[str] = ["[Compare Summary]"]
+    query = summary.get("query")
+    if isinstance(query, str) and query:
+        lines.append(f"Query: {query}")
+
+    providers = summary.get("providers")
+    if isinstance(providers, dict):
+        for key, value in providers.items():
+            if not isinstance(value, dict):
+                continue
+            status = value.get("status")
+            label = str(key).strip().title()
+            if status == "error":
+                error_msg = value.get("error") or "Error"
+                lines.append(f"{label}: Error: {error_msg}")
+            else:
+                answer = value.get("answer") or ""
+                if answer:
+                    lines.append(f"{label}: {answer}")
+
+    final_answer = summary.get("final_answer")
+    if isinstance(final_answer, str) and final_answer:
+        lines.append(f"Final: {final_answer}")
+
+    return "\n".join(lines)
+
+
 def extract_text_content(content: str | dict | list) -> str:
     """Extract plain text content from various message formats."""
     if isinstance(content, str):
@@ -29,6 +61,11 @@ def extract_text_content(content: str | dict | list) -> str:
         for part in content:
             if isinstance(part, dict) and part.get("type") == "text":
                 texts.append(part.get("text", ""))
+            elif isinstance(part, dict) and part.get("type") == "compare-summary":
+                summary = part.get("summary") if isinstance(part, dict) else None
+                summary_text = format_compare_summary_for_memory(summary)
+                if summary_text:
+                    texts.append(summary_text)
             elif isinstance(part, str):
                 texts.append(part)
         return "\n".join(texts) if texts else ""

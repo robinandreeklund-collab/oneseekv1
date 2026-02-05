@@ -560,6 +560,8 @@ export default function NewChatPage() {
 			// Prepare assistant message
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
+			let compareSummary: unknown | null = null;
+			let compareSummary: unknown | null = null;
 
 			// Ordered content parts to preserve inline tool call positions
 			// Each part is either a text segment or a tool call
@@ -643,6 +645,9 @@ export default function NewChatPage() {
 						type: "thinking-steps",
 						steps: Array.from(currentThinkingSteps.values()),
 					});
+				}
+				if (compareSummary) {
+					parts.push({ type: "compare-summary", summary: compareSummary });
 				}
 
 				// Add content parts (filtered)
@@ -824,6 +829,10 @@ export default function NewChatPage() {
 													return newMap;
 												});
 											}
+											break;
+										}
+										case "data-compare-summary": {
+											compareSummary = parsed.data ?? null;
 											break;
 										}
 
@@ -1097,6 +1106,9 @@ export default function NewChatPage() {
 						steps: Array.from(currentThinkingSteps.values()),
 					});
 				}
+				if (compareSummary) {
+					parts.push({ type: "compare-summary", summary: compareSummary });
+				}
 				for (const part of contentParts) {
 					if (part.type === "text" && part.text.length > 0) {
 						parts.push(part);
@@ -1238,6 +1250,10 @@ export default function NewChatPage() {
 													return newMap;
 												});
 											}
+											break;
+										}
+										case "data-compare-summary": {
+											compareSummary = parsed.data ?? null;
 											break;
 										}
 
