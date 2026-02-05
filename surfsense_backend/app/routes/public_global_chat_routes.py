@@ -80,10 +80,17 @@ def _resolve_default_llm_config_id() -> int:
 
 
 def _resolve_llm_config_id(requested_id: int | None) -> int:
+    if config.ANON_CHAT_DEFAULT_LLM_ID is not None:
+        llm_config_id = config.ANON_CHAT_DEFAULT_LLM_ID
+        if llm_config_id > 0:
+            raise HTTPException(
+                status_code=500,
+                detail="ANON_CHAT_DEFAULT_LLM_ID must be 0 or negative.",
+            )
+        return llm_config_id
+
     llm_config_id = (
-        requested_id
-        if requested_id is not None
-        else _resolve_default_llm_config_id()
+        requested_id if requested_id is not None else _resolve_default_llm_config_id()
     )
 
     if llm_config_id > 0:
