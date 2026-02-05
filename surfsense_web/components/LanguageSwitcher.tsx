@@ -9,6 +9,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { useLocaleContext } from "@/contexts/LocaleContext";
+import { DEFAULT_LOCALE } from "@/lib/locale";
 
 /**
  * Language switcher component
@@ -24,7 +25,8 @@ export function LanguageSwitcher() {
 		{ code: "en" as const, name: "English", flag: "🇺🇸" },
 		{ code: "zh" as const, name: "简体中文", flag: "🇨🇳" },
 	];
-	const defaultLanguageName = languages.find((lang) => lang.code === "sv")?.name ?? "Svenska";
+	const defaultLanguageName =
+		languages.find((lang) => lang.code === DEFAULT_LOCALE)?.name ?? "Svenska";
 
 	/**
 	 * Handle language change

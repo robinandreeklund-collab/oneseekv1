@@ -1,20 +1,13 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { DEFAULT_LOCALE, LOCALE_MAP } from "@/lib/locale";
 
 export function cn(...inputs: ClassValue[]) {
 	return twMerge(clsx(inputs));
 }
 
-// Swedish is the default locale for the UI.
-const DEFAULT_LOCALE = "sv";
-const LOCALE_DATE_MAP: Record<string, string> = {
-	sv: "sv-SE",
-	en: "en-US",
-	zh: "zh-CN",
-};
-
 export const formatDate = (date: Date, locale = DEFAULT_LOCALE): string => {
-	const resolvedLocale = LOCALE_DATE_MAP[locale] ?? locale;
+	const resolvedLocale = LOCALE_MAP[locale as keyof typeof LOCALE_MAP] ?? locale;
 	return date.toLocaleDateString(resolvedLocale, {
 		year: "numeric",
 		month: "long",

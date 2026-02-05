@@ -8,16 +8,11 @@ import { clearTargetCommentIdAtom, targetCommentIdAtom } from "@/atoms/chat/curr
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useLocaleContext } from "@/contexts/LocaleContext";
+import { DEFAULT_LOCALE, LOCALE_MAP, type LocaleCode } from "@/lib/locale";
 import { cn } from "@/lib/utils";
 import { CommentComposer } from "../comment-composer/comment-composer";
 import { CommentActions } from "./comment-actions";
 import type { CommentItemProps } from "./types";
-
-const LOCALE_MAP = {
-	sv: "sv-SE",
-	en: "en-US",
-	zh: "zh-CN",
-} as const;
 
 function getInitials(name: string | null, email: string): string {
 	if (name) {
@@ -33,7 +28,7 @@ function getInitials(name: string | null, email: string): string {
 
 function formatTimestamp(
 	dateString: string,
-	locale: keyof typeof LOCALE_MAP,
+	locale: LocaleCode,
 	t: ReturnType<typeof useTranslations>
 ): string {
 	const date = new Date(dateString);
@@ -42,7 +37,7 @@ function formatTimestamp(
 	const diffMins = Math.floor(diffMs / 60000);
 	const diffHours = Math.floor(diffMs / 3600000);
 	const diffDays = Math.floor(diffMs / 86400000);
-	const resolvedLocale = LOCALE_MAP[locale] ?? LOCALE_MAP.sv;
+	const resolvedLocale = LOCALE_MAP[locale] ?? LOCALE_MAP[DEFAULT_LOCALE];
 	const hour12 = locale !== "sv";
 
 	const timeStr = date.toLocaleTimeString(resolvedLocale, {
