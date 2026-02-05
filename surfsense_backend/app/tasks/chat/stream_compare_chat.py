@@ -28,7 +28,7 @@ from app.agents.new_chat.llm_config import (
 )
 import litellm
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
-from app.db import Document, SurfsenseDocsDocument
+from app.db import Document, NewChatThread, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
 from app.services.connector_service import ConnectorService
 from app.services.new_streaming_service import VercelStreamingService
@@ -245,6 +245,17 @@ async def stream_compare_chat(
         return
 
     try:
+        try:
+            thread_result = await session.execute(
+                select(NewChatThread).filter(NewChatThread.id == chat_id)
+            )
+            thread = thread_result.scalars().first()
+            if thread and not thread.needs_history_bootstrap:
+                thread.needs_history_bootstrap = True
+                await session.commit()
+        except Exception as exc:
+            print(f"[compare] Failed to mark history bootstrap: {exc!s}")
+
         query_with_context = await _build_query_with_context(
             user_query=compare_query,
             session=session,
