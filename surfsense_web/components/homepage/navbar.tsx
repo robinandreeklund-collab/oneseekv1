@@ -8,6 +8,7 @@ import {
 } from "@tabler/icons-react";
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { SignInButton } from "@/components/auth/sign-in-button";
 import { Logo } from "@/components/Logo";
@@ -17,12 +18,13 @@ import { cn } from "@/lib/utils";
 
 export const Navbar = () => {
 	const [isScrolled, setIsScrolled] = useState(false);
+	const t = useTranslations("navigation");
 
 	const navItems = [
-		{ name: "Pricing", link: "/pricing" },
-		{ name: "Contact\u00A0Us", link: "/contact" },
-		{ name: "Changelog", link: "/changelog" },
-		{ name: "Docs", link: "/docs" },
+		{ name: t("pricing"), link: "/pricing" },
+		{ name: t("contact"), link: "/contact" },
+		{ name: t("changelog"), link: "/changelog" },
+		{ name: t("docs"), link: "/docs" },
 	];
 
 	useEffect(() => {

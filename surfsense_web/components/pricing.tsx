@@ -5,6 +5,7 @@ import confetti from "canvas-confetti";
 import { Check, Star } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { useRef, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,7 @@ export function Pricing({
 	const [isMonthly, setIsMonthly] = useState(true);
 	const isDesktop = useMediaQuery("(min-width: 768px)");
 	const switchRef = useRef<HTMLButtonElement>(null);
+	const t = useTranslations("pricing");
 
 	const handleToggle = (checked: boolean) => {
 		setIsMonthly(!checked);
@@ -147,7 +149,7 @@ export function Pricing({
 							<div className="absolute top-0 right-0 bg-primary py-0.5 px-2 rounded-bl-xl rounded-tr-xl flex items-center">
 								<Star className="text-primary-foreground h-4 w-4 fill-current" />
 								<span className="text-primary-foreground ml-1 font-sans font-semibold">
-									Popular
+									{t("popular")}
 								</span>
 							</div>
 						)}
@@ -183,7 +185,11 @@ export function Pricing({
 							</div>
 
 							<p className="text-xs leading-5 text-muted-foreground">
-								{isNaN(Number(plan.price)) ? "" : isMonthly ? "billed monthly" : "billed annually"}
+								{isNaN(Number(plan.price))
+									? ""
+									: isMonthly
+										? t("billed_monthly")
+										: t("billed_annually")}
 							</p>
 
 							<ul className="mt-5 gap-2 flex flex-col">

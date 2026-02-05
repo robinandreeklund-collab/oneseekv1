@@ -2,6 +2,7 @@
 
 import { motion } from "motion/react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { AUTH_TYPE, BACKEND_URL } from "@/lib/env-config";
 import { trackLoginAttempt } from "@/lib/posthog/events";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,7 @@ interface SignInButtonProps {
 
 export const SignInButton = ({ variant = "desktop" }: SignInButtonProps) => {
 	const isGoogleAuth = AUTH_TYPE === "GOOGLE";
+	const t = useTranslations("auth");
 
 	const handleGoogleLogin = () => {
 		trackLoginAttempt("google");
@@ -75,14 +77,14 @@ export const SignInButton = ({ variant = "desktop" }: SignInButtonProps) => {
 				)}
 			>
 				<GoogleLogo className="h-4 w-4" />
-				<span>Sign In</span>
+				<span>{t("sign_in")}</span>
 			</motion.button>
 		);
 	}
 
 	return (
 		<Link href="/login" className={getClassName()}>
-			Sign In
+			{t("sign_in")}
 		</Link>
 	);
 };

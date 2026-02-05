@@ -187,12 +187,20 @@
 "pricing": "Priser",
 "contact": "Kontakt",
 "login": "Logga in",
-"register": "Registrera",
-"dashboard": "Instrumentpanel",
-"sign_in": "Logga in",
-"book_a_call": "Boka ett samtal"
-},
-"nav_menu": {
+		"register": "Registrera",
+		"dashboard": "Instrumentpanel",
+		"sign_in": "Logga in",
+		"changelog": "Ändringslogg",
+		"book_a_call": "Boka ett samtal"
+	},
+	"footer": {
+		"pages": "Sidor",
+		"socials": "Sociala medier",
+		"legal": "Juridiskt",
+		"register": "Registrera",
+		"rights_reserved": "© SurfSense {year}. Alla rättigheter förbehållna."
+	},
+	"nav_menu": {
 "settings": "Inställningar",
 "platform": "Plattform",
 "chat": "Chatt",
@@ -215,30 +223,50 @@
 "pricing": {
 "title": "SurfSense-priser",
 "subtitle": "Välj det som passar dig",
-"community_name": "COMMUNITY",
-"enterprise_name": "ENTERPRISE",
-"forever": "för alltid",
-"contact_us": "Kontakta oss",
-"feature_llms": "Stöd för 100+ LLM:er",
-"feature_ollama": "Stöd för lokal Ollama eller vLLM-installationer",
-"feature_embeddings": "6000+ inbäddningsmodeller",
-"feature_files": "50+ filändelser stöds.",
+		"community_name": "COMMUNITY",
+		"cloud_name": "CLOUD",
+		"enterprise_name": "ENTERPRISE",
+		"forever": "för alltid",
+		"cloud_period": "i beta",
+		"contact_us": "Kontakta oss",
+		"community_support": "Communitysupport",
+		"feature_llms": "Stöd för 100+ LLM:er",
+		"openai_litellm_support": "Stöd för OpenAI-spec och LiteLLM",
+		"feature_ollama": "Stöd för lokal Ollama eller vLLM-installationer",
+		"feature_embeddings": "6000+ inbäddningsmodeller",
+		"feature_files": "50+ filändelser stöds.",
 "feature_podcasts": "Podcaststöd med lokala TTS-leverantörer.",
 "feature_sources": "Kopplar till 15+ externa källor.",
 "feature_extension": "Webbläsartillägg för dynamiska webbsidor inklusive autentiserat innehåll",
 "upcoming_mindmaps": "Kommande: Sammanfogningsbara mindmaps",
 "upcoming_notes": "Kommande: Anteckningshantering",
-"community_desc": "Open source-version med kraftfulla funktioner",
-"get_started": "Kom igång",
-"everything_community": "Allt i Community",
-"priority_support": "Prioriterad support",
-"access_controls": "Åtkomstkontroller",
-"collaboration": "Samarbete och funktioner för flera användare",
-"video_gen": "Videogenerering",
-"advanced_security": "Avancerade säkerhetsfunktioner",
-"enterprise_desc": "För stora organisationer med specifika behov",
-"contact_sales": "Kontakta försäljning"
-},
+		"community_desc": "Open source-version med kraftfulla funktioner",
+		"get_started": "Kom igång",
+		"cloud_desc": "Omedelbar åtkomst för individer och team",
+		"everything_community": "Allt i Community",
+		"email_support": "E-postsupport",
+		"get_started_seconds": "Kom igång på några sekunder",
+		"instant_access": "Omedelbar åtkomst till nya funktioner",
+		"easy_access_anywhere": "Enkel åtkomst var som helst",
+		"remote_team_management": "Fjärrstyrd teamhantering och samarbete",
+		"priority_support": "Prioriterad support",
+		"access_controls": "Åtkomstkontroller",
+		"collaboration": "Samarbete och funktioner för flera användare",
+		"white_glove_setup": "White-glove-setup och driftsättning",
+		"managed_updates": "Månatliga hanterade uppdateringar och underhåll",
+		"on_prem_vpc": "On-prem eller VPC-driftsättning",
+		"audit_logs": "Revisionsloggar och efterlevnad",
+		"sso": "SSO, OIDC och SAML",
+		"sla_guarantee": "SLA-garanti",
+		"uptime_guarantee": "Drifttidsgaranti i VPC",
+		"video_gen": "Videogenerering",
+		"advanced_security": "Avancerade säkerhetsfunktioner",
+		"enterprise_desc": "För stora organisationer med specifika behov",
+		"contact_sales": "Kontakta försäljning",
+		"popular": "Populär",
+		"billed_monthly": "faktureras månadsvis",
+		"billed_annually": "faktureras årligen"
+	},
 "contact": {
 "title": "Kontakt",
 "subtitle": "Vi vill gärna höra från dig.",
@@ -250,9 +278,12 @@
 "optional": "valfritt",
 "name_placeholder": "John Doe",
 "email_placeholder": "john.doe@example.com",
-"company_placeholder": "Example Inc.",
-"message_placeholder": "Skriv ditt meddelande här",
-"submit": "Skicka",
+		"company_placeholder": "Example Inc.",
+		"message_placeholder": "Skriv ditt meddelande här",
+		"schedule_description": "Boka ett möte med vår produktchef, Eric Lammertsma, eller skicka oss ett e-postmeddelande.",
+		"schedule_meeting": "Boka ett möte",
+		"or": "eller",
+		"submit": "Skicka",
 "submitting": "Skickar...",
 "name_required": "Namn krävs",
 "name_too_long": "Namnet är för långt",
@@ -744,10 +775,11 @@
 "general_saving": "Sparar",
 "general_unsaved_changes": "Du har osparade ändringar. Klicka på \"Spara ändringar\" för att tillämpa dem."
 },
-"homepage": {
-"hero_title_part1": "AI-arbetsytan",
-"hero_title_part2": "Byggd för team",
-"hero_description": "Anslut valfri LLM till dina interna kunskapskällor och chatta med den i realtid tillsammans med ditt team.",
+	"homepage": {
+		"hero_title_part1": "AI-arbetsytan",
+		"hero_title_part2": "Byggd för team",
+		"notebooklm_title": "NotebookLM för team",
+		"hero_description": "Anslut valfri LLM till dina interna kunskapskällor och chatta med den i realtid tillsammans med ditt team.",
 "cta_start_trial": "Starta gratis provperiod",
 "cta_explore": "Utforska",
 "integrations_title": "Integrationer",
@@ -797,9 +829,13 @@
 "example_comment": "Låt oss diskutera detta i morgon!"
 }
 },
-"public_chat": {
-"not_found_title": "Denna chatt har tagits bort.",
-"click_here": "Klicka här",
-"sign_in_prompt": "för att logga in på SurfSense och starta din egen."
-}
+	"public_chat": {
+		"not_found_title": "Denna chatt har tagits bort.",
+		"click_here": "Klicka här",
+		"sign_in_prompt": "för att logga in på SurfSense och starta din egen."
+	},
+	"changelog": {
+		"title": "Ändringslogg",
+		"subtitle": "Håll dig uppdaterad med de senaste uppdateringarna och förbättringarna i SurfSense."
+	}
 }

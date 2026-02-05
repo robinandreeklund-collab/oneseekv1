@@ -175,7 +175,15 @@
 		"register": "注册",
 		"dashboard": "仪表盘",
 		"sign_in": "登录",
+		"changelog": "更新日志",
 		"book_a_call": "预约咨询"
+	},
+	"footer": {
+		"pages": "页面",
+		"socials": "社交",
+		"legal": "法律",
+		"register": "注册",
+		"rights_reserved": "© SurfSense {year}. 保留所有权利。"
 	},
 	"nav_menu": {
 		"settings": "设置",
@@ -201,10 +209,14 @@
 		"title": "SurfSense 定价",
 		"subtitle": "选择适合您的方案",
 		"community_name": "社区版",
+		"cloud_name": "云端版",
 		"enterprise_name": "企业版",
 		"forever": "永久",
+		"cloud_period": "测试版",
 		"contact_us": "联系我们",
+		"community_support": "社区支持",
 		"feature_llms": "支持 100+ 种 LLM",
+		"openai_litellm_support": "支持 OpenAI 规范和 LiteLLM",
 		"feature_ollama": "支持本地 Ollama 或 vLLM 部署",
 		"feature_embeddings": "6000+ 种嵌入模型",
 		"feature_files": "支持 50+ 种文件扩展名",
@@ -215,14 +227,30 @@
 		"upcoming_notes": "即将推出：笔记管理",
 		"community_desc": "开源版本，功能强大",
 		"get_started": "开始使用",
+		"cloud_desc": "为个人和团队提供即时访问",
 		"everything_community": "包含社区版所有功能",
+		"email_support": "电子邮件支持",
+		"get_started_seconds": "几秒即可开始",
+		"instant_access": "即时访问新功能",
+		"easy_access_anywhere": "随时随地轻松访问",
+		"remote_team_management": "远程团队管理与协作",
 		"priority_support": "优先支持",
 		"access_controls": "访问控制",
 		"collaboration": "协作和多人功能",
+		"white_glove_setup": "白手套式部署与交付",
+		"managed_updates": "每月托管更新与维护",
+		"on_prem_vpc": "本地或 VPC 部署",
+		"audit_logs": "审计日志与合规",
+		"sso": "SSO、OIDC 与 SAML",
+		"sla_guarantee": "SLA 保证",
+		"uptime_guarantee": "VPC 正常运行时间保证",
 		"video_gen": "视频生成",
 		"advanced_security": "高级安全功能",
 		"enterprise_desc": "为有特定需求的大型组织提供",
-		"contact_sales": "联系销售"
+		"contact_sales": "联系销售",
+		"popular": "热门",
+		"billed_monthly": "按月计费",
+		"billed_annually": "按年计费"
 	},
 	"contact": {
 		"title": "联系我们",
@@ -237,6 +265,9 @@
 		"email_placeholder": "zhangsan@example.com",
 		"company_placeholder": "示例公司",
 		"message_placeholder": "在此输入您的留言",
+		"schedule_description": "预约与产品负责人 Eric Lammertsma 的会议，或给我们发送邮件。",
+		"schedule_meeting": "预约会议",
+		"or": "或",
 		"submit": "提交",
 		"submitting": "提交中...",
 		"name_required": "请输入姓名",
@@ -732,6 +763,7 @@
 	"homepage": {
 		"hero_title_part1": "AI 工作空间",
 		"hero_title_part2": "为团队而生",
+		"notebooklm_title": "NotebookLM 团队版",
 		"hero_description": "将任何 LLM 连接到您的内部知识库，与团队实时协作对话。",
 		"cta_start_trial": "开始免费试用",
 		"cta_explore": "探索更多",
@@ -786,5 +818,9 @@
 		"not_found_title": "此对话已被删除。",
 		"click_here": "点击这里",
 		"sign_in_prompt": "登录 SurfSense 开始您自己的对话。"
+	},
+	"changelog": {
+		"title": "更新日志",
+		"subtitle": "了解 SurfSense 的最新更新和改进。"
 	}
 }

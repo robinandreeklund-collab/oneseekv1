@@ -3,6 +3,7 @@ import { useFeatureFlagVariantKey } from "@posthog/react";
 import { AnimatePresence, motion } from "motion/react";
 import Image from "next/image";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import React, { useEffect, useRef, useState } from "react";
 import Balancer from "react-wrap-balancer";
 import { AUTH_TYPE, BACKEND_URL } from "@/lib/env-config";
@@ -36,6 +37,7 @@ export function HeroSection() {
 	const parentRef = useRef<HTMLDivElement>(null);
 	const heroVariant = useFeatureFlagVariantKey("notebooklm_flag");
 	const isNotebookLMVariant = heroVariant === "notebooklm";
+	const t = useTranslations("homepage");
 
 	return (
 		<div
@@ -89,15 +91,15 @@ export function HeroSection() {
 					{isNotebookLMVariant ? (
 						<div className="relative mx-auto inline-block w-max filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
 							<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
-								<span className="">NotebookLM for Teams</span>
+								<span className="">{t("notebooklm_title")}</span>
 							</div>
 						</div>
 					) : (
 						<>
-							The AI Workspace{" "}
+							{t("hero_title_part1")}{" "}
 							<div className="relative mx-auto inline-block w-max filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
 								<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
-									<span className="">Built for Teams</span>
+									<span className="">{t("hero_title_part2")}</span>
 								</div>
 							</div>
 						</>
@@ -106,8 +108,7 @@ export function HeroSection() {
 			</h2>
 			{/* // TODO:aCTUAL DESCRITION */}
 			<p className="relative z-50 mx-auto mt-4 max-w-lg px-4 text-center text-base/6 text-gray-600 dark:text-gray-200">
-				Connect any LLM to your internal knowledge sources and chat with it in real time alongside
-				your team.
+				{t("hero_description")}
 			</p>
 			<div className="mb-10 mt-8 flex w-full flex-col items-center justify-center gap-4 px-8 sm:flex-row md:mb-20">
 				<GetStartedButton />
@@ -144,6 +145,8 @@ export function HeroSection() {
 
 function GetStartedButton() {
 	const isGoogleAuth = AUTH_TYPE === "GOOGLE";
+	const tAuth = useTranslations("auth");
+	const tPricing = useTranslations("pricing");
 
 	const handleGoogleLogin = () => {
 		trackLoginAttempt("google");
@@ -184,7 +187,7 @@ function GetStartedButton() {
 				>
 					<GoogleLogo className="h-5 w-5" />
 				</motion.div>
-				<span className="relative">Continue with Google</span>
+				<span className="relative">{tAuth("continue_with_google")}</span>
 			</motion.button>
 		);
 	}
@@ -195,13 +198,14 @@ function GetStartedButton() {
 				href="/login"
 				className="group relative z-20 flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-black px-6 py-2.5 text-sm font-semibold text-white shadow-lg transition-shadow duration-300 hover:shadow-xl sm:w-56 dark:bg-white dark:text-black"
 			>
-				Get Started
+				{tPricing("get_started")}
 			</Link>
 		</motion.div>
 	);
 }
 
 function ContactSalesButton() {
+	const tPricing = useTranslations("pricing");
 	return (
 		<motion.div whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.98 }}>
 			<Link
@@ -210,7 +214,7 @@ function ContactSalesButton() {
 				rel="noopener noreferrer"
 				className="group relative z-20 flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-6 py-2.5 text-sm font-semibold text-neutral-700 shadow-lg ring-1 ring-neutral-200/50 transition-shadow duration-300 hover:shadow-xl sm:w-56 dark:bg-neutral-900 dark:text-neutral-200 dark:ring-neutral-700/50"
 			>
-				Contact Sales
+				{tPricing("contact_sales")}
 			</Link>
 		</motion.div>
 	);
