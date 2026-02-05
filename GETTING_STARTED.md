@@ -340,10 +340,10 @@ If you're running a vLLM server locally (like Qwen3, Llama, etc.), you can add i
    - Click "Add LLM Configuration" or "+"
    - Fill in the form:
      - **Name**: Give it a descriptive name (e.g., "My Local vLLM (Qwen3-30B)")
-     - **Provider**: Select **OLLAMA** (vLLM is OpenAI-compatible, OLLAMA provider works)
+     - **Provider**: Select **OPENAI** (vLLM uses OpenAI-compatible API)
      - **Model Name**: Your model name from vLLM (e.g., `Qwen3-30B-A3B-Instruct-2507-AWQ-4bit`)
      - **API Base**: `http://localhost:8000/v1` (your vLLM server URL)
-     - **API Key**: Leave empty or enter "dummy" (not needed for local)
+     - **API Key**: Enter `dummy-key` (required field but not validated for local vLLM)
 
 3. **Save and Test**
    - Click "Save" or "Create"
@@ -379,7 +379,7 @@ global_llm_configs:
   - id: -10
     name: "Local vLLM Qwen3-30B"
     description: "Local vLLM server with Qwen3-30B AWQ model"
-    provider: "OLLAMA"
+    provider: "OPENAI"
     model_name: "Qwen3-30B-A3B-Instruct-2507-AWQ-4bit"
     api_key: "dummy-key"  # vLLM doesn't require real key
     api_base: "http://localhost:8000/v1"
@@ -426,8 +426,10 @@ python -m vllm.entrypoints.openai.api_server \
 - Don't include `/models/` prefix in the model name
 - Use the ID from `/v1/models` endpoint
 
-**Issue: "Invalid provider"**
-- Use **OLLAMA** as provider (not OPENAI or CUSTOM)
+**Issue: "Invalid provider" or "Ollama_chatException - Not Found"**
+- Use **OPENAI** as provider (vLLM implements OpenAI-compatible API)
+- **NOT** OLLAMA (Ollama uses different API protocol)
+- Ensure API Base includes `/v1` suffix: `http://localhost:8000/v1`
 - OLLAMA provider works with any OpenAI-compatible API
 
 **Issue: "API Base URL format"**
