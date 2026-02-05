@@ -1086,44 +1086,100 @@ WSL typically uses IPs in these ranges:
 
 **Problem**: After logging in, you see a 404 error at `/dashboard/[number]/new-chat`
 
-**Common Causes**:
+**Symptoms You May See**:
+- Login works (token is stored, backend returns 200 OK)
+- `/dashboard` page loads successfully  
+- Backend logs show: `GET /api/v1/searchspaces?limit=10&skip=0&owned_only=false HTTP/1.1" 200 OK`
+- But `/dashboard/1/new-chat` shows 404 "This page could not be found"
+- Frontend logs: `GET /dashboard/1/new-chat 404 in XXms`
 
-1. **Next.js dev server cache issue** (most common)
-   - The dynamic route `/dashboard/[search_space_id]/new-chat` exists but Next.js dev server isn't recognizing it
-   - Backend is working (search spaces are being fetched successfully)
-   - Frontend routing cache is stale
+**Root Cause**: 
+This is a Next.js 16 + Turbopack dev server cache issue. After package updates or git operations, the dev server cache becomes stale and doesn't recognize existing dynamic routes, even though they exist in the codebase at `app/dashboard/[search_space_id]/new-chat/[[...chat_id]]/page.tsx`.
 
-2. **No Search Space created yet**
-   - When you first log in, you need to create a Search Space
-   - The dashboard tries to redirect to `/dashboard/[search_space_id]/new-chat`
-   - If no search spaces exist, you may see a 404
+**🔧 SOLUTION - Complete Frontend Reset** (USE THIS SCRIPT):
 
-3. **Search Space query failing**
-   - Backend API not accessible
-   - Database connection issues
-   - Authentication token issues
+We've created an automated script to completely reset the frontend:
 
-**Solutions**:
+```bash
+# From repository root
+./reset-frontend-cache.sh
+```
 
-1. **Clear Next.js cache and restart dev server** (MOST EFFECTIVE):
+**OR Manual Reset** (if script doesn't work):
+
+```bash
+# 1. STOP the frontend dev server completely (Ctrl+C)
+
+cd surfsense_web
+
+# 2. KILL any lingering Next.js processes
+pkill -f "next dev" || true
+
+# 3. DELETE all cache directories
+rm -rf .next
+rm -rf node_modules/.cache
+rm -f package-lock.json
+
+# 4. CLEAR npm cache aggressively
+npm cache clean --force
+npm cache verify
+
+# 5. REINSTALL all dependencies fresh
+npm install
+
+# 6. START dev server
+npm run dev
+```
+
+**Then in your browser:**
+
+```
+1. Open DevTools (F12)
+2. Go to Application → Storage → "Clear site data" button
+3. Close browser completely (all tabs, all windows)
+4. Wait 10 seconds
+5. Reopen browser
+6. Navigate to http://localhost:3000
+7. Log in again
+```
+
+**Why This Happens**:
+
+Next.js 16 with Turbopack aggressively caches compiled routes. When you:
+- Update npm packages (we upgraded AI SDK, assistant-ui, etc.)
+- Perform git operations (pulls, checkouts, reverts)
+- Restart dev server multiple times
+
+The `.next/cache` directory can become corrupted and fail to recognize routes that exist in your filesystem.
+
+**Verification Steps**:
+
+After the reset, you should see in frontend terminal:
+```
+✓ Ready in Xms
+○ Compiling / ...
+✓ Compiled /dashboard in Xms
+✓ Compiled /dashboard/[search_space_id]/new-chat/[[...chat_id]] in Xms
+```
+
+If you still see 404, check:
+
+**Additional Troubleshooting**:
+
+1. **Verify the route file exists**:
    ```bash
-   # Stop the frontend dev server (Ctrl+C)
-   
-   cd surfsense_web
-   
-   # Remove the .next cache directory
-   rm -rf .next
-   
-   # Clear npm cache if needed
-   npm cache clean --force
-   
-   # Restart the dev server
-   npm run dev
+   ls -la surfsense_web/app/dashboard/[search_space_id]/new-chat/[[...chat_id]]/page.tsx
+   # Should show the file exists
    ```
-   
-   Then refresh your browser at http://localhost:3000/dashboard
 
-2. **Navigate to dashboard root to create Search Space**:
+2. **Check Next.js is using the correct port**:
+   ```bash
+   # Frontend should be on port 3000
+   netstat -tlnp | grep :3000
+   # Should show node/next process
+   ```
+
+3. **Try accessing dashboard root first**:
    ```bash
    # In your browser, go to:
    http://localhost:3000/dashboard
