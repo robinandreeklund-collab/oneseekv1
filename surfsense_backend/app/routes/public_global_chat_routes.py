@@ -17,6 +17,11 @@ from app.agents.new_chat.llm_config import (
     create_chat_litellm_from_config,
     load_llm_config_from_yaml,
 )
+from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CITATION_INSTRUCTIONS,
+    SURFSENSE_NO_CITATION_INSTRUCTIONS,
+    SURFSENSE_SYSTEM_INSTRUCTIONS,
+)
 from app.agents.new_chat.tools.registry import get_tool_by_name, build_tools_async
 from app.config import config
 from app.schemas.public_global_chat import PublicGlobalChatRequest
@@ -62,6 +67,11 @@ def _resolve_default_llm_config_id() -> int:
                     detail="ANON_CHAT_DEFAULT_LLM_ID must be 0 or negative.",
                 )
             return config.ANON_CHAT_DEFAULT_LLM_ID
+        first_config = _get_first_global_config()
+        if first_config:
+            first_id = first_config.get("id")
+            if isinstance(first_id, int) and first_id <= 0:
+                return first_id
         return 0
     raise HTTPException(
         status_code=503,
@@ -100,15 +110,45 @@ def _build_system_prompt(
     enabled_tools: list[str],
 ) -> str:
     today = datetime.now(UTC).date().isoformat()
-    base_prompt = PUBLIC_SYSTEM_PROMPT.format(resolved_today=today)
+    public_guard = PUBLIC_SYSTEM_PROMPT.format(resolved_today=today).strip()
 
+    system_instructions = ""
+    citations_enabled = True
     if llm_config:
-        extra = llm_config.get("system_instructions") or ""
-        if extra.strip():
-            base_prompt = f"{base_prompt}\n\n{extra.strip()}"
+        custom_instructions = llm_config.get("system_instructions") or ""
+        use_default = llm_config.get("use_default_system_instructions", True)
+        citations_enabled = llm_config.get("citations_enabled", True)
+        if custom_instructions.strip():
+            system_instructions = custom_instructions.format(
+                resolved_today=today
+            ).strip()
+        elif use_default:
+            system_instructions = SURFSENSE_SYSTEM_INSTRUCTIONS.format(
+                resolved_today=today
+            ).strip()
+    else:
+        system_instructions = SURFSENSE_SYSTEM_INSTRUCTIONS.format(
+            resolved_today=today
+        ).strip()
 
     tool_instructions = _build_tool_instructions(enabled_tools)
-    return f"{base_prompt}\n\n{tool_instructions}".strip()
+    citation_instructions = (
+        SURFSENSE_CITATION_INSTRUCTIONS
+        if citations_enabled
+        else SURFSENSE_NO_CITATION_INSTRUCTIONS
+    )
+
+    parts = [
+        part
+        for part in [
+            system_instructions,
+            public_guard,
+            tool_instructions,
+            citation_instructions,
+        ]
+        if part and part.strip()
+    ]
+    return "\n\n".join(parts).strip()
 
 
 def _get_first_global_config() -> dict | None:
