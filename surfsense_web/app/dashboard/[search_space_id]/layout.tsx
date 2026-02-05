@@ -12,6 +12,7 @@ export default function DashboardLayout({
 }) {
 	// Use React.use to unwrap the params Promise
 	const { search_space_id } = use(params);
+	const isPublicChat = search_space_id === "public";
 
 	const customNavSecondary = [
 		{
@@ -44,6 +45,7 @@ export default function DashboardLayout({
 	return (
 		<DashboardClientLayout
 			searchSpaceId={search_space_id}
+			isPublicChat={isPublicChat}
 			navSecondary={customNavSecondary}
 			navMain={customNavMain}
 		>

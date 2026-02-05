@@ -11,6 +11,7 @@ Available tools:
 - link_preview: Fetch rich previews for URLs
 - display_image: Display images in chat
 - scrape_webpage: Extract content from webpages
+- search_web: Search the public web with global API keys
 - save_memory: Store facts/preferences about the user
 - recall_memory: Retrieve relevant user memories
 """
@@ -26,6 +27,7 @@ from .knowledge_base import (
 )
 from .link_preview import create_link_preview_tool
 from .podcast import create_generate_podcast_tool
+from .public_web_search import create_public_web_search_tool
 from .registry import (
     BUILTIN_TOOLS,
     ToolDefinition,
@@ -49,6 +51,7 @@ __all__ = [
     "create_display_image_tool",
     "create_generate_podcast_tool",
     "create_link_preview_tool",
+    "create_public_web_search_tool",
     "create_recall_memory_tool",
     "create_save_memory_tool",
     "create_scrape_webpage_tool",

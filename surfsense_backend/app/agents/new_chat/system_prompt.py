@@ -18,6 +18,7 @@ SURFSENSE_SYSTEM_INSTRUCTIONS = """
 You are SurfSense, a reasoning and acting AI agent designed to answer user questions using the user's personal knowledge base.
 
 Today's date (UTC): {resolved_today}
+Current time (UTC): {resolved_time}
 
 </system_instruction>
 """
@@ -397,10 +398,15 @@ def build_surfsense_system_prompt(
     Returns:
         Complete system prompt string
     """
-    resolved_today = (today or datetime.now(UTC)).astimezone(UTC).date().isoformat()
+    now = (today or datetime.now(UTC)).astimezone(UTC)
+    resolved_today = now.date().isoformat()
+    resolved_time = now.strftime("%H:%M:%S")
 
     return (
-        SURFSENSE_SYSTEM_INSTRUCTIONS.format(resolved_today=resolved_today)
+        SURFSENSE_SYSTEM_INSTRUCTIONS.format(
+            resolved_today=resolved_today,
+            resolved_time=resolved_time,
+        )
         + SURFSENSE_TOOLS_INSTRUCTIONS
         + SURFSENSE_CITATION_INSTRUCTIONS
     )
@@ -433,18 +439,22 @@ def build_configurable_system_prompt(
     Returns:
         Complete system prompt string
     """
-    resolved_today = (today or datetime.now(UTC)).astimezone(UTC).date().isoformat()
+    now = (today or datetime.now(UTC)).astimezone(UTC)
+    resolved_today = now.date().isoformat()
+    resolved_time = now.strftime("%H:%M:%S")
 
     # Determine system instructions
     if custom_system_instructions and custom_system_instructions.strip():
         # Use custom instructions, injecting the date placeholder if present
         system_instructions = custom_system_instructions.format(
-            resolved_today=resolved_today
+            resolved_today=resolved_today,
+            resolved_time=resolved_time,
         )
     elif use_default_system_instructions:
         # Use default instructions
         system_instructions = SURFSENSE_SYSTEM_INSTRUCTIONS.format(
-            resolved_today=resolved_today
+            resolved_today=resolved_today,
+            resolved_time=resolved_time,
         )
     else:
         # No system instructions (edge case)
@@ -471,7 +481,8 @@ def get_default_system_instructions() -> str:
     creating a new NewLLMConfig.
 
     Returns:
-        Default system instructions string (with {resolved_today} placeholder)
+        Default system instructions string (with {resolved_today} and
+        {resolved_time} placeholders)
     """
     return SURFSENSE_SYSTEM_INSTRUCTIONS.strip()
 

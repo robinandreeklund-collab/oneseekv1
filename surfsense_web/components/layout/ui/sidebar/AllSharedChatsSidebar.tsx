@@ -145,7 +145,7 @@ export function AllSharedChatsSidebar({
 
 	const handleThreadClick = useCallback(
 		(threadId: number) => {
-			router.push(`/dashboard/${searchSpaceId}/new-chat/${threadId}`);
+			router.push(`/dashboard/${searchSpaceId}/new-chat?chat_id=${threadId}`);
 			onOpenChange(false);
 			onCloseMobileSidebar?.();
 		},

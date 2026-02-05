@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AlertTriangle, Inbox, LogOut, SquareLibrary, Trash2 } from "lucide-react";
-import { useParams, usePathname, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useTheme } from "next-themes";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -38,6 +38,7 @@ interface LayoutDataProviderProps {
 	searchSpaceId: string;
 	children: React.ReactNode;
 	breadcrumb?: React.ReactNode;
+	isPublicChat?: boolean;
 }
 
 /**
@@ -55,6 +56,7 @@ export function LayoutDataProvider({
 	searchSpaceId,
 	children,
 	breadcrumb,
+	isPublicChat: isPublicChatProp = false,
 }: LayoutDataProviderProps) {
 	const t = useTranslations("dashboard");
 	const tCommon = useTranslations("common");
@@ -62,8 +64,10 @@ export function LayoutDataProvider({
 	const router = useRouter();
 	const params = useParams();
 	const pathname = usePathname();
+	const searchParams = useSearchParams();
 	const queryClient = useQueryClient();
 	const { theme, setTheme } = useTheme();
+	const isPublicChat = isPublicChatProp || searchSpaceId === "public";
 
 	// Atoms
 	const { data: user } = useAtomValue(currentUserAtom);
@@ -75,23 +79,39 @@ export function LayoutDataProvider({
 	// State for handling new chat navigation when router is out of sync
 	const [pendingNewChat, setPendingNewChat] = useState(false);
 
+	const urlChatId = useMemo(() => {
+		const id = params?.chat_id;
+		if (Array.isArray(id) && id.length > 0) {
+			return id[0];
+		}
+		if (typeof id === "string") {
+			return id;
+		}
+		const queryId = searchParams.get("chat_id");
+		return queryId ?? null;
+	}, [params?.chat_id, searchParams]);
+
 	// Current IDs from URL, with fallback to atom for replaceState updates
-	const currentChatId = params?.chat_id
-		? Number(Array.isArray(params.chat_id) ? params.chat_id[0] : params.chat_id)
-		: currentThreadState.id;
+	const currentChatId = useMemo(() => {
+		if (urlChatId) {
+			const parsed = Number.parseInt(urlChatId, 10);
+			return Number.isNaN(parsed) ? currentThreadState.id : parsed;
+		}
+		return currentThreadState.id;
+	}, [urlChatId, currentThreadState.id]);
 
 	// Fetch current search space (for caching purposes)
 	useQuery({
 		queryKey: cacheKeys.searchSpaces.detail(searchSpaceId),
 		queryFn: () => searchSpacesApiService.getSearchSpace({ id: Number(searchSpaceId) }),
-		enabled: !!searchSpaceId,
+		enabled: !!searchSpaceId && !isPublicChat,
 	});
 
 	// Fetch threads (40 total to allow up to 20 per section - shared/private)
 	const { data: threadsData } = useQuery({
 		queryKey: ["threads", searchSpaceId, { limit: 40 }],
 		queryFn: () => fetchThreads(Number(searchSpaceId), 40),
-		enabled: !!searchSpaceId,
+		enabled: !!searchSpaceId && !isPublicChat,
 	});
 
 	// Separate sidebar states for shared and private chats
@@ -107,7 +127,8 @@ export function LayoutDataProvider({
 
 	// Inbox hooks - separate data sources for mentions and status tabs
 	// This ensures each tab has independent pagination and data loading
-	const userId = user?.id ? String(user.id) : null;
+	const userId = isPublicChat ? null : user?.id ? String(user.id) : null;
+	const inboxSearchSpaceId = isPublicChat ? null : Number(searchSpaceId) || null;
 
 	// Mentions: Only fetch "new_mention" type notifications
 	const {
@@ -119,7 +140,7 @@ export function LayoutDataProvider({
 		loadMore: mentionLoadMore,
 		markAsRead: markMentionAsRead,
 		markAllAsRead: markAllMentionsAsRead,
-	} = useInbox(userId, Number(searchSpaceId) || null, "new_mention");
+	} = useInbox(userId, inboxSearchSpaceId, "new_mention");
 
 	// Status: Fetch all types (will be filtered client-side to status types)
 	// We pass null to get all, then InboxSidebar filters to status types
@@ -132,7 +153,7 @@ export function LayoutDataProvider({
 		loadMore: statusLoadMore,
 		markAsRead: markStatusAsRead,
 		markAllAsRead: markAllStatusAsRead,
-	} = useInbox(userId, Number(searchSpaceId) || null, null);
+	} = useInbox(userId, inboxSearchSpaceId, null);
 
 	// Combined unread count for nav badge (mentions take priority for visibility)
 	const totalUnreadCount = mentionUnreadCount + statusUnreadCount;
@@ -218,15 +239,16 @@ export function LayoutDataProvider({
 	// Effect to complete new chat navigation after router syncs
 	// This runs when handleNewChat detected an out-of-sync state and triggered a sync
 	useEffect(() => {
-		if (pendingNewChat && params?.chat_id) {
+		if (pendingNewChat && urlChatId) {
 			// Router is now synced (chat_id is in params), complete navigation to new-chat
 			resetCurrentThread();
 			router.push(`/dashboard/${searchSpaceId}/new-chat`);
 			setPendingNewChat(false);
 		}
-	}, [pendingNewChat, params?.chat_id, router, searchSpaceId, resetCurrentThread]);
+	}, [pendingNewChat, urlChatId, router, searchSpaceId, resetCurrentThread]);
 
 	const searchSpaces: SearchSpace[] = useMemo(() => {
+		if (isPublicChat) return [];
 		if (!searchSpacesData || !Array.isArray(searchSpacesData)) return [];
 		return searchSpacesData.map((space) => ({
 			id: space.id,
@@ -240,12 +262,14 @@ export function LayoutDataProvider({
 
 	// Find active search space from list (has is_owner and member_count)
 	const activeSearchSpace: SearchSpace | null = useMemo(() => {
+		if (isPublicChat) return null;
 		if (!searchSpaceId || !searchSpaces.length) return null;
 		return searchSpaces.find((s) => s.id === Number(searchSpaceId)) ?? null;
 	}, [searchSpaceId, searchSpaces]);
 
 	// Transform and split chats into private and shared based on visibility
 	const { myChats, sharedChats } = useMemo(() => {
+		if (isPublicChat) return { myChats: [], sharedChats: [] };
 		if (!threadsData?.threads) return { myChats: [], sharedChats: [] };
 
 		const privateChats: ChatItem[] = [];
@@ -255,7 +279,7 @@ export function LayoutDataProvider({
 			const chatItem: ChatItem = {
 				id: thread.id,
 				name: thread.title || `Chat ${thread.id}`,
-				url: `/dashboard/${searchSpaceId}/new-chat/${thread.id}`,
+				url: `/dashboard/${searchSpaceId}/new-chat?chat_id=${thread.id}`,
 				visibility: thread.visibility,
 				isOwnThread: thread.is_own_thread,
 				archived: thread.archived,
@@ -276,22 +300,25 @@ export function LayoutDataProvider({
 
 	// Navigation items
 	const navItems: NavItem[] = useMemo(
-		() => [
-			{
-				title: "Inbox",
-				url: "#inbox", // Special URL to indicate this is handled differently
-				icon: Inbox,
-				isActive: isInboxSidebarOpen,
-				badge: totalUnreadCount > 0 ? formatInboxCount(totalUnreadCount) : undefined,
-			},
-			{
-				title: "Documents",
-				url: `/dashboard/${searchSpaceId}/documents`,
-				icon: SquareLibrary,
-				isActive: pathname?.includes("/documents"),
-			},
-		],
-		[searchSpaceId, pathname, isInboxSidebarOpen, totalUnreadCount]
+		() => {
+			if (isPublicChat) return [];
+			return [
+				{
+					title: "Inbox",
+					url: "#inbox", // Special URL to indicate this is handled differently
+					icon: Inbox,
+					isActive: isInboxSidebarOpen,
+					badge: totalUnreadCount > 0 ? formatInboxCount(totalUnreadCount) : undefined,
+				},
+				{
+					title: "Documents",
+					url: `/dashboard/${searchSpaceId}/documents`,
+					icon: SquareLibrary,
+					isActive: pathname?.includes("/documents"),
+				},
+			];
+		},
+		[isPublicChat, searchSpaceId, pathname, isInboxSidebarOpen, totalUnreadCount]
 	);
 
 	// Handlers
@@ -395,19 +422,19 @@ export function LayoutDataProvider({
 
 	const handleNewChat = useCallback(() => {
 		// Check if router is out of sync (thread created via replaceState but params don't have chat_id)
-		const isOutOfSync = currentThreadState.id !== null && !params?.chat_id;
+		const isOutOfSync = currentThreadState.id !== null && !urlChatId;
 
 		if (isOutOfSync) {
 			// First sync Next.js router by navigating to the current chat's actual URL
 			// This updates the router's internal state to match the browser URL
-			router.replace(`/dashboard/${searchSpaceId}/new-chat/${currentThreadState.id}`);
+			router.replace(`/dashboard/${searchSpaceId}/new-chat?chat_id=${currentThreadState.id}`);
 			// Set flag to trigger navigation to new-chat after params update
 			setPendingNewChat(true);
 		} else {
 			// Normal navigation - router is in sync
 			router.push(`/dashboard/${searchSpaceId}/new-chat`);
 		}
-	}, [router, searchSpaceId, currentThreadState.id, params?.chat_id]);
+	}, [router, searchSpaceId, currentThreadState.id, urlChatId]);
 
 	const handleChatSelect = useCallback(
 		(chat: ChatItem) => {
@@ -509,70 +536,85 @@ export function LayoutDataProvider({
 			}
 		: undefined;
 
+	const publicUser = {
+		email: "public@surfsense.ai",
+		name: "Public",
+	};
+
 	// Detect if we're on the chat page (needs overflow-hidden for chat's own scroll)
 	const isChatPage = pathname?.includes("/new-chat") ?? false;
 
 	return (
 		<>
 			<LayoutShell
-				searchSpaces={searchSpaces}
-				activeSearchSpaceId={Number(searchSpaceId)}
-				onSearchSpaceSelect={handleSearchSpaceSelect}
-				onSearchSpaceDelete={handleSearchSpaceDeleteClick}
-				onSearchSpaceSettings={handleSearchSpaceSettings}
-				onAddSearchSpace={handleAddSearchSpace}
-				searchSpace={activeSearchSpace}
-				navItems={navItems}
-				onNavItemClick={handleNavItemClick}
-				chats={myChats}
-				sharedChats={sharedChats}
-				activeChatId={currentChatId}
-				onNewChat={handleNewChat}
-				onChatSelect={handleChatSelect}
-				onChatDelete={handleChatDelete}
-				onChatArchive={handleChatArchive}
-				onViewAllSharedChats={handleViewAllSharedChats}
-				onViewAllPrivateChats={handleViewAllPrivateChats}
-				user={{
-					email: user?.email || "",
-					name: user?.display_name || user?.email?.split("@")[0],
-					avatarUrl: user?.avatar_url || undefined,
-				}}
-				onSettings={handleSettings}
-				onManageMembers={handleManageMembers}
-				onUserSettings={handleUserSettings}
-				onLogout={handleLogout}
-				pageUsage={pageUsage}
+				searchSpaces={isPublicChat ? [] : searchSpaces}
+				activeSearchSpaceId={isPublicChat ? null : Number(searchSpaceId)}
+				onSearchSpaceSelect={isPublicChat ? () => {} : handleSearchSpaceSelect}
+				onSearchSpaceDelete={isPublicChat ? undefined : handleSearchSpaceDeleteClick}
+				onSearchSpaceSettings={isPublicChat ? undefined : handleSearchSpaceSettings}
+				onAddSearchSpace={isPublicChat ? () => {} : handleAddSearchSpace}
+				searchSpace={isPublicChat ? null : activeSearchSpace}
+				navItems={isPublicChat ? [] : navItems}
+				onNavItemClick={isPublicChat ? undefined : handleNavItemClick}
+				chats={isPublicChat ? [] : myChats}
+				sharedChats={isPublicChat ? [] : sharedChats}
+				activeChatId={isPublicChat ? null : currentChatId}
+				onNewChat={
+					isPublicChat ? () => router.push("/dashboard/public/new-chat") : handleNewChat
+				}
+				onChatSelect={isPublicChat ? () => {} : handleChatSelect}
+				onChatDelete={isPublicChat ? undefined : handleChatDelete}
+				onChatArchive={isPublicChat ? undefined : handleChatArchive}
+				onViewAllSharedChats={isPublicChat ? undefined : handleViewAllSharedChats}
+				onViewAllPrivateChats={isPublicChat ? undefined : handleViewAllPrivateChats}
+				user={
+					isPublicChat
+						? publicUser
+						: {
+								email: user?.email || "",
+								name: user?.display_name || user?.email?.split("@")[0],
+								avatarUrl: user?.avatar_url || undefined,
+							}
+				}
+				onSettings={isPublicChat ? undefined : handleSettings}
+				onManageMembers={isPublicChat ? undefined : handleManageMembers}
+				onUserSettings={isPublicChat ? undefined : handleUserSettings}
+				onLogout={isPublicChat ? undefined : handleLogout}
+				pageUsage={isPublicChat ? undefined : pageUsage}
 				breadcrumb={breadcrumb}
 				theme={theme}
 				setTheme={setTheme}
 				isChatPage={isChatPage}
-				inbox={{
-					isOpen: isInboxSidebarOpen,
-					onOpenChange: setIsInboxSidebarOpen,
-					// Separate data sources for each tab
-					mentions: {
-						items: mentionItems,
-						unreadCount: mentionUnreadCount,
-						loading: mentionLoading,
-						loadingMore: mentionLoadingMore,
-						hasMore: mentionHasMore,
-						loadMore: mentionLoadMore,
-					},
-					status: {
-						items: statusItems,
-						unreadCount: statusUnreadCount,
-						loading: statusLoading,
-						loadingMore: statusLoadingMore,
-						hasMore: statusHasMore,
-						loadMore: statusLoadMore,
-					},
-					totalUnreadCount,
-					markAsRead,
-					markAllAsRead,
-					isDocked: isInboxDocked,
-					onDockedChange: setIsInboxDocked,
-				}}
+				inbox={
+					isPublicChat
+						? undefined
+						: {
+								isOpen: isInboxSidebarOpen,
+								onOpenChange: setIsInboxSidebarOpen,
+								// Separate data sources for each tab
+								mentions: {
+									items: mentionItems,
+									unreadCount: mentionUnreadCount,
+									loading: mentionLoading,
+									loadingMore: mentionLoadingMore,
+									hasMore: mentionHasMore,
+									loadMore: mentionLoadMore,
+								},
+								status: {
+									items: statusItems,
+									unreadCount: statusUnreadCount,
+									loading: statusLoading,
+									loadingMore: statusLoadingMore,
+									hasMore: statusHasMore,
+									loadMore: statusLoadMore,
+								},
+								totalUnreadCount,
+								markAsRead,
+								markAllAsRead,
+								isDocked: isInboxDocked,
+								onDockedChange: setIsInboxDocked,
+							}
+				}
 			>
 				{children}
 			</LayoutShell>

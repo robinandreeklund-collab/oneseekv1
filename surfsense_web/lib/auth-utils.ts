@@ -5,6 +5,17 @@
 const REDIRECT_PATH_KEY = "surfsense_redirect_path";
 const BEARER_TOKEN_KEY = "surfsense_bearer_token";
 
+function isPublicChatPath(pathname: string): boolean {
+	return pathname.startsWith("/dashboard/public/new-chat");
+}
+
+function sanitizeRedirectPath(pathname: string | null): string | null {
+	if (!pathname) return null;
+	if (!pathname.startsWith("/dashboard")) return null;
+	if (isPublicChatPath(pathname)) return null;
+	return pathname;
+}
+
 /**
  * Saves the current path and redirects to login page
  * Call this when a 401 response is received
@@ -17,8 +28,12 @@ export function handleUnauthorized(): void {
 
 	// Don't save auth-related paths
 	const excludedPaths = ["/auth", "/auth/callback", "/"];
-	if (!excludedPaths.includes(window.location.pathname)) {
-		localStorage.setItem(REDIRECT_PATH_KEY, currentPath);
+	const sanitizedPath =
+		!excludedPaths.includes(window.location.pathname) && !isPublicChatPath(currentPath)
+			? sanitizeRedirectPath(currentPath)
+			: null;
+	if (sanitizedPath) {
+		localStorage.setItem(REDIRECT_PATH_KEY, sanitizedPath);
 	}
 
 	// Clear the token
@@ -39,7 +54,7 @@ export function getAndClearRedirectPath(): string | null {
 	if (redirectPath) {
 		localStorage.removeItem(REDIRECT_PATH_KEY);
 	}
-	return redirectPath;
+	return sanitizeRedirectPath(redirectPath);
 }
 
 /**
@@ -86,8 +101,12 @@ export function redirectToLogin(): void {
 
 	// Don't save auth-related paths or home page
 	const excludedPaths = ["/auth", "/auth/callback", "/", "/login", "/register"];
-	if (!excludedPaths.includes(window.location.pathname)) {
-		localStorage.setItem(REDIRECT_PATH_KEY, currentPath);
+	const sanitizedPath =
+		!excludedPaths.includes(window.location.pathname) && !isPublicChatPath(currentPath)
+			? sanitizeRedirectPath(currentPath)
+			: null;
+	if (sanitizedPath) {
+		localStorage.setItem(REDIRECT_PATH_KEY, sanitizedPath);
 	}
 
 	// Redirect to login page

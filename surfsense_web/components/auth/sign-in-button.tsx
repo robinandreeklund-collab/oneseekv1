@@ -3,6 +3,8 @@
 import { motion } from "motion/react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { useEffect, useState } from "react";
+import { getBearerToken } from "@/lib/auth-utils";
 import { AUTH_TYPE, BACKEND_URL } from "@/lib/env-config";
 import { trackLoginAttempt } from "@/lib/posthog/events";
 import { cn } from "@/lib/utils";
@@ -41,6 +43,19 @@ interface SignInButtonProps {
 export const SignInButton = ({ variant = "desktop" }: SignInButtonProps) => {
 	const isGoogleAuth = AUTH_TYPE === "GOOGLE";
 	const t = useTranslations("auth");
+	const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+	useEffect(() => {
+		const updateAuthState = () => {
+			setIsAuthenticated(!!getBearerToken());
+		};
+
+		updateAuthState();
+
+		const handleStorage = () => updateAuthState();
+		window.addEventListener("storage", handleStorage);
+		return () => window.removeEventListener("storage", handleStorage);
+	}, []);
 
 	const handleGoogleLogin = () => {
 		trackLoginAttempt("google");
@@ -63,6 +78,14 @@ export const SignInButton = ({ variant = "desktop" }: SignInButtonProps) => {
 			? "w-full rounded-lg bg-white px-8 py-2.5 text-neutral-700 shadow-md ring-1 ring-neutral-200/50 dark:bg-neutral-900 dark:text-neutral-200 dark:ring-neutral-700/50 touch-manipulation"
 			: "w-full rounded-lg bg-black px-8 py-2 font-medium text-white shadow-[0px_-2px_0px_0px_rgba(255,255,255,0.4)_inset] dark:bg-white dark:text-black text-center touch-manipulation";
 	};
+
+	if (isAuthenticated) {
+		return (
+			<Link href="/dashboard" className={getClassName()}>
+				Dashboard
+			</Link>
+		);
+	}
 
 	if (isGoogleAuth) {
 		return (

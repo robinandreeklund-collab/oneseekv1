@@ -48,10 +48,10 @@ export function ThreadList({ searchSpaceId, currentThreadId, className }: Thread
 				searchSpaceId,
 				currentThreadId: currentThreadId ?? null,
 				onThreadSwitch: (threadId) => {
-					router.push(`/dashboard/${searchSpaceId}/new-chat/${threadId}`);
+					router.push(`/dashboard/${searchSpaceId}/new-chat?chat_id=${threadId}`);
 				},
 				onNewThread: (threadId) => {
-					router.push(`/dashboard/${searchSpaceId}/new-chat/${threadId}`);
+					router.push(`/dashboard/${searchSpaceId}/new-chat?chat_id=${threadId}`);
 				},
 			}),
 		[searchSpaceId, currentThreadId, router]

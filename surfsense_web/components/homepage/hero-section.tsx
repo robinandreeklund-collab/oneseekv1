@@ -87,22 +87,24 @@ export function HeroSection() {
 			/>
 
 			<h2 className="relative z-50 mx-auto mb-4 mt-4 max-w-4xl text-balance text-center text-3xl font-semibold tracking-tight text-gray-700 md:text-7xl dark:text-neutral-300">
-				<Balancer>
-					{isNotebookLMVariant ? (
-						<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
-							<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
-								<span className="">{t("notebooklm_title")}</span>
-							</div>
+				{isNotebookLMVariant ? (
+					<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
+						<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
+							<Balancer>
+								<span>{t("notebooklm_title")}</span>
+							</Balancer>
 						</div>
-					) : (
-						<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
-							<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
+					</div>
+				) : (
+					<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
+						<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
+							<Balancer>
 								<span>{t("hero_title_part1")}</span>
 								{t("hero_title_part2") && <span> {t("hero_title_part2")}</span>}
-							</div>
+							</Balancer>
 						</div>
-					)}
-				</Balancer>
+					</div>
+				)}
 			</h2>
 			{/* // TODO:aCTUAL DESCRITION */}
 			<p className="relative z-50 mx-auto mt-4 max-w-lg px-4 text-center text-base/6 text-gray-600 dark:text-gray-200">
@@ -194,7 +196,7 @@ function GetStartedButton() {
 	return (
 		<motion.div whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.98 }}>
 			<Link
-				href="/login"
+				href="/dashboard/public/new-chat"
 				className="group relative z-20 flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-black px-6 py-2.5 text-sm font-semibold text-white shadow-lg transition-shadow duration-300 hover:shadow-xl sm:w-56 dark:bg-white dark:text-black"
 			>
 				{tPricing("get_started")}
