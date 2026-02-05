@@ -51,6 +51,8 @@ from .podcast import create_generate_podcast_tool
 from .public_web_search import create_public_web_search_tool
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
+from .smhi_weather import create_smhi_weather_tool
+from .trafiklab_route import create_trafiklab_route_tool
 from .user_memory import create_recall_memory_tool, create_save_memory_tool
 
 # =============================================================================
@@ -134,6 +136,22 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
             firecrawl_api_key=deps.get("firecrawl_api_key"),
         ),
         requires=[],  # firecrawl_api_key is optional
+    ),
+    ToolDefinition(
+        name="smhi_weather",
+        description=(
+            "Fetch weather data from SMHI using a place name or lat/lon coordinates"
+        ),
+        factory=lambda deps: create_smhi_weather_tool(),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="trafiklab_route",
+        description=(
+            "Find public transport departures using Trafiklab realtime APIs and stop lookup"
+        ),
+        factory=lambda deps: create_trafiklab_route_tool(),
+        requires=[],
     ),
     ToolDefinition(
         name="search_web",

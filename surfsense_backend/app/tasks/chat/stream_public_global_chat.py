@@ -129,6 +129,31 @@ async def stream_public_global_chat(
                     )
                     title = "Analyzing the image"
                     items = [f"Image: {truncate(str(src), 100)}"]
+                elif tool_name == "smhi_weather":
+                    location = ""
+                    if isinstance(tool_input, dict):
+                        location = tool_input.get("location") or ""
+                        lat = tool_input.get("lat")
+                        lon = tool_input.get("lon")
+                        if not location and lat is not None and lon is not None:
+                            location = f"{lat}, {lon}"
+                    else:
+                        location = str(tool_input)
+                    title = "Fetching weather (SMHI)"
+                    items = [f"Location: {truncate(str(location), 100)}"]
+                elif tool_name == "trafiklab_route":
+                    origin = ""
+                    destination = ""
+                    if isinstance(tool_input, dict):
+                        origin = tool_input.get("origin") or tool_input.get("origin_id") or ""
+                        destination = (
+                            tool_input.get("destination") or tool_input.get("destination_id") or ""
+                        )
+                    else:
+                        origin = str(tool_input)
+                    title = "Planning route (Trafiklab)"
+                    route_label = f"{origin} -> {destination}".strip()
+                    items = [f"Route: {truncate(str(route_label), 100)}"]
 
                 last_active_step_title = title
                 last_active_step_items = items

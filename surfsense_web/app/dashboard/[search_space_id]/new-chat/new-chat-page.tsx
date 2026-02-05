@@ -37,6 +37,8 @@ import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
 import { GeneratePodcastToolUI } from "@/components/tool-ui/generate-podcast";
 import { LinkPreviewToolUI } from "@/components/tool-ui/link-preview";
 import { ScrapeWebpageToolUI } from "@/components/tool-ui/scrape-webpage";
+import { SmhiWeatherToolUI } from "@/components/tool-ui/smhi-weather";
+import { TrafiklabRouteToolUI } from "@/components/tool-ui/trafiklab-route";
 import { RecallMemoryToolUI, SaveMemoryToolUI } from "@/components/tool-ui/user-memory";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
@@ -121,6 +123,8 @@ const TOOLS_WITH_UI = new Set([
 	"link_preview",
 	"display_image",
 	"scrape_webpage",
+	"smhi_weather",
+	"trafiklab_route",
 	// "write_todos", // Disabled for now
 ]);
 
@@ -1622,6 +1626,8 @@ export default function NewChatPage() {
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
 			<ScrapeWebpageToolUI />
+			<SmhiWeatherToolUI />
+			<TrafiklabRouteToolUI />
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
 			{/* <WriteTodosToolUI /> Disabled for now */}

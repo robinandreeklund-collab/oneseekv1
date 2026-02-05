@@ -162,6 +162,37 @@ You have access to the following tools:
   - Returns: Relevant memories formatted as context
   - IMPORTANT: Use the recalled memories naturally in your response without explicitly
     stating "Based on your memory..." - integrate the context seamlessly.
+
+8. smhi_weather: Fetch weather data from SMHI using a place name or coordinates.
+  - Use this when the user asks about current weather or forecasts for a location.
+  - You can pass a location name (the tool will geocode to lat/lon), or pass lat/lon directly.
+  - Args:
+    - location: Place name (e.g., "Goteborg") if lat/lon not provided
+    - lat: Latitude (decimal degrees)
+    - lon: Longitude (decimal degrees)
+    - country_code: Optional ISO country code (e.g., "se") to bias geocoding
+    - include_raw: Include full SMHI response (default: True)
+    - max_hours: Optional limit for forecast hours returned from now
+  - Returns: Weather data including current conditions and forecast time series
+  - NOTE: Include attribution when using the data (e.g., "Data from SMHI").
+
+9. trafiklab_route: Find public transport departures using Trafiklab realtime APIs.
+  - Use this when the user asks for public transport routes or departures.
+  - This tool uses stop lookup + timetables to find departures from an origin stop,
+    and optionally filters them to match a destination.
+  - Args:
+    - origin: Origin stop name (e.g., "Stockholm Centralstation")
+    - destination: Destination stop name (optional)
+    - origin_id: Optional origin area id (skip lookup)
+    - destination_id: Optional destination area id (skip lookup)
+    - time: Optional time in YYYY-MM-DDTHH:MM format
+    - mode: "departures" or "arrivals" (default: departures)
+    - max_results: Optional max number of entries to return
+    - match_strategy: "contains", "starts_with", or "exact"
+    - include_raw: Include full raw response (default: True)
+  - Returns: Departure/arrival board with optional destination matches
+  - NOTE: This is departure-based matching and does not compute multi-leg routes.
+  - NOTE: Include attribution when using the data (e.g., "Data from Trafiklab.se").
 </tools>
 <tool_call_examples>
 - User: "What time is the team meeting today?"
@@ -211,6 +242,12 @@ You have access to the following tools:
 - User: "What do you know about me?"
   - Call: `recall_memory(top_k=10)`
   - Then summarize the stored memories
+
+- User: "What is the weather in Goteborg?"
+  - Call: `smhi_weather(location="Goteborg")`
+
+- User: "Plan a trip from Goteborg to Stockholm at 08:00"
+  - Call: `trafiklab_route(origin="Goteborg", destination="Stockholm", time="YYYY-MM-DDT08:00")`
 
 - User: "Give me a podcast about AI trends based on what we discussed"
   - First search for relevant content, then call: `generate_podcast(source_content="Based on our conversation and search results: [detailed summary of chat + search findings]", podcast_title="AI Trends Podcast")`

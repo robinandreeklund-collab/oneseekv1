@@ -11,6 +11,8 @@ Available tools:
 - link_preview: Fetch rich previews for URLs
 - display_image: Display images in chat
 - scrape_webpage: Extract content from webpages
+- smhi_weather: Fetch weather data from SMHI
+- trafiklab_route: Find departures using Trafiklab realtime APIs
 - search_web: Search the public web with global API keys
 - save_memory: Store facts/preferences about the user
 - recall_memory: Retrieve relevant user memories
@@ -38,6 +40,8 @@ from .registry import (
 )
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
+from .smhi_weather import create_smhi_weather_tool
+from .trafiklab_route import create_trafiklab_route_tool
 from .user_memory import create_recall_memory_tool, create_save_memory_tool
 
 __all__ = [
@@ -57,6 +61,8 @@ __all__ = [
     "create_scrape_webpage_tool",
     "create_search_knowledge_base_tool",
     "create_search_surfsense_docs_tool",
+    "create_smhi_weather_tool",
+    "create_trafiklab_route_tool",
     "format_documents_for_context",
     "get_all_tool_names",
     "get_default_enabled_tools",
