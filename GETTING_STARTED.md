@@ -827,19 +827,42 @@ WSL typically uses IPs in these ranges:
 
 **Common Causes**:
 
-1. **No Search Space created yet** (most common for new users)
+1. **Next.js dev server cache issue** (most common)
+   - The dynamic route `/dashboard/[search_space_id]/new-chat` exists but Next.js dev server isn't recognizing it
+   - Backend is working (search spaces are being fetched successfully)
+   - Frontend routing cache is stale
+
+2. **No Search Space created yet**
    - When you first log in, you need to create a Search Space
    - The dashboard tries to redirect to `/dashboard/[search_space_id]/new-chat`
    - If no search spaces exist, you may see a 404
 
-2. **Search Space query failing**
+3. **Search Space query failing**
    - Backend API not accessible
    - Database connection issues
    - Authentication token issues
 
 **Solutions**:
 
-1. **Navigate to dashboard root to create Search Space**:
+1. **Clear Next.js cache and restart dev server** (MOST EFFECTIVE):
+   ```bash
+   # Stop the frontend dev server (Ctrl+C)
+   
+   cd surfsense_web
+   
+   # Remove the .next cache directory
+   rm -rf .next
+   
+   # Clear npm cache if needed
+   npm cache clean --force
+   
+   # Restart the dev server
+   npm run dev
+   ```
+   
+   Then refresh your browser at http://localhost:3000/dashboard
+
+2. **Navigate to dashboard root to create Search Space**:
    ```bash
    # In your browser, go to:
    http://localhost:3000/dashboard
@@ -847,7 +870,7 @@ WSL typically uses IPs in these ranges:
    # This should show you the welcome screen to create your first Search Space
    ```
 
-2. **Check if backend is running**:
+3. **Check if backend is running**:
    ```bash
    # Test backend API
    curl http://localhost:8000/api/v1/search_space/
