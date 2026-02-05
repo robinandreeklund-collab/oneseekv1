@@ -264,7 +264,13 @@ async def public_global_chat(
         "messages": messages,
         "search_space_id": 0,
     }
-    stream_config = {"recursion_limit": config.ANON_CHAT_RECURSION_LIMIT}
+    thread_id = (
+        f"user:{user.id}" if user else f"anon:{anon_session.session_id}"
+    )
+    stream_config = {
+        "recursion_limit": config.ANON_CHAT_RECURSION_LIMIT,
+        "configurable": {"thread_id": thread_id},
+    }
 
     headers = VercelStreamingService.get_response_headers()
     headers.update(
