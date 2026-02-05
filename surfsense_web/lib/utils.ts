@@ -5,6 +5,7 @@ export function cn(...inputs: ClassValue[]) {
 	return twMerge(clsx(inputs));
 }
 
+// Swedish is the default locale for the UI.
 const DEFAULT_LOCALE = "sv";
 const LOCALE_DATE_MAP: Record<string, string> = {
 	sv: "sv-SE",

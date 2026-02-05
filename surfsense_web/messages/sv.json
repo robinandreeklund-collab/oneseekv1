@@ -32,9 +32,9 @@
 "shared": "Delad",
 "settings": "Inställningar"
 },
-"auth": {
-"login": "Logga in",
-"register": "Registrera",
+	"auth": {
+		"login": "Inloggning",
+		"register": "Registrera",
 "logout": "Logga ut",
 "email": "E-post",
 "password": "Lösenord",
@@ -742,16 +742,24 @@
 "all_connectors": "Alla anslutningar",
 "close": "Stäng"
 },
-"errors": {
-"something_went_wrong": "Något gick fel",
-"try_again": "Försök igen",
-"not_found": "Hittades inte",
-"unauthorized": "Obehörig",
-"forbidden": "Förbjuden",
-"server_error": "Serverfel",
-"network_error": "Nätverksfel"
-},
-"searchSpaceSettings": {
+	"errors": {
+		"something_went_wrong": "Något gick fel",
+		"try_again": "Försök igen",
+		"not_found": "Hittades inte",
+		"unauthorized": "Obehörig",
+		"forbidden": "Förbjuden",
+		"server_error": "Serverfel",
+		"network_error": "Nätverksfel"
+	},
+	"timestamps": {
+		"just_now": "Nyss",
+		"minutes_ago": "{count} min sedan",
+		"today_at": "Idag kl. {time}",
+		"yesterday_at": "Igår kl. {time}",
+		"day_at": "{day} kl. {time}",
+		"date_at": "{date} kl. {time}"
+	},
+	"searchSpaceSettings": {
 "title": "Sökutrymmesinställningar",
 "back_to_app": "Tillbaka till appen",
 "nav_general": "Allmänt",

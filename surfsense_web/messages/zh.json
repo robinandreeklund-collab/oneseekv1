@@ -736,6 +736,14 @@
 		"server_error": "服务器错误",
 		"network_error": "网络错误"
 	},
+	"timestamps": {
+		"just_now": "刚刚",
+		"minutes_ago": "{count} 分钟前",
+		"today_at": "今天 {time}",
+		"yesterday_at": "昨天 {time}",
+		"day_at": "{day} {time}",
+		"date_at": "{date} {time}"
+	},
 	"searchSpaceSettings": {
 		"title": "搜索空间设置",
 		"back_to_app": "返回应用",

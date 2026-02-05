@@ -751,6 +751,14 @@
 		"server_error": "Server error",
 		"network_error": "Network error"
 	},
+	"timestamps": {
+		"just_now": "Just now",
+		"minutes_ago": "{count}m ago",
+		"today_at": "Today at {time}",
+		"yesterday_at": "Yesterday at {time}",
+		"day_at": "{day} at {time}",
+		"date_at": "{date} at {time}"
+	},
 	"searchSpaceSettings": {
 		"title": "Search Space Settings",
 		"back_to_app": "Back to app",

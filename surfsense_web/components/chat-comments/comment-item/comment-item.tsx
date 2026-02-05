@@ -2,6 +2,7 @@
 
 import { useAtomValue, useSetAtom } from "jotai";
 import { MessageSquare } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { clearTargetCommentIdAtom, targetCommentIdAtom } from "@/atoms/chat/current-thread.atom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -18,14 +19,6 @@ const LOCALE_MAP = {
 	zh: "zh-CN",
 } as const;
 
-const SWEDISH_STRINGS = {
-	justNow: "Nyss",
-	minutesAgo: (minutes: number) => `${minutes} min sedan`,
-	todayAt: (time: string) => `Idag kl. ${time}`,
-	yesterdayAt: (time: string) => `Igår kl. ${time}`,
-	at: "kl.",
-} as const;
-
 function getInitials(name: string | null, email: string): string {
 	if (name) {
 		return name
@@ -38,7 +31,11 @@ function getInitials(name: string | null, email: string): string {
 	return email[0].toUpperCase();
 }
 
-function formatTimestamp(dateString: string, locale: keyof typeof LOCALE_MAP): string {
+function formatTimestamp(
+	dateString: string,
+	locale: keyof typeof LOCALE_MAP,
+	t: ReturnType<typeof useTranslations>
+): string {
 	const date = new Date(dateString);
 	const now = new Date();
 	const diffMs = now.getTime() - date.getTime();
@@ -46,8 +43,7 @@ function formatTimestamp(dateString: string, locale: keyof typeof LOCALE_MAP): s
 	const diffHours = Math.floor(diffMs / 3600000);
 	const diffDays = Math.floor(diffMs / 86400000);
 	const resolvedLocale = LOCALE_MAP[locale] ?? LOCALE_MAP.sv;
-	const isSwedish = locale === "sv";
-	const hour12 = !isSwedish;
+	const hour12 = locale !== "sv";
 
 	const timeStr = date.toLocaleTimeString(resolvedLocale, {
 		hour: "numeric",
@@ -56,35 +52,38 @@ function formatTimestamp(dateString: string, locale: keyof typeof LOCALE_MAP): s
 	});
 
 	if (diffMins < 1) {
-		return isSwedish ? SWEDISH_STRINGS.justNow : "Just now";
+		return t("just_now");
 	}
 
 	if (diffMins < 60) {
-		return isSwedish ? SWEDISH_STRINGS.minutesAgo(diffMins) : `${diffMins}m ago`;
+		return t("minutes_ago", { count: diffMins });
 	}
 
 	if (diffHours < 24 && date.getDate() === now.getDate()) {
-		return isSwedish ? SWEDISH_STRINGS.todayAt(timeStr) : `Today at ${timeStr}`;
+		return t("today_at", { time: timeStr });
 	}
 
 	const yesterday = new Date(now);
 	yesterday.setDate(yesterday.getDate() - 1);
 	if (date.getDate() === yesterday.getDate() && diffDays < 2) {
-		return isSwedish ? SWEDISH_STRINGS.yesterdayAt(timeStr) : `Yesterday at ${timeStr}`;
+		return t("yesterday_at", { time: timeStr });
 	}
 
 	if (diffDays < 7) {
 		const dayName = date.toLocaleDateString(resolvedLocale, { weekday: "long" });
-		return isSwedish ? `${dayName} ${SWEDISH_STRINGS.at} ${timeStr}` : `${dayName} at ${timeStr}`;
+		return t("day_at", { day: dayName, time: timeStr });
 	}
 
-	const atLabel = isSwedish ? SWEDISH_STRINGS.at : "at";
+	const formattedDate = date.toLocaleDateString(resolvedLocale, {
+		month: "short",
+		day: "numeric",
+		year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+	});
 	return (
-		date.toLocaleDateString(resolvedLocale, {
-			month: "short",
-			day: "numeric",
-			year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-		}) + ` ${atLabel} ${timeStr}`
+		t("date_at", {
+			date: formattedDate,
+			time: timeStr,
+		})
 	);
 }
 
@@ -137,6 +136,7 @@ export function CommentItem({
 	const commentRef = useRef<HTMLDivElement>(null);
 	const [isHighlighted, setIsHighlighted] = useState(false);
 	const { locale } = useLocaleContext();
+	const t = useTranslations("timestamps");
 
 	// Target comment navigation
 	const targetCommentId = useAtomValue(targetCommentIdAtom);
@@ -196,7 +196,7 @@ export function CommentItem({
 				<div className="flex items-center gap-2">
 					<span className="truncate text-sm font-medium">{displayName}</span>
 					<span className="shrink-0 text-xs text-muted-foreground">
-						{formatTimestamp(comment.createdAt, locale)}
+						{formatTimestamp(comment.createdAt, locale, t)}
 					</span>
 					{comment.isEdited && (
 						<span className="shrink-0 text-xs text-muted-foreground">(edited)</span>
