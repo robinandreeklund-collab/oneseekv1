@@ -49,9 +49,11 @@ const JobAdLinksResultSchema = z
 		status: z.string().nullish(),
 		error: z.string().nullish(),
 		query: z.string().nullish(),
+		effective_query: z.string().nullish(),
+		filters_in_query: z.array(z.string()).nullish(),
+		filters_not_applied: z.array(z.string()).nullish(),
 		results: z.array(JobAdResultSchema).nullish(),
 		total: z.number().nullish(),
-		filter_warning: z.string().nullish(),
 		attribution: z.string().nullish(),
 	})
 	.partial()
@@ -150,14 +152,19 @@ export const JobAdLinksToolUI = makeAssistantToolUI<JobAdLinksArgs, JobAdLinksRe
 							<Badge variant="secondary">{result.total} ads</Badge>
 						)}
 					</div>
-					{args.query && (
+					{result.effective_query && (
 						<p className="mt-1 text-xs text-muted-foreground">
-							Query: <span className="font-medium text-foreground">{args.query}</span>
+							Query:{" "}
+							<span className="font-medium text-foreground">
+								{result.effective_query}
+							</span>
 						</p>
 					)}
-					{result.filter_warning && (
-						<p className="mt-1 text-xs text-amber-600">{result.filter_warning}</p>
-					)}
+					{result.filters_not_applied?.length ? (
+						<p className="mt-1 text-xs text-amber-600">
+							Filters not applied: {result.filters_not_applied.join(", ")}
+						</p>
+					) : null}
 					<div className="mt-3 space-y-3">
 						{results.length === 0 ? (
 							<p className="text-sm text-muted-foreground">No job ads found.</p>

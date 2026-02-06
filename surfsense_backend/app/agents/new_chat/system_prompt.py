@@ -220,7 +220,8 @@ You have access to the following tools:
     - offset: Offset for pagination
     - include_raw: Include raw API response (default: False)
     - extra_params: Optional additional query params supported by API
-  - Returns: Structured job ad info with application links (Jobtech Links)
+  - Returns: Structured job ad info with application links (Jobtech Links).
+  - NOTE: Location/occupation/industry/remote are appended to the search query.
 </tools>
 <tool_call_examples>
 - User: "What time is the team meeting today?"
