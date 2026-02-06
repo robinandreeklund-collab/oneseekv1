@@ -4,6 +4,7 @@ import {
 	ErrorPrimitive,
 	MessagePrimitive,
 	useAssistantState,
+	useComposerRuntime,
 } from "@assistant-ui/react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { CheckIcon, CopyIcon, DownloadIcon, MessageSquare, RefreshCwIcon } from "lucide-react";
@@ -28,6 +29,7 @@ import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button
 import { CommentPanelContainer } from "@/components/chat-comments/comment-panel-container/comment-panel-container";
 import { CommentSheet } from "@/components/chat-comments/comment-sheet/comment-sheet";
 import { CommentTrigger } from "@/components/chat-comments/comment-trigger/comment-trigger";
+import { Button } from "@/components/ui/button";
 import { useComments } from "@/hooks/use-comments";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
@@ -67,6 +69,107 @@ const ThinkingStepsPart: FC = () => {
 	);
 };
 
+type FollowUpSuggestion = { title: string; items: string[] };
+
+function extractFollowUpSuggestions(text: string): FollowUpSuggestion | null {
+	const lines = text.replace(/\r\n/g, "\n").split("\n");
+	const headingRegex =
+		/^(#+\s*)?(\*\*)?\s*(possible next steps|next steps|möjliga nästa steg|nästa steg)\s*(\*\*)?:?\s*$/i;
+	const bulletRegex = /^([-*•]|\d+\.)\s+(.*)$/;
+	let headingIndex = -1;
+
+	for (let i = 0; i < lines.length; i += 1) {
+		if (headingRegex.test(lines[i].trim())) {
+			headingIndex = i;
+			break;
+		}
+	}
+	if (headingIndex === -1) return null;
+
+	const items: string[] = [];
+	let current = "";
+	for (let i = headingIndex + 1; i < lines.length; i += 1) {
+		const line = lines[i].trim();
+		if (!line) {
+			if (current) {
+				items.push(current.trim());
+				current = "";
+			}
+			if (items.length > 0) break;
+			continue;
+		}
+		if (/^#+\s+/.test(line) && items.length > 0) break;
+
+		const bulletMatch = line.match(bulletRegex);
+		if (bulletMatch) {
+			if (current) {
+				items.push(current.trim());
+			}
+			current = bulletMatch[2];
+			continue;
+		}
+		if (current) {
+			current = `${current} ${line}`;
+		}
+	}
+	if (current) items.push(current.trim());
+	const titleLine = lines[headingIndex].replace(/^[#*\s]+|[:*]+\s*$/g, "").trim();
+	if (!items.length) return null;
+	return { title: titleLine || "Possible next steps", items: items.slice(0, 4) };
+}
+
+const FollowUpSuggestions: FC = () => {
+	const composerRuntime = useComposerRuntime();
+	const messageContent = useAssistantState(({ message }) => message?.content);
+	const isThreadRunning = useAssistantState(({ thread }) => thread.isRunning);
+	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
+
+	const messageText = useMemo(() => {
+		if (!Array.isArray(messageContent)) return "";
+		let text = "";
+		for (const part of messageContent) {
+			if (typeof part === "object" && part && "type" in part && part.type === "text") {
+				if ("text" in part && typeof part.text === "string") {
+					text += `${part.text}\n`;
+				}
+			}
+		}
+		return text.trim();
+	}, [messageContent]);
+
+	const suggestions = useMemo(
+		() => (messageText ? extractFollowUpSuggestions(messageText) : null),
+		[messageText]
+	);
+
+	if (!suggestions || !suggestions.items.length) return null;
+	if (isThreadRunning || !isLastMessage) return null;
+
+	const handleClick = (item: string) => {
+		if (isThreadRunning) return;
+		composerRuntime.setText(item);
+		composerRuntime.send();
+	};
+
+	return (
+		<div className="mt-3 ml-2 flex flex-col gap-2">
+			<p className="text-xs text-muted-foreground">{suggestions.title}</p>
+			<div className="flex flex-wrap gap-2">
+				{suggestions.items.map((item) => (
+					<Button
+						key={item}
+						variant="secondary"
+						size="sm"
+						onClick={() => handleClick(item)}
+					>
+						{item}
+					</Button>
+				))}
+			</div>
+		</div>
+	);
+};
+
 const AssistantMessageInner: FC = () => {
 	return (
 		<>
@@ -82,6 +185,7 @@ const AssistantMessageInner: FC = () => {
 				/>
 				<MessageError />
 			</div>
+			<FollowUpSuggestions />
 
 			<div className="aui-assistant-message-footer mt-1 mb-5 ml-2 flex">
 				<BranchPicker />
