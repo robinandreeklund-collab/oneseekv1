@@ -78,7 +78,7 @@ function getChipDocType(element: Element): string {
 export const InlineMentionEditor = forwardRef<InlineMentionEditorRef, InlineMentionEditorProps>(
 	(
 		{
-			placeholder = "Type @ to mention documents...",
+			placeholder = "Skriv @ för att omnämna dokument...",
 			onMentionTrigger,
 			onMentionClose,
 			onSubmit,

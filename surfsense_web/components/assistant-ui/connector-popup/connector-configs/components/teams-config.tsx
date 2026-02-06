@@ -16,11 +16,11 @@ export const TeamsConfig: FC<TeamsConfigProps> = () => {
 					<Info className="size-4" />
 				</div>
 				<div className="text-xs sm:text-sm">
-					<p className="font-medium text-xs sm:text-sm">Microsoft Teams Access</p>
+					<p className="font-medium text-xs sm:text-sm">Microsoft Teams-åtkomst</p>
 					<p className="text-muted-foreground mt-1 text-[10px] sm:text-sm">
-						SurfSense will index messages from Teams channels that you have access to. The app can
-						only read messages from teams and channels where you are a member. Make sure you're a
-						member of the teams you want to index before connecting.
+						Oneseek kommer att indexera meddelanden från Teams-kanaler som du har åtkomst till.
+						Appen kan bara läsa meddelanden från team och kanaler där du är medlem. Se till att du
+						är medlem i de team du vill indexera innan du ansluter.
 					</p>
 				</div>
 			</div>

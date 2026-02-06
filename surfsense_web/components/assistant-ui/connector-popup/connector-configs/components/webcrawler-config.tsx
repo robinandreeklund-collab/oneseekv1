@@ -52,17 +52,17 @@ export const WebcrawlerConfig: FC<ConnectorConfigProps> = ({ connector, onConfig
 	return (
 		<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6 space-y-4 sm:space-y-6">
 			<div className="space-y-1 sm:space-y-2">
-				<h3 className="font-medium text-sm sm:text-base">Web Crawler Configuration</h3>
+				<h3 className="font-medium text-sm sm:text-base">Webbcrawler-konfiguration</h3>
 				<p className="text-xs sm:text-sm text-muted-foreground">
-					Configure your web crawler settings. You can add a Firecrawl API key for enhanced crawling
-					or use the free fallback option.
+					Konfigurera inställningarna för din webbcrawler. Du kan lägga till en Firecrawl
+					API-nyckel för förbättrad crawling eller använda det kostnadsfria reservalternativet.
 				</p>
 			</div>
 
 			{/* API Key Field */}
 			<div className="space-y-2">
 				<Label htmlFor="api-key" className="text-xs sm:text-sm">
-					Firecrawl API Key (Optional)
+					Firecrawl API-nyckel (valfritt)
 				</Label>
 				<div className="relative">
 					<Input
@@ -80,11 +80,11 @@ export const WebcrawlerConfig: FC<ConnectorConfigProps> = ({ connector, onConfig
 						onClick={() => setShowApiKey(!showApiKey)}
 						className="absolute right-1 top-1/2 -translate-y-1/2 h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
 					>
-						{showApiKey ? "Hide" : "Show"}
+						{showApiKey ? "Dölj" : "Visa"}
 					</Button>
 				</div>
 				<p className="text-[10px] sm:text-xs text-muted-foreground">
-					Get your API key from{" "}
+					Hämta din API-nyckel från{" "}
 					<a
 						href="https://firecrawl.dev"
 						target="_blank"
@@ -93,14 +93,14 @@ export const WebcrawlerConfig: FC<ConnectorConfigProps> = ({ connector, onConfig
 					>
 						firecrawl.dev
 					</a>
-					. If not provided, will use AsyncChromiumLoader as fallback.
+					. Om den inte anges används AsyncChromiumLoader som reserv.
 				</p>
 			</div>
 
 			{/* Initial URLs Field */}
 			<div className="space-y-2">
 				<Label htmlFor="initial-urls" className="text-xs sm:text-sm">
-					Initial URLs (Optional)
+					Initiala URL:er (valfritt)
 				</Label>
 				<Textarea
 					id="initial-urls"
@@ -110,7 +110,7 @@ export const WebcrawlerConfig: FC<ConnectorConfigProps> = ({ connector, onConfig
 					className="min-h-[100px] font-mono text-xs sm:text-sm bg-slate-400/5 dark:bg-white/5 border-slate-400/20 resize-none"
 				/>
 				<p className="text-[10px] sm:text-xs text-muted-foreground">
-					Enter URLs to crawl (one per line). You can add more URLs later.
+					Ange URL:er att crawla (en per rad). Du kan lägga till fler URL:er senare.
 				</p>
 			</div>
 
@@ -118,8 +118,8 @@ export const WebcrawlerConfig: FC<ConnectorConfigProps> = ({ connector, onConfig
 			<Alert className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 p-2 sm:p-3 flex items-center gap-2 [&>svg]:relative [&>svg]:left-0 [&>svg]:top-0 [&>svg+div]:translate-y-0">
 				<Info className="h-3 w-3 sm:h-4 sm:w-4 shrink-0" />
 				<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-					Configuration is saved when you start indexing. You can update these settings anytime from
-					the connector management page.
+					Konfigurationen sparas när du startar indexeringen. Du kan uppdatera dessa inställningar
+					när som helst från sidan för anslutningshantering.
 				</AlertDescription>
 			</Alert>
 		</div>

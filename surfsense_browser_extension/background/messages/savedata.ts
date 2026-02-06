@@ -98,7 +98,7 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
 				metadata: {
 					BrowsingSessionId: String(item.metadata.BrowsingSessionId || ""),
 					VisitedWebPageURL: String(item.metadata.VisitedWebPageURL || ""),
-					VisitedWebPageTitle: String(item.metadata.VisitedWebPageTitle || "No Title"),
+					VisitedWebPageTitle: String(item.metadata.VisitedWebPageTitle || "Ingen titel"),
 					VisitedWebPageDateWithTimeInISOString: String(
 						item.metadata.VisitedWebPageDateWithTimeInISOString || ""
 					),
@@ -138,7 +138,7 @@ const handler: PlasmoMessaging.MessageHandler = async (req, res) => {
 			if (resp) {
 				await clearMemory();
 				res.send({
-					message: "Save Job Started",
+					message: "Sparning startad",
 				});
 			}
 		}

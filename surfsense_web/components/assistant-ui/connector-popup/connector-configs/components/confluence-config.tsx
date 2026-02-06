@@ -81,7 +81,7 @@ export const ConfluenceConfig: FC<ConfluenceConfigProps> = ({
 	// For OAuth connectors, show simple info message
 	if (isOAuth) {
 		const siteUrl =
-			(connector.config?.base_url as string) || (connector.config?.site_url as string) || "Unknown";
+			(connector.config?.base_url as string) || (connector.config?.site_url as string) || "Okänd";
 		return (
 			<div className="space-y-6">
 				{/* OAuth Info */}
@@ -90,15 +90,15 @@ export const ConfluenceConfig: FC<ConfluenceConfigProps> = ({
 						<Info className="size-4" />
 					</div>
 					<div className="text-xs sm:text-sm">
-						<p className="font-medium text-xs sm:text-sm">Connected via OAuth</p>
+						<p className="font-medium text-xs sm:text-sm">Ansluten via OAuth</p>
 						<p className="text-muted-foreground mt-1 text-[10px] sm:text-sm">
-							This connector is authenticated using OAuth 2.0. Your Confluence instance is:
+							Den här anslutningen autentiseras med OAuth 2.0. Din Confluence-instans är:
 						</p>
 						<p className="text-muted-foreground mt-1 text-[10px] sm:text-sm">
 							<code className="bg-muted px-1 py-0.5 rounded text-inherit">{siteUrl}</code>
 						</p>
 						<p className="text-muted-foreground mt-1 text-[10px] sm:text-sm">
-							To update your connection, reconnect this connector.
+							För att uppdatera din anslutning, anslut om den här anslutningen.
 						</p>
 					</div>
 				</div>
@@ -112,15 +112,15 @@ export const ConfluenceConfig: FC<ConfluenceConfigProps> = ({
 			{/* Connector Name */}
 			<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6 space-y-3 sm:space-y-4">
 				<div className="space-y-2">
-					<Label className="text-xs sm:text-sm">Connector Name</Label>
+					<Label className="text-xs sm:text-sm">Anslutningsnamn</Label>
 					<Input
 						value={name}
 						onChange={(e) => handleNameChange(e.target.value)}
-						placeholder="My Confluence Connector"
+						placeholder="Min Confluence-anslutning"
 						className="border-slate-400/20 focus-visible:border-slate-400/40"
 					/>
 					<p className="text-[10px] sm:text-xs text-muted-foreground">
-						A friendly name to identify this connector.
+						Ett vänligt namn för att identifiera anslutningen.
 					</p>
 				</div>
 			</div>
@@ -128,12 +128,12 @@ export const ConfluenceConfig: FC<ConfluenceConfigProps> = ({
 			{/* Configuration */}
 			<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6 space-y-3 sm:space-y-4">
 				<div className="space-y-1 sm:space-y-2">
-					<h3 className="font-medium text-sm sm:text-base">Configuration</h3>
+					<h3 className="font-medium text-sm sm:text-base">Konfiguration</h3>
 				</div>
 
 				<div className="space-y-4">
 					<div className="space-y-2">
-						<Label className="text-xs sm:text-sm">Confluence Base URL</Label>
+						<Label className="text-xs sm:text-sm">Confluence-bas-URL</Label>
 						<Input
 							type="url"
 							value={baseUrl}
@@ -142,38 +142,38 @@ export const ConfluenceConfig: FC<ConfluenceConfigProps> = ({
 							className="border-slate-400/20 focus-visible:border-slate-400/40"
 						/>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							The base URL of your Confluence instance.
+							Bas-URL:en för din Confluence-instans.
 						</p>
 					</div>
 
 					<div className="space-y-2">
-						<Label className="text-xs sm:text-sm">Email Address</Label>
+						<Label className="text-xs sm:text-sm">E-postadress</Label>
 						<Input
 							type="email"
 							value={email}
 							onChange={(e) => handleEmailChange(e.target.value)}
-							placeholder="your-email@example.com"
+							placeholder="din-epost@example.com"
 							className="border-slate-400/20 focus-visible:border-slate-400/40"
 						/>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							The email address associated with your Atlassian account.
+							E-postadressen som är kopplad till ditt Atlassian-konto.
 						</p>
 					</div>
 
 					<div className="space-y-2">
 						<Label className="flex items-center gap-2 text-xs sm:text-sm">
 							<KeyRound className="h-4 w-4" />
-							API Token
+							API-token
 						</Label>
 						<Input
 							type="password"
 							value={apiToken}
 							onChange={(e) => handleApiTokenChange(e.target.value)}
-							placeholder="Your API Token"
+							placeholder="Din API-token"
 							className="border-slate-400/20 focus-visible:border-slate-400/40"
 						/>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							Update your Confluence API Token if needed.
+							Uppdatera din Confluence API-token vid behov.
 						</p>
 					</div>
 				</div>

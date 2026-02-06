@@ -56,7 +56,7 @@ function LinkPreviewErrorState({ url, error }: { url: string; error: string }) {
 					<AlertCircleIcon className="size-6 text-destructive" />
 				</div>
 				<div className="flex-1 min-w-0">
-					<p className="font-medium text-destructive text-sm">Failed to load preview</p>
+					<p className="font-medium text-destructive text-sm">Det gick inte att läsa in förhandsvisning</p>
 					<p className="text-muted-foreground text-xs mt-0.5 truncate">{url}</p>
 					<p className="text-muted-foreground text-xs mt-1">{error}</p>
 				</div>
@@ -73,7 +73,7 @@ function LinkPreviewCancelledState({ url }: { url: string }) {
 		<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
 			<p className="flex items-center gap-2">
 				<LinkIcon className="size-4" />
-				<span className="line-through truncate">Preview: {url}</span>
+				<span className="line-through truncate">Förhandsvisning: {url}</span>
 			</p>
 		</div>
 	);
@@ -89,7 +89,7 @@ function ParsedMediaCard({ result }: { result: unknown }) {
 		<MediaCard
 			{...card}
 			maxWidth="100%"
-			responseActions={[{ id: "open", label: "Open", variant: "default" }]}
+			responseActions={[{ id: "open", label: "Öppna", variant: "default" }]}
 			onResponseAction={(id) => {
 				if (id === "open" && card.href) {
 					window.open(card.href, "_blank", "noopener,noreferrer");
@@ -114,13 +114,13 @@ function ParsedMediaCard({ result }: { result: unknown }) {
 export const LinkPreviewToolUI = makeAssistantToolUI<LinkPreviewArgs, LinkPreviewResult>({
 	toolName: "link_preview",
 	render: function LinkPreviewUI({ args, result, status }) {
-		const url = args.url || "Unknown URL";
+		const url = args.url || "Okänd URL";
 
 		// Loading state - tool is still running
 		if (status.type === "running" || status.type === "requires-action") {
 			return (
 				<div className="my-4">
-					<MediaCardLoading title={`Loading preview for ${url}...`} />
+					<MediaCardLoading title={`Läser in förhandsvisning för ${url}...`} />
 				</div>
 			);
 		}
@@ -134,7 +134,7 @@ export const LinkPreviewToolUI = makeAssistantToolUI<LinkPreviewArgs, LinkPrevie
 				return (
 					<LinkPreviewErrorState
 						url={url}
-						error={typeof status.error === "string" ? status.error : "An error occurred"}
+						error={typeof status.error === "string" ? status.error : "Ett fel uppstod"}
 					/>
 				);
 			}
@@ -144,7 +144,7 @@ export const LinkPreviewToolUI = makeAssistantToolUI<LinkPreviewArgs, LinkPrevie
 		if (!result) {
 			return (
 				<div className="my-4">
-					<MediaCardLoading title={`Fetching metadata for ${url}...`} />
+					<MediaCardLoading title={`Hämtar metadata för ${url}...`} />
 				</div>
 			);
 		}
@@ -208,7 +208,7 @@ export const MultiLinkPreviewToolUI = makeAssistantToolUI<
 			return (
 				<div className="my-4 grid gap-4 sm:grid-cols-2">
 					{urls.slice(0, 4).map((url, index) => (
-						<MediaCardLoading key={`loading-${url}-${index}`} title="Loading..." />
+						<MediaCardLoading key={`loading-${url}-${index}`} title="Läser in..." />
 					))}
 				</div>
 			);
@@ -220,7 +220,7 @@ export const MultiLinkPreviewToolUI = makeAssistantToolUI<
 				<div className="my-4 text-muted-foreground text-sm">
 					<p className="flex items-center gap-2">
 						<LinkIcon className="size-4" />
-						<span>Link previews cancelled</span>
+						<span>Länkförhandsvisningar avbröts</span>
 					</p>
 				</div>
 			);

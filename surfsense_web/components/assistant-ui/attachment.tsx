@@ -82,7 +82,7 @@ const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src }) => {
 	return (
 		<Image
 			src={src}
-			alt="Image Preview"
+			alt="Bildförhandsvisning"
 			width={1}
 			height={1}
 			className={
@@ -110,7 +110,7 @@ const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
 				{children}
 			</DialogTrigger>
 			<DialogContent className="aui-attachment-preview-dialog-content p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:bg-foreground/60 [&>button]:p-1 [&>button]:opacity-100 [&>button]:ring-0! [&_svg]:text-background [&>button]:hover:[&_svg]:text-destructive">
-				<DialogTitle className="aui-sr-only sr-only">Image Attachment Preview</DialogTitle>
+				<DialogTitle className="aui-sr-only sr-only">Förhandsvisning av bildbilaga</DialogTitle>
 				<div className="aui-attachment-preview relative mx-auto flex max-h-[80dvh] w-full items-center justify-center overflow-hidden bg-background">
 					<AttachmentPreview src={src} />
 				</div>
@@ -145,7 +145,7 @@ const AttachmentThumb: FC = () => {
 		<Avatar className="aui-attachment-tile-avatar h-full w-full rounded-none">
 			<AvatarImage
 				src={src}
-				alt="Attachment preview"
+				alt="Förhandsvisning av bilaga"
 				className="aui-attachment-tile-image object-cover"
 			/>
 			<AvatarFallback delayMs={isImage ? 200 : 0}>
@@ -172,13 +172,13 @@ const AttachmentUI: FC = () => {
 		const type = attachment?.type;
 		switch (type) {
 			case "image":
-				return "Image";
+				return "Bild";
 			case "document":
-				return "Document";
+				return "Dokument";
 			case "file":
-				return "File";
+				return "Fil";
 			default:
-				return "File"; // Default fallback for unknown types
+				return "Fil"; // Default fallback for unknown types
 		}
 	});
 
@@ -200,7 +200,7 @@ const AttachmentUI: FC = () => {
 								isProcessing && "animate-pulse"
 							)}
 							id="attachment-tile"
-							aria-label={isProcessing ? "Processing attachment..." : `${typeLabel} attachment`}
+							aria-label={isProcessing ? "Bearbetar bilaga..." : `${typeLabel} bilaga`}
 						>
 							<AttachmentThumb />
 						</button>
@@ -215,7 +215,7 @@ const AttachmentUI: FC = () => {
 				{isProcessing ? (
 					<span className="flex items-center gap-1.5">
 						<Spinner size="xs" />
-						Processing...
+						Bearbetar...
 					</span>
 				) : (
 					<AttachmentPrimitive.Name />
@@ -229,7 +229,7 @@ const AttachmentRemove: FC = () => {
 	return (
 		<AttachmentPrimitive.Remove asChild>
 			<TooltipIconButton
-				tooltip="Remove file"
+					tooltip="Ta bort fil"
 				className="aui-attachment-tile-remove absolute top-1.5 right-1.5 size-3.5 rounded-full bg-white text-muted-foreground opacity-100 shadow-sm hover:bg-white! [&_svg]:text-black hover:[&_svg]:text-destructive"
 				side="top"
 			>
@@ -243,7 +243,7 @@ const AttachmentRemove: FC = () => {
  * Image attachment with preview thumbnail (click to expand)
  */
 const MessageImageAttachment: FC = () => {
-	const attachmentName = useAssistantState(({ attachment }) => attachment?.name || "Image");
+	const attachmentName = useAssistantState(({ attachment }) => attachment?.name || "Bild");
 	const src = useAttachmentSrc();
 
 	if (!src) return null;
@@ -252,7 +252,7 @@ const MessageImageAttachment: FC = () => {
 		<AttachmentPreviewDialog>
 			<div
 				className="relative group cursor-pointer overflow-hidden rounded-xl border border-border/50 bg-muted transition-all hover:border-primary/30 hover:shadow-md"
-				title={`Click to expand: ${attachmentName}`}
+				title={`Klicka för att förstora: ${attachmentName}`}
 			>
 				<Image
 					src={src}
@@ -278,7 +278,7 @@ const MessageImageAttachment: FC = () => {
  * Document/file attachment as chip (similar to mentioned documents)
  */
 const MessageDocumentAttachment: FC = () => {
-	const attachmentName = useAssistantState(({ attachment }) => attachment?.name || "Attachment");
+	const attachmentName = useAssistantState(({ attachment }) => attachment?.name || "Bilaga");
 
 	return (
 		<AttachmentPreviewDialog>
@@ -341,12 +341,12 @@ export const ComposerAddAttachment: FC = () => {
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<TooltipIconButton
-						tooltip="Upload"
+						tooltip="Ladda upp"
 						side="bottom"
 						variant="ghost"
 						size="icon"
 						className="aui-composer-add-attachment size-[34px] rounded-full p-1 font-semibold text-xs hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30"
-						aria-label="Upload"
+						aria-label="Ladda upp"
 					>
 						<PlusIcon className="aui-attachment-add-icon size-5 stroke-[1.5px]" />
 					</TooltipIconButton>
@@ -354,11 +354,11 @@ export const ComposerAddAttachment: FC = () => {
 				<DropdownMenuContent align="start" className="w-48 bg-background border-border">
 					<DropdownMenuItem onSelect={handleChatAttachment} className="cursor-pointer">
 						<Paperclip className="size-4" />
-						<span>Add attachment</span>
+						<span>Lägg till bilaga</span>
 					</DropdownMenuItem>
 					<DropdownMenuItem onClick={handleFileUpload} className="cursor-pointer">
 						<Upload className="size-4" />
-						<span>Upload Documents</span>
+						<span>Ladda upp dokument</span>
 					</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>

@@ -33,7 +33,7 @@ export const ChatSessionStatus: FC<ChatSessionStatusProps> = ({
 
 	const respondingUser = members.find((m) => m.user_id === respondingToUserId);
 	const displayName =
-		respondingUser?.user_display_name || respondingUser?.user_email || "another user";
+		respondingUser?.user_display_name || respondingUser?.user_email || "en annan användare";
 
 	return (
 		<div
@@ -44,7 +44,7 @@ export const ChatSessionStatus: FC<ChatSessionStatusProps> = ({
 			)}
 		>
 			<Spinner size="xs" />
-			<span>Currently responding to {displayName}</span>
+			<span>Svarar just nu på {displayName}</span>
 		</div>
 	);
 };

@@ -119,6 +119,24 @@ function getKindIcon(kind: MediaCardKind) {
 }
 
 /**
+ * Get Swedish label based on media card kind
+ */
+function getKindLabel(kind: MediaCardKind): string {
+	switch (kind) {
+		case "link":
+			return "Länk";
+		case "image":
+			return "Bild";
+		case "video":
+			return "Video";
+		case "audio":
+			return "Ljud";
+		default:
+			return "Länk";
+	}
+}
+
+/**
  * Error boundary for MediaCard
  */
 interface MediaCardErrorBoundaryState {
@@ -148,9 +166,11 @@ export class MediaCardErrorBoundary extends Component<
 							<LinkIcon className="size-5 text-destructive" />
 						</div>
 						<div className="min-w-0 flex-1">
-							<p className="font-medium text-destructive text-sm">Failed to load preview</p>
+							<p className="font-medium text-destructive text-sm">
+								Misslyckades att ladda förhandsvisning
+							</p>
 							<p className="text-muted-foreground text-xs truncate">
-								{this.state.error?.message || "An error occurred"}
+								{this.state.error?.message || "Ett fel uppstod"}
 							</p>
 						</div>
 					</CardContent>
@@ -258,7 +278,9 @@ export function MediaCard({
 					>
 						<div className="flex flex-col items-center gap-2 text-muted-foreground">
 							{getKindIcon(kind)}
-							<span className="text-xs">{kind === "link" ? "Link Preview" : kind}</span>
+							<span className="text-xs">
+								{kind === "link" ? "Länkförhandsvisning" : getKindLabel(kind)}
+							</span>
 						</div>
 					</div>
 				)}
@@ -333,7 +355,7 @@ export function MediaCard({
 /**
  * MediaCard Loading State
  */
-export function MediaCardLoading({ title = "Loading preview..." }: { title?: string }) {
+export function MediaCardLoading({ title = "Laddar förhandsvisning..." }: { title?: string }) {
 	return (
 		<Card className="w-full overflow-hidden">
 			<div className="aspect-[2/1] bg-muted animate-pulse flex items-center justify-center">

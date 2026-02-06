@@ -30,14 +30,14 @@ interface ConnectorCardProps {
  * Format document count (e.g., "1.2k docs", "500 docs", "1.5M docs")
  */
 function formatDocumentCount(count: number | undefined): string {
-	if (count === undefined || count === 0) return "0 docs";
-	if (count < 1000) return `${count} docs`;
+	if (count === undefined || count === 0) return "0 dokument";
+	if (count < 1000) return `${count} dokument`;
 	if (count < 1000000) {
 		const k = (count / 1000).toFixed(1);
-		return `${k.replace(/\.0$/, "")}k docs`;
+		return `${k.replace(/\.0$/, "")}k dokument`;
 	}
 	const m = (count / 1000000).toFixed(1);
-	return `${m.replace(/\.0$/, "")}M docs`;
+	return `${m.replace(/\.0$/, "")}M dokument`;
 }
 
 export const ConnectorCard: FC<ConnectorCardProps> = ({
@@ -113,13 +113,13 @@ export const ConnectorCard: FC<ConnectorCardProps> = ({
 				{isIndexing ? (
 					<p className="text-[11px] text-primary mt-1 flex items-center gap-1.5">
 						<Spinner size="xs" />
-						Syncing
+						Synkar
 					</p>
 				) : isConnected ? (
 					<p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1.5">
 						{isMCP && connectorCount !== undefined ? (
 							<span>
-								{connectorCount} {connectorCount === 1 ? "server" : "servers"}
+								{connectorCount} {connectorCount === 1 ? "server" : "servrar"}
 							</span>
 						) : (
 							<>
@@ -128,7 +128,7 @@ export const ConnectorCard: FC<ConnectorCardProps> = ({
 									<>
 										<span className="text-muted-foreground/50">•</span>
 										<span>
-											{accountCount} {accountCount === 1 ? "Account" : "Accounts"}
+											{accountCount} {accountCount === 1 ? "konto" : "konton"}
 										</span>
 									</>
 								)}
@@ -154,15 +154,15 @@ export const ConnectorCard: FC<ConnectorCardProps> = ({
 				{isConnecting ? (
 					<Spinner size="xs" />
 				) : !isEnabled ? (
-					"Unavailable"
+					"Otillgänglig"
 				) : isConnected ? (
-					"Manage"
+					"Hantera"
 				) : id === "youtube-crawler" ? (
-					"Add"
+					"Lägg till"
 				) : connectorType ? (
-					"Connect"
+					"Anslut"
 				) : (
-					"Add"
+					"Lägg till"
 				)}
 			</Button>
 		</div>

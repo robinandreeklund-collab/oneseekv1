@@ -23,10 +23,10 @@ import type { ConnectFormProps } from "../index";
 
 const linkupApiFormSchema = z.object({
 	name: z.string().min(3, {
-		message: "Connector name must be at least 3 characters.",
+		message: "Anslutningsnamn måste vara minst 3 tecken.",
 	}),
 	api_key: z.string().min(10, {
-		message: "API key is required and must be valid.",
+		message: "API-nyckel krävs och måste vara giltig.",
 	}),
 });
 
@@ -37,7 +37,7 @@ export const LinkupApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 	const form = useForm<LinkupApiFormValues>({
 		resolver: zodResolver(linkupApiFormSchema),
 		defaultValues: {
-			name: "Linkup API Connector",
+			name: "Linkup API-anslutning",
 			api_key: "",
 		},
 	});
@@ -72,9 +72,10 @@ export const LinkupApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 			<Alert className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 p-2 sm:p-3 flex items-center [&>svg]:relative [&>svg]:left-0 [&>svg]:top-0 [&>svg+div]:translate-y-0">
 				<Info className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 ml-1" />
 				<div className="-ml-1">
-					<AlertTitle className="text-xs sm:text-sm">API Key Required</AlertTitle>
+					<AlertTitle className="text-xs sm:text-sm">API-nyckel krävs</AlertTitle>
 					<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-						You'll need a Linkup API key to use this connector. You can get one by signing up at{" "}
+						Du behöver en Linkup API-nyckel för att använda denna anslutning. Du kan få en genom
+						att registrera dig på{" "}
 						<a
 							href="https://linkup.so"
 							target="_blank"
@@ -99,17 +100,17 @@ export const LinkupApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 							name="name"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Connector Name</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Anslutningsnamn</FormLabel>
 									<FormControl>
 										<Input
-											placeholder="My Linkup API Connector"
+											placeholder="Min Linkup API-anslutning"
 											className="border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										A friendly name to identify this connector.
+										Ett vänligt namn för att identifiera anslutningen.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -121,18 +122,18 @@ export const LinkupApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 							name="api_key"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Linkup API Key</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Linkup API-nyckel</FormLabel>
 									<FormControl>
 										<Input
 											type="password"
-											placeholder="Enter your Linkup API key"
+											placeholder="Ange din Linkup API-nyckel"
 											className="border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										Your API key will be encrypted and stored securely.
+										Din API-nyckel krypteras och lagras säkert.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -145,7 +146,7 @@ export const LinkupApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 			{/* What you get section */}
 			{getConnectorBenefits(EnumConnectorName.LINKUP_API) && (
 				<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 px-3 sm:px-6 py-4 space-y-2">
-					<h4 className="text-xs sm:text-sm font-medium">What you get with Linkup API:</h4>
+					<h4 className="text-xs sm:text-sm font-medium">Det här får du med Linkup API:</h4>
 					<ul className="list-disc pl-5 text-[10px] sm:text-xs text-muted-foreground space-y-1">
 						{getConnectorBenefits(EnumConnectorName.LINKUP_API)?.map((benefit) => (
 							<li key={benefit}>{benefit}</li>

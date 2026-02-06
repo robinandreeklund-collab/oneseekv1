@@ -14,7 +14,7 @@ const ApiKeyForm = () => {
 
 	const validateForm = () => {
 		if (!apiKey) {
-			setError("API key is required");
+			setError("API-nyckel krävs");
 			return false;
 		}
 		setError("");
@@ -42,11 +42,11 @@ const ApiKeyForm = () => {
 				await storage.set("token", apiKey);
 				navigation("/");
 			} else {
-				setError("Invalid API key. Please check and try again.");
+				setError("Ogiltig API-nyckel. Kontrollera och försök igen.");
 			}
 		} catch (error) {
 			setLoading(false);
-			setError("An error occurred. Please try again later.");
+			setError("Ett fel uppstod. Försök igen senare.");
 		}
 	};
 
@@ -55,22 +55,22 @@ const ApiKeyForm = () => {
 			<div className="w-full max-w-md mx-auto space-y-8">
 				<div className="flex flex-col items-center space-y-2">
 					<div className="bg-gray-800 p-3 rounded-full ring-2 ring-gray-700 shadow-lg">
-						<img className="w-12 h-12" src={icon} alt="SurfSense" />
+						<img className="w-12 h-12" src={icon} alt="Oneseek" />
 					</div>
-					<h1 className="text-3xl font-semibold tracking-tight text-white mt-4">SurfSense</h1>
+					<h1 className="text-3xl font-semibold tracking-tight text-white mt-4">Oneseek</h1>
 				</div>
 
 				<div className="bg-gray-800/70 backdrop-blur-sm rounded-xl shadow-xl border border-gray-700 p-6">
 					<div className="space-y-6">
-						<h2 className="text-xl font-medium text-white">Enter your API Key</h2>
+						<h2 className="text-xl font-medium text-white">Ange din API-nyckel</h2>
 						<p className="text-gray-400 text-sm">
-							Your API key connects this extension to the SurfSense.
+							Din API-nyckel kopplar detta tillägg till Oneseek.
 						</p>
 
 						<form onSubmit={handleSubmit} className="space-y-4">
 							<div className="space-y-2">
 								<label htmlFor="apiKey" className="text-sm font-medium text-gray-300">
-									API Key
+									API-nyckel
 								</label>
 								<input
 									type="text"
@@ -78,7 +78,7 @@ const ApiKeyForm = () => {
 									value={apiKey}
 									onChange={(e) => setApiKey(e.target.value)}
 									className="w-full px-3 py-2 bg-gray-900/50 border border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 text-white placeholder:text-gray-500"
-									placeholder="Enter your API key"
+									placeholder="Ange din API-nyckel"
 								/>
 								{error && <p className="text-red-400 text-sm mt-1">{error}</p>}
 							</div>
@@ -91,24 +91,24 @@ const ApiKeyForm = () => {
 								{loading ? (
 									<>
 										<ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
-										Verifying...
+										Verifierar...
 									</>
 								) : (
-									"Connect"
+									"Anslut"
 								)}
 							</Button>
 						</form>
 
 						<div className="text-center mt-4">
 							<p className="text-sm text-gray-400">
-								Need an API key?{" "}
+								Behöver du en API-nyckel?{" "}
 								<a
 									href="https://www.surfsense.com"
 									target="_blank"
 									className="text-teal-400 hover:text-teal-300 hover:underline"
 									rel="noopener"
 								>
-									Sign up
+									Registrera dig
 								</a>
 							</p>
 						</div>

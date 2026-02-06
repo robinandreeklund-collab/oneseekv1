@@ -33,16 +33,16 @@ import type { ConnectFormProps } from "../index";
 
 const githubConnectorFormSchema = z.object({
 	name: z.string().min(3, {
-		message: "Connector name must be at least 3 characters.",
+		message: "Anslutningsnamn måste vara minst 3 tecken.",
 	}),
 	github_pat: z
 		.string()
 		.optional()
 		.refine((pat) => !pat || pat.startsWith("ghp_") || pat.startsWith("github_pat_"), {
-			message: "GitHub PAT should start with 'ghp_' or 'github_pat_'",
+			message: "GitHub PAT ska börja med 'ghp_' eller 'github_pat_'",
 		}),
 	repo_full_names: z.string().min(1, {
-		message: "At least one repository is required.",
+		message: "Minst ett repository krävs.",
 	}),
 });
 
@@ -55,7 +55,7 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 	const form = useForm<GithubConnectorFormValues>({
 		resolver: zodResolver(githubConnectorFormSchema),
 		defaultValues: {
-			name: "GitHub Connector",
+			name: "GitHub-anslutning",
 			github_pat: "",
 			repo_full_names: "",
 		},
@@ -108,9 +108,9 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 			<Alert className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 p-2 sm:p-3 flex items-center [&>svg]:relative [&>svg]:left-0 [&>svg]:top-0 [&>svg+div]:translate-y-0">
 				<Info className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 ml-1" />
 				<div className="-ml-1">
-					<AlertTitle className="text-xs sm:text-sm">Personal Access Token (Optional)</AlertTitle>
+					<AlertTitle className="text-xs sm:text-sm">Personlig åtkomsttoken (valfritt)</AlertTitle>
 					<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-						A GitHub PAT is only required for private repositories. Public repos work without a
+						En GitHub PAT krävs bara för privata repositories. Offentliga repos fungerar utan
 						token.{" "}
 						<a
 							href="https://github.com/settings/tokens/new?description=surfsense&scopes=repo"
@@ -118,7 +118,7 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 							rel="noopener noreferrer"
 							className="font-medium underline underline-offset-4 inline-flex items-center gap-1.5"
 						>
-							Get your token
+							Hämta din token
 							<ExternalLink className="h-3 w-3 sm:h-4 sm:w-4" />
 						</a>{" "}
 					</AlertDescription>
@@ -137,17 +137,17 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 							name="name"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Connector Name</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Anslutningsnamn</FormLabel>
 									<FormControl>
 										<Input
-											placeholder="My GitHub Connector"
+											placeholder="Min GitHub-anslutning"
 											className="h-8 sm:h-10 px-2 sm:px-3 text-xs sm:text-sm border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										A friendly name to identify this connector.
+										Ett vänligt namn för att identifiera anslutningen.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -160,8 +160,8 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 							render={({ field }) => (
 								<FormItem>
 									<FormLabel className="text-xs sm:text-sm">
-										GitHub Personal Access Token{" "}
-										<span className="text-muted-foreground font-normal">(optional)</span>
+										GitHub personlig åtkomsttoken{" "}
+										<span className="text-muted-foreground font-normal">(valfritt)</span>
 									</FormLabel>
 									<FormControl>
 										<Input
@@ -173,8 +173,8 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										Only required for private repositories. Leave empty if indexing public repos
-										only.
+										Krävs endast för privata repositories. Lämna tomt om du bara indexerar
+										offentliga repos.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -186,7 +186,7 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 							name="repo_full_names"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Repository Names</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Repositorynamn</FormLabel>
 									<FormControl>
 										<Input
 											placeholder="owner/repo1, owner/repo2"
@@ -196,7 +196,7 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										Comma-separated list of repository full names (e.g., "owner/repo1,
+										Kommaseparerad lista över fullständiga repositorynamn (t.ex. "owner/repo1,
 										owner/repo2").
 									</FormDescription>
 									<FormMessage />
@@ -207,7 +207,7 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 						{/* Show parsed repositories as badges */}
 						{form.watch("repo_full_names")?.trim() && (
 							<div className="rounded-lg border border-border bg-muted/50 p-3">
-								<h4 className="text-[10px] sm:text-xs font-medium mb-2">Selected Repositories:</h4>
+								<h4 className="text-[10px] sm:text-xs font-medium mb-2">Valda repository:</h4>
 								<div className="flex flex-wrap gap-2">
 									{stringToArray(form.watch("repo_full_names") ?? "").map((repo) => (
 										<Badge key={repo} variant="secondary" className="text-[10px]">
@@ -220,7 +220,7 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 
 						{/* Indexing Configuration */}
 						<div className="space-y-4 pt-4 border-t border-slate-400/20">
-							<h3 className="text-sm sm:text-base font-medium">Sync Configuration</h3>
+							<h3 className="text-sm sm:text-base font-medium">Synkroniseringskonfiguration</h3>
 
 							{/* Note: No date range for GitHub - it indexes full repo snapshots */}
 
@@ -228,9 +228,9 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 							<div className="rounded-xl bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6">
 								<div className="flex items-center justify-between">
 									<div className="space-y-1">
-										<h3 className="font-medium text-sm sm:text-base">Enable Periodic Sync</h3>
+										<h3 className="font-medium text-sm sm:text-base">Aktivera periodisk synk</h3>
 										<p className="text-xs sm:text-sm text-muted-foreground">
-											Automatically re-index at regular intervals
+											Indexera om automatiskt med regelbundna intervall
 										</p>
 									</div>
 									<Switch
@@ -244,7 +244,7 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 									<div className="mt-4 pt-4 border-t border-slate-400/20 space-y-3">
 										<div className="space-y-2">
 											<Label htmlFor="frequency" className="text-xs sm:text-sm">
-												Sync Frequency
+												Synkfrekvens
 											</Label>
 											<Select
 												value={frequencyMinutes}
@@ -255,29 +255,29 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 													id="frequency"
 													className="w-full bg-slate-400/5 dark:bg-slate-400/5 border-slate-400/20 text-xs sm:text-sm"
 												>
-													<SelectValue placeholder="Select frequency" />
+													<SelectValue placeholder="Välj frekvens" />
 												</SelectTrigger>
 												<SelectContent className="z-[100]">
 													<SelectItem value="5" className="text-xs sm:text-sm">
-														Every 5 minutes
+														Var 5:e minut
 													</SelectItem>
 													<SelectItem value="15" className="text-xs sm:text-sm">
-														Every 15 minutes
+														Var 15:e minut
 													</SelectItem>
 													<SelectItem value="60" className="text-xs sm:text-sm">
-														Every hour
+														Varje timme
 													</SelectItem>
 													<SelectItem value="360" className="text-xs sm:text-sm">
-														Every 6 hours
+														Var 6:e timme
 													</SelectItem>
 													<SelectItem value="720" className="text-xs sm:text-sm">
-														Every 12 hours
+														Var 12:e timme
 													</SelectItem>
 													<SelectItem value="1440" className="text-xs sm:text-sm">
-														Daily
+														Dagligen
 													</SelectItem>
 													<SelectItem value="10080" className="text-xs sm:text-sm">
-														Weekly
+														Veckovis
 													</SelectItem>
 												</SelectContent>
 											</Select>
@@ -298,7 +298,7 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 					rel="noopener noreferrer"
 					className="text-xs sm:text-sm font-medium underline underline-offset-4 hover:text-primary transition-colors inline-flex items-center gap-1.5"
 				>
-					View GitHub Connector Documentation
+					Visa dokumentation för GitHub-anslutningen
 					<ExternalLink className="h-3 w-3 sm:h-4 sm:w-4" />
 				</Link>
 			</div>

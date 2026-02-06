@@ -190,15 +190,15 @@ export const SearxngConfig: FC<SearxngConfigProps> = ({
 			{/* Connector Name */}
 			<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6 space-y-3 sm:space-y-4">
 				<div className="space-y-2">
-					<Label className="text-xs sm:text-sm">Connector Name</Label>
+					<Label className="text-xs sm:text-sm">Anslutningsnamn</Label>
 					<Input
 						value={name}
 						onChange={(e) => handleNameChange(e.target.value)}
-						placeholder="My SearxNG Connector"
+						placeholder="Min SearxNG-anslutning"
 						className="border-slate-400/20 focus-visible:border-slate-400/40"
 					/>
 					<p className="text-[10px] sm:text-xs text-muted-foreground">
-						A friendly name to identify this connector.
+						Ett vänligt namn för att identifiera anslutningen.
 					</p>
 				</div>
 			</div>
@@ -206,14 +206,14 @@ export const SearxngConfig: FC<SearxngConfigProps> = ({
 			{/* Configuration */}
 			<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6 space-y-3 sm:space-y-4">
 				<div className="space-y-1 sm:space-y-2">
-					<h3 className="font-medium text-sm sm:text-base">Configuration</h3>
+					<h3 className="font-medium text-sm sm:text-base">Konfiguration</h3>
 				</div>
 
 				<div className="space-y-4">
 					<div className="space-y-2">
 						<Label className="flex items-center gap-2 text-xs sm:text-sm">
 							<Globe className="h-4 w-4" />
-							SearxNG Host
+							SearxNG-värd
 						</Label>
 						<Input
 							value={host}
@@ -222,30 +222,30 @@ export const SearxngConfig: FC<SearxngConfigProps> = ({
 							className="border-slate-400/20 focus-visible:border-slate-400/40"
 						/>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							Update the SearxNG Host if needed.
+							Uppdatera SearxNG-värden vid behov.
 						</p>
 					</div>
 
 					<div className="space-y-2">
 						<Label className="flex items-center gap-2 text-xs sm:text-sm">
 							<KeyRound className="h-4 w-4" />
-							API Key (optional)
+							API-nyckel (valfritt)
 						</Label>
 						<Input
 							type="password"
 							value={apiKey}
 							onChange={(e) => handleApiKeyChange(e.target.value)}
-							placeholder="Enter API key if your instance requires one"
+							placeholder="Ange API-nyckel om din instans kräver en"
 							className="border-slate-400/20 focus-visible:border-slate-400/40"
 						/>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							Leave empty if your SearxNG instance does not enforce API keys.
+							Lämna tomt om din SearxNG-instans inte kräver API-nycklar.
 						</p>
 					</div>
 
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 						<div className="space-y-2">
-							<Label className="text-xs sm:text-sm">Engines (optional)</Label>
+							<Label className="text-xs sm:text-sm">Sökmotorer (valfritt)</Label>
 							<Input
 								value={engines}
 								onChange={(e) => handleEnginesChange(e.target.value)}
@@ -253,12 +253,12 @@ export const SearxngConfig: FC<SearxngConfigProps> = ({
 								className="border-slate-400/20 focus-visible:border-slate-400/40"
 							/>
 							<p className="text-[10px] sm:text-xs text-muted-foreground">
-								Comma-separated list to target specific engines.
+								Kommaseparerad lista för att rikta in sig på specifika motorer.
 							</p>
 						</div>
 
 						<div className="space-y-2">
-							<Label className="text-xs sm:text-sm">Categories (optional)</Label>
+							<Label className="text-xs sm:text-sm">Kategorier (valfritt)</Label>
 							<Input
 								value={categories}
 								onChange={(e) => handleCategoriesChange(e.target.value)}
@@ -266,14 +266,14 @@ export const SearxngConfig: FC<SearxngConfigProps> = ({
 								className="border-slate-400/20 focus-visible:border-slate-400/40"
 							/>
 							<p className="text-[10px] sm:text-xs text-muted-foreground">
-								Comma-separated list of SearxNG categories.
+								Kommaseparerad lista över SearxNG-kategorier.
 							</p>
 						</div>
 					</div>
 
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 						<div className="space-y-2">
-							<Label className="text-xs sm:text-sm">Preferred Language (optional)</Label>
+							<Label className="text-xs sm:text-sm">Föredraget språk (valfritt)</Label>
 							<Input
 								value={language}
 								onChange={(e) => handleLanguageChange(e.target.value)}
@@ -281,30 +281,30 @@ export const SearxngConfig: FC<SearxngConfigProps> = ({
 								className="border-slate-400/20 focus-visible:border-slate-400/40"
 							/>
 							<p className="text-[10px] sm:text-xs text-muted-foreground">
-								IETF language tag (e.g. en, en-US). Leave blank to inherit defaults.
+								IETF-språktagg (t.ex. en, en-US). Lämna tomt för att använda standardinställningar.
 							</p>
 						</div>
 
 						<div className="space-y-2">
-							<Label className="text-xs sm:text-sm">SafeSearch Level (optional)</Label>
+							<Label className="text-xs sm:text-sm">SafeSearch-nivå (valfritt)</Label>
 							<Input
 								value={safesearch}
 								onChange={(e) => handleSafesearchChange(e.target.value)}
-								placeholder="0 (off), 1 (moderate), 2 (strict)"
+								placeholder="0 (av), 1 (måttlig), 2 (strikt)"
 								className="border-slate-400/20 focus-visible:border-slate-400/40"
 							/>
 							<p className="text-[10px] sm:text-xs text-muted-foreground">
-								Set 0, 1, or 2 to adjust SafeSearch filtering. Leave blank to use the instance
-								default.
+								Ange 0, 1 eller 2 för att justera SafeSearch-filtrering. Lämna tomt för att
+								använda instansens standard.
 							</p>
 						</div>
 					</div>
 
 					<div className="flex items-center justify-between rounded-lg border border-slate-400/20 p-3 sm:p-4">
 						<div>
-							<Label className="text-xs sm:text-sm">Verify SSL Certificates</Label>
+							<Label className="text-xs sm:text-sm">Verifiera SSL-certifikat</Label>
 							<p className="text-[10px] sm:text-xs text-muted-foreground">
-								Disable only when connecting to instances with self-signed certificates.
+								Inaktivera endast vid anslutning till instanser med självsignerade certifikat.
 							</p>
 						</div>
 						<Switch checked={verifySsl} onCheckedChange={handleVerifySslChange} />

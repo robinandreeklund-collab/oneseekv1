@@ -94,15 +94,15 @@ export const GithubConfig: FC<GithubConfigProps> = ({
 			{/* Connector Name */}
 			<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6 space-y-3 sm:space-y-4">
 				<div className="space-y-2">
-					<Label className="text-xs sm:text-sm">Connector Name</Label>
+					<Label className="text-xs sm:text-sm">Anslutningsnamn</Label>
 					<Input
 						value={name}
 						onChange={(e) => handleNameChange(e.target.value)}
-						placeholder="My GitHub Connector"
+						placeholder="Min GitHub-anslutning"
 						className="border-slate-400/20 focus-visible:border-slate-400/40"
 					/>
 					<p className="text-[10px] sm:text-xs text-muted-foreground">
-						A friendly name to identify this connector.
+						Ett vänligt namn för att identifiera anslutningen.
 					</p>
 				</div>
 			</div>
@@ -110,14 +110,14 @@ export const GithubConfig: FC<GithubConfigProps> = ({
 			{/* Configuration */}
 			<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6 space-y-3 sm:space-y-4">
 				<div className="space-y-1 sm:space-y-2">
-					<h3 className="font-medium text-sm sm:text-base">Configuration</h3>
+					<h3 className="font-medium text-sm sm:text-base">Konfiguration</h3>
 				</div>
 
 				<div className="space-y-4">
 					<div className="space-y-2">
 						<Label className="flex items-center gap-2 text-xs sm:text-sm">
 							<KeyRound className="h-4 w-4" />
-							GitHub Personal Access Token (optional)
+						GitHub personlig åtkomsttoken (valfritt)
 						</Label>
 						<Input
 							type="password"
@@ -127,12 +127,12 @@ export const GithubConfig: FC<GithubConfigProps> = ({
 							className="border-slate-400/20 focus-visible:border-slate-400/40"
 						/>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							Update your GitHub PAT if needed.
+						Uppdatera din GitHub PAT vid behov.
 						</p>
 					</div>
 
 					<div className="space-y-2">
-						<Label className="text-xs sm:text-sm">Repository Names</Label>
+						<Label className="text-xs sm:text-sm">Repositorynamn</Label>
 						<Input
 							value={repoFullNames}
 							onChange={(e) => handleRepoFullNamesChange(e.target.value)}
@@ -140,14 +140,14 @@ export const GithubConfig: FC<GithubConfigProps> = ({
 							className="border-slate-400/20 focus-visible:border-slate-400/40"
 						/>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							Comma-separated list of repository full names.
+							Kommaseparerad lista över fullständiga repositorynamn.
 						</p>
 					</div>
 
 					{/* Show parsed repositories as badges */}
 					{repoFullNames.trim() && (
 						<div className="rounded-lg border border-border bg-muted/50 p-3">
-							<h4 className="text-[10px] sm:text-xs font-medium mb-2">Repositories:</h4>
+							<h4 className="text-[10px] sm:text-xs font-medium mb-2">Repository:</h4>
 							<div className="flex flex-wrap gap-2">
 								{stringToArray(repoFullNames).map((repo) => (
 									<Badge key={repo} variant="secondary" className="text-[10px]">

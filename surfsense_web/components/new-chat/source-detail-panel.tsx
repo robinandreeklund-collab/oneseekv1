@@ -84,12 +84,12 @@ const ChunkCard = forwardRef<HTMLDivElement, ChunkCardProps>(
 						>
 							{index + 1}
 						</div>
-						<span className="text-sm text-muted-foreground">of {totalChunks} chunks</span>
+						<span className="text-sm text-muted-foreground">av {totalChunks} delar</span>
 					</div>
 					{isCited && (
 						<Badge variant="default" className="gap-1.5 px-3 py-1">
 							<Sparkles className="h-3 w-3" />
-							Cited Source
+							Citerad källa
 						</Badge>
 					)}
 				</div>
@@ -330,7 +330,7 @@ export function SourceDetailPanel({
 						>
 							<div className="min-w-0 flex-1">
 								<h2 className="text-xl font-semibold truncate">
-									{documentData?.title || title || "Source Document"}
+									{documentData?.title || title || "Källdokument"}
 								</h2>
 								<p className="text-sm text-muted-foreground mt-0.5">
 									{documentData && "document_type" in documentData
@@ -338,8 +338,8 @@ export function SourceDetailPanel({
 										: sourceType && formatDocumentType(sourceType)}
 									{documentData?.chunks && (
 										<span className="ml-2">
-											• {documentData.chunks.length} chunk
-											{documentData.chunks.length !== 1 ? "s" : ""}
+											• {documentData.chunks.length} del
+											{documentData.chunks.length !== 1 ? "ar" : ""}
 										</span>
 									)}
 								</p>
@@ -353,7 +353,7 @@ export function SourceDetailPanel({
 										className="hidden sm:flex gap-2 rounded-xl"
 									>
 										<ExternalLink className="h-4 w-4" />
-										Open Source
+										Öppna källa
 									</Button>
 								)}
 								<Button
@@ -363,7 +363,7 @@ export function SourceDetailPanel({
 									className="h-8 w-8 rounded-full"
 								>
 									<X className="h-4 w-4" />
-									<span className="sr-only">Close</span>
+									<span className="sr-only">Stäng</span>
 								</Button>
 							</div>
 						</motion.div>
@@ -397,15 +397,15 @@ export function SourceDetailPanel({
 									</div>
 									<div>
 										<p className="font-semibold text-destructive text-lg">
-											Failed to load document
+											Det gick inte att läsa in dokumentet
 										</p>
 										<p className="text-sm text-muted-foreground mt-2 max-w-md">
 											{documentByChunkFetchingError.message ||
-												"An unexpected error occurred. Please try again."}
+												"Ett oväntat fel uppstod. Försök igen."}
 										</p>
 									</div>
 									<Button variant="outline" onClick={() => onOpenChange(false)} className="mt-2">
-										Close Panel
+										Stäng panel
 									</Button>
 								</motion.div>
 							</div>
@@ -423,7 +423,7 @@ export function SourceDetailPanel({
 											className="w-full mb-6 sm:hidden rounded-xl"
 										>
 											<ExternalLink className="mr-2 h-4 w-4" />
-											Open in Browser
+											Öppna i webbläsaren
 										</Button>
 									)}
 									<motion.div
@@ -433,13 +433,13 @@ export function SourceDetailPanel({
 									>
 										<h3 className="text-base font-semibold mb-4 flex items-center gap-2">
 											<BookOpen className="h-4 w-4" />
-											Source Information
+											Källinformation
 										</h3>
 										<div className="text-sm text-muted-foreground mb-3 font-medium">
-											{title || "Untitled"}
+											{title || "Utan titel"}
 										</div>
 										<div className="text-sm text-foreground leading-relaxed">
-											{description || "No content available"}
+											{description || "Inget innehåll tillgängligt"}
 										</div>
 									</motion.div>
 								</div>
@@ -478,7 +478,7 @@ export function SourceDetailPanel({
 																		? "bg-muted text-foreground"
 																		: "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
 															)}
-															title={isCited ? `Chunk ${idx + 1} (Cited)` : `Chunk ${idx + 1}`}
+															title={isCited ? `Del ${idx + 1} (citerad)` : `Del ${idx + 1}`}
 														>
 															{idx + 1}
 															{isCited && (
@@ -509,7 +509,7 @@ export function SourceDetailPanel({
 												>
 													<h3 className="text-sm font-semibold mb-4 text-muted-foreground uppercase tracking-wider flex items-center gap-2">
 														<FileText className="h-4 w-4" />
-														Document Information
+														Dokumentinformation
 													</h3>
 													<dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
 														{Object.entries(documentData.document_metadata).map(([key, value]) => (
@@ -535,7 +535,7 @@ export function SourceDetailPanel({
 													<CollapsibleTrigger className="w-full flex items-center justify-between p-5 rounded-2xl bg-linear-to-r from-muted/50 to-muted/30 border hover:from-muted/70 hover:to-muted/50 transition-all duration-200">
 														<span className="font-semibold flex items-center gap-2">
 															<BookOpen className="h-4 w-4" />
-															Document Summary
+															Dokumentsammanfattning
 														</span>
 														<motion.div
 															animate={{ rotate: summaryOpen ? 180 : 0 }}
@@ -561,7 +561,7 @@ export function SourceDetailPanel({
 										<div className="flex items-center justify-between pt-4">
 											<h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
 												<Hash className="h-4 w-4" />
-												Content Chunks
+												Innehållsdelar
 											</h3>
 											{citedChunkIndex !== -1 && (
 												<Button
@@ -571,7 +571,7 @@ export function SourceDetailPanel({
 													className="gap-2 text-primary hover:text-primary"
 												>
 													<Sparkles className="h-3.5 w-3.5" />
-													Jump to cited
+													Hoppa till citerad del
 												</Button>
 											)}
 										</div>

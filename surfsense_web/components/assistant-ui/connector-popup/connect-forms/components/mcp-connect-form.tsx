@@ -26,11 +26,11 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 	// Default config for stdio transport (local process)
 	const DEFAULT_STDIO_CONFIG = JSON.stringify(
 		{
-			name: "My MCP Server",
+			name: "Min MCP-server",
 			command: "npx",
 			args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory"],
 			env: {
-				API_KEY: "your_api_key_here",
+				API_KEY: "din_api_nyckel_har",
 			},
 			transport: "stdio",
 		},
@@ -41,10 +41,10 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 	// Default config for HTTP transport (remote server)
 	const DEFAULT_HTTP_CONFIG = JSON.stringify(
 		{
-			name: "My Remote MCP Server",
+			name: "Min fjärr-MCP-server",
 			url: "https://your-mcp-server.com/mcp",
 			headers: {
-				API_KEY: "your_api_key_here",
+				API_KEY: "din_api_nyckel_har",
 			},
 			transport: "streamable-http",
 		},
@@ -86,7 +86,7 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 		if (!serverConfig) {
 			setTestResult({
 				status: "error",
-				message: jsonError || "Invalid configuration",
+				message: jsonError || "Ogiltig konfiguration",
 				tools: [],
 			});
 			return;
@@ -139,8 +139,8 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 			<Alert className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 p-2 sm:p-3 [&>svg]:top-2 sm:[&>svg]:top-3">
 				<Server className="h-4 w-4 shrink-0" />
 				<AlertDescription className="text-[10px] sm:text-xs">
-					Connect to an MCP (Model Context Protocol) server. Each MCP server is added as a separate
-					connector.
+					Anslut till en MCP-server (Model Context Protocol). Varje MCP-server läggs till som en
+					separat anslutning.
 				</AlertDescription>
 			</Alert>
 
@@ -148,7 +148,7 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 				<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-4 sm:p-6 space-y-4">
 					<div className="space-y-2">
 						<div className="flex items-center justify-between flex-wrap gap-2">
-							<Label htmlFor="config">MCP Server Configuration (JSON)</Label>
+							<Label htmlFor="config">MCP-serverkonfiguration (JSON)</Label>
 							{!configJson && (
 								<div className="flex gap-1">
 									<Button
@@ -158,7 +158,7 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 										className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
 										onClick={() => handleConfigChange(DEFAULT_STDIO_CONFIG)}
 									>
-										Local Example
+										Lokalt exempel
 									</Button>
 									<Button
 										type="button"
@@ -167,7 +167,7 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 										className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
 										onClick={() => handleConfigChange(DEFAULT_HTTP_CONFIG)}
 									>
-										Remote Example
+										Fjärr exempel
 									</Button>
 								</div>
 							)}
@@ -196,10 +196,10 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 							rows={16}
 							className={`font-mono text-xs ${jsonError ? "border-red-500" : ""}`}
 						/>
-						{jsonError && <p className="text-xs text-red-500">JSON Error: {jsonError}</p>}
+					{jsonError && <p className="text-xs text-red-500">JSON-fel: {jsonError}</p>}
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							Paste a single MCP server configuration. Must include: name, command, args (optional),
-							env (optional), transport (optional).
+						Klistra in en MCP-serverkonfiguration. Måste innehålla: name, command, args (valfritt),
+						env (valfritt), transport (valfritt).
 						</p>
 					</div>
 
@@ -212,7 +212,7 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 							variant="secondary"
 							className="w-full h-8 text-[13px] px-3 rounded-lg font-medium bg-white text-slate-700 hover:bg-slate-50 border-0 shadow-xs dark:bg-secondary dark:text-secondary-foreground dark:hover:bg-secondary/80"
 						>
-							{isTesting ? "Testing Connection" : "Test Connection"}
+							{isTesting ? "Testar anslutning" : "Testa anslutning"}
 						</Button>
 					</div>
 
@@ -234,8 +234,8 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 								<div className="flex items-center justify-between">
 									<AlertTitle className="text-sm">
 										{testResult.status === "success"
-											? "Connection Successful"
-											: "Connection Failed"}
+											? "Anslutning lyckades"
+											: "Anslutning misslyckades"}
 									</AlertTitle>
 									{testResult.tools.length > 0 && (
 										<Button
@@ -252,14 +252,14 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 											{showDetails ? (
 												<>
 													<ChevronUp className="h-3 w-3 mr-1" />
-													<span className="hidden sm:inline">Hide Details</span>
-													<span className="sm:hidden">Hide</span>
+													<span className="hidden sm:inline">Dölj detaljer</span>
+													<span className="sm:hidden">Dölj</span>
 												</>
 											) : (
 												<>
 													<ChevronDown className="h-3 w-3 mr-1" />
-													<span className="hidden sm:inline">Show Details</span>
-													<span className="sm:hidden">Show</span>
+													<span className="hidden sm:inline">Visa detaljer</span>
+													<span className="sm:hidden">Visa</span>
 												</>
 											)}
 										</Button>
@@ -269,7 +269,7 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 									{testResult.message}
 									{showDetails && testResult.tools.length > 0 && (
 										<div className="mt-3 pt-3 border-t border-green-500/20">
-											<p className="font-semibold mb-2">Available tools:</p>
+											<p className="font-semibold mb-2">Tillgängliga verktyg:</p>
 											<ul className="list-disc list-inside text-xs space-y-0.5">
 												{testResult.tools.map((tool, i) => (
 													<li key={i}>{tool.name}</li>

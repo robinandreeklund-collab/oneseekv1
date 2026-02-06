@@ -30,7 +30,7 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 			setLastFetched(new Date());
 		} catch (err) {
 			console.error("Failed to fetch Slack channels:", err);
-			setError(err instanceof Error ? err.message : "Failed to fetch channels");
+			setError(err instanceof Error ? err.message : "Det gick inte att hämta kanaler");
 		} finally {
 			setIsLoading(false);
 		}
@@ -65,9 +65,9 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 		const diffSecs = Math.floor(diffMs / 1000);
 		const diffMins = Math.floor(diffSecs / 60);
 
-		if (diffSecs < 60) return "just now";
-		if (diffMins === 1) return "1 minute ago";
-		if (diffMins < 60) return `${diffMins} minutes ago`;
+		if (diffSecs < 60) return "nyss";
+		if (diffMins === 1) return "1 minut sedan";
+		if (diffMins < 60) return `${diffMins} minuter sedan`;
 		return lastFetched.toLocaleTimeString();
 	};
 
@@ -79,12 +79,12 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 					<Info className="size-4" />
 				</div>
 				<div className="text-xs sm:text-sm">
-					<p className="font-medium text-xs sm:text-sm">Add Bot to Channels</p>
+					<p className="font-medium text-xs sm:text-sm">Lägg till boten i kanaler</p>
 					<p className="text-muted-foreground mt-1 text-[10px] sm:text-sm">
-						Before indexing, add the SurfSense bot to each channel you want to index. The bot can
-						only access messages from channels it's been added to. Type{" "}
-						<code className="bg-muted px-1 py-0.5 rounded text-[9px]">/invite @SurfSense</code> in
-						any channel to add it.
+						Innan indexering, lägg till Oneseek-boten i varje kanal du vill indexera. Boten kan
+						bara komma åt meddelanden från kanaler den har lagts till i. Skriv{" "}
+						<code className="bg-muted px-1 py-0.5 rounded text-[9px]">/invite @Oneseek</code> i
+						valfri kanal för att lägga till den.
 					</p>
 				</div>
 			</div>
@@ -93,7 +93,7 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 			<div className="space-y-3">
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-3">
-						<h3 className="text-sm font-semibold">Channel Access</h3>
+						<h3 className="text-sm font-semibold">Kanalåtkomst</h3>
 					</div>
 					<div className="flex items-center gap-2">
 						{lastFetched && (
@@ -107,7 +107,7 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 							className="h-7 px-2.5 text-[11px] bg-slate-400/10 dark:bg-white/10 hover:bg-slate-400/20 dark:hover:bg-white/20 border-slate-400/20 dark:border-white/20"
 						>
 							<RefreshCw className={cn("mr-1.5 size-3", isLoading && "animate-spin")} />
-							Refresh
+							Uppdatera
 						</Button>
 					</div>
 				</div>
@@ -121,11 +121,11 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 				{isLoading && channels.length === 0 ? (
 					<div className="flex items-center justify-center py-8">
 						<Spinner size="sm" />
-						<span className="ml-2 text-sm text-muted-foreground">Loading channels</span>
+						<span className="ml-2 text-sm text-muted-foreground">Läser in kanaler</span>
 					</div>
 				) : channels.length === 0 && !error ? (
 					<div className="text-center py-8 text-sm text-muted-foreground">
-						No channels found. Make sure the bot has been added to your Slack workspace.
+						Inga kanaler hittades. Se till att boten har lagts till i din Slack-arbetsyta.
 					</div>
 				) : (
 					<div className="rounded-xl bg-slate-400/5 dark:bg-white/5 overflow-hidden">
@@ -134,9 +134,10 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 							<div className={cn("p-3", channelsWithoutBot.length > 0 && "border-b border-border")}>
 								<div className="flex items-center gap-2 mb-2">
 									<CheckCircle2 className="size-3.5 text-emerald-500" />
-									<span className="text-[11px] font-medium">Ready to index</span>
+									<span className="text-[11px] font-medium">Redo att indexera</span>
 									<span className="text-[10px] text-muted-foreground">
-										{channelsWithBot.length} {channelsWithBot.length === 1 ? "channel" : "channels"}
+										{channelsWithBot.length}{" "}
+										{channelsWithBot.length === 1 ? "kanal" : "kanaler"}
 									</span>
 								</div>
 								<div className="flex flex-wrap gap-1.5">
@@ -152,10 +153,10 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 							<div className="p-3">
 								<div className="flex items-center gap-2 mb-2">
 									<AlertCircle className="size-3.5 text-amber-500" />
-									<span className="text-[11px] font-medium">Add bot to index</span>
+									<span className="text-[11px] font-medium">Lägg till bot för indexering</span>
 									<span className="text-[10px] text-muted-foreground">
 										{channelsWithoutBot.length}{" "}
-										{channelsWithoutBot.length === 1 ? "channel" : "channels"}
+										{channelsWithoutBot.length === 1 ? "kanal" : "kanaler"}
 									</span>
 								</div>
 								<div className="flex flex-wrap gap-1.5">
