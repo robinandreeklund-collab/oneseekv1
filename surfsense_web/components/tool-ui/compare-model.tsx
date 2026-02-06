@@ -191,16 +191,12 @@ function ModelCard({
 	}
 
 	const displayName = result.model_display_name || label;
-	const summary = resolveSummary(result);
 	const source = result.source || result.provider || "External model";
 	const latency = formatLatency(result.latency_ms);
 	const usage = formatUsage(result.usage);
-	const queryText = args.query;
 	const rawResponse = result.response || "";
-	const previewText = rawResponse || summary;
 	const hasFullResponse = typeof rawResponse === "string" && rawResponse.trim().length > 0;
-	const shouldTruncatePreview = typeof rawResponse === "string" && rawResponse.length > 700;
-	const showExpand = hasFullResponse && shouldTruncatePreview;
+	const showExpand = hasFullResponse;
 	const metadataRows = [
 		{ label: "Model", value: result.model || displayName },
 		{ label: "Provider", value: result.provider },
@@ -212,9 +208,9 @@ function ModelCard({
 
 	return (
 		<Card className="my-4 w-full">
-			<CardContent className="p-4">
-				<div className="flex items-start justify-between gap-4">
-					<div className="flex items-start gap-3">
+			<CardContent className="p-3">
+				<div className="flex items-center justify-between gap-4">
+					<div className="flex items-center gap-3">
 						<ModelLogo toolName={toolName} label={displayName} />
 						<div>
 							<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -222,12 +218,7 @@ function ModelCard({
 								<Badge variant="secondary">{source}</Badge>
 								{latency && <span>{latency}</span>}
 							</div>
-							<h3 className="mt-1 text-lg font-semibold">{displayName}</h3>
-							{queryText && (
-								<p className="mt-1 text-xs text-muted-foreground">
-									Question: <span className="font-medium text-foreground">{queryText}</span>
-								</p>
-							)}
+							<h3 className="mt-0.5 text-base font-semibold">{displayName}</h3>
 						</div>
 					</div>
 					{usage && (
@@ -237,37 +228,13 @@ function ModelCard({
 					)}
 				</div>
 
-				{previewText && (
-					<div className="mt-3 text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-						<div
-							className="relative"
-							style={
-								shouldTruncatePreview
-									? { maxHeight: "11rem", overflow: "hidden" }
-									: undefined
-							}
-						>
-							{previewText}
-							{shouldTruncatePreview && (
-								<div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background to-transparent" />
-							)}
-						</div>
-					</div>
-				)}
-
-				{result.truncated && (
-					<p className="mt-2 text-xs text-amber-600">
-						Response truncated in card.
-					</p>
-				)}
-
 				{showExpand && (
 					<Collapsible open={open} onOpenChange={setOpen}>
 						<CollapsibleTrigger asChild>
 							<Button
 								variant="ghost"
 								size="sm"
-								className="mt-3 w-full justify-center text-xs text-muted-foreground"
+								className="mt-2 w-full justify-center text-xs text-muted-foreground"
 							>
 								<span>{open ? "Hide full response" : "Show full response"}</span>
 								<ChevronDownIcon
