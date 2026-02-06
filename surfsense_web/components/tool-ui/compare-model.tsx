@@ -195,8 +195,10 @@ function ModelCard({
 	const usage = formatUsage(result.usage);
 	const queryText = args.query;
 	const rawResponse = result.response || "";
-	const hasFullResponse =
-		typeof rawResponse === "string" && rawResponse.trim().length > (summary?.length || 0);
+	const previewText = rawResponse || summary;
+	const hasFullResponse = typeof rawResponse === "string" && rawResponse.trim().length > 0;
+	const shouldTruncatePreview = typeof rawResponse === "string" && rawResponse.length > 700;
+	const showExpand = hasFullResponse && shouldTruncatePreview;
 	const metadataRows = [
 		{ label: "Model", value: result.model || displayName },
 		{ label: "Provider", value: result.provider },
@@ -233,9 +235,21 @@ function ModelCard({
 					)}
 				</div>
 
-				{summary && (
+				{previewText && (
 					<div className="mt-3 text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-						{summary}
+						<div
+							className="relative"
+							style={
+								shouldTruncatePreview
+									? { maxHeight: "11rem", overflow: "hidden" }
+									: undefined
+							}
+						>
+							{previewText}
+							{shouldTruncatePreview && (
+								<div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background to-transparent" />
+							)}
+						</div>
 					</div>
 				)}
 
@@ -245,7 +259,7 @@ function ModelCard({
 					</p>
 				)}
 
-				{hasFullResponse && (
+				{showExpand && (
 					<Collapsible open={open} onOpenChange={setOpen}>
 						<CollapsibleTrigger asChild>
 							<Button
