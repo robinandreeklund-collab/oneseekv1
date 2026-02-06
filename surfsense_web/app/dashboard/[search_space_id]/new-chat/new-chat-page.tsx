@@ -35,7 +35,9 @@ import { ChatHeader } from "@/components/new-chat/chat-header";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
 import { GeneratePodcastToolUI } from "@/components/tool-ui/generate-podcast";
+import { JobAdLinksToolUI } from "@/components/tool-ui/jobad-links";
 import { LinkPreviewToolUI } from "@/components/tool-ui/link-preview";
+import { LibrisSearchToolUI } from "@/components/tool-ui/libris-search";
 import { ScrapeWebpageToolUI } from "@/components/tool-ui/scrape-webpage";
 import { SmhiWeatherToolUI } from "@/components/tool-ui/smhi-weather";
 import { TrafiklabRouteToolUI } from "@/components/tool-ui/trafiklab-route";
@@ -125,6 +127,8 @@ const TOOLS_WITH_UI = new Set([
 	"scrape_webpage",
 	"smhi_weather",
 	"trafiklab_route",
+	"libris_search",
+	"jobad_links_search",
 	// "write_todos", // Disabled for now
 ]);
 
@@ -1628,6 +1632,8 @@ export default function NewChatPage() {
 			<ScrapeWebpageToolUI />
 			<SmhiWeatherToolUI />
 			<TrafiklabRouteToolUI />
+			<LibrisSearchToolUI />
+			<JobAdLinksToolUI />
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
 			{/* <WriteTodosToolUI /> Disabled for now */}

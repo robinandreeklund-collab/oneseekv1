@@ -193,6 +193,34 @@ You have access to the following tools:
   - Returns: Departure/arrival board with optional destination matches
   - NOTE: This is departure-based matching and does not compute multi-leg routes.
   - NOTE: Include attribution when using the data (e.g., "Data from Trafiklab.se").
+
+10. libris_search: Search the Libris XL catalog (Kungliga biblioteket).
+  - Use this when the user asks for books, journals, articles, or library materials.
+  - Supports free text and advanced query syntax (e.g., "tove (jansson|lindgren)").
+  - Args:
+    - query: Search query (required unless record_id is provided)
+    - record_id: Optional Libris record id or URL to fetch a single record
+    - limit: Max number of results (default: 5)
+    - offset: Offset for pagination (default: 0)
+    - include_raw: Include raw JSON-LD response (default: False)
+    - extra_params: Optional advanced filters (e.g., instanceOf.subject.@id, min-publication.year)
+  - Returns: Summarized results with title, authors, year, subjects, summary, and availability
+
+11. jobad_links_search: Search Swedish job ads via Arbetsförmedlingen JobAd Links API.
+  - Use this when the user asks for job listings, openings, or vacancies.
+  - Supports free text and filters (location, occupation, industry, remote, dates).
+  - Args:
+    - query: Free text search
+    - location: Location filter (municipality/region)
+    - occupation: Occupation filter
+    - industry: Industry/field filter
+    - remote: Remote jobs filter (true/false)
+    - published_after: ISO date for publication filter
+    - limit: Max number of results (default: 10)
+    - offset: Offset for pagination
+    - include_raw: Include raw API response (default: False)
+    - extra_params: Optional additional query params supported by API
+  - Returns: Structured job ad info with application links
 </tools>
 <tool_call_examples>
 - User: "What time is the team meeting today?"
@@ -248,6 +276,15 @@ You have access to the following tools:
 
 - User: "Plan a trip from Goteborg to Stockholm at 08:00"
   - Call: `trafiklab_route(origin="Goteborg", destination="Stockholm", time="YYYY-MM-DDT08:00")`
+
+- User: "Hitta böcker av Tove Jansson"
+  - Call: `libris_search(query="tove (jansson)")`
+
+- User: "Visa Libris-posten bib/9316064"
+  - Call: `libris_search(record_id="bib/9316064")`
+
+- User: "Lediga jobb för frontendutvecklare i Göteborg"
+  - Call: `jobad_links_search(query="frontendutvecklare", location="Göteborg")`
 
 - User: "Give me a podcast about AI trends based on what we discussed"
   - First search for relevant content, then call: `generate_podcast(source_content="Based on our conversation and search results: [detailed summary of chat + search findings]", podcast_title="AI Trends Podcast")`

@@ -13,6 +13,8 @@ Available tools:
 - scrape_webpage: Extract content from webpages
 - smhi_weather: Fetch weather data from SMHI
 - trafiklab_route: Find departures using Trafiklab realtime APIs
+- libris_search: Search the Libris XL catalog
+- jobad_links_search: Search job ads via Arbetsformedlingen
 - search_web: Search the public web with global API keys
 - save_memory: Store facts/preferences about the user
 - recall_memory: Retrieve relevant user memories
@@ -21,6 +23,7 @@ Available tools:
 # Registry exports
 # Tool factory exports (for direct use)
 from .display_image import create_display_image_tool
+from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import (
     CONNECTOR_DESCRIPTIONS,
     create_search_knowledge_base_tool,
@@ -28,6 +31,7 @@ from .knowledge_base import (
     search_knowledge_base_async,
 )
 from .link_preview import create_link_preview_tool
+from .libris_search import create_libris_search_tool
 from .podcast import create_generate_podcast_tool
 from .public_web_search import create_public_web_search_tool
 from .registry import (
@@ -54,7 +58,9 @@ __all__ = [
     # Tool factories
     "create_display_image_tool",
     "create_generate_podcast_tool",
+    "create_jobad_links_search_tool",
     "create_link_preview_tool",
+    "create_libris_search_tool",
     "create_public_web_search_tool",
     "create_recall_memory_tool",
     "create_save_memory_tool",

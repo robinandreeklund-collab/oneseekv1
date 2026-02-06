@@ -164,7 +164,10 @@ class Config:
     ANON_CHAT_RECURSION_LIMIT = int(os.getenv("ANON_CHAT_RECURSION_LIMIT", "40"))
     _ANON_CHAT_ENABLED_TOOLS = os.getenv(
         "ANON_CHAT_ENABLED_TOOLS",
-        "link_preview,display_image,scrape_webpage,search_web,smhi_weather,trafiklab_route",
+        (
+            "link_preview,display_image,scrape_webpage,search_web,smhi_weather,"
+            "trafiklab_route,libris_search,jobad_links_search"
+        ),
     )
     ANON_CHAT_ENABLED_TOOLS = [
         tool.strip()
@@ -180,6 +183,8 @@ class Config:
     FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
     TRAFIKLAB_API_KEY = os.getenv("TRAFIKLAB_API_KEY")
     GEOCODING_USER_AGENT = os.getenv("GEOCODING_USER_AGENT")
+    JOBAD_LINKS_BASE_URL = os.getenv("JOBAD_LINKS_BASE_URL")
+    JOBAD_LINKS_API_KEY = os.getenv("JOBAD_LINKS_API_KEY")
 
     # Google OAuth
     GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")

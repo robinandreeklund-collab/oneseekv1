@@ -154,6 +154,28 @@ async def stream_public_global_chat(
                     title = "Planning route (Trafiklab)"
                     route_label = f"{origin} -> {destination}".strip()
                     items = [f"Route: {truncate(str(route_label), 100)}"]
+                elif tool_name == "libris_search":
+                    query = ""
+                    record_id = ""
+                    if isinstance(tool_input, dict):
+                        query = tool_input.get("query") or ""
+                        record_id = tool_input.get("record_id") or ""
+                    else:
+                        query = str(tool_input)
+                    title = "Searching Libris catalog"
+                    label = record_id or query
+                    items = [f"Query: {truncate(str(label), 100)}"]
+                elif tool_name == "jobad_links_search":
+                    query = ""
+                    location = ""
+                    if isinstance(tool_input, dict):
+                        query = tool_input.get("query") or ""
+                        location = tool_input.get("location") or ""
+                    else:
+                        query = str(tool_input)
+                    title = "Searching job ads"
+                    label = f"{query} {location}".strip()
+                    items = [f"Search: {truncate(str(label), 100)}"]
 
                 last_active_step_title = title
                 last_active_step_items = items

@@ -583,6 +583,46 @@ async def stream_new_chat(
                         status="in_progress",
                         items=last_active_step_items,
                     )
+                elif tool_name == "libris_search":
+                    query = ""
+                    record_id = ""
+                    if isinstance(tool_input, dict):
+                        query = tool_input.get("query") or ""
+                        record_id = tool_input.get("record_id") or ""
+                    else:
+                        query = str(tool_input)
+                    last_active_step_title = "Searching Libris catalog"
+                    item_label = (
+                        f"Record: {record_id}" if record_id else f"Query: {query}"
+                    )
+                    last_active_step_items = [
+                        f"{item_label[:100]}{'...' if len(item_label) > 100 else ''}"
+                    ]
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title="Searching Libris catalog",
+                        status="in_progress",
+                        items=last_active_step_items,
+                    )
+                elif tool_name == "jobad_links_search":
+                    query = ""
+                    location = ""
+                    if isinstance(tool_input, dict):
+                        query = tool_input.get("query") or ""
+                        location = tool_input.get("location") or ""
+                    else:
+                        query = str(tool_input)
+                    last_active_step_title = "Searching job ads"
+                    details = f"{query} {location}".strip()
+                    last_active_step_items = [
+                        f"Search: {details[:100]}{'...' if len(details) > 100 else ''}"
+                    ]
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title="Searching job ads",
+                        status="in_progress",
+                        items=last_active_step_items,
+                    )
                 # elif tool_name == "write_todos":  # Disabled for now
                 #     # Track write_todos calls for better messaging
                 #     write_todos_call_count += 1
@@ -872,6 +912,42 @@ async def stream_new_chat(
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title="Planning route (Trafiklab)",
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "libris_search":
+                    if isinstance(tool_output, dict):
+                        mode = tool_output.get("mode", "search")
+                        if mode == "record":
+                            record = tool_output.get("record", {}) or {}
+                            title = record.get("title") or "Record"
+                            completed_items = [*last_active_step_items, f"Record: {title}"]
+                        else:
+                            results = tool_output.get("results", []) or []
+                            completed_items = [
+                                *last_active_step_items,
+                                f"Results: {len(results)}",
+                            ]
+                    else:
+                        completed_items = [*last_active_step_items, "Libris results ready"]
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title="Searching Libris catalog",
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "jobad_links_search":
+                    if isinstance(tool_output, dict):
+                        results = tool_output.get("results", []) or []
+                        completed_items = [
+                            *last_active_step_items,
+                            f"Results: {len(results)}",
+                        ]
+                    else:
+                        completed_items = [*last_active_step_items, "Job ads ready"]
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title="Searching job ads",
                         status="completed",
                         items=completed_items,
                     )
@@ -1189,6 +1265,48 @@ async def stream_new_chat(
                         )
                         yield streaming_service.format_terminal_info(
                             f"Trafiklab route failed: {error_msg}",
+                            "error",
+                        )
+                elif tool_name == "libris_search":
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                    )
+                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                        results = tool_output.get("results", []) or []
+                        yield streaming_service.format_terminal_info(
+                            f"Libris results loaded ({len(results)} items)",
+                            "success",
+                        )
+                    else:
+                        error_msg = (
+                            tool_output.get("error", "Libris search failed")
+                            if isinstance(tool_output, dict)
+                            else "Libris search failed"
+                        )
+                        yield streaming_service.format_terminal_info(
+                            f"Libris search failed: {error_msg}",
+                            "error",
+                        )
+                elif tool_name == "jobad_links_search":
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                    )
+                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                        results = tool_output.get("results", []) or []
+                        yield streaming_service.format_terminal_info(
+                            f"Job ads loaded ({len(results)} items)",
+                            "success",
+                        )
+                    else:
+                        error_msg = (
+                            tool_output.get("error", "Job ad search failed")
+                            if isinstance(tool_output, dict)
+                            else "Job ad search failed"
+                        )
+                        yield streaming_service.format_terminal_info(
+                            f"Job ad search failed: {error_msg}",
                             "error",
                         )
                 elif tool_name == "search_knowledge_base":

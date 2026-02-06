@@ -44,8 +44,10 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from .display_image import create_display_image_tool
+from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
 from .link_preview import create_link_preview_tool
+from .libris_search import create_libris_search_tool
 from .mcp_tool import load_mcp_tools
 from .podcast import create_generate_podcast_tool
 from .public_web_search import create_public_web_search_tool
@@ -151,6 +153,18 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
             "Find public transport departures using Trafiklab realtime APIs and stop lookup"
         ),
         factory=lambda deps: create_trafiklab_route_tool(),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="libris_search",
+        description="Search the Libris XL catalog for books and media",
+        factory=lambda deps: create_libris_search_tool(),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="jobad_links_search",
+        description="Search Swedish job ads via Arbetsformedlingen JobAd Links API",
+        factory=lambda deps: create_jobad_links_search_tool(),
         requires=[],
     ),
     ToolDefinition(
