@@ -106,7 +106,7 @@ export function ThreadList({ searchSpaceId, currentThreadId, className }: Thread
 		return (
 			<div className={cn("flex h-full flex-col", className)}>
 				<div className="flex items-center justify-center p-4">
-					<span className="text-muted-foreground text-sm">Loading threads...</span>
+					<span className="text-muted-foreground text-sm">Läser in konversationer...</span>
 				</div>
 			</div>
 		);
@@ -118,7 +118,7 @@ export function ThreadList({ searchSpaceId, currentThreadId, className }: Thread
 				<div className="p-4 text-center">
 					<span className="text-destructive text-sm">{state.error}</span>
 					<Button variant="ghost" size="sm" className="mt-2" onClick={loadThreads}>
-						Retry
+						Försök igen
 					</Button>
 				</div>
 			</div>
@@ -129,13 +129,13 @@ export function ThreadList({ searchSpaceId, currentThreadId, className }: Thread
 		<div className={cn("flex h-full flex-col", className)}>
 			{/* Header with New Chat button */}
 			<div className="flex items-center justify-between border-b p-3">
-				<h2 className="font-semibold text-sm">Conversations</h2>
+				<h2 className="font-semibold text-sm">Konversationer</h2>
 				<Button
 					variant="ghost"
 					size="icon"
 					className="size-8"
 					onClick={handleNewThread}
-					title="New Chat"
+					title="Ny chatt"
 				>
 					<PlusIcon className="size-4" />
 				</Button>
@@ -153,7 +153,7 @@ export function ThreadList({ searchSpaceId, currentThreadId, className }: Thread
 							: "text-muted-foreground hover:text-foreground"
 					)}
 				>
-					Active ({state.threads.length})
+					Aktiva ({state.threads.length})
 				</button>
 				<button
 					type="button"
@@ -165,7 +165,7 @@ export function ThreadList({ searchSpaceId, currentThreadId, className }: Thread
 							: "text-muted-foreground hover:text-foreground"
 					)}
 				>
-					Archived ({state.archivedThreads.length})
+					Arkiverade ({state.archivedThreads.length})
 				</button>
 			</div>
 
@@ -175,12 +175,12 @@ export function ThreadList({ searchSpaceId, currentThreadId, className }: Thread
 					<div className="flex flex-col items-center justify-center p-6 text-center">
 						<MessageSquareIcon className="mb-2 size-8 text-muted-foreground/50" />
 						<p className="text-muted-foreground text-sm">
-							{showArchived ? "No archived conversations" : "No conversations yet"}
+							{showArchived ? "Inga arkiverade konversationer" : "Inga konversationer ännu"}
 						</p>
 						{!showArchived && (
 							<Button variant="outline" size="sm" className="mt-3" onClick={handleNewThread}>
 								<PlusIcon className="mr-1 size-3" />
-								Start a conversation
+								Starta en konversation
 							</Button>
 						)}
 					</div>
@@ -239,7 +239,7 @@ function ThreadListItemComponent({
 		>
 			<MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
 			<div className="flex-1 min-w-0">
-				<p className="truncate text-sm font-medium">{thread.title || "New Chat"}</p>
+				<p className="truncate text-sm font-medium">{thread.title || "Ny chatt"}</p>
 				<p className="truncate text-xs text-muted-foreground">
 					{formatRelativeTime(new Date(thread.updatedAt))}
 				</p>
@@ -259,18 +259,18 @@ function ThreadListItemComponent({
 					{isArchived ? (
 						<DropdownMenuItem onClick={onUnarchive}>
 							<RotateCcwIcon className="mr-2 size-4" />
-							Unarchive
+							Återställ
 						</DropdownMenuItem>
 					) : (
 						<DropdownMenuItem onClick={onArchive}>
 							<ArchiveIcon className="mr-2 size-4" />
-							Archive
+							Arkivera
 						</DropdownMenuItem>
 					)}
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
 						<TrashIcon className="mr-2 size-4" />
-						Delete
+						Ta bort
 					</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
@@ -289,11 +289,11 @@ function formatRelativeTime(date: Date): string {
 	const diffHours = Math.floor(diffMins / 60);
 	const diffDays = Math.floor(diffHours / 24);
 
-	if (diffSecs < 60) return "Just now";
-	if (diffMins < 60) return `${diffMins} min${diffMins === 1 ? "" : "s"} ago`;
-	if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
-	if (diffDays === 1) return "Yesterday";
-	if (diffDays < 7) return `${diffDays} days ago`;
+	if (diffSecs < 60) return "Nyss";
+	if (diffMins < 60) return `${diffMins} min sedan`;
+	if (diffHours < 24) return `${diffHours} ${diffHours === 1 ? "timme" : "timmar"} sedan`;
+	if (diffDays === 1) return "Igår";
+	if (diffDays < 7) return `${diffDays} dagar sedan`;
 
 	return date.toLocaleDateString();
 }

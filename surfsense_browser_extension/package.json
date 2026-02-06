@@ -1,8 +1,8 @@
 {
 	"name": "surfsense_browser_extension",
-	"displayName": "Surfsense Browser Extension",
+	"displayName": "Oneseek Browser Extension",
 	"version": "0.0.12",
-	"description": "Extension to collect Browsing History for SurfSense.",
+	"description": "Tillägg för att samla webbhistorik för Oneseek.",
 	"author": "https://github.com/MODSetter",
 	"engines": {
 		"node": ">=18.0.0 <23.0.0",
@@ -59,8 +59,8 @@
 		"host_permissions": [
 			"<all_urls>"
 		],
-		"name": "SurfSense",
-		"description": "Extension to collect Browsing History for SurfSense.",
+		"name": "Oneseek",
+		"description": "Tillägg för att samla webbhistorik för Oneseek.",
 		"version": "0.0.3"
 	},
 	"permissions": [

@@ -23,10 +23,10 @@ import type { ConnectFormProps } from "../index";
 
 const baiduSearchApiFormSchema = z.object({
 	name: z.string().min(3, {
-		message: "Connector name must be at least 3 characters.",
+		message: "Anslutningsnamn måste vara minst 3 tecken.",
 	}),
 	api_key: z.string().min(10, {
-		message: "API key is required and must be valid.",
+		message: "API-nyckel krävs och måste vara giltig.",
 	}),
 });
 
@@ -37,7 +37,7 @@ export const BaiduSearchApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSu
 	const form = useForm<BaiduSearchApiFormValues>({
 		resolver: zodResolver(baiduSearchApiFormSchema),
 		defaultValues: {
-			name: "Baidu Search Connector",
+			name: "Baidu Search-anslutning",
 			api_key: "",
 		},
 	});
@@ -72,10 +72,10 @@ export const BaiduSearchApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSu
 			<Alert className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 p-2 sm:p-3 flex items-center [&>svg]:relative [&>svg]:left-0 [&>svg]:top-0 [&>svg+div]:translate-y-0">
 				<Info className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 ml-1" />
 				<div className="-ml-1">
-					<AlertTitle className="text-xs sm:text-sm">API Key Required</AlertTitle>
+					<AlertTitle className="text-xs sm:text-sm">API-nyckel krävs</AlertTitle>
 					<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-						You'll need a Baidu AppBuilder API key to use this connector. You can get one by signing
-						up at{" "}
+						Du behöver en Baidu AppBuilder API-nyckel för att använda denna anslutning. Du kan få
+						en genom att registrera dig på{" "}
 						<a
 							href="https://qianfan.cloud.baidu.com/"
 							target="_blank"
@@ -100,17 +100,17 @@ export const BaiduSearchApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSu
 							name="name"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Connector Name</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Anslutningsnamn</FormLabel>
 									<FormControl>
 										<Input
-											placeholder="My Baidu Search Connector"
+											placeholder="Min Baidu Search-anslutning"
 											className="border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										A friendly name to identify this connector.
+										Ett vänligt namn för att identifiera anslutningen.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -122,18 +122,18 @@ export const BaiduSearchApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSu
 							name="api_key"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Baidu AppBuilder API Key</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Baidu AppBuilder API-nyckel</FormLabel>
 									<FormControl>
 										<Input
 											type="password"
-											placeholder="Enter your Baidu API key"
+											placeholder="Ange din Baidu API-nyckel"
 											className="border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										Your API key will be encrypted and stored securely.
+										Din API-nyckel krypteras och lagras säkert.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -146,7 +146,7 @@ export const BaiduSearchApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSu
 			{/* What you get section */}
 			{getConnectorBenefits(EnumConnectorName.BAIDU_SEARCH_API) && (
 				<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 px-3 sm:px-6 py-4 space-y-2">
-					<h4 className="text-xs sm:text-sm font-medium">What you get with Baidu Search:</h4>
+					<h4 className="text-xs sm:text-sm font-medium">Det här får du med Baidu Search:</h4>
 					<ul className="list-disc pl-5 text-[10px] sm:text-xs text-muted-foreground space-y-1">
 						{getConnectorBenefits(EnumConnectorName.BAIDU_SEARCH_API)?.map((benefit) => (
 							<li key={benefit}>{benefit}</li>

@@ -32,14 +32,14 @@ const visibilityOptions: {
 }[] = [
 	{
 		value: "PRIVATE",
-		label: "Private",
-		description: "Only you can access this chat",
+		label: "Privat",
+		description: "Endast du kan komma åt den här chatten",
 		icon: User,
 	},
 	{
 		value: "SEARCH_SPACE",
-		label: "Search Space",
-		description: "All members of this search space can access",
+		label: "Sökutrymme",
+		description: "Alla medlemmar i det här sökutrymmet har åtkomst",
 		icon: Users,
 	},
 ];
@@ -88,14 +88,16 @@ export function ChatShareButton({ thread, onVisibilityChange, className }: ChatS
 
 				onVisibilityChange?.(newVisibility);
 				toast.success(
-					newVisibility === "SEARCH_SPACE" ? "Chat shared with search space" : "Chat is now private"
+					newVisibility === "SEARCH_SPACE"
+						? "Chatten är delad med sökutrymmet"
+						: "Chatten är nu privat"
 				);
 				setOpen(false);
 			} catch (error) {
 				console.error("Failed to update visibility:", error);
 				// Revert Jotai state on error
 				setThreadVisibility(thread.visibility ?? "PRIVATE");
-				toast.error("Failed to update sharing settings");
+				toast.error("Det gick inte att uppdatera delningsinställningarna");
 			}
 		},
 		[thread, currentVisibility, onVisibilityChange, queryClient, setThreadVisibility]
@@ -118,7 +120,7 @@ export function ChatShareButton({ thread, onVisibilityChange, className }: ChatS
 	}
 
 	const CurrentIcon = currentVisibility === "PRIVATE" ? User : Users;
-	const buttonLabel = currentVisibility === "PRIVATE" ? "Private" : "Shared";
+	const buttonLabel = currentVisibility === "PRIVATE" ? "Privat" : "Delad";
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
@@ -138,7 +140,7 @@ export function ChatShareButton({ thread, onVisibilityChange, className }: ChatS
 						</Button>
 					</PopoverTrigger>
 				</TooltipTrigger>
-				<TooltipContent>Share settings</TooltipContent>
+				<TooltipContent>Delningsinställningar</TooltipContent>
 			</Tooltip>
 
 			<PopoverContent
@@ -215,11 +217,11 @@ export function ChatShareButton({ thread, onVisibilityChange, className }: ChatS
 								<div className="flex-1 text-left min-w-0">
 									<div className="flex items-center gap-1.5">
 										<span className="text-sm font-medium">
-											{isCreatingSnapshot ? "Creating link..." : "Create public link"}
+											{isCreatingSnapshot ? "Skapar länk..." : "Skapa offentlig länk"}
 										</span>
 									</div>
 									<p className="text-xs text-muted-foreground mt-0.5 leading-snug">
-										Creates a shareable snapshot of this chat
+										Skapar en delbar ögonblicksbild av den här chatten
 									</p>
 								</div>
 							</button>

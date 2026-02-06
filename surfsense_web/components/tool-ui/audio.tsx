@@ -45,7 +45,7 @@ export function Audio({ id, src, title, description, artwork, durationMs, classN
 		} else {
 			audio.play().catch((err) => {
 				console.error("Error playing audio:", err);
-				setError("Failed to play audio");
+				setError("Det gick inte att spela upp ljudet");
 			});
 		}
 	}, [isPlaying]);
@@ -121,7 +121,7 @@ export function Audio({ id, src, title, description, artwork, durationMs, classN
 			setCurrentTime(0);
 		};
 		const handleError = () => {
-			setError("Failed to load audio");
+			setError("Det gick inte att läsa in ljudet");
 			setIsLoading(false);
 		};
 		const handleCanPlay = () => setIsLoading(false);
@@ -174,7 +174,7 @@ export function Audio({ id, src, title, description, artwork, durationMs, classN
 		>
 			{/* Hidden audio element */}
 			<audio ref={audioRef} src={src} preload="metadata">
-				<track kind="captions" srcLang="en" label="English captions" default />
+				<track kind="captions" srcLang="en" label="Engelska undertexter" default />
 			</audio>
 
 			<div className="flex gap-3 sm:gap-4">
@@ -239,7 +239,7 @@ export function Audio({ id, src, title, description, artwork, durationMs, classN
 						) : (
 							<PlayIcon className="size-3 sm:size-4" />
 						)}
-						{isPlaying ? "Pause" : "Play"}
+						{isPlaying ? "Pausa" : "Spela"}
 					</Button>
 
 					{/* Volume control */}
@@ -267,7 +267,7 @@ export function Audio({ id, src, title, description, artwork, durationMs, classN
 								value={isMuted ? 0 : volume}
 								onChange={(e) => handleVolumeChange([Number.parseFloat(e.target.value)])}
 								className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-								aria-label="Volume"
+								aria-label="Volym"
 							/>
 						</div>
 					</div>
@@ -281,7 +281,7 @@ export function Audio({ id, src, title, description, artwork, durationMs, classN
 					className="gap-1.5 sm:gap-2 h-7 sm:h-8 px-2.5 sm:px-3 text-xs sm:text-sm"
 				>
 					<DownloadIcon className="size-3 sm:size-4" />
-					Download
+					Ladda ner
 				</Button>
 			</div>
 		</div>

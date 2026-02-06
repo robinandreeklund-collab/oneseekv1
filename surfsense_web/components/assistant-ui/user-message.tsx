@@ -22,13 +22,13 @@ const UserAvatar: FC<AuthorMetadata> = ({ displayName, avatarUrl }) => {
 				.join("")
 				.toUpperCase()
 				.slice(0, 2)
-		: "U";
+		: "A";
 
 	if (avatarUrl && !hasError) {
 		return (
 			<img
 				src={avatarUrl}
-				alt={displayName || "User"}
+				alt={displayName || "Användare"}
 				className="size-8 rounded-full object-cover"
 				referrerPolicy="no-referrer"
 				onError={() => setHasError(true)}
@@ -109,7 +109,7 @@ const UserActionBar: FC = () => {
 			className="aui-user-action-bar-root flex flex-col items-end"
 		>
 			<ActionBarPrimitive.Edit asChild>
-				<TooltipIconButton tooltip="Edit" className="aui-user-action-edit p-4">
+				<TooltipIconButton tooltip="Redigera" className="aui-user-action-edit p-4">
 					<PencilIcon />
 				</TooltipIconButton>
 			</ActionBarPrimitive.Edit>

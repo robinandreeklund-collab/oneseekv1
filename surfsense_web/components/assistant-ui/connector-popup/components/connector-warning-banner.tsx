@@ -46,7 +46,7 @@ export const ConnectorWarningBanner: FC<ConnectorWarningBannerProps> = ({
 					type="button"
 					onClick={handleDismiss}
 					className="shrink-0 p-0.5 rounded hover:bg-yellow-500/20 transition-colors"
-					aria-label="Dismiss warning"
+					aria-label="Avfärda varning"
 				>
 					<X className="size-3.5 text-yellow-700 dark:text-yellow-300" />
 				</button>

@@ -20,11 +20,11 @@ const roboto = Roboto({
 });
 
 export const metadata: Metadata = {
-	title: "SurfSense – Customizable AI Research & Knowledge Management Assistant",
+	title: "Oneseek – Anpassningsbar AI-assistent för forskning och kunskapshantering",
 	description:
-		"SurfSense is an AI-powered research assistant that integrates with tools like Notion, GitHub, Slack, and more to help you efficiently manage, search, and chat with your documents. Generate podcasts, perform hybrid search, and unlock insights from your knowledge base.",
+		"Oneseek är en AI-driven forskningsassistent som integrerar med verktyg som Notion, GitHub, Slack och mer för att hjälpa dig att effektivt hantera, söka och chatta med dina dokument. Skapa podcasts, utför hybridsökning och få insikter från din kunskapsbas.",
 	keywords: [
-		"SurfSense",
+		"Oneseek",
 		"AI research assistant",
 		"AI knowledge management",
 		"AI document assistant",
@@ -49,27 +49,27 @@ export const metadata: Metadata = {
 		"AI-powered search assistant",
 	],
 	openGraph: {
-		title: "SurfSense – AI Research & Knowledge Management Assistant",
+		title: "Oneseek – AI-assistent för forskning och kunskapshantering",
 		description:
-			"Connect your documents and tools like Notion, Slack, GitHub, and more to your private AI assistant. SurfSense offers powerful search, document chat, podcast generation, and RAG APIs to enhance your workflow.",
+			"Anslut dina dokument och verktyg som Notion, Slack, GitHub med mera till din privata AI-assistent. Oneseek erbjuder kraftfull sökning, dokumentchatt, podcastgenerering och RAG-API:er för att förbättra ditt arbetsflöde.",
 		url: "https://surfsense.com",
-		siteName: "SurfSense",
+		siteName: "Oneseek",
 		type: "website",
 		images: [
 			{
 				url: "https://surfsense.com/og-image.png",
 				width: 1200,
 				height: 630,
-				alt: "SurfSense AI Research Assistant",
+				alt: "Oneseek AI-forskningsassistent",
 			},
 		],
 		locale: "sv_SE",
 	},
 	twitter: {
 		card: "summary_large_image",
-		title: "SurfSense – AI Assistant for Research & Knowledge Management",
+		title: "Oneseek – AI-assistent för forskning och kunskapshantering",
 		description:
-			"Have your own NotebookLM or Perplexity, but better. SurfSense connects external tools, allows chat with your documents, and generates fast, high-quality podcasts.",
+			"Få ditt eget NotebookLM eller Perplexity, fast bättre. Oneseek kopplar in externa verktyg, låter dig chatta med dina dokument och skapar snabba, högkvalitativa podcasts.",
 		creator: "https://surfsense.com",
 		site: "https://surfsense.com",
 		images: [
@@ -77,7 +77,7 @@ export const metadata: Metadata = {
 				url: "https://surfsense.com/og-image-twitter.png",
 				width: 1200,
 				height: 630,
-				alt: "SurfSense AI Assistant Preview",
+				alt: "Oneseek AI-assistentförhandsvisning",
 			},
 		],
 	},

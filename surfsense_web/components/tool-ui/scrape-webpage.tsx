@@ -60,7 +60,7 @@ function ScrapeErrorState({ url, error }: { url: string; error: string }) {
 					<AlertCircleIcon className="size-6 text-destructive" />
 				</div>
 				<div className="flex-1 min-w-0">
-					<p className="font-medium text-destructive text-sm">Failed to scrape webpage</p>
+					<p className="font-medium text-destructive text-sm">Det gick inte att skrapa webbsidan</p>
 					<p className="text-muted-foreground text-xs mt-0.5 truncate">{url}</p>
 					<p className="text-muted-foreground text-xs mt-1">{error}</p>
 				</div>
@@ -77,7 +77,7 @@ function ScrapeCancelledState({ url }: { url: string }) {
 		<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
 			<p className="flex items-center gap-2">
 				<FileTextIcon className="size-4" />
-				<span className="line-through truncate">Scraping: {url}</span>
+				<span className="line-through truncate">Skrapar: {url}</span>
 			</p>
 		</div>
 	);
@@ -93,7 +93,7 @@ function ParsedArticle({ result }: { result: unknown }) {
 		<Article
 			{...article}
 			maxWidth="100%"
-			responseActions={[{ id: "open", label: "Open Source", variant: "default" }]}
+			responseActions={[{ id: "open", label: "Öppna källa", variant: "default" }]}
 			onResponseAction={(id) => {
 				if (id === "open" && article.href) {
 					window.open(article.href, "_blank", "noopener,noreferrer");
@@ -118,13 +118,13 @@ function ParsedArticle({ result }: { result: unknown }) {
 export const ScrapeWebpageToolUI = makeAssistantToolUI<ScrapeWebpageArgs, ScrapeWebpageResult>({
 	toolName: "scrape_webpage",
 	render: function ScrapeWebpageUI({ args, result, status }) {
-		const url = args.url || "Unknown URL";
+		const url = args.url || "Okänd URL";
 
 		// Loading state - tool is still running
 		if (status.type === "running" || status.type === "requires-action") {
 			return (
 				<div className="my-4">
-					<ArticleLoading title={`Scraping ${url}...`} />
+					<ArticleLoading title={`Skrapar ${url}...`} />
 				</div>
 			);
 		}
@@ -138,7 +138,7 @@ export const ScrapeWebpageToolUI = makeAssistantToolUI<ScrapeWebpageArgs, Scrape
 				return (
 					<ScrapeErrorState
 						url={url}
-						error={typeof status.error === "string" ? status.error : "An error occurred"}
+						error={typeof status.error === "string" ? status.error : "Ett fel uppstod"}
 					/>
 				);
 			}
@@ -148,7 +148,7 @@ export const ScrapeWebpageToolUI = makeAssistantToolUI<ScrapeWebpageArgs, Scrape
 		if (!result) {
 			return (
 				<div className="my-4">
-					<ArticleLoading title={`Extracting content from ${url}...`} />
+					<ArticleLoading title={`Extraherar innehåll från ${url}...`} />
 				</div>
 			);
 		}

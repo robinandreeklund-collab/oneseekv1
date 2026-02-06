@@ -439,7 +439,7 @@ export const DocumentMentionPicker = forwardRef<
 						{surfsenseDocsList.length > 0 && (
 							<>
 								<div className="px-3 py-2 text-xs font-bold text-muted-foreground/55">
-									SurfSense Docs
+									Oneseek-dokument
 								</div>
 								{surfsenseDocsList.map((doc) => {
 									const docKey = `${doc.document_type}:${doc.id}`;
@@ -487,7 +487,7 @@ export const DocumentMentionPicker = forwardRef<
 						{userDocsList.length > 0 && (
 							<>
 								<div className="px-3 py-2 text-xs font-bold text-muted-foreground/55">
-									Your Documents
+									Dina dokument
 								</div>
 								{userDocsList.map((doc) => {
 									const docKey = `${doc.document_type}:${doc.id}`;

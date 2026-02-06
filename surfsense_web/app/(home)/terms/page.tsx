@@ -1,169 +1,171 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-	title: "Terms of Service | SurfSense",
-	description: "Terms of Service for SurfSense application",
+	title: "Användarvillkor | Oneseek",
+	description: "Användarvillkor för Oneseek-applikationen",
 };
 
 export default function TermsOfService() {
 	return (
 		<div className="container max-w-4xl mx-auto py-12 px-4">
-			<h1 className="text-4xl font-bold mb-8">Terms of Service</h1>
+			<h1 className="text-4xl font-bold mb-8">Användarvillkor</h1>
 
 			<div className="prose dark:prose-invert max-w-none">
-				<p className="text-lg mb-6">Last updated: {new Date().toLocaleDateString()}</p>
+				<p className="text-lg mb-6">Senast uppdaterad: {new Date().toLocaleDateString()}</p>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">1. Introduction</h2>
+					<h2 className="text-2xl font-semibold mb-4">1. Inledning</h2>
 					<p>
-						Welcome to SurfSense. These Terms of Service govern your access to and use of the
-						SurfSense website and services. By accessing or using our services, you agree to be
-						bound by these Terms.
+						Välkommen till Oneseek. Dessa användarvillkor reglerar din åtkomst till och användning
+						av Oneseeks webbplats och tjänster. Genom att använda våra tjänster godkänner du att
+						vara bunden av dessa villkor.
 					</p>
 					<p className="mt-4">
-						Please read these Terms carefully before using our Services. By using our Services, you
-						agree that these Terms will govern your relationship with us. If you do not agree to
-						these Terms, please refrain from using our Services.
+						Vänligen läs dessa villkor noggrant innan du använder våra tjänster. Genom att använda
+						våra tjänster godkänner du att dessa villkor styr din relation med oss. Om du inte
+						godkänner dessa villkor, vänligen avstå från att använda våra tjänster.
 					</p>
 				</section>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">2. Using Our Services</h2>
+					<h2 className="text-2xl font-semibold mb-4">2. Användning av våra tjänster</h2>
 					<p>
-						You must follow any policies made available to you within the Services. You may use our
-						Services only as permitted by law. We may suspend or stop providing our Services to you
-						if you do not comply with our terms or policies or if we are investigating suspected
-						misconduct.
+						Du måste följa de policyer som görs tillgängliga för dig inom tjänsterna. Du får endast
+						använda våra tjänster i enlighet med lag. Vi kan tillfälligt eller permanent upphöra att
+						tillhandahålla våra tjänster till dig om du inte följer våra villkor eller policyer,
+						eller om vi utreder misstänkt missbruk.
 					</p>
 					<p className="mt-4">
-						Using our Services does not give you ownership of any intellectual property rights in
-						our Services or the content you access. You may not use content from our Services unless
-						you obtain permission from its owner or are otherwise permitted by law.
+						Användning av våra tjänster ger dig ingen äganderätt till immateriella rättigheter i
+						våra tjänster eller det innehåll du får tillgång till. Du får inte använda innehåll från
+						våra tjänster utan tillstånd från rättighetsinnehavaren eller om det annars är tillåtet
+						enligt lag.
 					</p>
 					<p className="mt-4">
-						We reserve the right to remove any content that we reasonably believe violates these
-						Terms, infringes any intellectual property right, is abusive, illegal, or otherwise
-						objectionable.
+						Vi förbehåller oss rätten att ta bort innehåll som vi skäligen anser bryter mot dessa
+						villkor, gör intrång i immateriella rättigheter, är kränkande, olagligt eller på annat
+						sätt olämpligt.
 					</p>
 				</section>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">3. Your Account</h2>
+					<h2 className="text-2xl font-semibold mb-4">3. Ditt konto</h2>
 					<p>
-						To use some of our services, you may need to create an account. You are responsible for
-						safeguarding the password that you use to access the services and for any activities or
-						actions under your password.
+						För att använda vissa av våra tjänster kan du behöva skapa ett konto. Du ansvarar för
+						att skydda lösenordet som används för att få åtkomst till tjänsterna och för alla
+						aktiviteter som sker under ditt lösenord.
 					</p>
 					<p className="mt-4">
-						You must provide accurate and complete information when creating your account. You agree
-						to update your information to keep it accurate and complete. You are responsible for
-						maintaining the confidentiality of your account and password, including restricting
-						access to your computer and/or account.
+						Du måste lämna korrekta och fullständiga uppgifter när du skapar ditt konto. Du samtycker
+						till att uppdatera dina uppgifter för att hålla dem korrekta och fullständiga. Du ansvarar
+						för att upprätthålla sekretessen för ditt konto och lösenord, inklusive att begränsa
+						åtkomst till din dator och/eller ditt konto.
 					</p>
 					<p className="mt-4">
-						We reserve the right to refuse service, terminate accounts, remove or edit content, or
-						cancel orders at our sole discretion.
+						Vi förbehåller oss rätten att vägra tjänst, avsluta konton, ta bort eller redigera
+						innehåll eller avbryta beställningar efter eget gottfinnande.
 					</p>
 				</section>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">4. Privacy and Copyright Protection</h2>
+					<h2 className="text-2xl font-semibold mb-4">4. Integritet och upphovsrätt</h2>
 					<p>
-						Our privacy policies explain how we treat your personal data and protect your privacy
-						when you use our Services. By using our Services, you agree that SurfSense can use such
-						data in accordance with our privacy policies.
+						Våra integritetspolicyer förklarar hur vi behandlar dina personuppgifter och skyddar din
+						integritet när du använder våra tjänster. Genom att använda våra tjänster samtycker du
+						till att Oneseek får använda sådana uppgifter i enlighet med våra integritetspolicyer.
 					</p>
 					<p className="mt-4">
-						We respond to notices of alleged copyright infringement and terminate accounts of repeat
-						infringers according to the process set out in applicable copyright laws.
+						Vi svarar på meddelanden om påstådda upphovsrättsintrång och avslutar konton för
+						återkommande intrång i enlighet med tillämplig upphovsrättslagstiftning.
 					</p>
 				</section>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">5. License and Intellectual Property</h2>
+					<h2 className="text-2xl font-semibold mb-4">5. Licens och immateriella rättigheter</h2>
 					<p>
-						SurfSense gives you a personal, worldwide, royalty-free, non-assignable and
-						non-exclusive license to use the software provided to you as part of the Services. This
-						license is for the sole purpose of enabling you to use and enjoy the benefit of the
-						Services as provided by SurfSense, in the manner permitted by these terms.
+						Oneseek ger dig en personlig, världsomspännande, royaltyfri, icke-överlåtbar och
+						icke-exklusiv licens att använda den programvara som tillhandahålls som en del av
+						tjänsterna. Denna licens har som enda syfte att du ska kunna använda och dra nytta av
+						tjänsterna som tillhandahålls av Oneseek, på det sätt som tillåts enligt dessa villkor.
 					</p>
 					<p className="mt-4">
-						All content included in or made available through our Services—such as text, graphics,
-						logos, button icons, images, audio clips, digital downloads, data compilations, and
-						software—is the property of SurfSense or its content suppliers and is protected by
-						international copyright, trademark, and other intellectual property laws.
+						Allt innehåll som ingår i eller görs tillgängligt genom våra tjänster – såsom text,
+						grafik, logotyper, knappikoner, bilder, ljudklipp, digitala nedladdningar,
+						datakompileringar och programvara – är Oneseeks eller dess innehållsleverantörers
+						egendom och skyddas av internationell upphovsrätt, varumärkesrätt och andra immateriella
+						rättigheter.
 					</p>
 					<p className="mt-4">
-						By submitting, posting, or displaying content on or through our Services, you grant us a
-						worldwide, non-exclusive, royalty-free license to use, reproduce, modify, adapt,
-						publish, translate, create derivative works from, distribute, and display such content
-						in any media for the purpose of providing and improving our Services.
+						Genom att skicka in, publicera eller visa innehåll i eller genom våra tjänster ger du
+						oss en världsomspännande, icke-exklusiv, royaltyfri licens att använda, reproducera,
+						ändra, anpassa, publicera, översätta, skapa derivatverk av, distribuera och visa sådant
+						innehåll i alla medier i syfte att tillhandahålla och förbättra våra tjänster.
 					</p>
 				</section>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">6. Modifying and Terminating our Services</h2>
+					<h2 className="text-2xl font-semibold mb-4">6. Ändring och upphörande av våra tjänster</h2>
 					<p>
-						We are constantly changing and improving our Services. We may add or remove
-						functionalities or features, and we may suspend or stop a Service altogether. You can
-						stop using our Services at any time. SurfSense may also stop providing Services to you,
-						or add or create new limits on our Services at any time.
+						Vi förändrar och förbättrar ständigt våra tjänster. Vi kan lägga till eller ta bort
+						funktioner, och vi kan tillfälligt eller permanent upphöra med en tjänst. Du kan sluta
+						använda våra tjänster när som helst. Oneseek kan också sluta tillhandahålla tjänster till
+						dig, eller införa nya begränsningar, när som helst.
 					</p>
 					<p className="mt-4">
-						We believe that you own your data and preserving your access to such data is important.
-						If we discontinue a Service, where reasonably possible, we will give you reasonable
-						advance notice and a chance to get information out of that Service.
+						Vi anser att du äger din data och att det är viktigt att bevara din åtkomst till sådan
+						data. Om vi avvecklar en tjänst kommer vi, där det är rimligt möjligt, att ge dig skälig
+						förvarning och möjlighet att hämta ut information från den tjänsten.
 					</p>
 					<p className="mt-4">
-						We reserve the right to modify these Terms at any time. If we make material changes to
-						these Terms, we will notify you by email or by posting a notice on our website before
-						the changes become effective. Your continued use of our Services after the effective
-						date of such changes constitutes your acceptance of the modified Terms.
+						Vi förbehåller oss rätten att ändra dessa villkor när som helst. Om vi gör väsentliga
+						ändringar kommer vi att informera dig via e-post eller genom att publicera en notis på
+						vår webbplats innan ändringarna träder i kraft. Din fortsatta användning av våra tjänster
+						efter ikraftträdandet innebär att du accepterar de ändrade villkoren.
 					</p>
 				</section>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">7. Warranties and Disclaimers</h2>
+					<h2 className="text-2xl font-semibold mb-4">7. Garantier och ansvarsfriskrivningar</h2>
 					<p>
-						We provide our Services using a commercially reasonable level of skill and care and we
-						hope that you will enjoy using them. But there are certain things that we don't promise
-						about our Services.
+						Vi tillhandahåller våra tjänster med en kommersiellt rimlig nivå av skicklighet och
+						omsorg och hoppas att du ska ha nytta av dem. Men det finns vissa saker vi inte lovar
+						om våra tjänster.
 					</p>
 					<p className="mt-4 uppercase font-bold">
-						OTHER THAN AS EXPRESSLY SET OUT IN THESE TERMS OR ADDITIONAL TERMS, NEITHER SURFSENSE
-						NOR ITS SUPPLIERS OR DISTRIBUTORS MAKE ANY SPECIFIC PROMISES ABOUT THE SERVICES. FOR
-						EXAMPLE, WE DON'T MAKE ANY COMMITMENTS ABOUT THE CONTENT WITHIN THE SERVICES, THE
-						SPECIFIC FUNCTIONS OF THE SERVICES, OR THEIR RELIABILITY, AVAILABILITY, OR ABILITY TO
-						MEET YOUR NEEDS. WE PROVIDE THE SERVICES "AS IS".
+						UTÖVER VAD SOM UTTRYCKLIGEN ANGES I DESSA VILLKOR ELLER TILLÄGGSVILLKOR GER VARKEN
+						ONESEEK ELLER DESS LEVERANTÖRER ELLER DISTRIBUTÖRER NÅGRA SÄRSKILDA LÖFTEN OM
+						TJÄNSTERNA. TILL EXEMPEL LÄMNAR VI INGA UTFÄSTELSER OM INNEHÅLLET I TJÄNSTERNA,
+						TJÄNSTERNAS SPECIFIKA FUNKTIONER ELLER DERAS TILLFÖRLITLIGHET, TILLGÄNGLIGHET ELLER
+						FÖRMÅGA ATT UPPFYLLA DINA BEHOV. TJÄNSTERNA TILLHANDAHÅLLS I BEFINTLIGT SKICK.
 					</p>
 					<p className="mt-4 uppercase font-bold">
-						SOME JURISDICTIONS PROVIDE FOR CERTAIN WARRANTIES, LIKE THE IMPLIED WARRANTY OF
-						MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. TO THE EXTENT
-						PERMITTED BY LAW, WE EXCLUDE ALL WARRANTIES.
+						VISSA JURISDIKTIONER FÖRESKRIVER VISSA GARANTIER, SÅSOM UNDERFÖRSTÅDDA GARANTIER OM
+						SÄLJBARHET, LÄMPLIGHET FÖR ETT SÄRSKILT ÄNDAMÅL OCH ICKE-INTRÅNG. I DEN UTSTRÄCKNING
+						SOM LAGEN TILLÅTER UTESLUTER VI ALLA GARANTIER.
 					</p>
 				</section>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">8. Liability for our Services</h2>
+					<h2 className="text-2xl font-semibold mb-4">8. Ansvar för våra tjänster</h2>
 					<p className="uppercase font-bold">
-						WHEN PERMITTED BY LAW, SURFSENSE, AND SURFSENSE'S SUPPLIERS AND DISTRIBUTORS, WILL NOT
-						BE RESPONSIBLE FOR LOST PROFITS, REVENUES, OR DATA, FINANCIAL LOSSES OR INDIRECT,
-						SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES.
+						NÄR DET ÄR TILLÅTET ENLIGT LAG ÄR ONESEEK OCH DESS LEVERANTÖRER OCH DISTRIBUTÖRER INTE
+						ANSVARIGA FÖR FÖRLORADE VINSTER, INTÄKTER ELLER DATA, EKONOMISKA FÖRLUSTER ELLER
+						INDIREKTA, SÄRSKILDA, FÖLJDSKADOR, EXEMPLARISKA ELLER STRAFFSKADOR.
 					</p>
 					<p className="mt-4 uppercase font-bold">
-						TO THE EXTENT PERMITTED BY LAW, THE TOTAL LIABILITY OF SURFSENSE, AND ITS SUPPLIERS AND
-						DISTRIBUTORS, FOR ANY CLAIMS UNDER THESE TERMS, INCLUDING FOR ANY IMPLIED WARRANTIES, IS
-						LIMITED TO THE AMOUNT YOU PAID US TO USE THE SERVICES (OR, IF WE CHOOSE, TO SUPPLYING
-						YOU THE SERVICES AGAIN).
+						I DEN UTSTRÄCKNING SOM LAGEN TILLÅTER ÄR ONESEEKS OCH DESS LEVERANTÖRERS OCH
+						DISTRIBUTÖRERS SAMLADE ANSVAR FÖR EVENTUELLA KRAV ENLIGT DESSA VILLKOR, INKLUSIVE FÖR
+						UNDERFÖRSTÅDDA GARANTIER, BEGRÄNSAT TILL DET BELOPP DU BETALADE OSS FÖR ATT ANVÄNDA
+						TJÄNSTERNA (ELLER, OM VI VÄLJER, ATT TILLHANDAHÅLLA TJÄNSTERNA IGEN).
 					</p>
 					<p className="mt-4 uppercase font-bold">
-						IN ALL CASES, SURFSENSE, AND ITS SUPPLIERS AND DISTRIBUTORS, WILL NOT BE LIABLE FOR ANY
-						LOSS OR DAMAGE THAT IS NOT REASONABLY FORESEEABLE.
+						I ALLA FALL ÄR ONESEEK OCH DESS LEVERANTÖRER OCH DISTRIBUTÖRER INTE ANSVARIGA FÖR NÅGON
+						FÖRLUST ELLER SKADA SOM INTE SKÄLIGEN KAN FÖRUTSES.
 					</p>
 				</section>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">9. Indemnification</h2>
+					<h2 className="text-2xl font-semibold mb-4">9. Skadeslöshet</h2>
 					<p>
 						You agree to defend, indemnify, and hold harmless SurfSense, its affiliates, and their
 						respective officers, directors, employees, and agents from and against any claims,

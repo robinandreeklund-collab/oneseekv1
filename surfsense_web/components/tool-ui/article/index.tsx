@@ -21,7 +21,7 @@ const SerializableArticleSchema = z.object({
 	id: z.string().default("article-unknown"),
 	assetId: z.string().nullish(),
 	kind: z.literal("article").nullish(),
-	title: z.string().default("Untitled Article"),
+	title: z.string().default("Artikel utan titel"),
 	description: z.string().nullish(),
 	content: z.string().nullish(),
 	href: z.string().url().nullish(),
@@ -94,8 +94,8 @@ export function parseSerializableArticle(data: unknown): ArticleProps {
 		const obj = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
 		return {
 			id: String(obj.id || "article-unknown"),
-			title: String(obj.title || "Untitled Article"),
-			error: "Failed to parse article data",
+			title: String(obj.title || "Artikel utan titel"),
+			error: "Det gick inte att tolka artikeldata",
 		};
 	}
 
@@ -166,7 +166,7 @@ export function Article({
 							<AlertCircleIcon className="size-5 text-destructive" />
 						</div>
 						<div className="flex-1 min-w-0">
-							<p className="font-medium text-destructive text-sm">Failed to scrape webpage</p>
+							<p className="font-medium text-destructive text-sm">Det gick inte att skrapa webbsidan</p>
 							{href && <p className="text-muted-foreground text-xs mt-0.5 truncate">{href}</p>}
 							<p className="text-muted-foreground text-xs mt-1">{error}</p>
 						</div>
@@ -228,7 +228,7 @@ export function Article({
 											</span>
 										</TooltipTrigger>
 										<TooltipContent>
-											<p>Source: {domain}</p>
+											<p>Källa: {domain}</p>
 										</TooltipContent>
 									</Tooltip>
 								)}
@@ -242,7 +242,7 @@ export function Article({
 											</span>
 										</TooltipTrigger>
 										<TooltipContent>
-											<p>Author: {author}</p>
+											<p>Författare: {author}</p>
 										</TooltipContent>
 									</Tooltip>
 								)}
@@ -260,14 +260,14 @@ export function Article({
 											<span className="flex items-center gap-1">
 												<FileTextIcon className="size-3" />
 												<span>{formatWordCount(wordCount)}</span>
-												{wasTruncated && <span className="text-warning">(truncated)</span>}
+												{wasTruncated && <span className="text-warning">(avkortad)</span>}
 											</span>
 										</TooltipTrigger>
 										<TooltipContent>
 											<p>
 												{wasTruncated
-													? "Content was truncated due to length"
-													: "Full article content available"}
+													? "Innehållet avkortades på grund av längden"
+													: "Hela artikelinnehållet finns tillgängligt"}
 											</p>
 										</TooltipContent>
 									</Tooltip>
@@ -315,7 +315,7 @@ export function Article({
 /**
  * Loading state for article component
  */
-export function ArticleLoading({ title = "Loading article..." }: { title?: string }) {
+export function ArticleLoading({ title = "Läser in artikel..." }: { title?: string }) {
 	return (
 		<Card className="overflow-hidden animate-pulse">
 			<CardContent className="p-4">
@@ -386,7 +386,7 @@ export class ArticleErrorBoundary extends Component<ErrorBoundaryProps, ErrorBou
 						<CardContent className="p-4">
 							<div className="flex items-center gap-3">
 								<AlertCircleIcon className="size-5 text-destructive" />
-								<p className="text-sm text-destructive">Failed to render article</p>
+								<p className="text-sm text-destructive">Det gick inte att visa artikeln</p>
 							</div>
 						</CardContent>
 					</Card>

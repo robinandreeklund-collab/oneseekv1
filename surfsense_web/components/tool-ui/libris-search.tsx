@@ -75,7 +75,7 @@ function LibrisErrorState({ error }: { error: string }) {
 					<AlertCircleIcon className="size-6 text-destructive" />
 				</div>
 				<div className="flex-1 min-w-0">
-					<p className="font-medium text-destructive text-sm">Failed to load Libris results</p>
+					<p className="font-medium text-destructive text-sm">Det gick inte att läsa in Libris-resultat</p>
 					<p className="text-muted-foreground text-xs mt-1">{error}</p>
 				</div>
 			</div>
@@ -104,7 +104,7 @@ function LibrisResultCard({ result }: { result: z.infer<typeof LibrisResultItemS
 				{result.cover_image ? (
 					<img
 						src={result.cover_image}
-						alt={result.title || "Cover"}
+						alt={result.title || "Omslag"}
 						className="h-20 w-14 rounded border border-border/60 object-cover"
 						loading="lazy"
 					/>
@@ -115,13 +115,13 @@ function LibrisResultCard({ result }: { result: z.infer<typeof LibrisResultItemS
 				)}
 				<div className="flex-1 min-w-0">
 					<div className="flex items-start justify-between gap-2">
-						<h4 className="font-semibold text-sm">{result.title || "Untitled"}</h4>
+						<h4 className="font-semibold text-sm">{result.title || "Utan titel"}</h4>
 						{result.libris_url && (
 							<Button
 								variant="ghost"
 								size="icon"
 								onClick={() => window.open(result.libris_url || "", "_blank", "noopener,noreferrer")}
-								aria-label="Open in Libris"
+								aria-label="Öppna i Libris"
 							>
 								<ExternalLinkIcon className="size-4" />
 							</Button>
@@ -153,7 +153,7 @@ function LibrisResultCard({ result }: { result: z.infer<typeof LibrisResultItemS
 					)}
 					{result.availability?.count && (
 						<p className="mt-2 text-[10px] text-muted-foreground">
-							Available at {result.availability.count} libraries
+							Finns på {result.availability.count} bibliotek
 						</p>
 					)}
 				</div>
@@ -177,14 +177,14 @@ export const LibrisSearchToolUI = makeAssistantToolUI<LibrisSearchArgs, LibrisSe
 			if (status.reason === "cancelled") {
 				return (
 					<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
-						<p className="line-through">Libris search cancelled</p>
+						<p className="line-through">Libris-sökning avbröts</p>
 					</div>
 				);
 			}
 			if (status.reason === "error") {
 				return (
 					<LibrisErrorState
-						error={typeof status.error === "string" ? status.error : "An error occurred"}
+						error={typeof status.error === "string" ? status.error : "Ett fel uppstod"}
 					/>
 				);
 			}
@@ -195,7 +195,7 @@ export const LibrisSearchToolUI = makeAssistantToolUI<LibrisSearchArgs, LibrisSe
 		}
 
 		if (result.error || result.status === "error") {
-			return <LibrisErrorState error={result.error || "Libris search failed"} />;
+			return <LibrisErrorState error={result.error || "Libris-sökning misslyckades"} />;
 		}
 
 		const results = result.mode === "record" ? (result.record ? [result.record] : []) : result.results || [];
@@ -204,20 +204,20 @@ export const LibrisSearchToolUI = makeAssistantToolUI<LibrisSearchArgs, LibrisSe
 				<CardContent className="p-4">
 					<div className="flex items-center justify-between">
 						<div className="text-sm text-muted-foreground">
-							Libris XL {result.mode === "record" ? "record" : "search"}
+							Libris XL {result.mode === "record" ? "post" : "sökning"}
 						</div>
 						{typeof result.total_items === "number" && (
-							<Badge variant="secondary">{result.total_items} results</Badge>
+							<Badge variant="secondary">{result.total_items} resultat</Badge>
 						)}
 					</div>
 					{args.query && (
 						<p className="mt-1 text-xs text-muted-foreground">
-							Query: <span className="font-medium text-foreground">{args.query}</span>
+							Sökfråga: <span className="font-medium text-foreground">{args.query}</span>
 						</p>
 					)}
 					<div className="mt-3 space-y-3">
 						{results.length === 0 ? (
-							<p className="text-sm text-muted-foreground">No results found.</p>
+							<p className="text-sm text-muted-foreground">Inga resultat hittades.</p>
 						) : (
 							results.map((item) => <LibrisResultCard key={item.id || item.title} result={item} />)
 						)}

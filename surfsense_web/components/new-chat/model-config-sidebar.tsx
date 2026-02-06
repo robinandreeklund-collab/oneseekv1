@@ -67,10 +67,10 @@ export function ModelConfigSidebar({
 
 	// Get title based on mode
 	const getTitle = () => {
-		if (mode === "create") return "Add New Configuration";
-		if (isAutoMode) return "Auto Mode (Load Balanced)";
-		if (isGlobal) return "View Global Configuration";
-		return "Edit Configuration";
+		if (mode === "create") return "Lägg till ny konfiguration";
+		if (isAutoMode) return "Autoläge (lastbalanserat)";
+		if (isGlobal) return "Visa global konfiguration";
+		return "Redigera konfiguration";
 	};
 
 	// Handle form submit
@@ -95,7 +95,7 @@ export function ModelConfigSidebar({
 						});
 					}
 
-					toast.success("Configuration created and assigned!");
+					toast.success("Konfiguration skapad och tilldelad!");
 					onOpenChange(false);
 				} else if (!isGlobal && config) {
 					// Update existing user config
@@ -115,12 +115,12 @@ export function ModelConfigSidebar({
 							citations_enabled: data.citations_enabled,
 						},
 					});
-					toast.success("Configuration updated!");
+					toast.success("Konfiguration uppdaterad!");
 					onOpenChange(false);
 				}
 			} catch (error) {
 				console.error("Failed to save configuration:", error);
-				toast.error("Failed to save configuration");
+				toast.error("Det gick inte att spara konfigurationen");
 			} finally {
 				setIsSubmitting(false);
 			}
@@ -148,11 +148,11 @@ export function ModelConfigSidebar({
 					agent_llm_id: config.id,
 				},
 			});
-			toast.success(`Now using ${config.name}`);
+			toast.success(`Använder nu ${config.name}`);
 			onOpenChange(false);
 		} catch (error) {
 			console.error("Failed to set model:", error);
-			toast.error("Failed to set model");
+			toast.error("Det gick inte att välja modell");
 		} finally {
 			setIsSubmitting(false);
 		}
@@ -219,7 +219,7 @@ export function ModelConfigSidebar({
 												className="gap-1 text-xs bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
 											>
 												<Zap className="size-3" />
-												Recommended
+												Rekommenderad
 											</Badge>
 										) : isGlobal ? (
 											<Badge variant="secondary" className="gap-1 text-xs">
@@ -229,7 +229,7 @@ export function ModelConfigSidebar({
 										) : mode !== "create" ? (
 											<Badge variant="outline" className="gap-1 text-xs">
 												<User className="size-3" />
-												Custom
+												Anpassad
 											</Badge>
 										) : null}
 										{config && !isAutoMode && (
@@ -245,7 +245,7 @@ export function ModelConfigSidebar({
 								className="h-8 w-8 rounded-full"
 							>
 								<X className="h-4 w-4" />
-								<span className="sr-only">Close</span>
+								<span className="sr-only">Stäng</span>
 							</Button>
 						</div>
 
@@ -257,8 +257,9 @@ export function ModelConfigSidebar({
 									<Alert className="mb-6 border-violet-500/30 bg-violet-500/5">
 										<Shuffle className="size-4 text-violet-500" />
 										<AlertDescription className="text-sm text-violet-700 dark:text-violet-400">
-											Auto mode automatically distributes requests across all available LLM
-											providers to optimize performance and avoid rate limits.
+											Autoläge distribuerar automatiskt förfrågningar över alla tillgängliga
+											LLM-leverantörer för att optimera prestanda och undvika
+											hastighetsbegränsningar.
 										</AlertDescription>
 									</Alert>
 								)}
@@ -268,8 +269,8 @@ export function ModelConfigSidebar({
 									<Alert className="mb-6 border-amber-500/30 bg-amber-500/5">
 										<AlertCircle className="size-4 text-amber-500" />
 										<AlertDescription className="text-sm text-amber-700 dark:text-amber-400">
-											Global configurations are read-only. To customize settings, create a new
-											configuration based on this template.
+											Globala konfigurationer är skrivskyddade. Skapa en ny konfiguration
+											baserad på denna mall för att anpassa inställningarna.
 										</AlertDescription>
 									</Alert>
 								)}
@@ -282,7 +283,7 @@ export function ModelConfigSidebar({
 										onCancel={() => onOpenChange(false)}
 										isSubmitting={isSubmitting}
 										mode="create"
-										submitLabel="Create & Use"
+										submitLabel="Skapa och använd"
 									/>
 								) : isAutoMode && config ? (
 									// Special view for Auto mode
@@ -291,7 +292,7 @@ export function ModelConfigSidebar({
 										<div className="space-y-4">
 											<div className="space-y-1.5">
 												<div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-													How It Works
+													Så fungerar det
 												</div>
 												<p className="text-sm text-muted-foreground">{config.description}</p>
 											</div>
@@ -300,17 +301,17 @@ export function ModelConfigSidebar({
 
 											<div className="space-y-3">
 												<div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-													Key Benefits
+													Viktiga fördelar
 												</div>
 												<div className="space-y-2">
 													<div className="flex items-start gap-3 p-3 rounded-lg bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800/50">
 														<Zap className="size-4 text-violet-600 dark:text-violet-400 mt-0.5 shrink-0" />
 														<div>
 															<p className="text-sm font-medium text-violet-900 dark:text-violet-100">
-																Automatic Load Balancing
+																Automatisk lastbalansering
 															</p>
 															<p className="text-xs text-violet-700 dark:text-violet-300">
-																Distributes requests across all configured LLM providers
+																Distribuerar förfrågningar över alla konfigurerade LLM-leverantörer
 															</p>
 														</div>
 													</div>
@@ -318,10 +319,11 @@ export function ModelConfigSidebar({
 														<Zap className="size-4 text-violet-600 dark:text-violet-400 mt-0.5 shrink-0" />
 														<div>
 															<p className="text-sm font-medium text-violet-900 dark:text-violet-100">
-																Rate Limit Protection
+																Skydd mot hastighetsbegränsningar
 															</p>
 															<p className="text-xs text-violet-700 dark:text-violet-300">
-																Automatically handles rate limits with cooldowns and retries
+																Hanterar automatiskt hastighetsbegränsningar med avkylning och nya
+																försök
 															</p>
 														</div>
 													</div>
@@ -329,10 +331,10 @@ export function ModelConfigSidebar({
 														<Zap className="size-4 text-violet-600 dark:text-violet-400 mt-0.5 shrink-0" />
 														<div>
 															<p className="text-sm font-medium text-violet-900 dark:text-violet-100">
-																Automatic Failover
+																Automatisk reservväxling
 															</p>
 															<p className="text-xs text-violet-700 dark:text-violet-300">
-																Falls back to other providers if one becomes unavailable
+																Växlar över till andra leverantörer om någon blir otillgänglig
 															</p>
 														</div>
 													</div>
@@ -347,7 +349,7 @@ export function ModelConfigSidebar({
 												className="flex-1"
 												onClick={() => onOpenChange(false)}
 											>
-												Close
+												Stäng
 											</Button>
 											<Button
 												className="flex-1 gap-2 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700"
@@ -355,11 +357,11 @@ export function ModelConfigSidebar({
 												disabled={isSubmitting}
 											>
 												{isSubmitting ? (
-													<>Loading...</>
+													<>Läser in...</>
 												) : (
 													<>
 														<ChevronRight className="size-4" />
-														Use Auto Mode
+														Använd autoläge
 													</>
 												)}
 											</Button>
@@ -373,14 +375,14 @@ export function ModelConfigSidebar({
 											<div className="grid gap-4 sm:grid-cols-2">
 												<div className="space-y-1.5">
 													<div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-														Configuration Name
+														Konfigurationsnamn
 													</div>
 													<p className="text-sm font-medium">{config.name}</p>
 												</div>
 												{config.description && (
 													<div className="space-y-1.5">
 														<div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-															Description
+															Beskrivning
 														</div>
 														<p className="text-sm text-muted-foreground">{config.description}</p>
 													</div>
@@ -392,13 +394,13 @@ export function ModelConfigSidebar({
 											<div className="grid gap-4 sm:grid-cols-2">
 												<div className="space-y-1.5">
 													<div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-														Provider
+														Leverantör
 													</div>
 													<p className="text-sm font-medium">{config.provider}</p>
 												</div>
 												<div className="space-y-1.5">
 													<div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-														Model
+														Modell
 													</div>
 													<p className="text-sm font-medium font-mono">{config.model_name}</p>
 												</div>
@@ -409,13 +411,13 @@ export function ModelConfigSidebar({
 											<div className="grid gap-4 sm:grid-cols-2">
 												<div className="space-y-2">
 													<div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-														Citations
+														Citeringar
 													</div>
 													<Badge
 														variant={config.citations_enabled ? "default" : "secondary"}
 														className="w-fit"
 													>
-														{config.citations_enabled ? "Enabled" : "Disabled"}
+														{config.citations_enabled ? "Aktiverad" : "Inaktiverad"}
 													</Badge>
 												</div>
 											</div>
@@ -425,7 +427,7 @@ export function ModelConfigSidebar({
 													<div className="h-px bg-border/50" />
 													<div className="space-y-1.5">
 														<div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-															System Instructions
+															Systeminstruktioner
 														</div>
 														<div className="p-3 rounded-lg bg-muted/50 border border-border/50">
 															<p className="text-xs font-mono text-muted-foreground whitespace-pre-wrap line-clamp-10">
@@ -444,7 +446,7 @@ export function ModelConfigSidebar({
 												className="flex-1"
 												onClick={() => onOpenChange(false)}
 											>
-												Close
+												Stäng
 											</Button>
 											<Button
 												className="flex-1 gap-2"
@@ -452,11 +454,11 @@ export function ModelConfigSidebar({
 												disabled={isSubmitting}
 											>
 												{isSubmitting ? (
-													<>Loading...</>
+													<>Läser in...</>
 												) : (
 													<>
 														<ChevronRight className="size-4" />
-														Use This Model
+														Använd den här modellen
 													</>
 												)}
 											</Button>
@@ -484,7 +486,7 @@ export function ModelConfigSidebar({
 										onCancel={() => onOpenChange(false)}
 										isSubmitting={isSubmitting}
 										mode="edit"
-										submitLabel="Save Changes"
+										submitLabel="Spara ändringar"
 									/>
 								) : null}
 							</div>

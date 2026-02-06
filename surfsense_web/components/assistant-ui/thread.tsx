@@ -67,12 +67,12 @@ import { cn } from "@/lib/utils";
 
 /** Placeholder texts that cycle in new chats when input is empty */
 const CYCLING_PLACEHOLDERS = [
-	"Ask SurfSense anything or @mention docs.",
-	"Generate a podcast from marketing tips in the company handbook.",
-	"Sum up our vacation policy from Drive.",
-	"Give me a brief overview of the most urgent tickets in Jira and Linear.",
-	"Create a concise table of today's top ten emails and calendar events.",
-	"Check if this week's Slack messages reference any GitHub issues.",
+	"Fråga Oneseek vad som helst eller @omnämn dokument.",
+	"Skapa en podcast av marknadsföringstips i företagshandboken.",
+	"Sammanfatta vår semesterpolicy från Drive.",
+	"Ge mig en kort översikt över de mest brådskande ärendena i Jira och Linear.",
+	"Skapa en kort tabell över dagens tio viktigaste e-postmeddelanden och kalenderhändelser.",
+	"Kontrollera om den här veckans Slack-meddelanden hänvisar till några GitHub-ärenden.",
 ];
 
 interface ThreadProps {
@@ -145,7 +145,7 @@ const ThreadScrollToBottom: FC = () => {
 	return (
 		<ThreadPrimitive.ScrollToBottom asChild>
 			<TooltipIconButton
-				tooltip="Scroll to bottom"
+				tooltip="Skrolla till botten"
 				variant="outline"
 				className="aui-thread-scroll-to-bottom -top-12 absolute z-10 self-center rounded-full p-4 disabled:invisible dark:bg-background dark:hover:bg-accent"
 			>
@@ -174,15 +174,15 @@ const getTimeBasedGreeting = (user?: { display_name?: string | null; email?: str
 	}
 
 	// Array of greeting variations for each time period
-	const morningGreetings = ["Good morning", "Fresh start today", "Morning", "Hey there"];
+	const morningGreetings = ["God morgon", "Ny start idag", "Morgon", "Hej där"];
 
-	const afternoonGreetings = ["Good afternoon", "Afternoon", "Hey there", "Hi there"];
+	const afternoonGreetings = ["God eftermiddag", "Eftermiddag", "Hej där", "Hallå"];
 
-	const eveningGreetings = ["Good evening", "Evening", "Hey there", "Hi there"];
+	const eveningGreetings = ["God kväll", "Kväll", "Hej där", "Hallå"];
 
-	const nightGreetings = ["Good night", "Evening", "Hey there", "Winding down"];
+	const nightGreetings = ["God natt", "Kväll", "Hej där", "Varvar ner"];
 
-	const lateNightGreetings = ["Still up", "Night owl mode", "Up past bedtime", "Hi there"];
+	const lateNightGreetings = ["Vaken fortfarande", "Nattugglaläge", "Uppe efter läggdags", "Hej där"];
 
 	// Select a random greeting based on time
 	let greeting: string;
@@ -560,7 +560,7 @@ const ComposerAction: FC<ComposerActionProps> = ({
 			{hasProcessingAttachments && (
 				<div className="flex items-center gap-1.5 text-muted-foreground text-xs">
 					<Loader2 className="size-3 animate-spin" />
-					<span>Processing...</span>
+					<span>Bearbetar...</span>
 				</div>
 			)}
 
@@ -568,7 +568,7 @@ const ComposerAction: FC<ComposerActionProps> = ({
 		{!hasModelConfigured && !hasProcessingAttachments && !isPublicChat && (
 				<div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-xs">
 					<AlertCircle className="size-3" />
-					<span>Select a model</span>
+					<span>Välj en modell</span>
 				</div>
 			)}
 
@@ -577,14 +577,14 @@ const ComposerAction: FC<ComposerActionProps> = ({
 					<TooltipIconButton
 						tooltip={
 							isBlockedByOtherUser
-								? "Wait for AI to finish responding"
+								? "Vänta tills AI:n har svarat klart"
 								: !hasModelConfigured
-									? "Please select a model from the header to start chatting"
+									? "Välj en modell i sidhuvudet för att börja chatta"
 									: hasProcessingAttachments
-										? "Wait for attachments to process"
+										? "Vänta tills bilagorna har bearbetats"
 										: isComposerEmpty
-											? "Enter a message to send"
-											: "Send message"
+											? "Skriv ett meddelande för att skicka"
+											: "Skicka meddelande"
 						}
 						side="bottom"
 						type="submit"
@@ -594,7 +594,7 @@ const ComposerAction: FC<ComposerActionProps> = ({
 							"aui-composer-send size-8 rounded-full",
 							isSendDisabled && "cursor-not-allowed opacity-50"
 						)}
-						aria-label="Send message"
+						aria-label="Skicka meddelande"
 						disabled={isSendDisabled}
 					>
 						<ArrowUpIcon className="aui-composer-send-icon size-4" />
@@ -609,7 +609,7 @@ const ComposerAction: FC<ComposerActionProps> = ({
 						variant="default"
 						size="icon"
 						className="aui-composer-cancel size-8 rounded-full"
-						aria-label="Stop generating"
+						aria-label="Stoppa generering"
 					>
 						<SquareIcon className="aui-composer-cancel-icon size-3 fill-current" />
 					</Button>
@@ -687,7 +687,7 @@ const AssistantActionBar: FC = () => {
 			className="aui-assistant-action-bar-root -ml-1 col-start-3 row-start-2 flex gap-1 text-muted-foreground data-floating:absolute data-floating:rounded-md data-floating:border data-floating:bg-background data-floating:p-1 data-floating:shadow-sm"
 		>
 			<ActionBarPrimitive.Copy asChild>
-				<TooltipIconButton tooltip="Copy">
+				<TooltipIconButton tooltip="Kopiera">
 					<AssistantIf condition={({ message }) => message.isCopied}>
 						<CheckIcon />
 					</AssistantIf>
@@ -697,12 +697,12 @@ const AssistantActionBar: FC = () => {
 				</TooltipIconButton>
 			</ActionBarPrimitive.Copy>
 			<ActionBarPrimitive.ExportMarkdown asChild>
-				<TooltipIconButton tooltip="Export as Markdown">
+				<TooltipIconButton tooltip="Exportera som Markdown">
 					<DownloadIcon />
 				</TooltipIconButton>
 			</ActionBarPrimitive.ExportMarkdown>
 			<ActionBarPrimitive.Reload asChild>
-				<TooltipIconButton tooltip="Refresh">
+				<TooltipIconButton tooltip="Uppdatera">
 					<RefreshCwIcon />
 				</TooltipIconButton>
 			</ActionBarPrimitive.Reload>
@@ -721,11 +721,11 @@ const EditComposer: FC = () => {
 				<div className="aui-edit-composer-footer mx-3 mb-3 flex items-center gap-2 self-end">
 					<ComposerPrimitive.Cancel asChild>
 						<Button variant="ghost" size="sm">
-							Cancel
+							Avbryt
 						</Button>
 					</ComposerPrimitive.Cancel>
 					<ComposerPrimitive.Send asChild>
-						<Button size="sm">Update</Button>
+						<Button size="sm">Uppdatera</Button>
 					</ComposerPrimitive.Send>
 				</div>
 			</ComposerPrimitive.Root>
@@ -744,7 +744,7 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({ className, ...rest
 			{...rest}
 		>
 			<BranchPickerPrimitive.Previous asChild>
-				<TooltipIconButton tooltip="Previous">
+				<TooltipIconButton tooltip="Föregående">
 					<ChevronLeftIcon />
 				</TooltipIconButton>
 			</BranchPickerPrimitive.Previous>
@@ -752,7 +752,7 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({ className, ...rest
 				<BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
 			</span>
 			<BranchPickerPrimitive.Next asChild>
-				<TooltipIconButton tooltip="Next">
+				<TooltipIconButton tooltip="Nästa">
 					<ChevronRightIcon />
 				</TooltipIconButton>
 			</BranchPickerPrimitive.Next>

@@ -33,14 +33,14 @@ import type { ConnectFormProps } from "../index";
 
 const bookstackConnectorFormSchema = z.object({
 	name: z.string().min(3, {
-		message: "Connector name must be at least 3 characters.",
+		message: "Anslutningsnamn måste vara minst 3 tecken.",
 	}),
-	base_url: z.string().url({ message: "Please enter a valid BookStack base URL." }),
+	base_url: z.string().url({ message: "Ange en giltig BookStack-bas-URL." }),
 	token_id: z.string().min(1, {
-		message: "BookStack Token ID is required.",
+		message: "BookStack Token ID krävs.",
 	}),
 	token_secret: z.string().min(1, {
-		message: "BookStack Token Secret is required.",
+		message: "BookStack Token Secret krävs.",
 	}),
 });
 
@@ -55,7 +55,7 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 	const form = useForm<BookStackConnectorFormValues>({
 		resolver: zodResolver(bookstackConnectorFormSchema),
 		defaultValues: {
-			name: "BookStack Connector",
+			name: "BookStack-anslutning",
 			base_url: "",
 			token_id: "",
 			token_secret: "",
@@ -99,10 +99,10 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 			<Alert className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 p-2 sm:p-3 flex items-center [&>svg]:relative [&>svg]:left-0 [&>svg]:top-0 [&>svg+div]:translate-y-0">
 				<Info className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 ml-1" />
 				<div className="-ml-1">
-					<AlertTitle className="text-xs sm:text-sm">API Token Required</AlertTitle>
+					<AlertTitle className="text-xs sm:text-sm">API-token krävs</AlertTitle>
 					<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-						You'll need a BookStack API Token to use this connector. You can create one from your
-						BookStack instance settings.
+						Du behöver en BookStack API-token för att använda denna anslutning. Du kan skapa en i
+						inställningarna för din BookStack-instans.
 					</AlertDescription>
 				</div>
 			</Alert>
@@ -119,17 +119,17 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 							name="name"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Connector Name</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Anslutningsnamn</FormLabel>
 									<FormControl>
 										<Input
-											placeholder="My BookStack Connector"
+											placeholder="Min BookStack-anslutning"
 											className="h-8 sm:h-10 px-2 sm:px-3 text-xs sm:text-sm border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										A friendly name to identify this connector.
+										Ett vänligt namn för att identifiera anslutningen.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -141,7 +141,7 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 							name="base_url"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">BookStack Base URL</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">BookStack-bas-URL</FormLabel>
 									<FormControl>
 										<Input
 											type="url"
@@ -152,7 +152,7 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										The base URL of your BookStack instance (e.g.,
+										Bas-URL:en för din BookStack-instans (t.ex.
 										https://your-bookstack-instance.com).
 									</FormDescription>
 									<FormMessage />
@@ -165,17 +165,17 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 							name="token_id"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Token ID</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Token-ID</FormLabel>
 									<FormControl>
 										<Input
-											placeholder="Your Token ID"
+											placeholder="Ditt Token-ID"
 											className="h-8 sm:h-10 px-2 sm:px-3 text-xs sm:text-sm border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										Your BookStack API Token ID.
+										Ditt BookStack API Token-ID.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -187,18 +187,18 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 							name="token_secret"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Token Secret</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Token-hemlighet</FormLabel>
 									<FormControl>
 										<Input
 											type="password"
-											placeholder="Your Token Secret"
+											placeholder="Din token-hemlighet"
 											className="h-8 sm:h-10 px-2 sm:px-3 text-xs sm:text-sm border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										Your BookStack API Token Secret will be encrypted and stored securely.
+										Din BookStack API token-hemlighet krypteras och lagras säkert.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -207,7 +207,7 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 
 						{/* Indexing Configuration */}
 						<div className="space-y-4 pt-4 border-t border-slate-400/20">
-							<h3 className="text-sm sm:text-base font-medium">Indexing Configuration</h3>
+							<h3 className="text-sm sm:text-base font-medium">Indexeringskonfiguration</h3>
 
 							{/* Date Range Selector */}
 							<DateRangeSelector
@@ -221,9 +221,9 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 							<div className="rounded-xl bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6">
 								<div className="flex items-center justify-between">
 									<div className="space-y-1">
-										<h3 className="font-medium text-sm sm:text-base">Enable Periodic Sync</h3>
+										<h3 className="font-medium text-sm sm:text-base">Aktivera periodisk synk</h3>
 										<p className="text-xs sm:text-sm text-muted-foreground">
-											Automatically re-index at regular intervals
+											Indexera om automatiskt med regelbundna intervall
 										</p>
 									</div>
 									<Switch
@@ -237,7 +237,7 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 									<div className="mt-4 pt-4 border-t border-slate-400/20 space-y-3">
 										<div className="space-y-2">
 											<Label htmlFor="frequency" className="text-xs sm:text-sm">
-												Sync Frequency
+												Synkfrekvens
 											</Label>
 											<Select
 												value={frequencyMinutes}
@@ -248,29 +248,29 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 													id="frequency"
 													className="w-full bg-slate-400/5 dark:bg-slate-400/5 border-slate-400/20 text-xs sm:text-sm"
 												>
-													<SelectValue placeholder="Select frequency" />
+													<SelectValue placeholder="Välj frekvens" />
 												</SelectTrigger>
 												<SelectContent className="z-[100]">
 													<SelectItem value="5" className="text-xs sm:text-sm">
-														Every 5 minutes
+														Var 5:e minut
 													</SelectItem>
 													<SelectItem value="15" className="text-xs sm:text-sm">
-														Every 15 minutes
+														Var 15:e minut
 													</SelectItem>
 													<SelectItem value="60" className="text-xs sm:text-sm">
-														Every hour
+														Varje timme
 													</SelectItem>
 													<SelectItem value="360" className="text-xs sm:text-sm">
-														Every 6 hours
+														Var 6:e timme
 													</SelectItem>
 													<SelectItem value="720" className="text-xs sm:text-sm">
-														Every 12 hours
+														Var 12:e timme
 													</SelectItem>
 													<SelectItem value="1440" className="text-xs sm:text-sm">
-														Daily
+														Dagligen
 													</SelectItem>
 													<SelectItem value="10080" className="text-xs sm:text-sm">
-														Weekly
+														Veckovis
 													</SelectItem>
 												</SelectContent>
 											</Select>
@@ -287,7 +287,7 @@ export const BookStackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 			{getConnectorBenefits(EnumConnectorName.BOOKSTACK_CONNECTOR) && (
 				<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 px-3 sm:px-6 py-4 space-y-2">
 					<h4 className="text-xs sm:text-sm font-medium">
-						What you get with BookStack integration:
+						Det här får du med BookStack-integrationen:
 					</h4>
 					<ul className="list-disc pl-5 text-[10px] sm:text-xs text-muted-foreground space-y-1">
 						{getConnectorBenefits(EnumConnectorName.BOOKSTACK_CONNECTOR)?.map((benefit) => (

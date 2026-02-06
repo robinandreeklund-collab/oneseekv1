@@ -60,7 +60,7 @@ export default function InviteAcceptPage() {
 
 	const acceptInvite = useCallback(async () => {
 		if (!inviteCode) {
-			toast.error("No invite code provided");
+			toast.error("Ingen inbjudningskod angiven");
 			return null;
 		}
 
@@ -68,7 +68,7 @@ export default function InviteAcceptPage() {
 			const result = await acceptInviteMutation({ invite_code: inviteCode });
 			return result;
 		} catch (err: any) {
-			toast.error(err.message || "Failed to accept invite");
+			toast.error(err.message || "Det gick inte att acceptera inbjudan");
 			throw err;
 		}
 	}, [inviteCode, acceptInviteMutation]);
@@ -109,7 +109,7 @@ export default function InviteAcceptPage() {
 				);
 			}
 		} catch (err: any) {
-			setError(err.message || "Failed to accept invite");
+			setError(err.message || "Det gick inte att acceptera inbjudan");
 		} finally {
 			setAccepting(false);
 		}
@@ -165,7 +165,7 @@ export default function InviteAcceptPage() {
 							>
 								<Spinner size="xl" className="text-primary" />
 							</motion.div>
-							<p className="mt-4 text-muted-foreground">Loading invite details...</p>
+							<p className="mt-4 text-muted-foreground">Läser in inbjudningsdetaljer...</p>
 						</CardContent>
 					) : accepted && acceptedData ? (
 						<>
@@ -178,9 +178,9 @@ export default function InviteAcceptPage() {
 								>
 									<CheckCircle2 className="h-10 w-10 text-emerald-500" />
 								</motion.div>
-								<CardTitle className="text-2xl">Welcome to the team!</CardTitle>
+								<CardTitle className="text-2xl">Välkommen till teamet!</CardTitle>
 								<CardDescription>
-									You've successfully joined {acceptedData.search_space_name}
+									Du har gått med i {acceptedData.search_space_name}
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-4">
@@ -191,7 +191,7 @@ export default function InviteAcceptPage() {
 										</div>
 										<div>
 											<p className="font-medium">{acceptedData.search_space_name}</p>
-											<p className="text-sm text-muted-foreground">Search Space</p>
+											<p className="text-sm text-muted-foreground">Sökutrymme</p>
 										</div>
 									</div>
 									<div className="flex items-center gap-3">
@@ -200,7 +200,7 @@ export default function InviteAcceptPage() {
 										</div>
 										<div>
 											<p className="font-medium">{acceptedData.role_name}</p>
-											<p className="text-sm text-muted-foreground">Your Role</p>
+											<p className="text-sm text-muted-foreground">Din roll</p>
 										</div>
 									</div>
 								</div>
@@ -210,7 +210,7 @@ export default function InviteAcceptPage() {
 									className="w-full gap-2"
 									onClick={() => router.push(`/dashboard/${acceptedData.search_space_id}`)}
 								>
-									Go to Search Space
+									Gå till sökutrymme
 									<ArrowRight className="h-4 w-4" />
 								</Button>
 							</CardFooter>
@@ -226,15 +226,15 @@ export default function InviteAcceptPage() {
 								>
 									<XCircle className="h-10 w-10 text-destructive" />
 								</motion.div>
-								<CardTitle className="text-2xl">Invalid Invite</CardTitle>
+								<CardTitle className="text-2xl">Ogiltig inbjudan</CardTitle>
 								<CardDescription>
-									{inviteInfo?.message || "This invite link is no longer valid"}
+									{inviteInfo?.message || "Den här inbjudningslänken är inte längre giltig"}
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="text-center">
 								<p className="text-sm text-muted-foreground">
-									The invite may have expired, reached its maximum uses, or been revoked by the
-									owner.
+									Inbjudan kan ha gått ut, nått sitt maxantal användningar eller återkallats av
+									ägaren.
 								</p>
 							</CardContent>
 							<CardFooter>
@@ -243,7 +243,7 @@ export default function InviteAcceptPage() {
 									className="w-full"
 									onClick={() => router.push("/dashboard")}
 								>
-									Go to Dashboard
+									Gå till instrumentpanelen
 								</Button>
 							</CardFooter>
 						</>
@@ -258,9 +258,9 @@ export default function InviteAcceptPage() {
 								>
 									<Sparkles className="h-10 w-10 text-primary" />
 								</motion.div>
-								<CardTitle className="text-2xl">You're Invited!</CardTitle>
+								<CardTitle className="text-2xl">Du är inbjuden!</CardTitle>
 								<CardDescription>
-									Sign in to join {inviteInfo?.search_space_name || "this search space"}
+									Logga in för att gå med i {inviteInfo?.search_space_name || "det här sökutrymmet"}
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-4">
@@ -271,7 +271,7 @@ export default function InviteAcceptPage() {
 										</div>
 										<div>
 											<p className="font-medium">{inviteInfo?.search_space_name}</p>
-											<p className="text-sm text-muted-foreground">Search Space</p>
+											<p className="text-sm text-muted-foreground">Sökutrymme</p>
 										</div>
 									</div>
 									{inviteInfo?.role_name && (
@@ -281,7 +281,7 @@ export default function InviteAcceptPage() {
 											</div>
 											<div>
 												<p className="font-medium">{inviteInfo.role_name}</p>
-												<p className="text-sm text-muted-foreground">Role you'll receive</p>
+												<p className="text-sm text-muted-foreground">Rollen du får</p>
 											</div>
 										</div>
 									)}
@@ -290,7 +290,7 @@ export default function InviteAcceptPage() {
 							<CardFooter>
 								<Button className="w-full gap-2" onClick={handleLoginRedirect}>
 									<LogIn className="h-4 w-4" />
-									Sign in to Accept
+									Logga in för att acceptera
 								</Button>
 							</CardFooter>
 						</>
@@ -305,9 +305,10 @@ export default function InviteAcceptPage() {
 								>
 									<Sparkles className="h-10 w-10 text-primary" />
 								</motion.div>
-								<CardTitle className="text-2xl">You're Invited!</CardTitle>
+								<CardTitle className="text-2xl">Du är inbjuden!</CardTitle>
 								<CardDescription>
-									Accept this invite to join {inviteInfo?.search_space_name || "this search space"}
+									Acceptera denna inbjudan för att gå med i{" "}
+									{inviteInfo?.search_space_name || "det här sökutrymmet"}
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-4">
@@ -318,7 +319,7 @@ export default function InviteAcceptPage() {
 										</div>
 										<div>
 											<p className="font-medium">{inviteInfo?.search_space_name}</p>
-											<p className="text-sm text-muted-foreground">Search Space</p>
+											<p className="text-sm text-muted-foreground">Sökutrymme</p>
 										</div>
 									</div>
 									{inviteInfo?.role_name && (
@@ -328,7 +329,7 @@ export default function InviteAcceptPage() {
 											</div>
 											<div>
 												<p className="font-medium">{inviteInfo.role_name}</p>
-												<p className="text-sm text-muted-foreground">Role you'll receive</p>
+												<p className="text-sm text-muted-foreground">Rollen du får</p>
 											</div>
 										</div>
 									)}
@@ -347,18 +348,18 @@ export default function InviteAcceptPage() {
 							</CardContent>
 							<CardFooter className="flex gap-2">
 								<Button variant="outline" className="flex-1" onClick={handleDecline}>
-									Cancel
+									Avbryt
 								</Button>
 								<Button className="flex-1 gap-2" onClick={handleAccept} disabled={accepting}>
 									{accepting ? (
 										<>
 											<Spinner size="sm" />
-											Accepting...
+											Accepterar...
 										</>
 									) : (
 										<>
 											<CheckCircle2 className="h-4 w-4" />
-											Accept Invite
+											Acceptera inbjudan
 										</>
 									)}
 								</Button>
@@ -378,8 +379,8 @@ export default function InviteAcceptPage() {
 						href="/"
 						className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
 					>
-						<Image src="/icon-128.svg" alt="SurfSense" width={24} height={24} className="rounded" />
-						<span className="text-sm font-medium">SurfSense</span>
+						<Image src="/icon-128.svg" alt="Oneseek" width={24} height={24} className="rounded" />
+						<span className="text-sm font-medium">Oneseek</span>
 					</Link>
 				</motion.div>
 			</motion.div>

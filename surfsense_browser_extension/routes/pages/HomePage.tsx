@@ -56,7 +56,7 @@ const HomePage = () => {
 				);
 
 				if (!response.ok) {
-					throw new Error("Token verification failed");
+					throw new Error("Tokenverifiering misslyckades");
 				} else {
 					const res = await response.json();
 					console.log(res);
@@ -174,8 +174,8 @@ const HomePage = () => {
 					timeQueueList: newTimeQueue.filter((item: any) => item),
 				});
 				toast({
-					title: "History store cleared",
-					description: "Inactive history sessions have been removed",
+					title: "Historiken rensad",
+					description: "Inaktiva historiksessions har tagits bort",
 					variant: "destructive",
 				});
 			});
@@ -245,8 +245,8 @@ const HomePage = () => {
 				await storage.set("webhistory", webhistoryObj);
 
 				toast({
-					title: "Snapshot saved",
-					description: `Captured: ${toPushInTabHistory.title}`,
+					title: "Ögonblicksbild sparad",
+					description: `Infångad: ${toPushInTabHistory.title}`,
 				});
 			}
 		});
@@ -255,7 +255,7 @@ const HomePage = () => {
 	const saveDatamessage = async () => {
 		if (value === "") {
 			toast({
-				title: "Select a SearchSpace !",
+				title: "Välj ett sökutrymme!",
 			});
 			return;
 		}
@@ -265,7 +265,7 @@ const HomePage = () => {
 
 		if (!search_space_id) {
 			toast({
-				title: "Invalid SearchSpace selected!",
+				title: "Ogiltigt sökutrymme valt!",
 				variant: "destructive",
 			});
 			return;
@@ -273,8 +273,8 @@ const HomePage = () => {
 
 		setIsSaving(true);
 		toast({
-			title: "Save job running",
-			description: "Saving captured content to SurfSense",
+			title: "Sparning pågår",
+			description: "Sparar insamlat innehåll till Oneseek",
 		});
 
 		try {
@@ -288,8 +288,8 @@ const HomePage = () => {
 			});
 		} catch (error) {
 			toast({
-				title: "Error saving data",
-				description: "Please try again",
+				title: "Fel vid sparning av data",
+				description: "Försök igen",
 				variant: "destructive",
 			});
 		} finally {
@@ -313,11 +313,11 @@ const HomePage = () => {
 					<div className="w-full max-w-md space-y-8">
 						<div className="flex flex-col items-center space-y-2 text-center">
 							<div className="rounded-full bg-gray-800 p-3 shadow-lg ring-2 ring-gray-700">
-								<img className="h-12 w-12" src={icon} alt="SurfSense" />
+								<img className="h-12 w-12" src={icon} alt="Oneseek" />
 							</div>
-							<h1 className="mt-4 text-3xl font-semibold tracking-tight text-white">SurfSense</h1>
+							<h1 className="mt-4 text-3xl font-semibold tracking-tight text-white">Oneseek</h1>
 							<div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-4 text-yellow-300">
-								<p className="text-sm">Please create a Search Space to continue</p>
+								<p className="text-sm">Skapa ett sökutrymme för att fortsätta</p>
 							</div>
 						</div>
 
@@ -328,7 +328,7 @@ const HomePage = () => {
 								className="flex items-center space-x-2 border-gray-700 bg-gray-800 text-gray-200 hover:bg-gray-700"
 							>
 								<ExitIcon className="h-4 w-4" />
-								<span>Sign Out</span>
+								<span>Logga ut</span>
 							</Button>
 						</div>
 					</div>
@@ -340,9 +340,9 @@ const HomePage = () => {
 					<div className="flex items-center justify-between border-b border-gray-700 pb-4">
 						<div className="flex items-center space-x-3">
 							<div className="rounded-full bg-gray-800 p-2 shadow-md ring-1 ring-gray-700">
-								<img className="h-6 w-6" src={icon} alt="SurfSense" />
+								<img className="h-6 w-6" src={icon} alt="Oneseek" />
 							</div>
-							<h1 className="text-xl font-semibold text-white">SurfSense</h1>
+							<h1 className="text-xl font-semibold text-white">Oneseek</h1>
 						</div>
 						<Button
 							variant="ghost"
@@ -351,7 +351,7 @@ const HomePage = () => {
 							className="rounded-full text-gray-400 hover:bg-gray-800 hover:text-white"
 						>
 							<ExitIcon className="h-4 w-4" />
-							<span className="sr-only">Log out</span>
+							<span className="sr-only">Logga ut</span>
 						</Button>
 					</div>
 
@@ -359,15 +359,15 @@ const HomePage = () => {
 						<div className="flex flex-col items-center justify-center rounded-lg border border-gray-700 bg-gray-800/50 p-6 backdrop-blur-sm">
 							<div className="flex h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-gray-700 to-gray-800 shadow-inner">
 								<div className="flex flex-col items-center">
-									<img className="mb-2 h-10 w-10 opacity-80" src={brain} alt="brain" />
+									<img className="mb-2 h-10 w-10 opacity-80" src={brain} alt="hjärna" />
 									<span className="text-2xl font-semibold text-white">{noOfWebPages}</span>
 								</div>
 							</div>
-							<p className="mt-4 text-sm text-gray-400">Captured web pages</p>
+							<p className="mt-4 text-sm text-gray-400">Insamlade webbsidor</p>
 						</div>
 
 						<div className="rounded-lg border border-gray-700 bg-gray-800/50 p-4 backdrop-blur-sm">
-							<Label className="mb-2 block text-sm font-medium text-gray-300">Search Space</Label>
+							<Label className="mb-2 block text-sm font-medium text-gray-300">Sökutrymme</Label>
 							<Popover open={open} onOpenChange={setOpen}>
 								<PopoverTrigger asChild>
 									<Button
@@ -377,18 +377,18 @@ const HomePage = () => {
 									>
 										{value
 											? searchspaces.find((space) => space.name === value)?.name
-											: "Select Search Space..."}
+											: "Välj sökutrymme..."}
 										<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
 									</Button>
 								</PopoverTrigger>
 								<PopoverContent className="w-full border-gray-700 bg-gray-800/90 p-0 backdrop-blur-sm">
 									<Command className="bg-transparent">
 										<CommandInput
-											placeholder="Search spaces..."
+											placeholder="Sök sökutrymmen..."
 											className="border-gray-700 bg-gray-900 text-gray-200"
 										/>
 										<CommandList>
-											<CommandEmpty>No search spaces found.</CommandEmpty>
+											<CommandEmpty>Inga sökutrymmen hittades.</CommandEmpty>
 											<CommandGroup>
 												{searchspaces.map((space) => (
 													<CommandItem
@@ -437,7 +437,7 @@ const HomePage = () => {
 								onClick={() => clearMem()}
 							>
 								<CrossCircledIcon className="h-4 w-4 transition-transform group-hover:scale-110" />
-								<span>Clear Inactive History</span>
+								<span>Rensa inaktiv historik</span>
 							</Button>
 
 							<Button
@@ -446,7 +446,7 @@ const HomePage = () => {
 								onClick={() => saveCurrSnapShot()}
 							>
 								<FileIcon className="h-4 w-4 transition-transform group-hover:scale-110" />
-								<span>Save Current Page</span>
+								<span>Spara aktuell sida</span>
 							</Button>
 
 							<Button
@@ -458,12 +458,12 @@ const HomePage = () => {
 								{isSaving ? (
 									<>
 										<ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
-										<span>Saving to SurfSense...</span>
+										<span>Sparar till Oneseek...</span>
 									</>
 								) : (
 									<>
 										<UploadIcon className="h-4 w-4 transition-transform group-hover:scale-110" />
-										<span>Save to SurfSense</span>
+										<span>Spara till Oneseek</span>
 									</>
 								)}
 							</Button>

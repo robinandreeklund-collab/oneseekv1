@@ -25,7 +25,7 @@ export function ChatHeader({ searchSpaceId, isPublicChat = false }: ChatHeaderPr
 		return (
 			<div className="flex items-center gap-2">
 				<div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted px-3 py-1 text-sm text-muted-foreground">
-					Global model (public)
+					Global modell (offentlig)
 				</div>
 			</div>
 		);

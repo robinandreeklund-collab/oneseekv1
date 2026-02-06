@@ -239,10 +239,10 @@ export const AssistantMessage: FC = () => {
 						<MessageSquare className={cn("size-4", hasComments && "fill-current")} />
 						{hasComments ? (
 							<span>
-								{commentCount} {commentCount === 1 ? "comment" : "comments"}
+								{commentCount} {commentCount === 1 ? "kommentar" : "kommentarer"}
 							</span>
 						) : (
-							<span>Add comment</span>
+							<span>Lägg till kommentar</span>
 						)}
 					</button>
 				</div>
@@ -271,7 +271,7 @@ const AssistantActionBar: FC = () => {
 			className="aui-assistant-action-bar-root -ml-1 col-start-3 row-start-2 flex gap-1 text-muted-foreground md:data-floating:absolute md:data-floating:rounded-md md:data-floating:border md:data-floating:bg-background md:data-floating:p-1 md:data-floating:shadow-sm [&>button]:opacity-100 md:[&>button]:opacity-[var(--aui-button-opacity,1)]"
 		>
 			<ActionBarPrimitive.Copy asChild>
-				<TooltipIconButton tooltip="Copy">
+				<TooltipIconButton tooltip="Kopiera">
 					<AssistantIf condition={({ message }) => message.isCopied}>
 						<CheckIcon />
 					</AssistantIf>
@@ -281,12 +281,12 @@ const AssistantActionBar: FC = () => {
 				</TooltipIconButton>
 			</ActionBarPrimitive.Copy>
 			<ActionBarPrimitive.ExportMarkdown asChild>
-				<TooltipIconButton tooltip="Export as Markdown">
+				<TooltipIconButton tooltip="Exportera som Markdown">
 					<DownloadIcon />
 				</TooltipIconButton>
 			</ActionBarPrimitive.ExportMarkdown>
 			<ActionBarPrimitive.Reload asChild>
-				<TooltipIconButton tooltip="Refresh">
+				<TooltipIconButton tooltip="Uppdatera">
 					<RefreshCwIcon />
 				</TooltipIconButton>
 			</ActionBarPrimitive.Reload>

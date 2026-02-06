@@ -15,7 +15,7 @@ export const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({ className, 
 			{...rest}
 		>
 			<BranchPickerPrimitive.Previous asChild>
-				<TooltipIconButton tooltip="Previous">
+				<TooltipIconButton tooltip="Föregående">
 					<ChevronLeftIcon />
 				</TooltipIconButton>
 			</BranchPickerPrimitive.Previous>
@@ -23,7 +23,7 @@ export const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({ className, 
 				<BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
 			</span>
 			<BranchPickerPrimitive.Next asChild>
-				<TooltipIconButton tooltip="Next">
+				<TooltipIconButton tooltip="Nästa">
 					<ChevronRightIcon />
 				</TooltipIconButton>
 			</BranchPickerPrimitive.Next>

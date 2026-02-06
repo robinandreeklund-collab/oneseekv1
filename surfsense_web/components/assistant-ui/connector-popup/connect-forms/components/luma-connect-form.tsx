@@ -33,10 +33,10 @@ import type { ConnectFormProps } from "../index";
 
 const lumaConnectorFormSchema = z.object({
 	name: z.string().min(3, {
-		message: "Connector name must be at least 3 characters.",
+		message: "Anslutningsnamn måste vara minst 3 tecken.",
 	}),
 	api_key: z.string().min(10, {
-		message: "Luma API Key is required and must be valid.",
+		message: "Luma API-nyckel krävs och måste vara giltig.",
 	}),
 });
 
@@ -51,7 +51,7 @@ export const LumaConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting }
 	const form = useForm<LumaConnectorFormValues>({
 		resolver: zodResolver(lumaConnectorFormSchema),
 		defaultValues: {
-			name: "Luma Connector",
+			name: "Luma-anslutning",
 			api_key: "",
 		},
 	});
@@ -90,16 +90,16 @@ export const LumaConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting }
 			<Alert className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 p-2 sm:p-3 flex items-center [&>svg]:relative [&>svg]:left-0 [&>svg]:top-0 [&>svg+div]:translate-y-0">
 				<Info className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 ml-1" />
 				<div className="-ml-1">
-					<AlertTitle className="text-xs sm:text-sm">API Key Required</AlertTitle>
+					<AlertTitle className="text-xs sm:text-sm">API-nyckel krävs</AlertTitle>
 					<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-						You'll need a Luma API Key to use this connector. You can create one from{" "}
+						Du behöver en Luma API-nyckel för att använda denna anslutning. Du kan skapa en via{" "}
 						<a
 							href="https://lu.ma/api"
 							target="_blank"
 							rel="noopener noreferrer"
 							className="font-medium underline underline-offset-4"
 						>
-							Luma API Settings
+							Luma API-inställningar
 						</a>
 					</AlertDescription>
 				</div>
@@ -117,17 +117,17 @@ export const LumaConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting }
 							name="name"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Connector Name</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Anslutningsnamn</FormLabel>
 									<FormControl>
 										<Input
-											placeholder="My Luma Connector"
+											placeholder="Min Luma-anslutning"
 											className="h-8 sm:h-10 px-2 sm:px-3 text-xs sm:text-sm border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										A friendly name to identify this connector.
+										Ett vänligt namn för att identifiera anslutningen.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -139,18 +139,18 @@ export const LumaConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting }
 							name="api_key"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Luma API Key</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Luma API-nyckel</FormLabel>
 									<FormControl>
 										<Input
 											type="password"
-											placeholder="Your API Key"
+											placeholder="Din API-nyckel"
 											className="h-8 sm:h-10 px-2 sm:px-3 text-xs sm:text-sm border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										Your Luma API Key will be encrypted and stored securely.
+										Din Luma API-nyckel krypteras och lagras säkert.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -159,7 +159,7 @@ export const LumaConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting }
 
 						{/* Indexing Configuration */}
 						<div className="space-y-4 pt-4 border-t border-slate-400/20">
-							<h3 className="text-sm sm:text-base font-medium">Indexing Configuration</h3>
+							<h3 className="text-sm sm:text-base font-medium">Indexeringskonfiguration</h3>
 
 							{/* Date Range Selector */}
 							<DateRangeSelector
@@ -174,9 +174,9 @@ export const LumaConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting }
 							<div className="rounded-xl bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6">
 								<div className="flex items-center justify-between">
 									<div className="space-y-1">
-										<h3 className="font-medium text-sm sm:text-base">Enable Periodic Sync</h3>
+										<h3 className="font-medium text-sm sm:text-base">Aktivera periodisk synk</h3>
 										<p className="text-xs sm:text-sm text-muted-foreground">
-											Automatically re-index at regular intervals
+											Indexera om automatiskt med regelbundna intervall
 										</p>
 									</div>
 									<Switch
@@ -190,7 +190,7 @@ export const LumaConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting }
 									<div className="mt-4 pt-4 border-t border-slate-400/20 space-y-3">
 										<div className="space-y-2">
 											<Label htmlFor="frequency" className="text-xs sm:text-sm">
-												Sync Frequency
+												Synkfrekvens
 											</Label>
 											<Select
 												value={frequencyMinutes}
@@ -201,29 +201,29 @@ export const LumaConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting }
 													id="frequency"
 													className="w-full bg-slate-400/5 dark:bg-slate-400/5 border-slate-400/20 text-xs sm:text-sm"
 												>
-													<SelectValue placeholder="Select frequency" />
+													<SelectValue placeholder="Välj frekvens" />
 												</SelectTrigger>
 												<SelectContent className="z-[100]">
 													<SelectItem value="5" className="text-xs sm:text-sm">
-														Every 5 minutes
+														Var 5:e minut
 													</SelectItem>
 													<SelectItem value="15" className="text-xs sm:text-sm">
-														Every 15 minutes
+														Var 15:e minut
 													</SelectItem>
 													<SelectItem value="60" className="text-xs sm:text-sm">
-														Every hour
+														Varje timme
 													</SelectItem>
 													<SelectItem value="360" className="text-xs sm:text-sm">
-														Every 6 hours
+														Var 6:e timme
 													</SelectItem>
 													<SelectItem value="720" className="text-xs sm:text-sm">
-														Every 12 hours
+														Var 12:e timme
 													</SelectItem>
 													<SelectItem value="1440" className="text-xs sm:text-sm">
-														Daily
+														Dagligen
 													</SelectItem>
 													<SelectItem value="10080" className="text-xs sm:text-sm">
-														Weekly
+														Veckovis
 													</SelectItem>
 												</SelectContent>
 											</Select>
@@ -239,7 +239,7 @@ export const LumaConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting }
 			{/* What you get section */}
 			{getConnectorBenefits(EnumConnectorName.LUMA_CONNECTOR) && (
 				<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 px-3 sm:px-6 py-4 space-y-2">
-					<h4 className="text-xs sm:text-sm font-medium">What you get with Luma integration:</h4>
+					<h4 className="text-xs sm:text-sm font-medium">Det här får du med Luma-integrationen:</h4>
 					<ul className="list-disc pl-5 text-[10px] sm:text-xs text-muted-foreground space-y-1">
 						{getConnectorBenefits(EnumConnectorName.LUMA_CONNECTOR)?.map((benefit) => (
 							<li key={benefit}>{benefit}</li>

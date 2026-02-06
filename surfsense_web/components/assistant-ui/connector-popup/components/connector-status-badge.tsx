@@ -27,25 +27,25 @@ export const ConnectorStatusBadge: FC<ConnectorStatusBadgeProps> = ({
 				return {
 					icon: AlertTriangle,
 					className: "text-yellow-500 dark:text-yellow-400",
-					defaultTitle: "Warning",
+					defaultTitle: "Varning",
 				};
 			case "disabled":
 				return {
 					icon: Ban,
 					className: "text-red-500 dark:text-red-400",
-					defaultTitle: "Disabled",
+					defaultTitle: "Inaktiverad",
 				};
 			case "maintenance":
 				return {
 					icon: Wrench,
 					className: "text-orange-500 dark:text-orange-400",
-					defaultTitle: "Maintenance",
+					defaultTitle: "Underhåll",
 				};
 			case "deprecated":
 				return {
 					icon: AlertTriangle,
 					className: "text-slate-500 dark:text-slate-400",
-					defaultTitle: "Deprecated",
+					defaultTitle: "Utfasad",
 				};
 			default:
 				return null;

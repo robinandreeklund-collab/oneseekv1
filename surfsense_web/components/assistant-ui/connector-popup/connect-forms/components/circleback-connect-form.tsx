@@ -23,7 +23,7 @@ import type { ConnectFormProps } from "../index";
 
 const circlebackFormSchema = z.object({
 	name: z.string().min(3, {
-		message: "Connector name must be at least 3 characters.",
+		message: "Anslutningsnamn måste vara minst 3 tecken.",
 	}),
 });
 
@@ -34,7 +34,7 @@ export const CirclebackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmit
 	const form = useForm<CirclebackFormValues>({
 		resolver: zodResolver(circlebackFormSchema),
 		defaultValues: {
-			name: "Circleback Connector",
+			name: "Circleback-anslutning",
 		},
 	});
 
@@ -66,10 +66,10 @@ export const CirclebackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmit
 			<Alert className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 p-2 sm:p-3 flex items-center [&>svg]:relative [&>svg]:left-0 [&>svg]:top-0 [&>svg+div]:translate-y-0">
 				<Webhook className="h-3 w-3 sm:h-4 sm:w-4 shrink-0 ml-1" />
 				<div className="-ml-1">
-					<AlertTitle className="text-xs sm:text-sm">Webhook-Based Integration</AlertTitle>
+					<AlertTitle className="text-xs sm:text-sm">Webhook-baserad integration</AlertTitle>
 					<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-						Circleback uses webhooks to automatically send meeting data. After connecting, you'll
-						receive a webhook URL to configure in your Circleback settings.
+						Circleback använder webhooks för att automatiskt skicka mötesdata. Efter anslutning får
+						du en webhook-URL att konfigurera i dina Circleback-inställningar.
 					</AlertDescription>
 				</div>
 			</Alert>
@@ -86,17 +86,17 @@ export const CirclebackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmit
 							name="name"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Connector Name</FormLabel>
+									<FormLabel className="text-xs sm:text-sm">Anslutningsnamn</FormLabel>
 									<FormControl>
 										<Input
-											placeholder="My Circleback Connector"
+											placeholder="Min Circleback-anslutning"
 											className="border-slate-400/20 focus-visible:border-slate-400/40"
 											disabled={isSubmitting}
 											{...field}
 										/>
 									</FormControl>
 									<FormDescription className="text-[10px] sm:text-xs">
-										A friendly name to identify this connector.
+										Ett vänligt namn för att identifiera anslutningen.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -109,7 +109,7 @@ export const CirclebackConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmit
 			{/* What you get section */}
 			{getConnectorBenefits(EnumConnectorName.CIRCLEBACK_CONNECTOR) && (
 				<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 px-3 sm:px-6 py-4 space-y-2">
-					<h4 className="text-xs sm:text-sm font-medium">What you get with Circleback:</h4>
+					<h4 className="text-xs sm:text-sm font-medium">Det här får du med Circleback:</h4>
 					<ul className="list-disc pl-5 text-[10px] sm:text-xs text-muted-foreground space-y-1">
 						{getConnectorBenefits(EnumConnectorName.CIRCLEBACK_CONNECTOR)?.map((benefit) => (
 							<li key={benefit}>{benefit}</li>

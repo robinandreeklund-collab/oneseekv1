@@ -162,24 +162,24 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 			{/* Folder & File Selection */}
 			<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6 space-y-3 sm:space-y-4">
 				<div className="space-y-1 sm:space-y-2">
-					<h3 className="font-medium text-sm sm:text-base">Folder & File Selection</h3>
+					<h3 className="font-medium text-sm sm:text-base">Mapp- och filval</h3>
 					<p className="text-xs sm:text-sm text-muted-foreground">
-						Select specific folders and/or individual files to index.
+						Välj specifika mappar och/eller enskilda filer att indexera.
 					</p>
 				</div>
 
 				{totalSelected > 0 && (
 					<div className="p-2 sm:p-3 bg-muted rounded-lg text-xs sm:text-sm space-y-1 sm:space-y-2">
 						<p className="font-medium">
-							Selected {totalSelected} item{totalSelected > 1 ? "s" : ""}: {(() => {
+							Valt {totalSelected} objekt: {(() => {
 								const parts: string[] = [];
 								if (selectedFolders.length > 0) {
 									parts.push(
-										`${selectedFolders.length} folder${selectedFolders.length > 1 ? "s" : ""}`
+										`${selectedFolders.length} mapp${selectedFolders.length > 1 ? "ar" : ""}`
 									);
 								}
 								if (selectedFiles.length > 0) {
-									parts.push(`${selectedFiles.length} file${selectedFiles.length > 1 ? "s" : ""}`);
+									parts.push(`${selectedFiles.length} fil${selectedFiles.length > 1 ? "er" : ""}`);
 								}
 								return parts.length > 0 ? `(${parts.join(", ")})` : "";
 							})()}
@@ -197,7 +197,7 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 										type="button"
 										onClick={() => handleRemoveFolder(folder.id)}
 										className="shrink-0 p-0.5 hover:bg-muted-foreground/20 rounded transition-colors"
-										aria-label={`Remove ${folder.name}`}
+										aria-label={`Ta bort ${folder.name}`}
 									>
 										<X className="size-3.5" />
 									</button>
@@ -215,7 +215,7 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 										type="button"
 										onClick={() => handleRemoveFile(file.id)}
 										className="shrink-0 p-0.5 hover:bg-muted-foreground/20 rounded transition-colors"
-										aria-label={`Remove ${file.name}`}
+										aria-label={`Ta bort ${file.name}`}
 									>
 										<X className="size-3.5" />
 									</button>
@@ -241,7 +241,7 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 							onClick={() => setShowFolderSelector(false)}
 							className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 hover:bg-slate-400/10 dark:hover:bg-white/10 text-xs sm:text-sm h-8 sm:h-9"
 						>
-							Done Selecting
+							Klart
 						</Button>
 					</div>
 				) : (
@@ -251,7 +251,7 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 						onClick={() => setShowFolderSelector(true)}
 						className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 hover:bg-slate-400/10 dark:hover:bg-white/10 text-xs sm:text-sm h-8 sm:h-9"
 					>
-						{totalSelected > 0 ? "Change Selection" : "Select Folders & Files"}
+						{totalSelected > 0 ? "Ändra val" : "Välj mappar och filer"}
 					</Button>
 				)}
 			</div>
@@ -259,9 +259,9 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 			{/* Indexing Options */}
 			<div className="rounded-xl border border-border bg-slate-400/5 dark:bg-white/5 p-3 sm:p-6 space-y-4">
 				<div className="space-y-1 sm:space-y-2">
-					<h3 className="font-medium text-sm sm:text-base">Indexing Options</h3>
+					<h3 className="font-medium text-sm sm:text-base">Indexeringsalternativ</h3>
 					<p className="text-xs sm:text-sm text-muted-foreground">
-						Configure how files are indexed from your Google Drive.
+						Konfigurera hur filer indexeras från din Google Drive.
 					</p>
 				</div>
 
@@ -270,10 +270,10 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 					<div className="flex items-center justify-between">
 						<div className="space-y-0.5">
 							<Label htmlFor="max-files" className="text-sm font-medium">
-								Max files per folder
+								Max antal filer per mapp
 							</Label>
 							<p className="text-xs text-muted-foreground">
-								Maximum number of files to index from each folder
+								Maximalt antal filer att indexera från varje mapp
 							</p>
 						</div>
 						<Select
@@ -286,23 +286,23 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 								id="max-files"
 								className="w-[140px] bg-slate-400/5 dark:bg-slate-400/5 border-slate-400/20 text-xs sm:text-sm"
 							>
-								<SelectValue placeholder="Select limit" />
+								<SelectValue placeholder="Välj gräns" />
 							</SelectTrigger>
 							<SelectContent className="z-[100]">
 								<SelectItem value="50" className="text-xs sm:text-sm">
-									50 files
+									50 filer
 								</SelectItem>
 								<SelectItem value="100" className="text-xs sm:text-sm">
-									100 files
+									100 filer
 								</SelectItem>
 								<SelectItem value="250" className="text-xs sm:text-sm">
-									250 files
+									250 filer
 								</SelectItem>
 								<SelectItem value="500" className="text-xs sm:text-sm">
-									500 files
+									500 filer
 								</SelectItem>
 								<SelectItem value="1000" className="text-xs sm:text-sm">
-									1000 files
+									1000 filer
 								</SelectItem>
 							</SelectContent>
 						</Select>
@@ -313,10 +313,10 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 				<div className="flex items-center justify-between pt-2 border-t border-slate-400/20">
 					<div className="space-y-0.5">
 						<Label htmlFor="incremental-sync" className="text-sm font-medium">
-							Incremental sync
+							Inkrementell synk
 						</Label>
 						<p className="text-xs text-muted-foreground">
-							Only sync changes since last index (faster). Disable for a full re-index.
+							Synka endast ändringar sedan senaste indexering (snabbare). Inaktivera för fullständig omindexering.
 						</p>
 					</div>
 					<Switch
@@ -330,10 +330,10 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 				<div className="flex items-center justify-between pt-2 border-t border-slate-400/20">
 					<div className="space-y-0.5">
 						<Label htmlFor="include-subfolders" className="text-sm font-medium">
-							Include subfolders
+							Inkludera undermappar
 						</Label>
 						<p className="text-xs text-muted-foreground">
-							Recursively index files in subfolders of selected folders
+							Indexera filer rekursivt i undermappar till valda mappar
 						</p>
 					</div>
 					<Switch
