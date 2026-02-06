@@ -9,6 +9,7 @@ using a local LLM and Tavily.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 import uuid
@@ -16,10 +17,12 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from app.agents.new_chat.chat_deepagent import create_surfsense_deep_agent
 from app.agents.new_chat.llm_config import (
     create_chat_litellm_from_agent_config,
     load_agent_config,
@@ -101,11 +104,6 @@ LOCAL_ANALYSIS_SYSTEM_PROMPT = (
 
 COMPARE_CITATION_INSTRUCTIONS = ""
 
-LOCAL_TOOL_SYSTEM_PROMPT = (
-    "You are Oneseek. Answer the user's question clearly and concisely. "
-    "Use the <sources> section for up-to-date information when available. "
-    "Do not include citation brackets or a references list in this draft."
-)
 
 
 
@@ -570,6 +568,28 @@ async def stream_compare_chat(
             yield streaming_service.format_done()
             return
 
+        from app.db import SearchSourceConnectorType
+
+        firecrawl_api_key = None
+        webcrawler_connector = await connector_service.get_connector_by_type(
+            SearchSourceConnectorType.WEBCRAWLER_CONNECTOR, search_space_id
+        )
+        if webcrawler_connector and webcrawler_connector.config:
+            firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
+
+        oneseek_checkpointer = MemorySaver()
+        oneseek_agent = await create_surfsense_deep_agent(
+            llm=local_llm,
+            search_space_id=search_space_id,
+            db_session=session,
+            connector_service=connector_service,
+            checkpointer=oneseek_checkpointer,
+            user_id=user_id,
+            thread_id=chat_id,
+            agent_config=agent_config,
+            firecrawl_api_key=firecrawl_api_key,
+        )
+
         local_step_id = f"compare-oneseek-{uuid.uuid4().hex[:8]}"
         local_tool_call_id = streaming_service.generate_tool_call_id()
         local_model_name = str(agent_config.model_name or "")
@@ -608,41 +628,125 @@ async def stream_compare_chat(
             local_tool_call_id, "call_oneseek", {"query": compare_query}
         )
 
-        local_sources_context = (
-            format_documents_for_context(tavily_documents)
-            if tavily_documents
-            else ""
-        )
-        local_prompt_parts = [
-            f"<user_query>\n{query_with_context}\n</user_query>",
-            "<sources>",
-            local_sources_context or "None",
-            "</sources>",
-        ]
-        local_prompt = "\n".join(local_prompt_parts)
+        oneseek_start = time.monotonic()
+        oneseek_error: str | None = None
+        oneseek_text = ""
+        oneseek_tool_steps: dict[str, str] = {}
+        oneseek_tool_calls: dict[str, str] = {}
 
-        local_start = time.monotonic()
-        local_error: str | None = None
-        local_response_text = ""
+        input_state = {
+            "messages": [HumanMessage(content=query_with_context)],
+            "search_space_id": search_space_id,
+        }
+        config = {
+            "configurable": {"thread_id": f"{chat_id}-compare-oneseek"},
+            "recursion_limit": 80,
+        }
+
         try:
-            local_response = await asyncio.wait_for(
-                local_llm.ainvoke(
-                    [
-                        SystemMessage(content=LOCAL_TOOL_SYSTEM_PROMPT),
-                        HumanMessage(content=local_prompt),
-                    ]
-                ),
-                timeout=COMPARE_TIMEOUT_SECONDS,
-            )
-            local_response_text = str(
-                getattr(local_response, "content", "") or ""
-            ).strip()
-        except Exception as exc:
-            local_error = str(exc)
+            async for event in oneseek_agent.astream_events(
+                input_state, config=config, version="v2"
+            ):
+                event_type = event.get("event", "")
+                if event_type == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content"):
+                        content = chunk.content
+                        if content and isinstance(content, str):
+                            oneseek_text += content
+                elif event_type == "on_tool_start":
+                    tool_name = event.get("name", "unknown_tool")
+                    run_id = event.get("run_id", "")
+                    tool_input = event.get("data", {}).get("input", {})
 
-        local_elapsed = time.monotonic() - local_start
-        if local_error or not local_response_text:
-            error_msg = local_error or "Empty response"
+                    tool_step_id = f"compare-oneseek-tool-{uuid.uuid4().hex[:8]}"
+                    oneseek_tool_steps[run_id] = tool_step_id
+                    tool_title = f"Using {tool_name.replace('_', ' ')}"
+                    tool_items: list[str] = []
+                    if isinstance(tool_input, dict):
+                        for key in (
+                            "query",
+                            "location",
+                            "url",
+                            "origin",
+                            "destination",
+                            "record_id",
+                            "podcast_title",
+                        ):
+                            if tool_input.get(key):
+                                tool_items.append(
+                                    f"{key.replace('_', ' ').title()}: {tool_input.get(key)}"
+                                )
+                                break
+                    if not tool_items:
+                        tool_items = [f"Tool: {tool_name}"]
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title=tool_title,
+                        status="in_progress",
+                        items=tool_items,
+                    )
+
+                    tool_call_id = (
+                        f"call_{run_id[:32]}"
+                        if run_id
+                        else streaming_service.generate_tool_call_id()
+                    )
+                    oneseek_tool_calls[run_id] = tool_call_id
+                    yield streaming_service.format_tool_input_start(
+                        tool_call_id, tool_name
+                    )
+                    yield streaming_service.format_tool_input_available(
+                        tool_call_id,
+                        tool_name,
+                        tool_input if isinstance(tool_input, dict) else {"input": tool_input},
+                    )
+                elif event_type == "on_tool_end":
+                    tool_name = event.get("name", "unknown_tool")
+                    run_id = event.get("run_id", "")
+                    raw_output = event.get("data", {}).get("output")
+                    tool_output = raw_output
+                    if hasattr(raw_output, "content"):
+                        content = raw_output.content
+                        if isinstance(content, str):
+                            try:
+                                tool_output = json.loads(content)
+                            except Exception:
+                                tool_output = {"result": content}
+                        else:
+                            tool_output = content
+                    elif isinstance(raw_output, str):
+                        try:
+                            tool_output = json.loads(raw_output)
+                        except Exception:
+                            tool_output = {"result": raw_output}
+                    elif raw_output is None:
+                        tool_output = {"result": "No output"}
+
+                    tool_call_id = oneseek_tool_calls.get(run_id) or (
+                        f"call_{run_id[:32]}"
+                        if run_id
+                        else streaming_service.generate_tool_call_id()
+                    )
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                    )
+
+                    tool_step_id = oneseek_tool_steps.get(run_id)
+                    if tool_step_id:
+                        yield streaming_service.format_thinking_step(
+                            step_id=tool_step_id,
+                            title=f"Using {tool_name.replace('_', ' ')}",
+                            status="completed",
+                            items=[f"Completed: {tool_name.replace('_', ' ')}"],
+                        )
+        except Exception as exc:
+            oneseek_error = str(exc)
+
+        oneseek_elapsed = time.monotonic() - oneseek_start
+        if oneseek_error or not oneseek_text.strip():
+            error_msg = oneseek_error or "Empty response"
             provider_summaries["Oneseek"] = {
                 "status": "error",
                 "error": _truncate_text(error_msg, 200),
@@ -658,7 +762,7 @@ async def stream_compare_chat(
                     "model_string": local_model_string,
                     "api_base": local_api_base,
                     "source": "Oneseek",
-                    "latency_ms": int(local_elapsed * 1000),
+                    "latency_ms": int(oneseek_elapsed * 1000),
                 },
             )
             completed_items = [
@@ -666,11 +770,10 @@ async def stream_compare_chat(
                 f"Error: {_truncate_text(error_msg, 120)}",
             ]
         else:
-            was_truncated = len(local_response_text) > COMPARE_RAW_ANSWER_CHARS
-            local_response_text = _truncate_text(
-                local_response_text, COMPARE_RAW_ANSWER_CHARS
-            )
-            answers["oneseek"] = local_response_text
+            oneseek_text = oneseek_text.strip()
+            was_truncated = len(oneseek_text) > COMPARE_RAW_ANSWER_CHARS
+            oneseek_text = _truncate_text(oneseek_text, COMPARE_RAW_ANSWER_CHARS)
+            answers["oneseek"] = oneseek_text
             provider_results["oneseek"] = {
                 "status": "success",
                 "model_display_name": "Oneseek",
@@ -679,27 +782,23 @@ async def stream_compare_chat(
                 "model_string": local_model_string,
                 "api_base": local_api_base,
                 "source": "Oneseek",
-                "latency_ms": int(local_elapsed * 1000),
+                "latency_ms": int(oneseek_elapsed * 1000),
                 "usage": None,
-                "summary": _truncate_text(
-                    local_response_text, COMPARE_SUMMARY_ANSWER_CHARS
-                ),
-                "response": local_response_text,
+                "summary": _truncate_text(oneseek_text, COMPARE_SUMMARY_ANSWER_CHARS),
+                "response": oneseek_text,
                 "truncated": was_truncated,
             }
             provider_summaries["Oneseek"] = {
                 "status": "success",
-                "answer": _truncate_text(
-                    local_response_text, COMPARE_SUMMARY_ANSWER_CHARS
-                ),
+                "answer": _truncate_text(oneseek_text, COMPARE_SUMMARY_ANSWER_CHARS),
             }
             yield streaming_service.format_tool_output_available(
                 local_tool_call_id, provider_results["oneseek"]
             )
             completed_items = [
                 *local_items,
-                f"Response length: {len(local_response_text)} chars",
-                f"Elapsed: {local_elapsed:.1f}s",
+                f"Response length: {len(oneseek_text)} chars",
+                f"Elapsed: {oneseek_elapsed:.1f}s",
             ]
 
         yield streaming_service.format_thinking_step(
@@ -707,6 +806,12 @@ async def stream_compare_chat(
             title="Asking Oneseek",
             status="completed",
             items=completed_items,
+        )
+
+        _, tavily_documents = await connector_service.search_tavily(
+            user_query=compare_query,
+            search_space_id=search_space_id,
+            top_k=MAX_TAVILY_RESULTS,
         )
 
         if not answers:
