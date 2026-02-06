@@ -125,6 +125,18 @@ def _build_model_string(config: dict) -> str:
     return f"{provider_prefix}/{config['model_name']}"
 
 
+def _resolve_api_base(config: dict) -> str:
+    api_base = str(config.get("api_base") or "").strip()
+    if api_base:
+        return api_base
+    provider = str(config.get("provider") or "").upper()
+    if provider == "OPENAI":
+        return "https://api.openai.com/v1"
+    if provider == "GOOGLE":
+        return "https://generativelanguage.googleapis.com/v1beta"
+    return ""
+
+
 def _truncate_text(text: str, limit: int) -> tuple[str, bool]:
     if len(text) <= limit:
         return text, False
@@ -176,7 +188,7 @@ def describe_external_model_config(config: dict) -> dict[str, str]:
     provider = str(config.get("provider") or "").strip()
     model_name = str(config.get("model_name") or "").strip()
     model_string = _build_model_string(config) if model_name else ""
-    api_base = str(config.get("api_base") or "").strip()
+    api_base = _resolve_api_base(config)
     return {
         "provider": provider,
         "model_name": model_name,
@@ -192,7 +204,7 @@ async def _call_litellm(
 ) -> tuple[str, dict[str, int] | None]:
     model_string = _build_model_string(config)
     api_key = str(config.get("api_key") or "").strip()
-    api_base = str(config.get("api_base") or "").strip()
+    api_base = _resolve_api_base(config)
     litellm_params = config.get("litellm_params") or {}
 
     async def _run():
