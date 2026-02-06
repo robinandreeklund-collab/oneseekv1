@@ -53,6 +53,15 @@ type ExternalModelResult = z.infer<typeof ExternalModelResultSchema>;
 // Helpers
 // ============================================================================
 
+const MODEL_LOGOS: Record<string, { src: string; alt: string }> = {
+	call_grok: { src: "/model-logos/grok.png", alt: "Grok" },
+	call_gpt: { src: "/model-logos/chatgpt.png", alt: "ChatGPT" },
+	call_claude: { src: "/model-logos/claude.png", alt: "Claude" },
+	call_gemini: { src: "/model-logos/gemini.png", alt: "Gemini" },
+	call_deepseek: { src: "/model-logos/deepseek.png", alt: "DeepSeek" },
+	call_perplexity: { src: "/model-logos/perplexity.png", alt: "Perplexity" },
+};
+
 function formatLatency(latencyMs?: number | null): string {
 	if (typeof latencyMs !== "number" || Number.isNaN(latencyMs)) return "";
 	if (latencyMs >= 1000) return `${(latencyMs / 1000).toFixed(1)}s`;
@@ -82,6 +91,28 @@ function resolveSummary(result?: ExternalModelResult | null): string {
 	if (result.summary) return result.summary;
 	if (result.response) return result.response.slice(0, 220);
 	return "";
+}
+
+function ModelLogo({ toolName, label }: { toolName: string; label: string }) {
+	const [hasError, setHasError] = useState(false);
+	const logo = MODEL_LOGOS[toolName];
+	if (!logo || hasError) {
+		const fallback = label.trim().slice(0, 1).toUpperCase() || "M";
+		return (
+			<div className="flex size-10 items-center justify-center rounded-lg border border-border/60 bg-muted text-xs font-semibold text-muted-foreground">
+				{fallback}
+			</div>
+		);
+	}
+	return (
+		<img
+			src={logo.src}
+			alt={`${logo.alt} logo`}
+			className="size-10 rounded-lg border border-border/60 bg-white object-contain p-1"
+			loading="lazy"
+			onError={() => setHasError(true)}
+		/>
+	);
 }
 
 function ModelErrorState({ label, error }: { label: string; error: string }) {
@@ -114,11 +145,13 @@ function ModelLoading({ label }: { label: string }) {
 
 function ModelCard({
 	label,
+	toolName,
 	args,
 	result,
 	status,
 }: {
 	label: string;
+	toolName: string;
 	args: ExternalModelArgs;
 	result: ExternalModelResult | undefined;
 	status: { type: string; reason?: string; error?: unknown };
@@ -179,17 +212,20 @@ function ModelCard({
 		<Card className="my-4 w-full">
 			<CardContent className="p-4">
 				<div className="flex items-start justify-between gap-4">
-					<div>
-						<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-							<Badge variant="secondary">{source}</Badge>
-							{latency && <span>{latency}</span>}
+					<div className="flex items-start gap-3">
+						<ModelLogo toolName={toolName} label={displayName} />
+						<div>
+							<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+								<Badge variant="secondary">{source}</Badge>
+								{latency && <span>{latency}</span>}
+							</div>
+							<h3 className="mt-1 text-lg font-semibold">{displayName}</h3>
+							{queryText && (
+								<p className="mt-1 text-xs text-muted-foreground">
+									Query: <span className="font-medium text-foreground">{queryText}</span>
+								</p>
+							)}
 						</div>
-						<h3 className="mt-1 text-lg font-semibold">{displayName}</h3>
-						{queryText && (
-							<p className="mt-1 text-xs text-muted-foreground">
-								Query: <span className="font-medium text-foreground">{queryText}</span>
-							</p>
-						)}
 					</div>
 					{usage && (
 						<div className="text-right text-xs text-muted-foreground">
@@ -248,7 +284,15 @@ function createExternalModelToolUI(toolName: string, label: string) {
 	return makeAssistantToolUI<ExternalModelArgs, ExternalModelResult>({
 		toolName,
 		render: function ExternalModelUI({ args, result, status }) {
-			return <ModelCard label={label} args={args} result={result} status={status} />;
+			return (
+				<ModelCard
+					label={label}
+					toolName={toolName}
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
 		},
 	});
 }
