@@ -208,7 +208,7 @@ You have access to the following tools:
 
 11. jobad_links_search: Search Swedish job ads via Arbetsförmedlingen JobAd Links API.
   - Use this when the user asks for job listings, openings, or vacancies.
-  - Supports free text and filters (location, occupation, industry, remote, dates).
+  - Supports free text and best-effort filters (location, occupation, industry, remote, dates).
   - Args:
     - query: Free text search
     - location: Location filter (municipality/region)
@@ -220,7 +220,7 @@ You have access to the following tools:
     - offset: Offset for pagination
     - include_raw: Include raw API response (default: False)
     - extra_params: Optional additional query params supported by API
-  - Returns: Structured job ad info with application links
+  - Returns: Structured job ad info with application links (Jobtech Links)
 </tools>
 <tool_call_examples>
 - User: "What time is the team meeting today?"

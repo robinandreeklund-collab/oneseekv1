@@ -163,7 +163,7 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="jobad_links_search",
-        description="Search Swedish job ads via Arbetsformedlingen JobAd Links API",
+        description="Search Swedish job ads via Arbetsformedlingen Jobtech Links API",
         factory=lambda deps: create_jobad_links_search_tool(),
         requires=[],
     ),

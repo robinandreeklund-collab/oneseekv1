@@ -20,6 +20,17 @@ const JobAdResultSchema = z
 		published: z.string().nullish(),
 		application_url: z.string().nullish(),
 		remote: z.boolean().nullish(),
+		brief: z.string().nullish(),
+		occupation_group: z.string().nullish(),
+		occupation_field: z.string().nullish(),
+		sources: z
+			.array(
+				z.object({
+					label: z.string().nullish(),
+					url: z.string().nullish(),
+				})
+			)
+			.nullish(),
 	})
 	.partial();
 
@@ -85,6 +96,11 @@ function formatDate(value?: string | null): string {
 	const dt = new Date(value);
 	if (Number.isNaN(dt.getTime())) return value;
 	return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(dt);
+}
+
+function truncate(text?: string | null, limit = 140): string {
+	if (!text) return "";
+	return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
 // ============================================================================
@@ -160,10 +176,16 @@ export const JobAdLinksToolUI = makeAssistantToolUI<JobAdLinksArgs, JobAdLinksRe
 														{job.location}
 													</span>
 												)}
+												{job.occupation_field && <span>{job.occupation_field}</span>}
 											</div>
 											{job.published && (
 												<p className="mt-1 text-[10px] text-muted-foreground">
 													Published: {formatDate(job.published)}
+												</p>
+											)}
+											{job.brief && (
+												<p className="mt-2 text-xs text-muted-foreground">
+													{truncate(job.brief, 160)}
 												</p>
 											)}
 										</div>
@@ -182,6 +204,14 @@ export const JobAdLinksToolUI = makeAssistantToolUI<JobAdLinksArgs, JobAdLinksRe
 									</div>
 									<div className="mt-2 flex flex-wrap gap-2">
 										{job.remote && <Badge variant="secondary">Remote</Badge>}
+										{job.occupation_group && (
+											<Badge variant="secondary">{job.occupation_group}</Badge>
+										)}
+										{job.sources?.slice(0, 2).map((source) => (
+											<Badge key={source.label || source.url} variant="outline">
+												{source.label || "Source"}
+											</Badge>
+										))}
 									</div>
 								</div>
 							))

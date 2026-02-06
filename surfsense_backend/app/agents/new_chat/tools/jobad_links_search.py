@@ -1,7 +1,7 @@
 """
 Job ad links tool for SurfSense agent.
 
-Fetches job ad links and metadata from Arbetsförmedlingen/Jobtech JobAd Links API.
+    Fetches job ad links and metadata from Arbetsförmedlingen/Jobtech Links API.
 """
 
 from __future__ import annotations
@@ -33,6 +33,25 @@ def _first_text(value: Any) -> str | None:
     return None
 
 
+def _extract_location(item: dict[str, Any]) -> str | None:
+    addresses = _as_list(item.get("workplace_addresses"))
+    for address in addresses:
+        if not isinstance(address, dict):
+            continue
+        municipality = address.get("municipality")
+        region = address.get("region")
+        city = address.get("city") or address.get("town")
+        if municipality and region:
+            return f"{municipality}, {region}"
+        if city and region:
+            return f"{city}, {region}"
+        if municipality:
+            return str(municipality)
+        if city:
+            return str(city)
+    return None
+
+
 def _extract_job_item(item: dict[str, Any]) -> dict[str, Any]:
     headline = item.get("headline") or item.get("title") or item.get("occupation")
     employer = None
@@ -42,35 +61,25 @@ def _extract_job_item(item: dict[str, Any]) -> dict[str, Any]:
     if not employer and isinstance(employer_obj, str):
         employer = employer_obj
 
-    workplace = item.get("workplace_address") or {}
-    municipality = (
-        workplace.get("municipality") if isinstance(workplace, dict) else None
-    ) or item.get("municipality")
-    region = (
-        workplace.get("region") if isinstance(workplace, dict) else None
-    ) or item.get("region")
-    location = None
-    if municipality and region:
-        location = f"{municipality}, {region}"
-    elif municipality:
-        location = str(municipality)
-    elif region:
-        location = str(region)
+    location = _extract_location(item)
 
     published = (
         item.get("publication_date")
         or item.get("published")
         or item.get("last_publication_date")
     )
-    application = (
-        item.get("application_url")
-        or item.get("url")
-        or (item.get("application_details") or {}).get("url")
-        or (item.get("application_details") or {}).get("href")
-    )
-    remote_flag = item.get("remote") or (
-        workplace.get("remote") if isinstance(workplace, dict) else None
-    )
+    source_links = _as_list(item.get("source_links"))
+    application = None
+    sources: list[dict[str, Any]] = []
+    for link in source_links:
+        if not isinstance(link, dict):
+            continue
+        label = link.get("label")
+        url = link.get("url") or link.get("href")
+        if not application and url:
+            application = url
+        sources.append({"label": label, "url": url})
+    remote_flag = item.get("remote")
 
     return {
         "id": item.get("id") or item.get("ad_id") or item.get("job_id"),
@@ -80,6 +89,10 @@ def _extract_job_item(item: dict[str, Any]) -> dict[str, Any]:
         "published": published,
         "application_url": application,
         "remote": bool(remote_flag) if remote_flag is not None else None,
+        "brief": item.get("brief"),
+        "occupation_group": (item.get("occupation_group") or {}).get("label"),
+        "occupation_field": (item.get("occupation_field") or {}).get("label"),
+        "sources": sources,
         "raw": item,
     }
 
@@ -103,38 +116,44 @@ def create_jobad_links_search_tool():
         extra_params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Search job ads via JobAd Links API.
+        Search job ads via Jobtech Links API.
 
         Args:
             query: Free text search query.
-            location: Location filter (municipality/region).
-            occupation: Occupation filter.
-            industry: Industry/field filter.
-            remote: Filter for remote jobs.
-            published_after: ISO date filter for publication date.
+            location: Location filter (municipality/region) - best effort.
+            occupation: Occupation filter - best effort.
+            industry: Industry/field filter - best effort.
+            remote: Filter for remote jobs (best effort).
+            published_after: ISO date filter for publication date (best effort).
             limit: Max number of results (default: 10).
             offset: Offset for pagination (default: 0).
             include_raw: Include raw API payload (default: False).
             extra_params: Optional additional query params supported by API.
 
         Returns:
-            Structured job ad results with links and metadata.
+            Structured job ad results with links and metadata from Jobtech Links.
         """
-        base_url = config.JOBAD_LINKS_BASE_URL or "https://jobadlinks.api.jobtechdev.se"
-        url = f"{base_url.rstrip('/')}/search"
+        base_url = config.JOBAD_LINKS_BASE_URL or "https://links.api.jobtechdev.se"
+        url = f"{base_url.rstrip('/')}/joblinks"
         params: dict[str, Any] = {"limit": max(1, min(limit, 50))}
+        query_parts = []
         if query:
-            params["q"] = query
+            query_parts.append(str(query))
         if location:
-            params["location"] = location
+            query_parts.append(str(location))
         if occupation:
-            params["occupation"] = occupation
+            query_parts.append(str(occupation))
         if industry:
-            params["industry"] = industry
-        if remote is not None:
-            params["remote"] = str(remote).lower()
-        if published_after:
-            params["published_after"] = published_after
+            query_parts.append(str(industry))
+        if remote is True:
+            query_parts.append("remote")
+        if query_parts:
+            params["q"] = " ".join(query_parts)
+        else:
+            return {
+                "status": "error",
+                "error": "Provide a query or filters to search job ads.",
+            }
         if offset > 0:
             params["offset"] = offset
         if extra_params:
@@ -142,34 +161,85 @@ def create_jobad_links_search_tool():
 
         headers = {"Accept": "application/json"}
         if config.JOBAD_LINKS_API_KEY:
-            headers["X-API-KEY"] = config.JOBAD_LINKS_API_KEY
+            headers["api-key"] = config.JOBAD_LINKS_API_KEY
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            payload = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(url, params=params, headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+        except Exception as exc:
+            logger.error("JobAd Links request failed: %s", exc)
+            return {
+                "status": "error",
+                "error": f"JobAd Links request failed: {exc!s}",
+                "query": query,
+            }
 
-        items = []
+        items: list[Any] = []
         if isinstance(payload, dict):
-            items = (
-                payload.get("hits")
-                or payload.get("items")
-                or payload.get("links")
-                or payload.get("ads")
-                or []
-            )
+            items = payload.get("hits") or []
         if not isinstance(items, list):
             items = []
 
         results = [_extract_job_item(item) for item in items if isinstance(item, dict)]
 
+        if location:
+            location_lower = str(location).lower()
+            results = [
+                r
+                for r in results
+                if (r.get("location") or "").lower().find(location_lower) >= 0
+            ]
+        if occupation:
+            occupation_lower = str(occupation).lower()
+            results = [
+                r
+                for r in results
+                if occupation_lower
+                in " ".join(
+                    [
+                        str(r.get("occupation_group") or ""),
+                        str(r.get("occupation_field") or ""),
+                        str(r.get("headline") or ""),
+                        str(r.get("brief") or ""),
+                    ]
+                ).lower()
+            ]
+        if industry:
+            industry_lower = str(industry).lower()
+            results = [
+                r
+                for r in results
+                if industry_lower in str(r.get("occupation_field") or "").lower()
+            ]
+        if published_after:
+            try:
+                published_cutoff = published_after.split("T")[0]
+                results = [
+                    r
+                    for r in results
+                    if r.get("published")
+                    and str(r.get("published")).split("T")[0] >= published_cutoff
+                ]
+            except Exception:
+                pass
+        if remote is True:
+            results = [
+                r
+                for r in results
+                if r.get("remote") is True
+                or "remote" in str(r.get("headline") or "").lower()
+                or "remote" in str(r.get("brief") or "").lower()
+            ]
+
         result = {
             "status": "ok",
             "query": query,
-            "results": [
-                {k: v for k, v in r.items() if k != "raw"} for r in results
-            ],
-            "total": payload.get("total") if isinstance(payload, dict) else None,
+            "results": [{k: v for k, v in r.items() if k != "raw"} for r in results],
+            "total": payload.get("total", {}).get("value")
+            if isinstance(payload, dict)
+            else None,
             "attribution": "Data from Arbetsförmedlingen Jobtech",
         }
         if include_raw:
