@@ -2,7 +2,7 @@
 
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import { AlertCircleIcon, ChevronDownIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -195,18 +195,14 @@ function ModelCard({
 	const usage = formatUsage(result.usage);
 	const queryText = args.query;
 	const rawResponse = result.response || "";
-	const metadataRows = useMemo(
-		() =>
-			[
-				{ label: "Model", value: result.model || displayName },
-				{ label: "Provider", value: result.provider },
-				{ label: "Model string", value: result.model_string },
-				{ label: "API base", value: result.api_base },
-				{ label: "Latency", value: latency },
-				{ label: "Usage", value: usage },
-			].filter((row) => row.value),
-		[displayName, latency, result.api_base, result.model, result.model_string, result.provider, usage]
-	);
+	const metadataRows = [
+		{ label: "Model", value: result.model || displayName },
+		{ label: "Provider", value: result.provider },
+		{ label: "Model string", value: result.model_string },
+		{ label: "API base", value: result.api_base },
+		{ label: "Latency", value: latency },
+		{ label: "Usage", value: usage },
+	].filter((row) => row.value);
 
 	return (
 		<Card className="my-4 w-full">
