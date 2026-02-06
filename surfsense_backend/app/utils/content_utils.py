@@ -30,7 +30,9 @@ def format_compare_summary_for_memory(summary: object) -> str:
             if not isinstance(value, dict):
                 continue
             status = value.get("status")
-            label = str(key).strip().title()
+            label = str(key).strip()
+            if label.islower():
+                label = label.title()
             if status == "error":
                 error_msg = value.get("error") or "Error"
                 lines.append(f"{label}: Error: {error_msg}")

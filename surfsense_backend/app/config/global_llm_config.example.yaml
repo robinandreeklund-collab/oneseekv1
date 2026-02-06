@@ -248,6 +248,22 @@ global_llm_configs:
     use_default_system_instructions: true
     citations_enabled: false
 
+  - id: -24
+    name: "Compare Claude"
+    description: "Anthropic Claude for compare mode"
+    provider: "ANTHROPIC"
+    model_name: "claude-3-5-sonnet-20240620"
+    api_key: "sk-ant-your-anthropic-api-key-here"
+    api_base: ""
+    rpm: 1000
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 3000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false
+
 # Notes:
 # - ID 0 is reserved for "Auto" mode - uses LiteLLM Router for load balancing
 # - Use negative IDs to distinguish global configs from user configs (NewLLMConfig in DB)
