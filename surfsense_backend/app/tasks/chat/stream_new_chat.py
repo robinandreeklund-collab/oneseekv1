@@ -536,6 +536,93 @@ async def stream_new_chat(
                         status="in_progress",
                         items=last_active_step_items,
                     )
+                elif tool_name == "smhi_weather":
+                    location = ""
+                    if isinstance(tool_input, dict):
+                        location = tool_input.get("location") or ""
+                        lat = tool_input.get("lat")
+                        lon = tool_input.get("lon")
+                        if not location and lat is not None and lon is not None:
+                            location = f"{lat}, {lon}"
+                    else:
+                        location = str(tool_input)
+                    last_active_step_title = "Fetching weather (SMHI)"
+                    last_active_step_items = [
+                        f"Location: {location[:80]}{'...' if len(location) > 80 else ''}"
+                    ]
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title="Fetching weather (SMHI)",
+                        status="in_progress",
+                        items=last_active_step_items,
+                    )
+                elif tool_name == "trafiklab_route":
+                    origin = ""
+                    destination = ""
+                    time_value = ""
+                    if isinstance(tool_input, dict):
+                        origin = tool_input.get("origin") or tool_input.get("origin_id") or ""
+                        destination = (
+                            tool_input.get("destination") or tool_input.get("destination_id") or ""
+                        )
+                        time_value = tool_input.get("time") or ""
+                    else:
+                        origin = str(tool_input)
+                    last_active_step_title = "Planning route (Trafiklab)"
+                    route_text = f"{origin} -> {destination}".strip()
+                    last_active_step_items = [
+                        f"Route: {route_text[:80]}{'...' if len(route_text) > 80 else ''}"
+                    ]
+                    if time_value:
+                        last_active_step_items.append(
+                            f"Time: {time_value[:40]}{'...' if len(time_value) > 40 else ''}"
+                        )
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title="Planning route (Trafiklab)",
+                        status="in_progress",
+                        items=last_active_step_items,
+                    )
+                elif tool_name == "libris_search":
+                    query = ""
+                    record_id = ""
+                    if isinstance(tool_input, dict):
+                        query = tool_input.get("query") or ""
+                        record_id = tool_input.get("record_id") or ""
+                    else:
+                        query = str(tool_input)
+                    last_active_step_title = "Searching Libris catalog"
+                    item_label = (
+                        f"Record: {record_id}" if record_id else f"Query: {query}"
+                    )
+                    last_active_step_items = [
+                        f"{item_label[:100]}{'...' if len(item_label) > 100 else ''}"
+                    ]
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title="Searching Libris catalog",
+                        status="in_progress",
+                        items=last_active_step_items,
+                    )
+                elif tool_name == "jobad_links_search":
+                    query = ""
+                    location = ""
+                    if isinstance(tool_input, dict):
+                        query = tool_input.get("query") or ""
+                        location = tool_input.get("location") or ""
+                    else:
+                        query = str(tool_input)
+                    last_active_step_title = "Searching job ads"
+                    details = f"{query} {location}".strip()
+                    last_active_step_items = [
+                        f"Search: {details[:100]}{'...' if len(details) > 100 else ''}"
+                    ]
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title="Searching job ads",
+                        status="in_progress",
+                        items=last_active_step_items,
+                    )
                 # elif tool_name == "write_todos":  # Disabled for now
                 #     # Track write_todos calls for better messaging
                 #     write_todos_call_count += 1
@@ -770,6 +857,97 @@ async def stream_new_chat(
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title="Scraping webpage",
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "smhi_weather":
+                    if isinstance(tool_output, dict):
+                        location = tool_output.get("location", {}) or {}
+                        location_name = (
+                            location.get("name")
+                            or location.get("display_name")
+                            or "location"
+                        )
+                        summary = (tool_output.get("current", {}) or {}).get(
+                            "summary", {}
+                        )
+                        temperature = summary.get("temperature_c")
+                        completed_items = [*last_active_step_items]
+                        if temperature is not None:
+                            completed_items.append(f"Temperature: {temperature} C")
+                    else:
+                        completed_items = [*last_active_step_items, "Weather data retrieved"]
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title="Fetching weather (SMHI)",
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "trafiklab_route":
+                    if isinstance(tool_output, dict):
+                        origin_info = tool_output.get("origin", {}) or {}
+                        destination_info = tool_output.get("destination", {}) or {}
+                        origin = (
+                            (origin_info.get("stop_group") or {}).get("name")
+                            or origin_info.get("name")
+                            or ""
+                        )
+                        destination = (
+                            (destination_info.get("stop_group") or {}).get("name")
+                            or destination_info.get("name")
+                            or ""
+                        )
+                        matches = tool_output.get("matching_entries", []) or []
+                        completed_items = [*last_active_step_items]
+                        route_label = f"{origin} -> {destination}".strip(" ->")
+                        if route_label:
+                            completed_items.append(
+                                f"Route: {route_label[:60]}{'...' if len(route_label) > 60 else ''}"
+                            )
+                        completed_items.append(
+                            f"Matches: {len(matches)}"
+                        )
+                    else:
+                        completed_items = [*last_active_step_items, "Route results ready"]
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title="Planning route (Trafiklab)",
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "libris_search":
+                    if isinstance(tool_output, dict):
+                        mode = tool_output.get("mode", "search")
+                        if mode == "record":
+                            record = tool_output.get("record", {}) or {}
+                            title = record.get("title") or "Record"
+                            completed_items = [*last_active_step_items, f"Record: {title}"]
+                        else:
+                            results = tool_output.get("results", []) or []
+                            completed_items = [
+                                *last_active_step_items,
+                                f"Results: {len(results)}",
+                            ]
+                    else:
+                        completed_items = [*last_active_step_items, "Libris results ready"]
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title="Searching Libris catalog",
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "jobad_links_search":
+                    if isinstance(tool_output, dict):
+                        results = tool_output.get("results", []) or []
+                        completed_items = [
+                            *last_active_step_items,
+                            f"Results: {len(results)}",
+                        ]
+                    else:
+                        completed_items = [*last_active_step_items, "Job ads ready"]
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title="Searching job ads",
                         status="completed",
                         items=completed_items,
                     )
@@ -1040,6 +1218,95 @@ async def stream_new_chat(
                         )
                         yield streaming_service.format_terminal_info(
                             f"Scrape failed: {error_msg}",
+                            "error",
+                        )
+                elif tool_name == "smhi_weather":
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                    )
+                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                        location = tool_output.get("location", {}) or {}
+                        location_name = (
+                            location.get("name")
+                            or location.get("display_name")
+                            or "location"
+                        )
+                        yield streaming_service.format_terminal_info(
+                            f"Weather data loaded for {location_name[:40]}",
+                            "success",
+                        )
+                    else:
+                        error_msg = (
+                            tool_output.get("error", "Failed to fetch weather")
+                            if isinstance(tool_output, dict)
+                            else "Failed to fetch weather"
+                        )
+                        yield streaming_service.format_terminal_info(
+                            f"Weather lookup failed: {error_msg}",
+                            "error",
+                        )
+                elif tool_name == "trafiklab_route":
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                    )
+                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                        matches = tool_output.get("matching_entries", []) or []
+                        yield streaming_service.format_terminal_info(
+                            f"Trafiklab departures loaded ({len(matches)} matches)",
+                            "success",
+                        )
+                    else:
+                        error_msg = (
+                            tool_output.get("error", "Failed to fetch departures")
+                            if isinstance(tool_output, dict)
+                            else "Failed to fetch departures"
+                        )
+                        yield streaming_service.format_terminal_info(
+                            f"Trafiklab route failed: {error_msg}",
+                            "error",
+                        )
+                elif tool_name == "libris_search":
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                    )
+                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                        results = tool_output.get("results", []) or []
+                        yield streaming_service.format_terminal_info(
+                            f"Libris results loaded ({len(results)} items)",
+                            "success",
+                        )
+                    else:
+                        error_msg = (
+                            tool_output.get("error", "Libris search failed")
+                            if isinstance(tool_output, dict)
+                            else "Libris search failed"
+                        )
+                        yield streaming_service.format_terminal_info(
+                            f"Libris search failed: {error_msg}",
+                            "error",
+                        )
+                elif tool_name == "jobad_links_search":
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                    )
+                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                        results = tool_output.get("results", []) or []
+                        yield streaming_service.format_terminal_info(
+                            f"Job ads loaded ({len(results)} items)",
+                            "success",
+                        )
+                    else:
+                        error_msg = (
+                            tool_output.get("error", "Job ad search failed")
+                            if isinstance(tool_output, dict)
+                            else "Job ad search failed"
+                        )
+                        yield streaming_service.format_terminal_info(
+                            f"Job ad search failed: {error_msg}",
                             "error",
                         )
                 elif tool_name == "search_knowledge_base":

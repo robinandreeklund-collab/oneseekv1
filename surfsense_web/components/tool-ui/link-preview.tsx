@@ -50,7 +50,7 @@ type LinkPreviewResult = z.infer<typeof LinkPreviewResultSchema>;
  */
 function LinkPreviewErrorState({ url, error }: { url: string; error: string }) {
 	return (
-		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 max-w-md">
+		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 w-full">
 			<div className="flex items-center gap-4">
 				<div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
 					<AlertCircleIcon className="size-6 text-destructive" />
@@ -70,7 +70,7 @@ function LinkPreviewErrorState({ url, error }: { url: string; error: string }) {
  */
 function LinkPreviewCancelledState({ url }: { url: string }) {
 	return (
-		<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground max-w-md">
+		<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
 			<p className="flex items-center gap-2">
 				<LinkIcon className="size-4" />
 				<span className="line-through truncate">Preview: {url}</span>
@@ -88,7 +88,7 @@ function ParsedMediaCard({ result }: { result: unknown }) {
 	return (
 		<MediaCard
 			{...card}
-			maxWidth="420px"
+			maxWidth="100%"
 			responseActions={[{ id: "open", label: "Open", variant: "default" }]}
 			onResponseAction={(id) => {
 				if (id === "open" && card.href) {

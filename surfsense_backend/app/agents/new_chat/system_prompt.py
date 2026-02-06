@@ -162,6 +162,66 @@ You have access to the following tools:
   - Returns: Relevant memories formatted as context
   - IMPORTANT: Use the recalled memories naturally in your response without explicitly
     stating "Based on your memory..." - integrate the context seamlessly.
+
+8. smhi_weather: Fetch weather data from SMHI using a place name or coordinates.
+  - Use this when the user asks about current weather or forecasts for a location.
+  - You can pass a location name (the tool will geocode to lat/lon), or pass lat/lon directly.
+  - Args:
+    - location: Place name (e.g., "Goteborg") if lat/lon not provided
+    - lat: Latitude (decimal degrees)
+    - lon: Longitude (decimal degrees)
+    - country_code: Optional ISO country code (e.g., "se") to bias geocoding
+    - include_raw: Include raw SMHI response (default: False)
+    - max_hours: Optional limit for forecast hours returned from now (default: 48, capped)
+  - Returns: Weather data including current conditions and forecast time series (truncated to max_hours)
+  - NOTE: Include attribution when using the data (e.g., "Data from SMHI").
+
+9. trafiklab_route: Find public transport departures using Trafiklab realtime APIs.
+  - Use this when the user asks for public transport routes or departures.
+  - This tool uses stop lookup + timetables to find departures from an origin stop,
+    and optionally filters them to match a destination.
+  - Args:
+    - origin: Origin stop name (e.g., "Stockholm Centralstation")
+    - destination: Destination stop name (optional)
+    - origin_id: Optional origin area id (skip lookup)
+    - destination_id: Optional destination area id (skip lookup)
+    - time: Optional time in YYYY-MM-DDTHH:MM format
+    - mode: "departures" or "arrivals" (default: departures)
+    - max_results: Optional max number of entries to return
+    - match_strategy: "contains", "starts_with", or "exact"
+    - include_raw: Include full raw response (default: True)
+  - Returns: Departure/arrival board with optional destination matches
+  - NOTE: This is departure-based matching and does not compute multi-leg routes.
+  - NOTE: Include attribution when using the data (e.g., "Data from Trafiklab.se").
+
+10. libris_search: Search the Libris XL catalog (Kungliga biblioteket).
+  - Use this when the user asks for books, journals, articles, or library materials.
+  - Supports free text and advanced query syntax (e.g., "tove (jansson|lindgren)").
+  - Args:
+    - query: Search query (required unless record_id is provided)
+    - record_id: Optional Libris record id or URL to fetch a single record
+    - limit: Max number of results (default: 5)
+    - offset: Offset for pagination (default: 0)
+    - include_raw: Include raw JSON-LD response (default: False)
+    - extra_params: Optional advanced filters (e.g., instanceOf.subject.@id, min-publication.year)
+  - Returns: Summarized results with title, authors, year, subjects, summary, and availability
+
+11. jobad_links_search: Search Swedish job ads via Arbetsförmedlingen JobAd Links API.
+  - Use this when the user asks for job listings, openings, or vacancies.
+  - Supports free text and best-effort filters (location, occupation, industry, remote, dates).
+  - Args:
+    - query: Free text search
+    - location: Location filter (municipality/region)
+    - occupation: Occupation filter
+    - industry: Industry/field filter
+    - remote: Remote jobs filter (true/false)
+    - published_after: ISO date for publication filter
+    - limit: Max number of results (default: 10)
+    - offset: Offset for pagination
+    - include_raw: Include raw API response (default: False)
+    - extra_params: Optional additional query params supported by API
+  - Returns: Structured job ad info with application links (Jobtech Links).
+  - NOTE: Location/occupation/industry/remote are appended to the search query.
 </tools>
 <tool_call_examples>
 - User: "What time is the team meeting today?"
@@ -211,6 +271,21 @@ You have access to the following tools:
 - User: "What do you know about me?"
   - Call: `recall_memory(top_k=10)`
   - Then summarize the stored memories
+
+- User: "What is the weather in Goteborg?"
+  - Call: `smhi_weather(location="Goteborg")`
+
+- User: "Plan a trip from Goteborg to Stockholm at 08:00"
+  - Call: `trafiklab_route(origin="Goteborg", destination="Stockholm", time="YYYY-MM-DDT08:00")`
+
+- User: "Hitta böcker av Tove Jansson"
+  - Call: `libris_search(query="tove (jansson)")`
+
+- User: "Visa Libris-posten bib/9316064"
+  - Call: `libris_search(record_id="bib/9316064")`
+
+- User: "Lediga jobb för frontendutvecklare i Göteborg"
+  - Call: `jobad_links_search(query="frontendutvecklare", location="Göteborg")`
 
 - User: "Give me a podcast about AI trends based on what we discussed"
   - First search for relevant content, then call: `generate_podcast(source_content="Based on our conversation and search results: [detailed summary of chat + search findings]", podcast_title="AI Trends Podcast")`

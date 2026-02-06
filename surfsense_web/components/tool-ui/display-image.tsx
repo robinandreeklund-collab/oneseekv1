@@ -51,7 +51,7 @@ type DisplayImageResult = z.infer<typeof DisplayImageResultSchema>;
  */
 function ImageErrorState({ src, error }: { src: string; error: string }) {
 	return (
-		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 max-w-md">
+		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 w-full">
 			<div className="flex items-center gap-4">
 				<div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
 					<AlertCircleIcon className="size-6 text-destructive" />
@@ -71,7 +71,7 @@ function ImageErrorState({ src, error }: { src: string; error: string }) {
  */
 function ImageCancelledState({ src }: { src: string }) {
 	return (
-		<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground max-w-md">
+		<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
 			<p className="flex items-center gap-2">
 				<ImageIcon className="size-4" />
 				<span className="line-through truncate">Image: {src}</span>
@@ -88,7 +88,7 @@ function ImageCancelledState({ src }: { src: string }) {
 function ParsedImage({ result }: { result: unknown }) {
 	const image = parseSerializableImage(result);
 
-	return <Image {...image} maxWidth="420px" />;
+	return <Image {...image} maxWidth="100%" />;
 }
 
 /**

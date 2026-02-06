@@ -44,13 +44,17 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from .display_image import create_display_image_tool
+from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
 from .link_preview import create_link_preview_tool
+from .libris_search import create_libris_search_tool
 from .mcp_tool import load_mcp_tools
 from .podcast import create_generate_podcast_tool
 from .public_web_search import create_public_web_search_tool
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
+from .smhi_weather import create_smhi_weather_tool
+from .trafiklab_route import create_trafiklab_route_tool
 from .user_memory import create_recall_memory_tool, create_save_memory_tool
 
 # =============================================================================
@@ -134,6 +138,34 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
             firecrawl_api_key=deps.get("firecrawl_api_key"),
         ),
         requires=[],  # firecrawl_api_key is optional
+    ),
+    ToolDefinition(
+        name="smhi_weather",
+        description=(
+            "Fetch weather data from SMHI using a place name or lat/lon coordinates"
+        ),
+        factory=lambda deps: create_smhi_weather_tool(),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="trafiklab_route",
+        description=(
+            "Find public transport departures using Trafiklab realtime APIs and stop lookup"
+        ),
+        factory=lambda deps: create_trafiklab_route_tool(),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="libris_search",
+        description="Search the Libris XL catalog for books and media",
+        factory=lambda deps: create_libris_search_tool(),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="jobad_links_search",
+        description="Search Swedish job ads via Arbetsformedlingen Jobtech Links API",
+        factory=lambda deps: create_jobad_links_search_tool(),
+        requires=[],
     ),
     ToolDefinition(
         name="search_web",

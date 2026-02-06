@@ -54,7 +54,7 @@ type ScrapeWebpageResult = z.infer<typeof ScrapeWebpageResultSchema>;
  */
 function ScrapeErrorState({ url, error }: { url: string; error: string }) {
 	return (
-		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 max-w-md">
+		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 w-full">
 			<div className="flex items-center gap-4">
 				<div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
 					<AlertCircleIcon className="size-6 text-destructive" />
@@ -74,7 +74,7 @@ function ScrapeErrorState({ url, error }: { url: string; error: string }) {
  */
 function ScrapeCancelledState({ url }: { url: string }) {
 	return (
-		<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground max-w-md">
+		<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
 			<p className="flex items-center gap-2">
 				<FileTextIcon className="size-4" />
 				<span className="line-through truncate">Scraping: {url}</span>
@@ -92,7 +92,7 @@ function ParsedArticle({ result }: { result: unknown }) {
 	return (
 		<Article
 			{...article}
-			maxWidth="480px"
+			maxWidth="100%"
 			responseActions={[{ id: "open", label: "Open Source", variant: "default" }]}
 			onResponseAction={(id) => {
 				if (id === "open" && article.href) {
