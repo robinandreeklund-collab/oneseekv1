@@ -60,6 +60,7 @@ const MODEL_LOGOS: Record<string, { src: string; alt: string }> = {
 	call_gemini: { src: "/model-logos/gemini.png", alt: "Gemini" },
 	call_deepseek: { src: "/model-logos/deepseek.png", alt: "DeepSeek" },
 	call_perplexity: { src: "/model-logos/perplexity.png", alt: "Perplexity" },
+	call_qwen: { src: "/model-logos/qwen.png", alt: "Qwen" },
 };
 
 function formatLatency(latencyMs?: number | null): string {
@@ -327,3 +328,4 @@ export const PerplexityToolUI = createExternalModelToolUI(
 	"call_perplexity",
 	"Perplexity"
 );
+export const QwenToolUI = createExternalModelToolUI("call_qwen", "Qwen");

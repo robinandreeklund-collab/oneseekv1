@@ -31,6 +31,7 @@ _PROVIDER_SOURCE_LABELS = {
     "GOOGLE": "Google",
     "DEEPSEEK": "DeepSeek",
     "PERPLEXITY": "Perplexity",
+    "ALIBABA_QWEN": "Qwen",
 }
 
 
@@ -60,6 +61,7 @@ EXTERNAL_MODEL_SPECS: list[ExternalModelSpec] = [
         config_id=-25,
         tool_name="call_perplexity",
     ),
+    ExternalModelSpec(key="qwen", display="Qwen", config_id=-26, tool_name="call_qwen"),
 ]
 
 
@@ -115,6 +117,10 @@ def _apply_provider_env(provider: str, api_key: str) -> None:
         import os
 
         os.environ.setdefault("PERPLEXITY_API_KEY", api_key)
+    elif provider_key == "ALIBABA_QWEN":
+        import os
+
+        os.environ.setdefault("DASHSCOPE_API_KEY", api_key)
 
 
 def _build_model_string(config: dict) -> str:
@@ -134,6 +140,8 @@ def _resolve_api_base(config: dict) -> str:
         return "https://api.openai.com/v1"
     if provider == "GOOGLE":
         return "https://generativelanguage.googleapis.com/v1beta"
+    if provider == "ALIBABA_QWEN":
+        return "https://dashscope.aliyuncs.com/compatible-mode/v1"
     return ""
 
 

@@ -280,6 +280,22 @@ global_llm_configs:
     use_default_system_instructions: true
     citations_enabled: false
 
+  - id: -26
+    name: "Compare Qwen"
+    description: "Qwen for compare mode"
+    provider: "ALIBABA_QWEN"
+    model_name: "qwen3-max"
+    api_key: "your-qwen-api-key-here"
+    api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    rpm: 60
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 2000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false
+
 # Notes:
 # - ID 0 is reserved for "Auto" mode - uses LiteLLM Router for load balancing
 # - Use negative IDs to distinguish global configs from user configs (NewLLMConfig in DB)

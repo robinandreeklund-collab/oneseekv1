@@ -98,4 +98,5 @@ export {
 	GptToolUI,
 	GrokToolUI,
 	PerplexityToolUI,
+	QwenToolUI,
 } from "./compare-model";
