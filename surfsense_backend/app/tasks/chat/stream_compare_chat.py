@@ -102,7 +102,9 @@ LOCAL_ANALYSIS_SYSTEM_PROMPT = (
 COMPARE_CITATION_INSTRUCTIONS = ""
 
 LOCAL_TOOL_SYSTEM_PROMPT = (
-    "You are Oneseek. Answer the user's question clearly and concisely."
+    "You are Oneseek. Answer the user's question clearly and concisely. "
+    "Use the <sources> section for up-to-date information when available. "
+    "Do not include citation brackets or a references list in this draft."
 )
 
 
@@ -527,6 +529,27 @@ async def stream_compare_chat(
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
+        tavily_step_id = f"compare-tavily-{uuid.uuid4().hex[:8]}"
+        yield streaming_service.format_thinking_step(
+            step_id=tavily_step_id,
+            title="Fetching latest sources",
+            status="in_progress",
+            items=[f"Query: {short_query}"],
+        )
+
+        _, tavily_documents = await connector_service.search_tavily(
+            user_query=compare_query,
+            search_space_id=search_space_id,
+            top_k=MAX_TAVILY_RESULTS,
+        )
+        tavily_count = len(tavily_documents)
+        yield streaming_service.format_thinking_step(
+            step_id=tavily_step_id,
+            title="Fetching latest sources",
+            status="completed",
+            items=[f"Tavily results: {tavily_count}"],
+        )
+
         agent_config = await load_agent_config(
             session=session,
             config_id=llm_config_id,
@@ -585,6 +608,19 @@ async def stream_compare_chat(
             local_tool_call_id, "call_oneseek", {"query": compare_query}
         )
 
+        local_sources_context = (
+            format_documents_for_context(tavily_documents)
+            if tavily_documents
+            else ""
+        )
+        local_prompt_parts = [
+            f"<user_query>\n{query_with_context}\n</user_query>",
+            "<sources>",
+            local_sources_context or "None",
+            "</sources>",
+        ]
+        local_prompt = "\n".join(local_prompt_parts)
+
         local_start = time.monotonic()
         local_error: str | None = None
         local_response_text = ""
@@ -593,7 +629,7 @@ async def stream_compare_chat(
                 local_llm.ainvoke(
                     [
                         SystemMessage(content=LOCAL_TOOL_SYSTEM_PROMPT),
-                        HumanMessage(content=query_with_context),
+                        HumanMessage(content=local_prompt),
                     ]
                 ),
                 timeout=COMPARE_TIMEOUT_SECONDS,
@@ -693,11 +729,6 @@ async def stream_compare_chat(
             items=analysis_items,
         )
 
-        _, tavily_documents = await connector_service.search_tavily(
-            user_query=compare_query,
-            search_space_id=search_space_id,
-            top_k=MAX_TAVILY_RESULTS,
-        )
         if tavily_documents:
             analysis_items.append(f"Tavily results: {len(tavily_documents)}")
         else:
