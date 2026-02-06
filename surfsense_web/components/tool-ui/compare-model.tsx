@@ -195,6 +195,8 @@ function ModelCard({
 	const usage = formatUsage(result.usage);
 	const queryText = args.query;
 	const rawResponse = result.response || "";
+	const hasFullResponse =
+		typeof rawResponse === "string" && rawResponse.trim().length > (summary?.length || 0);
 	const metadataRows = [
 		{ label: "Model", value: result.model || displayName },
 		{ label: "Provider", value: result.provider },
@@ -212,13 +214,14 @@ function ModelCard({
 						<ModelLogo toolName={toolName} label={displayName} />
 						<div>
 							<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+								<span className="text-xs text-muted-foreground">AI model</span>
 								<Badge variant="secondary">{source}</Badge>
 								{latency && <span>{latency}</span>}
 							</div>
 							<h3 className="mt-1 text-lg font-semibold">{displayName}</h3>
 							{queryText && (
 								<p className="mt-1 text-xs text-muted-foreground">
-									Query: <span className="font-medium text-foreground">{queryText}</span>
+									Question: <span className="font-medium text-foreground">{queryText}</span>
 								</p>
 							)}
 						</div>
@@ -231,46 +234,54 @@ function ModelCard({
 				</div>
 
 				{summary && (
-					<p className="mt-3 text-sm text-foreground whitespace-pre-wrap">{summary}</p>
+					<div className="mt-3 text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+						{summary}
+					</div>
 				)}
 
 				{result.truncated && (
 					<p className="mt-2 text-xs text-amber-600">
-						Response truncated in UI card.
+						Response truncated in card.
 					</p>
 				)}
 
-				<Collapsible open={open} onOpenChange={setOpen}>
-					<CollapsibleTrigger asChild>
-						<Button
-							variant="ghost"
-							size="sm"
-							className="mt-3 w-full justify-center text-xs text-muted-foreground"
-						>
-							<span>{open ? "Hide full response" : "Show full response"}</span>
-							<ChevronDownIcon className={`ml-2 size-4 transition-transform ${open ? "rotate-180" : ""}`} />
-						</Button>
-					</CollapsibleTrigger>
-					<CollapsibleContent>
-						<div className="mt-3 rounded-lg border border-border/60 bg-background/60 p-3 space-y-3">
-							{metadataRows.length > 0 && (
-								<div className="grid gap-2 text-xs text-muted-foreground">
-									{metadataRows.map((row) => (
-										<div key={row.label} className="flex items-center justify-between gap-2">
-											<span>{row.label}</span>
-											<span className="text-foreground">{row.value}</span>
-										</div>
-									))}
-								</div>
-							)}
-							{rawResponse ? (
-								<pre className="whitespace-pre-wrap text-xs text-foreground">{rawResponse}</pre>
-							) : (
-								<p className="text-xs text-muted-foreground">No response content.</p>
-							)}
-						</div>
-					</CollapsibleContent>
-				</Collapsible>
+				{hasFullResponse && (
+					<Collapsible open={open} onOpenChange={setOpen}>
+						<CollapsibleTrigger asChild>
+							<Button
+								variant="ghost"
+								size="sm"
+								className="mt-3 w-full justify-center text-xs text-muted-foreground"
+							>
+								<span>{open ? "Hide full response" : "Show full response"}</span>
+								<ChevronDownIcon
+									className={`ml-2 size-4 transition-transform ${open ? "rotate-180" : ""}`}
+								/>
+							</Button>
+						</CollapsibleTrigger>
+						<CollapsibleContent>
+							<div className="mt-3 rounded-lg border border-border/60 bg-background/60 p-3 space-y-3">
+								{metadataRows.length > 0 && (
+									<div className="grid gap-2 text-xs text-muted-foreground">
+										{metadataRows.map((row) => (
+											<div key={row.label} className="flex items-center justify-between gap-2">
+												<span>{row.label}</span>
+												<span className="text-foreground">{row.value}</span>
+											</div>
+										))}
+									</div>
+								)}
+								{rawResponse ? (
+									<div className="whitespace-pre-wrap text-sm text-foreground leading-relaxed">
+										{rawResponse}
+									</div>
+								) : (
+									<p className="text-xs text-muted-foreground">No response to display.</p>
+								)}
+							</div>
+						</CollapsibleContent>
+					</Collapsible>
+				)}
 			</CardContent>
 		</Card>
 	);
