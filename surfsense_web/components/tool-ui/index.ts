@@ -97,4 +97,5 @@ export {
 	GeminiToolUI,
 	GptToolUI,
 	GrokToolUI,
+	PerplexityToolUI,
 } from "./compare-model";

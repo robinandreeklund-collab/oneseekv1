@@ -30,6 +30,7 @@ _PROVIDER_SOURCE_LABELS = {
     "ANTHROPIC": "Anthropic",
     "GOOGLE": "Google",
     "DEEPSEEK": "DeepSeek",
+    "PERPLEXITY": "Perplexity",
 }
 
 
@@ -52,6 +53,12 @@ EXTERNAL_MODEL_SPECS: list[ExternalModelSpec] = [
     ExternalModelSpec(key="gpt", display="ChatGPT", config_id=-23, tool_name="call_gpt"),
     ExternalModelSpec(
         key="claude", display="Claude", config_id=-24, tool_name="call_claude"
+    ),
+    ExternalModelSpec(
+        key="perplexity",
+        display="Perplexity",
+        config_id=-25,
+        tool_name="call_perplexity",
     ),
 ]
 
@@ -104,6 +111,10 @@ def _apply_provider_env(provider: str, api_key: str) -> None:
         import os
 
         os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
+    elif provider_key == "PERPLEXITY":
+        import os
+
+        os.environ.setdefault("PERPLEXITY_API_KEY", api_key)
 
 
 def _build_model_string(config: dict) -> str:

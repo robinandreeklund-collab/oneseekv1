@@ -48,6 +48,7 @@ import {
 	GeminiToolUI,
 	GptToolUI,
 	GrokToolUI,
+	PerplexityToolUI,
 } from "@/components/tool-ui/compare-model";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
@@ -141,6 +142,7 @@ const TOOLS_WITH_UI = new Set([
 	"call_gpt",
 	"call_gemini",
 	"call_deepseek",
+	"call_perplexity",
 	// "write_todos", // Disabled for now
 ]);
 
@@ -1651,6 +1653,7 @@ export default function NewChatPage() {
 			<GptToolUI />
 			<GeminiToolUI />
 			<DeepSeekToolUI />
+			<PerplexityToolUI />
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
 			{/* <WriteTodosToolUI /> Disabled for now */}

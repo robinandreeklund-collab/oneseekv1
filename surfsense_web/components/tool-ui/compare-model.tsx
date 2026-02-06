@@ -258,3 +258,7 @@ export const ClaudeToolUI = createExternalModelToolUI("call_claude", "Claude");
 export const GptToolUI = createExternalModelToolUI("call_gpt", "ChatGPT");
 export const GeminiToolUI = createExternalModelToolUI("call_gemini", "Gemini");
 export const DeepSeekToolUI = createExternalModelToolUI("call_deepseek", "DeepSeek");
+export const PerplexityToolUI = createExternalModelToolUI(
+	"call_perplexity",
+	"Perplexity"
+);
