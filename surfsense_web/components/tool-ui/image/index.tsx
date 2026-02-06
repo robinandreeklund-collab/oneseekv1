@@ -149,7 +149,7 @@ export class ImageErrorBoundary extends Component<
 	render() {
 		if (this.state.hasError) {
 			return (
-				<Card className="w-full max-w-md overflow-hidden">
+				<Card className="w-full overflow-hidden">
 					<div className="aspect-[4/3] bg-muted flex items-center justify-center">
 						<div className="flex flex-col items-center gap-2 text-muted-foreground">
 							<ImageIcon className="size-8" />
@@ -167,7 +167,7 @@ export class ImageErrorBoundary extends Component<
 /**
  * Loading skeleton for Image
  */
-export function ImageSkeleton({ maxWidth = "420px" }: { maxWidth?: string }) {
+export function ImageSkeleton({ maxWidth = "100%" }: { maxWidth?: string }) {
 	return (
 		<Card className="w-full overflow-hidden animate-pulse" style={{ maxWidth }}>
 			<div className="aspect-[4/3] bg-muted flex items-center justify-center">
@@ -182,7 +182,7 @@ export function ImageSkeleton({ maxWidth = "420px" }: { maxWidth?: string }) {
  */
 export function ImageLoading({ title = "Loading image..." }: { title?: string }) {
 	return (
-		<Card className="w-full max-w-md overflow-hidden">
+		<Card className="w-full overflow-hidden">
 			<div className="aspect-[4/3] bg-muted flex items-center justify-center">
 				<div className="flex flex-col items-center gap-3">
 					<Spinner size="lg" className="text-muted-foreground" />
@@ -210,7 +210,7 @@ export function Image({
 	ratio = "4:3",
 	fit = "cover",
 	source,
-	maxWidth = "420px",
+	maxWidth = "100%",
 	className,
 }: ImageProps) {
 	const [isHovered, setIsHovered] = useState(false);

@@ -7,6 +7,7 @@ Job ad links tool for SurfSense agent.
 from __future__ import annotations
 
 import logging
+import unicodedata
 from typing import Any
 
 import httpx
@@ -15,6 +16,8 @@ from langchain_core.tools import tool
 from app.config import config
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_JOBAD_BASE_URL = "https://links.api.jobtechdev.se"
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -31,6 +34,11 @@ def _first_text(value: Any) -> str | None:
     if isinstance(value, list) and value:
         return _first_text(value[0])
     return None
+
+
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch)).lower()
 
 
 def _extract_location(item: dict[str, Any]) -> str | None:
@@ -133,22 +141,22 @@ def create_jobad_links_search_tool():
         Returns:
             Structured job ad results with links and metadata from Jobtech Links.
         """
-        base_url = config.JOBAD_LINKS_BASE_URL or "https://links.api.jobtechdev.se"
+        base_url = config.JOBAD_LINKS_BASE_URL or DEFAULT_JOBAD_BASE_URL
         url = f"{base_url.rstrip('/')}/joblinks"
-        params: dict[str, Any] = {"limit": max(1, min(limit, 50))}
-        query_parts = []
-        if query:
-            query_parts.append(str(query))
-        if location:
-            query_parts.append(str(location))
-        if occupation:
-            query_parts.append(str(occupation))
-        if industry:
-            query_parts.append(str(industry))
-        if remote is True:
-            query_parts.append("remote")
-        if query_parts:
-            params["q"] = " ".join(query_parts)
+        params: dict[str, Any] = {"limit": max(1, min(limit, 100))}
+        query_text = str(query) if query else ""
+        if not query_text:
+            query_text = " ".join(
+                part
+                for part in [
+                    str(occupation) if occupation else "",
+                    str(industry) if industry else "",
+                    str(location) if location else "",
+                ]
+                if part
+            ).strip()
+        if query_text:
+            params["q"] = query_text
         else:
             return {
                 "status": "error",
@@ -163,18 +171,39 @@ def create_jobad_links_search_tool():
         if config.JOBAD_LINKS_API_KEY:
             headers["api-key"] = config.JOBAD_LINKS_API_KEY
 
+        payload = None
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.get(url, params=params, headers=headers)
                 response.raise_for_status()
                 payload = response.json()
         except Exception as exc:
-            logger.error("JobAd Links request failed: %s", exc)
-            return {
-                "status": "error",
-                "error": f"JobAd Links request failed: {exc!s}",
-                "query": query,
-            }
+            if base_url != DEFAULT_JOBAD_BASE_URL:
+                logger.warning(
+                    "JobAd Links base URL failed, retrying with default: %s", exc
+                )
+                try:
+                    fallback_url = f"{DEFAULT_JOBAD_BASE_URL}/joblinks"
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        response = await client.get(
+                            fallback_url, params=params, headers=headers
+                        )
+                        response.raise_for_status()
+                        payload = response.json()
+                except Exception as fallback_exc:
+                    logger.error("JobAd Links request failed: %s", fallback_exc)
+                    return {
+                        "status": "error",
+                        "error": f"JobAd Links request failed: {fallback_exc!s}",
+                        "query": query,
+                    }
+            else:
+                logger.error("JobAd Links request failed: %s", exc)
+                return {
+                    "status": "error",
+                    "error": f"JobAd Links request failed: {exc!s}",
+                    "query": query,
+                }
 
         items: list[Any] = []
         if isinstance(payload, dict):
@@ -182,36 +211,42 @@ def create_jobad_links_search_tool():
         if not isinstance(items, list):
             items = []
 
-        results = [_extract_job_item(item) for item in items if isinstance(item, dict)]
+        raw_results = [_extract_job_item(item) for item in items if isinstance(item, dict)]
+        results = raw_results
 
+        filters_applied = any([location, occupation, industry, published_after, remote])
         if location:
-            location_lower = str(location).lower()
+            location_norm = _normalize_text(str(location))
             results = [
                 r
                 for r in results
-                if (r.get("location") or "").lower().find(location_lower) >= 0
+                if location_norm
+                in _normalize_text(str(r.get("location") or ""))
             ]
         if occupation:
-            occupation_lower = str(occupation).lower()
+            occupation_norm = _normalize_text(str(occupation))
             results = [
                 r
                 for r in results
-                if occupation_lower
-                in " ".join(
-                    [
-                        str(r.get("occupation_group") or ""),
-                        str(r.get("occupation_field") or ""),
-                        str(r.get("headline") or ""),
-                        str(r.get("brief") or ""),
-                    ]
-                ).lower()
+                if occupation_norm
+                in _normalize_text(
+                    " ".join(
+                        [
+                            str(r.get("occupation_group") or ""),
+                            str(r.get("occupation_field") or ""),
+                            str(r.get("headline") or ""),
+                            str(r.get("brief") or ""),
+                        ]
+                    )
+                )
             ]
         if industry:
-            industry_lower = str(industry).lower()
+            industry_norm = _normalize_text(str(industry))
             results = [
                 r
                 for r in results
-                if industry_lower in str(r.get("occupation_field") or "").lower()
+                if industry_norm
+                in _normalize_text(str(r.get("occupation_field") or ""))
             ]
         if published_after:
             try:
@@ -229,9 +264,16 @@ def create_jobad_links_search_tool():
                 r
                 for r in results
                 if r.get("remote") is True
-                or "remote" in str(r.get("headline") or "").lower()
-                or "remote" in str(r.get("brief") or "").lower()
+                or "remote" in _normalize_text(str(r.get("headline") or ""))
+                or "remote" in _normalize_text(str(r.get("brief") or ""))
             ]
+
+        filter_warning = None
+        if filters_applied and not results and raw_results:
+            results = raw_results
+            filter_warning = (
+                "Filters returned no results; showing unfiltered results."
+            )
 
         result = {
             "status": "ok",
@@ -242,9 +284,11 @@ def create_jobad_links_search_tool():
             else None,
             "attribution": "Data from Arbetsförmedlingen Jobtech",
         }
+        if filter_warning:
+            result["filter_warning"] = filter_warning
         if include_raw:
             result["raw"] = payload
-            result["raw_items"] = results
+            result["raw_items"] = raw_results
         return result
 
     return jobad_links_search

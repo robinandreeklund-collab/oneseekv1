@@ -51,6 +51,7 @@ const JobAdLinksResultSchema = z
 		query: z.string().nullish(),
 		results: z.array(JobAdResultSchema).nullish(),
 		total: z.number().nullish(),
+		filter_warning: z.string().nullish(),
 		attribution: z.string().nullish(),
 	})
 	.partial()
@@ -65,7 +66,7 @@ type JobAdLinksResult = z.infer<typeof JobAdLinksResultSchema>;
 
 function JobAdErrorState({ error }: { error: string }) {
 	return (
-		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 max-w-2xl">
+		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 w-full">
 			<div className="flex items-center gap-4">
 				<div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
 					<AlertCircleIcon className="size-6 text-destructive" />
@@ -81,7 +82,7 @@ function JobAdErrorState({ error }: { error: string }) {
 
 function JobAdLoading() {
 	return (
-		<Card className="my-4 w-full max-w-2xl animate-pulse">
+		<Card className="my-4 w-full animate-pulse">
 			<CardContent className="p-4">
 				<div className="h-4 w-1/2 rounded bg-muted" />
 				<div className="mt-3 h-3 w-3/4 rounded bg-muted" />
@@ -117,7 +118,7 @@ export const JobAdLinksToolUI = makeAssistantToolUI<JobAdLinksArgs, JobAdLinksRe
 		if (status.type === "incomplete") {
 			if (status.reason === "cancelled") {
 				return (
-					<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground max-w-2xl">
+					<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
 						<p className="line-through">Job ad search cancelled</p>
 					</div>
 				);
@@ -141,7 +142,7 @@ export const JobAdLinksToolUI = makeAssistantToolUI<JobAdLinksArgs, JobAdLinksRe
 
 		const results = result.results || [];
 		return (
-			<Card className="my-4 w-full max-w-2xl">
+			<Card className="my-4 w-full">
 				<CardContent className="p-4">
 					<div className="flex items-center justify-between">
 						<div className="text-sm text-muted-foreground">Job ads</div>
@@ -153,6 +154,9 @@ export const JobAdLinksToolUI = makeAssistantToolUI<JobAdLinksArgs, JobAdLinksRe
 						<p className="mt-1 text-xs text-muted-foreground">
 							Query: <span className="font-medium text-foreground">{args.query}</span>
 						</p>
+					)}
+					{result.filter_warning && (
+						<p className="mt-1 text-xs text-amber-600">{result.filter_warning}</p>
 					)}
 					<div className="mt-3 space-y-3">
 						{results.length === 0 ? (

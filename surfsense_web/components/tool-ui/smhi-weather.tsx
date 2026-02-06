@@ -90,7 +90,7 @@ type SmhiWeatherResult = z.infer<typeof SmhiWeatherResultSchema>;
 
 function WeatherErrorState({ error }: { error: string }) {
 	return (
-		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 max-w-md">
+		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 w-full">
 			<div className="flex items-center gap-4">
 				<div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
 					<AlertCircleIcon className="size-6 text-destructive" />
@@ -106,7 +106,7 @@ function WeatherErrorState({ error }: { error: string }) {
 
 function WeatherLoading() {
 	return (
-		<Card className="my-4 w-full max-w-md animate-pulse">
+		<Card className="my-4 w-full animate-pulse">
 			<CardContent className="p-4">
 				<div className="h-4 w-1/3 rounded bg-muted" />
 				<div className="mt-3 h-8 w-1/2 rounded bg-muted" />
@@ -549,7 +549,7 @@ export const SmhiWeatherToolUI = makeAssistantToolUI<SmhiWeatherArgs, SmhiWeathe
 		if (status.type === "incomplete") {
 			if (status.reason === "cancelled") {
 				return (
-					<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground max-w-md">
+					<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
 						<p className="line-through">Weather lookup cancelled</p>
 					</div>
 				);
@@ -600,7 +600,7 @@ export const SmhiWeatherToolUI = makeAssistantToolUI<SmhiWeatherArgs, SmhiWeathe
 		const updatedAt = result.current?.valid_time;
 
 		return (
-			<Card className="my-4 w-full max-w-md">
+			<Card className="my-4 w-full">
 				<CardContent className="p-4">
 					<div className="mb-4">
 						<WeatherScene condition={condition} phase={phase} />

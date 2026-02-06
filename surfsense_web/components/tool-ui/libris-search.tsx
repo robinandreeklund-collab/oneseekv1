@@ -69,7 +69,7 @@ function truncate(text: string | null | undefined, limit: number): string {
 
 function LibrisErrorState({ error }: { error: string }) {
 	return (
-		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 max-w-2xl">
+		<div className="my-4 overflow-hidden rounded-xl border border-destructive/20 bg-destructive/5 p-4 w-full">
 			<div className="flex items-center gap-4">
 				<div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
 					<AlertCircleIcon className="size-6 text-destructive" />
@@ -85,7 +85,7 @@ function LibrisErrorState({ error }: { error: string }) {
 
 function LibrisLoading() {
 	return (
-		<Card className="my-4 w-full max-w-2xl animate-pulse">
+		<Card className="my-4 w-full animate-pulse">
 			<CardContent className="p-4">
 				<div className="h-4 w-1/3 rounded bg-muted" />
 				<div className="mt-3 h-3 w-3/4 rounded bg-muted" />
@@ -176,7 +176,7 @@ export const LibrisSearchToolUI = makeAssistantToolUI<LibrisSearchArgs, LibrisSe
 		if (status.type === "incomplete") {
 			if (status.reason === "cancelled") {
 				return (
-					<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground max-w-2xl">
+					<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
 						<p className="line-through">Libris search cancelled</p>
 					</div>
 				);
@@ -200,7 +200,7 @@ export const LibrisSearchToolUI = makeAssistantToolUI<LibrisSearchArgs, LibrisSe
 
 		const results = result.mode === "record" ? (result.record ? [result.record] : []) : result.results || [];
 		return (
-			<Card className="my-4 w-full max-w-2xl">
+			<Card className="my-4 w-full">
 				<CardContent className="p-4">
 					<div className="flex items-center justify-between">
 						<div className="text-sm text-muted-foreground">

@@ -142,7 +142,7 @@ export class MediaCardErrorBoundary extends Component<
 	render() {
 		if (this.state.hasError) {
 			return (
-				<Card className="w-full max-w-md border-destructive/20 bg-destructive/5">
+				<Card className="w-full border-destructive/20 bg-destructive/5">
 					<CardContent className="flex items-center gap-3 p-4">
 						<div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-destructive/10">
 							<LinkIcon className="size-5 text-destructive" />
@@ -165,7 +165,7 @@ export class MediaCardErrorBoundary extends Component<
 /**
  * Loading skeleton for MediaCard
  */
-export function MediaCardSkeleton({ maxWidth = "420px" }: { maxWidth?: string }) {
+export function MediaCardSkeleton({ maxWidth = "100%" }: { maxWidth?: string }) {
 	return (
 		<Card className="w-full overflow-hidden animate-pulse" style={{ maxWidth }}>
 			<div className="aspect-[2/1] bg-muted" />
@@ -193,7 +193,7 @@ export function MediaCard({
 	thumb,
 	ratio = "auto",
 	domain,
-	maxWidth = "420px",
+	maxWidth = "100%",
 	alt,
 	className,
 	responseActions,
@@ -335,7 +335,7 @@ export function MediaCard({
  */
 export function MediaCardLoading({ title = "Loading preview..." }: { title?: string }) {
 	return (
-		<Card className="w-full max-w-md overflow-hidden">
+		<Card className="w-full overflow-hidden">
 			<div className="aspect-[2/1] bg-muted animate-pulse flex items-center justify-center">
 				<Spinner size="lg" className="text-muted-foreground" />
 			</div>
