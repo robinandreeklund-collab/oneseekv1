@@ -50,6 +50,7 @@ import {
 	GrokToolUI,
 	PerplexityToolUI,
 	QwenToolUI,
+	OneseekToolUI,
 } from "@/components/tool-ui/compare-model";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
@@ -145,6 +146,7 @@ const TOOLS_WITH_UI = new Set([
 	"call_deepseek",
 	"call_perplexity",
 	"call_qwen",
+	"call_oneseek",
 	// "write_todos", // Disabled for now
 ]);
 
@@ -1657,6 +1659,7 @@ export default function NewChatPage() {
 			<DeepSeekToolUI />
 			<PerplexityToolUI />
 			<QwenToolUI />
+			<OneseekToolUI />
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
 			{/* <WriteTodosToolUI /> Disabled for now */}

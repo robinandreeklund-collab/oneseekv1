@@ -99,4 +99,5 @@ export {
 	GrokToolUI,
 	PerplexityToolUI,
 	QwenToolUI,
+	OneseekToolUI,
 } from "./compare-model";

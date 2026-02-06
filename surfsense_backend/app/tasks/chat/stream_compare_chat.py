@@ -43,6 +43,7 @@ from app.tasks.chat.context_formatters import (
 
 COMPARE_PREFIX = "/compare"
 COMPARE_TIMEOUT_SECONDS = 90
+COMPARE_RAW_ANSWER_CHARS = 12000
 MAX_TAVILY_RESULTS = 6
 COMPARE_SUMMARY_ANSWER_CHARS = 600
 COMPARE_SUMMARY_FINAL_CHARS = 700
@@ -100,6 +101,10 @@ LOCAL_ANALYSIS_SYSTEM_PROMPT = (
 
 COMPARE_CITATION_INSTRUCTIONS = ""
 
+LOCAL_TOOL_SYSTEM_PROMPT = (
+    "You are Oneseek. Answer the user's question clearly and concisely."
+)
+
 
 
 
@@ -141,10 +146,13 @@ def _build_compare_summary(
 
 def _build_model_answer_documents(
     provider_results: dict[str, dict],
+    specs: list[dict[str, str]] | None = None,
 ) -> list[dict]:
     documents: list[dict] = []
-    for spec in EXTERNAL_MODEL_SPECS:
-        provider_key = spec.key
+    if specs is None:
+        specs = [{"key": spec.key, "display": spec.display} for spec in EXTERNAL_MODEL_SPECS]
+    for spec in specs:
+        provider_key = spec["key"]
         result = provider_results.get(provider_key)
         if not result:
             continue
@@ -158,16 +166,16 @@ def _build_model_answer_documents(
             {
                 "document": {
                     "id": f"model-{provider_key}",
-                    "title": f"{spec.display} response",
+                    "title": f"{spec['display']} response",
                     "document_type": "MODEL_ANSWER",
                     "metadata": {
                         "source": "MODEL_ANSWER",
-                        "provider": spec.display,
+                        "provider": spec["display"],
                     },
                 },
                 "chunks": [
                     {
-                        "chunk_id": spec.display,
+                        "chunk_id": spec["display"],
                         "content": answer_text,
                     }
                 ],
@@ -519,9 +527,155 @@ async def stream_compare_chat(
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
+        agent_config = await load_agent_config(
+            session=session,
+            config_id=llm_config_id,
+            search_space_id=search_space_id,
+        )
+        if not agent_config:
+            yield streaming_service.format_error("Failed to load local LLM configuration.")
+            yield streaming_service.format_finish_step()
+            yield streaming_service.format_finish()
+            yield streaming_service.format_done()
+            return
+
+        local_llm = create_chat_litellm_from_agent_config(agent_config)
+        if not local_llm:
+            yield streaming_service.format_error("Failed to create local LLM instance.")
+            yield streaming_service.format_finish_step()
+            yield streaming_service.format_finish()
+            yield streaming_service.format_done()
+            return
+
+        local_step_id = f"compare-oneseek-{uuid.uuid4().hex[:8]}"
+        local_tool_call_id = streaming_service.generate_tool_call_id()
+        local_model_name = str(agent_config.model_name or "")
+        local_provider = str(agent_config.provider or "")
+        local_api_base = str(agent_config.api_base or "")
+        local_model_string = str(getattr(local_llm, "model", "") or "")
+        local_items = [
+            item
+            for item in [
+                f"Model: {local_model_name}" if local_model_name else None,
+                f"Provider: {local_provider}" if local_provider else None,
+                f"API base: {local_api_base}" if local_api_base else None,
+                f"Model string: {local_model_string}" if local_model_string else None,
+                "Tool: call_oneseek",
+                f"Query: {short_query}",
+            ]
+            if item
+        ]
+        provider_steps["oneseek"] = {
+            "id": local_step_id,
+            "title": "Asking Oneseek",
+            "items": local_items,
+        }
+        provider_tool_call_ids["oneseek"] = local_tool_call_id
+
+        yield streaming_service.format_thinking_step(
+            step_id=local_step_id,
+            title="Asking Oneseek",
+            status="in_progress",
+            items=local_items,
+        )
+        yield streaming_service.format_tool_input_start(
+            local_tool_call_id, "call_oneseek"
+        )
+        yield streaming_service.format_tool_input_available(
+            local_tool_call_id, "call_oneseek", {"query": compare_query}
+        )
+
+        local_start = time.monotonic()
+        local_error: str | None = None
+        local_response_text = ""
+        try:
+            local_response = await asyncio.wait_for(
+                local_llm.ainvoke(
+                    [
+                        SystemMessage(content=LOCAL_TOOL_SYSTEM_PROMPT),
+                        HumanMessage(content=query_with_context),
+                    ]
+                ),
+                timeout=COMPARE_TIMEOUT_SECONDS,
+            )
+            local_response_text = str(
+                getattr(local_response, "content", "") or ""
+            ).strip()
+        except Exception as exc:
+            local_error = str(exc)
+
+        local_elapsed = time.monotonic() - local_start
+        if local_error or not local_response_text:
+            error_msg = local_error or "Empty response"
+            provider_summaries["Oneseek"] = {
+                "status": "error",
+                "error": _truncate_text(error_msg, 200),
+            }
+            yield streaming_service.format_tool_output_available(
+                local_tool_call_id,
+                {
+                    "status": "error",
+                    "error": error_msg,
+                    "model_display_name": "Oneseek",
+                    "provider": local_provider,
+                    "model": local_model_name,
+                    "model_string": local_model_string,
+                    "api_base": local_api_base,
+                    "source": "Oneseek",
+                    "latency_ms": int(local_elapsed * 1000),
+                },
+            )
+            completed_items = [
+                *local_items,
+                f"Error: {_truncate_text(error_msg, 120)}",
+            ]
+        else:
+            was_truncated = len(local_response_text) > COMPARE_RAW_ANSWER_CHARS
+            local_response_text = _truncate_text(
+                local_response_text, COMPARE_RAW_ANSWER_CHARS
+            )
+            answers["oneseek"] = local_response_text
+            provider_results["oneseek"] = {
+                "status": "success",
+                "model_display_name": "Oneseek",
+                "provider": local_provider,
+                "model": local_model_name,
+                "model_string": local_model_string,
+                "api_base": local_api_base,
+                "source": "Oneseek",
+                "latency_ms": int(local_elapsed * 1000),
+                "usage": None,
+                "summary": _truncate_text(
+                    local_response_text, COMPARE_SUMMARY_ANSWER_CHARS
+                ),
+                "response": local_response_text,
+                "truncated": was_truncated,
+            }
+            provider_summaries["Oneseek"] = {
+                "status": "success",
+                "answer": _truncate_text(
+                    local_response_text, COMPARE_SUMMARY_ANSWER_CHARS
+                ),
+            }
+            yield streaming_service.format_tool_output_available(
+                local_tool_call_id, provider_results["oneseek"]
+            )
+            completed_items = [
+                *local_items,
+                f"Response length: {len(local_response_text)} chars",
+                f"Elapsed: {local_elapsed:.1f}s",
+            ]
+
+        yield streaming_service.format_thinking_step(
+            step_id=local_step_id,
+            title="Asking Oneseek",
+            status="completed",
+            items=completed_items,
+        )
+
         if not answers:
             yield streaming_service.format_error(
-                "Compare mode failed: no external answers were retrieved."
+                "Compare mode failed: no model answers were retrieved."
             )
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
@@ -529,9 +683,8 @@ async def stream_compare_chat(
             return
 
         analysis_step_id = f"compare-analysis-{uuid.uuid4().hex[:8]}"
-        analysis_items = [
-            f"Responses received: {len(answers)}/{len(EXTERNAL_MODEL_SPECS)}"
-        ]
+        total_models = len(EXTERNAL_MODEL_SPECS) + 1
+        analysis_items = [f"Responses received: {len(answers)}/{total_models}"]
 
         yield streaming_service.format_thinking_step(
             step_id=analysis_step_id,
@@ -550,56 +703,33 @@ async def stream_compare_chat(
         else:
             analysis_items.append("Tavily results: 0")
 
-        agent_config = await load_agent_config(
-            session=session,
-            config_id=llm_config_id,
-            search_space_id=search_space_id,
-        )
-        if not agent_config:
-            analysis_items.append("Error: Failed to load local LLM configuration")
-            yield streaming_service.format_thinking_step(
-                step_id=analysis_step_id,
-                title="Analyzing and validating responses",
-                status="completed",
-                items=analysis_items,
-            )
-            yield streaming_service.format_error("Failed to load local LLM configuration.")
-            yield streaming_service.format_finish_step()
-            yield streaming_service.format_finish()
-            yield streaming_service.format_done()
-            return
-
-        local_llm = create_chat_litellm_from_agent_config(agent_config)
-        if not local_llm:
-            analysis_items.append("Error: Failed to create local LLM instance")
-            yield streaming_service.format_thinking_step(
-                step_id=analysis_step_id,
-                title="Analyzing and validating responses",
-                status="completed",
-                items=analysis_items,
-            )
-            yield streaming_service.format_error("Failed to create local LLM instance.")
-            yield streaming_service.format_finish_step()
-            yield streaming_service.format_finish()
-            yield streaming_service.format_done()
-            return
+        compare_specs = [
+            *[
+                {"key": spec.key, "display": spec.display, "tool": spec.tool_name}
+                for spec in EXTERNAL_MODEL_SPECS
+            ],
+            {"key": "oneseek", "display": "Oneseek", "tool": "call_oneseek"},
+        ]
 
         answers_block = "\n".join(
             [
                 (
-                    f"<answer model='{spec.display}' tool='{spec.tool_name}' "
+                    f"<answer model='{spec['display']}' tool='{spec['tool']}' "
                     f"provider='{result.get('provider', '')}' "
                     f"model_name='{result.get('model', '')}' "
                     f"latency_ms='{result.get('latency_ms', '')}' "
                     f"source='{result.get('source', '')}'>\n"
                     f"{result.get('response', '')}\n</answer>"
                 )
-                for spec in EXTERNAL_MODEL_SPECS
-                if (result := provider_results.get(spec.key))
+                for spec in compare_specs
+                if (result := provider_results.get(spec["key"]))
             ]
         )
 
-        model_answer_documents = _build_model_answer_documents(provider_results)
+        model_answer_documents = _build_model_answer_documents(
+            provider_results,
+            specs=[{"key": spec["key"], "display": spec["display"]} for spec in compare_specs],
+        )
         source_documents = [*model_answer_documents, *tavily_documents]
         sources_context = (
             format_documents_for_context(source_documents)
