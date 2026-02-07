@@ -31,6 +31,7 @@ import {
 import { membersAtom } from "@/atoms/members/members-query.atoms";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import { Thread } from "@/components/assistant-ui/thread";
+import type { ContextStatsEntry } from "@/components/assistant-ui/context-stats";
 import { ChatHeader } from "@/components/new-chat/chat-header";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
@@ -198,6 +199,8 @@ interface ThinkingStepData {
 	items: string[];
 }
 
+type ContextStatsData = ContextStatsEntry;
+
 export default function NewChatPage() {
 	const params = useParams();
 	const queryClient = useQueryClient();
@@ -212,6 +215,9 @@ export default function NewChatPage() {
 	const [messageThinkingSteps, setMessageThinkingSteps] = useState<Map<string, ThinkingStep[]>>(
 		new Map()
 	);
+	const [messageContextStats, setMessageContextStats] = useState<
+		Map<string, ContextStatsEntry[]>
+	>(new Map());
 	const abortControllerRef = useRef<AbortController | null>(null);
 
 	// Get mentioned document IDs from the composer
@@ -328,6 +334,7 @@ export default function NewChatPage() {
 		setThreadId(null);
 		setCurrentThread(null);
 		setMessageThinkingSteps(new Map());
+		setMessageContextStats(new Map());
 		setMentionedDocumentIds({
 			surfsense_doc_ids: [],
 			document_ids: [],
@@ -511,6 +518,7 @@ export default function NewChatPage() {
 				const userMsgId = `msg-user-${Date.now()}`;
 				const assistantMsgId = `msg-assistant-${Date.now()}`;
 				const currentThinkingSteps = new Map<string, ThinkingStepData>();
+				const currentContextStats: ContextStatsData[] = [];
 
 				const userMessage: ThreadMessageLike = {
 					id: userMsgId,
@@ -824,6 +832,7 @@ export default function NewChatPage() {
 			// Prepare assistant message
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
+			const currentContextStats: ContextStatsData[] = [];
 			let compareSummary: unknown | null = null;
 
 			// Ordered content parts to preserve inline tool call positions
@@ -1094,6 +1103,18 @@ export default function NewChatPage() {
 											}
 											break;
 										}
+										case "data-context-stats": {
+											const stats = parsed.data as ContextStatsData;
+											if (stats) {
+												currentContextStats.push({ ...stats, receivedAt: Date.now() });
+												setMessageContextStats((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentContextStats]);
+													return newMap;
+												});
+											}
+											break;
+										}
 										case "data-compare-summary": {
 											compareSummary = parsed.data ?? null;
 											break;
@@ -1139,6 +1160,28 @@ export default function NewChatPage() {
 							}
 							return prev;
 						});
+
+						setMessageContextStats((prev) => {
+							const stats = prev.get(assistantMsgId);
+							if (stats) {
+								const newMap = new Map(prev);
+								newMap.delete(assistantMsgId);
+								newMap.set(newMsgId, stats);
+								return newMap;
+							}
+							return prev;
+						});
+
+					setMessageContextStats((prev) => {
+						const stats = prev.get(assistantMsgId);
+						if (stats) {
+							const newMap = new Map(prev);
+							newMap.delete(assistantMsgId);
+							newMap.set(newMsgId, stats);
+							return newMap;
+						}
+						return prev;
+					});
 					} catch (err) {
 						console.error("Failed to persist assistant message:", err);
 					}
@@ -1300,6 +1343,17 @@ export default function NewChatPage() {
 				}
 				return newMap;
 			});
+			setMessageContextStats((prev) => {
+				const newMap = new Map(prev);
+				const lastTwoIds = messages
+					.slice(-2)
+					.map((m) => m.id)
+					.filter((id): id is string => !!id);
+				for (const id of lastTwoIds) {
+					newMap.delete(id);
+				}
+				return newMap;
+			});
 
 			// Start streaming
 			setIsRunning(true);
@@ -1310,6 +1364,7 @@ export default function NewChatPage() {
 			const userMsgId = `msg-user-${Date.now()}`;
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
+			const currentContextStats: ContextStatsData[] = [];
 
 			// Content parts tracking (same as onNew)
 			type ContentPart =
@@ -1514,6 +1569,18 @@ export default function NewChatPage() {
 												setMessageThinkingSteps((prev) => {
 													const newMap = new Map(prev);
 													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
+													return newMap;
+												});
+											}
+											break;
+										}
+										case "data-context-stats": {
+											const stats = parsed.data as ContextStatsData;
+											if (stats) {
+												currentContextStats.push({ ...stats, receivedAt: Date.now() });
+												setMessageContextStats((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentContextStats]);
 													return newMap;
 												});
 											}
@@ -1742,6 +1809,7 @@ export default function NewChatPage() {
 			<div className="flex flex-col h-[calc(100vh-64px)] overflow-hidden">
 				<Thread
 					messageThinkingSteps={messageThinkingSteps}
+					messageContextStats={messageContextStats}
 					isPublicChat={isPublicChat}
 					header={<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />}
 				/>

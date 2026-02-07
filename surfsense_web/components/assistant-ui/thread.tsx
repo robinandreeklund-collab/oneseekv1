@@ -49,6 +49,10 @@ import {
 } from "@/components/assistant-ui/inline-mention-editor";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import {
+	ContextStatsContext,
+	type ContextStatsEntry,
+} from "@/components/assistant-ui/context-stats";
+import {
 	ThinkingStepsContext,
 	ThinkingStepsDisplay,
 } from "@/components/assistant-ui/thinking-steps";
@@ -77,19 +81,23 @@ const CYCLING_PLACEHOLDERS = [
 
 interface ThreadProps {
 	messageThinkingSteps?: Map<string, ThinkingStep[]>;
+	messageContextStats?: Map<string, ContextStatsEntry[]>;
 	header?: React.ReactNode;
 	isPublicChat?: boolean;
 }
 
 export const Thread: FC<ThreadProps> = ({
 	messageThinkingSteps = new Map(),
+	messageContextStats = new Map(),
 	header,
 	isPublicChat = false,
 }) => {
 	return (
-		<ThinkingStepsContext.Provider value={messageThinkingSteps}>
-			<ThreadContent header={header} isPublicChat={isPublicChat} />
-		</ThinkingStepsContext.Provider>
+		<ContextStatsContext.Provider value={messageContextStats}>
+			<ThinkingStepsContext.Provider value={messageThinkingSteps}>
+				<ThreadContent header={header} isPublicChat={isPublicChat} />
+			</ThinkingStepsContext.Provider>
+		</ContextStatsContext.Provider>
 	);
 };
 

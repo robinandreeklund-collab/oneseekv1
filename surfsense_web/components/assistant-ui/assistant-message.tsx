@@ -21,6 +21,10 @@ import { activeSearchSpaceIdAtom } from "@/atoms/search-spaces/search-space-quer
 import { BranchPicker } from "@/components/assistant-ui/branch-picker";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import {
+	ContextStatsContext,
+	ContextStatsDisplay,
+} from "@/components/assistant-ui/context-stats";
+import {
 	ThinkingStepsContext,
 	ThinkingStepsDisplay,
 } from "@/components/assistant-ui/thinking-steps";
@@ -65,6 +69,26 @@ const ThinkingStepsPart: FC = () => {
 	return (
 		<div className="mb-3">
 			<ThinkingStepsDisplay steps={thinkingSteps} isThreadRunning={isMessageStreaming} />
+		</div>
+	);
+};
+
+/**
+ * Custom component to render context stats from Context
+ */
+const ContextStatsPart: FC = () => {
+	const contextStatsMap = useContext(ContextStatsContext);
+	const messageId = useAssistantState(({ message }) => message?.id);
+	const contextStats = contextStatsMap.get(messageId) || [];
+	const isThreadRunning = useAssistantState(({ thread }) => thread.isRunning);
+	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
+	const isMessageStreaming = isThreadRunning && isLastMessage;
+
+	if (contextStats.length === 0) return null;
+
+	return (
+		<div className="mb-3">
+			<ContextStatsDisplay entries={contextStats} isThreadRunning={isMessageStreaming} />
 		</div>
 	);
 };
@@ -199,6 +223,7 @@ const AssistantMessageInner: FC = () => {
 		<>
 			{/* Render thinking steps from message content - this ensures proper scroll tracking */}
 			<ThinkingStepsPart />
+			<ContextStatsPart />
 
 			<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
 				<MessagePrimitive.Parts
