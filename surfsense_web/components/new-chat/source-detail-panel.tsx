@@ -464,7 +464,7 @@ export function SourceDetailPanel({
 													</Button>
 												)}
 											</div>
-											<div className="p-5 space-y-4">
+											<div className="divide-y divide-border/40">
 												{documentData.chunks.map((chunk, idx) => {
 													const isCited = chunk.id === chunkId;
 													return (
@@ -473,20 +473,24 @@ export function SourceDetailPanel({
 															ref={isCited ? citedChunkRefCallback : undefined}
 															data-chunk-index={idx}
 															className={cn(
-																"rounded-xl border transition-colors",
-																isCited
-																	? "border-yellow-300/60 bg-yellow-100/70 shadow-md shadow-yellow-200/30 dark:bg-yellow-900/20 dark:border-yellow-700/40"
-																	: "border-transparent"
+																"py-3 px-4",
+																isCited &&
+																	"-mx-4 px-6 rounded-lg border border-yellow-300/30 shadow-sm shadow-yellow-200/30",
+																isCited &&
+																	"bg-gradient-to-r from-yellow-50/90 via-yellow-50/40 to-transparent dark:from-yellow-900/20 dark:via-yellow-900/10"
 															)}
 														>
 															{isCited && (
-																<div className="flex items-center gap-2 px-4 pt-4 text-xs font-semibold text-yellow-900 dark:text-yellow-100">
+																<div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-yellow-800 dark:text-yellow-100">
 																	<Sparkles className="h-3.5 w-3.5" />
 																	Citerad del
 																</div>
 															)}
-															<div className="px-4 pb-4 pt-3">
-																<MarkdownViewer content={chunk.content} />
+															<div className={cn(isCited ? "pt-2" : "pt-1")}>
+																<MarkdownViewer
+																	content={chunk.content}
+																	className="prose-sm [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_h1]:my-3 [&_h2]:my-2 [&_h3]:my-2"
+																/>
 															</div>
 														</div>
 													);
