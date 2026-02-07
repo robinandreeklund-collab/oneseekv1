@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 // ============================================================================
 // Zod Schemas
@@ -70,20 +71,27 @@ function formatLatency(latencyMs?: number | null): string {
 	return `${Math.round(latencyMs)}ms`;
 }
 
-function formatUsage(usage?: ExternalModelResult["usage"] | null): string {
-	if (!usage) return "";
-	const prompt = usage.prompt_tokens ?? undefined;
-	const completion = usage.completion_tokens ?? undefined;
-	const total = usage.total_tokens ?? undefined;
-	if (typeof total === "number") {
-		return `${total} tokens`;
+function formatUsage(
+	usage: ExternalModelResult["usage"] | null | undefined,
+	estimate?: { totalTokens: number; isEstimated: boolean } | null
+): string {
+	if (usage) {
+		const prompt = usage.prompt_tokens ?? undefined;
+		const completion = usage.completion_tokens ?? undefined;
+		const total = usage.total_tokens ?? undefined;
+		if (typeof total === "number") {
+			return `${total} tokens`;
+		}
+		if (typeof prompt === "number" || typeof completion === "number") {
+			const parts = [
+				typeof prompt === "number" ? `p${prompt}` : null,
+				typeof completion === "number" ? `c${completion}` : null,
+			].filter(Boolean);
+			return parts.length ? `${parts.join(" / ")} tokens` : "";
+		}
 	}
-	if (typeof prompt === "number" || typeof completion === "number") {
-		const parts = [
-			typeof prompt === "number" ? `p${prompt}` : null,
-			typeof completion === "number" ? `c${completion}` : null,
-		].filter(Boolean);
-		return parts.length ? `${parts.join(" / ")} tokens` : "";
+	if (estimate?.totalTokens) {
+		return `${estimate.isEstimated ? "~" : ""}${estimate.totalTokens} tokens`;
 	}
 	return "";
 }
@@ -99,19 +107,31 @@ function formatEstimate(value: number, digits = 2): string {
 	return value.toFixed(digits);
 }
 
-function resolveTotalTokens(usage?: ExternalModelResult["usage"] | null): number | null {
-	if (!usage) return null;
-	if (typeof usage.total_tokens === "number") return usage.total_tokens;
-	const prompt = typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0;
-	const completion =
-		typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0;
-	const total = prompt + completion;
-	return total > 0 ? total : null;
+function estimateTokensFromText(text: string): number {
+	if (!text) return 0;
+	return Math.max(1, Math.round(text.length / 4));
 }
 
-function estimateImpact(usage?: ExternalModelResult["usage"] | null) {
-	const totalTokens = resolveTotalTokens(usage);
-	if (!totalTokens) return null;
+function resolveTokenEstimate(
+	usage: ExternalModelResult["usage"] | null | undefined,
+	args: ExternalModelArgs,
+	result?: ExternalModelResult | null
+): { totalTokens: number; isEstimated: boolean } | null {
+	if (usage && typeof usage.total_tokens === "number") {
+		return { totalTokens: usage.total_tokens, isEstimated: false };
+	}
+	const promptTokens = estimateTokensFromText(args.query ?? "");
+	const completionTokens = estimateTokensFromText(result?.response ?? "");
+	const total = promptTokens + completionTokens;
+	if (!total) return null;
+	return { totalTokens: total, isEstimated: true };
+}
+
+function estimateImpact(
+	tokenEstimate?: { totalTokens: number; isEstimated: boolean } | null
+) {
+	if (!tokenEstimate) return null;
+	const totalTokens = tokenEstimate.totalTokens;
 
 	const energyWh = (totalTokens / 1000) * ENERGY_WH_PER_1K_TOKENS;
 	const co2g = (totalTokens / 1000) * CO2G_PER_1K_TOKENS;
@@ -127,6 +147,7 @@ function estimateImpact(usage?: ExternalModelResult["usage"] | null) {
 
 	return {
 		totalTokens,
+		isEstimated: tokenEstimate.isEstimated,
 		energyWh,
 		co2g,
 		ledMinutes,
@@ -243,8 +264,9 @@ function ModelCard({
 	const displayName = result.model_display_name || label;
 	const source = result.source || result.provider || "External model";
 	const latency = formatLatency(result.latency_ms);
-	const usage = formatUsage(result.usage);
-	const impact = estimateImpact(result.usage);
+	const tokenEstimate = resolveTokenEstimate(result.usage, args, result);
+	const usage = formatUsage(result.usage, tokenEstimate);
+	const impact = estimateImpact(tokenEstimate);
 	const rawResponse = result.response || "";
 	const hasFullResponse = typeof rawResponse === "string" && rawResponse.trim().length > 0;
 	const showExpand = hasFullResponse;
@@ -280,33 +302,40 @@ function ModelCard({
 				</div>
 
 				{impact && (
-					<div className="mt-3 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs">
-						<div className="font-medium text-foreground">Miljöpåverkan (estimat)</div>
-						<div className="mt-1 text-muted-foreground">
-							Tokens: {impact.totalTokens}
-						</div>
-						<div className="mt-1 text-foreground">
-							Energi: {formatEstimate(impact.energyWh)} Wh
-							<span className="text-muted-foreground">
-								{" "}
-								(≈ 10 W LED i {formatEstimate(impact.ledMinutes)} min)
-							</span>
-						</div>
-						<div className="mt-1 text-foreground">
-							CO₂e: {formatEstimate(impact.co2g)} g
-							<span className="text-muted-foreground"> (antagande 0,1 g/1k tokens)</span>
-						</div>
-						<div className="mt-2 text-[10px] text-muted-foreground">
-							Elmix: ren 10–50 g/kWh → {formatEstimate(impact.co2Ranges.clean[0])}–
-							{formatEstimate(impact.co2Ranges.clean[1])} g · mix 100–300 g/kWh →{" "}
-							{formatEstimate(impact.co2Ranges.avg[0])}–
-							{formatEstimate(impact.co2Ranges.avg[1])} g · kol 600–900 g/kWh →{" "}
-							{formatEstimate(impact.co2Ranges.dirty[0])}–
-							{formatEstimate(impact.co2Ranges.dirty[1])} g
-						</div>
-						<div className="mt-1 text-[10px] text-muted-foreground">
-							Antagande: 0,2 Wh per 1 000 tokens.
-						</div>
+					<div className="mt-2 flex flex-wrap gap-2">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Badge variant="secondary" className="text-[10px]">
+									CO₂e {impact.isEstimated ? "≈" : ""}
+									{formatEstimate(impact.co2g)} g
+								</Badge>
+							</TooltipTrigger>
+							<TooltipContent>
+								<p className="text-xs">
+									Antagande: 0,1 g CO₂e per 1 000 tokens. Elmix: ren 10–50 g/kWh →{" "}
+									{formatEstimate(impact.co2Ranges.clean[0])}–
+									{formatEstimate(impact.co2Ranges.clean[1])} g · mix 100–300 g/kWh →{" "}
+									{formatEstimate(impact.co2Ranges.avg[0])}–
+									{formatEstimate(impact.co2Ranges.avg[1])} g · kol 600–900 g/kWh →{" "}
+									{formatEstimate(impact.co2Ranges.dirty[0])}–
+									{formatEstimate(impact.co2Ranges.dirty[1])} g
+								</p>
+							</TooltipContent>
+						</Tooltip>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Badge variant="secondary" className="text-[10px]">
+									Energi {impact.isEstimated ? "≈" : ""}
+									{formatEstimate(impact.energyWh)} Wh
+								</Badge>
+							</TooltipTrigger>
+							<TooltipContent>
+								<p className="text-xs">
+									Antagande: 0,2 Wh per 1 000 tokens (≈ 10 W LED i{" "}
+									{formatEstimate(impact.ledMinutes)} min).
+								</p>
+							</TooltipContent>
+						</Tooltip>
 					</div>
 				)}
 
