@@ -88,6 +88,56 @@ function formatUsage(usage?: ExternalModelResult["usage"] | null): string {
 	return "";
 }
 
+const ENERGY_WH_PER_1K_TOKENS = 0.2;
+const CO2G_PER_1K_TOKENS = 0.1;
+
+function formatEstimate(value: number, digits = 2): string {
+	if (!Number.isFinite(value)) return "";
+	if (value === 0) return "0";
+	if (value < 0.01) return value.toFixed(3);
+	if (value < 1) return value.toFixed(2);
+	return value.toFixed(digits);
+}
+
+function resolveTotalTokens(usage?: ExternalModelResult["usage"] | null): number | null {
+	if (!usage) return null;
+	if (typeof usage.total_tokens === "number") return usage.total_tokens;
+	const prompt = typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0;
+	const completion =
+		typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0;
+	const total = prompt + completion;
+	return total > 0 ? total : null;
+}
+
+function estimateImpact(usage?: ExternalModelResult["usage"] | null) {
+	const totalTokens = resolveTotalTokens(usage);
+	if (!totalTokens) return null;
+
+	const energyWh = (totalTokens / 1000) * ENERGY_WH_PER_1K_TOKENS;
+	const co2g = (totalTokens / 1000) * CO2G_PER_1K_TOKENS;
+	const ledMinutes = (energyWh / 10) * 60;
+	const kwh = energyWh / 1000;
+
+	const cleanMin = kwh * 10;
+	const cleanMax = kwh * 50;
+	const avgMin = kwh * 100;
+	const avgMax = kwh * 300;
+	const dirtyMin = kwh * 600;
+	const dirtyMax = kwh * 900;
+
+	return {
+		totalTokens,
+		energyWh,
+		co2g,
+		ledMinutes,
+		co2Ranges: {
+			clean: [cleanMin, cleanMax] as [number, number],
+			avg: [avgMin, avgMax] as [number, number],
+			dirty: [dirtyMin, dirtyMax] as [number, number],
+		},
+	};
+}
+
 function resolveSummary(result?: ExternalModelResult | null): string {
 	if (!result) return "";
 	if (result.summary) return result.summary;
@@ -194,6 +244,7 @@ function ModelCard({
 	const source = result.source || result.provider || "External model";
 	const latency = formatLatency(result.latency_ms);
 	const usage = formatUsage(result.usage);
+	const impact = estimateImpact(result.usage);
 	const rawResponse = result.response || "";
 	const hasFullResponse = typeof rawResponse === "string" && rawResponse.trim().length > 0;
 	const showExpand = hasFullResponse;
@@ -227,6 +278,37 @@ function ModelCard({
 						</div>
 					)}
 				</div>
+
+				{impact && (
+					<div className="mt-3 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs">
+						<div className="font-medium text-foreground">Miljöpåverkan (estimat)</div>
+						<div className="mt-1 text-muted-foreground">
+							Tokens: {impact.totalTokens}
+						</div>
+						<div className="mt-1 text-foreground">
+							Energi: {formatEstimate(impact.energyWh)} Wh
+							<span className="text-muted-foreground">
+								{" "}
+								(≈ 10 W LED i {formatEstimate(impact.ledMinutes)} min)
+							</span>
+						</div>
+						<div className="mt-1 text-foreground">
+							CO₂e: {formatEstimate(impact.co2g)} g
+							<span className="text-muted-foreground"> (antagande 0,1 g/1k tokens)</span>
+						</div>
+						<div className="mt-2 text-[10px] text-muted-foreground">
+							Elmix: ren 10–50 g/kWh → {formatEstimate(impact.co2Ranges.clean[0])}–
+							{formatEstimate(impact.co2Ranges.clean[1])} g · mix 100–300 g/kWh →{" "}
+							{formatEstimate(impact.co2Ranges.avg[0])}–
+							{formatEstimate(impact.co2Ranges.avg[1])} g · kol 600–900 g/kWh →{" "}
+							{formatEstimate(impact.co2Ranges.dirty[0])}–
+							{formatEstimate(impact.co2Ranges.dirty[1])} g
+						</div>
+						<div className="mt-1 text-[10px] text-muted-foreground">
+							Antagande: 0,2 Wh per 1 000 tokens.
+						</div>
+					</div>
+				)}
 
 				{showExpand && (
 					<Collapsible open={open} onOpenChange={setOpen}>

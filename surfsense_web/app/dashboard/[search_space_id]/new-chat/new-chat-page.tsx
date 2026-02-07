@@ -145,6 +145,26 @@ function buildChatTitle(rawQuery: string): string {
 	return `${candidate.slice(0, maxLength).trimEnd()}...`;
 }
 
+const GREETING_REGEX =
+	/^(hej|hejsan|hallå|tjena|tja|tjo|hi|hello|hey|yo|hola|bonjour|ciao|guten tag|god morgon|god kväll)\b/i;
+
+function isLowSignalTitle(title: string | null | undefined, lastAutoTitle?: string | null): boolean {
+	if (!title) return true;
+	const normalized = title.trim().toLowerCase();
+	if (!normalized) return true;
+	if (normalized === "new chat" || normalized === "ny chatt" || normalized === "chat") return true;
+	if (normalized.length <= 4) return true;
+	if (GREETING_REGEX.test(normalized)) return true;
+	if (lastAutoTitle && title.trim() === lastAutoTitle) return true;
+	return false;
+}
+
+function isGreetingQuery(query: string): boolean {
+	const cleaned = query.replace(/\s+/g, " ").trim();
+	if (!cleaned) return false;
+	return cleaned.length <= 12 && GREETING_REGEX.test(cleaned);
+}
+
 /**
  * Tools that should render custom UI in the chat.
  */
@@ -184,6 +204,7 @@ export default function NewChatPage() {
 	const [isInitializing, setIsInitializing] = useState(true);
 	const [threadId, setThreadId] = useState<number | null>(null);
 	const [currentThread, setCurrentThread] = useState<ThreadRecord | null>(null);
+	const lastAutoTitleRef = useRef<string | null>(null);
 	const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
 	const [isRunning, setIsRunning] = useState(false);
 	// Store thinking steps per message ID - kept separate from content to avoid
@@ -667,33 +688,41 @@ export default function NewChatPage() {
 				}
 			}
 
+			const userMessageCount = messages.filter((msg) => msg.role === "user").length;
+			const nextUserMessageCount = userMessageCount + 1;
+			const currentTitle = currentThread?.title ?? "";
+			const isLowSignal = isLowSignalTitle(currentTitle, lastAutoTitleRef.current);
+			const candidateTitle = buildChatTitle(userQuery);
 			const shouldAutoRename =
-				(isNewThread || (currentThread?.title ?? "").trim() === "New Chat") &&
-				messages.length === 0;
+				!isPublicChat &&
+				!!candidateTitle &&
+				(!isGreetingQuery(userQuery) || isLowSignal) &&
+				(isNewThread ||
+					isLowSignal ||
+					(lastAutoTitleRef.current && currentTitle.trim() === lastAutoTitleRef.current)) &&
+				nextUserMessageCount <= 6;
 
 			if (shouldAutoRename) {
-				const autoTitle = buildChatTitle(userQuery);
-				if (autoTitle) {
-					updateThread(currentThreadId, { title: autoTitle })
-						.then((updated) => {
-							setCurrentThread(updated);
-							queryClient.invalidateQueries({
-								queryKey: ["threads", String(searchSpaceId)],
-							});
-							queryClient.invalidateQueries({
-								queryKey: ["all-threads", String(searchSpaceId)],
-							});
-							queryClient.invalidateQueries({
-								queryKey: ["search-threads", String(searchSpaceId)],
-							});
-							queryClient.invalidateQueries({
-								queryKey: ["threads", "detail", currentThreadId],
-							});
-						})
-						.catch((error) =>
-							console.error("[NewChatPage] Failed to auto-rename thread:", error)
-						);
-				}
+				updateThread(currentThreadId, { title: candidateTitle })
+					.then((updated) => {
+						setCurrentThread(updated);
+						lastAutoTitleRef.current = candidateTitle;
+						queryClient.invalidateQueries({
+							queryKey: ["threads", String(searchSpaceId)],
+						});
+						queryClient.invalidateQueries({
+							queryKey: ["all-threads", String(searchSpaceId)],
+						});
+						queryClient.invalidateQueries({
+							queryKey: ["search-threads", String(searchSpaceId)],
+						});
+						queryClient.invalidateQueries({
+							queryKey: ["threads", "detail", currentThreadId],
+						});
+					})
+					.catch((error) =>
+						console.error("[NewChatPage] Failed to auto-rename thread:", error)
+					);
 			}
 
 			// Add user message to state
