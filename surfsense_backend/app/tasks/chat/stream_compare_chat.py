@@ -220,6 +220,25 @@ def _normalize_citations(text: str, valid_chunk_ids: set[str]) -> str:
     return pattern.sub(replace_match, text)
 
 
+def _filter_invalid_citations(text: str, valid_chunk_ids: set[str]) -> str:
+    if not text:
+        return text
+
+    pattern = re.compile(r"\[citation:([^\]]+)\]")
+
+    def replace_match(match: re.Match) -> str:
+        token = match.group(1).strip()
+        if not token:
+            return ""
+        parts = [p.strip() for p in token.split(",") if p.strip()]
+        valid_parts = [p for p in parts if p in valid_chunk_ids]
+        if not valid_parts:
+            return ""
+        return ", ".join([f"[citation:{part}]" for part in valid_parts])
+
+    return pattern.sub(replace_match, text)
+
+
 async def _ingest_compare_outputs(
     connector_service: ConnectorService,
     provider_results: dict[str, dict],
@@ -971,6 +990,7 @@ async def stream_compare_chat(
             final_answer = "I could not generate a response."
         else:
             final_answer = _normalize_citations(final_answer, valid_chunk_ids)
+            final_answer = _filter_invalid_citations(final_answer, valid_chunk_ids)
 
         try:
             await connector_service.ingest_tool_output(
