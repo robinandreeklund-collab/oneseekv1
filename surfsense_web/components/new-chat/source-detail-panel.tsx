@@ -5,10 +5,9 @@ import { BookOpen, ChevronDown, ExternalLink, FileText, Hash, Sparkles, X } from
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useTranslations } from "next-intl";
 import type React from "react";
-import { forwardRef, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MarkdownViewer } from "@/components/markdown-viewer";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -43,67 +42,6 @@ const formatDocumentType = (type: string) => {
 		.join(" ");
 };
 
-// Chunk card component
-// For large documents (>30 chunks), we disable animation to prevent layout shifts
-// which break auto-scroll functionality
-interface ChunkCardProps {
-	chunk: { id: number; content: string };
-	index: number;
-	totalChunks: number;
-	isCited: boolean;
-	isActive: boolean;
-	disableLayoutAnimation?: boolean;
-}
-
-const ChunkCard = forwardRef<HTMLDivElement, ChunkCardProps>(
-	({ chunk, index, totalChunks, isCited }, ref) => {
-		return (
-			<div
-				ref={ref}
-				data-chunk-index={index}
-				className={cn(
-					"group relative rounded-2xl border-2 transition-all duration-300",
-					isCited
-						? "bg-linear-to-br from-primary/5 via-primary/10 to-primary/5 border-primary shadow-lg shadow-primary/10"
-						: "bg-card border-border/50 hover:border-border hover:shadow-md"
-				)}
-			>
-				{/* Cited indicator glow effect */}
-				{isCited && <div className="absolute inset-0 rounded-2xl bg-primary/5 blur-xl -z-10" />}
-
-				{/* Header */}
-				<div className="flex items-center justify-between px-5 py-4 border-b border-border/50">
-					<div className="flex items-center gap-3">
-						<div
-							className={cn(
-								"flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold transition-colors",
-								isCited
-									? "bg-primary text-primary-foreground"
-									: "bg-muted text-muted-foreground group-hover:bg-muted/80"
-							)}
-						>
-							{index + 1}
-						</div>
-						<span className="text-sm text-muted-foreground">av {totalChunks} delar</span>
-					</div>
-					{isCited && (
-						<Badge variant="default" className="gap-1.5 px-3 py-1">
-							<Sparkles className="h-3 w-3" />
-							Citerad källa
-						</Badge>
-					)}
-				</div>
-
-				{/* Content */}
-				<div className="p-5 overflow-hidden">
-					<MarkdownViewer content={chunk.content} />
-				</div>
-			</div>
-		);
-	}
-);
-ChunkCard.displayName = "ChunkCard";
-
 export function SourceDetailPanel({
 	open,
 	onOpenChange,
@@ -119,7 +57,6 @@ export function SourceDetailPanel({
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const hasScrolledRef = useRef(false); // Use ref to avoid stale closures
 	const [summaryOpen, setSummaryOpen] = useState(false);
-	const [activeChunkIndex, setActiveChunkIndex] = useState<number | null>(null);
 	const [mounted, setMounted] = useState(false);
 	const [_hasScrolledToCited, setHasScrolledToCited] = useState(false);
 	const shouldReduceMotion = useReducedMotion();
@@ -186,7 +123,6 @@ export function SourceDetailPanel({
 				behavior: smooth && !shouldReduceMotion ? "smooth" : "auto",
 			});
 
-			setActiveChunkIndex(chunkIndex);
 		},
 		[shouldReduceMotion]
 	);
@@ -239,7 +175,6 @@ export function SourceDetailPanel({
 				setTimeout(
 					() => {
 						setHasScrolledToCited(true);
-						setActiveChunkIndex(citedChunkIndex);
 					},
 					scrollAttempts[scrollAttempts.length - 1] + 50
 				);
@@ -253,7 +188,6 @@ export function SourceDetailPanel({
 		if (!open) {
 			hasScrolledRef.current = false;
 			setHasScrolledToCited(false);
-			setActiveChunkIndex(null);
 		}
 	}, [open]);
 
@@ -449,51 +383,6 @@ export function SourceDetailPanel({
 						{/* API-fetched document content */}
 						{!isDirectRenderSource && documentData && (
 							<div className="flex-1 flex overflow-hidden">
-								{/* Chunk Navigation Sidebar */}
-								{documentData.chunks.length > 1 && (
-									<motion.div
-										initial={{ opacity: 0, x: -20 }}
-										animate={{ opacity: 1, x: 0 }}
-										transition={{ delay: 0.2 }}
-										className="hidden lg:flex flex-col w-16 border-r bg-muted/10 overflow-hidden"
-									>
-										<ScrollArea className="flex-1 h-full">
-											<div className="p-2 pt-3 flex flex-col gap-1.5">
-												{documentData.chunks.map((chunk, idx) => {
-													const isCited = chunk.id === chunkId;
-													const isActive = activeChunkIndex === idx;
-													return (
-														<motion.button
-															key={chunk.id}
-															type="button"
-															onClick={() => scrollToChunk(idx)}
-															initial={{ opacity: 0, scale: 0.8 }}
-															animate={{ opacity: 1, scale: 1 }}
-															transition={{ delay: Math.min(idx * 0.02, 0.2) }}
-															className={cn(
-																"relative w-11 h-9 mx-auto rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-center",
-																isCited
-																	? "bg-primary text-primary-foreground shadow-md"
-																	: isActive
-																		? "bg-muted text-foreground"
-																		: "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
-															)}
-															title={isCited ? `Del ${idx + 1} (citerad)` : `Del ${idx + 1}`}
-														>
-															{idx + 1}
-															{isCited && (
-																<span className="absolute -top-1.5 -right-1.5 flex items-center justify-center w-4 h-4 bg-primary rounded-full border-2 border-background shadow-sm">
-																	<Sparkles className="h-2.5 w-2.5 text-primary-foreground" />
-																</span>
-															)}
-														</motion.button>
-													);
-												})}
-											</div>
-										</ScrollArea>
-									</motion.div>
-								)}
-
 								{/* Main Content */}
 								<ScrollArea className="flex-1" ref={scrollAreaRef}>
 									<div className="p-6 lg:p-8 max-w-4xl mx-auto space-y-6">
@@ -557,42 +446,52 @@ export function SourceDetailPanel({
 											</motion.div>
 										)}
 
-										{/* Chunks Header */}
-										<div className="flex items-center justify-between pt-4">
-											<h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
-												<Hash className="h-4 w-4" />
-												Innehållsdelar
-											</h3>
-											{citedChunkIndex !== -1 && (
-												<Button
-													variant="ghost"
-													size="sm"
-													onClick={() => scrollToChunk(citedChunkIndex)}
-													className="gap-2 text-primary hover:text-primary"
-												>
-													<Sparkles className="h-3.5 w-3.5" />
-													Hoppa till citerad del
-												</Button>
-											)}
-										</div>
-
-										{/* Chunks */}
-										<div className="space-y-4">
-											{documentData.chunks.map((chunk, idx) => {
-												const isCited = chunk.id === chunkId;
-												return (
-													<ChunkCard
-														key={chunk.id}
-														ref={isCited ? citedChunkRefCallback : undefined}
-														chunk={chunk}
-														index={idx}
-														totalChunks={documentData.chunks.length}
-														isCited={isCited}
-														isActive={activeChunkIndex === idx}
-														disableLayoutAnimation={documentData.chunks.length > 30}
-													/>
-												);
-											})}
+										<div className="rounded-2xl border bg-muted/10">
+											<div className="flex items-center justify-between px-5 py-4 border-b border-border/50">
+												<h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+													<Hash className="h-4 w-4" />
+													Fulltext
+												</h3>
+												{citedChunkIndex !== -1 && (
+													<Button
+														variant="ghost"
+														size="sm"
+														onClick={() => scrollToChunk(citedChunkIndex)}
+														className="gap-2 text-primary hover:text-primary"
+													>
+														<Sparkles className="h-3.5 w-3.5" />
+														Hoppa till citerad del
+													</Button>
+												)}
+											</div>
+											<div className="p-5 space-y-4">
+												{documentData.chunks.map((chunk, idx) => {
+													const isCited = chunk.id === chunkId;
+													return (
+														<div
+															key={chunk.id}
+															ref={isCited ? citedChunkRefCallback : undefined}
+															data-chunk-index={idx}
+															className={cn(
+																"rounded-xl border transition-colors",
+																isCited
+																	? "border-yellow-300/60 bg-yellow-100/70 shadow-md shadow-yellow-200/30 dark:bg-yellow-900/20 dark:border-yellow-700/40"
+																	: "border-transparent"
+															)}
+														>
+															{isCited && (
+																<div className="flex items-center gap-2 px-4 pt-4 text-xs font-semibold text-yellow-900 dark:text-yellow-100">
+																	<Sparkles className="h-3.5 w-3.5" />
+																	Citerad del
+																</div>
+															)}
+															<div className="px-4 pb-4 pt-3">
+																<MarkdownViewer content={chunk.content} />
+															</div>
+														</div>
+													);
+												})}
+											</div>
 										</div>
 									</div>
 								</ScrollArea>
