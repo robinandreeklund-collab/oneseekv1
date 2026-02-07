@@ -43,6 +43,10 @@ from app.tasks.chat.context_formatters import (
     format_mentioned_documents_as_context,
     format_mentioned_surfsense_docs_as_context,
 )
+from app.utils.context_metrics import (
+    estimate_tokens_from_text,
+    serialize_context_payload,
+)
 
 COMPARE_PREFIX = "/compare"
 COMPARE_TIMEOUT_SECONDS = 90
@@ -127,6 +131,26 @@ def _truncate_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "..."
+
+
+def _estimate_documents_chars(documents: list[dict[str, Any]]) -> int:
+    total_chars = 0
+    for doc in documents:
+        if not isinstance(doc, dict):
+            continue
+        content = doc.get("content")
+        if isinstance(content, str):
+            total_chars += len(content)
+            continue
+        chunks = doc.get("chunks")
+        if isinstance(chunks, list):
+            for chunk in chunks:
+                if not isinstance(chunk, dict):
+                    continue
+                chunk_content = chunk.get("content")
+                if isinstance(chunk_content, str):
+                    total_chars += len(chunk_content)
+    return total_chars
 
 
 def _build_compare_summary(
@@ -298,7 +322,7 @@ async def _build_query_with_context(
     attachments: list[ChatAttachment] | None,
     mentioned_document_ids: list[int] | None,
     mentioned_surfsense_doc_ids: list[int] | None,
-) -> str:
+) -> tuple[str, dict[str, object]]:
     mentioned_documents: list[Document] = []
     if mentioned_document_ids:
         result = await session.execute(
@@ -321,20 +345,50 @@ async def _build_query_with_context(
         mentioned_surfsense_docs = list(result.scalars().all())
 
     context_parts: list[str] = []
+    attachments_context = ""
+    mentioned_documents_context = ""
+    mentioned_surfsense_context = ""
     if attachments:
-        context_parts.append(format_attachments_as_context(attachments))
+        attachments_context = format_attachments_as_context(attachments)
+        if attachments_context:
+            context_parts.append(attachments_context)
     if mentioned_documents:
-        context_parts.append(format_mentioned_documents_as_context(mentioned_documents))
-    if mentioned_surfsense_docs:
-        context_parts.append(
-            format_mentioned_surfsense_docs_as_context(mentioned_surfsense_docs)
+        mentioned_documents_context = format_mentioned_documents_as_context(
+            mentioned_documents
         )
+        if mentioned_documents_context:
+            context_parts.append(mentioned_documents_context)
+    if mentioned_surfsense_docs:
+        mentioned_surfsense_context = format_mentioned_surfsense_docs_as_context(
+            mentioned_surfsense_docs
+        )
+        if mentioned_surfsense_context:
+            context_parts.append(mentioned_surfsense_context)
 
+    final_query = user_query
     if context_parts:
         context = "\n\n".join(context_parts)
-        return f"{context}\n\n<user_query>{user_query}</user_query>"
+        final_query = f"{context}\n\n<user_query>{user_query}</user_query>"
 
-    return user_query
+    base_tokens = estimate_tokens_from_text(user_query)
+    total_tokens = estimate_tokens_from_text(final_query)
+    context_stats: dict[str, object] = {
+        "base_chars": len(user_query),
+        "base_tokens": base_tokens,
+        "context_chars": max(0, len(final_query) - len(user_query)),
+        "context_tokens": max(0, total_tokens - base_tokens),
+        "tool_chars": 0,
+        "tool_tokens": 0,
+        "total_chars": len(final_query),
+        "total_tokens": total_tokens,
+        "breakdown": {
+            "attachments_chars": len(attachments_context),
+            "mentioned_docs_chars": len(mentioned_documents_context),
+            "mentioned_surfsense_docs_chars": len(mentioned_surfsense_context),
+        },
+    }
+
+    return final_query, context_stats
 
 
 async def stream_compare_chat(
@@ -371,7 +425,7 @@ async def stream_compare_chat(
         except Exception as exc:
             print(f"[compare] Failed to mark history bootstrap: {exc!s}")
 
-        query_with_context = await _build_query_with_context(
+        query_with_context, context_stats = await _build_query_with_context(
             user_query=compare_query,
             session=session,
             search_space_id=search_space_id,
@@ -386,6 +440,24 @@ async def stream_compare_chat(
 
         yield streaming_service.format_message_start()
         yield streaming_service.format_start_step()
+        yield streaming_service.format_data(
+            "context-stats",
+            {
+                "phase": "initial",
+                "label": "Initial context",
+                "delta_chars": context_stats.get("context_chars", 0),
+                "delta_tokens": context_stats.get("context_tokens", 0),
+                "total_chars": context_stats.get("total_chars", 0),
+                "total_tokens": context_stats.get("total_tokens", 0),
+                "base_chars": context_stats.get("base_chars", 0),
+                "base_tokens": context_stats.get("base_tokens", 0),
+                "context_chars": context_stats.get("context_chars", 0),
+                "context_tokens": context_stats.get("context_tokens", 0),
+                "tool_chars": context_stats.get("tool_chars", 0),
+                "tool_tokens": context_stats.get("tool_tokens", 0),
+                "breakdown": context_stats.get("breakdown", {}),
+            },
+        )
 
         short_query = _truncate_text(compare_query, 80)
 
@@ -561,6 +633,40 @@ async def stream_compare_chat(
                                 COMPARE_SUMMARY_ANSWER_CHARS,
                             ),
                         }
+                        delta_chars = len(response_text)
+                        if delta_chars > 0:
+                            delta_tokens = estimate_tokens_from_text(response_text)
+                            context_stats["tool_chars"] = (
+                                int(context_stats.get("tool_chars", 0)) + delta_chars
+                            )
+                            context_stats["tool_tokens"] = (
+                                int(context_stats.get("tool_tokens", 0)) + delta_tokens
+                            )
+                            context_stats["total_chars"] = (
+                                int(context_stats.get("total_chars", 0)) + delta_chars
+                            )
+                            context_stats["total_tokens"] = (
+                                int(context_stats.get("total_tokens", 0)) + delta_tokens
+                            )
+                            yield streaming_service.format_data(
+                                "context-stats",
+                                {
+                                    "phase": "model",
+                                    "label": f"Model: {spec.display}",
+                                    "delta_chars": delta_chars,
+                                    "delta_tokens": delta_tokens,
+                                    "total_chars": context_stats.get("total_chars", 0),
+                                    "total_tokens": context_stats.get("total_tokens", 0),
+                                    "base_chars": context_stats.get("base_chars", 0),
+                                    "base_tokens": context_stats.get("base_tokens", 0),
+                                    "context_chars": context_stats.get("context_chars", 0),
+                                    "context_tokens": context_stats.get(
+                                        "context_tokens", 0
+                                    ),
+                                    "tool_chars": context_stats.get("tool_chars", 0),
+                                    "tool_tokens": context_stats.get("tool_tokens", 0),
+                                },
+                            )
                         completed_items = [
                             *base_items,
                             f"Response length: {len(response_text)} chars",
@@ -614,6 +720,40 @@ async def stream_compare_chat(
             top_k=MAX_TAVILY_RESULTS,
             user_id=user_id,
         )
+        tavily_chars = _estimate_documents_chars(tavily_documents)
+        if tavily_chars <= 0:
+            tavily_chars = len(serialize_context_payload(tavily_documents))
+        if tavily_chars > 0:
+            tavily_tokens = max(1, (tavily_chars + 3) // 4)
+            context_stats["tool_chars"] = (
+                int(context_stats.get("tool_chars", 0)) + tavily_chars
+            )
+            context_stats["tool_tokens"] = (
+                int(context_stats.get("tool_tokens", 0)) + tavily_tokens
+            )
+            context_stats["total_chars"] = (
+                int(context_stats.get("total_chars", 0)) + tavily_chars
+            )
+            context_stats["total_tokens"] = (
+                int(context_stats.get("total_tokens", 0)) + tavily_tokens
+            )
+            yield streaming_service.format_data(
+                "context-stats",
+                {
+                    "phase": "source",
+                    "label": "Tavily results",
+                    "delta_chars": tavily_chars,
+                    "delta_tokens": tavily_tokens,
+                    "total_chars": context_stats.get("total_chars", 0),
+                    "total_tokens": context_stats.get("total_tokens", 0),
+                    "base_chars": context_stats.get("base_chars", 0),
+                    "base_tokens": context_stats.get("base_tokens", 0),
+                    "context_chars": context_stats.get("context_chars", 0),
+                    "context_tokens": context_stats.get("context_tokens", 0),
+                    "tool_chars": context_stats.get("tool_chars", 0),
+                    "tool_tokens": context_stats.get("tool_tokens", 0),
+                },
+            )
         tavily_count = len(tavily_documents)
         yield streaming_service.format_thinking_step(
             step_id=tavily_step_id,
@@ -866,6 +1006,38 @@ async def stream_compare_chat(
                 "status": "success",
                 "answer": _truncate_text(oneseek_text, COMPARE_SUMMARY_ANSWER_CHARS),
             }
+            delta_chars = len(oneseek_text)
+            if delta_chars > 0:
+                delta_tokens = estimate_tokens_from_text(oneseek_text)
+                context_stats["tool_chars"] = (
+                    int(context_stats.get("tool_chars", 0)) + delta_chars
+                )
+                context_stats["tool_tokens"] = (
+                    int(context_stats.get("tool_tokens", 0)) + delta_tokens
+                )
+                context_stats["total_chars"] = (
+                    int(context_stats.get("total_chars", 0)) + delta_chars
+                )
+                context_stats["total_tokens"] = (
+                    int(context_stats.get("total_tokens", 0)) + delta_tokens
+                )
+                yield streaming_service.format_data(
+                    "context-stats",
+                    {
+                        "phase": "model",
+                        "label": "Model: Oneseek",
+                        "delta_chars": delta_chars,
+                        "delta_tokens": delta_tokens,
+                        "total_chars": context_stats.get("total_chars", 0),
+                        "total_tokens": context_stats.get("total_tokens", 0),
+                        "base_chars": context_stats.get("base_chars", 0),
+                        "base_tokens": context_stats.get("base_tokens", 0),
+                        "context_chars": context_stats.get("context_chars", 0),
+                        "context_tokens": context_stats.get("context_tokens", 0),
+                        "tool_chars": context_stats.get("tool_chars", 0),
+                        "tool_tokens": context_stats.get("tool_tokens", 0),
+                    },
+                )
             yield streaming_service.format_tool_output_available(
                 local_tool_call_id, provider_results["oneseek"]
             )

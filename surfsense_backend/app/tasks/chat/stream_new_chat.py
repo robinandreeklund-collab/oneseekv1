@@ -42,6 +42,10 @@ from app.tasks.chat.context_formatters import (
     format_mentioned_documents_as_context,
     format_mentioned_surfsense_docs_as_context,
 )
+from app.utils.context_metrics import (
+    estimate_tokens_from_text,
+    serialize_context_payload,
+)
 
 AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (
@@ -370,24 +374,51 @@ async def stream_new_chat(
 
         # Format the user query with context (attachments + mentioned documents + surfsense docs)
         final_query = user_query
-        context_parts = []
+        context_parts: list[str] = []
+        attachments_context = ""
+        mentioned_documents_context = ""
+        mentioned_surfsense_context = ""
 
         if attachments:
-            context_parts.append(format_attachments_as_context(attachments))
+            attachments_context = format_attachments_as_context(attachments)
+            if attachments_context:
+                context_parts.append(attachments_context)
 
         if mentioned_documents:
-            context_parts.append(
-                format_mentioned_documents_as_context(mentioned_documents)
+            mentioned_documents_context = format_mentioned_documents_as_context(
+                mentioned_documents
             )
+            if mentioned_documents_context:
+                context_parts.append(mentioned_documents_context)
 
         if mentioned_surfsense_docs:
-            context_parts.append(
-                format_mentioned_surfsense_docs_as_context(mentioned_surfsense_docs)
+            mentioned_surfsense_context = format_mentioned_surfsense_docs_as_context(
+                mentioned_surfsense_docs
             )
+            if mentioned_surfsense_context:
+                context_parts.append(mentioned_surfsense_context)
 
         if context_parts:
             context = "\n\n".join(context_parts)
             final_query = f"{context}\n\n<user_query>{user_query}</user_query>"
+
+        base_tokens = estimate_tokens_from_text(user_query)
+        total_tokens = estimate_tokens_from_text(final_query)
+        context_stats: dict[str, object] = {
+            "base_chars": len(user_query),
+            "base_tokens": base_tokens,
+            "context_chars": max(0, len(final_query) - len(user_query)),
+            "context_tokens": max(0, total_tokens - base_tokens),
+            "tool_chars": 0,
+            "tool_tokens": 0,
+            "total_chars": len(final_query),
+            "total_tokens": total_tokens,
+            "breakdown": {
+                "attachments_chars": len(attachments_context),
+                "mentioned_docs_chars": len(mentioned_documents_context),
+                "mentioned_surfsense_docs_chars": len(mentioned_surfsense_context),
+            },
+        }
 
         # if messages:
         #     # Convert frontend messages to LangChain format
@@ -421,6 +452,24 @@ async def stream_new_chat(
         # Start the message stream
         yield streaming_service.format_message_start()
         yield streaming_service.format_start_step()
+        yield streaming_service.format_data(
+            "context-stats",
+            {
+                "phase": "initial",
+                "label": "Initial context",
+                "delta_chars": context_stats.get("context_chars", 0),
+                "delta_tokens": context_stats.get("context_tokens", 0),
+                "total_chars": context_stats.get("total_chars", 0),
+                "total_tokens": context_stats.get("total_tokens", 0),
+                "base_chars": context_stats.get("base_chars", 0),
+                "base_tokens": context_stats.get("base_tokens", 0),
+                "context_chars": context_stats.get("context_chars", 0),
+                "context_tokens": context_stats.get("context_tokens", 0),
+                "tool_chars": context_stats.get("tool_chars", 0),
+                "tool_tokens": context_stats.get("tool_tokens", 0),
+                "breakdown": context_stats.get("breakdown", {}),
+            },
+        )
 
         # Reset text tracking for this stream
         accumulated_text = ""
@@ -891,6 +940,43 @@ async def stream_new_chat(
                     }
 
                 tool_call_id = f"call_{run_id[:32]}" if run_id else "call_unknown"
+
+                tool_payload_text = serialize_context_payload(tool_output)
+                if tool_payload_text:
+                    delta_chars = len(tool_payload_text)
+                    if delta_chars > 0:
+                        delta_tokens = estimate_tokens_from_text(tool_payload_text)
+                        context_stats["tool_chars"] = (
+                            int(context_stats.get("tool_chars", 0)) + delta_chars
+                        )
+                        context_stats["tool_tokens"] = (
+                            int(context_stats.get("tool_tokens", 0)) + delta_tokens
+                        )
+                        context_stats["total_chars"] = (
+                            int(context_stats.get("total_chars", 0)) + delta_chars
+                        )
+                        context_stats["total_tokens"] = (
+                            int(context_stats.get("total_tokens", 0)) + delta_tokens
+                        )
+                        yield streaming_service.format_data(
+                            "context-stats",
+                            {
+                                "phase": "tool",
+                                "label": f"Tool: {tool_name.replace('_', ' ')}",
+                                "delta_chars": delta_chars,
+                                "delta_tokens": delta_tokens,
+                                "total_chars": context_stats.get("total_chars", 0),
+                                "total_tokens": context_stats.get("total_tokens", 0),
+                                "base_chars": context_stats.get("base_chars", 0),
+                                "base_tokens": context_stats.get("base_tokens", 0),
+                                "context_chars": context_stats.get("context_chars", 0),
+                                "context_tokens": context_stats.get(
+                                    "context_tokens", 0
+                                ),
+                                "tool_chars": context_stats.get("tool_chars", 0),
+                                "tool_tokens": context_stats.get("tool_tokens", 0),
+                            },
+                        )
 
                 if tool_name in {"smhi_weather", "trafiklab_route"}:
                     try:
