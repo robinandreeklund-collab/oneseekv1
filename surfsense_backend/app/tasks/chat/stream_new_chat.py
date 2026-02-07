@@ -10,6 +10,7 @@ Supports loading LLM configurations from:
 """
 
 import json
+import re
 from collections.abc import AsyncGenerator
 from uuid import UUID
 
@@ -32,6 +33,7 @@ from app.services.chat_session_state_service import (
     clear_ai_responding,
     set_ai_responding,
 )
+from app.agents.new_chat.tools.user_memory import create_save_memory_tool
 from app.services.connector_service import ConnectorService
 from app.services.new_streaming_service import VercelStreamingService
 from app.tasks.chat.stream_compare_chat import is_compare_request, stream_compare_chat
@@ -40,6 +42,112 @@ from app.tasks.chat.context_formatters import (
     format_mentioned_documents_as_context,
     format_mentioned_surfsense_docs_as_context,
 )
+
+AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
+    (
+        re.compile(r"\bmy name is ([A-Z][\w\-]+(?:\s+[A-Z][\w\-]+)*)", re.IGNORECASE),
+        "fact",
+        "User's name is {value}",
+    ),
+    (
+        re.compile(r"\bcall me ([A-Z][\w\-]+(?:\s+[A-Z][\w\-]+)*)", re.IGNORECASE),
+        "fact",
+        "User prefers to be called {value}",
+    ),
+    (
+        re.compile(r"\bI am (\d{1,3}) years old\b", re.IGNORECASE),
+        "fact",
+        "User is {value} years old",
+    ),
+    (
+        re.compile(r"\bI'm (\d{1,3}) years old\b", re.IGNORECASE),
+        "fact",
+        "User is {value} years old",
+    ),
+    (
+        re.compile(r"\bI live in ([A-Za-zÅÄÖåäö\s\-]{2,60})\b", re.IGNORECASE),
+        "fact",
+        "User lives in {value}",
+    ),
+    (
+        re.compile(r"\bI work as ([A-Za-zÅÄÖåäö\s\-]{2,80})\b", re.IGNORECASE),
+        "fact",
+        "User works as {value}",
+    ),
+    (
+        re.compile(r"\bI(?:'m| am) a[n]? ([A-Za-zÅÄÖåäö\s\-]{2,80})\b", re.IGNORECASE),
+        "fact",
+        "User is a {value}",
+    ),
+    (
+        re.compile(r"\bI (?:prefer|like|love) ([^.!?\n]{2,80})", re.IGNORECASE),
+        "preference",
+        "User prefers {value}",
+    ),
+    (
+        re.compile(r"\bjag heter ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)", re.IGNORECASE),
+        "fact",
+        "User's name is {value}",
+    ),
+    (
+        re.compile(r"\bkalla mig ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)", re.IGNORECASE),
+        "fact",
+        "User prefers to be called {value}",
+    ),
+    (
+        re.compile(r"\bjag är (\d{1,3}) år\b", re.IGNORECASE),
+        "fact",
+        "User is {value} years old",
+    ),
+    (
+        re.compile(r"\bjag bor i ([A-Za-zÅÄÖåäö\s\-]{2,60})\b", re.IGNORECASE),
+        "fact",
+        "User lives in {value}",
+    ),
+    (
+        re.compile(r"\bjag (?:jobbar|arbetar) som ([A-Za-zÅÄÖåäö\s\-]{2,80})\b", re.IGNORECASE),
+        "fact",
+        "User works as {value}",
+    ),
+    (
+        re.compile(r"\bjag (?:gillar|föredrar|tycker om) ([^.!?\n]{2,80})", re.IGNORECASE),
+        "preference",
+        "User prefers {value}",
+    ),
+]
+
+
+def _normalize_memory_value(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", value or "").strip()
+    return cleaned.strip(" .,:;")
+
+
+def extract_auto_memories(text: str) -> list[tuple[str, str]]:
+    if not text:
+        return []
+    if len(text) > 400:
+        return []
+
+    memories: list[tuple[str, str]] = []
+    for pattern, category, template in AUTO_MEMORY_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        value = _normalize_memory_value(match.group(1))
+        if not value:
+            continue
+        memories.append((template.format(value=value), category))
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[tuple[str, str]] = []
+    for content, category in memories:
+        if content in seen:
+            continue
+        seen.add(content)
+        unique.append((content, category))
+
+    return unique[:3]
 from app.utils.content_utils import bootstrap_history_from_db
 
 
@@ -114,6 +222,21 @@ async def stream_new_chat(
         if user_id:
             await set_ai_responding(session, chat_id, UUID(user_id))
 
+        # Auto-save user memories from the raw query (best-effort)
+        if user_id and user_query:
+            try:
+                auto_memories = extract_auto_memories(user_query)
+                if auto_memories:
+                    save_memory = create_save_memory_tool(
+                        user_id=user_id,
+                        search_space_id=search_space_id,
+                        db_session=session,
+                    )
+                    for content, category in auto_memories:
+                        await save_memory(content=content, category=category)
+            except Exception as exc:
+                print(f"[auto-memory] Failed to save memories: {exc!s}")
+
         if is_compare_request(user_query):
             async for chunk in stream_compare_chat(
                 user_query=user_query,
@@ -168,7 +291,9 @@ async def stream_new_chat(
             return
 
         # Create connector service
-        connector_service = ConnectorService(session, search_space_id=search_space_id)
+        connector_service = ConnectorService(
+            session, search_space_id=search_space_id, user_id=user_id
+        )
 
         # Get Firecrawl API key from webcrawler connector if configured
         from app.db import SearchSourceConnectorType
@@ -766,6 +891,51 @@ async def stream_new_chat(
                     }
 
                 tool_call_id = f"call_{run_id[:32]}" if run_id else "call_unknown"
+
+                if tool_name in {"smhi_weather", "trafiklab_route"}:
+                    try:
+                        tool_title = None
+                        tool_metadata: dict[str, object] = {}
+                        if isinstance(tool_output, dict):
+                            if tool_name == "smhi_weather":
+                                location = tool_output.get("location", {}) or {}
+                                location_name = (
+                                    location.get("name")
+                                    or location.get("display_name")
+                                    or "location"
+                                )
+                                tool_title = f"SMHI weather: {location_name}"
+                                tool_metadata = {
+                                    "provider": "SMHI",
+                                    "location": location,
+                                    "source": tool_output.get("source", {}),
+                                }
+                            elif tool_name == "trafiklab_route":
+                                origin = (tool_output.get("origin") or {}).get("name")
+                                destination = (tool_output.get("destination") or {}).get("name")
+                                if origin and destination:
+                                    tool_title = f"Trafiklab route: {origin} → {destination}"
+                                tool_metadata = {
+                                    "provider": "Trafiklab",
+                                    "origin": tool_output.get("origin", {}),
+                                    "destination": tool_output.get("destination", {}),
+                                    "departures_count": len(
+                                        tool_output.get("matching_entries")
+                                        or tool_output.get("entries")
+                                        or []
+                                    ),
+                                }
+                        await connector_service.ingest_tool_output(
+                            tool_name=tool_name,
+                            tool_output=tool_output,
+                            title=tool_title,
+                            metadata=tool_metadata,
+                            user_id=user_id,
+                            origin_search_space_id=search_space_id,
+                            thread_id=chat_id,
+                        )
+                    except Exception as exc:
+                        print(f"[tool-output] Failed to ingest {tool_name}: {exc!s}")
 
                 # Get the original tool step ID to update it (not create a new one)
                 original_step_id = tool_step_ids.get(

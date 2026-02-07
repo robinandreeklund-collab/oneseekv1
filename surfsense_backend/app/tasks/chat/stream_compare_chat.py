@@ -220,6 +220,45 @@ def _normalize_citations(text: str, valid_chunk_ids: set[str]) -> str:
     return pattern.sub(replace_match, text)
 
 
+async def _ingest_compare_outputs(
+    connector_service: ConnectorService,
+    provider_results: dict[str, dict],
+    *,
+    user_id: str | None,
+    search_space_id: int,
+    chat_id: int,
+) -> None:
+    for provider_key, result in provider_results.items():
+        if not isinstance(result, dict):
+            continue
+        if result.get("status") != "success":
+            continue
+        response = result.get("response") or ""
+        if not response:
+            continue
+        tool_payload = {
+            "provider_key": provider_key,
+            "provider": result.get("provider"),
+            "model": result.get("model"),
+            "model_display_name": result.get("model_display_name"),
+            "response": response,
+            "latency_ms": result.get("latency_ms"),
+            "source": result.get("source"),
+            "truncated": result.get("truncated"),
+        }
+        display_name = result.get("model_display_name") or provider_key
+        title = f"Compare: {display_name} response"
+        await connector_service.ingest_tool_output(
+            tool_name="compare_model",
+            tool_output=tool_payload,
+            title=title,
+            metadata={"compare_mode": True, "provider_key": provider_key},
+            user_id=user_id,
+            origin_search_space_id=search_space_id,
+            thread_id=chat_id,
+        )
+
+
 async def _build_query_with_context(
     user_query: str,
     session: AsyncSession,
@@ -309,7 +348,9 @@ async def stream_compare_chat(
             mentioned_surfsense_doc_ids=mentioned_surfsense_doc_ids,
         )
 
-        connector_service = ConnectorService(session, search_space_id=search_space_id)
+        connector_service = ConnectorService(
+            session, search_space_id=search_space_id, user_id=user_id
+        )
 
         yield streaming_service.format_message_start()
         yield streaming_service.format_start_step()
@@ -539,6 +580,7 @@ async def stream_compare_chat(
             user_query=compare_query,
             search_space_id=search_space_id,
             top_k=MAX_TAVILY_RESULTS,
+            user_id=user_id,
         )
         tavily_count = len(tavily_documents)
         yield streaming_service.format_thinking_step(
@@ -808,10 +850,22 @@ async def stream_compare_chat(
             items=completed_items,
         )
 
+        try:
+            await _ingest_compare_outputs(
+                connector_service,
+                provider_results,
+                user_id=user_id,
+                search_space_id=search_space_id,
+                chat_id=chat_id,
+            )
+        except Exception as exc:
+            print(f"[compare] Failed to ingest model outputs: {exc!s}")
+
         _, tavily_documents = await connector_service.search_tavily(
             user_query=compare_query,
             search_space_id=search_space_id,
             top_k=MAX_TAVILY_RESULTS,
+            user_id=user_id,
         )
 
         if not answers:
@@ -917,6 +971,23 @@ async def stream_compare_chat(
             final_answer = "I could not generate a response."
         else:
             final_answer = _normalize_citations(final_answer, valid_chunk_ids)
+
+        try:
+            await connector_service.ingest_tool_output(
+                tool_name="compare_summary",
+                tool_output={
+                    "query": compare_query,
+                    "final_answer": final_answer,
+                    "providers": provider_summaries,
+                },
+                title="Compare: synthesized answer",
+                metadata={"compare_mode": True, "type": "summary"},
+                user_id=user_id,
+                origin_search_space_id=search_space_id,
+                thread_id=chat_id,
+            )
+        except Exception as exc:
+            print(f"[compare] Failed to ingest summary: {exc!s}")
 
         analysis_items.append(f"Final answer length: {len(final_answer)} chars")
         yield streaming_service.format_thinking_step(
