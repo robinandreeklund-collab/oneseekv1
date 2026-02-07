@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urljoin
 
@@ -8,16 +8,24 @@ from linkup import LinkupClient
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 from tavily import TavilyClient
 
+from app.config import config
 from app.db import (
     Chunk,
     Document,
+    DocumentType,
     SearchSourceConnector,
     SearchSourceConnectorType,
 )
 from app.retriever.chunks_hybrid_search import ChucksHybridSearchRetriever
 from app.retriever.documents_hybrid_search import DocumentHybridSearchRetriever
+from app.utils.document_converters import (
+    create_document_chunks,
+    generate_content_hash,
+    generate_unique_identifier_hash,
+)
 
 
 class ConnectorService:
@@ -400,6 +408,132 @@ class ConnectorService:
                 sources.append(source)
         return sources
 
+    async def _find_existing_external_document(
+        self,
+        *,
+        search_space_id: int,
+        unique_identifier_hash: str | None,
+        content_hash: str,
+        document_type: DocumentType,
+    ) -> Document | None:
+        base_filters = [
+            Document.search_space_id == search_space_id,
+            Document.document_type == document_type,
+        ]
+        if unique_identifier_hash:
+            result = await self.session.execute(
+                select(Document)
+                .options(selectinload(Document.chunks))
+                .filter(*base_filters, Document.unique_identifier_hash == unique_identifier_hash)
+            )
+            existing = result.scalars().first()
+            if existing:
+                return existing
+
+        result = await self.session.execute(
+            select(Document)
+            .options(selectinload(Document.chunks))
+            .filter(*base_filters, Document.content_hash == content_hash)
+        )
+        return result.scalars().first()
+
+    async def _upsert_external_document(
+        self,
+        *,
+        search_space_id: int,
+        document_type: DocumentType,
+        title: str,
+        content: str,
+        metadata: dict[str, Any],
+        unique_identifier: str | None = None,
+        connector_id: int | None = None,
+    ) -> tuple[Document | None, bool]:
+        normalized_content = (content or "").strip()
+        if not normalized_content:
+            return None, False
+
+        content_hash = generate_content_hash(normalized_content, search_space_id)
+        unique_identifier_hash = (
+            generate_unique_identifier_hash(document_type, unique_identifier, search_space_id)
+            if unique_identifier
+            else None
+        )
+
+        existing_document = await self._find_existing_external_document(
+            search_space_id=search_space_id,
+            unique_identifier_hash=unique_identifier_hash,
+            content_hash=content_hash,
+            document_type=document_type,
+        )
+
+        if existing_document:
+            metadata_changed = (existing_document.document_metadata or {}) != metadata
+            title_changed = existing_document.title != title
+            content_changed = existing_document.content_hash != content_hash
+
+            if not (metadata_changed or title_changed or content_changed):
+                return existing_document, False
+
+            existing_document.title = title
+            existing_document.content = normalized_content
+            existing_document.content_hash = content_hash
+            existing_document.unique_identifier_hash = unique_identifier_hash
+            existing_document.document_metadata = metadata
+            existing_document.embedding = config.embedding_model_instance.embed(
+                normalized_content
+            )
+            existing_document.chunks = await create_document_chunks(normalized_content)
+            existing_document.updated_at = datetime.now(UTC)
+            if connector_id and existing_document.connector_id is None:
+                existing_document.connector_id = connector_id
+            await self.session.flush()
+            return existing_document, True
+
+        embedding = config.embedding_model_instance.embed(normalized_content)
+        chunks = await create_document_chunks(normalized_content)
+        document = Document(
+            search_space_id=search_space_id,
+            title=title,
+            document_type=document_type,
+            document_metadata=metadata,
+            content=normalized_content,
+            embedding=embedding,
+            chunks=chunks,
+            content_hash=content_hash,
+            unique_identifier_hash=unique_identifier_hash,
+            updated_at=datetime.now(UTC),
+            connector_id=connector_id,
+        )
+        self.session.add(document)
+        await self.session.flush()
+        return document, True
+
+    def _serialize_external_document(
+        self,
+        document: Document,
+        *,
+        score: float = 0.0,
+    ) -> dict[str, Any]:
+        sorted_chunks = sorted(
+            document.chunks, key=lambda chunk: chunk.created_at or chunk.id
+        )
+        chunk_payload = [
+            {"chunk_id": chunk.id, "content": chunk.content} for chunk in sorted_chunks
+        ]
+        return {
+            "document_id": document.id,
+            "content": "\n\n".join([chunk["content"] for chunk in chunk_payload]),
+            "score": float(score),
+            "chunks": chunk_payload,
+            "document": {
+                "id": document.id,
+                "title": document.title,
+                "document_type": document.document_type.value,
+                "metadata": document.document_metadata or {},
+            },
+            "source": document.document_type.value,
+        }
+
     async def get_connector_by_type(
         self,
         connector_type: SearchSourceConnectorType,
@@ -475,41 +609,48 @@ class ConnectorService:
                     "sources": [],
                 }, []
 
-            # Process each result and create sources directly without deduplication
-            sources_list = []
-            documents = []
+            documents: list[dict[str, Any]] = []
+            did_write = False
 
-            async with self.counter_lock:
-                for _i, result in enumerate(tavily_results):
-                    # Create a source entry
-                    source = {
-                        "id": self.source_id_counter,
-                        "title": result.get("title", "Tavily Result"),
-                        "description": result.get("content", ""),
-                        "url": result.get("url", ""),
-                    }
-                    sources_list.append(source)
+            for result in tavily_results:
+                content = result.get("content", "") or ""
+                title = result.get("title", "Tavily Result")
+                url = result.get("url", "") or ""
+                metadata = {
+                    "url": url,
+                    "published_date": result.get("published_date", ""),
+                    "source": "TAVILY_API",
+                    "query": user_query,
+                }
 
-                    # Create a document entry
-                    document = {
-                        "chunk_id": self.source_id_counter,
-                        "content": result.get("content", ""),
-                        "score": result.get("score", 0.0),
-                        "document": {
-                            "id": self.source_id_counter,
-                            "title": result.get("title", "Tavily Result"),
-                            "document_type": "TAVILY_API",
-                            "metadata": {
-                                "url": result.get("url", ""),
-                                "published_date": result.get("published_date", ""),
-                                "source": "TAVILY_API",
-                            },
-                        },
-                    }
-                    documents.append(document)
-                    self.source_id_counter += 1
+                document, wrote = await self._upsert_external_document(
+                    search_space_id=search_space_id,
+                    document_type=DocumentType.TAVILY_API,
+                    title=title,
+                    content=content,
+                    metadata=metadata,
+                    unique_identifier=url or title,
+                    connector_id=tavily_connector.id,
+                )
+                if not document:
+                    continue
+                did_write = did_write or wrote
+                documents.append(
+                    self._serialize_external_document(
+                        document, score=float(result.get("score", 0.0))
+                    )
+                )
 
-            # Create result object
+            if did_write:
+                await self.session.commit()
+
+            sources_list = self._build_chunk_sources_from_documents(
+                documents,
+                description_fn=lambda chunk, _doc_info, _metadata: self._chunk_preview(
+                    chunk.get("content", "")
+                ),
+            )
+
             result_object = {
                 "id": 3,
                 "name": "Tavily Search",
@@ -667,43 +808,48 @@ class ConnectorService:
                 "sources": [],
             }, []
 
-        sources_list: list[dict[str, Any]] = []
         documents: list[dict[str, Any]] = []
+        did_write = False
 
-        async with self.counter_lock:
-            for result in searx_results:
-                description = result.get("content") or result.get("snippet") or ""
-                if len(description) > 160:
-                    description = f"{description}"
+        for result in searx_results:
+            description = result.get("content") or result.get("snippet") or ""
+            title = result.get("title", "SearxNG Result")
+            url = result.get("url", "") or ""
+            metadata = {
+                "url": url,
+                "engines": result.get("engines", []),
+                "category": result.get("category"),
+                "source": "SEARXNG_API",
+                "query": user_query,
+            }
 
-                source = {
-                    "id": self.source_id_counter,
-                    "title": result.get("title", "SearxNG Result"),
-                    "description": description,
-                    "url": result.get("url", ""),
-                }
-                sources_list.append(source)
+            document, wrote = await self._upsert_external_document(
+                search_space_id=search_space_id,
+                document_type=DocumentType.SEARXNG_API,
+                title=title,
+                content=description or result.get("content", ""),
+                metadata=metadata,
+                unique_identifier=url or title,
+                connector_id=searx_connector.id,
+            )
+            if not document:
+                continue
+            did_write = did_write or wrote
+            documents.append(
+                self._serialize_external_document(
+                    document, score=float(result.get("score", 0.0))
+                )
+            )
 
-                metadata = {
-                    "url": result.get("url", ""),
-                    "engines": result.get("engines", []),
-                    "category": result.get("category"),
-                    "source": "SEARXNG_API",
-                }
+        if did_write:
+            await self.session.commit()
 
-                document = {
-                    "chunk_id": self.source_id_counter,
-                    "content": description or result.get("content", ""),
-                    "score": result.get("score", 0.0),
-                    "document": {
-                        "id": self.source_id_counter,
-                        "title": result.get("title", "SearxNG Result"),
-                        "document_type": "SEARXNG_API",
-                        "metadata": metadata,
-                    },
-                }
-                documents.append(document)
-                self.source_id_counter += 1
+        sources_list = self._build_chunk_sources_from_documents(
+            documents,
+            description_fn=lambda chunk, _doc_info, _metadata: self._chunk_preview(
+                chunk.get("content", "")
+            ),
+        )
 
         result_object = {
             "id": 11,
@@ -875,59 +1021,53 @@ class ConnectorService:
                 "sources": [],
             }, []
 
-        sources_list: list[dict[str, Any]] = []
         documents: list[dict[str, Any]] = []
+        did_write = False
 
-        async with self.counter_lock:
-            for reference in baidu_references:
-                # Extract basic fields
-                title = reference.get("title", "Baidu Search Result")
-                url = reference.get("url", "")
-                content = reference.get("content", "")
-                date = reference.get("date", "")
-                ref_type = reference.get("type", "web")  # web, image, video
+        for reference in baidu_references:
+            title = reference.get("title", "Baidu Search Result")
+            url = reference.get("url", "") or ""
+            content = reference.get("content", "") or ""
+            date = reference.get("date", "")
+            ref_type = reference.get("type", "web")
 
-                # Create a source entry
-                source = {
-                    "id": self.source_id_counter,
-                    "title": title,
-                    "description": content[:300]
-                    if content
-                    else "",  # Limit description length
-                    "url": url,
-                }
-                sources_list.append(source)
+            metadata = {
+                "url": url,
+                "date": date,
+                "type": ref_type,
+                "source": "BAIDU_SEARCH_API",
+                "web_anchor": reference.get("web_anchor", ""),
+                "website": reference.get("website", ""),
+                "query": user_query,
+            }
+            if ref_type == "image" and reference.get("image"):
+                metadata["image"] = reference["image"]
+            elif ref_type == "video" and reference.get("video"):
+                metadata["video"] = reference["video"]
 
-                # Prepare metadata
-                metadata = {
-                    "url": url,
-                    "date": date,
-                    "type": ref_type,
-                    "source": "BAIDU_SEARCH_API",
-                    "web_anchor": reference.get("web_anchor", ""),
-                    "website": reference.get("website", ""),
-                }
+            document, wrote = await self._upsert_external_document(
+                search_space_id=search_space_id,
+                document_type=DocumentType.BAIDU_SEARCH_API,
+                title=title,
+                content=content,
+                metadata=metadata,
+                unique_identifier=url or title,
+                connector_id=baidu_connector.id,
+            )
+            if not document:
+                continue
+            did_write = did_write or wrote
+            documents.append(self._serialize_external_document(document, score=1.0))
 
-                # Add type-specific metadata
-                if ref_type == "image" and reference.get("image"):
-                    metadata["image"] = reference["image"]
-                elif ref_type == "video" and reference.get("video"):
-                    metadata["video"] = reference["video"]
+        if did_write:
+            await self.session.commit()
 
-                # Create a document entry
-                document = {
-                    "chunk_id": self.source_id_counter,
-                    "content": content,
-                    "score": 1.0,  # Baidu doesn't provide relevance scores
-                    "document": {
-                        "id": self.source_id_counter,
-                        "title": title,
-                        "document_type": "BAIDU_SEARCH_API",
-                        "metadata": metadata,
-                    },
-                }
-                documents.append(document)
-                self.source_id_counter += 1
+        sources_list = self._build_chunk_sources_from_documents(
+            documents,
+            description_fn=lambda chunk, _doc_info, _metadata: self._chunk_preview(
+                chunk.get("content", "")
+            ),
+        )
 
         result_object = {
             "id": 12,
@@ -2128,53 +2268,47 @@ class ConnectorService:
                     "sources": [],
                 }, []
 
-            # Process each result and create sources directly without deduplication
-            sources_list = []
-            documents = []
+            documents: list[dict[str, Any]] = []
+            did_write = False
 
-            async with self.counter_lock:
-                for _i, result in enumerate(linkup_results):
-                    # Only process results that have content
-                    if not hasattr(result, "content") or not result.content:
-                        continue
+            for result in linkup_results:
+                if not hasattr(result, "content") or not result.content:
+                    continue
 
-                    # Create a source entry
-                    source = {
-                        "id": self.source_id_counter,
-                        "title": (
-                            result.name if hasattr(result, "name") else "Linkup Result"
-                        ),
-                        "description": (
-                            result.content if hasattr(result, "content") else ""
-                        ),
-                        "url": result.url if hasattr(result, "url") else "",
-                    }
-                    sources_list.append(source)
+                title = result.name if hasattr(result, "name") else "Linkup Result"
+                url = result.url if hasattr(result, "url") else ""
+                content = result.content if hasattr(result, "content") else ""
+                metadata = {
+                    "url": url,
+                    "type": result.type if hasattr(result, "type") else "",
+                    "source": "LINKUP_API",
+                    "query": user_query,
+                }
 
-                    # Create a document entry
-                    document = {
-                        "chunk_id": self.source_id_counter,
-                        "content": result.content if hasattr(result, "content") else "",
-                        "score": 1.0,  # Default score since not provided by Linkup
-                        "document": {
-                            "id": self.source_id_counter,
-                            "title": (
-                                result.name
-                                if hasattr(result, "name")
-                                else "Linkup Result"
-                            ),
-                            "document_type": "LINKUP_API",
-                            "metadata": {
-                                "url": result.url if hasattr(result, "url") else "",
-                                "type": result.type if hasattr(result, "type") else "",
-                                "source": "LINKUP_API",
-                            },
-                        },
-                    }
-                    documents.append(document)
-                    self.source_id_counter += 1
+                document, wrote = await self._upsert_external_document(
+                    search_space_id=search_space_id,
+                    document_type=DocumentType.LINKUP_API,
+                    title=title,
+                    content=content,
+                    metadata=metadata,
+                    unique_identifier=url or title,
+                    connector_id=linkup_connector.id,
+                )
+                if not document:
+                    continue
+                did_write = did_write or wrote
+                documents.append(self._serialize_external_document(document, score=1.0))
 
-            # Create result object
+            if did_write:
+                await self.session.commit()
+
+            sources_list = self._build_chunk_sources_from_documents(
+                documents,
+                description_fn=lambda chunk, _doc_info, _metadata: self._chunk_preview(
+                    chunk.get("content", "")
+                ),
+            )
+
             result_object = {
                 "id": 10,
                 "name": "Linkup Search",
