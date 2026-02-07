@@ -1,4 +1,6 @@
 import asyncio
+import json
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urljoin
@@ -18,6 +20,10 @@ from app.db import (
     DocumentType,
     SearchSourceConnector,
     SearchSourceConnectorType,
+    SearchSpace,
+    SearchSpaceMembership,
+    SearchSpaceRole,
+    get_default_roles_config,
 )
 from app.retriever.chunks_hybrid_search import ChucksHybridSearchRetriever
 from app.retriever.documents_hybrid_search import DocumentHybridSearchRetriever
@@ -28,12 +34,23 @@ from app.utils.document_converters import (
 )
 
 
+SEARCH_HISTORY_NAME = "Search History"
+SEARCH_HISTORY_DESCRIPTION = "System workspace for external search history"
+TOOL_OUTPUT_MAX_CHARS = 12000
+
+
 class ConnectorService:
-    def __init__(self, session: AsyncSession, search_space_id: int | None = None):
+    def __init__(
+        self,
+        session: AsyncSession,
+        search_space_id: int | None = None,
+        user_id: str | None = None,
+    ):
         self.session = session
         self.chunk_retriever = ChucksHybridSearchRetriever(session)
         self.document_retriever = DocumentHybridSearchRetriever(session)
         self.search_space_id = search_space_id
+        self.user_id = user_id
         self.source_id_counter = (
             100000  # High starting value to avoid collisions with existing IDs
         )
@@ -408,6 +425,86 @@ class ConnectorService:
                 sources.append(source)
         return sources
 
+    async def _get_or_create_search_history_space_id(
+        self, user_id: str | None
+    ) -> int | None:
+        if not user_id:
+            return None
+
+        try:
+            user_id_value = uuid.UUID(str(user_id))
+        except Exception:
+            user_id_value = user_id
+
+        result = await self.session.execute(
+            select(SearchSpace).filter(
+                SearchSpace.user_id == user_id_value,
+                SearchSpace.name == SEARCH_HISTORY_NAME,
+            )
+        )
+        existing = result.scalars().first()
+        if existing:
+            return existing.id
+
+        db_search_space = SearchSpace(
+            name=SEARCH_HISTORY_NAME,
+            description=SEARCH_HISTORY_DESCRIPTION,
+            user_id=user_id_value,
+            citations_enabled=True,
+            qna_custom_instructions="",
+        )
+        self.session.add(db_search_space)
+        await self.session.flush()
+
+        default_roles = get_default_roles_config()
+        owner_role_id = None
+        for role_config in default_roles:
+            db_role = SearchSpaceRole(
+                name=role_config["name"],
+                description=role_config["description"],
+                permissions=role_config["permissions"],
+                is_default=role_config["is_default"],
+                is_system_role=role_config["is_system_role"],
+                search_space_id=db_search_space.id,
+            )
+            self.session.add(db_role)
+            await self.session.flush()
+            if role_config["name"] == "Owner":
+                owner_role_id = db_role.id
+
+        owner_membership = SearchSpaceMembership(
+            user_id=user_id_value,
+            search_space_id=db_search_space.id,
+            role_id=owner_role_id,
+            is_owner=True,
+        )
+        self.session.add(owner_membership)
+        await self.session.flush()
+
+        return db_search_space.id
+
+    async def _resolve_search_history_space_id(
+        self, user_id: str | None
+    ) -> int | None:
+        return await self._get_or_create_search_history_space_id(user_id)
+
+    def _build_tool_output_content(self, tool_output: Any) -> str:
+        if isinstance(tool_output, str):
+            content = tool_output
+        else:
+            try:
+                content = json.dumps(tool_output, ensure_ascii=False, indent=2, default=str)
+            except TypeError:
+                content = str(tool_output)
+
+        if len(content) > TOOL_OUTPUT_MAX_CHARS:
+            content = (
+                content[:TOOL_OUTPUT_MAX_CHARS].rstrip()
+                + "\n\n...[truncated tool output]..."
+            )
+
+        return content.strip()
+
     async def _find_existing_external_document(
         self,
         *,
@@ -534,6 +631,60 @@ class ConnectorService:
             "source": document.document_type.value,
         }
 
+    async def ingest_tool_output(
+        self,
+        *,
+        tool_name: str,
+        tool_output: Any,
+        title: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        origin_search_space_id: int | None = None,
+        thread_id: int | None = None,
+    ) -> Document | None:
+        if not tool_output:
+            return None
+        if isinstance(tool_output, dict) and (
+            tool_output.get("status") == "error" or "error" in tool_output
+        ):
+            return None
+
+        resolved_user_id = user_id or self.user_id
+        history_space_id = await self._resolve_search_history_space_id(resolved_user_id)
+        if not history_space_id:
+            return None
+
+        output_content = self._build_tool_output_content(tool_output)
+        if not output_content:
+            return None
+
+        cleaned_tool = tool_name.replace("_", " ").strip() if tool_name else "tool"
+        title = title or f"{cleaned_tool.title()} output"
+
+        merged_metadata = {
+            "tool_name": tool_name,
+            "source": "TOOL_OUTPUT",
+            "origin_search_space_id": origin_search_space_id or self.search_space_id,
+            "thread_id": thread_id,
+        }
+        if metadata:
+            merged_metadata.update(metadata)
+
+        unique_identifier = f"{tool_name}:{thread_id or 'unknown'}:{uuid.uuid4().hex}"
+
+        document, wrote = await self._upsert_external_document(
+            search_space_id=history_space_id,
+            document_type=DocumentType.TOOL_OUTPUT,
+            title=title,
+            content=output_content,
+            metadata=merged_metadata,
+            unique_identifier=unique_identifier,
+            connector_id=None,
+        )
+        if wrote:
+            await self.session.commit()
+        return document
+
     async def get_connector_by_type(
         self,
         connector_type: SearchSourceConnectorType,
@@ -558,7 +709,11 @@ class ConnectorService:
         return result.scalars().first()
 
     async def search_tavily(
-        self, user_query: str, search_space_id: int, top_k: int = 20
+        self,
+        user_query: str,
+        search_space_id: int,
+        top_k: int = 20,
+        user_id: str | None = None,
     ) -> tuple:
         """
         Search using Tavily API and return both the source information and documents
@@ -588,6 +743,17 @@ class ConnectorService:
         # Initialize Tavily client with API key from connector config
         tavily_api_key = tavily_connector.config.get("TAVILY_API_KEY")
         tavily_client = TavilyClient(api_key=tavily_api_key)
+
+        storage_search_space_id = await self._resolve_search_history_space_id(
+            user_id or self.user_id
+        )
+        if storage_search_space_id is None:
+            storage_search_space_id = search_space_id
+        storage_connector_id = (
+            tavily_connector.id
+            if storage_search_space_id == search_space_id
+            else None
+        )
 
         # Perform search with Tavily
         try:
@@ -621,16 +787,17 @@ class ConnectorService:
                     "published_date": result.get("published_date", ""),
                     "source": "TAVILY_API",
                     "query": user_query,
+                    "origin_search_space_id": search_space_id,
                 }
 
                 document, wrote = await self._upsert_external_document(
-                    search_space_id=search_space_id,
+                    search_space_id=storage_search_space_id,
                     document_type=DocumentType.TAVILY_API,
                     title=title,
                     content=content,
                     metadata=metadata,
                     unique_identifier=url or title,
-                    connector_id=tavily_connector.id,
+                    connector_id=storage_connector_id,
                 )
                 if not document:
                     continue
@@ -675,6 +842,7 @@ class ConnectorService:
         user_query: str,
         search_space_id: int,
         top_k: int = 20,
+        user_id: str | None = None,
     ) -> tuple:
         """
         Search using a configured SearxNG instance and return both sources and documents.
@@ -708,6 +876,17 @@ class ConnectorService:
         categories = config.get("SEARXNG_CATEGORIES")
         language = config.get("SEARXNG_LANGUAGE")
         safesearch = config.get("SEARXNG_SAFESEARCH")
+
+        storage_search_space_id = await self._resolve_search_history_space_id(
+            user_id or self.user_id
+        )
+        if storage_search_space_id is None:
+            storage_search_space_id = search_space_id
+        storage_connector_id = (
+            searx_connector.id
+            if storage_search_space_id == search_space_id
+            else None
+        )
 
         def _parse_bool(value: Any, default: bool = True) -> bool:
             if isinstance(value, bool):
@@ -821,16 +1000,17 @@ class ConnectorService:
                 "category": result.get("category"),
                 "source": "SEARXNG_API",
                 "query": user_query,
+                "origin_search_space_id": search_space_id,
             }
 
             document, wrote = await self._upsert_external_document(
-                search_space_id=search_space_id,
+                search_space_id=storage_search_space_id,
                 document_type=DocumentType.SEARXNG_API,
                 title=title,
                 content=description or result.get("content", ""),
                 metadata=metadata,
                 unique_identifier=url or title,
-                connector_id=searx_connector.id,
+                connector_id=storage_connector_id,
             )
             if not document:
                 continue
@@ -865,6 +1045,7 @@ class ConnectorService:
         user_query: str,
         search_space_id: int,
         top_k: int = 20,
+        user_id: str | None = None,
     ) -> tuple:
         """
         Search using Baidu AI Search API and return both sources and documents.
@@ -910,6 +1091,17 @@ class ConnectorService:
         model = config.get("BAIDU_MODEL", "ernie-3.5-8k")
         search_source = config.get("BAIDU_SEARCH_SOURCE", "baidu_search_v2")
         enable_deep_search = config.get("BAIDU_ENABLE_DEEP_SEARCH", False)
+
+        storage_search_space_id = await self._resolve_search_history_space_id(
+            user_id or self.user_id
+        )
+        if storage_search_space_id is None:
+            storage_search_space_id = search_space_id
+        storage_connector_id = (
+            baidu_connector.id
+            if storage_search_space_id == search_space_id
+            else None
+        )
 
         # Baidu AI Search API endpoint
         baidu_endpoint = "https://qianfan.baidubce.com/v2/ai_search/chat/completions"
@@ -1039,6 +1231,7 @@ class ConnectorService:
                 "web_anchor": reference.get("web_anchor", ""),
                 "website": reference.get("website", ""),
                 "query": user_query,
+                "origin_search_space_id": search_space_id,
             }
             if ref_type == "image" and reference.get("image"):
                 metadata["image"] = reference["image"]
@@ -1046,13 +1239,13 @@ class ConnectorService:
                 metadata["video"] = reference["video"]
 
             document, wrote = await self._upsert_external_document(
-                search_space_id=search_space_id,
+                search_space_id=storage_search_space_id,
                 document_type=DocumentType.BAIDU_SEARCH_API,
                 title=title,
                 content=content,
                 metadata=metadata,
                 unique_identifier=url or title,
-                connector_id=baidu_connector.id,
+                connector_id=storage_connector_id,
             )
             if not document:
                 continue
@@ -2218,6 +2411,7 @@ class ConnectorService:
         user_query: str,
         search_space_id: int,
         mode: str = "standard",
+        user_id: str | None = None,
     ) -> tuple:
         """
         Search using Linkup API and return both the source information and documents
@@ -2247,6 +2441,17 @@ class ConnectorService:
         # Initialize Linkup client with API key from connector config
         linkup_api_key = linkup_connector.config.get("LINKUP_API_KEY")
         linkup_client = LinkupClient(api_key=linkup_api_key)
+
+        storage_search_space_id = await self._resolve_search_history_space_id(
+            user_id or self.user_id
+        )
+        if storage_search_space_id is None:
+            storage_search_space_id = search_space_id
+        storage_connector_id = (
+            linkup_connector.id
+            if storage_search_space_id == search_space_id
+            else None
+        )
 
         # Perform search with Linkup
         try:
@@ -2283,16 +2488,17 @@ class ConnectorService:
                     "type": result.type if hasattr(result, "type") else "",
                     "source": "LINKUP_API",
                     "query": user_query,
+                    "origin_search_space_id": search_space_id,
                 }
 
                 document, wrote = await self._upsert_external_document(
-                    search_space_id=search_space_id,
+                    search_space_id=storage_search_space_id,
                     document_type=DocumentType.LINKUP_API,
                     title=title,
                     content=content,
                     metadata=metadata,
                     unique_identifier=url or title,
-                    connector_id=linkup_connector.id,
+                    connector_id=storage_connector_id,
                 )
                 if not document:
                     continue

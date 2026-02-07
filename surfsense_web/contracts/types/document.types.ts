@@ -32,6 +32,7 @@ export const documentTypeEnum = z.enum([
 	"COMPOSIO_GOOGLE_DRIVE_CONNECTOR",
 	"COMPOSIO_GMAIL_CONNECTOR",
 	"COMPOSIO_GOOGLE_CALENDAR_CONNECTOR",
+	"TOOL_OUTPUT",
 ]);
 
 export const document = z.object({
