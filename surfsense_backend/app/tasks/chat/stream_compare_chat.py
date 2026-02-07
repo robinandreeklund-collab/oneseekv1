@@ -69,9 +69,10 @@ LOCAL_ANALYSIS_SYSTEM_PROMPT = (
     "det är allmän kunskap.\n"
     "4. Skapa ett optimerat svar: Skriv ett sammanhängande, korrekt och välstrukturerat "
     "svar. Attributera fakta till modeller (t.ex. \"Enligt Modell X...\"). "
-    "För Tavily: citera inline med [citation:chunk_id]. Citerar aldrig MODEL_ANSWER "
-    "med hakparenteser; nämn modellnamn i löptext. Undvik numrerade hakparenteser "
-    "som [1] och skriv ingen separat referenslista.\n\n"
+    "För Tavily och modellutdata: citera inline med [citation:chunk_id]. "
+    "Nämn modellnamn i löptext och använd [citation:chunk_id] för det som kommer "
+    "från modellen. Undvik numrerade hakparenteser som [1] och skriv ingen separat "
+    "referenslista.\n\n"
     "**Svarsriktlinjer**:\n"
     "- Svara på samma språk som användaren.\n"
     "- Håll huvudsvaret kort, faktabaserat, tydligt och engagerande.\n"
@@ -244,7 +245,8 @@ async def _ingest_compare_outputs(
     user_id: str | None,
     search_space_id: int,
     chat_id: int,
-) -> None:
+) -> list[dict]:
+    documents: list[dict] = []
     for provider_key, result in provider_results.items():
         if not isinstance(result, dict):
             continue
@@ -265,15 +267,28 @@ async def _ingest_compare_outputs(
         }
         display_name = result.get("model_display_name") or provider_key
         title = f"Compare: {display_name} response"
-        await connector_service.ingest_tool_output(
+        document = await connector_service.ingest_tool_output(
             tool_name="compare_model",
             tool_output=tool_payload,
             title=title,
-            metadata={"compare_mode": True, "provider_key": provider_key},
+            metadata={
+                "compare_mode": True,
+                "provider_key": provider_key,
+                "provider": result.get("provider"),
+                "model": result.get("model"),
+                "model_display_name": result.get("model_display_name"),
+                "source": "MODEL_ANSWER",
+                "document_type": "MODEL_ANSWER",
+            },
             user_id=user_id,
             origin_search_space_id=search_space_id,
             thread_id=chat_id,
         )
+        if document:
+            documents.append(
+                connector_service._serialize_external_document(document, score=1.0)
+            )
+    return documents
 
 
 async def _build_query_with_context(
@@ -867,8 +882,9 @@ async def stream_compare_chat(
             items=completed_items,
         )
 
+        model_output_documents: list[dict] = []
         try:
-            await _ingest_compare_outputs(
+            model_output_documents = await _ingest_compare_outputs(
                 connector_service,
                 provider_results,
                 user_id=user_id,
@@ -933,9 +949,16 @@ async def stream_compare_chat(
             ]
         )
 
-        model_answer_documents = _build_model_answer_documents(
-            provider_results,
-            specs=[{"key": spec["key"], "display": spec["display"]} for spec in compare_specs],
+        model_answer_documents = (
+            model_output_documents
+            if model_output_documents
+            else _build_model_answer_documents(
+                provider_results,
+                specs=[
+                    {"key": spec["key"], "display": spec["display"]}
+                    for spec in compare_specs
+                ],
+            )
         )
         source_documents = [*model_answer_documents, *tavily_documents]
         sources_context = (
