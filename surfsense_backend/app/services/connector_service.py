@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 
 import httpx
 from linkup import LinkupClient
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -545,6 +545,13 @@ class ConnectorService:
         unique_identifier: str | None = None,
         connector_id: int | None = None,
     ) -> tuple[Document | None, bool]:
+        if not await self._document_type_supported(document_type):
+            print(
+                f"[ingest] documenttype '{document_type.value}' missing in DB enum; "
+                "skipping ingestion."
+            )
+            return None, False
+
         normalized_content = (content or "").strip()
         if not normalized_content:
             return None, False
@@ -604,6 +611,27 @@ class ConnectorService:
         self.session.add(document)
         await self.session.flush()
         return document, True
+
+    async def _document_type_supported(self, doc_type: DocumentType) -> bool:
+        label = doc_type.value if hasattr(doc_type, "value") else str(doc_type)
+        try:
+            result = await self.session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM pg_type t
+                    JOIN pg_enum e ON t.oid = e.enumtypid
+                    WHERE t.typname = 'documenttype'
+                      AND e.enumlabel = :label
+                    LIMIT 1
+                    """
+                ),
+                {"label": label},
+            )
+            return result.first() is not None
+        except Exception as exc:
+            print(f"[ingest] Failed to check documenttype enum: {exc!s}")
+            return True
 
     def _serialize_external_document(
         self,
@@ -672,18 +700,23 @@ class ConnectorService:
 
         unique_identifier = f"{tool_name}:{thread_id or 'unknown'}:{uuid.uuid4().hex}"
 
-        document, wrote = await self._upsert_external_document(
-            search_space_id=history_space_id,
-            document_type=DocumentType.TOOL_OUTPUT,
-            title=title,
-            content=output_content,
-            metadata=merged_metadata,
-            unique_identifier=unique_identifier,
-            connector_id=None,
-        )
-        if wrote:
-            await self.session.commit()
-        return document
+        try:
+            document, wrote = await self._upsert_external_document(
+                search_space_id=history_space_id,
+                document_type=DocumentType.TOOL_OUTPUT,
+                title=title,
+                content=output_content,
+                metadata=merged_metadata,
+                unique_identifier=unique_identifier,
+                connector_id=None,
+            )
+            if wrote:
+                await self.session.commit()
+            return document
+        except Exception as exc:
+            await self.session.rollback()
+            print(f"[ingest] Failed to ingest tool output: {exc!s}")
+            return None
 
     async def get_connector_by_type(
         self,
@@ -829,6 +862,7 @@ class ConnectorService:
 
         except Exception as e:
             # Log the error and return empty results
+            await self.session.rollback()
             print(f"Error searching with Tavily: {e!s}")
             return {
                 "id": 3,
@@ -2526,6 +2560,7 @@ class ConnectorService:
 
         except Exception as e:
             # Log the error and return empty results
+            await self.session.rollback()
             print(f"Error searching with Linkup: {e!s}")
             return {
                 "id": 10,
