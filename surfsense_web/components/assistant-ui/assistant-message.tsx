@@ -72,6 +72,18 @@ const ThinkingStepsPart: FC = () => {
 type FollowUpSuggestion = { title: string; items: string[] };
 
 function extractFollowUpSuggestions(text: string): FollowUpSuggestion | null {
+	const commentMatch = text.match(/<!--\s*possible_next_steps:\s*([\s\S]*?)-->/i);
+	if (commentMatch && commentMatch[1]) {
+		const rawLines = commentMatch[1].split("\n").map((line) => line.trim());
+		const items = rawLines
+			.map((line) => line.replace(/^[-*•]\s+/, "").trim())
+			.filter(Boolean)
+			.slice(0, 4);
+		if (items.length > 0) {
+			return { title: "Möjliga nästa steg", items };
+		}
+	}
+
 	const lines = text.replace(/\r\n/g, "\n").split("\n");
 	const headingRegex =
 		/^(#+\s*)?(\*\*)?\s*(possible next steps|next steps|möjliga nästa steg|nästa steg)\s*(\*\*)?:?\s*$/i;
@@ -147,8 +159,13 @@ const FollowUpSuggestions: FC = () => {
 
 	const handleClick = (item: string) => {
 		if (isThreadRunning) return;
-		composerRuntime.setText(item);
-		composerRuntime.send();
+		if (!composerRuntime || typeof composerRuntime.setText !== "function") return;
+		try {
+			composerRuntime.setText(item);
+			composerRuntime.send();
+		} catch (error) {
+			console.warn("[FollowUpSuggestions] Composer is not available", error);
+		}
 	};
 
 	return (
