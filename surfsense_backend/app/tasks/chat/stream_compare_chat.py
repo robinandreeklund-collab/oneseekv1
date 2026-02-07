@@ -9,25 +9,30 @@ using a local LLM and Tavily.
 from __future__ import annotations
 
 import asyncio
-import os
+import json
 import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from app.agents.new_chat.chat_deepagent import create_surfsense_deep_agent
 from app.agents.new_chat.llm_config import (
-    PROVIDER_MAP,
     create_chat_litellm_from_agent_config,
-    create_chat_litellm_from_config,
     load_agent_config,
     load_llm_config_from_yaml,
 )
-import litellm
+from app.agents.new_chat.tools.external_models import (
+    EXTERNAL_MODEL_SPECS,
+    call_external_model,
+    describe_external_model_config,
+)
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
 from app.db import Document, NewChatThread, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
@@ -41,110 +46,66 @@ from app.tasks.chat.context_formatters import (
 
 COMPARE_PREFIX = "/compare"
 COMPARE_TIMEOUT_SECONDS = 90
-MAX_EXTERNAL_ANSWER_CHARS = 8000
+COMPARE_RAW_ANSWER_CHARS = 12000
 MAX_TAVILY_RESULTS = 6
 COMPARE_SUMMARY_ANSWER_CHARS = 600
 COMPARE_SUMMARY_FINAL_CHARS = 700
 
-COMPARE_MODELS = [
-    {"key": "grok", "display": "Grok", "config_id": -20},
-    {"key": "deepseek", "display": "DeepSeek", "config_id": -21},
-    {"key": "gemini", "display": "Gemini", "config_id": -22},
-    {"key": "chatgpt", "display": "ChatGPT", "config_id": -23},
-]
-
-EXTERNAL_SYSTEM_PROMPT = (
-    "You are a helpful assistant. Answer the user's question clearly and concisely."
-)
-
 LOCAL_ANALYSIS_SYSTEM_PROMPT = (
-    "You are SurfSense Compare Analyzer. You will receive the user query, multiple "
-    "draft answers from external models, and Tavily web snippets. Your task is to "
-    "evaluate correctness, resolve conflicts, fill gaps, and produce a high-quality "
-    "optimized response. Use your own knowledge where appropriate. If information "
-    "is uncertain or conflicting, mention the uncertainty. Respond in the same "
-    "language as the user. Do not mention model names or that you compared multiple "
-    "models unless the user explicitly asks."
+    "You are Oneseek Compare Analyzer. Your role is to synthesize a high-quality "
+    "response from a user query, multiple tool responses from external models, and "
+    "Tavily web snippets.\n\n"
+    "**Input Structure**:\n"
+    "- User query: The original question.\n"
+    "- Tool responses: Outputs from external models (labeled as MODEL_ANSWER with "
+    "model names).\n"
+    "- Tavily snippets: Web sources in <sources> section with <chunk id='...'> tags.\n\n"
+    "**Core Tasks**:\n"
+    "1. Evaluate correctness: Cross-check facts across all inputs.\n"
+    "2. Resolve conflicts: If sources disagree, prioritize Tavily for factual "
+    "claims, then most recent/up-to-date info. Mention uncertainties and explain "
+    "reasons (e.g., \"Source A claims X, but Tavily indicates Y due to recent "
+    "updates\").\n"
+    "3. Fill gaps: Use your own knowledge to add context where inputs are "
+    "incomplete, but clearly state when doing so (e.g., \"Based on general "
+    "knowledge...\").\n"
+    "4. Produce optimized response: Create a coherent, accurate, well-structured "
+    "answer. Attribute key facts to models (e.g., \"According to Model X...\"). "
+    "For Tavily info, cite inline as [citation:chunk_id]. Do not cite MODEL_ANSWER "
+    "outputs with brackets; mention model names directly in the text. Avoid "
+    "numbered brackets like [1] and do not include a separate references list.\n\n"
+    "**Response Guidelines**:\n"
+    "- Respond in the same language as the user query.\n"
+    "- Keep the main answer concise, factual, clear and engaging.\n"
+    "- If information is limited, uncertain or conflicting, state this "
+    "transparently and explain why.\n"
+    "- Prioritize reliable, up-to-date sources (Tavily > recency > model consensus "
+    "> your internal knowledge).\n\n"
+    "**Follow-up Questions**:\n"
+    "After the main synthesized answer, always include a section called "
+    "**Possible next steps** (or equivalent in the user's language) and suggest "
+    "2-4 targeted follow-up questions that:\n"
+    "- help the user dig deeper into model differences\n"
+    "- explore resolution of remaining conflicts or uncertainties\n"
+    "- request deeper analysis of specific aspects\n\n"
+    "Examples of good follow-up questions (adapt to the context):\n"
+    "- Would you like me to do a point-by-point comparison of the most important "
+    "claims from Model X vs Model Y?\n"
+    "- Should I extract and rank all factual statements where the models disagree?\n"
+    "- Do you want a meta-analysis of the strengths/weaknesses of each model in "
+    "this topic?\n"
+    "- Should I examine linguistic bias, uncertainty markers, confidence levels or "
+    "truthfulness in the different responses?\n"
+    "- Would you like me to check source criticism, time aspects, or methodological "
+    "differences between the models?\n"
+    "- Do you need a summary of what is consensus vs what is controversial here?\n\n"
+    "Do not fabricate information. Stay factual and transparent."
 )
 
-COMPARE_CITATION_INSTRUCTIONS = (
-    "When using information from the <sources> section, include citations in the "
-    "format [citation:chunk_id] using chunk ids from <chunk id='...'> tags. "
-    "MODEL_ANSWER documents represent other model outputs; only cite them when "
-    "explicitly referencing those outputs. For model answers, the chunk ids are "
-    "Grok, DeepSeek, Gemini, and ChatGPT (e.g. [citation:Grok]). Prefer Tavily "
-    "sources for factual claims. "
-    "Do not use numbered brackets like [1]. Do not include a separate references list."
-)
+COMPARE_CITATION_INSTRUCTIONS = ""
 
 
-def _describe_key_format(api_key: str) -> str:
-    key = api_key.strip()
-    if key.startswith("xai-"):
-        return "xAI"
-    if key.startswith("AIza"):
-        return "Google AI Studio"
-    if key.startswith("sk-or-"):
-        return "OpenRouter"
-    if key.startswith("sk-ant-"):
-        return "Anthropic"
-    if key.startswith("sk-"):
-        return "OpenAI-like"
-    return "Unknown"
 
-
-def _apply_provider_env(provider: str, api_key: str) -> None:
-    provider_key = provider.strip().upper()
-    if not api_key:
-        return
-    if provider_key == "XAI":
-        os.environ.setdefault("XAI_API_KEY", api_key)
-    elif provider_key == "DEEPSEEK":
-        os.environ.setdefault("DEEPSEEK_API_KEY", api_key)
-    elif provider_key == "GOOGLE":
-        os.environ.setdefault("GEMINI_API_KEY", api_key)
-        os.environ.setdefault("GOOGLE_API_KEY", api_key)
-    elif provider_key == "OPENROUTER":
-        os.environ.setdefault("OPENROUTER_API_KEY", api_key)
-    elif provider_key == "OPENAI":
-        os.environ.setdefault("OPENAI_API_KEY", api_key)
-
-
-def _build_model_string(config: dict) -> str:
-    if config.get("custom_provider"):
-        return f"{config['custom_provider']}/{config['model_name']}"
-    provider = str(config.get("provider") or "").upper()
-    provider_prefix = PROVIDER_MAP.get(provider, provider.lower())
-    return f"{provider_prefix}/{config['model_name']}"
-
-
-async def _call_external_llm_with_litellm(
-    config: dict,
-    query: str,
-    timeout_seconds: int,
-) -> str:
-    model_string = _build_model_string(config)
-    api_key = str(config.get("api_key") or "").strip()
-    api_base = str(config.get("api_base") or "").strip()
-    litellm_params = config.get("litellm_params") or {}
-
-    async def _run():
-        response = await litellm.acompletion(
-            model=model_string,
-            messages=[
-                {"role": "system", "content": EXTERNAL_SYSTEM_PROMPT},
-                {"role": "user", "content": query},
-            ],
-            api_key=api_key,
-            api_base=api_base or None,
-            **litellm_params,
-        )
-        message = response.choices[0].message
-        if hasattr(message, "content"):
-            return str(message.content or "").strip()
-        return str(message.get("content", "")).strip()
-
-    return await asyncio.wait_for(_run(), timeout=timeout_seconds)
 
 
 def is_compare_request(user_query: str) -> bool:
@@ -183,32 +144,38 @@ def _build_compare_summary(
     }
 
 
-def _build_model_answer_documents(answers: dict[str, str]) -> list[dict]:
+def _build_model_answer_documents(
+    provider_results: dict[str, dict],
+    specs: list[dict[str, str]] | None = None,
+) -> list[dict]:
     documents: list[dict] = []
-    for provider in COMPARE_MODELS:
-        provider_key = provider["key"]
-        if provider_key not in answers:
+    if specs is None:
+        specs = [{"key": spec.key, "display": spec.display} for spec in EXTERNAL_MODEL_SPECS]
+    for spec in specs:
+        provider_key = spec["key"]
+        result = provider_results.get(provider_key)
+        if not result:
             continue
-        provider_label = provider["display"]
-        answer_text = _truncate_text(
-            answers[provider_key], COMPARE_SUMMARY_ANSWER_CHARS
-        )
+        answer_text = result.get("response") or ""
+        if not isinstance(answer_text, str):
+            answer_text = str(answer_text)
+        answer_text = _truncate_text(answer_text, COMPARE_SUMMARY_ANSWER_CHARS)
         if not answer_text:
             continue
         documents.append(
             {
                 "document": {
                     "id": f"model-{provider_key}",
-                    "title": f"{provider_label} response",
+                    "title": f"{spec['display']} response",
                     "document_type": "MODEL_ANSWER",
                     "metadata": {
                         "source": "MODEL_ANSWER",
-                        "provider": provider_label,
+                        "provider": spec["display"],
                     },
                 },
                 "chunks": [
                     {
-                        "chunk_id": provider_label,
+                        "chunk_id": spec["display"],
                         "content": answer_text,
                     }
                 ],
@@ -299,26 +266,6 @@ async def _build_query_with_context(
     return user_query
 
 
-async def _call_external_llm(
-    llm,
-    query: str,
-    timeout_seconds: int,
-) -> str:
-    response = await asyncio.wait_for(
-        llm.ainvoke(
-            [
-                SystemMessage(content=EXTERNAL_SYSTEM_PROMPT),
-                HumanMessage(content=query),
-            ]
-        ),
-        timeout=timeout_seconds,
-    )
-    content = getattr(response, "content", None)
-    if content is None:
-        return ""
-    return str(content).strip()
-
-
 async def stream_compare_chat(
     user_query: str,
     search_space_id: int,
@@ -372,154 +319,199 @@ async def stream_compare_chat(
         provider_steps: dict[str, dict[str, str | list[str] | None]] = {}
         provider_errors: dict[str, str] = {}
         provider_summaries: dict[str, dict[str, str]] = {}
-        provider_llms: dict[str, object] = {}
-        provider_model_strings: dict[str, str] = {}
         provider_configs: dict[str, dict] = {}
-        provider_labels: dict[str, str] = {}
+        provider_tool_call_ids: dict[str, str] = {}
+        provider_results: dict[str, dict] = {}
+        spec_by_key = {spec.key: spec for spec in EXTERNAL_MODEL_SPECS}
 
-        for provider in COMPARE_MODELS:
-            config = load_llm_config_from_yaml(provider["config_id"])
-            display = provider["display"]
-            model_name = ""
+        for spec in EXTERNAL_MODEL_SPECS:
+            config = load_llm_config_from_yaml(spec.config_id)
+            metadata = describe_external_model_config(config) if config else {}
+            api_key_value = str(config.get("api_key") or "").strip() if config else ""
+
             if not config:
-                provider_errors[provider["key"]] = (
-                    f"Missing global config id {provider['config_id']}"
+                provider_errors[spec.key] = (
+                    f"Missing global config id {spec.config_id}"
                 )
+            elif not api_key_value:
+                provider_errors[spec.key] = "Missing API key"
             else:
-                model_name = str(config.get("model_name") or "")
-                api_key = str(config.get("api_key") or "").strip()
-                if not api_key:
-                    provider_errors[provider["key"]] = "Missing API key"
-                else:
-                    provider_label = str(config.get("provider") or "").strip()
-                    if provider_label:
-                        _apply_provider_env(provider_label, api_key)
-                        provider_labels[provider["key"]] = provider_label
-                    provider_configs[provider["key"]] = config
-                    llm = create_chat_litellm_from_config(config)
-                    if llm is None:
-                        provider_errors[provider["key"]] = "Failed to initialize model"
-                    else:
-                        provider_llms[provider["key"]] = llm
-                        model_string = str(getattr(llm, "model", "") or "").strip()
-                        if model_string:
-                            provider_model_strings[provider["key"]] = model_string
+                provider_configs[spec.key] = config
 
-            step_id = f"compare-{provider['key']}-{uuid.uuid4().hex[:8]}"
+            step_id = f"compare-{spec.key}-{uuid.uuid4().hex[:8]}"
             items: list[str] = []
+            model_name = metadata.get("model_name") or ""
+            provider_label = metadata.get("provider") or ""
+            model_string = metadata.get("model_string") or ""
+            api_base_value = metadata.get("api_base") or ""
+            key_format = metadata.get("key_format") or ""
             if model_name:
                 items.append(f"Model: {model_name}")
-            if config:
-                provider_label = provider_labels.get(provider["key"], "").strip()
-                if provider_label:
-                    items.append(f"Provider: {provider_label}")
-                api_base_value = config.get("api_base")
-                if api_base_value:
-                    items.append(f"API base: {api_base_value}")
-                api_key_value = str(config.get("api_key") or "").strip()
-                if api_key_value:
-                    items.append(f"Key format: {_describe_key_format(api_key_value)}")
-                model_string = provider_model_strings.get(provider["key"], "")
-                if model_string:
-                    items.append(f"Model string: {model_string}")
+            if provider_label:
+                items.append(f"Provider: {provider_label}")
+            if api_base_value:
+                items.append(f"API base: {api_base_value}")
+            if api_key_value and key_format:
+                items.append(f"Key format: {key_format}")
+            if model_string:
+                items.append(f"Model string: {model_string}")
+            items.append(f"Tool: {spec.tool_name}")
             items.append(f"Query: {short_query}")
-            provider_steps[provider["key"]] = {
+
+            provider_steps[spec.key] = {
                 "id": step_id,
-                "title": f"Asking {display}",
+                "title": f"Asking {spec.display}",
                 "items": items,
             }
 
             yield streaming_service.format_thinking_step(
                 step_id=step_id,
-                title=f"Asking {display}",
+                title=f"Asking {spec.display}",
                 status="in_progress",
                 items=items,
             )
 
-            if provider["key"] not in provider_llms:
-                error_msg = provider_errors.get(provider["key"], "Unavailable")
+            tool_call_id = streaming_service.generate_tool_call_id()
+            provider_tool_call_ids[spec.key] = tool_call_id
+            yield streaming_service.format_tool_input_start(
+                tool_call_id, spec.tool_name
+            )
+            yield streaming_service.format_tool_input_available(
+                tool_call_id,
+                spec.tool_name,
+                {"query": compare_query},
+            )
+
+            if spec.key in provider_errors:
+                error_msg = provider_errors[spec.key]
                 completed_items = [
                     *items,
                     f"Error: {_truncate_text(error_msg, 120)}",
                 ]
                 yield streaming_service.format_thinking_step(
                     step_id=step_id,
-                    title=f"Asking {display}",
+                    title=f"Asking {spec.display}",
                     status="completed",
                     items=completed_items,
                 )
-                provider_summaries[provider["key"]] = {
+                error_result = {
+                    "status": "error",
+                    "error": error_msg,
+                    "model_display_name": spec.display,
+                    "provider": provider_label,
+                    "model": model_name,
+                    "model_string": model_string,
+                    "api_base": api_base_value,
+                    "source": metadata.get("source") or "",
+                }
+                yield streaming_service.format_tool_output_available(
+                    tool_call_id, error_result
+                )
+                provider_summaries[spec.display] = {
                     "status": "error",
                     "error": _truncate_text(error_msg, 200),
                 }
 
         answers: dict[str, str] = {}
         results_queue: asyncio.Queue[
-            tuple[str, str | None, Exception | None, float]
+            tuple[str, dict | None, Exception | None, float]
         ] = asyncio.Queue()
         tasks: list[asyncio.Task] = []
 
-        async def run_call(provider_key: str, llm) -> None:
+        async def run_call(spec_key: str, spec, config: dict) -> None:
             start_time = time.monotonic()
             try:
-                provider_label = provider_labels.get(provider_key, "").upper()
-                if provider_label == "DEEPSEEK" and provider_key in provider_configs:
-                    result = await _call_external_llm_with_litellm(
-                        provider_configs[provider_key],
-                        query_with_context,
-                        COMPARE_TIMEOUT_SECONDS,
-                    )
-                else:
-                    result = await _call_external_llm(
-                        llm, query_with_context, COMPARE_TIMEOUT_SECONDS
-                    )
+                result = await call_external_model(
+                    spec=spec,
+                    query=query_with_context,
+                    timeout_seconds=COMPARE_TIMEOUT_SECONDS,
+                    config=config,
+                )
                 await results_queue.put(
-                    (provider_key, result, None, time.monotonic() - start_time)
+                    (spec_key, result, None, time.monotonic() - start_time)
                 )
             except Exception as exc:
                 await results_queue.put(
-                    (provider_key, None, exc, time.monotonic() - start_time)
+                    (spec_key, None, exc, time.monotonic() - start_time)
                 )
 
-        for provider_key, llm in provider_llms.items():
-            tasks.append(asyncio.create_task(run_call(provider_key, llm)))
+        for spec in EXTERNAL_MODEL_SPECS:
+            if spec.key not in provider_configs:
+                continue
+            tasks.append(
+                asyncio.create_task(
+                    run_call(spec.key, spec, provider_configs[spec.key])
+                )
+            )
 
         try:
             for _ in range(len(tasks)):
                 provider_key, result, error, elapsed = await results_queue.get()
+                spec = spec_by_key.get(provider_key)
+                if spec is None:
+                    continue
                 step_info = provider_steps.get(provider_key, {})
                 step_id = str(step_info.get("id"))
                 title = str(step_info.get("title"))
                 base_items = list(step_info.get("items") or [])
+                tool_call_id = provider_tool_call_ids.get(provider_key, "")
 
-                if error is None and result:
-                    result = result.strip()
-                    if not result:
-                        error = RuntimeError("Empty response")
-                    else:
-                        answers[provider_key] = _truncate_text(
-                            result, MAX_EXTERNAL_ANSWER_CHARS
-                        )
-                        provider_summaries[provider_key] = {
+                result_payload: dict[str, Any] = {}
+                if error is None and isinstance(result, dict):
+                    result_payload = result
+                elif error is not None:
+                    result_payload = {
+                        "status": "error",
+                        "error": str(error),
+                        "model_display_name": spec.display,
+                    }
+
+                if tool_call_id:
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        result_payload
+                        if result_payload
+                        else {"status": "error", "error": "Empty response"},
+                    )
+
+                if result_payload.get("status") == "success":
+                    response_text = result_payload.get("response") or ""
+                    if not isinstance(response_text, str):
+                        response_text = str(response_text)
+                    if response_text:
+                        answers[provider_key] = response_text
+                        provider_results[provider_key] = result_payload
+                        provider_summaries[spec.display] = {
                             "status": "success",
                             "answer": _truncate_text(
-                                result, COMPARE_SUMMARY_ANSWER_CHARS
+                                result_payload.get("summary") or response_text,
+                                COMPARE_SUMMARY_ANSWER_CHARS,
                             ),
                         }
                         completed_items = [
                             *base_items,
-                            f"Response length: {len(result)} chars",
+                            f"Response length: {len(response_text)} chars",
                             f"Elapsed: {elapsed:.1f}s",
                         ]
-                if error is not None or not result:
-                    error_msg = str(error) if error else "Empty response"
+                    else:
+                        error_msg = "Empty response"
+                        completed_items = [
+                            *base_items,
+                            f"Error: {_truncate_text(error_msg, 120)}",
+                        ]
+                        provider_summaries[spec.display] = {
+                            "status": "error",
+                            "error": _truncate_text(error_msg, 200),
+                        }
+                else:
+                    error_msg = result_payload.get("error") or "Empty response"
                     completed_items = [
                         *base_items,
                         f"Error: {_truncate_text(error_msg, 120)}",
                     ]
-                    provider_summaries[provider_key] = {
+                    provider_summaries[spec.display] = {
                         "status": "error",
-                        "error": _truncate_text(error_msg, 200),
+                        "error": _truncate_text(str(error_msg), 200),
                     }
 
                 yield streaming_service.format_thinking_step(
@@ -535,25 +527,12 @@ async def stream_compare_chat(
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-        if not answers:
-            yield streaming_service.format_error(
-                "Compare mode failed: no external answers were retrieved."
-            )
-            yield streaming_service.format_finish_step()
-            yield streaming_service.format_finish()
-            yield streaming_service.format_done()
-            return
-
-        analysis_step_id = f"compare-analysis-{uuid.uuid4().hex[:8]}"
-        analysis_items = [
-            f"Responses received: {len(answers)}/{len(COMPARE_MODELS)}"
-        ]
-
+        tavily_step_id = f"compare-tavily-{uuid.uuid4().hex[:8]}"
         yield streaming_service.format_thinking_step(
-            step_id=analysis_step_id,
-            title="Analyzing and validating responses",
+            step_id=tavily_step_id,
+            title="Fetching latest sources",
             status="in_progress",
-            items=analysis_items,
+            items=[f"Query: {short_query}"],
         )
 
         _, tavily_documents = await connector_service.search_tavily(
@@ -561,10 +540,13 @@ async def stream_compare_chat(
             search_space_id=search_space_id,
             top_k=MAX_TAVILY_RESULTS,
         )
-        if tavily_documents:
-            analysis_items.append(f"Tavily results: {len(tavily_documents)}")
-        else:
-            analysis_items.append("Tavily results: 0")
+        tavily_count = len(tavily_documents)
+        yield streaming_service.format_thinking_step(
+            step_id=tavily_step_id,
+            title="Fetching latest sources",
+            status="completed",
+            items=[f"Tavily results: {tavily_count}"],
+        )
 
         agent_config = await load_agent_config(
             session=session,
@@ -572,13 +554,6 @@ async def stream_compare_chat(
             search_space_id=search_space_id,
         )
         if not agent_config:
-            analysis_items.append("Error: Failed to load local LLM configuration")
-            yield streaming_service.format_thinking_step(
-                step_id=analysis_step_id,
-                title="Analyzing and validating responses",
-                status="completed",
-                items=analysis_items,
-            )
             yield streaming_service.format_error("Failed to load local LLM configuration.")
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
@@ -587,28 +562,310 @@ async def stream_compare_chat(
 
         local_llm = create_chat_litellm_from_agent_config(agent_config)
         if not local_llm:
-            analysis_items.append("Error: Failed to create local LLM instance")
-            yield streaming_service.format_thinking_step(
-                step_id=analysis_step_id,
-                title="Analyzing and validating responses",
-                status="completed",
-                items=analysis_items,
-            )
             yield streaming_service.format_error("Failed to create local LLM instance.")
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
             yield streaming_service.format_done()
             return
 
+        from app.db import SearchSourceConnectorType
+
+        firecrawl_api_key = None
+        webcrawler_connector = await connector_service.get_connector_by_type(
+            SearchSourceConnectorType.WEBCRAWLER_CONNECTOR, search_space_id
+        )
+        if webcrawler_connector and webcrawler_connector.config:
+            firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
+
+        oneseek_checkpointer = MemorySaver()
+        oneseek_agent = await create_surfsense_deep_agent(
+            llm=local_llm,
+            search_space_id=search_space_id,
+            db_session=session,
+            connector_service=connector_service,
+            checkpointer=oneseek_checkpointer,
+            user_id=user_id,
+            thread_id=chat_id,
+            agent_config=agent_config,
+            firecrawl_api_key=firecrawl_api_key,
+        )
+
+        local_step_id = f"compare-oneseek-{uuid.uuid4().hex[:8]}"
+        local_tool_call_id = streaming_service.generate_tool_call_id()
+        local_model_name = str(agent_config.model_name or "")
+        local_provider = str(agent_config.provider or "")
+        local_api_base = str(agent_config.api_base or "")
+        local_model_string = str(getattr(local_llm, "model", "") or "")
+        local_items = [
+            item
+            for item in [
+                f"Model: {local_model_name}" if local_model_name else None,
+                f"Provider: {local_provider}" if local_provider else None,
+                f"API base: {local_api_base}" if local_api_base else None,
+                f"Model string: {local_model_string}" if local_model_string else None,
+                "Tool: call_oneseek",
+                f"Query: {short_query}",
+            ]
+            if item
+        ]
+        provider_steps["oneseek"] = {
+            "id": local_step_id,
+            "title": "Asking Oneseek",
+            "items": local_items,
+        }
+        provider_tool_call_ids["oneseek"] = local_tool_call_id
+
+        yield streaming_service.format_thinking_step(
+            step_id=local_step_id,
+            title="Asking Oneseek",
+            status="in_progress",
+            items=local_items,
+        )
+        yield streaming_service.format_tool_input_start(
+            local_tool_call_id, "call_oneseek"
+        )
+        yield streaming_service.format_tool_input_available(
+            local_tool_call_id, "call_oneseek", {"query": compare_query}
+        )
+
+        oneseek_start = time.monotonic()
+        oneseek_error: str | None = None
+        oneseek_text = ""
+        oneseek_tool_steps: dict[str, str] = {}
+        oneseek_tool_calls: dict[str, str] = {}
+
+        input_state = {
+            "messages": [HumanMessage(content=query_with_context)],
+            "search_space_id": search_space_id,
+        }
+        config = {
+            "configurable": {"thread_id": f"{chat_id}-compare-oneseek"},
+            "recursion_limit": 80,
+        }
+
+        try:
+            async for event in oneseek_agent.astream_events(
+                input_state, config=config, version="v2"
+            ):
+                event_type = event.get("event", "")
+                if event_type == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content"):
+                        content = chunk.content
+                        if content and isinstance(content, str):
+                            oneseek_text += content
+                elif event_type == "on_tool_start":
+                    tool_name = event.get("name", "unknown_tool")
+                    run_id = event.get("run_id", "")
+                    tool_input = event.get("data", {}).get("input", {})
+
+                    tool_step_id = f"compare-oneseek-tool-{uuid.uuid4().hex[:8]}"
+                    oneseek_tool_steps[run_id] = tool_step_id
+                    tool_title = f"Using {tool_name.replace('_', ' ')}"
+                    tool_items: list[str] = []
+                    if isinstance(tool_input, dict):
+                        for key in (
+                            "query",
+                            "location",
+                            "url",
+                            "origin",
+                            "destination",
+                            "record_id",
+                            "podcast_title",
+                        ):
+                            if tool_input.get(key):
+                                tool_items.append(
+                                    f"{key.replace('_', ' ').title()}: {tool_input.get(key)}"
+                                )
+                                break
+                    if not tool_items:
+                        tool_items = [f"Tool: {tool_name}"]
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title=tool_title,
+                        status="in_progress",
+                        items=tool_items,
+                    )
+
+                    tool_call_id = (
+                        f"call_{run_id[:32]}"
+                        if run_id
+                        else streaming_service.generate_tool_call_id()
+                    )
+                    oneseek_tool_calls[run_id] = tool_call_id
+                    yield streaming_service.format_tool_input_start(
+                        tool_call_id, tool_name
+                    )
+                    yield streaming_service.format_tool_input_available(
+                        tool_call_id,
+                        tool_name,
+                        tool_input if isinstance(tool_input, dict) else {"input": tool_input},
+                    )
+                elif event_type == "on_tool_end":
+                    tool_name = event.get("name", "unknown_tool")
+                    run_id = event.get("run_id", "")
+                    raw_output = event.get("data", {}).get("output")
+                    tool_output = raw_output
+                    if hasattr(raw_output, "content"):
+                        content = raw_output.content
+                        if isinstance(content, str):
+                            try:
+                                tool_output = json.loads(content)
+                            except Exception:
+                                tool_output = {"result": content}
+                        else:
+                            tool_output = content
+                    elif isinstance(raw_output, str):
+                        try:
+                            tool_output = json.loads(raw_output)
+                        except Exception:
+                            tool_output = {"result": raw_output}
+                    elif raw_output is None:
+                        tool_output = {"result": "No output"}
+
+                    tool_call_id = oneseek_tool_calls.get(run_id) or (
+                        f"call_{run_id[:32]}"
+                        if run_id
+                        else streaming_service.generate_tool_call_id()
+                    )
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                    )
+
+                    tool_step_id = oneseek_tool_steps.get(run_id)
+                    if tool_step_id:
+                        yield streaming_service.format_thinking_step(
+                            step_id=tool_step_id,
+                            title=f"Using {tool_name.replace('_', ' ')}",
+                            status="completed",
+                            items=[f"Completed: {tool_name.replace('_', ' ')}"],
+                        )
+        except Exception as exc:
+            oneseek_error = str(exc)
+
+        oneseek_elapsed = time.monotonic() - oneseek_start
+        if oneseek_error or not oneseek_text.strip():
+            error_msg = oneseek_error or "Empty response"
+            provider_summaries["Oneseek"] = {
+                "status": "error",
+                "error": _truncate_text(error_msg, 200),
+            }
+            yield streaming_service.format_tool_output_available(
+                local_tool_call_id,
+                {
+                    "status": "error",
+                    "error": error_msg,
+                    "model_display_name": "Oneseek",
+                    "provider": local_provider,
+                    "model": local_model_name,
+                    "model_string": local_model_string,
+                    "api_base": local_api_base,
+                    "source": "Oneseek",
+                    "latency_ms": int(oneseek_elapsed * 1000),
+                },
+            )
+            completed_items = [
+                *local_items,
+                f"Error: {_truncate_text(error_msg, 120)}",
+            ]
+        else:
+            oneseek_text = oneseek_text.strip()
+            was_truncated = len(oneseek_text) > COMPARE_RAW_ANSWER_CHARS
+            oneseek_text = _truncate_text(oneseek_text, COMPARE_RAW_ANSWER_CHARS)
+            answers["oneseek"] = oneseek_text
+            provider_results["oneseek"] = {
+                "status": "success",
+                "model_display_name": "Oneseek",
+                "provider": local_provider,
+                "model": local_model_name,
+                "model_string": local_model_string,
+                "api_base": local_api_base,
+                "source": "Oneseek",
+                "latency_ms": int(oneseek_elapsed * 1000),
+                "usage": None,
+                "summary": _truncate_text(oneseek_text, COMPARE_SUMMARY_ANSWER_CHARS),
+                "response": oneseek_text,
+                "truncated": was_truncated,
+            }
+            provider_summaries["Oneseek"] = {
+                "status": "success",
+                "answer": _truncate_text(oneseek_text, COMPARE_SUMMARY_ANSWER_CHARS),
+            }
+            yield streaming_service.format_tool_output_available(
+                local_tool_call_id, provider_results["oneseek"]
+            )
+            completed_items = [
+                *local_items,
+                f"Response length: {len(oneseek_text)} chars",
+                f"Elapsed: {oneseek_elapsed:.1f}s",
+            ]
+
+        yield streaming_service.format_thinking_step(
+            step_id=local_step_id,
+            title="Asking Oneseek",
+            status="completed",
+            items=completed_items,
+        )
+
+        _, tavily_documents = await connector_service.search_tavily(
+            user_query=compare_query,
+            search_space_id=search_space_id,
+            top_k=MAX_TAVILY_RESULTS,
+        )
+
+        if not answers:
+            yield streaming_service.format_error(
+                "Compare mode failed: no model answers were retrieved."
+            )
+            yield streaming_service.format_finish_step()
+            yield streaming_service.format_finish()
+            yield streaming_service.format_done()
+            return
+
+        analysis_step_id = f"compare-analysis-{uuid.uuid4().hex[:8]}"
+        total_models = len(EXTERNAL_MODEL_SPECS) + 1
+        analysis_items = [f"Responses received: {len(answers)}/{total_models}"]
+
+        yield streaming_service.format_thinking_step(
+            step_id=analysis_step_id,
+            title="Analyzing and validating responses",
+            status="in_progress",
+            items=analysis_items,
+        )
+
+        if tavily_documents:
+            analysis_items.append(f"Tavily results: {len(tavily_documents)}")
+        else:
+            analysis_items.append("Tavily results: 0")
+
+        compare_specs = [
+            *[
+                {"key": spec.key, "display": spec.display, "tool": spec.tool_name}
+                for spec in EXTERNAL_MODEL_SPECS
+            ],
+            {"key": "oneseek", "display": "Oneseek", "tool": "call_oneseek"},
+        ]
+
         answers_block = "\n".join(
             [
-                f"<answer provider='{provider['key']}'>\n{answers[provider['key']]}\n</answer>"
-                for provider in COMPARE_MODELS
-                if provider["key"] in answers
+                (
+                    f"<answer model='{spec['display']}' tool='{spec['tool']}' "
+                    f"provider='{result.get('provider', '')}' "
+                    f"model_name='{result.get('model', '')}' "
+                    f"latency_ms='{result.get('latency_ms', '')}' "
+                    f"source='{result.get('source', '')}'>\n"
+                    f"{result.get('response', '')}\n</answer>"
+                )
+                for spec in compare_specs
+                if (result := provider_results.get(spec["key"]))
             ]
         )
 
-        model_answer_documents = _build_model_answer_documents(answers)
+        model_answer_documents = _build_model_answer_documents(
+            provider_results,
+            specs=[{"key": spec["key"], "display": spec["display"]} for spec in compare_specs],
+        )
         source_documents = [*model_answer_documents, *tavily_documents]
         sources_context = (
             format_documents_for_context(source_documents)

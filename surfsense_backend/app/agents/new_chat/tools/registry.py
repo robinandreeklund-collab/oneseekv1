@@ -44,6 +44,7 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from .display_image import create_display_image_tool
+from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
 from .link_preview import create_link_preview_tool
@@ -209,6 +210,21 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         ),
         requires=["user_id", "search_space_id", "db_session"],
     ),
+    # =========================================================================
+    # EXTERNAL MODEL TOOLS (COMPARE FLOW)
+    # =========================================================================
+    *[
+        ToolDefinition(
+            name=spec.tool_name,
+            description=(
+                f"Call the external model {spec.display} using global config {spec.config_id}"
+            ),
+            factory=lambda deps, spec=spec: create_external_model_tool(spec),
+            requires=[],
+            enabled_by_default=False,
+        )
+        for spec in EXTERNAL_MODEL_SPECS
+    ],
     # =========================================================================
     # ADD YOUR CUSTOM TOOLS BELOW
     # =========================================================================

@@ -91,3 +91,13 @@ export {
 	SaveMemoryToolUI,
 } from "./user-memory";
 export { type WriteTodosData, WriteTodosSchema, WriteTodosToolUI } from "./write-todos";
+export {
+	ClaudeToolUI,
+	DeepSeekToolUI,
+	GeminiToolUI,
+	GptToolUI,
+	GrokToolUI,
+	PerplexityToolUI,
+	QwenToolUI,
+	OneseekToolUI,
+} from "./compare-model";

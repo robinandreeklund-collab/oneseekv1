@@ -23,6 +23,7 @@ Available tools:
 # Registry exports
 # Tool factory exports (for direct use)
 from .display_image import create_display_image_tool
+from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import (
     CONNECTOR_DESCRIPTIONS,
@@ -57,6 +58,7 @@ __all__ = [
     "build_tools",
     # Tool factories
     "create_display_image_tool",
+    "create_external_model_tool",
     "create_generate_podcast_tool",
     "create_jobad_links_search_tool",
     "create_link_preview_tool",
@@ -69,6 +71,7 @@ __all__ = [
     "create_search_surfsense_docs_tool",
     "create_smhi_weather_tool",
     "create_trafiklab_route_tool",
+    "EXTERNAL_MODEL_SPECS",
     "format_documents_for_context",
     "get_all_tool_names",
     "get_default_enabled_tools",

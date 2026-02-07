@@ -42,6 +42,16 @@ import { ScrapeWebpageToolUI } from "@/components/tool-ui/scrape-webpage";
 import { SmhiWeatherToolUI } from "@/components/tool-ui/smhi-weather";
 import { TrafiklabRouteToolUI } from "@/components/tool-ui/trafiklab-route";
 import { RecallMemoryToolUI, SaveMemoryToolUI } from "@/components/tool-ui/user-memory";
+import {
+	ClaudeToolUI,
+	DeepSeekToolUI,
+	GeminiToolUI,
+	GptToolUI,
+	GrokToolUI,
+	PerplexityToolUI,
+	QwenToolUI,
+	OneseekToolUI,
+} from "@/components/tool-ui/compare-model";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
 import { useMessagesElectric } from "@/hooks/use-messages-electric";
@@ -129,6 +139,14 @@ const TOOLS_WITH_UI = new Set([
 	"trafiklab_route",
 	"libris_search",
 	"jobad_links_search",
+	"call_grok",
+	"call_claude",
+	"call_gpt",
+	"call_gemini",
+	"call_deepseek",
+	"call_perplexity",
+	"call_qwen",
+	"call_oneseek",
 	// "write_todos", // Disabled for now
 ]);
 
@@ -1634,6 +1652,14 @@ export default function NewChatPage() {
 			<TrafiklabRouteToolUI />
 			<LibrisSearchToolUI />
 			<JobAdLinksToolUI />
+			<GrokToolUI />
+			<ClaudeToolUI />
+			<GptToolUI />
+			<GeminiToolUI />
+			<DeepSeekToolUI />
+			<PerplexityToolUI />
+			<QwenToolUI />
+			<OneseekToolUI />
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
 			{/* <WriteTodosToolUI /> Disabled for now */}

@@ -248,6 +248,54 @@ global_llm_configs:
     use_default_system_instructions: true
     citations_enabled: false
 
+  - id: -24
+    name: "Compare Claude"
+    description: "Anthropic Claude for compare mode"
+    provider: "ANTHROPIC"
+    model_name: "claude-3-5-sonnet-20240620"
+    api_key: "sk-ant-your-anthropic-api-key-here"
+    api_base: ""
+    rpm: 1000
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 3000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false
+
+  - id: -25
+    name: "Compare Perplexity"
+    description: "Perplexity for compare mode"
+    provider: "PERPLEXITY"
+    model_name: "sonar-pro"
+    api_key: "your-perplexity-api-key-here"
+    api_base: ""
+    rpm: 60
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 3000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false
+
+  - id: -26
+    name: "Compare Qwen"
+    description: "Qwen for compare mode"
+    provider: "ALIBABA_QWEN"
+    model_name: "qwen3-max"
+    api_key: "your-qwen-api-key-here"
+    api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    rpm: 60
+    tpm: 100000
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 2000
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: false
+
 # Notes:
 # - ID 0 is reserved for "Auto" mode - uses LiteLLM Router for load balancing
 # - Use negative IDs to distinguish global configs from user configs (NewLLMConfig in DB)
