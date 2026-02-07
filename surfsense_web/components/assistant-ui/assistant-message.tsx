@@ -159,7 +159,14 @@ const FollowUpSuggestions: FC = () => {
 
 	const handleClick = (item: string) => {
 		if (isThreadRunning) return;
-		if (!composerRuntime || typeof composerRuntime.setText !== "function") return;
+		if (!composerRuntime || typeof composerRuntime.setText !== "function") {
+			window.dispatchEvent(
+				new CustomEvent("assistant:compose", {
+					detail: { text: item, send: true },
+				})
+			);
+			return;
+		}
 		try {
 			composerRuntime.setText(item);
 			composerRuntime.send();

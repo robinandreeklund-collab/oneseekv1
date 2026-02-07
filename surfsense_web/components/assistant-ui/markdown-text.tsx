@@ -18,6 +18,11 @@ import { cn } from "@/lib/utils";
 // Citation pattern: [citation:CHUNK_ID] or [citation:doc-CHUNK_ID]
 // Also matches Chinese brackets 【】 and handles zero-width spaces that LLM sometimes inserts
 const CITATION_REGEX = /[[【]\u200B?citation:(doc-)?(\d+)\u200B?[\]】]/g;
+const POSSIBLE_NEXT_STEPS_COMMENT_REGEX = /<!--\s*possible_next_steps:[\s\S]*?-->/gi;
+
+function stripPossibleNextStepsComment(text: string): string {
+	return text.replace(POSSIBLE_NEXT_STEPS_COMMENT_REGEX, "");
+}
 
 // Track chunk IDs to citation numbers mapping for consistent numbering
 // This map is reset when a new message starts rendering
@@ -51,6 +56,7 @@ function getCitationNumber(chunkId: number, isDocsChunk: boolean): number {
  * Supports both regular chunks [citation:123] and docs chunks [citation:doc-123]
  */
 function parseTextWithCitations(text: string): ReactNode[] {
+	const cleanedText = stripPossibleNextStepsComment(text);
 	const parts: ReactNode[] = [];
 	let lastIndex = 0;
 	let match: RegExpExecArray | null;
@@ -59,10 +65,10 @@ function parseTextWithCitations(text: string): ReactNode[] {
 	// Reset regex state
 	CITATION_REGEX.lastIndex = 0;
 
-	while ((match = CITATION_REGEX.exec(text)) !== null) {
+	while ((match = CITATION_REGEX.exec(cleanedText)) !== null) {
 		// Add text before the citation
 		if (match.index > lastIndex) {
-			parts.push(text.substring(lastIndex, match.index));
+			parts.push(cleanedText.substring(lastIndex, match.index));
 		}
 
 		// Check if this is a docs chunk (has "doc-" prefix)
@@ -83,8 +89,8 @@ function parseTextWithCitations(text: string): ReactNode[] {
 	}
 
 	// Add any remaining text after the last citation
-	if (lastIndex < text.length) {
-		parts.push(text.substring(lastIndex));
+	if (lastIndex < cleanedText.length) {
+		parts.push(cleanedText.substring(lastIndex));
 	}
 
 	return parts.length > 0 ? parts : [text];
@@ -140,16 +146,18 @@ const useCopyToClipboard = ({ copiedDuration = 3000 }: { copiedDuration?: number
  */
 function processChildrenWithCitations(children: ReactNode): ReactNode {
 	if (typeof children === "string") {
-		const parsed = parseTextWithCitations(children);
-		return parsed.length === 1 && typeof parsed[0] === "string" ? children : <>{parsed}</>;
+		const cleaned = stripPossibleNextStepsComment(children);
+		const parsed = parseTextWithCitations(cleaned);
+		return parsed.length === 1 && typeof parsed[0] === "string" ? cleaned : <>{parsed}</>;
 	}
 
 	if (Array.isArray(children)) {
 		return children.map((child, index) => {
 			if (typeof child === "string") {
-				const parsed = parseTextWithCitations(child);
+				const cleaned = stripPossibleNextStepsComment(child);
+				const parsed = parseTextWithCitations(cleaned);
 				return parsed.length === 1 && typeof parsed[0] === "string" ? (
-					child
+					cleaned
 				) : (
 					<span key={index}>{parsed}</span>
 				);

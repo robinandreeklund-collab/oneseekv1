@@ -390,6 +390,35 @@ const Composer: FC<{ isPublicChat: boolean }> = ({ isPublicChat }) => {
 		setMentionedDocumentIds,
 	]);
 
+	useEffect(() => {
+		const handler = (event: Event) => {
+			const detail = (event as CustomEvent<{ text?: string; send?: boolean }>).detail;
+			if (!detail?.text) return;
+			if (isThreadRunning || isBlockedByOtherUser) return;
+			if (showDocumentPopover) return;
+			composerRuntime.setText(detail.text);
+			if (detail.send) {
+				composerRuntime.send();
+				editorRef.current?.clear();
+				setMentionedDocuments([]);
+				setMentionedDocumentIds({
+					surfsense_doc_ids: [],
+					document_ids: [],
+				});
+			}
+		};
+
+		window.addEventListener("assistant:compose", handler as EventListener);
+		return () => window.removeEventListener("assistant:compose", handler as EventListener);
+	}, [
+		composerRuntime,
+		isThreadRunning,
+		isBlockedByOtherUser,
+		showDocumentPopover,
+		setMentionedDocuments,
+		setMentionedDocumentIds,
+	]);
+
 	// Remove document from mentions and sync IDs to atom
 	const handleDocumentRemove = useCallback(
 		(docId: number, docType?: string) => {
