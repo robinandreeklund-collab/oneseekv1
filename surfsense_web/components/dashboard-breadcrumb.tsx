@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import React, { useEffect, useState } from "react";
 import {
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { searchSpacesApiService } from "@/lib/apis/search-spaces-api.service";
 import { authenticatedFetch, getBearerToken } from "@/lib/auth-utils";
+import { getThreadFull } from "@/lib/chat/thread-persistence";
 import { cacheKeys } from "@/lib/query-client/cache-keys";
 
 interface BreadcrumbItemInterface {
@@ -24,14 +25,29 @@ interface BreadcrumbItemInterface {
 export function DashboardBreadcrumb() {
 	const t = useTranslations("breadcrumb");
 	const pathname = usePathname();
+	const searchParams = useSearchParams();
 	// Extract search space ID and chat ID from pathname
 	const segments = pathname.split("/").filter(Boolean);
 	const searchSpaceId = segments[0] === "dashboard" && segments[1] ? segments[1] : null;
+	const chatIdFromPath =
+		segments[2] === "new-chat" && segments[3] ? Number(segments[3]) : null;
+	const chatIdFromQuery = searchParams.get("chat_id")
+		? Number(searchParams.get("chat_id"))
+		: null;
+	const chatId = Number.isNaN(chatIdFromPath || chatIdFromQuery)
+		? null
+		: chatIdFromPath || chatIdFromQuery;
 
 	const { data: searchSpace } = useQuery({
 		queryKey: cacheKeys.searchSpaces.detail(searchSpaceId || ""),
 		queryFn: () => searchSpacesApiService.getSearchSpace({ id: Number(searchSpaceId) }),
 		enabled: !!searchSpaceId,
+	});
+
+	const { data: chatThread } = useQuery({
+		queryKey: cacheKeys.threads.detail(chatId || 0),
+		queryFn: () => getThreadFull(chatId as number),
+		enabled: !!chatId && searchSpaceId !== "public" && segments[2] === "new-chat",
 	});
 
 	// State to store document title for editor breadcrumb
@@ -146,9 +162,16 @@ export function DashboardBreadcrumb() {
 					// Handle new-chat sub-sections (thread IDs)
 					// Don't show thread ID in breadcrumb - users identify chats by content, not by ID
 					if (section === "new-chat") {
-						breadcrumbs.push({
-							label: t("chat") || "Chat",
-						});
+						const chatLabel = t("chat") || "Chat";
+						if (chatThread?.title) {
+							breadcrumbs.push({
+								label: chatLabel,
+								href: `/dashboard/${segments[1]}/new-chat`,
+							});
+							breadcrumbs.push({ label: chatThread.title });
+						} else {
+							breadcrumbs.push({ label: chatLabel });
+						}
 						return breadcrumbs;
 					}
 

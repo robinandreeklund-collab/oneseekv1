@@ -71,6 +71,7 @@ import {
 	getRegenerateUrl,
 	getThreadFull,
 	getThreadMessages,
+	updateThread,
 	type ThreadRecord,
 } from "@/lib/chat/thread-persistence";
 import {
@@ -125,6 +126,23 @@ function extractMentionedDocuments(content: unknown): MentionedDocumentInfo[] {
 	}
 
 	return [];
+}
+
+function buildChatTitle(rawQuery: string): string {
+	const cleaned = rawQuery.replace(/\s+/g, " ").trim();
+	if (!cleaned) return "";
+
+	const withoutCommand = cleaned.replace(/^\/compare\s*:?\s*/i, "").trim();
+	const firstLine = (withoutCommand.split("\n")[0] || "").trim();
+	const sentence = (firstLine.split(/[.!?]/)[0] || "").trim();
+	const candidate = sentence || firstLine || withoutCommand;
+	const maxLength = 80;
+
+	if (candidate.length <= maxLength) {
+		return candidate;
+	}
+
+	return `${candidate.slice(0, maxLength).trimEnd()}...`;
 }
 
 /**
@@ -646,6 +664,35 @@ export default function NewChatPage() {
 					console.error("[NewChatPage] Failed to create thread:", error);
 					toast.error("Failed to start chat. Please try again.");
 					return;
+				}
+			}
+
+			const shouldAutoRename =
+				(isNewThread || (currentThread?.title ?? "").trim() === "New Chat") &&
+				messages.length === 0;
+
+			if (shouldAutoRename) {
+				const autoTitle = buildChatTitle(userQuery);
+				if (autoTitle) {
+					updateThread(currentThreadId, { title: autoTitle })
+						.then((updated) => {
+							setCurrentThread(updated);
+							queryClient.invalidateQueries({
+								queryKey: ["threads", String(searchSpaceId)],
+							});
+							queryClient.invalidateQueries({
+								queryKey: ["all-threads", String(searchSpaceId)],
+							});
+							queryClient.invalidateQueries({
+								queryKey: ["search-threads", String(searchSpaceId)],
+							});
+							queryClient.invalidateQueries({
+								queryKey: ["threads", "detail", currentThreadId],
+							});
+						})
+						.catch((error) =>
+							console.error("[NewChatPage] Failed to auto-rename thread:", error)
+						);
 				}
 			}
 
