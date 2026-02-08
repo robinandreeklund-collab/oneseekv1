@@ -37,7 +37,21 @@ export const agentPromptsUpdateRequest = z.object({
 	items: z.array(agentPromptUpdateItem),
 });
 
+export const agentPromptHistoryItem = z.object({
+	key: agentPromptKeyEnum,
+	previous_prompt: z.string().nullable().optional(),
+	new_prompt: z.string().nullable().optional(),
+	updated_at: z.string(),
+	updated_by_id: z.string().nullable().optional(),
+});
+
+export const agentPromptHistoryResponse = z.object({
+	items: z.array(agentPromptHistoryItem),
+});
+
 export type AgentPromptItem = z.infer<typeof agentPromptItem>;
 export type AgentPromptsResponse = z.infer<typeof agentPromptsResponse>;
 export type AgentPromptUpdateItem = z.infer<typeof agentPromptUpdateItem>;
 export type AgentPromptsUpdateRequest = z.infer<typeof agentPromptsUpdateRequest>;
+export type AgentPromptHistoryItem = z.infer<typeof agentPromptHistoryItem>;
+export type AgentPromptHistoryResponse = z.infer<typeof agentPromptHistoryResponse>;

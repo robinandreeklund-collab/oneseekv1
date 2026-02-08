@@ -1,5 +1,6 @@
 import {
 	type AgentPromptsUpdateRequest,
+	agentPromptHistoryResponse,
 	agentPromptsResponse,
 	agentPromptsUpdateRequest,
 } from "@/contracts/types/agent-prompts.types";
@@ -27,6 +28,13 @@ class AdminPromptsApiService {
 			{
 				body: parsedRequest.data,
 			}
+		);
+	};
+
+	getAgentPromptHistory = async (searchSpaceId: number, promptKey: string) => {
+		return baseApiService.get(
+			`/api/v1/admin/search-spaces/${searchSpaceId}/agent-prompts/${promptKey}/history`,
+			agentPromptHistoryResponse
 		);
 	};
 }

@@ -157,9 +157,75 @@ export default function AdminPromptsPage() {
 								{item.default_prompt}
 							</pre>
 						</details>
+						<PromptHistory
+							searchSpaceId={searchSpaceId}
+							promptKey={item.key}
+							isSaving={isSaving}
+						/>
 					</div>
 				))}
 			</div>
 		</div>
+	);
+}
+
+function PromptHistory({
+	searchSpaceId,
+	promptKey,
+	isSaving,
+}: {
+	searchSpaceId: number;
+	promptKey: string;
+	isSaving: boolean;
+}) {
+	const [isOpen, setIsOpen] = useState(false);
+	const { data, isLoading } = useQuery({
+		queryKey: ["admin-prompts-history", searchSpaceId, promptKey],
+		queryFn: () => adminPromptsApiService.getAgentPromptHistory(searchSpaceId, promptKey),
+		enabled: isOpen,
+	});
+
+	const items = data?.items ?? [];
+
+	return (
+		<details
+			className="mt-3"
+			open={isOpen}
+			onToggle={(event) => setIsOpen((event.target as HTMLDetailsElement).open)}
+		>
+			<summary className="cursor-pointer text-xs text-muted-foreground">
+				Visa versionshistorik
+			</summary>
+			<div className="mt-2 space-y-3 text-xs text-muted-foreground">
+				{isLoading && <p>Laddar historik...</p>}
+				{!isLoading && items.length === 0 && <p>Ingen historik ännu.</p>}
+				{items.map((entry) => (
+					<div
+						key={`${entry.updated_at}-${entry.updated_by_id ?? "unknown"}`}
+						className="rounded-md border border-border/40 bg-muted/30 p-3"
+					>
+						<p className="text-[11px] text-muted-foreground">
+							{new Date(entry.updated_at).toLocaleString("sv-SE")}
+							{entry.updated_by_id ? ` · ${entry.updated_by_id}` : ""}
+						</p>
+						{entry.previous_prompt ? (
+							<>
+								<p className="mt-2 text-[11px] uppercase text-muted-foreground">
+									Föregående
+								</p>
+								<pre className="mt-1 whitespace-pre-wrap rounded bg-background/70 p-2 text-[11px] text-foreground/80">
+									{entry.previous_prompt}
+								</pre>
+							</>
+						) : null}
+						<p className="mt-2 text-[11px] uppercase text-muted-foreground">Ny</p>
+						<pre className="mt-1 whitespace-pre-wrap rounded bg-background/70 p-2 text-[11px] text-foreground/80">
+							{entry.new_prompt || "(tömd)"}
+						</pre>
+					</div>
+				))}
+				{isSaving && <p>Historik uppdateras när du sparar.</p>}
+			</div>
+		</details>
 	);
 }
