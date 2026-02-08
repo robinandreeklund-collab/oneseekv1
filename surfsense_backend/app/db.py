@@ -467,6 +467,11 @@ class NewChatThread(BaseModel, TimestampMixin):
         order_by="NewChatMessage.created_at",
         cascade="all, delete-orphan",
     )
+    trace_sessions = relationship(
+        "ChatTraceSession",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+    )
     snapshots = relationship(
         "PublicChatSnapshot",
         back_populates="thread",
@@ -653,6 +658,88 @@ class ChatCommentMention(BaseModel, TimestampMixin):
     # Relationships
     comment = relationship("ChatComment", back_populates="mentions")
     mentioned_user = relationship("User")
+
+
+class ChatTraceSession(BaseModel, TimestampMixin):
+    """
+    Trace session for a single AI response.
+    Stores metadata for all trace spans emitted during generation.
+    """
+
+    __tablename__ = "chat_trace_sessions"
+
+    session_id = Column(String(64), nullable=False, unique=True, index=True)
+    thread_id = Column(
+        Integer,
+        ForeignKey("new_chat_threads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    message_id = Column(
+        Integer,
+        ForeignKey("new_chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_by_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("user.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    ended_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+
+    thread = relationship("NewChatThread", back_populates="trace_sessions")
+    message = relationship("NewChatMessage")
+    created_by = relationship("User")
+    spans = relationship(
+        "ChatTraceSpan",
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+
+class ChatTraceSpan(BaseModel, TimestampMixin):
+    """
+    Individual trace span within a trace session.
+    """
+
+    __tablename__ = "chat_trace_spans"
+
+    session_id = Column(
+        Integer,
+        ForeignKey("chat_trace_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    span_id = Column(String(80), nullable=False)
+    parent_span_id = Column(String(80), nullable=True, index=True)
+    name = Column(String(200), nullable=False)
+    kind = Column(String(50), nullable=False)
+    status = Column(
+        String(32),
+        nullable=False,
+        default="running",
+        server_default="running",
+    )
+    sequence = Column(Integer, nullable=False)
+    start_ts = Column(TIMESTAMP(timezone=True), nullable=False)
+    end_ts = Column(TIMESTAMP(timezone=True), nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    input = Column(JSONB, nullable=True)
+    output = Column(JSONB, nullable=True)
+    meta = Column(JSONB, nullable=True)
+
+    session = relationship("ChatTraceSession", back_populates="spans")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id", "span_id", name="uq_chat_trace_span_session_span"
+        ),
+    )
 
 
 class ChatSessionState(BaseModel):

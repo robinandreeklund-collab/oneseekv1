@@ -15,6 +15,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
+from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -47,11 +48,18 @@ from app.agents.new_chat.subagent_utils import (
     knowledge_route_instructions,
     knowledge_route_label,
 )
-from app.db import Document, NewChatThread, SurfsenseDocsDocument
+from app.db import (
+    ChatTraceSession,
+    Document,
+    NewChatThread,
+    SurfsenseDocsDocument,
+    async_session_maker,
+)
 from app.schemas.new_chat import ChatAttachment
 from app.services.connector_service import ConnectorService
 from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.services.new_streaming_service import VercelStreamingService
+from app.services.trace_service import TraceRecorder
 from app.tasks.chat.context_formatters import (
     format_attachments_as_context,
     format_mentioned_documents_as_context,
@@ -477,7 +485,41 @@ async def stream_compare_chat(
         yield streaming_service.format_done()
         return
 
+    trace_recorder: TraceRecorder | None = None
+    trace_db_session: AsyncSession | None = None
+
     try:
+        try:
+            trace_db_session = async_session_maker()
+            trace_session = ChatTraceSession(
+                session_id=uuid.uuid4().hex,
+                thread_id=chat_id,
+                created_by_id=UUID(user_id) if user_id else None,
+            )
+            trace_db_session.add(trace_session)
+            await trace_db_session.commit()
+            await trace_db_session.refresh(trace_session)
+            trace_recorder = TraceRecorder(
+                db_session=trace_db_session,
+                trace_session=trace_session,
+                streaming_service=streaming_service,
+                root_name="Compare Response",
+                root_input={
+                    "query": compare_query,
+                    "attachments": [a.name for a in attachments or []],
+                    "mentioned_document_ids": mentioned_document_ids or [],
+                    "mentioned_surfsense_doc_ids": mentioned_surfsense_doc_ids or [],
+                },
+            )
+            yield await trace_recorder.emit_session_start()
+            root_event = await trace_recorder.start_root_span()
+            if root_event:
+                yield root_event
+        except Exception as exc:
+            if trace_db_session:
+                await trace_db_session.rollback()
+            trace_recorder = None
+            print(f"[compare-trace] Failed to initialize trace session: {exc!s}")
         try:
             thread_result = await session.execute(
                 select(NewChatThread).filter(NewChatThread.id == chat_id)
@@ -529,6 +571,25 @@ async def stream_compare_chat(
             status="completed",
             items=route_items,
         )
+        if trace_recorder:
+            route_span_id = f"compare-route-{uuid.uuid4().hex[:8]}"
+            route_start = await trace_recorder.start_span(
+                span_id=route_span_id,
+                name="Routing request",
+                kind="middleware",
+                parent_id=trace_recorder.root_span_id,
+                input_data={"query": compare_query},
+                meta={"route": "compare"},
+            )
+            if route_start:
+                yield route_start
+            route_end = await trace_recorder.end_span(
+                span_id=route_span_id,
+                output_data={"route": "compare"},
+                status="completed",
+            )
+            if route_end:
+                yield route_end
         yield streaming_service.format_data(
             "context-stats",
             {
@@ -556,6 +617,7 @@ async def stream_compare_chat(
         provider_configs: dict[str, dict] = {}
         provider_tool_call_ids: dict[str, str] = {}
         provider_results: dict[str, dict] = {}
+        provider_trace_spans: dict[str, str] = {}
         spec_by_key = {spec.key: spec for spec in EXTERNAL_MODEL_SPECS}
 
         for spec in EXTERNAL_MODEL_SPECS:
@@ -598,6 +660,31 @@ async def stream_compare_chat(
                 "title": step_title,
                 "items": items,
             }
+
+            if trace_recorder:
+                span_id = f"compare-model-{spec.key}-{uuid.uuid4().hex[:8]}"
+                provider_trace_spans[spec.key] = span_id
+                trace_start = await trace_recorder.start_span(
+                    span_id=span_id,
+                    name=str(spec.display),
+                    kind="model",
+                    parent_id=trace_recorder.root_span_id,
+                    input_data={
+                        "query": compare_query,
+                        "context": query_with_context,
+                        "provider": provider_label,
+                        "model": model_name,
+                        "model_string": model_string,
+                    },
+                    meta={
+                        "provider": provider_label,
+                        "model": model_name,
+                        "model_string": model_string,
+                        "api_base": api_base_value,
+                    },
+                )
+                if trace_start:
+                    yield trace_start
 
             yield streaming_service.format_thinking_step(
                 step_id=step_id,
@@ -646,6 +733,16 @@ async def stream_compare_chat(
                     "status": "error",
                     "error": _truncate_text(error_msg, 200),
                 }
+                if trace_recorder:
+                    span_id = provider_trace_spans.get(spec.key, "")
+                    if span_id:
+                        trace_end = await trace_recorder.end_span(
+                            span_id=span_id,
+                            output_data=error_result,
+                            status="error",
+                        )
+                        if trace_end:
+                            yield trace_end
 
         answers: dict[str, str] = {}
         results_queue: asyncio.Queue[
@@ -786,6 +883,27 @@ async def stream_compare_chat(
                         "error": _truncate_text(str(error_msg), 200),
                     }
 
+                if trace_recorder:
+                    span_id = provider_trace_spans.get(provider_key, "")
+                    if span_id:
+                        trace_status = (
+                            "completed"
+                            if result_payload.get("status") == "success"
+                            else "error"
+                        )
+                        trace_output = (
+                            result_payload
+                            if result_payload
+                            else {"status": "error", "error": "Empty response"}
+                        )
+                        trace_end = await trace_recorder.end_span(
+                            span_id=span_id,
+                            output_data=trace_output,
+                            status=trace_status,
+                        )
+                        if trace_end:
+                            yield trace_end
+
                 yield streaming_service.format_thinking_step(
                     step_id=step_id,
                     title=title,
@@ -811,12 +929,35 @@ async def stream_compare_chat(
         )
 
         tavily_query = _build_tavily_query(compare_query)
+        tavily_span_id = f"tavily-{uuid.uuid4().hex[:8]}"
+        if trace_recorder:
+            tavily_start = await trace_recorder.start_span(
+                span_id=tavily_span_id,
+                name="tavily_search",
+                kind="tool",
+                parent_id=trace_recorder.root_span_id,
+                input_data={"query": tavily_query or compare_query, "top_k": MAX_TAVILY_RESULTS},
+                meta={"source": "tavily"},
+            )
+            if tavily_start:
+                yield tavily_start
         tavily_sources_info, tavily_documents = await connector_service.search_tavily(
             user_query=tavily_query or compare_query,
             search_space_id=search_space_id,
             top_k=MAX_TAVILY_RESULTS,
             user_id=user_id,
         )
+        if trace_recorder:
+            tavily_end = await trace_recorder.end_span(
+                span_id=tavily_span_id,
+                output_data={
+                    "sources": tavily_sources_info,
+                    "result_count": len(tavily_documents),
+                },
+                status="completed",
+            )
+            if tavily_end:
+                yield tavily_end
         tavily_documents_for_prompt = _minimize_documents_for_prompt(
             tavily_documents,
             max_documents=MAX_TAVILY_RESULTS,
@@ -878,6 +1019,14 @@ async def stream_compare_chat(
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
             yield streaming_service.format_done()
+            if trace_recorder:
+                trace_end = await trace_recorder.end_span(
+                    span_id=trace_recorder.root_span_id,
+                    output_data={"status": "error", "error": "Missing local LLM configuration"},
+                    status="error",
+                )
+                if trace_end:
+                    yield trace_end
             return
 
         local_llm = create_chat_litellm_from_agent_config(agent_config)
@@ -886,6 +1035,14 @@ async def stream_compare_chat(
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
             yield streaming_service.format_done()
+            if trace_recorder:
+                trace_end = await trace_recorder.end_span(
+                    span_id=trace_recorder.root_span_id,
+                    output_data={"status": "error", "error": "Missing local LLM instance"},
+                    status="error",
+                )
+                if trace_end:
+                    yield trace_end
             return
 
         from app.db import SearchSourceConnectorType
@@ -995,6 +1152,23 @@ async def stream_compare_chat(
         oneseek_tool_steps: dict[str, str] = {}
         oneseek_tool_calls: dict[str, str] = {}
         write_todos_call_count = 0
+        oneseek_trace_span_id = ""
+        if trace_recorder:
+            oneseek_trace_span_id = f"compare-oneseek-{uuid.uuid4().hex[:8]}"
+            oneseek_trace_start = await trace_recorder.start_span(
+                span_id=oneseek_trace_span_id,
+                name="Oneseek",
+                kind="chain",
+                parent_id=trace_recorder.root_span_id,
+                input_data={
+                    "query": compare_query,
+                    "context": query_with_context,
+                    "knowledge_route": knowledge_route_label(knowledge_route),
+                },
+                meta={"route": "compare", "agent": "oneseek"},
+            )
+            if oneseek_trace_start:
+                yield oneseek_trace_start
 
         input_state = {
             "messages": [HumanMessage(content=query_with_context)],
@@ -1004,22 +1178,116 @@ async def stream_compare_chat(
             "configurable": {"thread_id": f"{chat_id}-compare-oneseek"},
             "recursion_limit": 80,
         }
+        def trace_parent_id(event: dict) -> str | None:
+            parents = event.get("parent_ids") or []
+            if parents:
+                return str(parents[-1])
+            return oneseek_trace_span_id or None
 
         try:
             async for event in oneseek_agent.astream_events(
                 input_state, config=config, version="v2"
             ):
                 event_type = event.get("event", "")
+                run_id = str(event.get("run_id") or "")
+                trace_parent = trace_parent_id(event)
+                if trace_recorder:
+                    if event_type == "on_chain_start":
+                        chain_name = event.get("name") or "chain"
+                        chain_input = event.get("data", {}).get("input")
+                        chain_meta = {
+                            "tags": event.get("tags") or [],
+                            "metadata": event.get("metadata") or {},
+                        }
+                        trace_event = await trace_recorder.start_span(
+                            span_id=run_id or f"chain-{uuid.uuid4().hex[:8]}",
+                            name=str(chain_name),
+                            kind="chain",
+                            parent_id=trace_parent,
+                            input_data=chain_input,
+                            meta=chain_meta,
+                        )
+                        if trace_event:
+                            yield trace_event
+                    elif event_type == "on_chain_end":
+                        chain_output = event.get("data", {}).get("output")
+                        trace_event = await trace_recorder.end_span(
+                            span_id=run_id,
+                            output_data=chain_output,
+                            status="completed",
+                        )
+                        if trace_event:
+                            yield trace_event
+                    elif event_type == "on_chain_error":
+                        trace_event = await trace_recorder.end_span(
+                            span_id=run_id,
+                            output_data=event.get("data"),
+                            status="error",
+                        )
+                        if trace_event:
+                            yield trace_event
+                    elif event_type in ("on_chat_model_start", "on_llm_start"):
+                        model_data = event.get("data", {})
+                        model_input = (
+                            model_data.get("input")
+                            or model_data.get("messages")
+                            or model_data.get("prompt")
+                        )
+                        model_name = (
+                            event.get("name") or model_data.get("model") or "model"
+                        )
+                        model_meta = {
+                            "model": model_data.get("model"),
+                            "provider": model_data.get("provider"),
+                            "tags": event.get("tags") or [],
+                            "metadata": event.get("metadata") or {},
+                        }
+                        trace_event = await trace_recorder.start_span(
+                            span_id=run_id or f"model-{uuid.uuid4().hex[:8]}",
+                            name=str(model_name),
+                            kind="model",
+                            parent_id=trace_parent,
+                            input_data=model_input,
+                            meta=model_meta,
+                        )
+                        if trace_event:
+                            yield trace_event
+                    elif event_type in ("on_chat_model_end", "on_llm_end"):
+                        model_output = event.get("data", {}).get("output")
+                        trace_event = await trace_recorder.end_span(
+                            span_id=run_id,
+                            output_data=model_output,
+                            status="completed",
+                        )
+                        if trace_event:
+                            yield trace_event
                 if event_type == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content"):
                         content = chunk.content
                         if content and isinstance(content, str):
                             oneseek_text += content
+                            if trace_recorder:
+                                trace_update = await trace_recorder.append_span_output(
+                                    span_id=run_id, output_delta=content
+                                )
+                                if trace_update:
+                                    yield trace_update
                 elif event_type == "on_tool_start":
                     tool_name = event.get("name", "unknown_tool")
                     run_id = event.get("run_id", "")
                     tool_input = event.get("data", {}).get("input", {})
+                    if trace_recorder:
+                        trace_event = await trace_recorder.start_span(
+                            span_id=str(run_id) or f"tool-{uuid.uuid4().hex[:8]}",
+                            name=str(tool_name),
+                            kind="tool",
+                            parent_id=trace_parent,
+                            input_data=tool_input,
+                            meta={"tool": tool_name},
+                        )
+                        if trace_event:
+                            yield trace_event
 
                     tool_step_id = f"compare-oneseek-tool-{uuid.uuid4().hex[:8]}"
                     oneseek_tool_steps[run_id] = tool_step_id
@@ -1099,6 +1367,21 @@ async def stream_compare_chat(
                             tool_output = {"result": raw_output}
                     elif raw_output is None:
                         tool_output = {"result": "No output"}
+
+                    if trace_recorder:
+                        status = "completed"
+                        if isinstance(tool_output, dict) and (
+                            tool_output.get("status") == "error"
+                            or "error" in tool_output
+                        ):
+                            status = "error"
+                        trace_event = await trace_recorder.end_span(
+                            span_id=str(run_id),
+                            output_data=tool_output,
+                            status=status,
+                        )
+                        if trace_event:
+                            yield trace_event
 
                     tool_call_id = oneseek_tool_calls.get(run_id) or (
                         f"call_{run_id[:32]}"
@@ -1225,6 +1508,28 @@ async def stream_compare_chat(
                 f"Elapsed: {oneseek_elapsed:.1f}s",
             ]
 
+        if trace_recorder and oneseek_trace_span_id:
+            trace_status = "completed"
+            trace_output: dict[str, Any] = {}
+            if oneseek_error or not oneseek_text.strip():
+                trace_status = "error"
+                trace_output = {
+                    "status": "error",
+                    "error": oneseek_error or "Empty response",
+                }
+            else:
+                trace_output = provider_results.get("oneseek") or {
+                    "status": "success",
+                    "response": oneseek_text,
+                }
+            trace_end = await trace_recorder.end_span(
+                span_id=oneseek_trace_span_id,
+                output_data=trace_output,
+                status=trace_status,
+            )
+            if trace_end:
+                yield trace_end
+
         yield streaming_service.format_thinking_step(
             step_id=local_step_id,
             title=oneseek_title,
@@ -1287,6 +1592,14 @@ async def stream_compare_chat(
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
             yield streaming_service.format_done()
+            if trace_recorder:
+                trace_end = await trace_recorder.end_span(
+                    span_id=trace_recorder.root_span_id,
+                    output_data={"status": "error", "error": "No model answers"},
+                    status="error",
+                )
+                if trace_end:
+                    yield trace_end
             return
 
         analysis_step_id = f"compare-analysis-{uuid.uuid4().hex[:8]}"
@@ -1390,6 +1703,22 @@ async def stream_compare_chat(
             },
         )
 
+        analysis_span_id = ""
+        if trace_recorder:
+            analysis_span_id = f"compare-analysis-{uuid.uuid4().hex[:8]}"
+            analysis_start = await trace_recorder.start_span(
+                span_id=analysis_span_id,
+                name="Compare analysis",
+                kind="model",
+                parent_id=trace_recorder.root_span_id,
+                input_data={
+                    "system_prompt": analysis_system_prompt,
+                    "analysis_prompt": analysis_prompt,
+                },
+                meta={"phase": "analysis"},
+            )
+            if analysis_start:
+                yield analysis_start
         try:
             local_response = await local_llm.ainvoke(
                 [
@@ -1400,10 +1729,26 @@ async def stream_compare_chat(
                 ]
             )
             final_answer = str(getattr(local_response, "content", "") or "").strip()
+            if trace_recorder and analysis_span_id:
+                analysis_end = await trace_recorder.end_span(
+                    span_id=analysis_span_id,
+                    output_data={"final_answer": final_answer},
+                    status="completed",
+                )
+                if analysis_end:
+                    yield analysis_end
         except Exception as exc:
             analysis_items.append(
                 f"Error: {_truncate_text(str(exc), 120)}"
             )
+            if trace_recorder and analysis_span_id:
+                analysis_end = await trace_recorder.end_span(
+                    span_id=analysis_span_id,
+                    output_data={"error": str(exc)},
+                    status="error",
+                )
+                if analysis_end:
+                    yield analysis_end
             yield streaming_service.format_thinking_step(
                 step_id=analysis_step_id,
                 title=format_step_title("Analyzing and validating responses"),
@@ -1416,6 +1761,14 @@ async def stream_compare_chat(
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
             yield streaming_service.format_done()
+            if trace_recorder:
+                trace_end = await trace_recorder.end_span(
+                    span_id=trace_recorder.root_span_id,
+                    output_data={"status": "error", "error": str(exc)},
+                    status="error",
+                )
+                if trace_end:
+                    yield trace_end
             return
         if not final_answer:
             final_answer = "I could not generate a response."
@@ -1461,6 +1814,18 @@ async def stream_compare_chat(
             yield part
         yield streaming_service.format_text_end(text_id)
 
+        if trace_recorder:
+            trace_end = await trace_recorder.end_span(
+                span_id=trace_recorder.root_span_id,
+                output_data={
+                    "status": "completed",
+                    "final_answer_length": len(final_answer),
+                },
+                status="completed",
+            )
+            if trace_end:
+                yield trace_end
+
         yield streaming_service.format_finish_step()
         yield streaming_service.format_finish()
         yield streaming_service.format_done()
@@ -1470,3 +1835,16 @@ async def stream_compare_chat(
         yield streaming_service.format_finish_step()
         yield streaming_service.format_finish()
         yield streaming_service.format_done()
+        if trace_recorder:
+            trace_end = await trace_recorder.end_span(
+                span_id=trace_recorder.root_span_id,
+                output_data={"status": "error", "error": str(exc)},
+                status="error",
+            )
+            if trace_end:
+                yield trace_end
+    finally:
+        if trace_recorder:
+            await trace_recorder.end_session()
+        if trace_db_session:
+            await trace_db_session.close()

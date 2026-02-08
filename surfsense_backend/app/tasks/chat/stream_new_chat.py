@@ -11,6 +11,7 @@ Supports loading LLM configurations from:
 
 import json
 import re
+import uuid
 from collections.abc import AsyncGenerator
 from uuid import UUID
 
@@ -52,7 +53,7 @@ from app.agents.new_chat.subagent_utils import (
     knowledge_route_label,
 )
 from app.services.agent_prompt_service import get_global_prompt_overrides
-from app.db import Document, SurfsenseDocsDocument
+from app.db import ChatTraceSession, Document, SurfsenseDocsDocument, async_session_maker
 from app.schemas.new_chat import ChatAttachment
 from app.services.chat_session_state_service import (
     clear_ai_responding,
@@ -61,6 +62,7 @@ from app.services.chat_session_state_service import (
 from app.agents.new_chat.tools.user_memory import create_save_memory_tool
 from app.services.connector_service import ConnectorService
 from app.services.new_streaming_service import VercelStreamingService
+from app.services.trace_service import TraceRecorder
 from app.tasks.chat.stream_compare_chat import is_compare_request, stream_compare_chat
 from app.tasks.chat.context_formatters import (
     format_attachments_as_context,
@@ -245,6 +247,8 @@ async def stream_new_chat(
 
     # Track the current text block for streaming (defined early for exception handling)
     current_text_id: str | None = None
+    trace_recorder: TraceRecorder | None = None
+    trace_db_session: AsyncSession | None = None
 
     try:
         # Mark AI as responding to this user for live collaboration
@@ -280,6 +284,37 @@ async def stream_new_chat(
             ):
                 yield chunk
             return
+        try:
+            trace_db_session = async_session_maker()
+            trace_session = ChatTraceSession(
+                session_id=uuid.uuid4().hex,
+                thread_id=chat_id,
+                created_by_id=UUID(user_id) if user_id else None,
+            )
+            trace_db_session.add(trace_session)
+            await trace_db_session.commit()
+            await trace_db_session.refresh(trace_session)
+            trace_recorder = TraceRecorder(
+                db_session=trace_db_session,
+                trace_session=trace_session,
+                streaming_service=streaming_service,
+                root_name="Chat Response",
+                root_input={
+                    "query": user_query,
+                    "attachments": [a.name for a in attachments or []],
+                    "mentioned_document_ids": mentioned_document_ids or [],
+                    "mentioned_surfsense_doc_ids": mentioned_surfsense_doc_ids or [],
+                },
+            )
+            yield await trace_recorder.emit_session_start()
+            root_event = await trace_recorder.start_root_span()
+            if root_event:
+                yield root_event
+        except Exception as exc:
+            if trace_db_session:
+                await trace_db_session.rollback()
+            trace_recorder = None
+            print(f"[trace] Failed to initialize trace session: {exc!s}")
         # Load LLM config - supports both YAML (negative IDs) and database (positive IDs)
         agent_config: AgentConfig | None = None
 
@@ -470,6 +505,33 @@ async def stream_new_chat(
                 prompt_tool_names.append("write_todos")
             if "reflect_on_progress" not in prompt_tool_names:
                 prompt_tool_names.append("reflect_on_progress")
+        if trace_recorder:
+            route_span_id = f"route-{uuid.uuid4().hex[:8]}"
+            route_meta = {
+                "route": route.value,
+                "knowledge_route": knowledge_route.value
+                if knowledge_route is not None
+                else None,
+                "action_route": action_route.value if action_route is not None else None,
+                "citations_enabled": citations_enabled,
+            }
+            route_start = await trace_recorder.start_span(
+                span_id=route_span_id,
+                name="Routing request",
+                kind="middleware",
+                parent_id=trace_recorder.root_span_id,
+                input_data={"query": user_query},
+                meta=route_meta,
+            )
+            if route_start:
+                yield route_start
+            route_end = await trace_recorder.end_span(
+                span_id=route_span_id,
+                output_data=route_meta,
+                status="completed",
+            )
+            if route_end:
+                yield route_end
 
         # Create connector service
         connector_service = ConnectorService(
@@ -794,11 +856,88 @@ async def stream_new_chat(
             items=last_active_step_items,
         )
 
+        def trace_parent_id(event: dict) -> str | None:
+            parents = event.get("parent_ids") or []
+            if parents:
+                return str(parents[-1])
+            return None
+
         # Stream the agent response with thread config for memory
         async for event in agent.astream_events(
             input_state, config=config, version="v2"
         ):
             event_type = event.get("event", "")
+            run_id = str(event.get("run_id") or "")
+            trace_parent = trace_parent_id(event)
+
+            if trace_recorder:
+                if event_type == "on_chain_start":
+                    chain_name = event.get("name") or "chain"
+                    chain_input = event.get("data", {}).get("input")
+                    chain_meta = {
+                        "tags": event.get("tags") or [],
+                        "metadata": event.get("metadata") or {},
+                    }
+                    trace_event = await trace_recorder.start_span(
+                        span_id=run_id or f"chain-{uuid.uuid4().hex[:8]}",
+                        name=str(chain_name),
+                        kind="chain",
+                        parent_id=trace_parent,
+                        input_data=chain_input,
+                        meta=chain_meta,
+                    )
+                    if trace_event:
+                        yield trace_event
+                elif event_type == "on_chain_end":
+                    chain_output = event.get("data", {}).get("output")
+                    trace_event = await trace_recorder.end_span(
+                        span_id=run_id,
+                        output_data=chain_output,
+                        status="completed",
+                    )
+                    if trace_event:
+                        yield trace_event
+                elif event_type == "on_chain_error":
+                    trace_event = await trace_recorder.end_span(
+                        span_id=run_id,
+                        output_data=event.get("data"),
+                        status="error",
+                    )
+                    if trace_event:
+                        yield trace_event
+                elif event_type in ("on_chat_model_start", "on_llm_start"):
+                    model_data = event.get("data", {})
+                    model_input = (
+                        model_data.get("input")
+                        or model_data.get("messages")
+                        or model_data.get("prompt")
+                    )
+                    model_name = event.get("name") or model_data.get("model") or "model"
+                    model_meta = {
+                        "model": model_data.get("model"),
+                        "provider": model_data.get("provider"),
+                        "tags": event.get("tags") or [],
+                        "metadata": event.get("metadata") or {},
+                    }
+                    trace_event = await trace_recorder.start_span(
+                        span_id=run_id or f"model-{uuid.uuid4().hex[:8]}",
+                        name=str(model_name),
+                        kind="model",
+                        parent_id=trace_parent,
+                        input_data=model_input,
+                        meta=model_meta,
+                    )
+                    if trace_event:
+                        yield trace_event
+                elif event_type in ("on_chat_model_end", "on_llm_end"):
+                    model_output = event.get("data", {}).get("output")
+                    trace_event = await trace_recorder.end_span(
+                        span_id=run_id,
+                        output_data=model_output,
+                        status="completed",
+                    )
+                    if trace_event:
+                        yield trace_event
 
             # Handle chat model stream events (text streaming)
             if event_type == "on_chat_model_stream":
@@ -828,12 +967,29 @@ async def stream_new_chat(
                             current_text_id, content
                         )
                         accumulated_text += content
+                        if trace_recorder:
+                            trace_update = await trace_recorder.append_span_output(
+                                span_id=run_id, output_delta=content
+                            )
+                            if trace_update:
+                                yield trace_update
 
             # Handle tool calls
             elif event_type == "on_tool_start":
                 tool_name = event.get("name", "unknown_tool")
                 run_id = event.get("run_id", "")
                 tool_input = event.get("data", {}).get("input", {})
+                if trace_recorder:
+                    trace_event = await trace_recorder.start_span(
+                        span_id=str(run_id) or f"tool-{uuid.uuid4().hex[:8]}",
+                        name=str(tool_name),
+                        kind="tool",
+                        parent_id=trace_parent,
+                        input_data=tool_input,
+                        meta={"tool": tool_name},
+                    )
+                    if trace_event:
+                        yield trace_event
 
                 # End current text block if any
                 if current_text_id is not None:
@@ -1171,6 +1327,21 @@ async def stream_new_chat(
                     tool_output = {
                         "result": str(raw_output) if raw_output else "completed"
                     }
+
+                if trace_recorder:
+                    status = "completed"
+                    if isinstance(tool_output, dict) and (
+                        tool_output.get("status") == "error"
+                        or "error" in tool_output
+                    ):
+                        status = "error"
+                    trace_event = await trace_recorder.end_span(
+                        span_id=str(run_id),
+                        output_data=tool_output,
+                        status=status,
+                    )
+                    if trace_event:
+                        yield trace_event
 
                 tool_call_id = f"call_{run_id[:32]}" if run_id else "call_unknown"
 
@@ -1869,6 +2040,15 @@ async def stream_new_chat(
         if completion_event:
             yield completion_event
 
+        if trace_recorder:
+            trace_end = await trace_recorder.end_span(
+                span_id=trace_recorder.root_span_id,
+                output_data={"status": "completed"},
+                status="completed",
+            )
+            if trace_end:
+                yield trace_end
+
         # Finish the step and message
         yield streaming_service.format_finish_step()
         yield streaming_service.format_finish()
@@ -1887,6 +2067,15 @@ async def stream_new_chat(
         if current_text_id is not None:
             yield streaming_service.format_text_end(current_text_id)
 
+        if trace_recorder:
+            trace_end = await trace_recorder.end_span(
+                span_id=trace_recorder.root_span_id,
+                output_data={"status": "error", "error": error_message},
+                status="error",
+            )
+            if trace_end:
+                yield trace_end
+
         yield streaming_service.format_error(error_message)
         yield streaming_service.format_finish_step()
         yield streaming_service.format_finish()
@@ -1895,3 +2084,7 @@ async def stream_new_chat(
     finally:
         # Clear AI responding state for live collaboration
         await clear_ai_responding(session, chat_id)
+        if trace_recorder:
+            await trace_recorder.end_session()
+        if trace_db_session:
+            await trace_db_session.close()
