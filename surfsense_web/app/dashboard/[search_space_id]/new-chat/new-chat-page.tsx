@@ -1976,6 +1976,24 @@ export default function NewChatPage() {
 		adapters: attachmentAdapter ? { attachments: attachmentAdapter } : undefined,
 	});
 
+	const traceContextValue = useMemo<TracePanelContextValue>(
+		() => ({
+			messageTraceSessions,
+			traceSpansBySession,
+			activeMessageId: activeTraceMessageId,
+			isOpen: isTraceOpen,
+			openTraceForMessage: (messageId: string) => openTraceForMessage(messageId),
+			setIsOpen: setIsTraceOpen,
+		}),
+		[
+			messageTraceSessions,
+			traceSpansBySession,
+			activeTraceMessageId,
+			isTraceOpen,
+			openTraceForMessage,
+		]
+	);
+
 	// Show loading state only when loading an existing thread
 	if (isInitializing) {
 		return (
@@ -2035,25 +2053,6 @@ export default function NewChatPage() {
 			</div>
 		);
 	}
-
-	const traceContextValue = useMemo<TracePanelContextValue>(
-		() => ({
-			messageTraceSessions,
-			traceSpansBySession,
-			activeMessageId: activeTraceMessageId,
-			isOpen: isTraceOpen,
-			openTraceForMessage: (messageId: string) => openTraceForMessage(messageId),
-			setIsOpen: setIsTraceOpen,
-		}),
-		[
-			messageTraceSessions,
-			traceSpansBySession,
-			activeTraceMessageId,
-			isTraceOpen,
-			openTraceForMessage,
-		]
-	);
-
 	return (
 		<AssistantRuntimeProvider runtime={runtime}>
 			{!isPublicChat && <GeneratePodcastToolUI />}
