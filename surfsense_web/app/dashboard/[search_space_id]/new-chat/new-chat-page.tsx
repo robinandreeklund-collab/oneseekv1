@@ -2079,17 +2079,6 @@ export default function NewChatPage() {
 			<WriteTodosToolUI />
 			<TracePanelContext.Provider value={traceContextValue}>
 				<div className="flex h-[calc(100vh-64px)] overflow-hidden">
-					{isInlineTrace && (
-						<TraceSheet
-							open={isTraceOpen}
-							onOpenChange={setIsTraceOpen}
-							messageId={activeTraceMessageId}
-							sessionId={activeTraceSessionId}
-							spans={activeTraceSpans}
-							variant="inline"
-							dock="left"
-						/>
-					)}
 					<div className="flex min-w-0 flex-1 flex-col">
 						<Thread
 							messageThinkingSteps={messageThinkingSteps}
@@ -2116,6 +2105,17 @@ export default function NewChatPage() {
 							}
 						/>
 					</div>
+					{isInlineTrace && (
+						<TraceSheet
+							open={isTraceOpen}
+							onOpenChange={setIsTraceOpen}
+							messageId={activeTraceMessageId}
+							sessionId={activeTraceSessionId}
+							spans={activeTraceSpans}
+							variant="inline"
+							dock="right"
+						/>
+					)}
 				</div>
 				{!isInlineTrace && (
 					<TraceSheet

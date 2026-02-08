@@ -78,6 +78,24 @@ function extractAttribution(span: TraceSpan | null) {
 	return entries;
 }
 
+function getTokenInfo(span: TraceSpan | null) {
+	if (!span || !span.meta || typeof span.meta !== "object") return null;
+	const meta = span.meta as Record<string, unknown>;
+	const inputTokens = Number(meta.input_tokens ?? 0);
+	const outputTokens = Number(meta.output_tokens ?? 0);
+	const totalTokens = Number(meta.total_tokens ?? 0);
+	const resolvedTotal =
+		Number.isFinite(totalTokens) && totalTokens > 0
+			? totalTokens
+			: inputTokens + outputTokens;
+	if (!resolvedTotal) return null;
+	return {
+		total: resolvedTotal,
+		input: Number.isFinite(inputTokens) ? inputTokens : 0,
+		output: Number.isFinite(outputTokens) ? outputTokens : 0,
+	};
+}
+
 export function TraceSheet({
 	open,
 	onOpenChange,
@@ -182,6 +200,7 @@ export function TraceSheet({
 	};
 
 	const attributionEntries = extractAttribution(selectedSpan);
+	const selectedTokenInfo = getTokenInfo(selectedSpan);
 
 	const headerContent = (
 		<div className="flex items-center justify-between gap-3">
@@ -266,6 +285,7 @@ export function TraceSheet({
 								const depth = depthMap.get(span.id) ?? 0;
 								const isActive = span.status === "running";
 								const isSelected = selectedSpan?.id === span.id;
+								const tokenInfo = getTokenInfo(span);
 								const lineSegments = treeColumns.lineMap.get(span.id) ?? [];
 								const isLastChild = span.parent_id
 									? treeColumns.lastChildMap.get(span.parent_id) === span.id
@@ -328,8 +348,13 @@ export function TraceSheet({
 												)}
 												<span className="font-medium text-foreground">{span.name}</span>
 											</div>
-											<span className="text-xs text-muted-foreground">
-												{formatDuration(span.duration_ms)}
+											<span className="flex items-center gap-2 text-xs text-muted-foreground">
+												{tokenInfo && (
+													<span className="rounded-full border border-border/60 px-2 py-0.5">
+														{tokenInfo.total} tok
+													</span>
+												)}
+												<span>{formatDuration(span.duration_ms)}</span>
 											</span>
 										</div>
 										<div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -379,6 +404,11 @@ export function TraceSheet({
 											<span className="rounded-full border border-border/60 px-2 py-0.5">
 												{formatDuration(selectedSpan.duration_ms)}
 											</span>
+											{selectedTokenInfo && (
+												<span className="rounded-full border border-border/60 px-2 py-0.5">
+													{selectedTokenInfo.total} tok
+												</span>
+											)}
 											{selectedSpan.status === "running" && (
 												<span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">
 													Live
@@ -386,6 +416,11 @@ export function TraceSheet({
 											)}
 										</div>
 									</div>
+									{selectedTokenInfo && (
+										<div className="rounded-lg border border-border/60 bg-card/40 px-3 py-2 text-xs text-muted-foreground">
+											Tokens: input {selectedTokenInfo.input} · output {selectedTokenInfo.output}
+										</div>
+									)}
 
 									{attributionEntries.length > 0 && (
 										<div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-emerald-600 dark:text-emerald-300">
