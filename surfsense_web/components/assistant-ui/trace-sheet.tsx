@@ -25,6 +25,8 @@ interface TraceSheetProps {
 	messageId: string | null;
 	sessionId: string | null;
 	spans: TraceSpan[];
+	variant?: "overlay" | "inline";
+	dock?: "left" | "right";
 }
 
 const MIN_WIDTH = 420;
@@ -76,7 +78,15 @@ function extractAttribution(span: TraceSpan | null) {
 	return entries;
 }
 
-export function TraceSheet({ open, onOpenChange, messageId, sessionId, spans }: TraceSheetProps) {
+export function TraceSheet({
+	open,
+	onOpenChange,
+	messageId,
+	sessionId,
+	spans,
+	variant = "overlay",
+	dock = "right",
+}: TraceSheetProps) {
 	const isMobile = useMediaQuery("(max-width: 767px)");
 	const [panelWidth, setPanelWidth] = useState(720);
 	const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
@@ -144,7 +154,10 @@ export function TraceSheet({ open, onOpenChange, messageId, sessionId, spans }: 
 	useEffect(() => {
 		if (!isDragging) return;
 		const handlePointerMove = (event: PointerEvent) => {
-			const delta = startXRef.current - event.clientX;
+			const delta =
+				dock === "right"
+					? startXRef.current - event.clientX
+					: event.clientX - startXRef.current;
 			const nextWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidthRef.current + delta));
 			setPanelWidth(nextWidth);
 		};
@@ -192,11 +205,49 @@ export function TraceSheet({ open, onOpenChange, messageId, sessionId, spans }: 
 		</div>
 	);
 
+	const treeColumns = useMemo(() => {
+		const childrenMap = new Map<string, TraceSpan[]>();
+		sortedSpans.forEach((span) => {
+			if (!span.parent_id) return;
+			const list = childrenMap.get(span.parent_id) ?? [];
+			list.push(span);
+			childrenMap.set(span.parent_id, list);
+		});
+		const lastChildMap = new Map<string, string>();
+		childrenMap.forEach((list, parentId) => {
+			list.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+			const lastChild = list[list.length - 1];
+			if (lastChild) {
+				lastChildMap.set(parentId, lastChild.id);
+			}
+		});
+		const lineMap = new Map<string, boolean[]>();
+		sortedSpans.forEach((span) => {
+			const segments: boolean[] = [];
+			const chain: Array<{ parent: TraceSpan; child: TraceSpan }> = [];
+			let current: TraceSpan | undefined = span;
+			while (current?.parent_id) {
+				const parent = spanMap.get(current.parent_id);
+				if (!parent) break;
+				chain.push({ parent, child: current });
+				current = parent;
+			}
+			chain.reverse().forEach(({ parent, child }) => {
+				segments.push(lastChildMap.get(parent.id) !== child.id);
+			});
+			lineMap.set(span.id, segments);
+		});
+		return { lineMap, lastChildMap };
+	}, [sortedSpans, spanMap]);
+
 	const content = (
 		<div className="relative flex h-full flex-col bg-background">
 			<div
 				onPointerDown={handleResizeStart}
-				className="absolute left-0 top-0 h-full w-1 cursor-col-resize bg-border/40 hover:bg-border"
+				className={cn(
+					"absolute top-0 h-full w-1 cursor-col-resize bg-border/40 hover:bg-border",
+					dock === "right" ? "left-0" : "right-0"
+				)}
 			/>
 			<div className="flex h-full min-h-0 flex-1 overflow-hidden">
 				<div className="flex w-1/2 flex-col border-r border-border/60">
@@ -215,6 +266,13 @@ export function TraceSheet({ open, onOpenChange, messageId, sessionId, spans }: 
 								const depth = depthMap.get(span.id) ?? 0;
 								const isActive = span.status === "running";
 								const isSelected = selectedSpan?.id === span.id;
+								const lineSegments = treeColumns.lineMap.get(span.id) ?? [];
+								const isLastChild = span.parent_id
+									? treeColumns.lastChildMap.get(span.parent_id) === span.id
+									: true;
+								const gutterWidth = 12;
+								const columnCount = depth > 0 ? depth + 1 : 0;
+								const paddingLeft = 10 + columnCount * gutterWidth;
 								return (
 									<button
 										key={span.id}
@@ -224,12 +282,41 @@ export function TraceSheet({ open, onOpenChange, messageId, sessionId, spans }: 
 											setFollowLive(false);
 										}}
 										className={cn(
-											"group flex w-full flex-col gap-1 rounded-lg border border-border/40 bg-card/40 px-3 py-2 text-left text-sm transition",
+											"group relative flex w-full flex-col gap-1 rounded-lg border border-border/40 bg-card/40 px-3 py-2 text-left text-sm transition",
 											isSelected && "border-primary/50 bg-primary/5",
 											isActive && "animate-pulse border-primary/80 shadow-sm"
 										)}
-										style={{ paddingLeft: 12 + depth * 14 }}
+										style={{ paddingLeft }}
 									>
+										{columnCount > 0 && (
+											<div className="absolute inset-y-0 left-0 flex">
+												{lineSegments.map((hasLine, idx) => (
+													<div
+														key={`${span.id}-line-${idx}`}
+														className="relative"
+														style={{ width: gutterWidth }}
+													>
+														{hasLine && (
+															<div className="absolute inset-y-0 left-1/2 w-px bg-border/60" />
+														)}
+													</div>
+												))}
+												{depth > 0 && (
+													<div
+														className="relative"
+														style={{ width: gutterWidth }}
+													>
+														<div
+															className={cn(
+																"absolute left-1/2 w-px bg-border/60",
+																isLastChild ? "top-0 h-1/2" : "top-0 h-full"
+															)}
+														/>
+														<div className="absolute left-1/2 top-1/2 h-px w-full bg-border/60" />
+													</div>
+												)}
+											</div>
+										)}
 										<div className="flex items-center justify-between gap-2">
 											<div className="flex items-center gap-2">
 												{isActive ? (
@@ -328,6 +415,28 @@ export function TraceSheet({ open, onOpenChange, messageId, sessionId, spans }: 
 			</div>
 		</div>
 	);
+
+	const panelBody = (
+		<div className="flex h-full flex-col">
+			<div className="border-b border-border/60 px-4 py-4">{headerContent}</div>
+			<div className="min-h-0 flex-1">{content}</div>
+		</div>
+	);
+
+	if (variant === "inline") {
+		if (!open) return null;
+		return (
+			<div
+				className={cn(
+					"h-full",
+					dock === "left" ? "border-r border-border/60" : "border-l border-border/60"
+				)}
+				style={{ width: panelWidth, minWidth: MIN_WIDTH, maxWidth: MAX_WIDTH }}
+			>
+				{panelBody}
+			</div>
+		);
+	}
 
 	if (isMobile) {
 		return (

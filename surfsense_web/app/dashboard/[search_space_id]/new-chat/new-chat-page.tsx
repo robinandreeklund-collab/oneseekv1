@@ -63,6 +63,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
 import { useMessagesElectric } from "@/hooks/use-messages-electric";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import type { TraceSpan } from "@/contracts/types/chat-trace.types";
 import { chatTraceApiService } from "@/lib/apis/chat-trace-api.service";
 import { documentsApiService } from "@/lib/apis/documents-api.service";
@@ -236,6 +237,7 @@ export default function NewChatPage() {
 	);
 	const [isTraceOpen, setIsTraceOpen] = useState(false);
 	const [activeTraceMessageId, setActiveTraceMessageId] = useState<string | null>(null);
+	const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 	const abortControllerRef = useRef<AbortController | null>(null);
 
 	// Get mentioned document IDs from the composer
@@ -1993,6 +1995,7 @@ export default function NewChatPage() {
 			openTraceForMessage,
 		]
 	);
+	const isInlineTrace = isTraceOpen && isLargeScreen;
 
 	// Show loading state only when loading an existing thread
 	if (isInitializing) {
@@ -2075,37 +2078,56 @@ export default function NewChatPage() {
 			{!isPublicChat && <RecallMemoryToolUI />}
 			<WriteTodosToolUI />
 			<TracePanelContext.Provider value={traceContextValue}>
-				<div className="flex flex-col h-[calc(100vh-64px)] overflow-hidden">
-					<Thread
-						messageThinkingSteps={messageThinkingSteps}
-						messageContextStats={messageContextStats}
-						isPublicChat={isPublicChat}
-						header={
-							<div className="flex items-center justify-between gap-2">
-								<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />
-								{!isPublicChat && (
-									<Button
-										variant="outline"
-										size="sm"
-										className="gap-2"
-										disabled={!lastAssistantMessageId}
-										onClick={() => openTraceForMessage(lastAssistantMessageId)}
-									>
-										<Activity className={cn("size-4", isTraceOpen ? "animate-pulse" : "")} />
-										Live-spårning
-									</Button>
-								)}
-							</div>
-						}
-					/>
+				<div className="flex h-[calc(100vh-64px)] overflow-hidden">
+					{isInlineTrace && (
+						<TraceSheet
+							open={isTraceOpen}
+							onOpenChange={setIsTraceOpen}
+							messageId={activeTraceMessageId}
+							sessionId={activeTraceSessionId}
+							spans={activeTraceSpans}
+							variant="inline"
+							dock="left"
+						/>
+					)}
+					<div className="flex min-w-0 flex-1 flex-col">
+						<Thread
+							messageThinkingSteps={messageThinkingSteps}
+							messageContextStats={messageContextStats}
+							isPublicChat={isPublicChat}
+							header={
+								<div className="flex items-center justify-between gap-2">
+									<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />
+									{!isPublicChat && (
+										<Button
+											variant="outline"
+											size="sm"
+											className="gap-2"
+											disabled={!lastAssistantMessageId}
+											onClick={() => openTraceForMessage(lastAssistantMessageId)}
+										>
+											<Activity
+												className={cn("size-4", isTraceOpen ? "animate-pulse" : "")}
+											/>
+											Live-spårning
+										</Button>
+									)}
+								</div>
+							}
+						/>
+					</div>
 				</div>
-				<TraceSheet
-					open={isTraceOpen}
-					onOpenChange={setIsTraceOpen}
-					messageId={activeTraceMessageId}
-					sessionId={activeTraceSessionId}
-					spans={activeTraceSpans}
-				/>
+				{!isInlineTrace && (
+					<TraceSheet
+						open={isTraceOpen}
+						onOpenChange={setIsTraceOpen}
+						messageId={activeTraceMessageId}
+						sessionId={activeTraceSessionId}
+						spans={activeTraceSpans}
+						variant="overlay"
+						dock="right"
+					/>
+				)}
 			</TracePanelContext.Provider>
 		</AssistantRuntimeProvider>
 	);
