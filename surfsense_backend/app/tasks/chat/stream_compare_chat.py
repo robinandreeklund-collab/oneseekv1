@@ -962,7 +962,9 @@ async def stream_compare_chat(
             ]
             if item
         ]
-        oneseek_title = format_step_title("Asking Oneseek")
+        oneseek_title = format_step_title(
+            f"Asking Oneseek · Knowledge/{knowledge_route_label(knowledge_route)}"
+        )
         provider_steps["oneseek"] = {
             "id": local_step_id,
             "title": oneseek_title,

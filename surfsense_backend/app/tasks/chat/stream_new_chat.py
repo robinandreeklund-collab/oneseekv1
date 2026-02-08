@@ -27,6 +27,7 @@ from app.agents.new_chat.llm_config import (
     load_agent_config,
     load_llm_config_from_yaml,
 )
+from app.agents.new_chat.action_router import ActionRoute, dispatch_action_route
 from app.agents.new_chat.dispatcher import dispatch_route
 from app.agents.new_chat.knowledge_router import (
     KnowledgeRoute,
@@ -34,6 +35,8 @@ from app.agents.new_chat.knowledge_router import (
 )
 from app.agents.new_chat.routing import Route, ROUTE_CITATIONS_ENABLED, ROUTE_TOOL_SETS
 from app.agents.new_chat.subagent_utils import (
+    action_route_instructions,
+    action_route_label,
     build_subagent_config,
     knowledge_route_instructions,
     knowledge_route_label,
@@ -320,6 +323,7 @@ async def stream_new_chat(
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
         )
         knowledge_route: KnowledgeRoute | None = None
+        action_route: ActionRoute | None = None
         if route == Route.KNOWLEDGE:
             knowledge_route = await dispatch_knowledge_route(
                 user_query,
@@ -338,6 +342,20 @@ async def stream_new_chat(
                     "save_memory",
                     "recall_memory",
                 ]
+        elif route == Route.ACTION:
+            action_route = await dispatch_action_route(user_query, llm)
+            if action_route == ActionRoute.MEDIA:
+                enabled_tools = ["generate_podcast", "search_knowledge_base"]
+            elif action_route == ActionRoute.TRAVEL:
+                enabled_tools = ["smhi_weather", "trafiklab_route"]
+            elif action_route == ActionRoute.DATA:
+                enabled_tools = ["libris_search", "jobad_links_search"]
+            else:
+                enabled_tools = [
+                    "link_preview",
+                    "scrape_webpage",
+                    "display_image",
+                ]
         else:
             enabled_tools = ROUTE_TOOL_SETS.get(
                 route, ROUTE_TOOL_SETS[Route.KNOWLEDGE]
@@ -347,6 +365,10 @@ async def stream_new_chat(
         if route == Route.KNOWLEDGE and knowledge_route is not None:
             effective_agent_config = build_subagent_config(
                 agent_config, knowledge_route_instructions(knowledge_route)
+            )
+        elif route == Route.ACTION and action_route is not None:
+            effective_agent_config = build_subagent_config(
+                agent_config, action_route_instructions(action_route)
             )
 
         # Create connector service
@@ -551,6 +573,8 @@ async def stream_new_chat(
         route_label = route.value.capitalize()
         if route == Route.KNOWLEDGE and knowledge_route is not None:
             route_label = f"Knowledge/{knowledge_route_label(knowledge_route)}"
+        elif route == Route.ACTION and action_route is not None:
+            route_label = f"Action/{action_route_label(action_route)}"
         route_prefix = f"[{route_label}] "
 
         def format_step_title(title: str) -> str:
@@ -582,6 +606,8 @@ async def stream_new_chat(
         route_items = [f"Route: {route.value}"]
         if knowledge_route is not None:
             route_items.append(f"Sub-route: {knowledge_route.value}")
+        if action_route is not None:
+            route_items.append(f"Sub-route: {action_route.value}")
         yield streaming_service.format_thinking_step(
             step_id=route_step_id,
             title=format_step_title("Routing request"),
@@ -1257,10 +1283,10 @@ async def stream_new_chat(
                         )
                         matches = tool_output.get("matching_entries", []) or []
                         completed_items = [*last_active_step_items]
-                        route_label = f"{origin} -> {destination}".strip(" ->")
-                        if route_label:
+                        route_summary = f"{origin} -> {destination}".strip(" ->")
+                        if route_summary:
                             completed_items.append(
-                                f"Route: {route_label[:60]}{'...' if len(route_label) > 60 else ''}"
+                                f"Route: {route_summary[:60]}{'...' if len(route_summary) > 60 else ''}"
                             )
                         completed_items.append(
                             f"Matches: {len(matches)}"
