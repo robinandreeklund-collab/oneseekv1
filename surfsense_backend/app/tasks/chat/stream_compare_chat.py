@@ -51,9 +51,11 @@ from app.utils.context_metrics import (
 COMPARE_PREFIX = "/compare"
 COMPARE_TIMEOUT_SECONDS = 90
 COMPARE_RAW_ANSWER_CHARS = 12000
-MAX_TAVILY_RESULTS = 6
+MAX_TAVILY_RESULTS = 3
 COMPARE_SUMMARY_ANSWER_CHARS = 600
 COMPARE_SUMMARY_FINAL_CHARS = 700
+TAVILY_RESULT_CHUNK_CHARS = 320
+TAVILY_RESULT_MAX_CHUNKS = 1
 
 LOCAL_ANALYSIS_SYSTEM_PROMPT = (
     "Du är Oneseek Compare Analyzer. Din roll är att syntetisera ett högkvalitativt "
@@ -63,7 +65,9 @@ LOCAL_ANALYSIS_SYSTEM_PROMPT = (
     "- Användarfråga: Den ursprungliga frågan.\n"
     "- Verktygssvar: Utdata från externa modeller (märkta som MODEL_ANSWER med "
     "modellnamn).\n"
-    "- Tavily-snuttar: Webbkällor i <sources>-sektionen med <chunk id='...'>-taggar.\n\n"
+    "- Tavily-snuttar: Webbkällor i <sources>-sektionen med <chunk id='...'>-taggar "
+    "(kan vara förkortade till titel/URL).\n"
+    "- Tavily-svar: Ett sammanfattat Tavily-svar kan finnas i <sources>.\n\n"
     "**Kärnuppgifter**:\n"
     "1. Utvärdera korrekthet: Korskontrollera fakta mellan alla källor.\n"
     "2. Lös konflikter: Om källor säger olika, prioritera Tavily för faktapåståenden, "
@@ -151,6 +155,74 @@ def _estimate_documents_chars(documents: list[dict[str, Any]]) -> int:
                 if isinstance(chunk_content, str):
                     total_chars += len(chunk_content)
     return total_chars
+
+
+def _build_tavily_query(query: str) -> str:
+    trimmed = (query or "").strip()
+    if not trimmed:
+        return ""
+    lowered = trimmed.lower()
+    if "site:.se" in lowered or "site:se" in lowered:
+        return trimmed
+    return f"{trimmed} site:.se"
+
+
+def _minimize_documents_for_prompt(
+    documents: list[dict[str, Any]],
+    *,
+    max_documents: int,
+    max_chunks_per_doc: int,
+    max_chunk_chars: int,
+) -> list[dict[str, Any]]:
+    trimmed: list[dict[str, Any]] = []
+    for doc in documents[:max_documents]:
+        if not isinstance(doc, dict):
+            continue
+        document_info = doc.get("document") if isinstance(doc, dict) else None
+        document_info = document_info if isinstance(document_info, dict) else {}
+        metadata = document_info.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        title = (
+            document_info.get("title")
+            or metadata.get("title")
+            or "Tavily source"
+        )
+        url = (
+            metadata.get("url")
+            or metadata.get("source")
+            or metadata.get("page_url")
+            or ""
+        )
+        fallback_content = "\n".join([part for part in [title, url] if part]).strip()
+        raw_chunks = doc.get("chunks") if isinstance(doc, dict) else None
+        raw_chunks = raw_chunks if isinstance(raw_chunks, list) else []
+        new_chunks: list[dict[str, Any]] = []
+        for chunk in raw_chunks[:max_chunks_per_doc]:
+            if not isinstance(chunk, dict):
+                continue
+            content = fallback_content or (chunk.get("content") or "").strip()
+            if len(content) > max_chunk_chars:
+                content = content[:max_chunk_chars].rstrip() + "..."
+            new_chunks.append(
+                {"chunk_id": chunk.get("chunk_id") or chunk.get("id"), "content": content}
+            )
+        if not new_chunks:
+            new_chunks = [
+                {
+                    "chunk_id": document_info.get("id"),
+                    "content": fallback_content[:max_chunk_chars]
+                    if fallback_content
+                    else "Tavily source",
+                }
+            ]
+        minimized_doc = dict(doc)
+        minimized_doc["chunks"] = new_chunks
+        minimized_doc["content"] = "\n\n".join(
+            [chunk["content"] for chunk in new_chunks if chunk.get("content")]
+        )
+        trimmed.append(minimized_doc)
+    return trimmed
 
 
 def _build_compare_summary(
@@ -403,6 +475,7 @@ async def stream_compare_chat(
     mentioned_surfsense_doc_ids: list[int] | None = None,
 ) -> AsyncGenerator[str, None]:
     streaming_service = VercelStreamingService()
+    tokenizer_model: str | None = None
 
     compare_query = extract_compare_query(user_query)
     if not compare_query:
@@ -635,7 +708,9 @@ async def stream_compare_chat(
                         }
                         delta_chars = len(response_text)
                         if delta_chars > 0:
-                            delta_tokens = estimate_tokens_from_text(response_text)
+                            delta_tokens = estimate_tokens_from_text(
+                                response_text, model=tokenizer_model
+                            )
                             context_stats["tool_chars"] = (
                                 int(context_stats.get("tool_chars", 0)) + delta_chars
                             )
@@ -707,6 +782,9 @@ async def stream_compare_chat(
                 await asyncio.gather(*tasks, return_exceptions=True)
 
         tavily_step_id = f"compare-tavily-{uuid.uuid4().hex[:8]}"
+        tavily_sources_info: dict[str, Any] | None = None
+        tavily_documents: list[dict[str, Any]] = []
+        tavily_documents_for_prompt: list[dict[str, Any]] = []
         yield streaming_service.format_thinking_step(
             step_id=tavily_step_id,
             title="Fetching latest sources",
@@ -714,17 +792,27 @@ async def stream_compare_chat(
             items=[f"Query: {short_query}"],
         )
 
-        _, tavily_documents = await connector_service.search_tavily(
-            user_query=compare_query,
+        tavily_query = _build_tavily_query(compare_query)
+        tavily_sources_info, tavily_documents = await connector_service.search_tavily(
+            user_query=tavily_query or compare_query,
             search_space_id=search_space_id,
             top_k=MAX_TAVILY_RESULTS,
             user_id=user_id,
         )
-        tavily_chars = _estimate_documents_chars(tavily_documents)
+        tavily_documents_for_prompt = _minimize_documents_for_prompt(
+            tavily_documents,
+            max_documents=MAX_TAVILY_RESULTS,
+            max_chunks_per_doc=TAVILY_RESULT_MAX_CHUNKS,
+            max_chunk_chars=TAVILY_RESULT_CHUNK_CHARS,
+        )
+        tavily_chars = _estimate_documents_chars(tavily_documents_for_prompt)
         if tavily_chars <= 0:
-            tavily_chars = len(serialize_context_payload(tavily_documents))
+            tavily_chars = len(serialize_context_payload(tavily_documents_for_prompt))
         if tavily_chars > 0:
-            tavily_tokens = max(1, (tavily_chars + 3) // 4)
+            tavily_payload_text = serialize_context_payload(tavily_documents_for_prompt)
+            tavily_tokens = estimate_tokens_from_text(
+                tavily_payload_text or (" " * tavily_chars), model=tokenizer_model
+            )
             context_stats["tool_chars"] = (
                 int(context_stats.get("tool_chars", 0)) + tavily_chars
             )
@@ -810,6 +898,8 @@ async def stream_compare_chat(
         local_provider = str(agent_config.provider or "")
         local_api_base = str(agent_config.api_base or "")
         local_model_string = str(getattr(local_llm, "model", "") or "")
+        if not tokenizer_model:
+            tokenizer_model = local_model_name or local_model_string or None
         local_items = [
             item
             for item in [
@@ -1008,7 +1098,9 @@ async def stream_compare_chat(
             }
             delta_chars = len(oneseek_text)
             if delta_chars > 0:
-                delta_tokens = estimate_tokens_from_text(oneseek_text)
+                delta_tokens = estimate_tokens_from_text(
+                    oneseek_text, model=tokenizer_model
+                )
                 context_stats["tool_chars"] = (
                     int(context_stats.get("tool_chars", 0)) + delta_chars
                 )
@@ -1066,12 +1158,41 @@ async def stream_compare_chat(
         except Exception as exc:
             print(f"[compare] Failed to ingest model outputs: {exc!s}")
 
-        _, tavily_documents = await connector_service.search_tavily(
-            user_query=compare_query,
-            search_space_id=search_space_id,
-            top_k=MAX_TAVILY_RESULTS,
-            user_id=user_id,
-        )
+        tavily_answer_documents: list[dict] = []
+        tavily_answer_text = ""
+        if tavily_sources_info and isinstance(tavily_sources_info.get("answer"), str):
+            tavily_answer_text = tavily_sources_info.get("answer", "").strip()
+        if tavily_answer_text:
+            try:
+                tavily_answer_doc = await connector_service.ingest_tool_output(
+                    tool_name="tavily_answer",
+                    tool_output=tavily_answer_text,
+                    title=f"Tavily answer: {_truncate_text(short_query, 60)}",
+                    metadata={
+                        "source": "TAVILY_API",
+                        "query": compare_query,
+                        "result_count": len(tavily_documents),
+                    },
+                    user_id=user_id,
+                    origin_search_space_id=search_space_id,
+                    thread_id=chat_id,
+                )
+                if tavily_answer_doc:
+                    tavily_answer_documents.append(
+                        connector_service._serialize_external_document(
+                            tavily_answer_doc, score=1.0
+                        )
+                    )
+            except Exception as exc:
+                print(f"[compare] Failed to ingest Tavily answer: {exc!s}")
+
+        if not tavily_documents_for_prompt:
+            tavily_documents_for_prompt = _minimize_documents_for_prompt(
+                tavily_documents,
+                max_documents=MAX_TAVILY_RESULTS,
+                max_chunks_per_doc=TAVILY_RESULT_MAX_CHUNKS,
+                max_chunk_chars=TAVILY_RESULT_CHUNK_CHARS,
+            )
 
         if not answers:
             yield streaming_service.format_error(
@@ -1132,7 +1253,11 @@ async def stream_compare_chat(
                 ],
             )
         )
-        source_documents = [*model_answer_documents, *tavily_documents]
+        source_documents = [
+            *model_answer_documents,
+            *tavily_answer_documents,
+            *tavily_documents_for_prompt,
+        ]
         sources_context = (
             format_documents_for_context(source_documents)
             if source_documents
@@ -1151,6 +1276,33 @@ async def stream_compare_chat(
         ]
 
         analysis_prompt = "\n".join(prompt_parts)
+        analysis_prompt_chars = len(analysis_prompt)
+        analysis_prompt_tokens = estimate_tokens_from_text(
+            analysis_prompt, model=tokenizer_model
+        )
+        delta_chars = analysis_prompt_chars - int(context_stats.get("total_chars", 0))
+        delta_tokens = analysis_prompt_tokens - int(
+            context_stats.get("total_tokens", 0)
+        )
+        context_stats["total_chars"] = analysis_prompt_chars
+        context_stats["total_tokens"] = analysis_prompt_tokens
+        yield streaming_service.format_data(
+            "context-stats",
+            {
+                "phase": "analysis-prompt",
+                "label": "Analysis prompt total",
+                "delta_chars": max(0, delta_chars),
+                "delta_tokens": max(0, delta_tokens),
+                "total_chars": context_stats.get("total_chars", 0),
+                "total_tokens": context_stats.get("total_tokens", 0),
+                "base_chars": context_stats.get("base_chars", 0),
+                "base_tokens": context_stats.get("base_tokens", 0),
+                "context_chars": context_stats.get("context_chars", 0),
+                "context_tokens": context_stats.get("context_tokens", 0),
+                "tool_chars": context_stats.get("tool_chars", 0),
+                "tool_tokens": context_stats.get("tool_tokens", 0),
+            },
+        )
 
         try:
             local_response = await local_llm.ainvoke(

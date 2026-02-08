@@ -294,6 +294,14 @@ async def stream_new_chat(
             yield streaming_service.format_done()
             return
 
+        tokenizer_model = None
+        if agent_config and agent_config.model_name:
+            tokenizer_model = agent_config.model_name
+        if not tokenizer_model:
+            model_attr = getattr(llm, "model", None)
+            if isinstance(model_attr, str) and model_attr.strip():
+                tokenizer_model = model_attr.strip()
+
         # Create connector service
         connector_service = ConnectorService(
             session, search_space_id=search_space_id, user_id=user_id
@@ -402,8 +410,8 @@ async def stream_new_chat(
             context = "\n\n".join(context_parts)
             final_query = f"{context}\n\n<user_query>{user_query}</user_query>"
 
-        base_tokens = estimate_tokens_from_text(user_query)
-        total_tokens = estimate_tokens_from_text(final_query)
+        base_tokens = estimate_tokens_from_text(user_query, model=tokenizer_model)
+        total_tokens = estimate_tokens_from_text(final_query, model=tokenizer_model)
         context_stats: dict[str, object] = {
             "base_chars": len(user_query),
             "base_tokens": base_tokens,
@@ -945,7 +953,9 @@ async def stream_new_chat(
                 if tool_payload_text:
                     delta_chars = len(tool_payload_text)
                     if delta_chars > 0:
-                        delta_tokens = estimate_tokens_from_text(tool_payload_text)
+                        delta_tokens = estimate_tokens_from_text(
+                            tool_payload_text, model=tokenizer_model
+                        )
                         context_stats["tool_chars"] = (
                             int(context_stats.get("tool_chars", 0)) + delta_chars
                         )

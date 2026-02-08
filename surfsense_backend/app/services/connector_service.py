@@ -794,10 +794,14 @@ class ConnectorService:
                 query=user_query,
                 max_results=top_k,
                 search_depth="advanced",  # Use advanced search for better results
+                include_answer=True,
+                include_raw_content=False,
+                include_images=False,
             )
 
             # Extract results from Tavily response
             tavily_results = response.get("results", [])
+            tavily_answer = response.get("answer") if isinstance(response, dict) else None
 
             # Early return if no results
             if not tavily_results:
@@ -857,6 +861,8 @@ class ConnectorService:
                 "type": "TAVILY_API",
                 "sources": sources_list,
             }
+            if tavily_answer:
+                result_object["answer"] = tavily_answer
 
             return result_object, documents
 
