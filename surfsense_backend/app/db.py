@@ -964,6 +964,12 @@ class SearchSpace(BaseModel, TimestampMixin):
         order_by="AgentPromptOverride.id",
         cascade="all, delete-orphan",
     )
+    agent_prompt_override_history = relationship(
+        "AgentPromptOverrideHistory",
+        back_populates="search_space",
+        order_by="AgentPromptOverrideHistory.created_at.desc()",
+        cascade="all, delete-orphan",
+    )
 
     # RBAC relationships
     roles = relationship(
@@ -1100,6 +1106,26 @@ class AgentPromptOverride(BaseModel, TimestampMixin):
     )
     search_space = relationship(
         "SearchSpace", back_populates="agent_prompt_overrides"
+    )
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class AgentPromptOverrideHistory(BaseModel, TimestampMixin):
+    __tablename__ = "agent_prompt_override_history"
+
+    key = Column(String(120), nullable=False, index=True)
+    previous_prompt_text = Column(Text, nullable=True)
+    new_prompt_text = Column(Text, nullable=True)
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    search_space = relationship(
+        "SearchSpace", back_populates="agent_prompt_override_history"
     )
 
     updated_by_id = Column(

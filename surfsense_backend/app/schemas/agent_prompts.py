@@ -22,3 +22,15 @@ class AgentPromptUpdateItem(BaseModel):
 
 class AgentPromptsUpdateRequest(BaseModel):
     items: list[AgentPromptUpdateItem]
+
+
+class AgentPromptHistoryItem(BaseModel):
+    key: str
+    previous_prompt: str | None = None
+    new_prompt: str | None = None
+    updated_at: str
+    updated_by_id: str | None = None
+
+
+class AgentPromptHistoryResponse(BaseModel):
+    items: list[AgentPromptHistoryItem]

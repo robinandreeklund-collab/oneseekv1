@@ -4,9 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.prompt_registry import PROMPT_DEFINITION_MAP, get_prompt_definitions
-from app.db import Permission, User
+from sqlalchemy.future import select
+
+from app.db import AgentPromptOverrideHistory, Permission, User
 from app.schemas.agent_prompts import (
     AgentPromptsResponse,
+    AgentPromptHistoryResponse,
     AgentPromptsUpdateRequest,
 )
 from app.services.agent_prompt_service import (
@@ -103,6 +106,51 @@ async def update_agent_prompts(
                 "description": definition.description,
                 "default_prompt": definition.default_prompt,
                 "override_prompt": overrides.get(definition.key),
+            }
+        )
+    return {"items": items}
+
+
+@router.get(
+    "/search-spaces/{search_space_id}/agent-prompts/{prompt_key}/history",
+    response_model=AgentPromptHistoryResponse,
+)
+async def get_agent_prompt_history(
+    search_space_id: int,
+    prompt_key: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    await check_permission(
+        session,
+        user,
+        search_space_id,
+        Permission.SETTINGS_UPDATE.value,
+        "You don't have permission to manage agent prompts",
+    )
+    if prompt_key not in PROMPT_DEFINITION_MAP:
+        raise HTTPException(status_code=400, detail="Unknown prompt key")
+
+    result = await session.execute(
+        select(AgentPromptOverrideHistory)
+        .filter(
+            AgentPromptOverrideHistory.search_space_id == search_space_id,
+            AgentPromptOverrideHistory.key == prompt_key,
+        )
+        .order_by(AgentPromptOverrideHistory.created_at.desc())
+        .limit(50)
+    )
+    items = []
+    for row in result.scalars().all():
+        items.append(
+            {
+                "key": row.key,
+                "previous_prompt": row.previous_prompt_text,
+                "new_prompt": row.new_prompt_text,
+                "updated_at": row.created_at.isoformat(),
+                "updated_by_id": str(row.updated_by_id)
+                if row.updated_by_id
+                else None,
             }
         )
     return {"items": items}
