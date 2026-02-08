@@ -57,7 +57,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
 import { useMessagesElectric } from "@/hooks/use-messages-electric";
 import { documentsApiService } from "@/lib/apis/documents-api.service";
-// import { WriteTodosToolUI } from "@/components/tool-ui/write-todos";
+import { WriteTodosToolUI } from "@/components/tool-ui/write-todos";
 import { getBearerToken } from "@/lib/auth-utils";
 import { createAttachmentAdapter, extractAttachmentContent } from "@/lib/chat/attachment-adapter";
 import { convertToThreadMessage } from "@/lib/chat/message-utils";
@@ -186,7 +186,7 @@ const TOOLS_WITH_UI = new Set([
 	"call_perplexity",
 	"call_qwen",
 	"call_oneseek",
-	// "write_todos", // Disabled for now
+	"write_todos",
 ]);
 
 /**
@@ -1805,7 +1805,7 @@ export default function NewChatPage() {
 			<OneseekToolUI />
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
-			{/* <WriteTodosToolUI /> Disabled for now */}
+			<WriteTodosToolUI />
 			<div className="flex flex-col h-[calc(100vh-64px)] overflow-hidden">
 				<Thread
 					messageThinkingSteps={messageThinkingSteps}
