@@ -8,6 +8,7 @@ import {
 } from "@assistant-ui/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAtomValue, useSetAtom } from "jotai";
+import { Activity } from "lucide-react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -32,6 +33,11 @@ import { membersAtom } from "@/atoms/members/members-query.atoms";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import { Thread } from "@/components/assistant-ui/thread";
 import type { ContextStatsEntry } from "@/components/assistant-ui/context-stats";
+import {
+	TracePanelContext,
+	type TracePanelContextValue,
+} from "@/components/assistant-ui/trace-context";
+import { TraceSheet } from "@/components/assistant-ui/trace-sheet";
 import { ChatHeader } from "@/components/new-chat/chat-header";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
@@ -54,8 +60,11 @@ import {
 	OneseekToolUI,
 } from "@/components/tool-ui/compare-model";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
 import { useMessagesElectric } from "@/hooks/use-messages-electric";
+import type { TraceSpan } from "@/contracts/types/chat-trace.types";
+import { chatTraceApiService } from "@/lib/apis/chat-trace-api.service";
 import { documentsApiService } from "@/lib/apis/documents-api.service";
 import { WriteTodosToolUI } from "@/components/tool-ui/write-todos";
 import { getBearerToken } from "@/lib/auth-utils";
@@ -75,6 +84,7 @@ import {
 	updateThread,
 	type ThreadRecord,
 } from "@/lib/chat/thread-persistence";
+import { cn } from "@/lib/utils";
 import {
 	trackChatCreated,
 	trackChatError,
@@ -218,6 +228,14 @@ export default function NewChatPage() {
 	const [messageContextStats, setMessageContextStats] = useState<
 		Map<string, ContextStatsEntry[]>
 	>(new Map());
+	const [messageTraceSessions, setMessageTraceSessions] = useState<Map<string, string>>(
+		new Map()
+	);
+	const [traceSpansBySession, setTraceSpansBySession] = useState<Map<string, TraceSpan[]>>(
+		new Map()
+	);
+	const [isTraceOpen, setIsTraceOpen] = useState(false);
+	const [activeTraceMessageId, setActiveTraceMessageId] = useState<string | null>(null);
 	const abortControllerRef = useRef<AbortController | null>(null);
 
 	// Get mentioned document IDs from the composer
@@ -237,6 +255,66 @@ export default function NewChatPage() {
 	// Live collaboration: sync session state and messages via Electric SQL
 	useChatSessionStateSync(threadId);
 	const { data: membersData } = useAtomValue(membersAtom);
+
+	const lastAssistantMessageId = useMemo(() => {
+		for (let i = messages.length - 1; i >= 0; i -= 1) {
+			const msg = messages[i];
+			if (msg?.role === "assistant") return msg.id;
+		}
+		return null;
+	}, [messages]);
+
+	const openTraceForMessage = useCallback((messageId: string | null) => {
+		if (!messageId) return;
+		setActiveTraceMessageId(messageId);
+		setIsTraceOpen(true);
+	}, []);
+
+	const activeTraceSessionId = useMemo(() => {
+		if (!activeTraceMessageId) return null;
+		return messageTraceSessions.get(activeTraceMessageId) ?? null;
+	}, [activeTraceMessageId, messageTraceSessions]);
+
+	const activeTraceSpans = useMemo(() => {
+		if (!activeTraceSessionId) return [];
+		return traceSpansBySession.get(activeTraceSessionId) ?? [];
+	}, [activeTraceSessionId, traceSpansBySession]);
+
+	const loadTraceForMessage = useCallback(
+		async (messageId: string | null) => {
+			if (!messageId || !threadId) return;
+			if (messageTraceSessions.has(messageId)) return;
+			const match = messageId.match(/^msg-(\d+)$/);
+			if (!match) return;
+			const messageNumericId = Number.parseInt(match[1], 10);
+			if (!Number.isFinite(messageNumericId)) return;
+			try {
+				const trace = await chatTraceApiService.getTraceByMessage(
+					threadId,
+					messageNumericId
+				);
+				setMessageTraceSessions((prev) => {
+					const next = new Map(prev);
+					next.set(messageId, trace.session_id);
+					return next;
+				});
+				setTraceSpansBySession((prev) => {
+					const next = new Map(prev);
+					next.set(trace.session_id, trace.spans);
+					return next;
+				});
+			} catch (error) {
+				console.warn("[trace] Failed to load trace", error);
+			}
+		},
+		[threadId, messageTraceSessions]
+	);
+
+	useEffect(() => {
+		if (isTraceOpen) {
+			void loadTraceForMessage(activeTraceMessageId);
+		}
+	}, [activeTraceMessageId, isTraceOpen, loadTraceForMessage]);
 
 	const handleElectricMessagesUpdate = useCallback(
 		(
@@ -335,6 +413,10 @@ export default function NewChatPage() {
 		setCurrentThread(null);
 		setMessageThinkingSteps(new Map());
 		setMessageContextStats(new Map());
+		setMessageTraceSessions(new Map());
+		setTraceSpansBySession(new Map());
+		setActiveTraceMessageId(null);
+		setIsTraceOpen(false);
 		setMentionedDocumentIds({
 			surfsense_doc_ids: [],
 			document_ids: [],
@@ -833,6 +915,7 @@ export default function NewChatPage() {
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
 			const currentContextStats: ContextStatsData[] = [];
+			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 
 			// Ordered content parts to preserve inline tool call positions
@@ -1115,6 +1198,52 @@ export default function NewChatPage() {
 											}
 											break;
 										}
+										case "data-trace-session": {
+											const traceSessionId = parsed.data?.trace_session_id as
+												| string
+												| undefined;
+											if (traceSessionId) {
+												currentTraceSessionId = traceSessionId;
+												setMessageTraceSessions((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, traceSessionId);
+													return newMap;
+												});
+											}
+											break;
+										}
+										case "data-trace-span": {
+											const traceSessionId = parsed.data?.trace_session_id as
+												| string
+												| undefined;
+											const spanEvent = parsed.data?.event as string | undefined;
+											const span = parsed.data?.span as TraceSpan | undefined;
+											if (traceSessionId && span) {
+												setTraceSpansBySession((prev) => {
+													const newMap = new Map(prev);
+													const existing = newMap.get(traceSessionId) ?? [];
+													const idx = existing.findIndex((s) => s.id === span.id);
+													let next = existing;
+													if (idx >= 0) {
+														next = existing.map((s, i) => (i === idx ? { ...s, ...span } : s));
+													} else {
+														next = [...existing, span];
+													}
+													next.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+													newMap.set(traceSessionId, next);
+													return newMap;
+												});
+												if (
+													spanEvent === "start" &&
+													(!activeTraceMessageId || activeTraceMessageId === assistantMsgId)
+												) {
+													if (!activeTraceMessageId) {
+														setActiveTraceMessageId(assistantMsgId);
+													}
+												}
+											}
+											break;
+										}
 										case "data-compare-summary": {
 											compareSummary = parsed.data ?? null;
 											break;
@@ -1172,16 +1301,30 @@ export default function NewChatPage() {
 							return prev;
 						});
 
-					setMessageContextStats((prev) => {
-						const stats = prev.get(assistantMsgId);
-						if (stats) {
+						setMessageTraceSessions((prev) => {
+							const traceSessionId = prev.get(assistantMsgId);
+							if (!traceSessionId) return prev;
 							const newMap = new Map(prev);
 							newMap.delete(assistantMsgId);
-							newMap.set(newMsgId, stats);
+							newMap.set(newMsgId, traceSessionId);
 							return newMap;
+						});
+
+						setActiveTraceMessageId((prev) =>
+							prev === assistantMsgId ? newMsgId : prev
+						);
+
+						if (currentTraceSessionId) {
+							try {
+								await chatTraceApiService.attachTraceSession({
+									thread_id: threadId,
+									trace_session_id: currentTraceSessionId,
+									message_id: savedMessage.id,
+								});
+							} catch (error) {
+								console.warn("[trace] Failed to attach trace session", error);
+							}
 						}
-						return prev;
-					});
 					} catch (err) {
 						console.error("Failed to persist assistant message:", err);
 					}
@@ -1210,6 +1353,48 @@ export default function NewChatPage() {
 							setMessages((prev) =>
 								prev.map((m) => (m.id === assistantMsgId ? { ...m, id: newMsgId } : m))
 							);
+							setMessageThinkingSteps((prev) => {
+								const steps = prev.get(assistantMsgId);
+								if (steps) {
+									const newMap = new Map(prev);
+									newMap.delete(assistantMsgId);
+									newMap.set(newMsgId, steps);
+									return newMap;
+								}
+								return prev;
+							});
+							setMessageContextStats((prev) => {
+								const stats = prev.get(assistantMsgId);
+								if (stats) {
+									const newMap = new Map(prev);
+									newMap.delete(assistantMsgId);
+									newMap.set(newMsgId, stats);
+									return newMap;
+								}
+								return prev;
+							});
+							setMessageTraceSessions((prev) => {
+								const traceSessionId = prev.get(assistantMsgId);
+								if (!traceSessionId) return prev;
+								const newMap = new Map(prev);
+								newMap.delete(assistantMsgId);
+								newMap.set(newMsgId, traceSessionId);
+								return newMap;
+							});
+							setActiveTraceMessageId((prev) =>
+								prev === assistantMsgId ? newMsgId : prev
+							);
+							if (currentTraceSessionId) {
+								try {
+									await chatTraceApiService.attachTraceSession({
+										thread_id: currentThreadId,
+										trace_session_id: currentTraceSessionId,
+										message_id: savedMessage.id,
+									});
+								} catch (error) {
+									console.warn("[trace] Failed to attach trace session", error);
+								}
+							}
 						} catch (err) {
 							console.error("Failed to persist partial assistant message:", err);
 						}
@@ -1252,6 +1437,7 @@ export default function NewChatPage() {
 			threadId,
 			searchSpaceId,
 			messages,
+			activeTraceMessageId,
 			mentionedDocumentIds,
 			mentionedDocuments,
 			setMentionedDocumentIds,
@@ -1354,6 +1540,17 @@ export default function NewChatPage() {
 				}
 				return newMap;
 			});
+			setMessageTraceSessions((prev) => {
+				const newMap = new Map(prev);
+				const lastTwoIds = messages
+					.slice(-2)
+					.map((m) => m.id)
+					.filter((id): id is string => !!id);
+				for (const id of lastTwoIds) {
+					newMap.delete(id);
+				}
+				return newMap;
+			});
 
 			// Start streaming
 			setIsRunning(true);
@@ -1365,6 +1562,7 @@ export default function NewChatPage() {
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
 			const currentContextStats: ContextStatsData[] = [];
+			let currentTraceSessionId: string | null = null;
 
 			// Content parts tracking (same as onNew)
 			type ContentPart =
@@ -1586,6 +1784,52 @@ export default function NewChatPage() {
 											}
 											break;
 										}
+										case "data-trace-session": {
+											const traceSessionId = parsed.data?.trace_session_id as
+												| string
+												| undefined;
+											if (traceSessionId) {
+												currentTraceSessionId = traceSessionId;
+												setMessageTraceSessions((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, traceSessionId);
+													return newMap;
+												});
+											}
+											break;
+										}
+										case "data-trace-span": {
+											const traceSessionId = parsed.data?.trace_session_id as
+												| string
+												| undefined;
+											const spanEvent = parsed.data?.event as string | undefined;
+											const span = parsed.data?.span as TraceSpan | undefined;
+											if (traceSessionId && span) {
+												setTraceSpansBySession((prev) => {
+													const newMap = new Map(prev);
+													const existing = newMap.get(traceSessionId) ?? [];
+													const idx = existing.findIndex((s) => s.id === span.id);
+													let next = existing;
+													if (idx >= 0) {
+														next = existing.map((s, i) => (i === idx ? { ...s, ...span } : s));
+													} else {
+														next = [...existing, span];
+													}
+													next.sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+													newMap.set(traceSessionId, next);
+													return newMap;
+												});
+												if (
+													spanEvent === "start" &&
+													(!activeTraceMessageId || activeTraceMessageId === assistantMsgId)
+												) {
+													if (!activeTraceMessageId) {
+														setActiveTraceMessageId(assistantMsgId);
+													}
+												}
+											}
+											break;
+										}
 										case "data-compare-summary": {
 											compareSummary = parsed.data ?? null;
 											break;
@@ -1681,7 +1925,14 @@ export default function NewChatPage() {
 				abortControllerRef.current = null;
 			}
 		},
-		[isPublicChat, threadId, searchSpaceId, messages, setMessageThinkingSteps]
+		[
+			isPublicChat,
+			threadId,
+			searchSpaceId,
+			messages,
+			activeTraceMessageId,
+			setMessageThinkingSteps,
+		]
 	);
 
 	// Handle editing a message - truncates history and regenerates with new query
@@ -1785,6 +2036,24 @@ export default function NewChatPage() {
 		);
 	}
 
+	const traceContextValue = useMemo<TracePanelContextValue>(
+		() => ({
+			messageTraceSessions,
+			traceSpansBySession,
+			activeMessageId: activeTraceMessageId,
+			isOpen: isTraceOpen,
+			openTraceForMessage: (messageId: string) => openTraceForMessage(messageId),
+			setIsOpen: setIsTraceOpen,
+		}),
+		[
+			messageTraceSessions,
+			traceSpansBySession,
+			activeTraceMessageId,
+			isTraceOpen,
+			openTraceForMessage,
+		]
+	);
+
 	return (
 		<AssistantRuntimeProvider runtime={runtime}>
 			{!isPublicChat && <GeneratePodcastToolUI />}
@@ -1806,14 +2075,39 @@ export default function NewChatPage() {
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
 			<WriteTodosToolUI />
-			<div className="flex flex-col h-[calc(100vh-64px)] overflow-hidden">
-				<Thread
-					messageThinkingSteps={messageThinkingSteps}
-					messageContextStats={messageContextStats}
-					isPublicChat={isPublicChat}
-					header={<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />}
+			<TracePanelContext.Provider value={traceContextValue}>
+				<div className="flex flex-col h-[calc(100vh-64px)] overflow-hidden">
+					<Thread
+						messageThinkingSteps={messageThinkingSteps}
+						messageContextStats={messageContextStats}
+						isPublicChat={isPublicChat}
+						header={
+							<div className="flex items-center justify-between gap-2">
+								<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />
+								{!isPublicChat && (
+									<Button
+										variant="outline"
+										size="sm"
+										className="gap-2"
+										disabled={!lastAssistantMessageId}
+										onClick={() => openTraceForMessage(lastAssistantMessageId)}
+									>
+										<Activity className={cn("size-4", isTraceOpen ? "animate-pulse" : "")} />
+										Live-spårning
+									</Button>
+								)}
+							</div>
+						}
+					/>
+				</div>
+				<TraceSheet
+					open={isTraceOpen}
+					onOpenChange={setIsTraceOpen}
+					messageId={activeTraceMessageId}
+					sessionId={activeTraceSessionId}
+					spans={activeTraceSpans}
 				/>
-			</div>
+			</TracePanelContext.Provider>
 		</AssistantRuntimeProvider>
 	);
 }

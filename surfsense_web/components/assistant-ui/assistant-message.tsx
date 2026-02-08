@@ -7,7 +7,7 @@ import {
 	useComposerRuntime,
 } from "@assistant-ui/react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { CheckIcon, CopyIcon, DownloadIcon, MessageSquare, RefreshCwIcon } from "lucide-react";
+import { Activity, CheckIcon, CopyIcon, DownloadIcon, MessageSquare, RefreshCwIcon } from "lucide-react";
 import type { FC } from "react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -28,6 +28,7 @@ import {
 	ThinkingStepsContext,
 	ThinkingStepsDisplay,
 } from "@/components/assistant-ui/thinking-steps";
+import { TracePanelContext } from "@/components/assistant-ui/trace-context";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { CommentPanelContainer } from "@/components/chat-comments/comment-panel-container/comment-panel-container";
@@ -416,6 +417,20 @@ export const AssistantMessage: FC = () => {
 };
 
 const AssistantActionBar: FC = () => {
+	const traceContext = useContext(TracePanelContext);
+	const messageId = useAssistantState(({ message }) => message?.id);
+	const hasTraceSession = messageId
+		? traceContext?.messageTraceSessions.get(messageId)
+		: null;
+	const isTraceActive = !!(
+		messageId &&
+		traceContext?.activeMessageId === messageId &&
+		traceContext?.isOpen
+	);
+	const handleTraceClick = () => {
+		if (!messageId || !traceContext) return;
+		traceContext.openTraceForMessage(messageId);
+	};
 	return (
 		<ActionBarPrimitive.Root
 			hideWhenRunning
@@ -423,6 +438,17 @@ const AssistantActionBar: FC = () => {
 			autohideFloat="single-branch"
 			className="aui-assistant-action-bar-root -ml-1 col-start-3 row-start-2 flex gap-1 text-muted-foreground md:data-floating:absolute md:data-floating:rounded-md md:data-floating:border md:data-floating:bg-background md:data-floating:p-1 md:data-floating:shadow-sm [&>button]:opacity-100 md:[&>button]:opacity-[var(--aui-button-opacity,1)]"
 		>
+			<TooltipIconButton
+				tooltip="Live-spårning"
+				onClick={handleTraceClick}
+				disabled={!messageId || !traceContext}
+				className={cn(
+					hasTraceSession ? "text-primary" : "",
+					isTraceActive ? "bg-primary/10" : ""
+				)}
+			>
+				<Activity className={cn("size-4", isTraceActive && "animate-pulse")} />
+			</TooltipIconButton>
 			<ActionBarPrimitive.Copy asChild>
 				<TooltipIconButton tooltip="Kopiera">
 					<AssistantIf condition={({ message }) => message.isCopied}>
