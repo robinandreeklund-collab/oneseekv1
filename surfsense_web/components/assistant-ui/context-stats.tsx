@@ -70,7 +70,7 @@ export const ContextStatsDisplay: FC<{
 					)}
 				>
 					<span>
-						Kontext (est.) ~ {formatNumber(stats.totalTokens)} tokens
+						Kontext (tokens): {formatNumber(stats.totalTokens)}
 						{stats.totalChars > 0 ? ` · ${formatNumber(stats.totalChars)} tecken` : ""}
 					</span>
 					<ChevronRightIcon
