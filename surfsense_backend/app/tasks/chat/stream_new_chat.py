@@ -361,6 +361,8 @@ async def stream_new_chat(
             model_attr = getattr(llm, "model", None)
             if isinstance(model_attr, str) and model_attr.strip():
                 tokenizer_model = model_attr.strip()
+        if trace_recorder and tokenizer_model:
+            trace_recorder.set_tokenizer_model(tokenizer_model)
 
         prompt_overrides = await get_global_prompt_overrides(session)
         router_prompt = resolve_prompt(

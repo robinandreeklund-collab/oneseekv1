@@ -11,6 +11,10 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import ChatTraceSession, ChatTraceSpan
+from app.utils.context_metrics import (
+    estimate_tokens_from_text,
+    serialize_context_payload,
+)
 from app.services.new_streaming_service import VercelStreamingService
 
 logger = logging.getLogger(__name__)
@@ -34,6 +38,7 @@ class TraceRecorder:
         root_name: str,
         root_input: Any | None = None,
         root_meta: dict[str, Any] | None = None,
+        tokenizer_model: str | None = None,
     ):
         self.db_session = db_session
         self.trace_session = trace_session
@@ -46,6 +51,23 @@ class TraceRecorder:
         self.root_name = root_name
         self.root_input = root_input
         self.root_meta = root_meta or {}
+        self.tokenizer_model = tokenizer_model
+
+    def set_tokenizer_model(self, model: str | None) -> None:
+        if model:
+            self.tokenizer_model = model
+
+    def _estimate_tokens(self, payload: Any | None) -> int:
+        text = serialize_context_payload(payload)
+        return estimate_tokens_from_text(text, model=self.tokenizer_model)
+
+    @staticmethod
+    def _ensure_meta_dict(meta: Any | None) -> dict[str, Any]:
+        if isinstance(meta, dict):
+            return dict(meta)
+        if meta is None:
+            return {}
+        return {"meta": meta}
 
     async def emit_session_start(self) -> str:
         return self.streaming_service.format_trace_session(
@@ -83,6 +105,9 @@ class TraceRecorder:
             parent_span_id = parent_id
             if parent_span_id is None and span_id != self.root_span_id:
                 parent_span_id = self.root_span_id
+            meta_payload = self._ensure_meta_dict(meta)
+            if input_data is not None:
+                meta_payload["input_tokens"] = self._estimate_tokens(input_data)
             span = ChatTraceSpan(
                 session_id=self.trace_session.id,
                 span_id=span_id,
@@ -93,7 +118,7 @@ class TraceRecorder:
                 sequence=sequence,
                 start_ts=start_ts,
                 input=_safe_payload(input_data),
-                meta=_safe_payload(meta),
+                meta=_safe_payload(meta_payload),
             )
             try:
                 self.db_session.add(span)
@@ -160,14 +185,23 @@ class TraceRecorder:
             if output_data is not None
             else self.span_output_buffers.get(span_id)
         )
+        meta_payload = self._ensure_meta_dict(span.meta)
+        if final_output is not None:
+            meta_payload["output_tokens"] = self._estimate_tokens(final_output)
+        input_tokens = meta_payload.get("input_tokens")
+        output_tokens = meta_payload.get("output_tokens")
+        if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+            meta_payload["total_tokens"] = input_tokens + output_tokens
         values = {
             "status": status,
             "end_ts": end_ts,
             "duration_ms": duration_ms,
             "output": _safe_payload(final_output),
+            "meta": _safe_payload(meta_payload),
         }
         if meta:
-            values["meta"] = _safe_payload(meta)
+            meta_payload.update(self._ensure_meta_dict(meta))
+            values["meta"] = _safe_payload(meta_payload)
         async with self.lock:
             try:
                 await self.db_session.execute(
@@ -183,8 +217,7 @@ class TraceRecorder:
         span.end_ts = end_ts
         span.duration_ms = duration_ms
         span.output = values.get("output")
-        if meta:
-            span.meta = values.get("meta")
+        span.meta = values.get("meta")
         payload = self._serialize_span(span)
         return self.streaming_service.format_trace_span(
             trace_session_id=self.trace_session.session_id,

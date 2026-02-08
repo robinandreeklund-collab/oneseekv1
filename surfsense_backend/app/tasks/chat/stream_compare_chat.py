@@ -1110,6 +1110,8 @@ async def stream_compare_chat(
         local_model_string = str(getattr(local_llm, "model", "") or "")
         if not tokenizer_model:
             tokenizer_model = local_model_name or local_model_string or None
+        if trace_recorder and tokenizer_model:
+            trace_recorder.set_tokenizer_model(tokenizer_model)
         local_items = [
             item
             for item in [
