@@ -27,18 +27,28 @@ def build_subagent_config(
     )
 
 
+PLANNING_REFLECTION_INSTRUCTIONS = (
+    "Before starting multi-step work, call write_todos to outline a short plan. "
+    "Update the plan as you complete steps. After each major action or tool call, "
+    "use reflect_on_progress to summarize findings, gaps, and the next step. "
+    "Keep both concise to preserve context."
+)
+
 KNOWLEDGE_DOCS_INSTRUCTIONS = (
     "The user question is about SurfSense itself. "
-    "Use search_surfsense_docs to answer and cite docs."
+    "Use search_surfsense_docs to answer and cite docs. "
+    f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 KNOWLEDGE_INTERNAL_INSTRUCTIONS = (
     "The user question should be answered from the user's internal knowledge base. "
-    "Use search_knowledge_base and search broadly unless the user specifies a source."
+    "Use search_knowledge_base and search broadly unless the user specifies a source. "
+    f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 KNOWLEDGE_EXTERNAL_INSTRUCTIONS = (
     "The user needs external, real-time web information. "
     "Use search_knowledge_base with connectors_to_search=['TAVILY_API'] "
-    "and top_k=3. Prefer concise, up-to-date sources."
+    "and top_k=3. Prefer concise, up-to-date sources. "
+    f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 
 
@@ -60,19 +70,23 @@ def knowledge_route_label(route: KnowledgeRoute) -> str:
 
 ACTION_WEB_INSTRUCTIONS = (
     "The user needs web content handling. Use link_preview for URLs, "
-    "scrape_webpage for content, and display_image for relevant images."
+    "scrape_webpage for content, and display_image for relevant images. "
+    f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 ACTION_MEDIA_INSTRUCTIONS = (
     "The user wants media output. Use generate_podcast to create audio. "
-    "If you need source content, first call search_knowledge_base."
+    "If you need source content, first call search_knowledge_base. "
+    f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 ACTION_TRAVEL_INSTRUCTIONS = (
     "The user needs travel or weather info. Use smhi_weather for weather "
-    "and trafiklab_route for public transport. Ask for missing details."
+    "and trafiklab_route for public transport. Ask for missing details. "
+    f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 ACTION_DATA_INSTRUCTIONS = (
     "The user is asking for structured data results. Use libris_search for books "
-    "and jobad_links_search for job listings."
+    "and jobad_links_search for job listings. "
+    f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 
 

@@ -101,6 +101,25 @@ def _truncate_text(text: str, limit: int) -> str:
     return text[:limit] + "..."
 
 
+def _extract_todos_from_deepagents(command_output) -> dict:
+    """
+    Extract todos from deepagents' TodoListMiddleware Command output.
+
+    deepagents returns a Command object with:
+    - Command.update['todos'] = [{'content': '...', 'status': '...'}]
+    """
+    todos_data = []
+    if hasattr(command_output, "update"):
+        update = command_output.update
+        todos_data = update.get("todos", [])
+    elif isinstance(command_output, dict):
+        if "todos" in command_output:
+            todos_data = command_output.get("todos", [])
+        elif "update" in command_output and isinstance(command_output["update"], dict):
+            todos_data = command_output["update"].get("todos", [])
+    return {"todos": todos_data}
+
+
 def _estimate_documents_chars(documents: list[dict[str, Any]]) -> int:
     total_chars = 0
     for doc in documents:
@@ -901,11 +920,16 @@ async def stream_compare_chat(
             knowledge_route_instructions(KnowledgeRoute.INTERNAL),
         )
         if knowledge_route == KnowledgeRoute.DOCS:
-            oneseek_tools = ["search_surfsense_docs"]
+            oneseek_tools = ["search_surfsense_docs", "reflect_on_progress"]
             oneseek_config = build_subagent_config(agent_config, docs_instructions)
         else:
-            oneseek_tools = ["search_knowledge_base"]
+            oneseek_tools = ["search_knowledge_base", "reflect_on_progress"]
             oneseek_config = build_subagent_config(agent_config, internal_instructions)
+        oneseek_prompt_tools = list(oneseek_tools)
+        if "write_todos" not in oneseek_prompt_tools:
+            oneseek_prompt_tools.append("write_todos")
+        if "reflect_on_progress" not in oneseek_prompt_tools:
+            oneseek_prompt_tools.append("reflect_on_progress")
         oneseek_agent = await create_surfsense_deep_agent(
             llm=local_llm,
             search_space_id=search_space_id,
@@ -917,7 +941,7 @@ async def stream_compare_chat(
             agent_config=oneseek_config,
             firecrawl_api_key=firecrawl_api_key,
             enabled_tools=oneseek_tools,
-            tool_names_for_prompt=oneseek_tools,
+            tool_names_for_prompt=oneseek_prompt_tools,
             force_citations_enabled=False,
         )
 
@@ -970,6 +994,7 @@ async def stream_compare_chat(
         oneseek_text = ""
         oneseek_tool_steps: dict[str, str] = {}
         oneseek_tool_calls: dict[str, str] = {}
+        write_todos_call_count = 0
 
         input_state = {
             "messages": [HumanMessage(content=query_with_context)],
@@ -998,27 +1023,38 @@ async def stream_compare_chat(
 
                     tool_step_id = f"compare-oneseek-tool-{uuid.uuid4().hex[:8]}"
                     oneseek_tool_steps[run_id] = tool_step_id
-                    tool_title = format_step_title(
-                        f"Using {tool_name.replace('_', ' ')}"
-                    )
                     tool_items: list[str] = []
-                    if isinstance(tool_input, dict):
-                        for key in (
-                            "query",
-                            "location",
-                            "url",
-                            "origin",
-                            "destination",
-                            "record_id",
-                            "podcast_title",
-                        ):
-                            if tool_input.get(key):
-                                tool_items.append(
-                                    f"{key.replace('_', ' ').title()}: {tool_input.get(key)}"
-                                )
-                                break
-                    if not tool_items:
-                        tool_items = [f"Tool: {tool_name}"]
+                    if tool_name == "write_todos":
+                        write_todos_call_count += 1
+                        if write_todos_call_count == 1:
+                            tool_title = format_step_title("Creating plan")
+                        else:
+                            tool_title = format_step_title("Updating plan")
+                        tool_items = ["Planning tasks for the request"]
+                    elif tool_name == "reflect_on_progress":
+                        tool_title = format_step_title("Reflecting on progress")
+                        tool_items = ["Reviewing findings, gaps, and next steps"]
+                    else:
+                        tool_title = format_step_title(
+                            f"Using {tool_name.replace('_', ' ')}"
+                        )
+                        if isinstance(tool_input, dict):
+                            for key in (
+                                "query",
+                                "location",
+                                "url",
+                                "origin",
+                                "destination",
+                                "record_id",
+                                "podcast_title",
+                            ):
+                                if tool_input.get(key):
+                                    tool_items.append(
+                                        f"{key.replace('_', ' ').title()}: {tool_input.get(key)}"
+                                    )
+                                    break
+                        if not tool_items:
+                            tool_items = [f"Tool: {tool_name}"]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=tool_title,
@@ -1045,7 +1081,9 @@ async def stream_compare_chat(
                     run_id = event.get("run_id", "")
                     raw_output = event.get("data", {}).get("output")
                     tool_output = raw_output
-                    if hasattr(raw_output, "content"):
+                    if tool_name == "write_todos" and hasattr(raw_output, "update"):
+                        tool_output = _extract_todos_from_deepagents(raw_output)
+                    elif hasattr(raw_output, "content"):
                         content = raw_output.content
                         if isinstance(content, str):
                             try:
@@ -1074,13 +1112,24 @@ async def stream_compare_chat(
 
                     tool_step_id = oneseek_tool_steps.get(run_id)
                     if tool_step_id:
+                        if tool_name == "write_todos":
+                            step_title = format_step_title("Plan updated")
+                            step_items = ["Plan updated"]
+                        elif tool_name == "reflect_on_progress":
+                            step_title = format_step_title("Reflecting on progress")
+                            step_items = ["Reflection logged"]
+                        else:
+                            step_title = format_step_title(
+                                f"Using {tool_name.replace('_', ' ')}"
+                            )
+                            step_items = [
+                                f"Completed: {tool_name.replace('_', ' ')}"
+                            ]
                         yield streaming_service.format_thinking_step(
                             step_id=tool_step_id,
-                            title=format_step_title(
-                                f"Using {tool_name.replace('_', ' ')}"
-                            ),
+                            title=step_title,
                             status="completed",
-                            items=[f"Completed: {tool_name.replace('_', ' ')}"],
+                            items=step_items,
                         )
         except Exception as exc:
             oneseek_error = str(exc)

@@ -223,11 +223,30 @@ You have access to the following tools:
     - extra_params: Optional additional query params supported by API
   - Returns: Structured job ad info with application links (Jobtech Links).
   - NOTE: Location/occupation/industry/remote are appended to the search query.
+
+12. write_todos: Plan and track multi-step work.
+  - Use this for complex tasks before calling other tools.
+  - Provide a short todo list and update statuses as you progress.
+  - Args:
+    - todos: List of items with content + status ("pending", "in_progress", "completed")
+  - Returns: The updated todo list.
+
+13. reflect_on_progress: Log a brief reflection on progress, gaps, and next steps.
+  - Use this after a major action or tool call to verify completeness.
+  - Keep reflections concise and focused on next actions (avoid verbosity).
+  - Args:
+    - thoughts: Short reflection covering what was found, gaps, and next step
+  - Returns: Logged reflection status.
 </tools>
 <tool_call_examples>
 - User: "What time is the team meeting today?"
   - Call: `search_knowledge_base(query="team meeting time today")` (searches ALL sources - calendar, notes, Obsidian, etc.)
   - DO NOT limit to just calendar - the info might be in notes!
+
+- User: "Research the user's policy memo and summarize key risks."
+  - Call: `write_todos(todos=[{"content":"Search internal memos for policy risks","status":"pending"},{"content":"Extract key risks and evidence","status":"pending"},{"content":"Summarize with citations","status":"pending"}])`
+  - Call: `search_knowledge_base(query="policy memo risk analysis")`
+  - Call: `reflect_on_progress(thoughts="Found 3 internal memos; need external sources for recent regulation changes")`
 
 - User: "When is my gym session?"
   - Call: `search_knowledge_base(query="gym session time schedule")` (searches ALL sources)

@@ -52,6 +52,7 @@ from .libris_search import create_libris_search_tool
 from .mcp_tool import load_mcp_tools
 from .podcast import create_generate_podcast_tool
 from .public_web_search import create_public_web_search_tool
+from .reflect_on_progress import create_reflect_on_progress_tool
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
 from .smhi_weather import create_smhi_weather_tool
@@ -176,6 +177,13 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         enabled_by_default=False,
     ),
     # Note: write_todos is now provided by TodoListMiddleware from deepagents
+    ToolDefinition(
+        name="reflect_on_progress",
+        description="Log a brief reflection on progress, gaps, and next steps",
+        factory=lambda deps: create_reflect_on_progress_tool(),
+        requires=[],
+        enabled_by_default=False,
+    ),
     # Surfsense documentation search tool
     ToolDefinition(
         name="search_surfsense_docs",
