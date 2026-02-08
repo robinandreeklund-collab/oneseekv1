@@ -512,6 +512,16 @@ async def stream_new_chat(
         # Disabled for now
         # write_todos_call_count: int = 0
 
+        route_label = route.value.capitalize()
+        route_prefix = f"[{route_label}] "
+
+        def format_step_title(title: str) -> str:
+            if not title:
+                return title
+            if title.startswith(route_prefix):
+                return title
+            return f"{route_prefix}{title}"
+
         def next_thinking_step_id() -> str:
             nonlocal thinking_step_counter
             thinking_step_counter += 1
@@ -530,22 +540,38 @@ async def stream_new_chat(
                 )
             return None
 
+        route_step_id = next_thinking_step_id()
+        route_items = [f"Route: {route.value}"]
+        yield streaming_service.format_thinking_step(
+            step_id=route_step_id,
+            title=format_step_title("Routing request"),
+            status="in_progress",
+            items=route_items,
+        )
+        yield streaming_service.format_thinking_step(
+            step_id=route_step_id,
+            title=format_step_title("Routing request"),
+            status="completed",
+            items=route_items,
+        )
+        completed_step_ids.add(route_step_id)
+
         # Initial thinking step - analyzing the request
         analyze_step_id = next_thinking_step_id()
         last_active_step_id = analyze_step_id
 
         # Determine step title and action verb based on context
         if attachments and (mentioned_documents or mentioned_surfsense_docs):
-            last_active_step_title = "Analyzing your content"
+            last_active_step_title = format_step_title("Analyzing your content")
             action_verb = "Reading"
         elif attachments:
-            last_active_step_title = "Reading your content"
+            last_active_step_title = format_step_title("Reading your content")
             action_verb = "Reading"
         elif mentioned_documents or mentioned_surfsense_docs:
-            last_active_step_title = "Analyzing referenced content"
+            last_active_step_title = format_step_title("Analyzing referenced content")
             action_verb = "Analyzing"
         else:
-            last_active_step_title = "Understanding your request"
+            last_active_step_title = format_step_title("Understanding your request")
             action_verb = "Processing"
 
         # Build the message with inline context about attachments/documents
@@ -651,7 +677,7 @@ async def stream_new_chat(
 
                 # Complete any previous step EXCEPT "Synthesizing response"
                 # (we want to reuse the Synthesizing step after tools complete)
-                if last_active_step_title != "Synthesizing response":
+                if last_active_step_title != format_step_title("Synthesizing response"):
                     completion_event = complete_current_step()
                     if completion_event:
                         yield completion_event
@@ -669,13 +695,15 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = "Searching knowledge base"
+                    last_active_step_title = format_step_title(
+                        "Searching knowledge base"
+                    )
                     last_active_step_items = [
                         f"Query: {query[:100]}{'...' if len(query) > 100 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
-                        title="Searching knowledge base",
+                        title=last_active_step_title,
                         status="in_progress",
                         items=last_active_step_items,
                     )
@@ -685,13 +713,15 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = "Fetching link preview"
+                    last_active_step_title = format_step_title(
+                        "Fetching link preview"
+                    )
                     last_active_step_items = [
                         f"URL: {url[:80]}{'...' if len(url) > 80 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
-                        title="Fetching link preview",
+                        title=last_active_step_title,
                         status="in_progress",
                         items=last_active_step_items,
                     )
@@ -706,13 +736,13 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else ""
                     )
-                    last_active_step_title = "Analyzing the image"
+                    last_active_step_title = format_step_title("Analyzing the image")
                     last_active_step_items = [
                         f"Analyzing: {title[:50] if title else src[:50]}{'...' if len(title or src) > 50 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
-                        title="Analyzing the image",
+                        title=last_active_step_title,
                         status="in_progress",
                         items=last_active_step_items,
                     )
@@ -722,13 +752,13 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = "Scraping webpage"
+                    last_active_step_title = format_step_title("Scraping webpage")
                     last_active_step_items = [
                         f"URL: {url[:80]}{'...' if len(url) > 80 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
-                        title="Scraping webpage",
+                        title=last_active_step_title,
                         status="in_progress",
                         items=last_active_step_items,
                     )
@@ -742,13 +772,15 @@ async def stream_new_chat(
                             location = f"{lat}, {lon}"
                     else:
                         location = str(tool_input)
-                    last_active_step_title = "Fetching weather (SMHI)"
+                    last_active_step_title = format_step_title(
+                        "Fetching weather (SMHI)"
+                    )
                     last_active_step_items = [
                         f"Location: {location[:80]}{'...' if len(location) > 80 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
-                        title="Fetching weather (SMHI)",
+                        title=last_active_step_title,
                         status="in_progress",
                         items=last_active_step_items,
                     )
@@ -764,7 +796,9 @@ async def stream_new_chat(
                         time_value = tool_input.get("time") or ""
                     else:
                         origin = str(tool_input)
-                    last_active_step_title = "Planning route (Trafiklab)"
+                    last_active_step_title = format_step_title(
+                        "Planning route (Trafiklab)"
+                    )
                     route_text = f"{origin} -> {destination}".strip()
                     last_active_step_items = [
                         f"Route: {route_text[:80]}{'...' if len(route_text) > 80 else ''}"
@@ -775,7 +809,7 @@ async def stream_new_chat(
                         )
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
-                        title="Planning route (Trafiklab)",
+                        title=last_active_step_title,
                         status="in_progress",
                         items=last_active_step_items,
                     )
@@ -787,7 +821,9 @@ async def stream_new_chat(
                         record_id = tool_input.get("record_id") or ""
                     else:
                         query = str(tool_input)
-                    last_active_step_title = "Searching Libris catalog"
+                    last_active_step_title = format_step_title(
+                        "Searching Libris catalog"
+                    )
                     item_label = (
                         f"Record: {record_id}" if record_id else f"Query: {query}"
                     )
@@ -796,7 +832,7 @@ async def stream_new_chat(
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
-                        title="Searching Libris catalog",
+                        title=last_active_step_title,
                         status="in_progress",
                         items=last_active_step_items,
                     )
@@ -808,14 +844,14 @@ async def stream_new_chat(
                         location = tool_input.get("location") or ""
                     else:
                         query = str(tool_input)
-                    last_active_step_title = "Searching job ads"
+                    last_active_step_title = format_step_title("Searching job ads")
                     details = f"{query} {location}".strip()
                     last_active_step_items = [
                         f"Search: {details[:100]}{'...' if len(details) > 100 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
-                        title="Searching job ads",
+                        title=last_active_step_title,
                         status="in_progress",
                         items=last_active_step_items,
                     )
@@ -885,7 +921,7 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else ""
                     )
-                    last_active_step_title = "Generating podcast"
+                    last_active_step_title = format_step_title("Generating podcast")
                     last_active_step_items = [
                         f"Title: {podcast_title}",
                         f"Content: {content_len:,} characters",
@@ -893,7 +929,7 @@ async def stream_new_chat(
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
-                        title="Generating podcast",
+                        title=last_active_step_title,
                         status="in_progress",
                         items=last_active_step_items,
                     )
@@ -907,7 +943,9 @@ async def stream_new_chat(
                 #         items=None,
                 #     )
                 else:
-                    last_active_step_title = f"Using {tool_name.replace('_', ' ')}"
+                    last_active_step_title = format_step_title(
+                        f"Using {tool_name.replace('_', ' ')}"
+                    )
                     last_active_step_items = []
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -1068,7 +1106,7 @@ async def stream_new_chat(
                     completed_items = [*last_active_step_items, result_info]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Searching knowledge base",
+                        title=format_step_title("Searching knowledge base"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1093,7 +1131,7 @@ async def stream_new_chat(
                         completed_items = [*last_active_step_items, "Preview loaded"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Fetching link preview",
+                        title=format_step_title("Fetching link preview"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1111,7 +1149,7 @@ async def stream_new_chat(
                         completed_items = [*last_active_step_items, "Image analyzed"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Analyzing the image",
+                        title=format_step_title("Analyzing the image"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1136,7 +1174,7 @@ async def stream_new_chat(
                         completed_items = [*last_active_step_items, "Content extracted"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Scraping webpage",
+                        title=format_step_title("Scraping webpage"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1159,7 +1197,7 @@ async def stream_new_chat(
                         completed_items = [*last_active_step_items, "Weather data retrieved"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Fetching weather (SMHI)",
+                        title=format_step_title("Fetching weather (SMHI)"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1191,7 +1229,7 @@ async def stream_new_chat(
                         completed_items = [*last_active_step_items, "Route results ready"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Planning route (Trafiklab)",
+                        title=format_step_title("Planning route (Trafiklab)"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1212,7 +1250,7 @@ async def stream_new_chat(
                         completed_items = [*last_active_step_items, "Libris results ready"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Searching Libris catalog",
+                        title=format_step_title("Searching Libris catalog"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1227,7 +1265,7 @@ async def stream_new_chat(
                         completed_items = [*last_active_step_items, "Job ads ready"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Searching job ads",
+                        title=format_step_title("Searching job ads"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1271,7 +1309,7 @@ async def stream_new_chat(
 
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Generating podcast",
+                        title=format_step_title("Generating podcast"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1369,14 +1407,16 @@ async def stream_new_chat(
 
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title="Exploring files",
+                        title=format_step_title("Exploring files"),
                         status="completed",
                         items=completed_items,
                     )
                 else:
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=f"Using {tool_name.replace('_', ' ')}",
+                        title=format_step_title(
+                            f"Using {tool_name.replace('_', ' ')}"
+                        ),
                         status="completed",
                         items=last_active_step_items,
                     )

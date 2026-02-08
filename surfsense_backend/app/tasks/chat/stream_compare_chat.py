@@ -477,6 +477,14 @@ async def stream_compare_chat(
 ) -> AsyncGenerator[str, None]:
     streaming_service = VercelStreamingService()
     tokenizer_model: str | None = None
+    route_prefix = "[Compare] "
+
+    def format_step_title(title: str) -> str:
+        if not title:
+            return title
+        if title.startswith(route_prefix):
+            return title
+        return f"{route_prefix}{title}"
 
     compare_query = extract_compare_query(user_query)
     if not compare_query:
@@ -514,6 +522,20 @@ async def stream_compare_chat(
 
         yield streaming_service.format_message_start()
         yield streaming_service.format_start_step()
+        route_step_id = f"compare-route-{uuid.uuid4().hex[:8]}"
+        route_items = ["Route: compare"]
+        yield streaming_service.format_thinking_step(
+            step_id=route_step_id,
+            title=format_step_title("Routing request"),
+            status="in_progress",
+            items=route_items,
+        )
+        yield streaming_service.format_thinking_step(
+            step_id=route_step_id,
+            title=format_step_title("Routing request"),
+            status="completed",
+            items=route_items,
+        )
         yield streaming_service.format_data(
             "context-stats",
             {
@@ -577,15 +599,16 @@ async def stream_compare_chat(
             items.append(f"Tool: {spec.tool_name}")
             items.append(f"Query: {short_query}")
 
+            step_title = format_step_title(f"Asking {spec.display}")
             provider_steps[spec.key] = {
                 "id": step_id,
-                "title": f"Asking {spec.display}",
+                "title": step_title,
                 "items": items,
             }
 
             yield streaming_service.format_thinking_step(
                 step_id=step_id,
-                title=f"Asking {spec.display}",
+                title=step_title,
                 status="in_progress",
                 items=items,
             )
@@ -609,7 +632,7 @@ async def stream_compare_chat(
                 ]
                 yield streaming_service.format_thinking_step(
                     step_id=step_id,
-                    title=f"Asking {spec.display}",
+                    title=step_title,
                     status="completed",
                     items=completed_items,
                 )
@@ -788,7 +811,7 @@ async def stream_compare_chat(
         tavily_documents_for_prompt: list[dict[str, Any]] = []
         yield streaming_service.format_thinking_step(
             step_id=tavily_step_id,
-            title="Fetching latest sources",
+            title=format_step_title("Fetching latest sources"),
             status="in_progress",
             items=[f"Query: {short_query}"],
         )
@@ -846,7 +869,7 @@ async def stream_compare_chat(
         tavily_count = len(tavily_documents)
         yield streaming_service.format_thinking_step(
             step_id=tavily_step_id,
-            title="Fetching latest sources",
+            title=format_step_title("Fetching latest sources"),
             status="completed",
             items=[f"Tavily results: {tavily_count}"],
         )
@@ -917,16 +940,17 @@ async def stream_compare_chat(
             ]
             if item
         ]
+        oneseek_title = format_step_title("Asking Oneseek")
         provider_steps["oneseek"] = {
             "id": local_step_id,
-            "title": "Asking Oneseek",
+            "title": oneseek_title,
             "items": local_items,
         }
         provider_tool_call_ids["oneseek"] = local_tool_call_id
 
         yield streaming_service.format_thinking_step(
             step_id=local_step_id,
-            title="Asking Oneseek",
+            title=oneseek_title,
             status="in_progress",
             items=local_items,
         )
@@ -970,7 +994,9 @@ async def stream_compare_chat(
 
                     tool_step_id = f"compare-oneseek-tool-{uuid.uuid4().hex[:8]}"
                     oneseek_tool_steps[run_id] = tool_step_id
-                    tool_title = f"Using {tool_name.replace('_', ' ')}"
+                    tool_title = format_step_title(
+                        f"Using {tool_name.replace('_', ' ')}"
+                    )
                     tool_items: list[str] = []
                     if isinstance(tool_input, dict):
                         for key in (
@@ -1046,7 +1072,9 @@ async def stream_compare_chat(
                     if tool_step_id:
                         yield streaming_service.format_thinking_step(
                             step_id=tool_step_id,
-                            title=f"Using {tool_name.replace('_', ' ')}",
+                            title=format_step_title(
+                                f"Using {tool_name.replace('_', ' ')}"
+                            ),
                             status="completed",
                             items=[f"Completed: {tool_name.replace('_', ' ')}"],
                         )
@@ -1146,7 +1174,7 @@ async def stream_compare_chat(
 
         yield streaming_service.format_thinking_step(
             step_id=local_step_id,
-            title="Asking Oneseek",
+            title=oneseek_title,
             status="completed",
             items=completed_items,
         )
@@ -1214,7 +1242,7 @@ async def stream_compare_chat(
 
         yield streaming_service.format_thinking_step(
             step_id=analysis_step_id,
-            title="Analyzing and validating responses",
+            title=format_step_title("Analyzing and validating responses"),
             status="in_progress",
             items=analysis_items,
         )
@@ -1325,7 +1353,7 @@ async def stream_compare_chat(
             )
             yield streaming_service.format_thinking_step(
                 step_id=analysis_step_id,
-                title="Analyzing and validating responses",
+                title=format_step_title("Analyzing and validating responses"),
                 status="completed",
                 items=analysis_items,
             )
@@ -1362,7 +1390,7 @@ async def stream_compare_chat(
         analysis_items.append(f"Final answer length: {len(final_answer)} chars")
         yield streaming_service.format_thinking_step(
             step_id=analysis_step_id,
-            title="Analyzing and validating responses",
+            title=format_step_title("Analyzing and validating responses"),
             status="completed",
             items=analysis_items,
         )

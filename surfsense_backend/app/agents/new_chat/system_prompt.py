@@ -10,8 +10,8 @@ The prompt is composed of three parts:
 3. Citation Instructions (toggleable via NewLLMConfig.citations_enabled)
 """
 
-from datetime import UTC, datetime
 import re
+from datetime import UTC, datetime
 
 # Default system instructions - can be overridden via NewLLMConfig.system_instructions
 SURFSENSE_SYSTEM_INSTRUCTIONS = """
