@@ -11,6 +11,7 @@ The prompt is composed of three parts:
 """
 
 from datetime import UTC, datetime
+import re
 
 # Default system instructions - can be overridden via NewLLMConfig.system_instructions
 SURFSENSE_SYSTEM_INSTRUCTIONS = """
@@ -456,8 +457,97 @@ Your goal is to provide helpful, informative answers in a clean, readable format
 """
 
 
+_TOOL_HEADER_REGEX = re.compile(r"(?m)^\d+\.\s+([a-zA-Z0-9_]+)\s*:")
+
+
+def _extract_tool_sections(tools_text: str) -> tuple[str, list[tuple[str, str]]]:
+    matches = list(_TOOL_HEADER_REGEX.finditer(tools_text))
+    if not matches:
+        return tools_text, []
+    header = tools_text[: matches[0].start()]
+    sections: list[tuple[str, str]] = []
+    for idx, match in enumerate(matches):
+        start = match.start()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(tools_text)
+        tool_name = match.group(1)
+        sections.append((tool_name, tools_text[start:end]))
+    return header, sections
+
+
+def _filter_tool_examples(examples_block: str, tool_names: set[str]) -> str:
+    if not examples_block or not tool_names:
+        return ""
+    if "<tool_call_examples>" not in examples_block:
+        return ""
+    before, _, after = examples_block.partition("<tool_call_examples>")
+    examples_body, _, tail = after.partition("</tool_call_examples>")
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in examples_body.splitlines():
+        if line.startswith("- User:") and current:
+            blocks.append("\n".join(current).strip())
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current).strip())
+
+    selected = [
+        block
+        for block in blocks
+        if any(tool in block for tool in tool_names)
+    ]
+    if not selected:
+        return ""
+    return "\n".join(
+        [
+            before.strip(),
+            "<tool_call_examples>",
+            "\n\n".join(selected).strip(),
+            "</tool_call_examples>",
+            tail.strip(),
+        ]
+    ).strip()
+
+
+def build_tools_instructions(tool_names: list[str] | None = None) -> str:
+    if tool_names is None:
+        return SURFSENSE_TOOLS_INSTRUCTIONS
+    tool_set = {name for name in tool_names if name}
+    if not tool_set:
+        return ""
+
+    tools_block, _, examples_block = SURFSENSE_TOOLS_INSTRUCTIONS.partition(
+        "<tool_call_examples>"
+    )
+
+    tools_close_idx = tools_block.find("</tools>")
+    tools_body = tools_block
+    tools_tail = ""
+    if tools_close_idx != -1:
+        tools_body = tools_block[:tools_close_idx]
+        tools_tail = tools_block[tools_close_idx:]
+
+    header, sections = _extract_tool_sections(tools_body)
+    selected_sections = [
+        section for name, section in sections if name in tool_set
+    ]
+    if not selected_sections:
+        return ""
+
+    filtered_tools = (header + "".join(selected_sections) + tools_tail).strip()
+    filtered_examples = _filter_tool_examples(
+        "<tool_call_examples>" + examples_block, tool_set
+    )
+    if filtered_examples:
+        return "\n\n".join([filtered_tools, filtered_examples]).strip()
+    return filtered_tools
+
+
 def build_surfsense_system_prompt(
     today: datetime | None = None,
+    tool_names: list[str] | None = None,
+    citations_enabled: bool = True,
 ) -> str:
     """
     Build the SurfSense system prompt with default settings.
@@ -469,6 +559,8 @@ def build_surfsense_system_prompt(
 
     Args:
         today: Optional datetime for today's date (defaults to current UTC date)
+        tool_names: Optional list of tool names to filter tool instructions/examples.
+        citations_enabled: Whether to include citation instructions.
 
     Returns:
         Complete system prompt string
@@ -477,13 +569,12 @@ def build_surfsense_system_prompt(
     resolved_today = now.date().isoformat()
     resolved_time = now.strftime("%H:%M:%S")
 
-    return (
-        SURFSENSE_SYSTEM_INSTRUCTIONS.format(
-            resolved_today=resolved_today,
-            resolved_time=resolved_time,
-        )
-        + SURFSENSE_TOOLS_INSTRUCTIONS
-        + SURFSENSE_CITATION_INSTRUCTIONS
+    return build_configurable_system_prompt(
+        custom_system_instructions=None,
+        use_default_system_instructions=True,
+        citations_enabled=citations_enabled,
+        today=today,
+        tool_names=tool_names,
     )
 
 
@@ -492,6 +583,7 @@ def build_configurable_system_prompt(
     use_default_system_instructions: bool = True,
     citations_enabled: bool = True,
     today: datetime | None = None,
+    tool_names: list[str] | None = None,
 ) -> str:
     """
     Build a configurable SurfSense system prompt based on NewLLMConfig settings.
@@ -510,6 +602,7 @@ def build_configurable_system_prompt(
         citations_enabled: Whether to include citation instructions (True) or
                           anti-citation instructions (False).
         today: Optional datetime for today's date (defaults to current UTC date)
+        tool_names: Optional list of tool names to filter tool instructions/examples.
 
     Returns:
         Complete system prompt string
@@ -535,15 +628,18 @@ def build_configurable_system_prompt(
         # No system instructions (edge case)
         system_instructions = ""
 
-    # Tools instructions are always included
-    tools_instructions = SURFSENSE_TOOLS_INSTRUCTIONS
+    # Tools instructions can be filtered for routed agents
+    tools_instructions = build_tools_instructions(tool_names)
 
     # Citation instructions based on toggle
-    citation_instructions = (
-        SURFSENSE_CITATION_INSTRUCTIONS
-        if citations_enabled
-        else SURFSENSE_NO_CITATION_INSTRUCTIONS
-    )
+    if not tools_instructions and not citations_enabled:
+        citation_instructions = ""
+    else:
+        citation_instructions = (
+            SURFSENSE_CITATION_INSTRUCTIONS
+            if citations_enabled
+            else SURFSENSE_NO_CITATION_INSTRUCTIONS
+        )
 
     return system_instructions + tools_instructions + citation_instructions
 

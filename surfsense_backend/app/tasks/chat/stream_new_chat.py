@@ -27,6 +27,8 @@ from app.agents.new_chat.llm_config import (
     load_agent_config,
     load_llm_config_from_yaml,
 )
+from app.agents.new_chat.dispatcher import dispatch_route
+from app.agents.new_chat.routing import Route, ROUTE_CITATIONS_ENABLED, ROUTE_TOOL_SETS
 from app.db import Document, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
 from app.services.chat_session_state_service import (
@@ -302,6 +304,15 @@ async def stream_new_chat(
             if isinstance(model_attr, str) and model_attr.strip():
                 tokenizer_model = model_attr.strip()
 
+        route = await dispatch_route(
+            user_query,
+            llm,
+            has_attachments=bool(attachments),
+            has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
+        )
+        enabled_tools = ROUTE_TOOL_SETS.get(route, ROUTE_TOOL_SETS[Route.KNOWLEDGE])
+        citations_enabled = ROUTE_CITATIONS_ENABLED.get(route, True)
+
         # Create connector service
         connector_service = ConnectorService(
             session, search_space_id=search_space_id, user_id=user_id
@@ -331,6 +342,9 @@ async def stream_new_chat(
             thread_id=chat_id,  # Pass chat ID for podcast association
             agent_config=agent_config,  # Pass prompt configuration
             firecrawl_api_key=firecrawl_api_key,  # Pass Firecrawl API key if configured
+            enabled_tools=enabled_tools,
+            tool_names_for_prompt=enabled_tools,
+            force_citations_enabled=citations_enabled,
         )
 
         # Build input with message history

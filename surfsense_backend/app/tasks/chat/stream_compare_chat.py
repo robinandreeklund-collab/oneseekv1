@@ -34,6 +34,7 @@ from app.agents.new_chat.tools.external_models import (
     describe_external_model_config,
 )
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
+from app.agents.new_chat.routing import Route, ROUTE_TOOL_SETS
 from app.db import Document, NewChatThread, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
 from app.services.connector_service import ConnectorService
@@ -880,6 +881,7 @@ async def stream_compare_chat(
             firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
 
         oneseek_checkpointer = MemorySaver()
+        oneseek_tools = ROUTE_TOOL_SETS.get(Route.KNOWLEDGE, [])
         oneseek_agent = await create_surfsense_deep_agent(
             llm=local_llm,
             search_space_id=search_space_id,
@@ -890,6 +892,9 @@ async def stream_compare_chat(
             thread_id=chat_id,
             agent_config=agent_config,
             firecrawl_api_key=firecrawl_api_key,
+            enabled_tools=oneseek_tools,
+            tool_names_for_prompt=oneseek_tools,
+            force_citations_enabled=False,
         )
 
         local_step_id = f"compare-oneseek-{uuid.uuid4().hex[:8]}"

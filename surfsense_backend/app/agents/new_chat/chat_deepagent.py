@@ -126,6 +126,8 @@ async def create_surfsense_deep_agent(
     disabled_tools: list[str] | None = None,
     additional_tools: Sequence[BaseTool] | None = None,
     firecrawl_api_key: str | None = None,
+    tool_names_for_prompt: list[str] | None = None,
+    force_citations_enabled: bool | None = None,
 ):
     """
     Create a SurfSense deep agent with configurable tools and prompts.
@@ -164,6 +166,9 @@ async def create_surfsense_deep_agent(
                          These are always added regardless of enabled/disabled settings.
         firecrawl_api_key: Optional Firecrawl API key for premium web scraping.
                           Falls back to Chromium/Trafilatura if not provided.
+        tool_names_for_prompt: Optional list of tool names used to filter tool instructions
+                               in the system prompt.
+        force_citations_enabled: Override for citation instructions, regardless of config.
 
     Returns:
         CompiledStateGraph: The configured deep agent
@@ -247,17 +252,24 @@ async def create_surfsense_deep_agent(
         additional_tools=list(additional_tools) if additional_tools else None,
     )
 
-    # Build system prompt based on agent_config
+    citations_enabled = (
+        force_citations_enabled
+        if force_citations_enabled is not None
+        else (agent_config.citations_enabled if agent_config is not None else True)
+    )
+
     if agent_config is not None:
-        # Use configurable prompt with settings from NewLLMConfig
         system_prompt = build_configurable_system_prompt(
             custom_system_instructions=agent_config.system_instructions,
             use_default_system_instructions=agent_config.use_default_system_instructions,
-            citations_enabled=agent_config.citations_enabled,
+            citations_enabled=citations_enabled,
+            tool_names=tool_names_for_prompt,
         )
     else:
-        # Use default prompt (with citations enabled)
-        system_prompt = build_surfsense_system_prompt()
+        system_prompt = build_surfsense_system_prompt(
+            tool_names=tool_names_for_prompt,
+            citations_enabled=citations_enabled,
+        )
 
     # Create the deep agent with system prompt and checkpointer
     # Note: TodoListMiddleware (write_todos) is included by default in create_deep_agent
