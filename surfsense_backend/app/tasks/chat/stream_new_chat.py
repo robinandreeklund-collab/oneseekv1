@@ -28,7 +28,16 @@ from app.agents.new_chat.llm_config import (
     load_llm_config_from_yaml,
 )
 from app.agents.new_chat.dispatcher import dispatch_route
+from app.agents.new_chat.knowledge_router import (
+    KnowledgeRoute,
+    dispatch_knowledge_route,
+)
 from app.agents.new_chat.routing import Route, ROUTE_CITATIONS_ENABLED, ROUTE_TOOL_SETS
+from app.agents.new_chat.subagent_utils import (
+    build_subagent_config,
+    knowledge_route_instructions,
+    knowledge_route_label,
+)
 from app.db import Document, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
 from app.services.chat_session_state_service import (
@@ -310,8 +319,35 @@ async def stream_new_chat(
             has_attachments=bool(attachments),
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
         )
-        enabled_tools = ROUTE_TOOL_SETS.get(route, ROUTE_TOOL_SETS[Route.KNOWLEDGE])
+        knowledge_route: KnowledgeRoute | None = None
+        if route == Route.KNOWLEDGE:
+            knowledge_route = await dispatch_knowledge_route(
+                user_query,
+                llm,
+                has_attachments=bool(attachments),
+                has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
+                allow_external=True,
+            )
+            if knowledge_route == KnowledgeRoute.DOCS:
+                enabled_tools = ["search_surfsense_docs"]
+            elif knowledge_route == KnowledgeRoute.EXTERNAL:
+                enabled_tools = ["search_knowledge_base"]
+            else:
+                enabled_tools = [
+                    "search_knowledge_base",
+                    "save_memory",
+                    "recall_memory",
+                ]
+        else:
+            enabled_tools = ROUTE_TOOL_SETS.get(
+                route, ROUTE_TOOL_SETS[Route.KNOWLEDGE]
+            )
         citations_enabled = ROUTE_CITATIONS_ENABLED.get(route, True)
+        effective_agent_config = agent_config
+        if route == Route.KNOWLEDGE and knowledge_route is not None:
+            effective_agent_config = build_subagent_config(
+                agent_config, knowledge_route_instructions(knowledge_route)
+            )
 
         # Create connector service
         connector_service = ConnectorService(
@@ -340,7 +376,7 @@ async def stream_new_chat(
             checkpointer=checkpointer,
             user_id=user_id,  # Pass user ID for memory tools
             thread_id=chat_id,  # Pass chat ID for podcast association
-            agent_config=agent_config,  # Pass prompt configuration
+            agent_config=effective_agent_config,  # Pass prompt configuration
             firecrawl_api_key=firecrawl_api_key,  # Pass Firecrawl API key if configured
             enabled_tools=enabled_tools,
             tool_names_for_prompt=enabled_tools,
@@ -513,6 +549,8 @@ async def stream_new_chat(
         # write_todos_call_count: int = 0
 
         route_label = route.value.capitalize()
+        if route == Route.KNOWLEDGE and knowledge_route is not None:
+            route_label = f"Knowledge/{knowledge_route_label(knowledge_route)}"
         route_prefix = f"[{route_label}] "
 
         def format_step_title(title: str) -> str:
@@ -542,6 +580,8 @@ async def stream_new_chat(
 
         route_step_id = next_thinking_step_id()
         route_items = [f"Route: {route.value}"]
+        if knowledge_route is not None:
+            route_items.append(f"Sub-route: {knowledge_route.value}")
         yield streaming_service.format_thinking_step(
             step_id=route_step_id,
             title=format_step_title("Routing request"),

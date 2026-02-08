@@ -10,7 +10,6 @@ class Route(str, Enum):
 
 ROUTE_TOOL_SETS: dict[Route, list[str]] = {
     Route.KNOWLEDGE: [
-        "search_knowledge_base",
         "search_surfsense_docs",
         "save_memory",
         "recall_memory",

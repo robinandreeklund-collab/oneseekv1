@@ -34,7 +34,15 @@ from app.agents.new_chat.tools.external_models import (
     describe_external_model_config,
 )
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
-from app.agents.new_chat.routing import Route, ROUTE_TOOL_SETS
+from app.agents.new_chat.knowledge_router import (
+    KnowledgeRoute,
+    dispatch_knowledge_route,
+)
+from app.agents.new_chat.subagent_utils import (
+    build_subagent_config,
+    knowledge_route_instructions,
+    knowledge_route_label,
+)
 from app.db import Document, NewChatThread, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
 from app.services.connector_service import ConnectorService
@@ -904,7 +912,20 @@ async def stream_compare_chat(
             firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
 
         oneseek_checkpointer = MemorySaver()
-        oneseek_tools = ROUTE_TOOL_SETS.get(Route.KNOWLEDGE, [])
+        knowledge_route = await dispatch_knowledge_route(
+            compare_query,
+            local_llm,
+            has_attachments=bool(attachments),
+            has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
+            allow_external=False,
+        )
+        if knowledge_route == KnowledgeRoute.DOCS:
+            oneseek_tools = ["search_surfsense_docs"]
+        else:
+            oneseek_tools = ["search_knowledge_base"]
+        oneseek_config = build_subagent_config(
+            agent_config, knowledge_route_instructions(knowledge_route)
+        )
         oneseek_agent = await create_surfsense_deep_agent(
             llm=local_llm,
             search_space_id=search_space_id,
@@ -913,7 +934,7 @@ async def stream_compare_chat(
             checkpointer=oneseek_checkpointer,
             user_id=user_id,
             thread_id=chat_id,
-            agent_config=agent_config,
+            agent_config=oneseek_config,
             firecrawl_api_key=firecrawl_api_key,
             enabled_tools=oneseek_tools,
             tool_names_for_prompt=oneseek_tools,
@@ -937,6 +958,7 @@ async def stream_compare_chat(
                 f"Model string: {local_model_string}" if local_model_string else None,
                 "Tool: call_oneseek",
                 f"Query: {short_query}",
+                f"Knowledge route: {knowledge_route_label(knowledge_route)}",
             ]
             if item
         ]
