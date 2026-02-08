@@ -7,6 +7,7 @@ from app.agents.new_chat.prompt_registry import PROMPT_DEFINITION_MAP, get_promp
 from sqlalchemy.future import select
 
 from app.db import GlobalAgentPromptOverrideHistory, SearchSpaceMembership, User
+from app.db import get_async_session
 from app.schemas.agent_prompts import (
     AgentPromptsResponse,
     AgentPromptHistoryResponse,
@@ -17,7 +18,6 @@ from app.services.agent_prompt_service import (
     upsert_global_prompt_overrides,
 )
 from app.users import current_active_user
-from app.utils.session import get_async_session
 
 logger = logging.getLogger(__name__)
 
