@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { diffLines } from "diff";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -205,10 +206,51 @@ function PromptHistory({ promptKey, isSaving }: { promptKey: string; isSaving: b
 						<pre className="mt-1 whitespace-pre-wrap rounded bg-background/70 p-2 text-[11px] text-foreground/80">
 							{entry.new_prompt || "(tömd)"}
 						</pre>
+						<details className="mt-3">
+							<summary className="cursor-pointer text-[11px] text-muted-foreground">
+								Visa diff
+							</summary>
+							<DiffBlock
+								previousPrompt={entry.previous_prompt}
+								newPrompt={entry.new_prompt}
+							/>
+						</details>
 					</div>
 				))}
 				{isSaving && <p>Historik uppdateras när du sparar.</p>}
 			</div>
 		</details>
+	);
+}
+
+function DiffBlock({
+	previousPrompt,
+	newPrompt,
+}: {
+	previousPrompt?: string | null;
+	newPrompt?: string | null;
+}) {
+	const diff = diffLines(previousPrompt ?? "", newPrompt ?? "", {
+		newlineIsToken: true,
+	});
+
+	return (
+		<pre className="mt-2 whitespace-pre-wrap rounded bg-background/70 p-2 text-[11px]">
+			{diff.map((part, index) => (
+				<span
+					key={`${part.added ? "add" : part.removed ? "del" : "same"}-${index}`}
+					className={cn(
+						"block px-1",
+						part.added &&
+							"bg-emerald-500/20 text-emerald-800 dark:text-emerald-200",
+						part.removed &&
+							"bg-rose-500/20 text-rose-800 line-through dark:text-rose-200",
+						!part.added && !part.removed && "text-muted-foreground"
+					)}
+				>
+					{part.value}
+				</span>
+			))}
+		</pre>
 	);
 }
