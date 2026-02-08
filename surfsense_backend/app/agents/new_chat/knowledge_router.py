@@ -37,7 +37,7 @@ _EXTERNAL_PATTERNS = [
     r"\brealtid\b",
 ]
 
-_KNOWLEDGE_ROUTE_PROMPT = (
+DEFAULT_KNOWLEDGE_ROUTE_PROMPT = (
     "You are a routing classifier for SurfSense knowledge search.\n"
     "Decide the best route for the user's question.\n"
     "Return ONLY one of: docs, internal, external.\n"
@@ -71,6 +71,7 @@ async def dispatch_knowledge_route(
     has_attachments: bool = False,
     has_mentions: bool = False,
     allow_external: bool = True,
+    system_prompt_override: str | None = None,
 ) -> KnowledgeRoute:
     text = (user_query or "").strip()
     if not text:
@@ -86,9 +87,10 @@ async def dispatch_knowledge_route(
         return KnowledgeRoute.EXTERNAL
 
     try:
+        system_prompt = system_prompt_override or DEFAULT_KNOWLEDGE_ROUTE_PROMPT
         response = await llm.ainvoke(
             [
-                SystemMessage(content=_KNOWLEDGE_ROUTE_PROMPT),
+                SystemMessage(content=system_prompt),
                 HumanMessage(content=text),
             ]
         )

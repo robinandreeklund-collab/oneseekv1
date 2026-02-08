@@ -958,6 +958,12 @@ class SearchSpace(BaseModel, TimestampMixin):
         order_by="NewLLMConfig.id",
         cascade="all, delete-orphan",
     )
+    agent_prompt_overrides = relationship(
+        "AgentPromptOverride",
+        back_populates="search_space",
+        order_by="AgentPromptOverride.id",
+        cascade="all, delete-orphan",
+    )
 
     # RBAC relationships
     roles = relationship(
@@ -1076,6 +1082,30 @@ class NewLLMConfig(BaseModel, TimestampMixin):
         Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
     )
     search_space = relationship("SearchSpace", back_populates="new_llm_configs")
+
+
+class AgentPromptOverride(BaseModel, TimestampMixin):
+    __tablename__ = "agent_prompt_overrides"
+    __table_args__ = (
+        UniqueConstraint(
+            "search_space_id", "key", name="uq_agent_prompt_override_space_key"
+        ),
+    )
+
+    key = Column(String(120), nullable=False, index=True)
+    prompt_text = Column(Text, nullable=False, default="")
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    search_space = relationship(
+        "SearchSpace", back_populates="agent_prompt_overrides"
+    )
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
 
 
 class Log(BaseModel, TimestampMixin):

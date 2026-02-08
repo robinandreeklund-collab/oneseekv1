@@ -27,22 +27,27 @@ def build_subagent_config(
     )
 
 
+KNOWLEDGE_DOCS_INSTRUCTIONS = (
+    "The user question is about SurfSense itself. "
+    "Use search_surfsense_docs to answer and cite docs."
+)
+KNOWLEDGE_INTERNAL_INSTRUCTIONS = (
+    "The user question should be answered from the user's internal knowledge base. "
+    "Use search_knowledge_base and search broadly unless the user specifies a source."
+)
+KNOWLEDGE_EXTERNAL_INSTRUCTIONS = (
+    "The user needs external, real-time web information. "
+    "Use search_knowledge_base with connectors_to_search=['TAVILY_API'] "
+    "and top_k=3. Prefer concise, up-to-date sources."
+)
+
+
 def knowledge_route_instructions(route: KnowledgeRoute) -> str:
     if route == KnowledgeRoute.DOCS:
-        return (
-            "The user question is about SurfSense itself. "
-            "Use search_surfsense_docs to answer and cite docs."
-        )
+        return KNOWLEDGE_DOCS_INSTRUCTIONS
     if route == KnowledgeRoute.EXTERNAL:
-        return (
-            "The user needs external, real-time web information. "
-            "Use search_knowledge_base with connectors_to_search=['TAVILY_API'] "
-            "and top_k=3. Prefer concise, up-to-date sources."
-        )
-    return (
-        "The user question should be answered from the user's internal knowledge base. "
-        "Use search_knowledge_base and search broadly unless the user specifies a source."
-    )
+        return KNOWLEDGE_EXTERNAL_INSTRUCTIONS
+    return KNOWLEDGE_INTERNAL_INSTRUCTIONS
 
 
 def knowledge_route_label(route: KnowledgeRoute) -> str:
@@ -53,26 +58,38 @@ def knowledge_route_label(route: KnowledgeRoute) -> str:
     return "KB"
 
 
+ACTION_WEB_INSTRUCTIONS = (
+    "The user needs web content handling. Use link_preview for URLs, "
+    "scrape_webpage for content, and display_image for relevant images."
+)
+ACTION_MEDIA_INSTRUCTIONS = (
+    "The user wants media output. Use generate_podcast to create audio. "
+    "If you need source content, first call search_knowledge_base."
+)
+ACTION_TRAVEL_INSTRUCTIONS = (
+    "The user needs travel or weather info. Use smhi_weather for weather "
+    "and trafiklab_route for public transport. Ask for missing details."
+)
+ACTION_DATA_INSTRUCTIONS = (
+    "The user is asking for structured data results. Use libris_search for books "
+    "and jobad_links_search for job listings."
+)
+
+
 def action_route_instructions(route: ActionRoute) -> str:
     if route == ActionRoute.MEDIA:
-        return (
-            "The user wants media output. Use generate_podcast to create audio. "
-            "If you need source content, first call search_knowledge_base."
-        )
+        return ACTION_MEDIA_INSTRUCTIONS
     if route == ActionRoute.TRAVEL:
-        return (
-            "The user needs travel or weather info. Use smhi_weather for weather "
-            "and trafiklab_route for public transport. Ask for missing details."
-        )
+        return ACTION_TRAVEL_INSTRUCTIONS
     if route == ActionRoute.DATA:
-        return (
-            "The user is asking for structured data results. Use libris_search for books "
-            "and jobad_links_search for job listings."
-        )
-    return (
-        "The user needs web content handling. Use link_preview for URLs, "
-        "scrape_webpage for content, and display_image for relevant images."
-    )
+        return ACTION_DATA_INSTRUCTIONS
+    return ACTION_WEB_INSTRUCTIONS
+
+
+SMALLTALK_INSTRUCTIONS = (
+    "Keep responses friendly, concise, and conversational. "
+    "Do not use tools. Avoid long explanations unless asked."
+)
 
 
 def action_route_label(route: ActionRoute) -> str:

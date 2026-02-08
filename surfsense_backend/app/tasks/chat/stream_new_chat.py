@@ -27,20 +27,31 @@ from app.agents.new_chat.llm_config import (
     load_agent_config,
     load_llm_config_from_yaml,
 )
-from app.agents.new_chat.action_router import ActionRoute, dispatch_action_route
-from app.agents.new_chat.dispatcher import dispatch_route
+from app.agents.new_chat.action_router import (
+    ActionRoute,
+    DEFAULT_ACTION_ROUTE_PROMPT,
+    dispatch_action_route,
+)
+from app.agents.new_chat.dispatcher import (
+    DEFAULT_ROUTE_SYSTEM_PROMPT,
+    dispatch_route,
+)
 from app.agents.new_chat.knowledge_router import (
     KnowledgeRoute,
+    DEFAULT_KNOWLEDGE_ROUTE_PROMPT,
     dispatch_knowledge_route,
 )
+from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.routing import Route, ROUTE_CITATIONS_ENABLED, ROUTE_TOOL_SETS
 from app.agents.new_chat.subagent_utils import (
     action_route_instructions,
     action_route_label,
     build_subagent_config,
+    SMALLTALK_INSTRUCTIONS,
     knowledge_route_instructions,
     knowledge_route_label,
 )
+from app.services.agent_prompt_service import get_prompt_overrides
 from app.db import Document, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
 from app.services.chat_session_state_service import (
@@ -316,60 +327,133 @@ async def stream_new_chat(
             if isinstance(model_attr, str) and model_attr.strip():
                 tokenizer_model = model_attr.strip()
 
+        prompt_overrides = await get_prompt_overrides(session, search_space_id)
+        router_prompt = resolve_prompt(
+            prompt_overrides, "router.top_level", DEFAULT_ROUTE_SYSTEM_PROMPT
+        )
+
         route = await dispatch_route(
             user_query,
             llm,
             has_attachments=bool(attachments),
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
+            system_prompt_override=router_prompt,
         )
         knowledge_route: KnowledgeRoute | None = None
         action_route: ActionRoute | None = None
+        effective_agent_config = agent_config
         if route == Route.KNOWLEDGE:
+            knowledge_router_prompt = resolve_prompt(
+                prompt_overrides, "router.knowledge", DEFAULT_KNOWLEDGE_ROUTE_PROMPT
+            )
             knowledge_route = await dispatch_knowledge_route(
                 user_query,
                 llm,
                 has_attachments=bool(attachments),
                 has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
                 allow_external=True,
+                system_prompt_override=knowledge_router_prompt,
+            )
+            docs_instructions = resolve_prompt(
+                prompt_overrides,
+                "agent.knowledge.docs",
+                knowledge_route_instructions(KnowledgeRoute.DOCS),
+            )
+            internal_instructions = resolve_prompt(
+                prompt_overrides,
+                "agent.knowledge.internal",
+                knowledge_route_instructions(KnowledgeRoute.INTERNAL),
+            )
+            external_instructions = resolve_prompt(
+                prompt_overrides,
+                "agent.knowledge.external",
+                knowledge_route_instructions(KnowledgeRoute.EXTERNAL),
             )
             if knowledge_route == KnowledgeRoute.DOCS:
                 enabled_tools = ["search_surfsense_docs"]
+                effective_agent_config = build_subagent_config(
+                    agent_config, docs_instructions
+                )
             elif knowledge_route == KnowledgeRoute.EXTERNAL:
                 enabled_tools = ["search_knowledge_base"]
+                effective_agent_config = build_subagent_config(
+                    agent_config, external_instructions
+                )
             else:
                 enabled_tools = [
                     "search_knowledge_base",
                     "save_memory",
                     "recall_memory",
                 ]
+                effective_agent_config = build_subagent_config(
+                    agent_config, internal_instructions
+                )
         elif route == Route.ACTION:
-            action_route = await dispatch_action_route(user_query, llm)
+            action_router_prompt = resolve_prompt(
+                prompt_overrides, "router.action", DEFAULT_ACTION_ROUTE_PROMPT
+            )
+            action_route = await dispatch_action_route(
+                user_query, llm, system_prompt_override=action_router_prompt
+            )
+            web_instructions = resolve_prompt(
+                prompt_overrides,
+                "agent.action.web",
+                action_route_instructions(ActionRoute.WEB),
+            )
+            media_instructions = resolve_prompt(
+                prompt_overrides,
+                "agent.action.media",
+                action_route_instructions(ActionRoute.MEDIA),
+            )
+            travel_instructions = resolve_prompt(
+                prompt_overrides,
+                "agent.action.travel",
+                action_route_instructions(ActionRoute.TRAVEL),
+            )
+            data_instructions = resolve_prompt(
+                prompt_overrides,
+                "agent.action.data",
+                action_route_instructions(ActionRoute.DATA),
+            )
             if action_route == ActionRoute.MEDIA:
                 enabled_tools = ["generate_podcast", "search_knowledge_base"]
+                effective_agent_config = build_subagent_config(
+                    agent_config, media_instructions
+                )
             elif action_route == ActionRoute.TRAVEL:
                 enabled_tools = ["smhi_weather", "trafiklab_route"]
+                effective_agent_config = build_subagent_config(
+                    agent_config, travel_instructions
+                )
             elif action_route == ActionRoute.DATA:
                 enabled_tools = ["libris_search", "jobad_links_search"]
+                effective_agent_config = build_subagent_config(
+                    agent_config, data_instructions
+                )
             else:
                 enabled_tools = [
                     "link_preview",
                     "scrape_webpage",
                     "display_image",
                 ]
+                effective_agent_config = build_subagent_config(
+                    agent_config, web_instructions
+                )
         else:
             enabled_tools = ROUTE_TOOL_SETS.get(
                 route, ROUTE_TOOL_SETS[Route.KNOWLEDGE]
             )
+            effective_agent_config = agent_config
+            if route == Route.SMALLTALK:
+                smalltalk_instructions = resolve_prompt(
+                    prompt_overrides,
+                    "agent.smalltalk.system",
+                    SMALLTALK_INSTRUCTIONS,
+                )
+                effective_agent_config = build_subagent_config(
+                    agent_config, smalltalk_instructions
+                )
         citations_enabled = ROUTE_CITATIONS_ENABLED.get(route, True)
-        effective_agent_config = agent_config
-        if route == Route.KNOWLEDGE and knowledge_route is not None:
-            effective_agent_config = build_subagent_config(
-                agent_config, knowledge_route_instructions(knowledge_route)
-            )
-        elif route == Route.ACTION and action_route is not None:
-            effective_agent_config = build_subagent_config(
-                agent_config, action_route_instructions(action_route)
-            )
 
         # Create connector service
         connector_service = ConnectorService(

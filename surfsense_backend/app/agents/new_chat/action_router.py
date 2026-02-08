@@ -56,7 +56,7 @@ _DATA_PATTERNS = [
     r"\bjobtech\b",
 ]
 
-_ACTION_ROUTE_PROMPT = (
+DEFAULT_ACTION_ROUTE_PROMPT = (
     "You are a routing classifier for SurfSense action tools.\n"
     "Return ONLY one of: web, media, travel, data.\n"
     "Use 'web' for link previews, scraping, and URL-based tasks.\n"
@@ -83,7 +83,12 @@ def _normalize_route(value: str) -> ActionRoute | None:
     return None
 
 
-async def dispatch_action_route(user_query: str, llm) -> ActionRoute:
+async def dispatch_action_route(
+    user_query: str,
+    llm,
+    *,
+    system_prompt_override: str | None = None,
+) -> ActionRoute:
     text = (user_query or "").strip()
     if not text:
         return ActionRoute.WEB
@@ -101,8 +106,9 @@ async def dispatch_action_route(user_query: str, llm) -> ActionRoute:
         return ActionRoute.DATA
 
     try:
+        system_prompt = system_prompt_override or DEFAULT_ACTION_ROUTE_PROMPT
         response = await llm.ainvoke(
-            [SystemMessage(content=_ACTION_ROUTE_PROMPT), HumanMessage(content=text)]
+            [SystemMessage(content=system_prompt), HumanMessage(content=text)]
         )
         return _normalize_route(str(getattr(response, "content", "") or "")) or ActionRoute.WEB
     except Exception:

@@ -48,7 +48,7 @@ _KNOWLEDGE_PATTERNS = [
     r"\bkom ihåg\b",
 ]
 
-_ROUTE_SYSTEM_PROMPT = (
+DEFAULT_ROUTE_SYSTEM_PROMPT = (
     "You are a routing classifier for SurfSense.\n"
     "Decide the best route for the user's message.\n"
     "Return ONLY one of: knowledge, action, smalltalk.\n"
@@ -81,6 +81,7 @@ async def dispatch_route(
     *,
     has_attachments: bool = False,
     has_mentions: bool = False,
+    system_prompt_override: str | None = None,
 ) -> Route:
     text = (user_query or "").strip()
     if not text:
@@ -99,8 +100,9 @@ async def dispatch_route(
         return Route.KNOWLEDGE
 
     try:
+        system_prompt = system_prompt_override or DEFAULT_ROUTE_SYSTEM_PROMPT
         response = await llm.ainvoke(
-            [SystemMessage(content=_ROUTE_SYSTEM_PROMPT), HumanMessage(content=text)]
+            [SystemMessage(content=system_prompt), HumanMessage(content=text)]
         )
         return _normalize_route(str(getattr(response, "content", "") or "")) or Route.KNOWLEDGE
     except Exception:

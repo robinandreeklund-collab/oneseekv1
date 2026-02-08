@@ -28,7 +28,9 @@ from app.agents.new_chat.llm_config import (
     load_agent_config,
     load_llm_config_from_yaml,
 )
+from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.tools.external_models import (
+    DEFAULT_EXTERNAL_SYSTEM_PROMPT,
     EXTERNAL_MODEL_SPECS,
     call_external_model,
     describe_external_model_config,
@@ -36,8 +38,10 @@ from app.agents.new_chat.tools.external_models import (
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
 from app.agents.new_chat.knowledge_router import (
     KnowledgeRoute,
+    DEFAULT_KNOWLEDGE_ROUTE_PROMPT,
     dispatch_knowledge_route,
 )
+from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.subagent_utils import (
     build_subagent_config,
     knowledge_route_instructions,
@@ -46,6 +50,7 @@ from app.agents.new_chat.subagent_utils import (
 from app.db import Document, NewChatThread, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
 from app.services.connector_service import ConnectorService
+from app.services.agent_prompt_service import get_prompt_overrides
 from app.services.new_streaming_service import VercelStreamingService
 from app.tasks.chat.context_formatters import (
     format_attachments_as_context,
@@ -66,57 +71,7 @@ COMPARE_SUMMARY_FINAL_CHARS = 700
 TAVILY_RESULT_CHUNK_CHARS = 320
 TAVILY_RESULT_MAX_CHUNKS = 1
 
-LOCAL_ANALYSIS_SYSTEM_PROMPT = (
-    "Du är Oneseek Compare Analyzer. Din roll är att syntetisera ett högkvalitativt "
-    "svar från en användarfråga, flera verktygssvar från externa modeller och "
-    "Tavily-webbsnuttar.\n\n"
-    "**Indatastruktur**:\n"
-    "- Användarfråga: Den ursprungliga frågan.\n"
-    "- Verktygssvar: Utdata från externa modeller (märkta som MODEL_ANSWER med "
-    "modellnamn).\n"
-    "- Tavily-snuttar: Webbkällor i <sources>-sektionen med <chunk id='...'>-taggar "
-    "(kan vara förkortade till titel/URL).\n"
-    "- Tavily-svar: Ett sammanfattat Tavily-svar kan finnas i <sources>.\n\n"
-    "**Kärnuppgifter**:\n"
-    "1. Utvärdera korrekthet: Korskontrollera fakta mellan alla källor.\n"
-    "2. Lös konflikter: Om källor säger olika, prioritera Tavily för faktapåståenden, "
-    "därefter det mest aktuella. Nämn osäkerheter och förklara varför "
-    "(t.ex. \"Källa A hävdar X, men Tavily indikerar Y p.g.a. nya uppdateringar\").\n"
-    "3. Fyll luckor: Använd egen allmän kunskap vid behov, men var tydlig med att "
-    "det är allmän kunskap.\n"
-    "4. Skapa ett optimerat svar: Skriv ett sammanhängande, korrekt och välstrukturerat "
-    "svar. Attributera fakta till modeller (t.ex. \"Enligt Modell X...\"). "
-    "För Tavily och modellutdata: citera inline med [citation:chunk_id]. "
-    "Nämn modellnamn i löptext och använd [citation:chunk_id] för det som kommer "
-    "från modellen. Undvik numrerade hakparenteser som [1] och skriv ingen separat "
-    "referenslista.\n\n"
-    "**Svarsriktlinjer**:\n"
-    "- Svara på samma språk som användaren.\n"
-    "- Håll huvudsvaret kort, faktabaserat, tydligt och engagerande.\n"
-    "- Om info är osäker eller konfliktfylld: säg det och förklara varför.\n"
-    "- Prioritera tillförlitliga, aktuella källor (Tavily > färskhet > modellkonsensus "
-    "> intern kunskap).\n\n"
-    "**Uppföljningsfrågor (viktigt format)**:\n"
-    "Efter huvudsvaret ska du alltid lämna 2–4 riktade uppföljningsfrågor, "
-    "men de får INTE synas i den synliga texten. "
-    "Lägg dem i en HTML-kommentar exakt så här:\n"
-    "<!-- possible_next_steps:\n"
-    "- Fråga 1\n"
-    "- Fråga 2\n"
-    "-->\n"
-    "Skriv ingen rubrik som \"Possible next steps\" i den synliga texten.\n\n"
-    "Exempel på bra uppföljningsfrågor:\n"
-    "- Vill du att jag gör en punkt-för-punkt-jämförelse av de viktigaste påståendena "
-    "från Modell X vs Modell Y?\n"
-    "- Ska jag extrahera och rangordna alla faktapåståenden där modellerna inte "
-    "är överens?\n"
-    "- Vill du ha en metaanalys av styrkor/svagheter för varje modell i ämnet?\n"
-    "- Vill du att jag analyserar språklig bias, osäkerhetsmarkörer och "
-    "sannolikhetsnivåer i svaren?\n"
-    "- Ska jag granska källkritik, tidsaspekter eller metodskillnader mellan modellerna?\n"
-    "- Vill du ha en sammanfattning av konsensus vs kontrovers?\n\n"
-    "Hitta inte på information. Var saklig och transparent."
-)
+DEFAULT_ANALYSIS_SYSTEM_PROMPT = DEFAULT_COMPARE_ANALYSIS_PROMPT
 
 COMPARE_CITATION_INSTRUCTIONS = ""
 
@@ -523,6 +478,17 @@ async def stream_compare_chat(
             mentioned_document_ids=mentioned_document_ids,
             mentioned_surfsense_doc_ids=mentioned_surfsense_doc_ids,
         )
+        prompt_overrides = await get_prompt_overrides(session, search_space_id)
+        analysis_system_prompt = resolve_prompt(
+            prompt_overrides,
+            "compare.analysis.system",
+            DEFAULT_ANALYSIS_SYSTEM_PROMPT,
+        )
+        external_system_prompt = resolve_prompt(
+            prompt_overrides,
+            "compare.external.system",
+            DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+        )
 
         connector_service = ConnectorService(
             session, search_space_id=search_space_id, user_id=user_id
@@ -676,6 +642,7 @@ async def stream_compare_chat(
                     query=query_with_context,
                     timeout_seconds=COMPARE_TIMEOUT_SECONDS,
                     config=config,
+                    system_prompt=external_system_prompt,
                 )
                 await results_queue.put(
                     (spec_key, result, None, time.monotonic() - start_time)
@@ -912,20 +879,33 @@ async def stream_compare_chat(
             firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
 
         oneseek_checkpointer = MemorySaver()
+        knowledge_router_prompt = resolve_prompt(
+            prompt_overrides, "router.knowledge", DEFAULT_KNOWLEDGE_ROUTE_PROMPT
+        )
         knowledge_route = await dispatch_knowledge_route(
             compare_query,
             local_llm,
             has_attachments=bool(attachments),
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
             allow_external=False,
+            system_prompt_override=knowledge_router_prompt,
+        )
+        docs_instructions = resolve_prompt(
+            prompt_overrides,
+            "agent.knowledge.docs",
+            knowledge_route_instructions(KnowledgeRoute.DOCS),
+        )
+        internal_instructions = resolve_prompt(
+            prompt_overrides,
+            "agent.knowledge.internal",
+            knowledge_route_instructions(KnowledgeRoute.INTERNAL),
         )
         if knowledge_route == KnowledgeRoute.DOCS:
             oneseek_tools = ["search_surfsense_docs"]
+            oneseek_config = build_subagent_config(agent_config, docs_instructions)
         else:
             oneseek_tools = ["search_knowledge_base"]
-        oneseek_config = build_subagent_config(
-            agent_config, knowledge_route_instructions(knowledge_route)
-        )
+            oneseek_config = build_subagent_config(agent_config, internal_instructions)
         oneseek_agent = await create_surfsense_deep_agent(
             llm=local_llm,
             search_space_id=search_space_id,
@@ -1365,7 +1345,7 @@ async def stream_compare_chat(
             local_response = await local_llm.ainvoke(
                 [
                     SystemMessage(
-                        content=f"{LOCAL_ANALYSIS_SYSTEM_PROMPT}\n\n{COMPARE_CITATION_INSTRUCTIONS}"
+                        content=f"{analysis_system_prompt}\n\n{COMPARE_CITATION_INSTRUCTIONS}"
                     ),
                     HumanMessage(content=analysis_prompt),
                 ]
