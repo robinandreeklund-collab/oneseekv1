@@ -50,7 +50,7 @@ from app.agents.new_chat.subagent_utils import (
 from app.db import Document, NewChatThread, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
 from app.services.connector_service import ConnectorService
-from app.services.agent_prompt_service import get_prompt_overrides
+from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.services.new_streaming_service import VercelStreamingService
 from app.tasks.chat.context_formatters import (
     format_attachments_as_context,
@@ -478,7 +478,7 @@ async def stream_compare_chat(
             mentioned_document_ids=mentioned_document_ids,
             mentioned_surfsense_doc_ids=mentioned_surfsense_doc_ids,
         )
-        prompt_overrides = await get_prompt_overrides(session, search_space_id)
+        prompt_overrides = await get_global_prompt_overrides(session)
         analysis_system_prompt = resolve_prompt(
             prompt_overrides,
             "compare.analysis.system",

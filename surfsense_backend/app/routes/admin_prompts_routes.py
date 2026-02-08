@@ -6,18 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.new_chat.prompt_registry import PROMPT_DEFINITION_MAP, get_prompt_definitions
 from sqlalchemy.future import select
 
-from app.db import AgentPromptOverrideHistory, Permission, User
+from app.db import GlobalAgentPromptOverrideHistory, SearchSpaceMembership, User
 from app.schemas.agent_prompts import (
     AgentPromptsResponse,
     AgentPromptHistoryResponse,
     AgentPromptsUpdateRequest,
 )
 from app.services.agent_prompt_service import (
-    get_prompt_overrides,
-    upsert_prompt_overrides,
+    get_global_prompt_overrides,
+    upsert_global_prompt_overrides,
 )
 from app.users import current_active_user
-from app.utils.rbac import check_permission
 from app.utils.session import get_async_session
 
 logger = logging.getLogger(__name__)
@@ -25,23 +24,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+async def _require_admin(
+    session: AsyncSession,
+    user: User,
+) -> None:
+    result = await session.execute(
+        select(SearchSpaceMembership)
+        .filter(
+            SearchSpaceMembership.user_id == user.id,
+            SearchSpaceMembership.is_owner.is_(True),
+        )
+        .limit(1)
+    )
+    if result.scalars().first() is None:
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to manage agent prompts",
+        )
+
+
 @router.get(
-    "/search-spaces/{search_space_id}/agent-prompts",
+    "/agent-prompts",
     response_model=AgentPromptsResponse,
 )
 async def get_agent_prompts(
-    search_space_id: int,
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    await check_permission(
-        session,
-        user,
-        search_space_id,
-        Permission.SETTINGS_UPDATE.value,
-        "You don't have permission to manage agent prompts",
-    )
-    overrides = await get_prompt_overrides(session, search_space_id)
+    await _require_admin(session, user)
+    overrides = await get_global_prompt_overrides(session)
     items = []
     for definition in get_prompt_definitions():
         items.append(
@@ -57,22 +68,15 @@ async def get_agent_prompts(
 
 
 @router.put(
-    "/search-spaces/{search_space_id}/agent-prompts",
+    "/agent-prompts",
     response_model=AgentPromptsResponse,
 )
 async def update_agent_prompts(
-    search_space_id: int,
     payload: AgentPromptsUpdateRequest,
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    await check_permission(
-        session,
-        user,
-        search_space_id,
-        Permission.SETTINGS_UPDATE.value,
-        "You don't have permission to manage agent prompts",
-    )
+    await _require_admin(session, user)
     updates = []
     for item in payload.items:
         if item.key not in PROMPT_DEFINITION_MAP:
@@ -82,9 +86,8 @@ async def update_agent_prompts(
         updates.append((item.key, item.override_prompt))
 
     try:
-        await upsert_prompt_overrides(
+        await upsert_global_prompt_overrides(
             session,
-            search_space_id,
             updates,
             updated_by_id=user.id,
         )
@@ -96,7 +99,7 @@ async def update_agent_prompts(
             status_code=500, detail=f"Failed to update agent prompts: {exc!s}"
         ) from exc
 
-    overrides = await get_prompt_overrides(session, search_space_id)
+    overrides = await get_global_prompt_overrides(session)
     items = []
     for definition in get_prompt_definitions():
         items.append(
@@ -112,32 +115,24 @@ async def update_agent_prompts(
 
 
 @router.get(
-    "/search-spaces/{search_space_id}/agent-prompts/{prompt_key}/history",
+    "/agent-prompts/{prompt_key}/history",
     response_model=AgentPromptHistoryResponse,
 )
 async def get_agent_prompt_history(
-    search_space_id: int,
     prompt_key: str,
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    await check_permission(
-        session,
-        user,
-        search_space_id,
-        Permission.SETTINGS_UPDATE.value,
-        "You don't have permission to manage agent prompts",
-    )
+    await _require_admin(session, user)
     if prompt_key not in PROMPT_DEFINITION_MAP:
         raise HTTPException(status_code=400, detail="Unknown prompt key")
 
     result = await session.execute(
-        select(AgentPromptOverrideHistory)
+        select(GlobalAgentPromptOverrideHistory)
         .filter(
-            AgentPromptOverrideHistory.search_space_id == search_space_id,
-            AgentPromptOverrideHistory.key == prompt_key,
+            GlobalAgentPromptOverrideHistory.key == prompt_key,
         )
-        .order_by(AgentPromptOverrideHistory.created_at.desc())
+        .order_by(GlobalAgentPromptOverrideHistory.created_at.desc())
         .limit(50)
     )
     items = []

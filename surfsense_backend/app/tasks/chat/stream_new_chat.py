@@ -51,7 +51,7 @@ from app.agents.new_chat.subagent_utils import (
     knowledge_route_instructions,
     knowledge_route_label,
 )
-from app.services.agent_prompt_service import get_prompt_overrides
+from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.db import Document, SurfsenseDocsDocument
 from app.schemas.new_chat import ChatAttachment
 from app.services.chat_session_state_service import (
@@ -327,7 +327,7 @@ async def stream_new_chat(
             if isinstance(model_attr, str) and model_attr.strip():
                 tokenizer_model = model_attr.strip()
 
-        prompt_overrides = await get_prompt_overrides(session, search_space_id)
+        prompt_overrides = await get_global_prompt_overrides(session)
         router_prompt = resolve_prompt(
             prompt_overrides, "router.top_level", DEFAULT_ROUTE_SYSTEM_PROMPT
         )

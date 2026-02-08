@@ -1134,6 +1134,36 @@ class AgentPromptOverrideHistory(BaseModel, TimestampMixin):
     updated_by = relationship("User")
 
 
+class GlobalAgentPromptOverride(BaseModel, TimestampMixin):
+    __tablename__ = "agent_prompt_overrides_global"
+    __table_args__ = (
+        UniqueConstraint(
+            "key", name="uq_agent_prompt_override_global_key"
+        ),
+    )
+
+    key = Column(String(120), nullable=False, index=True)
+    prompt_text = Column(Text, nullable=False, default="")
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class GlobalAgentPromptOverrideHistory(BaseModel, TimestampMixin):
+    __tablename__ = "agent_prompt_override_history_global"
+
+    key = Column(String(120), nullable=False, index=True)
+    previous_prompt_text = Column(Text, nullable=True)
+    new_prompt_text = Column(Text, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
 class Log(BaseModel, TimestampMixin):
     __tablename__ = "logs"
 
