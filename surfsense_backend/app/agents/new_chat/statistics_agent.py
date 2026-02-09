@@ -369,11 +369,10 @@ def _build_scb_tool(
         return json.dumps(response_payload, ensure_ascii=True)
 
     return tool(
-        _scb_tool,
-        name=definition.tool_id,
+        definition.tool_id,
         description=description,
         parse_docstring=False,
-    )
+    )(_scb_tool)
 
 
 def build_scb_tool_registry(
