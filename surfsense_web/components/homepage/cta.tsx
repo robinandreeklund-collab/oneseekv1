@@ -2,54 +2,34 @@
 import { IconMessageCircleQuestion } from "@tabler/icons-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import type React from "react";
-import { cn } from "@/lib/utils";
 
 export function CTAHomepage() {
 	const t = useTranslations("homepage");
 
 	return (
-		<section className="w-full grid grid-cols-1 md:grid-cols-3 my-20 md:my-20 justify-start relative z-20 max-w-7xl mx-auto bg-gradient-to-br from-gray-100 to-white dark:from-neutral-900 dark:to-neutral-950">
-			<GridLineHorizontal className="top-0" offset="200px" />
-			<GridLineHorizontal className="bottom-0 top-auto" offset="200px" />
-			<GridLineVertical className="left-0" offset="80px" />
-			<GridLineVertical className="left-auto right-0" offset="80px" />
-			<div className="md:col-span-2 p-8 md:p-14">
-				<h2 className="text-left text-neutral-500 dark:text-neutral-200 text-xl md:text-3xl tracking-tight font-medium">
-					{t("cta_transform")}{" "}
-					<span className="font-bold text-black dark:text-white">{t("cta_transform_bold")}</span>
-				</h2>
-				<p className="text-left text-neutral-500 mt-4 max-w-lg dark:text-neutral-200 text-xl md:text-3xl tracking-tight font-medium">
-					{t("cta_unite_start")} <span className="text-sky-700">{t("cta_unite_knowledge")}</span>{" "}
-					{t("cta_unite_middle")} <span className="text-indigo-700">{t("cta_unite_search")}</span>.
-				</p>
+		<section className="w-full py-20 md:py-32 bg-gray-50 dark:bg-neutral-900">
+			<div className="max-w-7xl mx-auto px-4">
+				<div className="max-w-4xl mx-auto text-center">
+					<h2 className="text-3xl md:text-5xl font-bold text-gray-900 dark:text-white mb-6">
+						{t("cta_transform")}{" "}
+						<span className="text-black dark:text-white">{t("cta_transform_bold")}</span>
+					</h2>
+					<p className="text-lg md:text-xl text-gray-600 dark:text-gray-300 mb-10">
+						{t("cta_unite_start")} <span className="font-semibold text-blue-600 dark:text-blue-400">{t("cta_unite_knowledge")}</span>{" "}
+						{t("cta_unite_middle")} <span className="font-semibold text-indigo-600 dark:text-indigo-400">{t("cta_unite_search")}</span>.
+					</p>
 
-				<div className="flex items-start sm:items-center flex-col sm:flex-row sm:gap-4">
 					<Link href="/contact">
 						<button
 							type="button"
-							className="mt-8 flex space-x-2 items-center group text-base px-4 py-2 rounded-lg  text-black dark:text-white border border-neutral-200 dark:border-neutral-800 shadow-[0px_2px_0px_0px_rgba(255,255,255,0.3)_inset]"
+							className="inline-flex items-center gap-2 px-6 py-3 text-base font-medium text-white bg-black rounded-lg hover:bg-gray-800 transition-colors dark:bg-white dark:text-black dark:hover:bg-gray-100"
 						>
 							<span>{t("cta_talk_to_us")}</span>
-							<IconMessageCircleQuestion className="text-black dark:text-white group-hover:translate-x-1 stroke-[1px] h-3 w-3 mt-0.5 transition-transform duration-200" />
+							<IconMessageCircleQuestion className="h-5 w-5" />
 						</button>
 					</Link>
 				</div>
 			</div>
-			{/* <div className="border-t md:border-t-0 md:border-l border-dashed p-8 md:p-14">
-        <p className="text-base text-neutral-700 dark:text-neutral-200">
-          &quot;SurfSense has revolutionized how our team shares and discovers knowledge. 
-          Everyone can contribute and find what they need instantly. True collaboration at scale.&quot;
-        </p>
-        <div className="flex flex-col text-sm items-start mt-4 gap-1">
-          <p className="font-bold text-neutral-800 dark:text-neutral-200">
-            Sarah Chen
-          </p>
-          <p className="text-neutral-500 dark:text-neutral-400">
-            Research Lead
-          </p>
-        </div>
-      </div> */}
 		</section>
 	);
 }
