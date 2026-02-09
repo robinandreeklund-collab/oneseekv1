@@ -10,6 +10,7 @@ from langchain_core.tools import tool
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Checkpointer
 from langgraph_bigtool import create_agent as create_bigtool_agent
+from langgraph_bigtool.graph import ToolNode as BigtoolToolNode
 
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
 from app.services.connector_service import ConnectorService
@@ -427,6 +428,10 @@ def create_statistics_agent(
     checkpointer: Checkpointer | None,
     scb_base_url: str | None = None,
 ):
+    if not hasattr(BigtoolToolNode, "inject_tool_args") and hasattr(
+        BigtoolToolNode, "_inject_tool_args"
+    ):
+        BigtoolToolNode.inject_tool_args = BigtoolToolNode._inject_tool_args  # type: ignore[attr-defined]
     scb_service = ScbService(base_url=scb_base_url or SCB_BASE_URL)
     tool_registry = build_scb_tool_registry(
         connector_service=connector_service,
