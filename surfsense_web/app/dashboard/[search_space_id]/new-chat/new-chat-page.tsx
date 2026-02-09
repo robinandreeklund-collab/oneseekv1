@@ -67,7 +67,6 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import type { TraceSpan } from "@/contracts/types/chat-trace.types";
 import { chatTraceApiService } from "@/lib/apis/chat-trace-api.service";
 import { documentsApiService } from "@/lib/apis/documents-api.service";
-import { WriteTodosToolUI } from "@/components/tool-ui/write-todos";
 import { getBearerToken } from "@/lib/auth-utils";
 import { createAttachmentAdapter, extractAttachmentContent } from "@/lib/chat/attachment-adapter";
 import { convertToThreadMessage } from "@/lib/chat/message-utils";
@@ -197,7 +196,6 @@ const TOOLS_WITH_UI = new Set([
 	"call_perplexity",
 	"call_qwen",
 	"call_oneseek",
-	"write_todos",
 ]);
 
 /**
@@ -2076,7 +2074,6 @@ export default function NewChatPage() {
 			<OneseekToolUI />
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
-			<WriteTodosToolUI />
 			<TracePanelContext.Provider value={traceContextValue}>
 				<div className="flex h-[calc(100vh-64px)] overflow-hidden">
 					<div className="flex min-w-0 flex-1 flex-col">

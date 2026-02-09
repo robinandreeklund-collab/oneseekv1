@@ -205,7 +205,9 @@ export function TraceSheet({
 	const headerContent = (
 		<div className="flex items-center justify-between gap-3">
 			<div className="flex items-center gap-2">
-				<Activity className={cn("size-5 text-primary", open && "animate-pulse")} />
+				<div className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+					<Activity className={cn("size-5", open && "animate-pulse")} />
+				</div>
 				<div>
 					<div className="text-sm font-semibold">Live-spårning</div>
 					<div className="text-xs text-muted-foreground">
@@ -260,17 +262,17 @@ export function TraceSheet({
 	}, [sortedSpans, spanMap]);
 
 	const content = (
-		<div className="relative flex h-full flex-col bg-background">
+		<div className="relative flex h-full flex-col bg-gradient-to-b from-background via-background/95 to-background/90">
 			<div
 				onPointerDown={handleResizeStart}
 				className={cn(
-					"absolute top-0 h-full w-1 cursor-col-resize bg-border/40 hover:bg-border",
-					dock === "right" ? "left-0" : "right-0"
+					"absolute top-0 h-full cursor-col-resize bg-border/50 hover:bg-primary/40 touch-none z-20",
+					dock === "right" ? "-left-1 w-2" : "-right-1 w-2"
 				)}
 			/>
 			<div className="flex h-full min-h-0 flex-1 overflow-hidden">
-				<div className="flex w-1/2 flex-col border-r border-border/60">
-					<div className="flex items-center justify-between px-4 py-3 text-xs uppercase tracking-wide text-muted-foreground">
+				<div className="flex w-1/2 flex-col border-r border-border/60 bg-card/40 backdrop-blur-xl">
+					<div className="flex items-center justify-between border-b border-border/60 px-4 py-3 text-xs uppercase tracking-wide text-muted-foreground">
 						<span>Waterfall</span>
 						<span>{sortedSpans.length} steg</span>
 					</div>
@@ -302,9 +304,10 @@ export function TraceSheet({
 											setFollowLive(false);
 										}}
 										className={cn(
-											"group relative flex w-full flex-col gap-1 rounded-lg border border-border/40 bg-card/40 px-3 py-2 text-left text-sm transition",
-											isSelected && "border-primary/50 bg-primary/5",
-											isActive && "animate-pulse border-primary/80 shadow-sm"
+											"group relative flex w-full flex-col gap-1 rounded-lg border border-border/40 bg-card/50 px-3 py-2 text-left text-sm transition-all",
+											"hover:border-primary/40 hover:bg-primary/5",
+											isSelected && "border-primary/60 bg-primary/10 shadow-md",
+											isActive && "animate-pulse border-primary/80 shadow-[0_0_0_1px_rgba(59,130,246,0.4)]"
 										)}
 										style={{ paddingLeft }}
 									>
@@ -375,8 +378,8 @@ export function TraceSheet({
 					</ScrollArea>
 				</div>
 
-				<div className="flex w-1/2 flex-col">
-					<div className="flex items-center justify-between px-4 py-3 text-xs uppercase tracking-wide text-muted-foreground">
+				<div className="flex w-1/2 flex-col bg-card/30 backdrop-blur-xl">
+					<div className="flex items-center justify-between border-b border-border/60 px-4 py-3 text-xs uppercase tracking-wide text-muted-foreground">
 						<span>Detaljer</span>
 						{selectedSpan && (
 							<span className="text-xs text-muted-foreground">
@@ -453,7 +456,9 @@ export function TraceSheet({
 
 	const panelBody = (
 		<div className="flex h-full flex-col">
-			<div className="border-b border-border/60 px-4 py-4">{headerContent}</div>
+			<div className="border-b border-border/60 bg-gradient-to-r from-primary/10 via-transparent to-transparent px-4 py-4">
+				{headerContent}
+			</div>
 			<div className="min-h-0 flex-1">{content}</div>
 		</div>
 	);
@@ -491,10 +496,10 @@ export function TraceSheet({
 		<Sheet open={open} onOpenChange={onOpenChange}>
 			<SheetContent
 				side="right"
-				className="flex h-full flex-col gap-0 overflow-hidden p-0"
+				className="flex h-full flex-col gap-0 overflow-hidden p-0 shadow-2xl"
 				style={{ width: panelWidth, maxWidth: "100vw" }}
 			>
-				<SheetHeader className="border-b border-border/60 px-4 py-4">
+				<SheetHeader className="border-b border-border/60 bg-gradient-to-r from-primary/10 via-transparent to-transparent px-4 py-4">
 					<SheetTitle>{headerContent}</SheetTitle>
 				</SheetHeader>
 				<div className="min-h-0 flex-1">{content}</div>
