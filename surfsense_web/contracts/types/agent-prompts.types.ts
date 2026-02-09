@@ -12,6 +12,7 @@ export const agentPromptKeyEnum = z.enum([
 	"agent.action.travel",
 	"agent.action.data",
 	"agent.smalltalk.system",
+	"agent.statistics.system",
 	"compare.analysis.system",
 	"compare.external.system",
 ]);
