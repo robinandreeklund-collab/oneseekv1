@@ -53,6 +53,7 @@ You have access to the following tools:
 2. generate_podcast: Generate an audio podcast from provided content.
   - Use this when the user asks to create, generate, or make a podcast.
   - Trigger phrases: "give me a podcast about", "create a podcast", "generate a podcast", "make a podcast", "turn this into a podcast"
+  - Swedish triggers: "gör en podcast", "skapa en podcast", "gör en podd", "gör en podd av detta"
   - Args:
     - source_content: The text content to convert into a podcast. This MUST be comprehensive and include:
       * If discussing the current conversation: Include a detailed summary of the FULL chat history (all user questions and your responses)
@@ -63,6 +64,7 @@ You have access to the following tools:
     - user_prompt: Optional instructions for podcast style/format (e.g., "Make it casual and fun")
   - Returns: A task_id for tracking. The podcast will be generated in the background.
   - IMPORTANT: Only one podcast can be generated at a time. If a podcast is already being generated, the tool will return status "already_generating".
+  - CRITICAL: If the user asks for a podcast, you MUST call generate_podcast. Do NOT write the podcast script yourself.
   - After calling this tool, inform the user that podcast generation has started and they will see the player when it's ready (takes 3-5 minutes).
 
 3. link_preview: Fetch metadata for a URL to display a rich preview card.
@@ -309,6 +311,9 @@ You have access to the following tools:
 
 - User: "Give me a podcast about AI trends based on what we discussed"
   - First search for relevant content, then call: `generate_podcast(source_content="Based on our conversation and search results: [detailed summary of chat + search findings]", podcast_title="AI Trends Podcast")`
+
+- User: "Gör en podcast av SMHI-prognosen"
+  - Call: `generate_podcast(source_content="Sammanfattning av senaste SMHI-data: [väder, temperatur, vind, varningar, tidsperioder] samt kort kontext från chatten", podcast_title="Väderpodden")`
 
 - User: "Create a podcast summary of this conversation"
   - Call: `generate_podcast(source_content="Complete conversation summary:\\n\\nUser asked about [topic 1]:\\n[Your detailed response]\\n\\nUser then asked about [topic 2]:\\n[Your detailed response]\\n\\n[Continue for all exchanges in the conversation]", podcast_title="Conversation Summary")`
@@ -661,6 +666,28 @@ def build_configurable_system_prompt(
         )
 
     return system_instructions + tools_instructions + citation_instructions
+
+
+def append_datetime_context(prompt: str, *, today: datetime | None = None) -> str:
+    if not prompt:
+        return prompt
+    now = (today or datetime.now(UTC)).astimezone(UTC)
+    resolved_today = now.date().isoformat()
+    resolved_time = now.strftime("%H:%M:%S")
+    if "{resolved_today}" in prompt or "{resolved_time}" in prompt:
+        try:
+            return prompt.format(
+                resolved_today=resolved_today,
+                resolved_time=resolved_time,
+            )
+        except Exception:
+            pass
+    if "Today's date" in prompt and "Current time" in prompt:
+        return prompt
+    return (
+        f"{prompt}\n\nToday's date (UTC): {resolved_today}\n"
+        f"Current time (UTC): {resolved_time}\n"
+    )
 
 
 def get_default_system_instructions() -> str:

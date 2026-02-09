@@ -4,6 +4,8 @@ from typing import Iterable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.new_chat.system_prompt import append_datetime_context
+
 
 class ActionRoute(str, Enum):
     WEB = "web"
@@ -106,7 +108,9 @@ async def dispatch_action_route(
         return ActionRoute.DATA
 
     try:
-        system_prompt = system_prompt_override or DEFAULT_ACTION_ROUTE_PROMPT
+        system_prompt = append_datetime_context(
+            system_prompt_override or DEFAULT_ACTION_ROUTE_PROMPT
+        )
         response = await llm.ainvoke(
             [SystemMessage(content=system_prompt), HumanMessage(content=text)]
         )

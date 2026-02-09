@@ -76,6 +76,7 @@ ACTION_WEB_INSTRUCTIONS = (
 ACTION_MEDIA_INSTRUCTIONS = (
     "The user wants media output. Use generate_podcast to create audio. "
     "If you need source content, first call search_knowledge_base. "
+    "If the user asks for a podcast, ALWAYS call generate_podcast and do not write a script. "
     f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 ACTION_TRAVEL_INSTRUCTIONS = (

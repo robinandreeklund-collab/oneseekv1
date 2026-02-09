@@ -4,6 +4,7 @@ from typing import Iterable
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.new_chat.routing import Route
+from app.agents.new_chat.system_prompt import append_datetime_context
 
 _GREETING_REGEX = re.compile(
     r"^(hi|hello|hey|hej|tjena|hallå|yo|god( morgon| kväll| eftermiddag))\b",
@@ -13,6 +14,7 @@ _URL_REGEX = re.compile(r"https?://", re.IGNORECASE)
 
 _ACTION_PATTERNS = [
     r"\bpodcast\b",
+    r"\bpodd(ar|en)?\b",
     r"\bscrape\b",
     r"\bscrap(e|a) .*web\b",
     r"\bsammanfatta .*https?://",
@@ -100,7 +102,9 @@ async def dispatch_route(
         return Route.KNOWLEDGE
 
     try:
-        system_prompt = system_prompt_override or DEFAULT_ROUTE_SYSTEM_PROMPT
+        system_prompt = append_datetime_context(
+            system_prompt_override or DEFAULT_ROUTE_SYSTEM_PROMPT
+        )
         response = await llm.ainvoke(
             [SystemMessage(content=system_prompt), HumanMessage(content=text)]
         )

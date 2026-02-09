@@ -4,6 +4,8 @@ from typing import Iterable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.new_chat.system_prompt import append_datetime_context
+
 
 class KnowledgeRoute(str, Enum):
     DOCS = "docs"
@@ -87,7 +89,9 @@ async def dispatch_knowledge_route(
         return KnowledgeRoute.EXTERNAL
 
     try:
-        system_prompt = system_prompt_override or DEFAULT_KNOWLEDGE_ROUTE_PROMPT
+        system_prompt = append_datetime_context(
+            system_prompt_override or DEFAULT_KNOWLEDGE_ROUTE_PROMPT
+        )
         response = await llm.ainvoke(
             [
                 SystemMessage(content=system_prompt),

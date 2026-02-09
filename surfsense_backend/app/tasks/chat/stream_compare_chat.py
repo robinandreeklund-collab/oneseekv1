@@ -18,12 +18,10 @@ from typing import Any
 from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
-from app.agents.new_chat.chat_deepagent import create_surfsense_deep_agent
 from app.agents.new_chat.llm_config import (
     create_chat_litellm_from_agent_config,
     load_agent_config,
@@ -37,17 +35,8 @@ from app.agents.new_chat.tools.external_models import (
     describe_external_model_config,
 )
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
-from app.agents.new_chat.knowledge_router import (
-    KnowledgeRoute,
-    DEFAULT_KNOWLEDGE_ROUTE_PROMPT,
-    dispatch_knowledge_route,
-)
 from app.agents.new_chat.prompt_registry import resolve_prompt
-from app.agents.new_chat.subagent_utils import (
-    build_subagent_config,
-    knowledge_route_instructions,
-    knowledge_route_label,
-)
+from app.agents.new_chat.system_prompt import append_datetime_context
 from app.db import (
     ChatTraceSession,
     Document,
@@ -126,6 +115,28 @@ def _extract_todos_from_deepagents(command_output) -> dict:
         elif "update" in command_output and isinstance(command_output["update"], dict):
             todos_data = command_output["update"].get("todos", [])
     return {"todos": todos_data}
+
+
+def _format_todo_items(todos: list[dict] | None) -> list[str]:
+    if not todos:
+        return []
+    items: list[str] = []
+    for todo in todos:
+        if not isinstance(todo, dict):
+            continue
+        content = str(todo.get("content") or "").strip()
+        status = str(todo.get("status") or "").lower()
+        if not content:
+            continue
+        marker = "[ ]"
+        if status == "completed":
+            marker = "[x]"
+        elif status == "in_progress":
+            marker = "[>]"
+        elif status == "cancelled":
+            marker = "[!]"
+        items.append(f"{marker} {content}")
+    return items
 
 
 def _estimate_documents_chars(documents: list[dict[str, Any]]) -> int:
@@ -545,11 +556,13 @@ async def stream_compare_chat(
             "compare.analysis.system",
             DEFAULT_ANALYSIS_SYSTEM_PROMPT,
         )
+        analysis_system_prompt = append_datetime_context(analysis_system_prompt)
         external_system_prompt = resolve_prompt(
             prompt_overrides,
             "compare.external.system",
             DEFAULT_EXTERNAL_SYSTEM_PROMPT,
         )
+        external_system_prompt = append_datetime_context(external_system_prompt)
 
         connector_service = ConnectorService(
             session, search_space_id=search_space_id, user_id=user_id
@@ -947,12 +960,23 @@ async def stream_compare_chat(
             top_k=MAX_TAVILY_RESULTS,
             user_id=user_id,
         )
+        fallback_used = False
+        if not tavily_documents and tavily_query and tavily_query != compare_query:
+            fallback_used = True
+            tavily_sources_info, tavily_documents = await connector_service.search_tavily(
+                user_query=compare_query,
+                search_space_id=search_space_id,
+                top_k=MAX_TAVILY_RESULTS,
+                user_id=user_id,
+            )
         if trace_recorder:
             tavily_end = await trace_recorder.end_span(
                 span_id=tavily_span_id,
                 output_data={
                     "sources": tavily_sources_info,
                     "result_count": len(tavily_documents),
+                    "fallback_used": fallback_used,
+                    "query": tavily_query or compare_query,
                 },
                 status="completed",
             )
@@ -1045,499 +1069,13 @@ async def stream_compare_chat(
                     yield trace_end
             return
 
-        from app.db import SearchSourceConnectorType
-
-        firecrawl_api_key = None
-        webcrawler_connector = await connector_service.get_connector_by_type(
-            SearchSourceConnectorType.WEBCRAWLER_CONNECTOR, search_space_id
-        )
-        if webcrawler_connector and webcrawler_connector.config:
-            firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
-
-        oneseek_checkpointer = MemorySaver()
-        knowledge_router_prompt = resolve_prompt(
-            prompt_overrides, "router.knowledge", DEFAULT_KNOWLEDGE_ROUTE_PROMPT
-        )
-        knowledge_route = await dispatch_knowledge_route(
-            compare_query,
-            local_llm,
-            has_attachments=bool(attachments),
-            has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
-            allow_external=False,
-            system_prompt_override=knowledge_router_prompt,
-        )
-        docs_instructions = resolve_prompt(
-            prompt_overrides,
-            "agent.knowledge.docs",
-            knowledge_route_instructions(KnowledgeRoute.DOCS),
-        )
-        internal_instructions = resolve_prompt(
-            prompt_overrides,
-            "agent.knowledge.internal",
-            knowledge_route_instructions(KnowledgeRoute.INTERNAL),
-        )
-        if knowledge_route == KnowledgeRoute.DOCS:
-            oneseek_tools = ["search_surfsense_docs", "reflect_on_progress"]
-            oneseek_config = build_subagent_config(agent_config, docs_instructions)
-        else:
-            oneseek_tools = ["search_knowledge_base", "reflect_on_progress"]
-            oneseek_config = build_subagent_config(agent_config, internal_instructions)
-        oneseek_prompt_tools = list(oneseek_tools)
-        if "write_todos" not in oneseek_prompt_tools:
-            oneseek_prompt_tools.append("write_todos")
-        if "reflect_on_progress" not in oneseek_prompt_tools:
-            oneseek_prompt_tools.append("reflect_on_progress")
-        oneseek_agent = await create_surfsense_deep_agent(
-            llm=local_llm,
-            search_space_id=search_space_id,
-            db_session=session,
-            connector_service=connector_service,
-            checkpointer=oneseek_checkpointer,
-            user_id=user_id,
-            thread_id=chat_id,
-            agent_config=oneseek_config,
-            firecrawl_api_key=firecrawl_api_key,
-            enabled_tools=oneseek_tools,
-            tool_names_for_prompt=oneseek_prompt_tools,
-            force_citations_enabled=False,
-        )
-
-        local_step_id = f"compare-oneseek-{uuid.uuid4().hex[:8]}"
-        local_tool_call_id = streaming_service.generate_tool_call_id()
         local_model_name = str(agent_config.model_name or "")
-        local_provider = str(agent_config.provider or "")
-        local_api_base = str(agent_config.api_base or "")
         local_model_string = str(getattr(local_llm, "model", "") or "")
         if not tokenizer_model:
             tokenizer_model = local_model_name or local_model_string or None
         if trace_recorder and tokenizer_model:
             trace_recorder.set_tokenizer_model(tokenizer_model)
-        local_items = [
-            item
-            for item in [
-                f"Model: {local_model_name}" if local_model_name else None,
-                f"Provider: {local_provider}" if local_provider else None,
-                f"API base: {local_api_base}" if local_api_base else None,
-                f"Model string: {local_model_string}" if local_model_string else None,
-                "Tool: call_oneseek",
-                f"Query: {short_query}",
-                f"Knowledge route: {knowledge_route_label(knowledge_route)}",
-            ]
-            if item
-        ]
-        oneseek_title = format_step_title(
-            f"Asking Oneseek · Knowledge/{knowledge_route_label(knowledge_route)}"
-        )
-        provider_steps["oneseek"] = {
-            "id": local_step_id,
-            "title": oneseek_title,
-            "items": local_items,
-        }
-        provider_tool_call_ids["oneseek"] = local_tool_call_id
-
-        yield streaming_service.format_thinking_step(
-            step_id=local_step_id,
-            title=oneseek_title,
-            status="in_progress",
-            items=local_items,
-        )
-        yield streaming_service.format_tool_input_start(
-            local_tool_call_id, "call_oneseek"
-        )
-        yield streaming_service.format_tool_input_available(
-            local_tool_call_id, "call_oneseek", {"query": compare_query}
-        )
-
-        oneseek_start = time.monotonic()
-        oneseek_error: str | None = None
-        oneseek_text = ""
-        oneseek_tool_steps: dict[str, str] = {}
-        oneseek_tool_calls: dict[str, str] = {}
-        write_todos_call_count = 0
-        oneseek_trace_span_id = ""
-        if trace_recorder:
-            oneseek_trace_span_id = f"compare-oneseek-{uuid.uuid4().hex[:8]}"
-            oneseek_trace_start = await trace_recorder.start_span(
-                span_id=oneseek_trace_span_id,
-                name="Oneseek",
-                kind="chain",
-                parent_id=trace_recorder.root_span_id,
-                input_data={
-                    "query": compare_query,
-                    "context": query_with_context,
-                    "knowledge_route": knowledge_route_label(knowledge_route),
-                },
-                meta={"route": "compare", "agent": "oneseek"},
-            )
-            if oneseek_trace_start:
-                yield oneseek_trace_start
-
-        input_state = {
-            "messages": [HumanMessage(content=query_with_context)],
-            "search_space_id": search_space_id,
-        }
-        config = {
-            "configurable": {"thread_id": f"{chat_id}-compare-oneseek"},
-            "recursion_limit": 80,
-        }
-        def trace_parent_id(event: dict) -> str | None:
-            parents = event.get("parent_ids") or []
-            if parents:
-                return str(parents[-1])
-            return oneseek_trace_span_id or None
-
-        try:
-            async for event in oneseek_agent.astream_events(
-                input_state, config=config, version="v2"
-            ):
-                event_type = event.get("event", "")
-                run_id = str(event.get("run_id") or "")
-                trace_parent = trace_parent_id(event)
-                if trace_recorder:
-                    if event_type == "on_chain_start":
-                        chain_name = event.get("name") or "chain"
-                        chain_input = event.get("data", {}).get("input")
-                        chain_meta = {
-                            "tags": event.get("tags") or [],
-                            "metadata": event.get("metadata") or {},
-                        }
-                        trace_event = await trace_recorder.start_span(
-                            span_id=run_id or f"chain-{uuid.uuid4().hex[:8]}",
-                            name=str(chain_name),
-                            kind="chain",
-                            parent_id=trace_parent,
-                            input_data=chain_input,
-                            meta=chain_meta,
-                        )
-                        if trace_event:
-                            yield trace_event
-                    elif event_type == "on_chain_end":
-                        chain_output = event.get("data", {}).get("output")
-                        trace_event = await trace_recorder.end_span(
-                            span_id=run_id,
-                            output_data=chain_output,
-                            status="completed",
-                        )
-                        if trace_event:
-                            yield trace_event
-                    elif event_type == "on_chain_error":
-                        trace_event = await trace_recorder.end_span(
-                            span_id=run_id,
-                            output_data=event.get("data"),
-                            status="error",
-                        )
-                        if trace_event:
-                            yield trace_event
-                    elif event_type in ("on_chat_model_start", "on_llm_start"):
-                        model_data = event.get("data", {})
-                        model_input = (
-                            model_data.get("input")
-                            or model_data.get("messages")
-                            or model_data.get("prompt")
-                        )
-                        model_name = (
-                            event.get("name") or model_data.get("model") or "model"
-                        )
-                        model_meta = {
-                            "model": model_data.get("model"),
-                            "provider": model_data.get("provider"),
-                            "tags": event.get("tags") or [],
-                            "metadata": event.get("metadata") or {},
-                        }
-                        trace_event = await trace_recorder.start_span(
-                            span_id=run_id or f"model-{uuid.uuid4().hex[:8]}",
-                            name=str(model_name),
-                            kind="model",
-                            parent_id=trace_parent,
-                            input_data=model_input,
-                            meta=model_meta,
-                        )
-                        if trace_event:
-                            yield trace_event
-                    elif event_type in ("on_chat_model_end", "on_llm_end"):
-                        model_output = event.get("data", {}).get("output")
-                        trace_event = await trace_recorder.end_span(
-                            span_id=run_id,
-                            output_data=model_output,
-                            status="completed",
-                        )
-                        if trace_event:
-                            yield trace_event
-                if event_type == "on_chat_model_stream":
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content"):
-                        content = chunk.content
-                        if content and isinstance(content, str):
-                            oneseek_text += content
-                            if trace_recorder:
-                                trace_update = await trace_recorder.append_span_output(
-                                    span_id=run_id, output_delta=content
-                                )
-                                if trace_update:
-                                    yield trace_update
-                elif event_type == "on_tool_start":
-                    tool_name = event.get("name", "unknown_tool")
-                    run_id = event.get("run_id", "")
-                    tool_input = event.get("data", {}).get("input", {})
-                    if trace_recorder:
-                        trace_event = await trace_recorder.start_span(
-                            span_id=str(run_id) or f"tool-{uuid.uuid4().hex[:8]}",
-                            name=str(tool_name),
-                            kind="tool",
-                            parent_id=trace_parent,
-                            input_data=tool_input,
-                            meta={"tool": tool_name},
-                        )
-                        if trace_event:
-                            yield trace_event
-
-                    tool_step_id = f"compare-oneseek-tool-{uuid.uuid4().hex[:8]}"
-                    oneseek_tool_steps[run_id] = tool_step_id
-                    tool_items: list[str] = []
-                    if tool_name == "write_todos":
-                        write_todos_call_count += 1
-                        if write_todos_call_count == 1:
-                            tool_title = format_step_title("Creating plan")
-                        else:
-                            tool_title = format_step_title("Updating plan")
-                        tool_items = ["Planning tasks for the request"]
-                    elif tool_name == "reflect_on_progress":
-                        tool_title = format_step_title("Reflecting on progress")
-                        tool_items = ["Reviewing findings, gaps, and next steps"]
-                    else:
-                        tool_title = format_step_title(
-                            f"Using {tool_name.replace('_', ' ')}"
-                        )
-                        if isinstance(tool_input, dict):
-                            for key in (
-                                "query",
-                                "location",
-                                "url",
-                                "origin",
-                                "destination",
-                                "record_id",
-                                "podcast_title",
-                            ):
-                                if tool_input.get(key):
-                                    tool_items.append(
-                                        f"{key.replace('_', ' ').title()}: {tool_input.get(key)}"
-                                    )
-                                    break
-                        if not tool_items:
-                            tool_items = [f"Tool: {tool_name}"]
-                    yield streaming_service.format_thinking_step(
-                        step_id=tool_step_id,
-                        title=tool_title,
-                        status="in_progress",
-                        items=tool_items,
-                    )
-
-                    tool_call_id = (
-                        f"call_{run_id[:32]}"
-                        if run_id
-                        else streaming_service.generate_tool_call_id()
-                    )
-                    oneseek_tool_calls[run_id] = tool_call_id
-                    yield streaming_service.format_tool_input_start(
-                        tool_call_id, tool_name
-                    )
-                    yield streaming_service.format_tool_input_available(
-                        tool_call_id,
-                        tool_name,
-                        tool_input if isinstance(tool_input, dict) else {"input": tool_input},
-                    )
-                elif event_type == "on_tool_end":
-                    tool_name = event.get("name", "unknown_tool")
-                    run_id = event.get("run_id", "")
-                    raw_output = event.get("data", {}).get("output")
-                    tool_output = raw_output
-                    if tool_name == "write_todos" and hasattr(raw_output, "update"):
-                        tool_output = _extract_todos_from_deepagents(raw_output)
-                    elif hasattr(raw_output, "content"):
-                        content = raw_output.content
-                        if isinstance(content, str):
-                            try:
-                                tool_output = json.loads(content)
-                            except Exception:
-                                tool_output = {"result": content}
-                        else:
-                            tool_output = content
-                    elif isinstance(raw_output, str):
-                        try:
-                            tool_output = json.loads(raw_output)
-                        except Exception:
-                            tool_output = {"result": raw_output}
-                    elif raw_output is None:
-                        tool_output = {"result": "No output"}
-
-                    if trace_recorder:
-                        status = "completed"
-                        if isinstance(tool_output, dict) and (
-                            tool_output.get("status") == "error"
-                            or "error" in tool_output
-                        ):
-                            status = "error"
-                        trace_event = await trace_recorder.end_span(
-                            span_id=str(run_id),
-                            output_data=tool_output,
-                            status=status,
-                        )
-                        if trace_event:
-                            yield trace_event
-
-                    tool_call_id = oneseek_tool_calls.get(run_id) or (
-                        f"call_{run_id[:32]}"
-                        if run_id
-                        else streaming_service.generate_tool_call_id()
-                    )
-                    yield streaming_service.format_tool_output_available(
-                        tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
-                    )
-
-                    tool_step_id = oneseek_tool_steps.get(run_id)
-                    if tool_step_id:
-                        if tool_name == "write_todos":
-                            step_title = format_step_title("Plan updated")
-                            step_items = ["Plan updated"]
-                        elif tool_name == "reflect_on_progress":
-                            step_title = format_step_title("Reflecting on progress")
-                            step_items = ["Reflection logged"]
-                        else:
-                            step_title = format_step_title(
-                                f"Using {tool_name.replace('_', ' ')}"
-                            )
-                            step_items = [
-                                f"Completed: {tool_name.replace('_', ' ')}"
-                            ]
-                        yield streaming_service.format_thinking_step(
-                            step_id=tool_step_id,
-                            title=step_title,
-                            status="completed",
-                            items=step_items,
-                        )
-        except Exception as exc:
-            oneseek_error = str(exc)
-
-        oneseek_elapsed = time.monotonic() - oneseek_start
-        if oneseek_error or not oneseek_text.strip():
-            error_msg = oneseek_error or "Empty response"
-            provider_summaries["Oneseek"] = {
-                "status": "error",
-                "error": _truncate_text(error_msg, 200),
-            }
-            yield streaming_service.format_tool_output_available(
-                local_tool_call_id,
-                {
-                    "status": "error",
-                    "error": error_msg,
-                    "model_display_name": "Oneseek",
-                    "provider": local_provider,
-                    "model": local_model_name,
-                    "model_string": local_model_string,
-                    "api_base": local_api_base,
-                    "source": "Oneseek",
-                    "latency_ms": int(oneseek_elapsed * 1000),
-                },
-            )
-            completed_items = [
-                *local_items,
-                f"Error: {_truncate_text(error_msg, 120)}",
-            ]
-        else:
-            oneseek_text = oneseek_text.strip()
-            was_truncated = len(oneseek_text) > COMPARE_RAW_ANSWER_CHARS
-            oneseek_text = _truncate_text(oneseek_text, COMPARE_RAW_ANSWER_CHARS)
-            answers["oneseek"] = oneseek_text
-            provider_results["oneseek"] = {
-                "status": "success",
-                "model_display_name": "Oneseek",
-                "provider": local_provider,
-                "model": local_model_name,
-                "model_string": local_model_string,
-                "api_base": local_api_base,
-                "source": "Oneseek",
-                "latency_ms": int(oneseek_elapsed * 1000),
-                "usage": None,
-                "summary": _truncate_text(oneseek_text, COMPARE_SUMMARY_ANSWER_CHARS),
-                "response": oneseek_text,
-                "truncated": was_truncated,
-            }
-            provider_summaries["Oneseek"] = {
-                "status": "success",
-                "answer": _truncate_text(oneseek_text, COMPARE_SUMMARY_ANSWER_CHARS),
-            }
-            delta_chars = len(oneseek_text)
-            if delta_chars > 0:
-                delta_tokens = estimate_tokens_from_text(
-                    oneseek_text, model=tokenizer_model
-                )
-                context_stats["tool_chars"] = (
-                    int(context_stats.get("tool_chars", 0)) + delta_chars
-                )
-                context_stats["tool_tokens"] = (
-                    int(context_stats.get("tool_tokens", 0)) + delta_tokens
-                )
-                context_stats["total_chars"] = (
-                    int(context_stats.get("total_chars", 0)) + delta_chars
-                )
-                context_stats["total_tokens"] = (
-                    int(context_stats.get("total_tokens", 0)) + delta_tokens
-                )
-                yield streaming_service.format_data(
-                    "context-stats",
-                    {
-                        "phase": "model",
-                        "label": "Model: Oneseek",
-                        "delta_chars": delta_chars,
-                        "delta_tokens": delta_tokens,
-                        "total_chars": context_stats.get("total_chars", 0),
-                        "total_tokens": context_stats.get("total_tokens", 0),
-                        "base_chars": context_stats.get("base_chars", 0),
-                        "base_tokens": context_stats.get("base_tokens", 0),
-                        "context_chars": context_stats.get("context_chars", 0),
-                        "context_tokens": context_stats.get("context_tokens", 0),
-                        "tool_chars": context_stats.get("tool_chars", 0),
-                        "tool_tokens": context_stats.get("tool_tokens", 0),
-                    },
-                )
-            yield streaming_service.format_tool_output_available(
-                local_tool_call_id, provider_results["oneseek"]
-            )
-            completed_items = [
-                *local_items,
-                f"Response length: {len(oneseek_text)} chars",
-                f"Elapsed: {oneseek_elapsed:.1f}s",
-            ]
-
-        if trace_recorder and oneseek_trace_span_id:
-            trace_status = "completed"
-            trace_output: dict[str, Any] = {}
-            if oneseek_error or not oneseek_text.strip():
-                trace_status = "error"
-                trace_output = {
-                    "status": "error",
-                    "error": oneseek_error or "Empty response",
-                }
-            else:
-                trace_output = provider_results.get("oneseek") or {
-                    "status": "success",
-                    "response": oneseek_text,
-                }
-            trace_end = await trace_recorder.end_span(
-                span_id=oneseek_trace_span_id,
-                output_data=trace_output,
-                status=trace_status,
-            )
-            if trace_end:
-                yield trace_end
-
-        yield streaming_service.format_thinking_step(
-            step_id=local_step_id,
-            title=oneseek_title,
-            status="completed",
-            items=completed_items,
-        )
+        # Oneseek answer disabled in compare mode; use synthesis only.
 
         model_output_documents: list[dict] = []
         try:
@@ -1605,7 +1143,7 @@ async def stream_compare_chat(
             return
 
         analysis_step_id = f"compare-analysis-{uuid.uuid4().hex[:8]}"
-        total_models = len(EXTERNAL_MODEL_SPECS) + 1
+        total_models = max(1, len(provider_steps))
         analysis_items = [f"Responses received: {len(answers)}/{total_models}"]
 
         yield streaming_service.format_thinking_step(
@@ -1621,11 +1159,8 @@ async def stream_compare_chat(
             analysis_items.append("Tavily results: 0")
 
         compare_specs = [
-            *[
-                {"key": spec.key, "display": spec.display, "tool": spec.tool_name}
-                for spec in EXTERNAL_MODEL_SPECS
-            ],
-            {"key": "oneseek", "display": "Oneseek", "tool": "call_oneseek"},
+            {"key": spec.key, "display": spec.display, "tool": spec.tool_name}
+            for spec in EXTERNAL_MODEL_SPECS
         ]
 
         answers_block = "\n".join(

@@ -208,6 +208,28 @@ def extract_todos_from_deepagents(command_output) -> dict:
     return {"todos": todos_data}
 
 
+def format_todo_items(todos: list[dict] | None) -> list[str]:
+    if not todos:
+        return []
+    items: list[str] = []
+    for todo in todos:
+        if not isinstance(todo, dict):
+            continue
+        content = str(todo.get("content") or "").strip()
+        status = str(todo.get("status") or "").lower()
+        if not content:
+            continue
+        marker = "[ ]"
+        if status == "completed":
+            marker = "[x]"
+        elif status == "in_progress":
+            marker = "[>]"
+        elif status == "cancelled":
+            marker = "[!]"
+        items.append(f"{marker} {content}")
+    return items
+
+
 async def stream_new_chat(
     user_query: str,
     search_space_id: int,
@@ -722,6 +744,7 @@ async def stream_new_chat(
         thinking_step_counter = 0
         # Map run_id -> step_id for tool calls so we can update them on completion
         tool_step_ids: dict[str, str] = {}
+        write_todos_step_id: str | None = None
         # Track the last active step so we can mark it complete at the end
         last_active_step_id: str | None = None
         last_active_step_title: str = ""
@@ -1010,6 +1033,11 @@ async def stream_new_chat(
 
                 # Create thinking step for the tool call and store it for later update
                 tool_step_id = next_thinking_step_id()
+                if tool_name == "write_todos":
+                    if write_todos_step_id is None:
+                        write_todos_step_id = tool_step_id
+                    else:
+                        tool_step_id = write_todos_step_id
                 tool_step_ids[run_id] = tool_step_id
                 last_active_step_id = tool_step_id
                 if tool_name == "search_knowledge_base":
@@ -1453,6 +1481,24 @@ async def stream_new_chat(
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Searching knowledge base"),
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "write_todos":
+                    todos = (
+                        tool_output.get("todos", [])
+                        if isinstance(tool_output, dict)
+                        else []
+                    )
+                    todo_items = format_todo_items(
+                        todos if isinstance(todos, list) else []
+                    )
+                    completed_items = (
+                        todo_items if todo_items else ["Plan updated"]
+                    )
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title=format_step_title("Plan"),
                         status="completed",
                         items=completed_items,
                     )
@@ -1995,6 +2041,27 @@ async def stream_new_chat(
                     )
                     yield streaming_service.format_terminal_info(
                         "Knowledge base search completed", "success"
+                    )
+                elif tool_name == "write_todos":
+                    todos = (
+                        tool_output.get("todos", [])
+                        if isinstance(tool_output, dict)
+                        else []
+                    )
+                    todo_items = format_todo_items(
+                        todos if isinstance(todos, list) else []
+                    )
+                    if todo_items:
+                        last_active_step_items = todo_items
+                    yield streaming_service.format_tool_output_available(
+                        tool_call_id,
+                        tool_output
+                        if isinstance(tool_output, dict)
+                        else {"result": tool_output},
+                    )
+                    yield streaming_service.format_terminal_info(
+                        f"Plan updated ({len(todo_items) or len(todos) if isinstance(todos, list) else 0} tasks)",
+                        "success",
                     )
                 elif tool_name == "write_todos":
                     # Stream the full write_todos result so frontend can render the Plan component
