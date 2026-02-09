@@ -29,6 +29,7 @@ class ScbTable:
     path: str
     title: str
     updated: str | None = None
+    breadcrumb: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,98 @@ def _is_age_variable(code: str, label: str) -> bool:
     normalized_code = _normalize_text(code)
     normalized_label = _normalize_text(label)
     return any(marker in normalized_code or marker in normalized_label for marker in ("alder", "age"))
+
+
+def _has_region_request(query_tokens: set[str], query_norm: str) -> bool:
+    markers = {
+        "lan",
+        "lans",
+        "län",
+        "kommun",
+        "region",
+        "stockholm",
+        "goteborg",
+        "göteborg",
+        "malmo",
+        "malmö",
+        "skane",
+        "skåne",
+        "uppsala",
+        "västra",
+        "vastra",
+        "gotaland",
+        "götaland",
+        "riket",
+        "sverige",
+    }
+    return any(token in markers for token in query_tokens) or " per " in query_norm
+
+
+def _has_gender_request(query_tokens: set[str], query_norm: str) -> bool:
+    markers = {"kvinna", "kvinnor", "man", "män", "kon", "kön", "gender"}
+    return any(token in markers for token in query_tokens) or "kvin" in query_norm
+
+
+def _has_age_request(query_tokens: set[str], query_norm: str) -> bool:
+    markers = {"alder", "ålder", "age", "aldersgrupp", "åldersgrupp"}
+    return any(token in markers for token in query_tokens) or "alder" in query_norm
+
+
+def _score_table_metadata(
+    *,
+    metadata: dict[str, Any],
+    query_tokens: set[str],
+    query_norm: str,
+    requested_years: list[str],
+    wants_region: bool,
+    wants_gender: bool,
+    wants_age: bool,
+) -> int:
+    score = 0
+    variables = metadata.get("variables") or []
+    if not isinstance(variables, list):
+        return score
+
+    has_time = False
+    for var in variables:
+        code = str(var.get("code") or "")
+        label = str(var.get("text") or code)
+        values = [str(v) for v in (var.get("values") or []) if v is not None]
+        value_texts = [
+            str(v) for v in (var.get("valueTexts") or []) if v is not None
+        ]
+
+        score += min(3, _score_text(query_tokens, f"{code} {label}"))
+
+        if _is_time_variable(code, label):
+            has_time = True
+            if requested_years and values:
+                matches = 0
+                for year in requested_years:
+                    if any(value.startswith(year) for value in values):
+                        matches += 1
+                if matches:
+                    score += 3 * matches
+                else:
+                    score -= 4
+
+        if wants_region and _is_region_variable(code, label):
+            score += 4
+        if wants_gender and _is_gender_variable(code, label):
+            score += 3
+        if wants_age and _is_age_variable(code, label):
+            score += 2
+
+        if value_texts and len(value_texts) <= 200:
+            for text in value_texts:
+                if _score_text(query_tokens, text) > 0:
+                    score += 2
+                    break
+
+    if requested_years and not has_time:
+        score -= 4
+
+    return score
 
 
 def _match_values_by_text(
@@ -191,16 +284,20 @@ class ScbService:
         base_path: str,
         query: str,
         *,
-        max_tables: int = 40,
-        max_depth: int = 3,
+        max_tables: int = 80,
+        max_depth: int = 4,
+        max_nodes: int = 140,
+        max_children: int = 8,
     ) -> list[ScbTable]:
         query_tokens = set(_tokenize(query))
-        queue: list[tuple[str, int]] = [(base_path.rstrip("/") + "/", 0)]
+        queue: list[tuple[str, int, tuple[str, ...]]] = [
+            (base_path.rstrip("/") + "/", 0, ())
+        ]
         seen: set[str] = set()
         tables: list[ScbTable] = []
 
-        while queue and len(tables) < max_tables:
-            current_path, depth = queue.pop(0)
+        while queue and len(tables) < max_tables and len(seen) < max_nodes:
+            current_path, depth, breadcrumb = queue.pop(0)
             if current_path in seen:
                 continue
             seen.add(current_path)
@@ -210,6 +307,7 @@ class ScbService:
             except httpx.HTTPError:
                 continue
 
+            children: list[tuple[int, str, int, tuple[str, ...]]] = []
             for item in items:
                 item_id = str(item.get("id") or "").strip()
                 if not item_id:
@@ -224,14 +322,26 @@ class ScbService:
                             path=table_path,
                             title=item_text,
                             updated=item.get("updated"),
+                            breadcrumb=breadcrumb,
                         )
                     )
                     if len(tables) >= max_tables:
                         break
                 elif item_type == "l" and depth < max_depth:
                     score = _score_text(query_tokens, f"{item_id} {item_text}")
-                    if depth <= 1 or score > 0:
-                        queue.append((f"{current_path}{item_id}/", depth + 1))
+                    next_path = f"{current_path}{item_id}/"
+                    next_breadcrumb = (*breadcrumb, item_text)
+                    children.append((score, next_path, depth + 1, next_breadcrumb))
+
+            if children:
+                children.sort(key=lambda item: item[0], reverse=True)
+                if depth <= 1:
+                    selected = children
+                else:
+                    selected = [child for child in children if child[0] > 0]
+                    if len(selected) < max_children:
+                        selected = children[:max_children]
+                queue.extend(selected)
 
         return tables
 
@@ -240,20 +350,52 @@ class ScbService:
         base_path: str,
         query: str,
         *,
-        max_tables: int = 40,
+        max_tables: int = 80,
+        metadata_limit: int = 10,
     ) -> ScbTable | None:
         tables = await self.collect_tables(base_path, query, max_tables=max_tables)
         if not tables:
             return None
         query_tokens = set(_tokenize(query))
+        query_norm = _normalize_text(query)
+        requested_years = _extract_years(query)
+        wants_region = _has_region_request(query_tokens, query_norm)
+        wants_gender = _has_gender_request(query_tokens, query_norm)
+        wants_age = _has_age_request(query_tokens, query_norm)
 
         def rank(table: ScbTable) -> tuple[int, float]:
-            score = _score_text(query_tokens, f"{table.title} {table.id}")
+            breadcrumb_text = " ".join(table.breadcrumb)
+            score = _score_text(
+                query_tokens, f"{table.title} {breadcrumb_text} {table.id}"
+            )
             updated = _parse_iso(table.updated)
             return (score, updated.timestamp() if updated else 0.0)
 
         tables.sort(key=rank, reverse=True)
-        return tables[0]
+        top_candidates = tables[:metadata_limit]
+        best_table = tables[0]
+        best_score = rank(best_table)[0]
+
+        for table in top_candidates:
+            try:
+                metadata = await self.get_table_metadata(table.path)
+            except httpx.HTTPError:
+                continue
+            meta_score = _score_table_metadata(
+                metadata=metadata,
+                query_tokens=query_tokens,
+                query_norm=query_norm,
+                requested_years=requested_years,
+                wants_region=wants_region,
+                wants_gender=wants_gender,
+                wants_age=wants_age,
+            )
+            total_score = rank(table)[0] + meta_score
+            if total_score > best_score:
+                best_score = total_score
+                best_table = table
+
+        return best_table
 
     def build_query_payload(
         self,

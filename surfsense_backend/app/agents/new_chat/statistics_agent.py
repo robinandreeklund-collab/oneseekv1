@@ -294,7 +294,7 @@ def _build_scb_tool(
 
     async def _scb_tool(
         question: str,
-        max_tables: int = 40,
+        max_tables: int = 80,
         max_cells: int = 150_000,
     ) -> str:
         query = (question or "").strip()
@@ -304,8 +304,12 @@ def _build_scb_tool(
             )
 
         try:
+            query_hint = " ".join([definition.name, *definition.keywords]).strip()
+            enriched_query = f"{query} {query_hint}".strip()
             table = await scb_service.find_best_table(
-                definition.base_path, query, max_tables=max_tables
+                definition.base_path,
+                enriched_query,
+                max_tables=max_tables,
             )
             if not table:
                 return json.dumps(
