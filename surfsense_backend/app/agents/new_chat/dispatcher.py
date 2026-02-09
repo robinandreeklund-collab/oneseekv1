@@ -48,6 +48,9 @@ _KNOWLEDGE_PATTERNS = [
     r"\bpolicy\b",
     r"\bremember\b",
     r"\bkom ihåg\b",
+    r"\bnyheter\b",
+    r"\bsenaste nyheterna\b",
+    r"\baktuella händelser\b",
 ]
 
 DEFAULT_ROUTE_SYSTEM_PROMPT = (
