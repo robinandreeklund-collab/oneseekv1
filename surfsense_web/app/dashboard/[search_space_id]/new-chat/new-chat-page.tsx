@@ -236,6 +236,8 @@ export default function NewChatPage() {
 	const [isTraceOpen, setIsTraceOpen] = useState(false);
 	const [activeTraceMessageId, setActiveTraceMessageId] = useState<string | null>(null);
 	const isLargeScreen = useMediaQuery("(min-width: 1024px)");
+	const traceLayoutRef = useRef<HTMLDivElement | null>(null);
+	const [traceMaxWidth, setTraceMaxWidth] = useState<number>(720);
 	const abortControllerRef = useRef<AbortController | null>(null);
 
 	// Get mentioned document IDs from the composer
@@ -1995,6 +1997,23 @@ export default function NewChatPage() {
 	);
 	const isInlineTrace = isTraceOpen && isLargeScreen;
 
+	useEffect(() => {
+		const container = traceLayoutRef.current;
+		if (!container) return;
+		const chatWidthPx = 44 * 16; // matches --thread-max-width (44rem)
+		const minTraceWidth = 420;
+		const updateMaxWidth = () => {
+			const totalWidth = container.clientWidth;
+			const available = Math.max(0, totalWidth - chatWidthPx);
+			const nextMax = Math.max(minTraceWidth, available);
+			setTraceMaxWidth(nextMax);
+		};
+		updateMaxWidth();
+		const observer = new ResizeObserver(updateMaxWidth);
+		observer.observe(container);
+		return () => observer.disconnect();
+	}, [isInlineTrace]);
+
 	// Show loading state only when loading an existing thread
 	if (isInitializing) {
 		return (
@@ -2075,7 +2094,10 @@ export default function NewChatPage() {
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
 			<TracePanelContext.Provider value={traceContextValue}>
-				<div className="flex h-[calc(100vh-64px)] overflow-hidden">
+				<div
+					ref={traceLayoutRef}
+					className="flex h-[calc(100vh-64px)] overflow-hidden"
+				>
 					<div className="flex min-w-0 flex-1 flex-col">
 						<Thread
 							messageThinkingSteps={messageThinkingSteps}
@@ -2111,6 +2133,7 @@ export default function NewChatPage() {
 							spans={activeTraceSpans}
 							variant="inline"
 							dock="right"
+							maxWidth={traceMaxWidth}
 						/>
 					)}
 				</div>

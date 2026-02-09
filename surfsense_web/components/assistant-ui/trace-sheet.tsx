@@ -27,6 +27,8 @@ interface TraceSheetProps {
 	spans: TraceSpan[];
 	variant?: "overlay" | "inline";
 	dock?: "left" | "right";
+	minWidth?: number;
+	maxWidth?: number;
 }
 
 const MIN_WIDTH = 420;
@@ -104,6 +106,8 @@ export function TraceSheet({
 	spans,
 	variant = "overlay",
 	dock = "right",
+	minWidth = MIN_WIDTH,
+	maxWidth = MAX_WIDTH,
 }: TraceSheetProps) {
 	const isMobile = useMediaQuery("(max-width: 767px)");
 	const [panelWidth, setPanelWidth] = useState(720);
@@ -176,7 +180,7 @@ export function TraceSheet({
 				dock === "right"
 					? startXRef.current - event.clientX
 					: event.clientX - startXRef.current;
-			const nextWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidthRef.current + delta));
+			const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidthRef.current + delta));
 			setPanelWidth(nextWidth);
 		};
 		const handlePointerUp = () => {
@@ -271,12 +275,12 @@ export function TraceSheet({
 				)}
 			/>
 			<div className="flex h-full min-h-0 flex-1 overflow-hidden">
-				<div className="flex w-1/2 flex-col border-r border-border/60 bg-card/40 backdrop-blur-xl">
+				<div className="flex w-1/2 min-h-0 flex-col border-r border-border/60 bg-card/40 backdrop-blur-xl">
 					<div className="flex items-center justify-between border-b border-border/60 px-4 py-3 text-xs uppercase tracking-wide text-muted-foreground">
 						<span>Waterfall</span>
 						<span>{sortedSpans.length} steg</span>
 					</div>
-					<ScrollArea className="flex-1">
+					<ScrollArea className="flex-1 min-h-0">
 						<div className="space-y-2 px-3 pb-6">
 							{sortedSpans.length === 0 && (
 								<div className="rounded-lg border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
@@ -378,7 +382,7 @@ export function TraceSheet({
 					</ScrollArea>
 				</div>
 
-				<div className="flex w-1/2 flex-col bg-card/30 backdrop-blur-xl">
+				<div className="flex w-1/2 min-h-0 flex-col bg-card/30 backdrop-blur-xl">
 					<div className="flex items-center justify-between border-b border-border/60 px-4 py-3 text-xs uppercase tracking-wide text-muted-foreground">
 						<span>Detaljer</span>
 						{selectedSpan && (
@@ -387,7 +391,7 @@ export function TraceSheet({
 							</span>
 						)}
 					</div>
-					<ScrollArea className="flex-1">
+					<ScrollArea className="flex-1 min-h-0">
 						<div className="space-y-4 px-4 pb-8">
 							{!selectedSpan && (
 								<div className="rounded-lg border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
@@ -471,7 +475,7 @@ export function TraceSheet({
 					"h-full",
 					dock === "left" ? "border-r border-border/60" : "border-l border-border/60"
 				)}
-				style={{ width: panelWidth, minWidth: MIN_WIDTH, maxWidth: MAX_WIDTH }}
+				style={{ width: panelWidth, minWidth, maxWidth }}
 			>
 				{panelBody}
 			</div>
