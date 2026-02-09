@@ -56,6 +56,7 @@ from .reflect_on_progress import create_reflect_on_progress_tool
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
 from .smhi_weather import create_smhi_weather_tool
+from .tavily_search import create_tavily_search_tool
 from .trafiklab_route import create_trafiklab_route_tool
 from .user_memory import create_recall_memory_tool, create_save_memory_tool
 
@@ -106,6 +107,16 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         ),
         requires=["search_space_id", "db_session", "connector_service"],
         # Note: available_connectors and available_document_types are optional
+    ),
+    ToolDefinition(
+        name="search_tavily",
+        description="Search the public web via the Tavily connector (live)",
+        factory=lambda deps: create_tavily_search_tool(
+            connector_service=deps["connector_service"],
+            search_space_id=deps["search_space_id"],
+            user_id=deps.get("user_id"),
+        ),
+        requires=["connector_service", "search_space_id"],
     ),
     # Podcast generation tool
     ToolDefinition(

@@ -434,7 +434,7 @@ async def stream_new_chat(
                     agent_config, docs_instructions
                 )
             elif knowledge_route == KnowledgeRoute.EXTERNAL:
-                enabled_tools = ["search_knowledge_base", "reflect_on_progress"]
+                enabled_tools = ["search_tavily", "reflect_on_progress"]
                 effective_agent_config = build_subagent_config(
                     agent_config, external_instructions
                 )

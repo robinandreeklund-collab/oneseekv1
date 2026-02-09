@@ -46,8 +46,8 @@ KNOWLEDGE_INTERNAL_INSTRUCTIONS = (
 )
 KNOWLEDGE_EXTERNAL_INSTRUCTIONS = (
     "The user needs external, real-time web information. "
-    "Use search_knowledge_base with connectors_to_search=['TAVILY_API'] "
-    "and top_k=3. Prefer concise, up-to-date sources. "
+    "Use search_tavily with top_k=3 for live web results. "
+    "Prefer concise, up-to-date sources. "
     f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 

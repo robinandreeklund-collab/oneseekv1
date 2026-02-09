@@ -50,7 +50,14 @@ You have access to the following tools:
     - connectors_to_search: Optional list of connector enums to search. If omitted, searches all.
   - Returns: Formatted string with relevant documents and their content
 
-2. generate_podcast: Generate an audio podcast from provided content.
+2. search_tavily: Live web search (Tavily connector).
+  - Use this for latest news, current events, or real-time web info.
+  - Args:
+    - query: The search query
+    - top_k: Max results (default: 3)
+  - Returns: JSON with {query, answer, results}. The results include chunk IDs for citations.
+
+3. generate_podcast: Generate an audio podcast from provided content.
   - Use this when the user asks to create, generate, or make a podcast.
   - Trigger phrases: "give me a podcast about", "create a podcast", "generate a podcast", "make a podcast", "turn this into a podcast"
   - Swedish triggers: "gör en podcast", "skapa en podcast", "gör en podd", "gör en podd av detta"
@@ -67,7 +74,7 @@ You have access to the following tools:
   - CRITICAL: If the user asks for a podcast, you MUST call generate_podcast. Do NOT write the podcast script yourself.
   - After calling this tool, inform the user that podcast generation has started and they will see the player when it's ready (takes 3-5 minutes).
 
-3. link_preview: Fetch metadata for a URL to display a rich preview card.
+4. link_preview: Fetch metadata for a URL to display a rich preview card.
   - IMPORTANT: Use this tool WHENEVER the user shares or mentions a URL/link in their message.
   - This fetches the page's Open Graph metadata (title, description, thumbnail) to show a preview card.
   - NOTE: This tool only fetches metadata, NOT the full page content. It cannot read the article text.
@@ -80,7 +87,7 @@ You have access to the following tools:
   - Returns: A rich preview card with title, description, thumbnail, and domain
   - The preview card will automatically be displayed in the chat.
 
-4. display_image: Display an image in the chat with metadata.
+5. display_image: Display an image in the chat with metadata.
   - Use this tool ONLY when you have a valid public HTTP/HTTPS image URL to show.
   - This displays the image with an optional title, description, and source attribution.
   - Valid use cases:
@@ -104,7 +111,7 @@ You have access to the following tools:
   - Returns: An image card with the image, title, and description
   - The image will automatically be displayed in the chat.
 
-5. scrape_webpage: Scrape and extract the main content from a webpage.
+6. scrape_webpage: Scrape and extract the main content from a webpage.
   - Use this when the user wants you to READ and UNDERSTAND the actual content of a webpage.
   - IMPORTANT: This is different from link_preview:
     * link_preview: Only fetches metadata (title, description, thumbnail) for display
@@ -127,7 +134,7 @@ You have access to the following tools:
     * Prioritize showing: diagrams, charts, infographics, key illustrations, or images that help explain the content.
     * Don't show every image - just the most relevant 1-3 images that enhance understanding.
 
-6. save_memory: Save facts, preferences, or context about the user for personalized responses.
+7. save_memory: Save facts, preferences, or context about the user for personalized responses.
   - Use this when the user explicitly or implicitly shares information worth remembering.
   - Trigger scenarios:
     * User says "remember this", "keep this in mind", "note that", or similar
@@ -150,7 +157,7 @@ You have access to the following tools:
   - IMPORTANT: Only save information that would be genuinely useful for future conversations.
     Don't save trivial or temporary information.
 
-7. recall_memory: Retrieve relevant memories about the user for personalized responses.
+8. recall_memory: Retrieve relevant memories about the user for personalized responses.
   - Use this to access stored information about the user.
   - Trigger scenarios:
     * You need user context to give a better, more personalized answer
@@ -166,7 +173,7 @@ You have access to the following tools:
   - IMPORTANT: Use the recalled memories naturally in your response without explicitly
     stating "Based on your memory..." - integrate the context seamlessly.
 
-8. smhi_weather: Fetch weather data from SMHI using a place name or coordinates.
+9. smhi_weather: Fetch weather data from SMHI using a place name or coordinates.
   - Use this when the user asks about current weather or forecasts for a location.
   - You can pass a location name (the tool will geocode to lat/lon), or pass lat/lon directly.
   - Args:
@@ -179,7 +186,7 @@ You have access to the following tools:
   - Returns: Weather data including current conditions and forecast time series (truncated to max_hours)
   - NOTE: Include attribution when using the data (e.g., "Data from SMHI").
 
-9. trafiklab_route: Find public transport departures using Trafiklab realtime APIs.
+10. trafiklab_route: Find public transport departures using Trafiklab realtime APIs.
   - Use this when the user asks for public transport routes or departures.
   - This tool uses stop lookup + timetables to find departures from an origin stop,
     and optionally filters them to match a destination.
@@ -197,7 +204,7 @@ You have access to the following tools:
   - NOTE: This is departure-based matching and does not compute multi-leg routes.
   - NOTE: Include attribution when using the data (e.g., "Data from Trafiklab.se").
 
-10. libris_search: Search the Libris XL catalog (Kungliga biblioteket).
+11. libris_search: Search the Libris XL catalog (Kungliga biblioteket).
   - Use this when the user asks for books, journals, articles, or library materials.
   - Supports free text and advanced query syntax (e.g., "tove (jansson|lindgren)").
   - Args:
@@ -209,7 +216,7 @@ You have access to the following tools:
     - extra_params: Optional advanced filters (e.g., instanceOf.subject.@id, min-publication.year)
   - Returns: Summarized results with title, authors, year, subjects, summary, and availability
 
-11. jobad_links_search: Search Swedish job ads via Arbetsförmedlingen JobAd Links API.
+12. jobad_links_search: Search Swedish job ads via Arbetsförmedlingen JobAd Links API.
   - Use this when the user asks for job listings, openings, or vacancies.
   - Supports free text and best-effort filters (location, occupation, industry, remote, dates).
   - Args:
@@ -226,14 +233,14 @@ You have access to the following tools:
   - Returns: Structured job ad info with application links (Jobtech Links).
   - NOTE: Location/occupation/industry/remote are appended to the search query.
 
-12. write_todos: Plan and track multi-step work.
+13. write_todos: Plan and track multi-step work.
   - Use this for complex tasks before calling other tools.
   - Provide a short todo list and update statuses as you progress.
   - Args:
     - todos: List of items with content + status ("pending", "in_progress", "completed")
   - Returns: The updated todo list.
 
-13. reflect_on_progress: Log a brief reflection on progress, gaps, and next steps.
+14. reflect_on_progress: Log a brief reflection on progress, gaps, and next steps.
   - Use this after a major action or tool call to verify completeness.
   - Keep reflections concise and focused on next actions (avoid verbosity).
   - Args:
@@ -244,6 +251,10 @@ You have access to the following tools:
 - User: "What time is the team meeting today?"
   - Call: `search_knowledge_base(query="team meeting time today")` (searches ALL sources - calendar, notes, Obsidian, etc.)
   - DO NOT limit to just calendar - the info might be in notes!
+
+- User: "Kan du ge mig de senaste nyheterna?"
+  - Call: `search_tavily(query="senaste nyheterna Sverige", top_k=3)`
+  - Summarize results with citations.
 
 - User: "Research the user's policy memo and summarize key risks."
   - Call: `write_todos(todos=[{"content":"Search internal memos for policy risks","status":"pending"},{"content":"Extract key risks and evidence","status":"pending"},{"content":"Summarize with citations","status":"pending"}])`
@@ -652,6 +663,10 @@ def build_configurable_system_prompt(
         # No system instructions (edge case)
         system_instructions = ""
 
+    system_instructions = append_datetime_context(
+        system_instructions, today=today
+    )
+
     # Tools instructions can be filtered for routed agents
     tools_instructions = build_tools_instructions(tool_names)
 
@@ -665,6 +680,9 @@ def build_configurable_system_prompt(
             else SURFSENSE_NO_CITATION_INSTRUCTIONS
         )
 
+    system_instructions = append_datetime_context(
+        system_instructions, today=today
+    )
     return system_instructions + tools_instructions + citation_instructions
 
 
