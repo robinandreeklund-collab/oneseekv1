@@ -26,15 +26,42 @@ class ScbToolDefinition:
     description: str
     keywords: list[str]
     example_queries: list[str]
+    table_codes: list[str]
+    typical_filters: list[str]
 
 
 SCB_TOOL_DEFINITIONS: list[ScbToolDefinition] = [
+    ScbToolDefinition(
+        tool_id="scb_arbetsmarknad",
+        name="SCB Arbetsmarknad",
+        base_path="AM/",
+        description=(
+            "Arbetsmarknadsstatistik fran SCB. Omfattar sysselsattning, "
+            "arbetsloshet, arbetskraftsdeltagande och loner."
+        ),
+        keywords=[
+            "arbetsmarknad",
+            "arbetsloshet",
+            "sysselsattning",
+            "arbetstid",
+            "lon",
+        ],
+        example_queries=[
+            "Arbetsloshet Sverige 2018-2024",
+            "Sysselsattning kvinnor 2023",
+            "Arbetsloshet per lan 2024",
+            "Arbetskraftsdeltagande 2015-2024",
+            "Lonestatistik per sektor 2022",
+        ],
+        table_codes=["AM7001", "AM0211", "AM0301", "AM0401", "AM0403"],
+        typical_filters=["tid", "region", "kon", "alder", "naring"],
+    ),
     ScbToolDefinition(
         tool_id="scb_befolkning",
         name="SCB Befolkning",
         base_path="BE/",
         description=(
-            "Hamta befolkningsstatistik fran SCB. Omfattar folkmangd, flyttningar, "
+            "Befolkningsstatistik fran SCB. Omfattar folkmangd, flyttningar, "
             "fodelser, dodsfall, alder, kon och region."
         ),
         keywords=[
@@ -48,56 +75,294 @@ SCB_TOOL_DEFINITIONS: list[ScbToolDefinition] = [
             "kon",
         ],
         example_queries=[
-            "Befolkning i Stockholm 2024",
+            "Befolkning i Stockholms lan 2024",
             "Folkmangd Sverige 2015-2024",
+            "Flyttnetto per lan 2020-2024",
+            "Fodda och dodda i Skane 2015-2024",
+            "Aldersfordelning i Goteborg 2023",
         ],
+        table_codes=["BE0001", "BE0101", "BE0205", "BE0401", "BE0701"],
+        typical_filters=["tid", "region", "kon", "alder", "civilstand"],
     ),
     ScbToolDefinition(
-        tool_id="scb_arbetsmarknad",
-        name="SCB Arbetsmarknad",
-        base_path="AM/",
+        tool_id="scb_boende_byggande",
+        name="SCB Boende, byggande och bebyggelse",
+        base_path="BO/",
         description=(
-            "Hamta arbetsmarknadsstatistik fran SCB. Omfattar sysselsattning, "
-            "arbetsloshet, arbetskraftsdeltagande och loner."
+            "Statistik om boende, byggande och bostader fran SCB. "
+            "Omfattar bostadsbestand, nybyggnation och bygglov."
         ),
         keywords=[
-            "arbetsmarknad",
-            "arbetsloshet",
-            "sysselsattning",
-            "arbetstid",
-            "lon",
+            "boende",
+            "bostad",
+            "byggande",
+            "bygglov",
+            "bostadsbestand",
         ],
         example_queries=[
-            "Arbetsloshet Sverige senaste ar",
-            "Sysselsattning kvinnor 2023",
+            "Antal fardigstallda bostader 2015-2024",
+            "Nybyggnation per lan 2020-2024",
+            "Bygglov bostader 2018-2024",
+            "Bostadsbestand per kommun 2024",
+            "Antal bostader i Stockholm 2010-2024",
         ],
+        table_codes=["BO0101", "BO0104", "BO0201", "BO0301", "BO0303"],
+        typical_filters=["tid", "region", "bostadstyp", "upplatelseform"],
     ),
     ScbToolDefinition(
-        tool_id="scb_utbildning",
-        name="SCB Utbildning och forskning",
-        base_path="UF/",
+        tool_id="scb_demokrati",
+        name="SCB Demokrati",
+        base_path="ME/",
         description=(
-            "Hamta utbildnings- och forskningsstatistik fran SCB. "
-            "Omfattar skolresultat, examen, hogskola och forskning."
+            "Demokrati- och valdeltagandestatistik fran SCB. "
+            "Omfattar val, deltagande och fortroendeindikatorer."
         ),
         keywords=[
-            "utbildning",
-            "skola",
-            "examen",
-            "hogskola",
-            "forskning",
+            "demokrati",
+            "val",
+            "valdeltagande",
+            "parti",
+            "fortroende",
         ],
         example_queries=[
-            "Gymnasieexamen per lan 2022",
-            "Hogskoleutbildning kvinnor 2021",
+            "Valdeltagande i riksdagsval 2022",
+            "Valresultat per lan 2022",
+            "Partisympatier 2010-2024",
+            "Fortroende for institutioner 2015-2024",
+            "Politisk aktivitet per alder 2023",
         ],
+        table_codes=["ME0001", "ME0002", "ME0104", "ME0105", "ME0107"],
+        typical_filters=["tid", "region", "alder", "kon", "parti"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_energi",
+        name="SCB Energi",
+        base_path="EN/",
+        description=(
+            "Energistatistik fran SCB. Omfattar energianvandning, produktion "
+            "och branslen."
+        ),
+        keywords=[
+            "energi",
+            "el",
+            "bransle",
+            "produktion",
+            "forbrukning",
+        ],
+        example_queries=[
+            "Energianvandning per sektor 2015-2024",
+            "Elproduktion Sverige 2010-2024",
+            "Forbrukning av branslen per lan 2023",
+            "Slutlig energianvandning per bransch 2022",
+            "Fornybar energi andel 2010-2024",
+        ],
+        table_codes=["EN0105", "EN0106", "EN0107", "EN0108", "EN0109"],
+        typical_filters=["tid", "region", "energislag", "sektor"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_finansmarknad",
+        name="SCB Finansmarknad",
+        base_path="FM/",
+        description=(
+            "Finansmarknadsstatistik fran SCB. Omfattar rantor, "
+            "utlaning, insattningar och finansiella tillgangar."
+        ),
+        keywords=[
+            "finans",
+            "ranta",
+            "utlaning",
+            "insattning",
+            "bank",
+        ],
+        example_queries=[
+            "Rantor pa bostadslan 2015-2024",
+            "Utlanning till hushall per ar",
+            "Insattningar hushall 2010-2024",
+            "Finansiella tillgangar per sektor 2022",
+            "Kreditvolymer 2018-2024",
+        ],
+        table_codes=["FM0001", "FM0002", "FM0103", "FM0105", "FM0201"],
+        typical_filters=["tid", "sektor", "instrument", "region"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_handel",
+        name="SCB Handel med varor och tjanster",
+        base_path="HA/",
+        description=(
+            "Handelsstatistik fran SCB. Omfattar import, export, handelsbalans "
+            "och tjanstehandel."
+        ),
+        keywords=[
+            "handel",
+            "import",
+            "export",
+            "handelsbalans",
+            "tjanster",
+        ],
+        example_queries=[
+            "Export per varugrupp 2023",
+            "Import per land 2018-2024",
+            "Handelsbalans Sverige 2010-2024",
+            "Tjanstehandel per land 2022",
+            "Export av tjanster per sektor 2023",
+        ],
+        table_codes=["HA0101", "HA0103", "HA0104", "HA0201", "HA0202"],
+        typical_filters=["tid", "land", "varugrupp", "tjanstekategori"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_hushall",
+        name="SCB Hushallens ekonomi",
+        base_path="HE/",
+        description=(
+            "Statistik om hushallens ekonomi fran SCB. Omfattar inkomster, "
+            "utgifter, konsumtion och sparande."
+        ),
+        keywords=[
+            "hushall",
+            "inkomst",
+            "utgift",
+            "konsumtion",
+            "sparande",
+        ],
+        example_queries=[
+            "Disponibel inkomst per hushall 2015-2024",
+            "Hushallens skulder 2010-2024",
+            "Sparande per hushallstyp 2023",
+            "Konsumtionsutgifter per kategori 2022",
+            "Inkomstmedian per lan 2024",
+        ],
+        table_codes=["HE0000", "HE0103", "HE0104", "HE0110", "HE0111"],
+        typical_filters=["tid", "region", "hushallstyp", "inkomstslag"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_halsa_sjukvard",
+        name="SCB Halso- och sjukvard",
+        base_path="HS/",
+        description=(
+            "Halso- och sjukvardsstatistik fran SCB. Omfattar patientstatistik, "
+            "halsa och sjukvard."
+        ),
+        keywords=[
+            "halsa",
+            "sjukvard",
+            "patient",
+            "vard",
+        ],
+        example_queries=[
+            "Patientstatistik per lan 2024",
+            "Sjukhusvard per region 2022",
+            "Varddagar per kon 2023",
+            "Vardkontakter per alder 2024",
+            "Diagnoser per ar 2015-2024",
+        ],
+        table_codes=["HS0301"],
+        typical_filters=["tid", "region", "kon", "alder", "diagnos"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_jordbruk",
+        name="SCB Jord- och skogsbruk, fiske",
+        base_path="JO/",
+        description=(
+            "Jordbruks-, skogsbruks- och fiskestatistik fran SCB. "
+            "Omfattar arealer, produktion och lantbruk."
+        ),
+        keywords=[
+            "jordbruk",
+            "skogsbruk",
+            "fiske",
+            "lantbruk",
+            "areal",
+        ],
+        example_queries=[
+            "Areal jordbruksmark per lan 2023",
+            "Antal jordbruksforetag 2010-2024",
+            "Fiskefangster per art 2022",
+            "Skogsareal per region 2024",
+            "Antal djur pa lantbruk 2023",
+        ],
+        table_codes=["JO1104", "JO0106", "JO0103", "JO0204", "JO0202"],
+        typical_filters=["tid", "region", "produktionstyp", "djur", "areal"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_kultur",
+        name="SCB Kultur och fritid",
+        base_path="KU/",
+        description=(
+            "Kultur- och fritidsstatistik fran SCB. Omfattar bibliotek, museer, "
+            "kulturvanor och fritidsdeltagande."
+        ),
+        keywords=[
+            "kultur",
+            "fritid",
+            "bibliotek",
+            "museer",
+            "idrott",
+        ],
+        example_queries=[
+            "Biblioteksbesok per lan 2015-2024",
+            "Museibesok Sverige 2022",
+            "Kulturvanor per alder 2023",
+            "Idrottsdeltagande per region 2024",
+            "Kulturella evenemang per kommun 2023",
+        ],
+        table_codes=["KU0401", "KU0402", "KU0105"],
+        typical_filters=["tid", "region", "alder", "aktivitet"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_levnadsforhallanden",
+        name="SCB Levnadsforhallanden",
+        base_path="LE/",
+        description=(
+            "Levnadsforhallanden och livsvillkor fran SCB. Omfattar trygghet, "
+            "boendemiljo och vardagsvillkor."
+        ),
+        keywords=[
+            "levnadsforhallanden",
+            "livsvillkor",
+            "trygghet",
+            "boendemiljo",
+            "livskvalitet",
+        ],
+        example_queries=[
+            "Levnadsforhallanden per lan 2024",
+            "Trygghet i bostadsomrade 2023",
+            "Livskvalitet per alder 2022",
+            "Tid for obetalt arbete 2018-2024",
+            "Hinder i vardagen 2023",
+        ],
+        table_codes=["LE0101", "LE0102", "LE0105", "LE0106", "LE0108"],
+        typical_filters=["tid", "region", "alder", "kon", "bakgrund"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_miljo",
+        name="SCB Miljo",
+        base_path="MI/",
+        description=(
+            "Miljostatistik fran SCB. Omfattar utslapp, energi och miljopaverkan."
+        ),
+        keywords=[
+            "miljo",
+            "utslapp",
+            "co2",
+            "energi",
+            "klimat",
+        ],
+        example_queries=[
+            "CO2-utslapp Sverige 2010-2024",
+            "Utslapp per sektor 2020-2024",
+            "Energianvandning per sektor 2015-2024",
+            "Fornybar energi andel 2010-2024",
+            "Utslapp per lan 2023",
+        ],
+        table_codes=["MI0106", "MI0107", "MI0108", "MI0305", "MI0307"],
+        typical_filters=["tid", "region", "sektor", "miljokategori"],
     ),
     ScbToolDefinition(
         tool_id="scb_nationalrakenskaper",
         name="SCB Nationalrakenskaper",
         base_path="NR/",
         description=(
-            "Hamta nationalrakenskaper fran SCB. Omfattar BNP, tillvaxt, "
+            "Nationalrakenskaper fran SCB. Omfattar BNP, tillvaxt, "
             "offentliga finanser och makroekonomi."
         ),
         keywords=[
@@ -109,55 +374,21 @@ SCB_TOOL_DEFINITIONS: list[ScbToolDefinition] = [
         ],
         example_queries=[
             "BNP Sverige 2010-2024",
-            "Tillvaxt per ar",
+            "BNP per capita 2015-2024",
+            "Tillvaxt per ar 2015-2024",
+            "Offentlig konsumtion 2010-2024",
+            "Fasta investeringar 2012-2024",
         ],
-    ),
-    ScbToolDefinition(
-        tool_id="scb_priser_konsumtion",
-        name="SCB Priser och konsumtion",
-        base_path="PR/",
-        description=(
-            "Hamta pris- och konsumtionsstatistik fran SCB. Omfattar KPI, inflation "
-            "och konsumtionsindex."
-        ),
-        keywords=[
-            "kpi",
-            "inflation",
-            "priser",
-            "konsumtion",
-        ],
-        example_queries=[
-            "KPI Sverige senaste 5 ar",
-            "Inflation 2022",
-        ],
-    ),
-    ScbToolDefinition(
-        tool_id="scb_boende_byggande",
-        name="SCB Boende och byggande",
-        base_path="BO/",
-        description=(
-            "Hamta statistik om boende, byggande och bostader fran SCB. "
-            "Omfattar bostadsbestand, nybyggnation och bygglov."
-        ),
-        keywords=[
-            "boende",
-            "bostad",
-            "byggande",
-            "bygglov",
-            "bostadsbestand",
-        ],
-        example_queries=[
-            "Nybyggnation bostader 2023",
-            "Bostadsbestand Stockholm",
-        ],
+        table_codes=["NR0001", "NR0101", "NR0103", "NR0105", "NR0109"],
+        typical_filters=["tid", "sektor", "transaktion"],
     ),
     ScbToolDefinition(
         tool_id="scb_naringsverksamhet",
         name="SCB Naringsverksamhet",
         base_path="NV/",
         description=(
-            "Hamta statistik om naringsverksamhet och foretag fran SCB. "
-            "Omfattar foretagsstruktur, branscher och omsattning."
+            "Naringslivs- och foretagsstatistik fran SCB. Omfattar foretagsstruktur, "
+            "branscher och omsattning."
         ),
         keywords=[
             "foretag",
@@ -168,53 +399,94 @@ SCB_TOOL_DEFINITIONS: list[ScbToolDefinition] = [
         ],
         example_queries=[
             "Antal foretag per bransch 2023",
-            "Omsattning i industrin",
+            "Foretagsstruktur i Sverige 2015-2024",
+            "Omsattning i industrin 2018-2024",
+            "Nyregistrerade foretag per lan 2024",
+            "Foretag efter storleksklass 2020-2024",
         ],
+        table_codes=["NV0006", "NV0101", "NV0103", "NV0109", "NV0116"],
+        typical_filters=["tid", "region", "bransch", "storlek"],
     ),
     ScbToolDefinition(
-        tool_id="scb_halsa_sjukvard",
-        name="SCB Halsa och sjukvard",
-        base_path="HS/",
+        tool_id="scb_offentlig_ekonomi",
+        name="SCB Offentlig ekonomi",
+        base_path="OE/",
         description=(
-            "Hamta halso- och sjukvardsstatistik fran SCB. Omfattar patientstatistik, "
-            "halsa och sjukvard."
+            "Statistik om offentlig ekonomi fran SCB. Omfattar skatteintakter, "
+            "kommunal ekonomi och offentliga utgifter."
         ),
         keywords=[
-            "halsa",
-            "sjukvard",
-            "patient",
-            "vard",
+            "offentlig",
+            "kommunal",
+            "skatt",
+            "utgift",
+            "inkomst",
         ],
         example_queries=[
-            "Patientstatistik per lan 2024",
-            "Sjukhusvard Sverige",
+            "Kommunala kostnader per invanare 2023",
+            "Skatteintakter per lan 2010-2024",
+            "Offentliga utgifter per sektor 2022",
+            "Kommunal ekonomi resultat 2024",
+            "Statliga utgifter 2015-2024",
         ],
+        table_codes=["OE0101", "OE0106", "OE0107", "OE0108", "OE0111"],
+        typical_filters=["tid", "region", "sektor", "intaktstyp"],
     ),
     ScbToolDefinition(
-        tool_id="scb_miljo",
-        name="SCB Miljo",
-        base_path="MI/",
+        tool_id="scb_priser_konsumtion",
+        name="SCB Priser och konsumtion",
+        base_path="PR/",
         description=(
-            "Hamta miljostatistik fran SCB. Omfattar utslapp, energi och miljopaverkan."
+            "Pris- och konsumtionsstatistik fran SCB. Omfattar KPI, inflation "
+            "och konsumtionsindex."
         ),
         keywords=[
-            "miljo",
-            "utslapp",
-            "co2",
-            "energi",
-            "klimat",
+            "kpi",
+            "inflation",
+            "priser",
+            "konsumtion",
         ],
         example_queries=[
-            "CO2-utslapp Sverige 2020-2024",
-            "Energianvandning per sektor",
+            "KPI Sverige 2010-2024",
+            "Inflation 2021-2024",
+            "KPI per manad senaste 24 manaderna",
+            "Konsumentprisindex for boende 2018-2024",
+            "Prisniva for livsmedel 2015-2024",
         ],
+        table_codes=["PR0101", "PR0301", "PR0501", "PR0502"],
+        typical_filters=["tid", "varukategori", "region"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_socialtjanst",
+        name="SCB Socialtjanst",
+        base_path="SO/",
+        description=(
+            "Socialtjanststatistik fran SCB. Omfattar ekonomiskt bistand, "
+            "insatser och social omsorg."
+        ),
+        keywords=[
+            "socialtjanst",
+            "ekonomiskt bistand",
+            "forsorjningsstod",
+            "omsorg",
+            "insatser",
+        ],
+        example_queries=[
+            "Ekonomiskt bistand per lan 2015-2024",
+            "Socialtjanstinsatser for barn 2023",
+            "Forsorjningsstod per kommun 2024",
+            "Antal barn i familjehem 2010-2024",
+            "Social omsorg per alder 2023",
+        ],
+        table_codes=["SO0203"],
+        typical_filters=["tid", "region", "alder", "insatstyp"],
     ),
     ScbToolDefinition(
         tool_id="scb_transporter",
         name="SCB Transporter och kommunikationer",
         base_path="TK/",
         description=(
-            "Hamta statistik om transporter och kommunikationer fran SCB. "
+            "Transport- och kommunikationsstatistik fran SCB. "
             "Omfattar resor, trafik och gods."
         ),
         keywords=[
@@ -225,9 +497,62 @@ SCB_TOOL_DEFINITIONS: list[ScbToolDefinition] = [
             "kommunikation",
         ],
         example_queries=[
-            "Resor med kollektivtrafik 2023",
-            "Godstransporter Sverige",
+            "Resor med kollektivtrafik 2015-2024",
+            "Godstransporter Sverige 2010-2024",
+            "Persontransporter per trafikslag 2018-2024",
+            "Transportarbete per region 2022-2024",
+            "Antal registrerade bilar per lan 2024",
         ],
+        table_codes=["TK1001", "TK1201"],
+        typical_filters=["tid", "region", "trafikslag", "fordonstyp"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_utbildning",
+        name="SCB Utbildning och forskning",
+        base_path="UF/",
+        description=(
+            "Utbildnings- och forskningsstatistik fran SCB. "
+            "Omfattar skolresultat, examen, hogskola och forskning."
+        ),
+        keywords=[
+            "utbildning",
+            "skola",
+            "examen",
+            "hogskola",
+            "forskning",
+        ],
+        example_queries=[
+            "Gymnasieexamen per lan 2022",
+            "Andel med eftergymnasial utbildning 2010-2024",
+            "Hogskoleutbildade kvinnor vs man 2023",
+            "Antal studenter i hogskolan 2015-2024",
+            "Forskningsutgifter i Sverige 2018-2024",
+        ],
+        table_codes=["UF0104", "UF0117", "UF0202", "UF0205", "UF0301"],
+        typical_filters=["tid", "region", "kon", "alder", "utbildningsniva"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_amnesovergripande",
+        name="SCB Amnesovergripande statistik",
+        base_path="AA/",
+        description=(
+            "Amnesovergripande statistik och nyckeltal som korsar flera omraden, "
+            "t.ex. kommun- och regionsammanstallningar."
+        ),
+        keywords=[
+            "amnesovergripande",
+            "nyckeltal",
+            "indikator",
+            "sammanstallning",
+            "kommunfakta",
+        ],
+        example_queries=[
+            "Nyckeltal for kommuner 2024",
+            "Overgripande indikatorer Sverige 2010-2024",
+            "Sammanstallning per lan 2023",
+        ],
+        table_codes=["AA0003"],
+        typical_filters=["region", "tid", "kommun", "lan"],
     ),
 ]
 
@@ -251,6 +576,9 @@ def _score_tool(definition: ScbToolDefinition, query_norm: str, tokens: set[str]
     for keyword in definition.keywords:
         if _normalize_text(keyword) in query_norm:
             score += 3
+    for code in definition.table_codes:
+        if _normalize_text(code) in query_norm:
+            score += 6
     for token in tokens:
         if token and token in desc_norm:
             score += 1
@@ -278,7 +606,15 @@ async def aretrieve_scb_tools(query: str, limit: int = 2) -> list[str]:
 
 def _build_tool_description(definition: ScbToolDefinition) -> str:
     examples = "\n".join(f"- {example}" for example in definition.example_queries)
-    return f"{definition.description}\n\nExempel:\n{examples}"
+    sections = [definition.description]
+    if definition.table_codes:
+        sections.append(f"Vanliga tabellkoder: {', '.join(definition.table_codes)}.")
+    if definition.typical_filters:
+        sections.append(
+            f"Typiska filter: {', '.join(definition.typical_filters)}."
+        )
+    sections.append(f"Exempel:\n{examples}")
+    return "\n\n".join(sections)
 
 
 def _build_scb_tool(
@@ -304,7 +640,14 @@ def _build_scb_tool(
             )
 
         try:
-            query_hint = " ".join([definition.name, *definition.keywords]).strip()
+            query_hint = " ".join(
+                [
+                    definition.name,
+                    *definition.keywords,
+                    *definition.table_codes,
+                    *definition.typical_filters,
+                ]
+            ).strip()
             enriched_query = f"{query} {query_hint}".strip()
             table = await scb_service.find_best_table(
                 definition.base_path,
@@ -418,6 +761,8 @@ def build_scb_tool_store() -> InMemoryStore:
                 "base_path": definition.base_path,
                 "keywords": definition.keywords,
                 "example_queries": definition.example_queries,
+                "table_codes": definition.table_codes,
+                "typical_filters": definition.typical_filters,
             },
         )
     return store
