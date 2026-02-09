@@ -11,6 +11,7 @@ from langgraph.store.memory import InMemoryStore
 from langgraph.types import Checkpointer
 from langgraph_bigtool import create_agent as create_bigtool_agent
 from langgraph_bigtool.graph import ToolNode as BigtoolToolNode
+from langgraph.prebuilt.tool_node import ToolRuntime
 
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
 from app.services.connector_service import ConnectorService
@@ -431,7 +432,21 @@ def create_statistics_agent(
     if not hasattr(BigtoolToolNode, "inject_tool_args") and hasattr(
         BigtoolToolNode, "_inject_tool_args"
     ):
-        BigtoolToolNode.inject_tool_args = BigtoolToolNode._inject_tool_args  # type: ignore[attr-defined]
+        def _inject_tool_args_compat(self, tool_call, state, store):
+            tool_call_id = None
+            if isinstance(tool_call, dict):
+                tool_call_id = tool_call.get("id")
+            runtime = ToolRuntime(
+                state,
+                {},
+                {},
+                lambda _: None,
+                tool_call_id,
+                store,
+            )
+            return self._inject_tool_args(tool_call, runtime)
+
+        BigtoolToolNode.inject_tool_args = _inject_tool_args_compat  # type: ignore[attr-defined]
     scb_service = ScbService(base_url=scb_base_url or SCB_BASE_URL)
     tool_registry = build_scb_tool_registry(
         connector_service=connector_service,
