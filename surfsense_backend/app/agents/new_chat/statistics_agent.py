@@ -256,6 +256,7 @@ def _score_tool(definition: ScbToolDefinition, query_norm: str, tokens: set[str]
 
 
 def retrieve_scb_tools(query: str, limit: int = 2) -> list[str]:
+    """Retrieve SCB tool IDs matching the query."""
     query_norm = _normalize_text(query)
     tokens = set(query_norm.split())
     scored = [
@@ -269,6 +270,7 @@ def retrieve_scb_tools(query: str, limit: int = 2) -> list[str]:
 
 
 async def aretrieve_scb_tools(query: str, limit: int = 2) -> list[str]:
+    """Async wrapper for retrieving SCB tool IDs matching the query."""
     return retrieve_scb_tools(query, limit=limit)
 
 
