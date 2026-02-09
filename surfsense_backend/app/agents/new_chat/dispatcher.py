@@ -53,12 +53,35 @@ _KNOWLEDGE_PATTERNS = [
     r"\baktuella händelser\b",
 ]
 
+_STATISTICS_PATTERNS = [
+    r"\bscb\b",
+    r"\bstatistik\b",
+    r"\bstatistiska centralbyr",
+    r"\bpxweb\b",
+    r"\bfolkmangd\b",
+    r"\bfolkmängd\b",
+    r"\bbefolkning\b",
+    r"\barbetsloshet\b",
+    r"\barbetslöshet\b",
+    r"\bsysselsattning\b",
+    r"\bsysselsättning\b",
+    r"\bskog\b",
+    r"\bbnp\b",
+    r"\bkpi\b",
+    r"\binflation\b",
+    r"\bbygglov\b",
+    r"\bbostad\b",
+    r"\bmiljo\b",
+    r"\bmiljö\b",
+]
+
 DEFAULT_ROUTE_SYSTEM_PROMPT = (
     "You are a routing classifier for SurfSense.\n"
     "Decide the best route for the user's message.\n"
-    "Return ONLY one of: knowledge, action, smalltalk.\n"
+    "Return ONLY one of: knowledge, action, smalltalk, statistics.\n"
     "Use 'knowledge' for anything that needs searching user data, docs, or memory.\n"
     "Use 'action' for tool execution (scrape, link preview, podcast, weather, routes).\n"
+    "Use 'statistics' for SCB/statistics questions and official data requests.\n"
     "Use 'smalltalk' for greetings, chit-chat, or simple conversation without tools."
 )
 
@@ -74,9 +97,11 @@ def _normalize_route(value: str) -> Route | None:
     if not value:
         return None
     lowered = value.strip().lower()
-    for route in (Route.KNOWLEDGE, Route.ACTION, Route.SMALLTALK):
+    for route in (Route.KNOWLEDGE, Route.ACTION, Route.SMALLTALK, Route.STATISTICS):
         if route.value in lowered:
             return route
+    if "statistik" in lowered:
+        return Route.STATISTICS
     return None
 
 
@@ -100,6 +125,9 @@ async def dispatch_route(
 
     if _URL_REGEX.search(text) or _matches_any(_ACTION_PATTERNS, text):
         return Route.ACTION
+
+    if _matches_any(_STATISTICS_PATTERNS, text):
+        return Route.STATISTICS
 
     if _matches_any(_KNOWLEDGE_PATTERNS, text):
         return Route.KNOWLEDGE

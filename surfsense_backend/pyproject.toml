@@ -60,6 +60,7 @@ dependencies = [
     "deepagents>=0.3.8",
     "langchain>=1.2.6",
     "langgraph>=1.0.5",
+    "langgraph-bigtool>=0.0.3",
     "unstructured[all-docs]>=0.18.31",
     "unstructured-client>=0.42.3",
     "langchain-unstructured>=1.0.1",

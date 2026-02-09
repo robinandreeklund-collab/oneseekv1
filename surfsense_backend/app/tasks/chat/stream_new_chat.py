@@ -15,7 +15,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from uuid import UUID
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -44,6 +44,11 @@ from app.agents.new_chat.knowledge_router import (
 )
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.routing import Route, ROUTE_CITATIONS_ENABLED, ROUTE_TOOL_SETS
+from app.agents.new_chat.statistics_agent import create_statistics_agent
+from app.agents.new_chat.statistics_prompts import (
+    DEFAULT_STATISTICS_SYSTEM_PROMPT,
+    build_statistics_system_prompt,
+)
 from app.agents.new_chat.subagent_utils import (
     action_route_instructions,
     action_route_label,
@@ -400,6 +405,7 @@ async def stream_new_chat(
         )
         knowledge_route: KnowledgeRoute | None = None
         action_route: ActionRoute | None = None
+        statistics_prompt: str | None = None
         effective_agent_config = agent_config
         if route == Route.KNOWLEDGE:
             knowledge_router_prompt = resolve_prompt(
@@ -508,6 +514,14 @@ async def stream_new_chat(
                 effective_agent_config = build_subagent_config(
                     agent_config, web_instructions
                 )
+        elif route == Route.STATISTICS:
+            enabled_tools = []
+            statistics_prompt = resolve_prompt(
+                prompt_overrides,
+                "agent.statistics.system",
+                DEFAULT_STATISTICS_SYSTEM_PROMPT,
+            )
+            effective_agent_config = agent_config
         else:
             enabled_tools = ROUTE_TOOL_SETS.get(
                 route, ROUTE_TOOL_SETS[Route.KNOWLEDGE]
@@ -575,21 +589,31 @@ async def stream_new_chat(
         # Get the PostgreSQL checkpointer for persistent conversation memory
         checkpointer = await get_checkpointer()
 
-        # Create the deep agent with checkpointer and configurable prompts
-        agent = await create_surfsense_deep_agent(
-            llm=llm,
-            search_space_id=search_space_id,
-            db_session=session,
-            connector_service=connector_service,
-            checkpointer=checkpointer,
-            user_id=user_id,  # Pass user ID for memory tools
-            thread_id=chat_id,  # Pass chat ID for podcast association
-            agent_config=effective_agent_config,  # Pass prompt configuration
-            firecrawl_api_key=firecrawl_api_key,  # Pass Firecrawl API key if configured
-            enabled_tools=enabled_tools,
-            tool_names_for_prompt=prompt_tool_names,
-            force_citations_enabled=citations_enabled,
-        )
+        if route == Route.STATISTICS:
+            agent = create_statistics_agent(
+                llm=llm,
+                connector_service=connector_service,
+                search_space_id=search_space_id,
+                user_id=user_id,
+                thread_id=chat_id,
+                checkpointer=checkpointer,
+            )
+        else:
+            # Create the deep agent with checkpointer and configurable prompts
+            agent = await create_surfsense_deep_agent(
+                llm=llm,
+                search_space_id=search_space_id,
+                db_session=session,
+                connector_service=connector_service,
+                checkpointer=checkpointer,
+                user_id=user_id,  # Pass user ID for memory tools
+                thread_id=chat_id,  # Pass chat ID for podcast association
+                agent_config=effective_agent_config,  # Pass prompt configuration
+                firecrawl_api_key=firecrawl_api_key,  # Pass Firecrawl API key if configured
+                enabled_tools=enabled_tools,
+                tool_names_for_prompt=prompt_tool_names,
+                force_citations_enabled=citations_enabled,
+            )
 
         # Build input with message history
         langchain_messages = []
@@ -695,6 +719,9 @@ async def stream_new_chat(
         #             langchain_messages.append(AIMessage(content=msg.content))
         # else:
         # Fallback: just use the current user query with attachment context
+        if route == Route.STATISTICS:
+            stats_prompt = build_statistics_system_prompt(statistics_prompt)
+            langchain_messages.append(SystemMessage(content=stats_prompt))
         langchain_messages.append(HumanMessage(content=final_query))
 
         input_state = {
@@ -761,6 +788,8 @@ async def stream_new_chat(
             route_label = f"Knowledge/{knowledge_route_label(knowledge_route)}"
         elif route == Route.ACTION and action_route is not None:
             route_label = f"Action/{action_route_label(action_route)}"
+        elif route == Route.STATISTICS:
+            route_label = "Statistics/SCB"
         route_prefix = f"[{route_label}] "
 
         def format_step_title(title: str) -> str:

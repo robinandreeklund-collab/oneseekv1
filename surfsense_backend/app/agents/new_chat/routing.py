@@ -6,6 +6,7 @@ class Route(str, Enum):
     ACTION = "action"
     SMALLTALK = "smalltalk"
     COMPARE = "compare"
+    STATISTICS = "statistics"
 
 
 ROUTE_TOOL_SETS: dict[Route, list[str]] = {
@@ -26,6 +27,7 @@ ROUTE_TOOL_SETS: dict[Route, list[str]] = {
         "jobad_links_search",
     ],
     Route.SMALLTALK: [],
+    Route.STATISTICS: [],
 }
 
 
@@ -33,4 +35,5 @@ ROUTE_CITATIONS_ENABLED: dict[Route, bool] = {
     Route.KNOWLEDGE: True,
     Route.ACTION: False,
     Route.SMALLTALK: False,
+    Route.STATISTICS: True,
 }

@@ -14,6 +14,7 @@ from app.agents.new_chat.subagent_utils import (
     KNOWLEDGE_INTERNAL_INSTRUCTIONS,
     SMALLTALK_INSTRUCTIONS,
 )
+from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PROMPT
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
 
@@ -29,7 +30,7 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
     PromptDefinition(
         key="router.top_level",
         label="Top-level router prompt",
-        description="Routes user requests into knowledge/action/smalltalk/compare.",
+        description="Routes user requests into knowledge/action/smalltalk/compare/statistics.",
         default_prompt=DEFAULT_ROUTE_SYSTEM_PROMPT,
     ),
     PromptDefinition(
@@ -91,6 +92,12 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Smalltalk instructions",
         description="Instructions for casual chat without tools.",
         default_prompt=SMALLTALK_INSTRUCTIONS,
+    ),
+    PromptDefinition(
+        key="agent.statistics.system",
+        label="Statistics agent prompt",
+        description="System prompt for the SCB statistics agent.",
+        default_prompt=DEFAULT_STATISTICS_SYSTEM_PROMPT,
     ),
     PromptDefinition(
         key="compare.analysis.system",
