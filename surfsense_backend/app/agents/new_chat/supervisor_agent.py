@@ -232,6 +232,26 @@ async def create_supervisor_agent(
 
     agent_definitions = [
         AgentDefinition(
+            name="action",
+            description="Realtime actions som vader, resor och verktygskorningar",
+            keywords=[
+                "vader",
+                "vadret",
+                "väder",
+                "vädret",
+                "smhi",
+                "resa",
+                "tåg",
+                "tag",
+                "avgår",
+                "tidtabell",
+                "trafik",
+                "rutt",
+            ],
+            namespace=("agents", "action"),
+            prompt_key="action",
+        ),
+        AgentDefinition(
             name="statistics",
             description="SCB och officiell svensk statistik",
             keywords=["statistik", "scb", "kolada", "befolkning", "kpi"],

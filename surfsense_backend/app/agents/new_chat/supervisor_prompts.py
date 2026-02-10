@@ -23,6 +23,7 @@ Regler:
 - Nar planen ar klar: kalla write_todos med plan_complete=true.
 
 Tillgangliga agenter (hamtas via retrieve_agents):
+- action: vader, resor och realtidsverktyg
 - statistics: SCB, officiell svensk statistik
 - media: podcast, bild, video-generering
 - knowledge: SurfSense, Tavily, generell kunskap
