@@ -3,7 +3,7 @@
 import { IconMenu2, IconX } from "@tabler/icons-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Logo } from "@/components/Logo";
 import { SignInButton } from "@/components/auth/sign-in-button";
 import { ThemeTogglerComponent } from "@/components/theme/theme-toggle";
@@ -11,6 +11,18 @@ import { ThemeTogglerComponent } from "@/components/theme/theme-toggle";
 export function LeftSidebar() {
 	const [isOpen, setIsOpen] = useState(false);
 	const t = useTranslations("navigation");
+
+	// Handle keyboard accessibility (Escape key to close)
+	useEffect(() => {
+		const handleEscape = (e: KeyboardEvent) => {
+			if (e.key === "Escape" && isOpen) {
+				setIsOpen(false);
+			}
+		};
+
+		document.addEventListener("keydown", handleEscape);
+		return () => document.removeEventListener("keydown", handleEscape);
+	}, [isOpen]);
 
 	return (
 		<>
@@ -20,6 +32,7 @@ export function LeftSidebar() {
 				onClick={() => setIsOpen(!isOpen)}
 				className="fixed top-4 left-4 z-50 flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 transition-colors dark:bg-neutral-900 dark:border-neutral-800 dark:hover:bg-neutral-800"
 				aria-label={isOpen ? "Close menu" : "Open menu"}
+				aria-expanded={isOpen}
 			>
 				{isOpen ? (
 					<IconX className="h-5 w-5 text-gray-700 dark:text-gray-300" />
@@ -31,7 +44,7 @@ export function LeftSidebar() {
 			{/* Overlay */}
 			{isOpen && (
 				<div
-					className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+					className="fixed inset-0 bg-black/50 z-40"
 					onClick={() => setIsOpen(false)}
 					aria-hidden="true"
 				/>
@@ -43,6 +56,7 @@ export function LeftSidebar() {
 					isOpen ? "translate-x-0" : "-translate-x-full"
 				}`}
 				aria-label="Main navigation sidebar"
+				aria-hidden={!isOpen}
 			>
 				<div className="flex flex-col h-full">
 					{/* Logo at top */}
