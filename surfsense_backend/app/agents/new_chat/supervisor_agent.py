@@ -18,6 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
+from app.agents.new_chat.tools.external_models import (
+    DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+    EXTERNAL_MODEL_SPECS,
+    call_external_model,
+)
 from app.agents.new_chat.tools.reflect_on_progress import create_reflect_on_progress_tool
 from app.agents.new_chat.tools.write_todos import create_write_todos_tool
 from app.db import AgentComboCache
@@ -53,6 +58,7 @@ _AGENT_STOPWORDS = {
     "det",
     "de",
 }
+_EXTERNAL_MODEL_TOOL_NAMES = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
 
 
 @dataclass(frozen=True)
@@ -198,12 +204,58 @@ def _append_recent(left: list[dict[str, Any]] | None, right: list[dict[str, Any]
     return merged[-3:]
 
 
+def _append_compare_outputs(
+    left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for item in left or []:
+        tool_call_id = str(item.get("tool_call_id") or "")
+        if tool_call_id:
+            merged[tool_call_id] = item
+    for item in right or []:
+        tool_call_id = str(item.get("tool_call_id") or "")
+        if tool_call_id:
+            merged[tool_call_id] = item
+    return list(merged.values())
+
+
+def _format_compare_outputs_for_prompt(compare_outputs: list[dict[str, Any]] | None) -> str:
+    if not compare_outputs:
+        return ""
+    blocks: list[str] = []
+    for output in compare_outputs:
+        model_name = (
+            output.get("model_display_name")
+            or output.get("model")
+            or output.get("tool_name")
+            or "Model"
+        )
+        response = output.get("response") or ""
+        if not isinstance(response, str):
+            response = str(response)
+        response = response.strip()
+        if not response:
+            continue
+        citation_ids = output.get("citation_chunk_ids") or []
+        if isinstance(citation_ids, str):
+            citation_ids = [citation_ids]
+        citation_hint = ", ".join([str(cid) for cid in citation_ids if cid])
+        cite_note = (
+            f" (citation_ids: {citation_hint})" if citation_hint else ""
+        )
+        blocks.append(f"MODEL_ANSWER ({model_name}){cite_note}:\n{response}")
+    if not blocks:
+        return ""
+    return "<compare_outputs>\n" + "\n\n".join(blocks) + "\n</compare_outputs>"
+
+
 class SupervisorState(TypedDict, total=False):
     messages: Annotated[list[Any], add_messages]
     active_plan: Annotated[list[dict[str, Any]], _replace]
     plan_complete: Annotated[bool, _replace]
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
     route_hint: Annotated[str | None, _replace]
+    compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
 
 
 def _format_plan_context(state: dict[str, Any]) -> str | None:
@@ -268,6 +320,9 @@ async def create_supervisor_agent(
     knowledge_prompt: str,
     action_prompt: str,
     statistics_prompt: str,
+    synthesis_prompt: str | None = None,
+    compare_mode: bool = False,
+    external_model_prompt: str | None = None,
 ):
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
@@ -325,6 +380,15 @@ async def create_supervisor_agent(
                 ("tools", "statistics"),
             ],
         ),
+        "synthesis": WorkerConfig(
+            name="synthesis-worker",
+            primary_namespaces=[("tools", "knowledge")],
+            fallback_namespaces=[
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "general"),
+            ],
+        ),
     }
 
     worker_prompts: dict[str, str] = {
@@ -334,6 +398,7 @@ async def create_supervisor_agent(
         "statistics": statistics_prompt,
         "browser": knowledge_prompt,
         "code": knowledge_prompt,
+        "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
     workers = {}
@@ -401,10 +466,60 @@ async def create_supervisor_agent(
             namespace=("agents", "code"),
             prompt_key="code",
         ),
+        AgentDefinition(
+            name="synthesis",
+            description="Syntes och jämförelser av flera källor och modeller",
+            keywords=["synthesis", "syntes", "jämför", "compare", "sammanfatta"],
+            namespace=("agents", "synthesis"),
+            prompt_key="synthesis",
+        ),
     ]
 
     agent_by_name = {definition.name: definition for definition in agent_definitions}
     db_session = dependencies.get("db_session")
+    connector_service = dependencies.get("connector_service")
+    search_space_id = dependencies.get("search_space_id")
+    user_id = dependencies.get("user_id")
+    thread_id = dependencies.get("thread_id")
+    compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
+
+    def _build_compare_external_tool(spec):
+        async def _compare_tool(query: str) -> dict[str, Any]:
+            result = await call_external_model(
+                spec=spec,
+                query=query,
+                system_prompt=compare_external_prompt,
+            )
+            if connector_service:
+                try:
+                    document = await connector_service.ingest_tool_output(
+                        tool_name=spec.tool_name,
+                        tool_output=result,
+                        metadata={
+                            "provider": result.get("provider"),
+                            "model": result.get("model"),
+                            "model_display_name": result.get("model_display_name"),
+                            "source": result.get("source"),
+                        },
+                        user_id=user_id,
+                        origin_search_space_id=search_space_id,
+                        thread_id=thread_id,
+                    )
+                    if document and getattr(document, "chunks", None):
+                        result["document_id"] = document.id
+                        result["citation_chunk_ids"] = [
+                            str(chunk.id) for chunk in document.chunks
+                        ]
+                except Exception as exc:
+                    print(
+                        f"[compare] Failed to ingest {spec.tool_name}: {exc!s}"
+                    )
+            return result
+
+        return tool(
+            spec.tool_name,
+            description=f"Call external model {spec.display} for compare mode.",
+        )(_compare_tool)
 
     @tool
     async def retrieve_agents(
@@ -464,6 +579,7 @@ async def create_supervisor_agent(
                     "action": ["action", "media"],
                     "knowledge": ["knowledge", "browser"],
                     "statistics": ["statistics"],
+                    "compare": ["synthesis", "knowledge", "statistics"],
                 }.get(str(route_hint), [])
                 if preferred:
                     preferred_defs = [
@@ -495,7 +611,11 @@ async def create_supervisor_agent(
         return json.dumps({"agents": payload}, ensure_ascii=True)
 
     @tool
-    async def call_agent(agent_name: str, task: str) -> str:
+    async def call_agent(
+        agent_name: str,
+        task: str,
+        state: Annotated[dict[str, Any], InjectedState] | None = None,
+    ) -> str:
         """Call a specialized agent with a task."""
         name = (agent_name or "").strip().lower()
         worker = workers.get(name)
@@ -503,6 +623,12 @@ async def create_supervisor_agent(
             return json.dumps(
                 {"error": f"Agent '{agent_name}' not available."}, ensure_ascii=True
             )
+        if name == "synthesis" and state:
+            compare_context = _format_compare_outputs_for_prompt(
+                state.get("compare_outputs") or []
+            )
+            if compare_context and "<compare_outputs>" not in task:
+                task = f"{task}\n\n{compare_context}"
         prompt = worker_prompts.get(name, "")
         messages = []
         if prompt:
@@ -554,6 +680,9 @@ async def create_supervisor_agent(
         "write_todos": create_write_todos_tool(),
         "reflect_on_progress": create_reflect_on_progress_tool(),
     }
+    if compare_mode:
+        for spec in EXTERNAL_MODEL_SPECS:
+            tool_registry[spec.tool_name] = _build_compare_external_tool(spec)
 
     llm_with_tools = llm.bind_tools(list(tool_registry.values()))
     tool_node = ToolNode(tool_registry.values())
@@ -605,6 +734,7 @@ async def create_supervisor_agent(
     ) -> SupervisorState:
         updates: dict[str, Any] = {}
         recent_updates: list[dict[str, Any]] = []
+        compare_updates: list[dict[str, Any]] = []
         plan_update: list[dict[str, Any]] | None = None
         plan_complete: bool | None = None
         last_call_payload: dict[str, Any] | None = None
@@ -639,6 +769,19 @@ async def create_supervisor_agent(
                             "response": payload.get("response"),
                         }
                     )
+            elif tool_name in _EXTERNAL_MODEL_TOOL_NAMES:
+                if payload and payload.get("status") == "success":
+                    compare_updates.append(
+                        {
+                            "tool_call_id": getattr(message, "tool_call_id", None),
+                            "tool_name": tool_name,
+                            "model_display_name": payload.get("model_display_name"),
+                            "model": payload.get("model"),
+                            "response": payload.get("response"),
+                            "summary": payload.get("summary"),
+                            "citation_chunk_ids": payload.get("citation_chunk_ids"),
+                        }
+                    )
             if plan_update and last_call_payload:
                 break
 
@@ -648,6 +791,8 @@ async def create_supervisor_agent(
             updates["plan_complete"] = plan_complete
         if recent_updates:
             updates["recent_agent_calls"] = recent_updates
+        if compare_updates:
+            updates["compare_outputs"] = compare_updates
 
         if last_call_payload:
             critic_payload = last_call_payload.get("critic") or {}

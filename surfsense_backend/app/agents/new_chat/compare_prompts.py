@@ -1,3 +1,10 @@
+from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CITATION_INSTRUCTIONS,
+    SURFSENSE_NO_CITATION_INSTRUCTIONS,
+    append_datetime_context,
+)
+
+
 DEFAULT_COMPARE_ANALYSIS_PROMPT = (
     "Du är Oneseek Compare Analyzer. Din roll är att syntetisera ett högkvalitativt "
     "svar från en användarfråga, flera verktygssvar från externa modeller och "
@@ -49,3 +56,27 @@ DEFAULT_COMPARE_ANALYSIS_PROMPT = (
     "- Vill du ha en sammanfattning av konsensus vs kontrovers?\n\n"
     "Hitta inte på information. Var saklig och transparent."
 )
+
+COMPARE_SUPERVISOR_INSTRUCTIONS = """
+<compare_mode>
+Du kör compare-läge.
+
+Instruktioner:
+- Kör flera externa modellverktyg parallellt i EN och samma verktygskall (t.ex. call_gpt + call_claude + call_grok).
+- Vänta på alla verktygssvar innan du går vidare.
+- Anropa därefter synthesis-agenten för att skapa slutsvaret.
+- Svara inte själv med slutsvaret; låt synthesis-agenten göra syntesen.
+- Om användaren saknar jämförelseobjekt eller scope, ställ EN kort förtydligande fråga.
+</compare_mode>
+""".strip()
+
+
+def build_compare_synthesis_prompt(
+    base_prompt: str,
+    *,
+    citations_enabled: bool,
+) -> str:
+    prompt = append_datetime_context(base_prompt.strip())
+    if citations_enabled:
+        return prompt + "\n\n" + SURFSENSE_CITATION_INSTRUCTIONS
+    return prompt + "\n\n" + SURFSENSE_NO_CITATION_INSTRUCTIONS

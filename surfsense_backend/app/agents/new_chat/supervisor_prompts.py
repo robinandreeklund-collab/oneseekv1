@@ -29,6 +29,7 @@ Tillgangliga agenter (hamtas via retrieve_agents):
 - knowledge: SurfSense, Tavily, generell kunskap
 - code: kodkalkyler och berakningar (om tillgangligt)
 - browser: webbsokning och scrape
+- synthesis: syntes och jamforelser av flera källor
 
 Today's date (UTC): {resolved_today}
 Current time (UTC): {resolved_time}

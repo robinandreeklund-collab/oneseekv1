@@ -43,6 +43,13 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "jobad_links_search": ("tools", "action", "data"),
     "write_todos": ("tools", "general", "planning"),
     "reflect_on_progress": ("tools", "general", "reflection"),
+    "call_grok": ("tools", "compare", "external"),
+    "call_gpt": ("tools", "compare", "external"),
+    "call_claude": ("tools", "compare", "external"),
+    "call_gemini": ("tools", "compare", "external"),
+    "call_deepseek": ("tools", "compare", "external"),
+    "call_perplexity": ("tools", "compare", "external"),
+    "call_qwen": ("tools", "compare", "external"),
 }
 
 TOOL_KEYWORDS: dict[str, list[str]] = {
@@ -82,6 +89,13 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "jobad_links_search": ["jobb", "job", "annons", "arbetsformedlingen"],
     "write_todos": ["plan", "todo", "planera", "steg"],
     "reflect_on_progress": ["reflektion", "sammanfatta", "status"],
+    "call_grok": ["grok", "xai", "modell"],
+    "call_gpt": ["gpt", "chatgpt", "openai", "modell"],
+    "call_claude": ["claude", "anthropic", "modell"],
+    "call_gemini": ["gemini", "google", "modell"],
+    "call_deepseek": ["deepseek", "modell"],
+    "call_perplexity": ["perplexity", "modell"],
+    "call_qwen": ["qwen", "alibaba", "modell"],
 }
 
 

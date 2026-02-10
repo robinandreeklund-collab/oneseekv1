@@ -35,5 +35,6 @@ ROUTE_CITATIONS_ENABLED: dict[Route, bool] = {
     Route.KNOWLEDGE: True,
     Route.ACTION: False,
     Route.SMALLTALK: False,
+    Route.COMPARE: True,
     Route.STATISTICS: True,
 }

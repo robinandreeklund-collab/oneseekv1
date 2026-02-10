@@ -338,7 +338,6 @@ def create_external_model_tool(spec: ExternalModelSpec):
     The tool uses the global LLM config ID specified in the spec.
     """
 
-    @tool(name=spec.tool_name)
     async def external_model_tool(query: str) -> dict[str, Any]:
         """
         Call an externally configured model for compare mode.
@@ -352,4 +351,7 @@ def create_external_model_tool(spec: ExternalModelSpec):
 
         return await call_external_model(spec=spec, query=query)
 
-    return external_model_tool
+    return tool(
+        spec.tool_name,
+        description=f"Call the external model {spec.display} for compare.",
+    )(external_model_tool)

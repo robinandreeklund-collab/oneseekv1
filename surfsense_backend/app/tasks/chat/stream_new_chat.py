@@ -33,6 +33,11 @@ from app.agents.new_chat.bigtool_prompts import (
     DEFAULT_WORKER_KNOWLEDGE_PROMPT,
     build_worker_prompt,
 )
+from app.agents.new_chat.compare_prompts import (
+    COMPARE_SUPERVISOR_INSTRUCTIONS,
+    DEFAULT_COMPARE_ANALYSIS_PROMPT,
+    build_compare_synthesis_prompt,
+)
 from app.agents.new_chat.dispatcher import (
     DEFAULT_ROUTE_SYSTEM_PROMPT,
     dispatch_route,
@@ -52,6 +57,7 @@ from app.agents.new_chat.subagent_utils import (
     SMALLTALK_INSTRUCTIONS,
     build_subagent_config,
 )
+from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
 from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.db import ChatTraceSession, Document, SurfsenseDocsDocument, async_session_maker
 from app.schemas.new_chat import ChatAttachment
@@ -63,7 +69,10 @@ from app.agents.new_chat.tools.user_memory import create_save_memory_tool
 from app.services.connector_service import ConnectorService
 from app.services.new_streaming_service import VercelStreamingService
 from app.services.trace_service import TraceRecorder
-from app.tasks.chat.stream_compare_chat import is_compare_request, stream_compare_chat
+from app.tasks.chat.stream_compare_chat import (
+    extract_compare_query,
+    is_compare_request,
+)
 from app.tasks.chat.context_formatters import (
     format_attachments_as_context,
     format_mentioned_documents_as_context,
@@ -282,6 +291,9 @@ async def stream_new_chat(
         str: SSE formatted response strings
     """
     streaming_service = VercelStreamingService()
+    raw_user_query = user_query
+    compare_mode = is_compare_request(user_query)
+    compare_query = extract_compare_query(user_query) if compare_mode else ""
 
     # Track the current text block for streaming (defined early for exception handling)
     current_text_id: str | None = None
@@ -294,9 +306,10 @@ async def stream_new_chat(
             await set_ai_responding(session, chat_id, UUID(user_id))
 
         # Auto-save user memories from the raw query (best-effort)
-        if user_id and user_query:
+        memory_query = compare_query or user_query
+        if user_id and memory_query:
             try:
-                auto_memories = extract_auto_memories(user_query)
+                auto_memories = extract_auto_memories(memory_query)
                 if auto_memories:
                     save_memory = create_save_memory_tool(
                         user_id=user_id,
@@ -308,20 +321,6 @@ async def stream_new_chat(
             except Exception as exc:
                 print(f"[auto-memory] Failed to save memories: {exc!s}")
 
-        if is_compare_request(user_query):
-            async for chunk in stream_compare_chat(
-                user_query=user_query,
-                search_space_id=search_space_id,
-                chat_id=chat_id,
-                session=session,
-                user_id=user_id,
-                llm_config_id=llm_config_id,
-                attachments=attachments,
-                mentioned_document_ids=mentioned_document_ids,
-                mentioned_surfsense_doc_ids=mentioned_surfsense_doc_ids,
-            ):
-                yield chunk
-            return
         try:
             trace_db_session = async_session_maker()
             trace_session = ChatTraceSession(
@@ -338,7 +337,7 @@ async def stream_new_chat(
                 streaming_service=streaming_service,
                 root_name="Chat Response",
                 root_input={
-                    "query": user_query,
+                    "query": raw_user_query,
                     "attachments": [a.name for a in attachments or []],
                     "mentioned_document_ids": mentioned_document_ids or [],
                     "mentioned_surfsense_doc_ids": mentioned_surfsense_doc_ids or [],
@@ -408,12 +407,14 @@ async def stream_new_chat(
         )
 
         route = await dispatch_route(
-            user_query,
+            raw_user_query,
             llm,
             has_attachments=bool(attachments),
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
             system_prompt_override=router_prompt,
         )
+        if route == Route.COMPARE and compare_query:
+            user_query = compare_query
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
@@ -425,6 +426,10 @@ async def stream_new_chat(
             DEFAULT_SUPERVISOR_PROMPT,
         )
         supervisor_system_prompt = build_supervisor_prompt(supervisor_prompt)
+        if route == Route.COMPARE:
+            supervisor_system_prompt = (
+                supervisor_system_prompt + "\n\n" + COMPARE_SUPERVISOR_INSTRUCTIONS
+            )
 
         knowledge_prompt = resolve_prompt(
             prompt_overrides,
@@ -448,6 +453,19 @@ async def stream_new_chat(
             DEFAULT_STATISTICS_SYSTEM_PROMPT,
         )
         statistics_worker_prompt = build_statistics_system_prompt(statistics_prompt)
+        compare_analysis_prompt = resolve_prompt(
+            prompt_overrides,
+            "compare.analysis.system",
+            DEFAULT_COMPARE_ANALYSIS_PROMPT,
+        )
+        compare_synthesis_prompt = build_compare_synthesis_prompt(
+            compare_analysis_prompt, citations_enabled=citations_enabled
+        )
+        compare_external_prompt = resolve_prompt(
+            prompt_overrides,
+            "compare.external.system",
+            DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+        )
 
         if route == Route.SMALLTALK:
             smalltalk_prompt = resolve_prompt(
@@ -475,7 +493,7 @@ async def stream_new_chat(
                 name="Routing request",
                 kind="middleware",
                 parent_id=trace_recorder.root_span_id,
-                input_data={"query": user_query},
+                input_data={"query": raw_user_query},
                 meta=route_meta,
             )
             if route_start:
@@ -521,6 +539,9 @@ async def stream_new_chat(
                 knowledge_prompt=knowledge_worker_prompt,
                 action_prompt=action_worker_prompt,
                 statistics_prompt=statistics_worker_prompt,
+                synthesis_prompt=compare_synthesis_prompt,
+                compare_mode=route == Route.COMPARE,
+                external_model_prompt=compare_external_prompt,
             )
         else:
             # Fallback to deep agent for smalltalk

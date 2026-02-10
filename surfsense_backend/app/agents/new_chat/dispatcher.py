@@ -78,10 +78,11 @@ _STATISTICS_PATTERNS = [
 DEFAULT_ROUTE_SYSTEM_PROMPT = (
     "You are a routing classifier for SurfSense.\n"
     "Decide the best route for the user's message.\n"
-    "Return ONLY one of: knowledge, action, smalltalk, statistics.\n"
+    "Return ONLY one of: knowledge, action, smalltalk, statistics, compare.\n"
     "Use 'knowledge' for anything that needs searching user data, docs, or memory.\n"
     "Use 'action' for tool execution (scrape, link preview, podcast, weather, routes).\n"
     "Use 'statistics' for SCB/statistics questions and official data requests.\n"
+    "Use 'compare' only when the user explicitly starts with /compare.\n"
     "Use 'smalltalk' for greetings, chit-chat, or simple conversation without tools."
 )
 
@@ -97,11 +98,19 @@ def _normalize_route(value: str) -> Route | None:
     if not value:
         return None
     lowered = value.strip().lower()
-    for route in (Route.KNOWLEDGE, Route.ACTION, Route.SMALLTALK, Route.STATISTICS):
+    for route in (
+        Route.KNOWLEDGE,
+        Route.ACTION,
+        Route.SMALLTALK,
+        Route.STATISTICS,
+        Route.COMPARE,
+    ):
         if route.value in lowered:
             return route
     if "statistik" in lowered:
         return Route.STATISTICS
+    if "compare" in lowered:
+        return Route.COMPARE
     return None
 
 
@@ -116,6 +125,9 @@ async def dispatch_route(
     text = (user_query or "").strip()
     if not text:
         return Route.SMALLTALK
+
+    if text.lower().startswith("/compare"):
+        return Route.COMPARE
 
     if has_attachments or has_mentions:
         return Route.KNOWLEDGE
