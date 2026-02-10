@@ -34,6 +34,7 @@ Key goals:
 - Allow cross-workflows (e.g., statistics -> media) in one session
 - Keep routing deterministic and lightweight
 - Keep tool usage and citations consistent
+- Cache common agent combinations for sub-second reuse
 
 ---
 
@@ -142,7 +143,18 @@ Behavior:
 - If plan exists and not complete: continue
 - If plan complete or topic shift: create new plan
 - `write_todos` updates plan + can set `plan_complete`
+- When `plan_complete` is true, the next message starts a fresh plan
 - `reflect_on_progress` runs after each step
+
+### 5.1) Agent-combo cache (sub-second reuse)
+
+The Supervisor caches common agent combinations to avoid recomputing
+`retrieve_agents()` on repeated patterns (e.g., statistics -> media).
+
+- **In-memory cache**: fastest path for repeated queries
+- **Database cache**: persistent across restarts (`agent_combo_cache`)
+- Cache key includes route hint + recent agent calls + query tokens
+- TTL: ~20 minutes (in-memory), DB keeps hit_count/last_used_at
 
 ---
 
@@ -197,6 +209,8 @@ Steps show:
 - reflect_on_progress notes
 
 Critic output (quality check) is shown in steps, not user response.
+The critic micro-step runs after each worker call to detect missing data
+(`needs_more`) and can keep the plan active.
 
 ---
 
