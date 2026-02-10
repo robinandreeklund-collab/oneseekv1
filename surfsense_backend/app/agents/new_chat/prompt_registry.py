@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from app.agents.new_chat.action_router import DEFAULT_ACTION_ROUTE_PROMPT
+from app.agents.new_chat.bolag_prompts import DEFAULT_BOLAG_SYSTEM_PROMPT
 from app.agents.new_chat.bigtool_prompts import (
     DEFAULT_WORKER_ACTION_PROMPT,
     DEFAULT_WORKER_KNOWLEDGE_PROMPT,
@@ -20,6 +21,7 @@ from app.agents.new_chat.subagent_utils import (
 )
 from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PROMPT
 from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
+from app.agents.new_chat.trafik_prompts import DEFAULT_TRAFFIC_SYSTEM_PROMPT
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
 
@@ -121,6 +123,18 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Statistics agent prompt",
         description="System prompt for the SCB statistics agent.",
         default_prompt=DEFAULT_STATISTICS_SYSTEM_PROMPT,
+    ),
+    PromptDefinition(
+        key="agent.bolag.system",
+        label="Bolag agent prompt",
+        description="System prompt for Bolagsverket tools.",
+        default_prompt=DEFAULT_BOLAG_SYSTEM_PROMPT,
+    ),
+    PromptDefinition(
+        key="agent.trafik.system",
+        label="Trafik agent prompt",
+        description="System prompt for Trafikverket tools.",
+        default_prompt=DEFAULT_TRAFFIC_SYSTEM_PROMPT,
     ),
     PromptDefinition(
         key="compare.analysis.system",

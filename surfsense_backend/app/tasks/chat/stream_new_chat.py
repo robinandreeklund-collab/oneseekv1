@@ -34,6 +34,10 @@ from app.agents.new_chat.bigtool_prompts import (
     build_worker_prompt,
 )
 from app.agents.new_chat.bigtool_store import get_tool_rerank_trace
+from app.agents.new_chat.bolag_prompts import (
+    DEFAULT_BOLAG_SYSTEM_PROMPT,
+    build_bolag_prompt,
+)
 from app.agents.new_chat.compare_prompts import (
     COMPARE_SUPERVISOR_INSTRUCTIONS,
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
@@ -57,6 +61,10 @@ from app.agents.new_chat.statistics_prompts import (
 from app.agents.new_chat.subagent_utils import (
     SMALLTALK_INSTRUCTIONS,
     build_subagent_config,
+)
+from app.agents.new_chat.trafik_prompts import (
+    DEFAULT_TRAFFIC_SYSTEM_PROMPT,
+    build_trafik_prompt,
 )
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
 from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
@@ -456,6 +464,18 @@ async def stream_new_chat(
             DEFAULT_STATISTICS_SYSTEM_PROMPT,
         )
         statistics_worker_prompt = build_statistics_system_prompt(statistics_prompt)
+        bolag_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.bolag.system",
+            DEFAULT_BOLAG_SYSTEM_PROMPT,
+        )
+        bolag_worker_prompt = build_bolag_prompt(bolag_prompt)
+        trafik_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.trafik.system",
+            DEFAULT_TRAFFIC_SYSTEM_PROMPT,
+        )
+        trafik_worker_prompt = build_trafik_prompt(trafik_prompt)
         compare_analysis_prompt = resolve_prompt(
             prompt_overrides,
             "compare.analysis.system",
@@ -545,6 +565,8 @@ async def stream_new_chat(
                 synthesis_prompt=compare_synthesis_prompt,
                 compare_mode=route == Route.COMPARE,
                 external_model_prompt=compare_external_prompt,
+                bolag_prompt=bolag_worker_prompt,
+                trafik_prompt=trafik_worker_prompt,
             )
         else:
             # Fallback to deep agent for smalltalk

@@ -506,6 +506,8 @@ async def create_supervisor_agent(
     synthesis_prompt: str | None = None,
     compare_mode: bool = False,
     external_model_prompt: str | None = None,
+    bolag_prompt: str | None = None,
+    trafik_prompt: str | None = None,
 ):
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
@@ -600,8 +602,8 @@ async def create_supervisor_agent(
         "statistics": statistics_prompt,
         "browser": knowledge_prompt,
         "code": knowledge_prompt,
-        "bolag": knowledge_prompt,
-        "trafik": action_prompt,
+        "bolag": bolag_prompt or knowledge_prompt,
+        "trafik": trafik_prompt or action_prompt,
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
