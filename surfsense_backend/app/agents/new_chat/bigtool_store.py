@@ -10,6 +10,7 @@ from app.agents.new_chat.statistics_agent import (
     SCB_TOOL_DEFINITIONS,
     build_scb_tool_registry,
 )
+from app.services.reranker_service import RerankerService
 from app.agents.new_chat.tools.registry import (
     build_tools_async,
     get_default_enabled_tools,
@@ -25,6 +26,7 @@ class ToolIndexEntry:
     keywords: list[str]
     example_queries: list[str]
     category: str
+    embedding: list[float] | None = None
 
 
 TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
@@ -98,6 +100,10 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "call_qwen": ["qwen", "alibaba", "modell"],
 }
 
+TOOL_RERANK_CANDIDATES = 24
+TOOL_EMBEDDING_WEIGHT = 4.0
+_TOOL_EMBED_CACHE: dict[str, list[float]] = {}
+
 
 def _normalize_text(text: str) -> str:
     lowered = (text or "").lower()
@@ -153,6 +159,114 @@ def _score_entry(entry: ToolIndexEntry, query_tokens: set[str], query_norm: str)
     return score
 
 
+def _build_rerank_text(entry: ToolIndexEntry) -> str:
+    parts: list[str] = []
+    if entry.name:
+        parts.append(entry.name)
+    if entry.description:
+        parts.append(entry.description)
+    if entry.keywords:
+        parts.append("Keywords: " + ", ".join(entry.keywords))
+    if entry.example_queries:
+        parts.append("Examples: " + " | ".join(entry.example_queries))
+    return "\n".join(part for part in parts if part)
+
+
+def _normalize_vector(vector: Any) -> list[float] | None:
+    if vector is None:
+        return None
+    if isinstance(vector, list):
+        return vector
+    try:
+        return [float(value) for value in vector]
+    except Exception:
+        return None
+
+
+def _get_embedding_for_tool(tool_id: str, text: str) -> list[float] | None:
+    if tool_id in _TOOL_EMBED_CACHE:
+        return _TOOL_EMBED_CACHE[tool_id]
+    if not text:
+        return None
+    try:
+        from app.config import config
+    except Exception:
+        return None
+    try:
+        embedding = config.embedding_model_instance.embed(text)
+    except Exception:
+        return None
+    normalized = _normalize_vector(embedding)
+    if normalized is None:
+        return None
+    _TOOL_EMBED_CACHE[tool_id] = normalized
+    return normalized
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    dot = 0.0
+    norm_left = 0.0
+    norm_right = 0.0
+    for a, b in zip(left, right):
+        dot += a * b
+        norm_left += a * a
+        norm_right += b * b
+    if norm_left == 0.0 or norm_right == 0.0:
+        return 0.0
+    return dot / ((norm_left**0.5) * (norm_right**0.5))
+
+
+def _rerank_tool_candidates(
+    query: str,
+    *,
+    candidate_ids: list[str],
+    tool_index_by_id: dict[str, ToolIndexEntry],
+    scores_by_id: dict[str, int],
+) -> list[str]:
+    if len(candidate_ids) <= 1:
+        return candidate_ids
+    reranker = RerankerService.get_reranker_instance()
+    if not reranker:
+        return candidate_ids
+    documents: list[dict[str, Any]] = []
+    for tool_id in candidate_ids:
+        entry = tool_index_by_id.get(tool_id)
+        if not entry:
+            continue
+        content = _build_rerank_text(entry) or entry.name or tool_id
+        documents.append(
+            {
+                "document_id": tool_id,
+                "content": content,
+                "score": float(scores_by_id.get(tool_id, 0)),
+                "document": {
+                    "id": tool_id,
+                    "title": entry.name or tool_id,
+                    "document_type": "TOOL",
+                },
+            }
+        )
+    if not documents:
+        return candidate_ids
+    reranked = reranker.rerank_documents(query, documents)
+    if not reranked:
+        return candidate_ids
+    reranked_ids = [
+        str(doc.get("document_id"))
+        for doc in reranked
+        if doc.get("document_id")
+    ]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for tool_id in reranked_ids + candidate_ids:
+        if tool_id and tool_id not in seen:
+            ordered.append(tool_id)
+            seen.add(tool_id)
+    return ordered
+
+
 def smart_retrieve_tools(
     query: str,
     *,
@@ -164,29 +278,65 @@ def smart_retrieve_tools(
     query_norm = _normalize_text(query)
     query_tokens = set(_tokenize(query_norm))
     fallback_namespaces = fallback_namespaces or []
+    query_embedding: list[float] | None = None
+    if query:
+        try:
+            from app.config import config
 
-    primary_scored: list[tuple[str, int]] = []
-    fallback_scored: list[tuple[str, int]] = []
+            query_embedding = _normalize_vector(
+                config.embedding_model_instance.embed(query)
+            )
+        except Exception:
+            query_embedding = None
+
+    primary_scored: list[tuple[str, float]] = []
+    fallback_scored: list[tuple[str, float]] = []
 
     for entry in tool_index:
-        base_score = _score_entry(entry, query_tokens, query_norm)
+        base_score = float(_score_entry(entry, query_tokens, query_norm))
+        semantic_score = 0.0
+        if query_embedding and entry.embedding:
+            semantic_score = _cosine_similarity(query_embedding, entry.embedding)
+        total_score = base_score + (semantic_score * TOOL_EMBEDDING_WEIGHT)
         namespace_score = 0
         if any(_match_namespace(entry.namespace, prefix) for prefix in primary_namespaces):
             namespace_score = 3
-            primary_scored.append((entry.tool_id, base_score + namespace_score))
+            primary_scored.append((entry.tool_id, total_score + namespace_score))
         elif any(_match_namespace(entry.namespace, prefix) for prefix in fallback_namespaces):
-            fallback_scored.append((entry.tool_id, base_score))
+            fallback_scored.append((entry.tool_id, total_score))
 
     primary_scored.sort(key=lambda item: item[1], reverse=True)
     fallback_scored.sort(key=lambda item: item[1], reverse=True)
 
+    tool_index_by_id = {entry.tool_id: entry for entry in tool_index}
+    scores_by_id = {tool_id: score for tool_id, score in primary_scored}
+    scores_by_id.update({tool_id: score for tool_id, score in fallback_scored})
+
+    candidate_ids: list[str] = []
     if primary_scored and primary_scored[0][1] > 0:
-        return [tool_id for tool_id, _ in primary_scored[:limit]]
-    if fallback_scored and fallback_scored[0][1] > 0:
-        return [tool_id for tool_id, _ in fallback_scored[:limit]]
-    if primary_scored:
-        return [tool_id for tool_id, _ in primary_scored[:limit]]
-    return [tool_id for tool_id, _ in fallback_scored[:limit]]
+        candidate_ids = [
+            tool_id for tool_id, _ in primary_scored[:TOOL_RERANK_CANDIDATES]
+        ]
+    elif fallback_scored and fallback_scored[0][1] > 0:
+        candidate_ids = [
+            tool_id for tool_id, _ in fallback_scored[:TOOL_RERANK_CANDIDATES]
+        ]
+    elif primary_scored:
+        candidate_ids = [
+            tool_id for tool_id, _ in primary_scored[:TOOL_RERANK_CANDIDATES]
+        ]
+    else:
+        candidate_ids = [
+            tool_id for tool_id, _ in fallback_scored[:TOOL_RERANK_CANDIDATES]
+        ]
+
+    reranked_ids = _rerank_tool_candidates(
+        query,
+        candidate_ids=candidate_ids,
+        tool_index_by_id=tool_index_by_id,
+        scores_by_id=scores_by_id,
+    )
+    return reranked_ids[:limit]
 
 
 def make_smart_retriever(
@@ -255,15 +405,27 @@ def build_tool_index(
             keywords = list(definition.keywords)
             example_queries = list(definition.example_queries)
             category = "statistics"
+        entry = ToolIndexEntry(
+            tool_id=tool_id,
+            namespace=namespace_for_tool(tool_id),
+            name=getattr(tool, "name", tool_id),
+            description=description,
+            keywords=keywords,
+            example_queries=example_queries,
+            category=category,
+        )
+        embedding_text = _build_rerank_text(entry)
+        embedding = _get_embedding_for_tool(tool_id, embedding_text)
         entries.append(
             ToolIndexEntry(
-                tool_id=tool_id,
-                namespace=namespace_for_tool(tool_id),
-                name=getattr(tool, "name", tool_id),
-                description=description,
-                keywords=keywords,
-                example_queries=example_queries,
-                category=category,
+                tool_id=entry.tool_id,
+                namespace=entry.namespace,
+                name=entry.name,
+                description=entry.description,
+                keywords=entry.keywords,
+                example_queries=entry.example_queries,
+                category=entry.category,
+                embedding=embedding,
             )
         )
     return entries
