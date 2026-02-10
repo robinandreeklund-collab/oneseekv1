@@ -33,13 +33,17 @@ from app.agents.new_chat.bigtool_prompts import (
     DEFAULT_WORKER_KNOWLEDGE_PROMPT,
     build_worker_prompt,
 )
-from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
 from app.agents.new_chat.dispatcher import (
     DEFAULT_ROUTE_SYSTEM_PROMPT,
     dispatch_route,
 )
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.routing import Route, ROUTE_CITATIONS_ENABLED, ROUTE_TOOL_SETS
+from app.agents.new_chat.supervisor_agent import create_supervisor_agent
+from app.agents.new_chat.supervisor_prompts import (
+    DEFAULT_SUPERVISOR_PROMPT,
+    build_supervisor_prompt,
+)
 from app.agents.new_chat.statistics_prompts import (
     DEFAULT_STATISTICS_SYSTEM_PROMPT,
     build_statistics_system_prompt,
@@ -394,69 +398,49 @@ async def stream_new_chat(
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
             system_prompt_override=router_prompt,
         )
-        worker_config: WorkerConfig | None = None
         worker_system_prompt: str | None = None
+        supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
 
         citations_enabled = ROUTE_CITATIONS_ENABLED.get(route, True)
-        if route == Route.KNOWLEDGE:
-            knowledge_prompt = resolve_prompt(
-                prompt_overrides,
-                "agent.worker.knowledge",
-                DEFAULT_WORKER_KNOWLEDGE_PROMPT,
-            )
-            worker_system_prompt = build_worker_prompt(
-                knowledge_prompt, citations_enabled=citations_enabled
-            )
-            worker_config = WorkerConfig(
-                name="knowledge-worker",
-                primary_namespaces=[("tools", "knowledge")],
-                fallback_namespaces=[
-                    ("tools", "action"),
-                    ("tools", "statistics"),
-                    ("tools", "general"),
-                ],
-            )
-        elif route == Route.ACTION:
-            action_prompt = resolve_prompt(
-                prompt_overrides,
-                "agent.worker.action",
-                DEFAULT_WORKER_ACTION_PROMPT,
-            )
-            worker_system_prompt = build_worker_prompt(
-                action_prompt, citations_enabled=citations_enabled
-            )
-            worker_config = WorkerConfig(
-                name="action-worker",
-                primary_namespaces=[("tools", "action")],
-                fallback_namespaces=[
-                    ("tools", "knowledge"),
-                    ("tools", "statistics"),
-                    ("tools", "general"),
-                ],
-            )
-        elif route == Route.STATISTICS:
-            statistics_prompt = resolve_prompt(
-                prompt_overrides,
-                "agent.statistics.system",
-                DEFAULT_STATISTICS_SYSTEM_PROMPT,
-            )
-            worker_system_prompt = build_statistics_system_prompt(statistics_prompt)
-            worker_config = WorkerConfig(
-                name="statistics-worker",
-                primary_namespaces=[("tools", "statistics")],
-                fallback_namespaces=[
-                    ("tools", "action"),
-                    ("tools", "knowledge"),
-                    ("tools", "general"),
-                ],
-            )
-        elif route == Route.SMALLTALK:
+        supervisor_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.supervisor.system",
+            DEFAULT_SUPERVISOR_PROMPT,
+        )
+        supervisor_system_prompt = build_supervisor_prompt(supervisor_prompt)
+
+        knowledge_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.worker.knowledge",
+            DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+        )
+        knowledge_worker_prompt = build_worker_prompt(
+            knowledge_prompt, citations_enabled=True
+        )
+        action_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.worker.action",
+            DEFAULT_WORKER_ACTION_PROMPT,
+        )
+        action_worker_prompt = build_worker_prompt(
+            action_prompt, citations_enabled=False
+        )
+        statistics_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.statistics.system",
+            DEFAULT_STATISTICS_SYSTEM_PROMPT,
+        )
+        statistics_worker_prompt = build_statistics_system_prompt(statistics_prompt)
+
+        if route == Route.SMALLTALK:
             smalltalk_prompt = resolve_prompt(
                 prompt_overrides,
                 "agent.smalltalk.system",
                 SMALLTALK_INSTRUCTIONS,
             )
+        else:
+            worker_system_prompt = supervisor_system_prompt
 
         effective_agent_config = agent_config
         if route == Route.SMALLTALK and smalltalk_prompt:
@@ -506,8 +490,8 @@ async def stream_new_chat(
         # Get the PostgreSQL checkpointer for persistent conversation memory
         checkpointer = await get_checkpointer()
 
-        if worker_config:
-            agent = await create_bigtool_worker(
+        if route != Route.SMALLTALK:
+            agent = await create_supervisor_agent(
                 llm=llm,
                 dependencies={
                     "search_space_id": search_space_id,
@@ -518,10 +502,12 @@ async def stream_new_chat(
                     "thread_id": chat_id,
                 },
                 checkpointer=checkpointer,
-                config=worker_config,
+                knowledge_prompt=knowledge_worker_prompt,
+                action_prompt=action_worker_prompt,
+                statistics_prompt=statistics_worker_prompt,
             )
         else:
-            # Fallback to deep agent for smalltalk and legacy flows
+            # Fallback to deep agent for smalltalk
             agent = await create_surfsense_deep_agent(
                 llm=llm,
                 search_space_id=search_space_id,
@@ -650,8 +636,15 @@ async def stream_new_chat(
             # We will use this to simulate group chat functionality in the future
             "messages": langchain_messages,
         }
-        if not worker_config:
+        if route == Route.SMALLTALK:
             input_state["search_space_id"] = search_space_id
+        else:
+            input_state["selected_tool_ids"] = [
+                "retrieve_agents",
+                "call_agent",
+                "write_todos",
+                "reflect_on_progress",
+            ]
 
         # Configure LangGraph with thread_id for memory
         # If checkpoint_id is provided, fork from that checkpoint (for edit/reload)

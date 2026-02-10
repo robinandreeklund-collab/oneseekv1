@@ -19,6 +19,7 @@ from app.agents.new_chat.subagent_utils import (
     SMALLTALK_INSTRUCTIONS,
 )
 from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PROMPT
+from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
 
@@ -96,6 +97,12 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Smalltalk instructions",
         description="Instructions for casual chat without tools.",
         default_prompt=SMALLTALK_INSTRUCTIONS,
+    ),
+    PromptDefinition(
+        key="agent.supervisor.system",
+        label="Supervisor prompt",
+        description="System prompt for the supervisor agent.",
+        default_prompt=DEFAULT_SUPERVISOR_PROMPT,
     ),
     PromptDefinition(
         key="agent.worker.knowledge",
