@@ -638,13 +638,6 @@ async def stream_new_chat(
         }
         if route == Route.SMALLTALK:
             input_state["search_space_id"] = search_space_id
-        else:
-            input_state["selected_tool_ids"] = [
-                "retrieve_agents",
-                "call_agent",
-                "write_todos",
-                "reflect_on_progress",
-            ]
 
         # Configure LangGraph with thread_id for memory
         # If checkpoint_id is provided, fork from that checkpoint (for edit/reload)

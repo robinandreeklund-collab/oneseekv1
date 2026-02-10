@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Annotated, TypedDict
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 from langchain_core.tools import tool
+from langgraph.graph.message import add_messages
 from langgraph.types import Checkpointer
-from langgraph_bigtool import create_agent as create_bigtool_agent
+from langgraph_bigtool.graph import END, StateGraph, ToolNode, RunnableCallable
+from langgraph_bigtool.tools import InjectedState
 
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
@@ -44,16 +46,84 @@ def _smart_retrieve_agents(
     query: str,
     *,
     agent_definitions: list[AgentDefinition],
+    recent_agents: list[str] | None = None,
     limit: int = 3,
 ) -> list[AgentDefinition]:
     query_norm = _normalize_text(query)
     tokens = set(_tokenize(query_norm))
+    recent_agents = [agent for agent in (recent_agents or []) if agent]
     scored = [
         (definition, _score_agent(definition, query_norm, tokens))
         for definition in agent_definitions
     ]
+    if recent_agents:
+        for idx, (definition, score) in enumerate(scored):
+            if definition.name in recent_agents:
+                scored[idx] = (definition, score + 4)
     scored.sort(key=lambda item: item[1], reverse=True)
     return [definition for definition, _ in scored[:limit]]
+
+
+def _replace(left: Any, right: Any) -> Any:
+    return right if right is not None else left
+
+
+def _append_recent(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    merged = list(left or [])
+    merged.extend(right or [])
+    return merged[-3:]
+
+
+class SupervisorState(TypedDict, total=False):
+    messages: Annotated[list[Any], add_messages]
+    active_plan: Annotated[list[dict[str, Any]], _replace]
+    plan_complete: Annotated[bool, _replace]
+    recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
+
+
+def _format_plan_context(state: dict[str, Any]) -> str | None:
+    plan = state.get("active_plan") or []
+    if not plan:
+        return None
+    status = "complete" if state.get("plan_complete") else "active"
+    lines = []
+    for item in plan:
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        step_status = str(item.get("status") or "pending").lower()
+        lines.append(f"- [{step_status}] {content}")
+    if not lines:
+        return None
+    return f"<active_plan status=\"{status}\">\n" + "\n".join(lines) + "\n</active_plan>"
+
+
+def _format_recent_calls(state: dict[str, Any]) -> str | None:
+    recent_calls = state.get("recent_agent_calls") or []
+    if not recent_calls:
+        return None
+    lines = []
+    for call in recent_calls[-3:]:
+        agent = call.get("agent")
+        task = call.get("task")
+        response = call.get("response") or ""
+        if response and len(response) > 180:
+            response = response[:177] + "..."
+        lines.append(f"- {agent}: {task} → {response}")
+    if not lines:
+        return None
+    return "<recent_agent_calls>\n" + "\n".join(lines) + "\n</recent_agent_calls>"
+
+
+def _safe_json(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    if not payload:
+        return {}
+    try:
+        return json.loads(payload)
+    except (TypeError, ValueError):
+        return {}
 
 
 async def create_supervisor_agent(
@@ -180,10 +250,36 @@ async def create_supervisor_agent(
     ]
 
     @tool
-    async def retrieve_agents(query: str, limit: int = 3) -> str:
+    async def retrieve_agents(
+        query: str,
+        limit: int = 3,
+        state: Annotated[dict[str, Any], InjectedState] | None = None,
+    ) -> str:
         """Retrieve relevant agents for the task."""
+        recent_agents = []
+        context_query = query
+        if state:
+            recent_calls = state.get("recent_agent_calls") or []
+            recent_agents = [
+                str(call.get("agent"))
+                for call in recent_calls
+                if call.get("agent")
+            ]
+            context_parts = []
+            for call in recent_calls[-3:]:
+                response = str(call.get("response") or "")
+                if len(response) > 120:
+                    response = response[:117] + "..."
+                context_parts.append(
+                    f"{call.get('agent')}: {call.get('task')} {response}"
+                )
+            if context_parts:
+                context_query = f\"{query} {' '.join(context_parts)}\"
         selected = _smart_retrieve_agents(
-            query, agent_definitions=agent_definitions, limit=limit
+            context_query,
+            agent_definitions=agent_definitions,
+            recent_agents=recent_agents,
+            limit=limit,
         )
         payload = [
             {"name": agent.name, "description": agent.description}
@@ -219,7 +315,8 @@ async def create_supervisor_agent(
         if not response_text:
             response_text = str(result)
         return json.dumps(
-            {"agent": name, "response": response_text}, ensure_ascii=True
+            {"agent": name, "task": task, "response": response_text},
+            ensure_ascii=True,
         )
 
     tool_registry = {
@@ -229,22 +326,119 @@ async def create_supervisor_agent(
         "reflect_on_progress": create_reflect_on_progress_tool(),
     }
 
-    def retrieve_tools(query: str) -> list[str]:
-        """Return supervisor tools to bind for this step."""
-        return list(tool_registry.keys())
+    llm_with_tools = llm.bind_tools(list(tool_registry.values()))
+    tool_node = ToolNode(tool_registry.values())
 
-    async def aretrieve_tools(query: str) -> list[str]:
-        """Async wrapper for supervisor tool binding."""
-        return retrieve_tools(query)
+    def call_model(state: SupervisorState, config: dict, *, store=None) -> SupervisorState:
+        messages = list(state.get("messages") or [])
+        plan_context = _format_plan_context(state)
+        recent_context = _format_recent_calls(state)
+        if plan_context:
+            messages = [SystemMessage(content=plan_context)] + messages
+        if recent_context:
+            messages = [SystemMessage(content=recent_context)] + messages
+        response = llm_with_tools.invoke(messages)
+        return {"messages": [response]}
 
-    graph = create_bigtool_agent(
-        llm,
-        tool_registry,
-        limit=3,
-        retrieve_tools_function=retrieve_tools,
-        retrieve_tools_coroutine=aretrieve_tools,
-    )
-    return graph.compile(
-        checkpointer=checkpointer,
-        name="supervisor-agent",
-    )
+    async def acall_model(
+        state: SupervisorState, config: dict, *, store=None
+    ) -> SupervisorState:
+        messages = list(state.get("messages") or [])
+        plan_context = _format_plan_context(state)
+        recent_context = _format_recent_calls(state)
+        if plan_context:
+            messages = [SystemMessage(content=plan_context)] + messages
+        if recent_context:
+            messages = [SystemMessage(content=recent_context)] + messages
+        response = await llm_with_tools.ainvoke(messages)
+        return {"messages": [response]}
+
+    async def post_tools(state: SupervisorState, config: dict, *, store=None) -> SupervisorState:
+        updates: dict[str, Any] = {}
+        recent_updates: list[dict[str, Any]] = []
+        plan_update: list[dict[str, Any]] | None = None
+        plan_complete: bool | None = None
+        last_call_payload: dict[str, Any] | None = None
+
+        for message in reversed(state.get("messages") or []):
+            if not isinstance(message, ToolMessage):
+                continue
+            tool_name = message.name or ""
+            payload = _safe_json(message.content)
+            if tool_name == "write_todos":
+                todos = payload.get("todos") or []
+                if todos:
+                    plan_update = todos
+                    completed = [
+                        str(todo.get("status") or "").lower()
+                        for todo in todos
+                        if isinstance(todo, dict)
+                    ]
+                    if completed:
+                        plan_complete = all(
+                            status in ("completed", "cancelled") for status in completed
+                        )
+                if "plan_complete" in payload:
+                    plan_complete = bool(payload.get("plan_complete"))
+            elif tool_name == "call_agent":
+                last_call_payload = payload
+                if payload:
+                    recent_updates.append(
+                        {
+                            "agent": payload.get("agent"),
+                            "task": payload.get("task"),
+                            "response": payload.get("response"),
+                        }
+                    )
+            if plan_update and last_call_payload:
+                break
+
+        if plan_update is not None:
+            updates["active_plan"] = plan_update
+        if plan_complete is not None:
+            updates["plan_complete"] = plan_complete
+        if recent_updates:
+            updates["recent_agent_calls"] = recent_updates
+
+        if last_call_payload and last_call_payload.get("response"):
+            critic_prompt = (
+                "Du ar en kritisk granskare. Bedom om svaret ar komplett och korrekt. "
+                "Svara kort i JSON med {\"status\": \"ok\"|\"needs_more\", \"reason\": \"...\"}."
+            )
+            critic_input = (
+                f"Uppgift: {last_call_payload.get('task')}\n"
+                f"Svar: {last_call_payload.get('response')}"
+            )
+            critic_msg = await llm.ainvoke(
+                [
+                    SystemMessage(content=critic_prompt),
+                    HumanMessage(content=critic_input),
+                ]
+            )
+            critic_text = str(getattr(critic_msg, "content", "") or "").strip()
+            updates["messages"] = [SystemMessage(content=f"<critic>{critic_text}</critic>")]
+            critic_payload = _safe_json(critic_text)
+            if critic_payload.get("status") == "needs_more":
+                updates["plan_complete"] = False
+
+        return updates
+
+    def should_continue(state: SupervisorState, *, store=None):
+        messages = state.get("messages") or []
+        if not messages:
+            return END
+        last_message = messages[-1]
+        if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
+            return "tools"
+        return END
+
+    graph_builder = StateGraph(SupervisorState)
+    graph_builder.add_node("agent", RunnableCallable(call_model, acall_model))
+    graph_builder.add_node("tools", tool_node)
+    graph_builder.add_node("post_tools", RunnableCallable(None, post_tools))
+    graph_builder.set_entry_point("agent")
+    graph_builder.add_conditional_edges("agent", should_continue, path_map=["tools", END])
+    graph_builder.add_edge("tools", "post_tools")
+    graph_builder.add_edge("post_tools", "agent")
+
+    return graph_builder.compile(checkpointer=checkpointer, name="supervisor-agent")

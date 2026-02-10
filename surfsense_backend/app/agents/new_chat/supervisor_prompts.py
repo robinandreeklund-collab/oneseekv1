@@ -20,6 +20,7 @@ Regler:
 - Om nagot ar oklart: stall en kort foljdfråga istallet for att gissa.
 - Hall svar korta och faktabaserade. Inkludera citations om de kommer fran agenter.
 - Efter varje verktygssteg: kalla reflect_on_progress kort.
+- Nar planen ar klar: kalla write_todos med plan_complete=true.
 
 Tillgangliga agenter (hamtas via retrieve_agents):
 - statistics: SCB, officiell svensk statistik
