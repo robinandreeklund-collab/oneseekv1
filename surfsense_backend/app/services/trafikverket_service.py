@@ -4,9 +4,11 @@ import asyncio
 import hashlib
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
 
 TRAFIKVERKET_BASE_URL = "https://api.trafikinfo.trafikverket.se/v3"
 TRAFIKVERKET_SOURCE = "Trafikverket Open API"
@@ -35,6 +37,10 @@ class TrafikverketService:
         redis_url: str | None = None,
     ) -> None:
         self.api_key = (api_key or os.getenv("TRAFIKVERKET_API_KEY") or "").strip()
+        if not self.api_key:
+            base_dir = Path(__file__).resolve().parent.parent.parent
+            load_dotenv(base_dir / ".env")
+            self.api_key = (os.getenv("TRAFIKVERKET_API_KEY") or "").strip()
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._redis_url = redis_url or os.getenv("REDIS_APP_URL") or ""
