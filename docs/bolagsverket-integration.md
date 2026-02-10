@@ -6,7 +6,9 @@ Syftet är att ge snabba, fokuserade verktyg för bolagsdata utan att explodera 
 ## Översikt
 
 - **Namespace:** `tools/bolag/bolagsverket_*`
-- **Autentisering:** `X-Api-Key` via `BOLAGSVERKET_API_KEY`
+- **Autentisering:**  
+  - `X-Api-Key` via `BOLAGSVERKET_API_KEY`, eller  
+  - OAuth2 client credentials via `BOLAGSVERKET_CLIENT_ID` + `BOLAGSVERKET_CLIENT_SECRET`
 - **Caching:** Redis TTL 1 dag (för GET‑anrop)
 - **Rate‑limit:** Exponentiell backoff vid 429 (retry)
 - **Citations:** Alla verktyg ingestas som `TOOL_OUTPUT` för citat med `chunk_id`
@@ -107,10 +109,20 @@ Syftet är att ge snabba, fokuserade verktyg för bolagsdata utan att explodera 
 
 ## Konfiguration
 
-Lägg till i `.env`:
+Lägg till i `.env` (välj ett av alternativen):
 
+**Alternativ A – API‑nyckel**
 ```
 BOLAGSVERKET_API_KEY="..."
+```
+
+**Alternativ B – Client credentials**
+```
+BOLAGSVERKET_CLIENT_ID="..."
+BOLAGSVERKET_CLIENT_SECRET="..."
+BOLAGSVERKET_TOKEN_URL="..."
+# (valfritt)
+BOLAGSVERKET_SCOPE=""
 ```
 
 Redis används om `REDIS_APP_URL` är satt. Om Redis saknas körs verktygen utan cache.

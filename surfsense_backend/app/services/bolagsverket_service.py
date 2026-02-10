@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from typing import Any
 
 import httpx
@@ -40,10 +41,25 @@ class BolagsverketService:
         redis_url: str | None = None,
     ) -> None:
         self.api_key = (api_key or os.getenv("BOLAGSVERKET_API_KEY") or "").strip()
+        self.client_id = (
+            os.getenv("BOLAGSVERKET_CLIENT_ID") or ""
+        ).strip()
+        self.client_secret = (
+            os.getenv("BOLAGSVERKET_CLIENT_SECRET") or ""
+        ).strip()
+        self.token_url = (
+            os.getenv("BOLAGSVERKET_TOKEN_URL") or ""
+        ).strip()
+        self.token_scope = (
+            os.getenv("BOLAGSVERKET_SCOPE") or ""
+        ).strip()
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._redis_url = redis_url or os.getenv("REDIS_APP_URL") or ""
         self._redis_client = None
+        self._token: str | None = None
+        self._token_expires_at: float = 0.0
+        self._token_lock = asyncio.Lock()
 
     def _get_redis(self):
         if not self._redis_url:
@@ -60,6 +76,45 @@ class BolagsverketService:
             self._redis_client = None
         return self._redis_client
 
+    async def _fetch_token(self) -> str:
+        if not self.client_id or not self.client_secret or not self.token_url:
+            raise ValueError(
+                "Missing Bolagsverket OAuth credentials (client_id, client_secret, token_url)."
+            )
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            data = {
+                "grant_type": "client_credentials",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+            }
+            if self.token_scope:
+                data["scope"] = self.token_scope
+            response = await client.post(self.token_url, data=data)
+            response.raise_for_status()
+            payload = response.json()
+        access_token = str(payload.get("access_token") or "").strip()
+        if not access_token:
+            raise RuntimeError("Bolagsverket OAuth token missing access_token.")
+        expires_in = payload.get("expires_in") or 3600
+        try:
+            expires_in = float(expires_in)
+        except (TypeError, ValueError):
+            expires_in = 3600
+        self._token = access_token
+        self._token_expires_at = time.time() + max(60.0, expires_in - 60.0)
+        return access_token
+
+    async def _get_auth_headers(self) -> dict[str, str]:
+        if self.api_key:
+            return {"X-Api-Key": self.api_key}
+        if self._token and time.time() < self._token_expires_at:
+            return {"Authorization": f"Bearer {self._token}"}
+        async with self._token_lock:
+            if self._token and time.time() < self._token_expires_at:
+                return {"Authorization": f"Bearer {self._token}"}
+            token = await self._fetch_token()
+            return {"Authorization": f"Bearer {token}"}
+
     async def _request_json(
         self,
         method: str,
@@ -69,11 +124,8 @@ class BolagsverketService:
         json_body: dict[str, Any] | None = None,
         cache_ttl: int | None = None,
     ) -> tuple[dict[str, Any], bool]:
-        if not self.api_key:
-            raise ValueError("Missing BOLAGSVERKET_API_KEY for Bolagsverket API.")
-
         url = f"{self.base_url}/{path.lstrip('/')}"
-        headers = {"X-Api-Key": self.api_key}
+        headers = await self._get_auth_headers()
         payload = {"params": params or {}, "json": json_body or {}}
         cache_key = None
         cache_hit = False
@@ -100,6 +152,12 @@ class BolagsverketService:
                         params=params,
                         json=json_body,
                     )
+                if response.status_code == 401 and not self.api_key:
+                    async with self._token_lock:
+                        self._token = None
+                        self._token_expires_at = 0.0
+                    headers = await self._get_auth_headers()
+                    continue
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After")
                     delay = float(retry_after) if retry_after else (0.5 * (2**attempt))
