@@ -63,6 +63,7 @@ Du kör compare-läge.
 
 Instruktioner:
 - Kör flera externa modellverktyg parallellt i EN och samma verktygskall (t.ex. call_gpt + call_claude + call_grok).
+- När du anropar externa modeller: skicka alltid användarens fråga i argumentet "query".
 - Vänta på alla verktygssvar innan du går vidare.
 - Anropa därefter synthesis-agenten för att skapa slutsvaret.
 - Svara inte själv med slutsvaret; låt synthesis-agenten göra syntesen.

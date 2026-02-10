@@ -312,6 +312,29 @@ def _safe_json(payload: Any) -> dict[str, Any]:
         return {}
 
 
+def _sanitize_messages(messages: list[Any]) -> list[Any]:
+    sanitized: list[Any] = []
+    for message in messages:
+        if isinstance(message, ToolMessage) and (message.name or "") == "call_agent":
+            payload = _safe_json(message.content)
+            agent = payload.get("agent") or "agent"
+            response = payload.get("response") or ""
+            if response:
+                content = f"{agent}: {response}"
+            else:
+                content = f"{agent}: completed"
+            sanitized.append(
+                ToolMessage(
+                    content=content,
+                    name=message.name,
+                    tool_call_id=getattr(message, "tool_call_id", None),
+                )
+            )
+        else:
+            sanitized.append(message)
+    return sanitized
+
+
 async def create_supervisor_agent(
     *,
     llm,
@@ -694,7 +717,7 @@ async def create_supervisor_agent(
         store=None,
         **kwargs,
     ) -> SupervisorState:
-        messages = list(state.get("messages") or [])
+        messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
         route_context = _format_route_hint(state)
@@ -713,7 +736,7 @@ async def create_supervisor_agent(
         store=None,
         **kwargs,
     ) -> SupervisorState:
-        messages = list(state.get("messages") or [])
+        messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
         route_context = _format_route_hint(state)

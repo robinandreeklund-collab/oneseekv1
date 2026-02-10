@@ -58,6 +58,7 @@ from app.agents.new_chat.subagent_utils import (
     build_subagent_config,
 )
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
+from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
 from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.db import ChatTraceSession, Document, SurfsenseDocsDocument, async_session_maker
 from app.schemas.new_chat import ChatAttachment
@@ -291,6 +292,7 @@ async def stream_new_chat(
         str: SSE formatted response strings
     """
     streaming_service = VercelStreamingService()
+    external_model_tool_names = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
     raw_user_query = user_query
     compare_mode = is_compare_request(user_query)
     compare_query = extract_compare_query(user_query) if compare_mode else ""
@@ -2192,9 +2194,16 @@ async def stream_new_chat(
                         )
                 else:
                     # Default handling for other tools
+                    payload = {"status": "completed", "result_length": len(str(tool_output))}
+                    if tool_name in external_model_tool_names:
+                        payload = (
+                            tool_output
+                            if isinstance(tool_output, dict)
+                            else {"result": tool_output}
+                        )
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
-                        {"status": "completed", "result_length": len(str(tool_output))},
+                        payload,
                     )
                     yield streaming_service.format_terminal_info(
                         f"Tool {tool_name} completed", "success"
