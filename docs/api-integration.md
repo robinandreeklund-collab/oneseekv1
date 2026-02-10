@@ -83,6 +83,103 @@ their tools and categories. More APIs will be added over time.
 
 ---
 
+## Bolagsverket (Open Data API v2.0)
+
+**Purpose:** Company registry data (orgnr, status, owners, economy).  
+**Namespace:** `tools/bolag/bolagsverket_*`  
+**Citations:** TOOL_OUTPUT ingestion enabled.  
+
+### Categories
+- bolagsverket_info
+- bolagsverket_sok
+- bolagsverket_ekonomi
+- bolagsverket_styrelse
+- bolagsverket_registrering
+
+### Tools
+- bolagsverket_info_basic
+- bolagsverket_info_status
+- bolagsverket_info_adress
+- bolagsverket_sok_namn
+- bolagsverket_sok_orgnr
+- bolagsverket_sok_bransch
+- bolagsverket_sok_region
+- bolagsverket_sok_status
+- bolagsverket_ekonomi_bokslut
+- bolagsverket_ekonomi_arsredovisning
+- bolagsverket_ekonomi_nyckeltal
+- bolagsverket_styrelse_ledning
+- bolagsverket_styrelse_agarstruktur
+- bolagsverket_styrelse_firmatecknare
+- bolagsverket_registrering_fskatt
+- bolagsverket_registrering_moms
+- bolagsverket_registrering_konkurs
+- bolagsverket_registrering_andringar
+
+---
+
+## Trafikverket (Open API v3.0)
+
+**Purpose:** Traffic data (roads, trains, cameras, weather).  
+**Namespace:** `tools/trafik/trafikverket_*`  
+**Citations:** TOOL_OUTPUT ingestion enabled.  
+
+### Categories
+- trafikverket_trafikinfo
+- trafikverket_tag
+- trafikverket_vag
+- trafikverket_vader
+- trafikverket_kameror
+- trafikverket_prognos
+
+### Tools
+- trafikverket_trafikinfo_storningar
+- trafikverket_trafikinfo_olyckor
+- trafikverket_trafikinfo_koer
+- trafikverket_trafikinfo_vagarbeten
+- trafikverket_tag_forseningar
+- trafikverket_tag_tidtabell
+- trafikverket_tag_stationer
+- trafikverket_tag_installda
+- trafikverket_vag_status
+- trafikverket_vag_underhall
+- trafikverket_vag_hastighet
+- trafikverket_vag_avstangningar
+- trafikverket_vader_stationer
+- trafikverket_vader_halka
+- trafikverket_vader_vind
+- trafikverket_vader_temperatur
+- trafikverket_kameror_lista
+- trafikverket_kameror_snapshot
+- trafikverket_kameror_status
+- trafikverket_prognos_trafik
+- trafikverket_prognos_vag
+- trafikverket_prognos_tag
+
+---
+
+## Trafiklab (Realtime transit)
+
+**Purpose:** Public transport departures and route matching.  
+**Namespace:** `tools/action/travel`  
+**Citations:** TOOL_OUTPUT ingestion enabled.  
+
+### Tools
+- trafiklab_route
+
+---
+
+## Libris (Library catalog)
+
+**Purpose:** Search the Libris XL catalog (books/media).  
+**Namespace:** `tools/action/data`  
+**Citations:** TOOL_OUTPUT ingestion enabled.  
+
+### Tools
+- libris_search
+
+---
+
 ## Notes
 
 - All tools are registered via `langgraph-bigtool` with namespace-aware selection.

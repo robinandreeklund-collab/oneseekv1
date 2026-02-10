@@ -11,6 +11,7 @@ from app.agents.new_chat.statistics_agent import (
     build_scb_tool_registry,
 )
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.services.reranker_service import RerankerService
 from app.agents.new_chat.tools.registry import (
     build_tools_async,
@@ -137,11 +138,20 @@ def _namespace_for_bolagsverket_tool(tool_id: str) -> tuple[str, ...]:
     return ("tools", "bolag")
 
 
+def _namespace_for_trafikverket_tool(tool_id: str) -> tuple[str, ...]:
+    parts = tool_id.split("_")
+    if len(parts) >= 2:
+        return ("tools", "trafik", f"trafikverket_{parts[1]}")
+    return ("tools", "trafik")
+
+
 def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
     if tool_id.startswith("scb_"):
         return _namespace_for_scb_tool(tool_id)
     if tool_id.startswith("bolagsverket_"):
         return _namespace_for_bolagsverket_tool(tool_id)
+    if tool_id.startswith("trafikverket_"):
+        return _namespace_for_trafikverket_tool(tool_id)
     return TOOL_NAMESPACE_OVERRIDES.get(tool_id, ("tools", "general"))
 
 
@@ -450,6 +460,9 @@ def build_tool_index(
     bolagsverket_by_id = {
         definition.tool_id: definition for definition in BOLAGSVERKET_TOOL_DEFINITIONS
     }
+    trafikverket_by_id = {
+        definition.tool_id: definition for definition in TRAFIKVERKET_TOOL_DEFINITIONS
+    }
     entries: list[ToolIndexEntry] = []
 
     for tool_id, tool in tool_registry.items():
@@ -467,6 +480,13 @@ def build_tool_index(
             base_path = definition.base_path
         if tool_id in bolagsverket_by_id:
             definition = bolagsverket_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = definition.category
+            base_path = definition.base_path
+        if tool_id in trafikverket_by_id:
+            definition = trafikverket_by_id[tool_id]
             description = definition.description
             keywords = list(definition.keywords)
             example_queries = list(definition.example_queries)

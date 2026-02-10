@@ -573,6 +573,15 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
+        "trafik": WorkerConfig(
+            name="trafik-worker",
+            primary_namespaces=[("tools", "trafik")],
+            fallback_namespaces=[
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
         "synthesis": WorkerConfig(
             name="synthesis-worker",
             primary_namespaces=[("tools", "knowledge")],
@@ -592,6 +601,7 @@ async def create_supervisor_agent(
         "browser": knowledge_prompt,
         "code": knowledge_prompt,
         "bolag": knowledge_prompt,
+        "trafik": action_prompt,
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
@@ -680,6 +690,27 @@ async def create_supervisor_agent(
             ],
             namespace=("agents", "bolag"),
             prompt_key="bolag",
+        ),
+        AgentDefinition(
+            name="trafik",
+            description="Trafikverket realtidsdata (väg, tåg, kameror, väder)",
+            keywords=[
+                "trafikverket",
+                "trafik",
+                "väg",
+                "vag",
+                "tåg",
+                "tag",
+                "störning",
+                "olycka",
+                "kö",
+                "ko",
+                "kamera",
+                "väder",
+                "vader",
+            ],
+            namespace=("agents", "trafik"),
+            prompt_key="trafik",
         ),
         AgentDefinition(
             name="synthesis",
@@ -795,6 +826,7 @@ async def create_supervisor_agent(
                     "knowledge": ["knowledge", "browser"],
                     "statistics": ["statistics"],
                     "compare": ["synthesis", "knowledge", "statistics"],
+                    "trafik": ["trafik", "action"],
                 }.get(str(route_hint), [])
                 if preferred:
                     preferred_defs = [
