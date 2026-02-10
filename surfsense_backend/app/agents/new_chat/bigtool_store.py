@@ -10,6 +10,7 @@ from app.agents.new_chat.statistics_agent import (
     SCB_TOOL_DEFINITIONS,
     build_scb_tool_registry,
 )
+from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.services.reranker_service import RerankerService
 from app.agents.new_chat.tools.registry import (
     build_tools_async,
@@ -27,6 +28,7 @@ class ToolIndexEntry:
     example_queries: list[str]
     category: str
     embedding: list[float] | None = None
+    base_path: str | None = None
 
 
 TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
@@ -128,9 +130,18 @@ def _namespace_for_scb_tool(tool_id: str) -> tuple[str, ...]:
     return ("tools", "statistics", "scb")
 
 
+def _namespace_for_bolagsverket_tool(tool_id: str) -> tuple[str, ...]:
+    parts = tool_id.split("_")
+    if len(parts) >= 2:
+        return ("tools", "bolag", f"bolagsverket_{parts[1]}")
+    return ("tools", "bolag")
+
+
 def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
     if tool_id.startswith("scb_"):
         return _namespace_for_scb_tool(tool_id)
+    if tool_id.startswith("bolagsverket_"):
+        return _namespace_for_bolagsverket_tool(tool_id)
     return TOOL_NAMESPACE_OVERRIDES.get(tool_id, ("tools", "general"))
 
 
@@ -436,6 +447,9 @@ def build_tool_index(
     tool_registry: dict[str, BaseTool],
 ) -> list[ToolIndexEntry]:
     scb_by_id = {definition.tool_id: definition for definition in SCB_TOOL_DEFINITIONS}
+    bolagsverket_by_id = {
+        definition.tool_id: definition for definition in BOLAGSVERKET_TOOL_DEFINITIONS
+    }
     entries: list[ToolIndexEntry] = []
 
     for tool_id, tool in tool_registry.items():
@@ -443,12 +457,21 @@ def build_tool_index(
         keywords = TOOL_KEYWORDS.get(tool_id, [])
         example_queries: list[str] = []
         category = "general"
+        base_path: str | None = None
         if tool_id in scb_by_id:
             definition = scb_by_id[tool_id]
             description = definition.description
             keywords = list(definition.keywords)
             example_queries = list(definition.example_queries)
             category = "statistics"
+            base_path = definition.base_path
+        if tool_id in bolagsverket_by_id:
+            definition = bolagsverket_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = definition.category
+            base_path = definition.base_path
         entry = ToolIndexEntry(
             tool_id=tool_id,
             namespace=namespace_for_tool(tool_id),
@@ -470,6 +493,7 @@ def build_tool_index(
                 example_queries=entry.example_queries,
                 category=entry.category,
                 embedding=embedding,
+                base_path=base_path,
             )
         )
     return entries
@@ -487,6 +511,7 @@ def build_bigtool_store(tool_index: Iterable[ToolIndexEntry]) -> InMemoryStore:
                 "category": entry.category,
                 "keywords": entry.keywords,
                 "example_queries": entry.example_queries,
+                "base_path": entry.base_path,
             },
         )
     return store

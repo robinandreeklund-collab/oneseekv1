@@ -44,6 +44,10 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from .display_image import create_display_image_tool
+from .bolagsverket import (
+    BOLAGSVERKET_TOOL_DEFINITIONS,
+    create_bolagsverket_tool,
+)
 from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
@@ -237,6 +241,24 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         ),
         requires=["user_id", "search_space_id", "db_session"],
     ),
+    # =========================================================================
+    # BOLAGSVERKET OPEN DATA TOOLS
+    # =========================================================================
+    *[
+        ToolDefinition(
+            name=definition.tool_id,
+            description=definition.description,
+            factory=lambda deps, definition=definition: create_bolagsverket_tool(
+                definition,
+                connector_service=deps["connector_service"],
+                search_space_id=deps["search_space_id"],
+                user_id=deps.get("user_id"),
+                thread_id=deps.get("thread_id"),
+            ),
+            requires=["connector_service", "search_space_id"],
+        )
+        for definition in BOLAGSVERKET_TOOL_DEFINITIONS
+    ],
     # =========================================================================
     # EXTERNAL MODEL TOOLS (COMPARE FLOW)
     # =========================================================================

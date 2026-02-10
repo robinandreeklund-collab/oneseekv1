@@ -563,6 +563,16 @@ async def create_supervisor_agent(
                 ("tools", "statistics"),
             ],
         ),
+        "bolag": WorkerConfig(
+            name="bolag-worker",
+            primary_namespaces=[("tools", "bolag")],
+            fallback_namespaces=[
+                ("tools", "knowledge"),
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "general"),
+            ],
+        ),
         "synthesis": WorkerConfig(
             name="synthesis-worker",
             primary_namespaces=[("tools", "knowledge")],
@@ -581,6 +591,7 @@ async def create_supervisor_agent(
         "statistics": statistics_prompt,
         "browser": knowledge_prompt,
         "code": knowledge_prompt,
+        "bolag": knowledge_prompt,
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
@@ -648,6 +659,27 @@ async def create_supervisor_agent(
             keywords=["kod", "berakna", "script", "python"],
             namespace=("agents", "code"),
             prompt_key="code",
+        ),
+        AgentDefinition(
+            name="bolag",
+            description="Bolagsverket och företagsdata (orgnr, ägare, ekonomi)",
+            keywords=[
+                "bolag",
+                "bolagsverket",
+                "foretag",
+                "företag",
+                "orgnr",
+                "organisationsnummer",
+                "styrelse",
+                "firmatecknare",
+                "arsredovisning",
+                "årsredovisning",
+                "f-skatt",
+                "moms",
+                "konkurs",
+            ],
+            namespace=("agents", "bolag"),
+            prompt_key="bolag",
         ),
         AgentDefinition(
             name="synthesis",
