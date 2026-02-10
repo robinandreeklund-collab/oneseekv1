@@ -176,6 +176,48 @@ function isGreetingQuery(query: string): boolean {
 	return cleaned.length <= 12 && GREETING_REGEX.test(cleaned);
 }
 
+const formatContextNumber = (value?: number) => {
+	if (typeof value !== "number" || Number.isNaN(value)) return "0";
+	return value.toLocaleString("sv-SE");
+};
+
+const buildContextStatsStep = (stats: ContextStatsEntry): ThinkingStepData => {
+	const totalTokens = stats.total_tokens ?? 0;
+	const totalChars = stats.total_chars ?? 0;
+	const baseTokens = stats.base_tokens ?? 0;
+	const contextTokens = stats.context_tokens ?? 0;
+	const toolTokens = stats.tool_tokens ?? 0;
+	const deltaTokens = stats.delta_tokens ?? 0;
+	const label = stats.label || stats.phase || "Uppdatering";
+
+	const items: string[] = [];
+	if (totalTokens || totalChars) {
+		items.push(
+			`Totalt: ${formatContextNumber(totalTokens)} tok · ${formatContextNumber(totalChars)} tecken`
+		);
+	}
+	if (baseTokens || contextTokens || toolTokens) {
+		items.push(
+			`Bas: ${formatContextNumber(baseTokens)} tok · Kontext: ${formatContextNumber(
+				contextTokens
+			)} tok · Verktyg: ${formatContextNumber(toolTokens)} tok`
+		);
+	}
+	if (deltaTokens > 0) {
+		items.push(`Senaste: +${formatContextNumber(deltaTokens)} tok · ${label}`);
+	}
+	if (!items.length) {
+		items.push(label);
+	}
+
+	return {
+		id: "context-stats",
+		title: "Kontextstatus",
+		status: "in_progress",
+		items,
+	};
+};
+
 /**
  * Tools that should render custom UI in the chat.
  */
@@ -602,7 +644,6 @@ export default function NewChatPage() {
 				const userMsgId = `msg-user-${Date.now()}`;
 				const assistantMsgId = `msg-assistant-${Date.now()}`;
 				const currentThinkingSteps = new Map<string, ThinkingStepData>();
-				const currentContextStats: ContextStatsData[] = [];
 
 				const userMessage: ThreadMessageLike = {
 					id: userMsgId,
@@ -916,7 +957,6 @@ export default function NewChatPage() {
 			// Prepare assistant message
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
-			const currentContextStats: ContextStatsData[] = [];
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 
@@ -1191,10 +1231,11 @@ export default function NewChatPage() {
 										case "data-context-stats": {
 											const stats = parsed.data as ContextStatsData;
 											if (stats) {
-												currentContextStats.push({ ...stats, receivedAt: Date.now() });
-												setMessageContextStats((prev) => {
+												const step = buildContextStatsStep(stats);
+												currentThinkingSteps.set(step.id, step);
+												setMessageThinkingSteps((prev) => {
 													const newMap = new Map(prev);
-													newMap.set(assistantMsgId, [...currentContextStats]);
+													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
 													return newMap;
 												});
 											}
@@ -1563,7 +1604,6 @@ export default function NewChatPage() {
 			const userMsgId = `msg-user-${Date.now()}`;
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
-			const currentContextStats: ContextStatsData[] = [];
 			let currentTraceSessionId: string | null = null;
 
 			// Content parts tracking (same as onNew)
@@ -1777,10 +1817,11 @@ export default function NewChatPage() {
 										case "data-context-stats": {
 											const stats = parsed.data as ContextStatsData;
 											if (stats) {
-												currentContextStats.push({ ...stats, receivedAt: Date.now() });
-												setMessageContextStats((prev) => {
+												const step = buildContextStatsStep(stats);
+												currentThinkingSteps.set(step.id, step);
+												setMessageThinkingSteps((prev) => {
 													const newMap = new Map(prev);
-													newMap.set(assistantMsgId, [...currentContextStats]);
+													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
 													return newMap;
 												});
 											}
