@@ -1251,6 +1251,31 @@ class GlobalAgentPromptOverrideHistory(BaseModel, TimestampMixin):
     updated_by = relationship("User")
 
 
+class AgentComboCache(BaseModel, TimestampMixin):
+    __tablename__ = "agent_combo_cache"
+    __table_args__ = (
+        UniqueConstraint("cache_key", name="uq_agent_combo_cache_key"),
+    )
+
+    cache_key = Column(String(128), nullable=False, index=True)
+    route_hint = Column(String(32), nullable=True, index=True)
+    pattern = Column(Text, nullable=True)
+    recent_agents = Column(JSONB, nullable=True)
+    agents = Column(JSONB, nullable=False)
+    hit_count = Column(Integer, nullable=False, default=0)
+    last_used_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
 class Log(BaseModel, TimestampMixin):
     __tablename__ = "logs"
 

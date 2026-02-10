@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Annotated, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
@@ -10,12 +12,47 @@ from langgraph.graph.message import add_messages
 from langgraph.types import Checkpointer
 from langgraph_bigtool.graph import END, StateGraph, ToolNode, RunnableCallable
 from langgraph_bigtool.tools import InjectedState
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
 from app.agents.new_chat.tools.reflect_on_progress import create_reflect_on_progress_tool
 from app.agents.new_chat.tools.write_todos import create_write_todos_tool
+from app.db import AgentComboCache
+
+
+_AGENT_CACHE_TTL = timedelta(minutes=20)
+_AGENT_COMBO_CACHE: dict[str, tuple[datetime, list[str]]] = {}
+_AGENT_STOPWORDS = {
+    "hur",
+    "vad",
+    "var",
+    "när",
+    "nar",
+    "är",
+    "ar",
+    "och",
+    "eller",
+    "för",
+    "for",
+    "till",
+    "fran",
+    "från",
+    "en",
+    "ett",
+    "i",
+    "på",
+    "pa",
+    "av",
+    "med",
+    "som",
+    "om",
+    "den",
+    "det",
+    "de",
+}
 
 
 @dataclass(frozen=True)
@@ -62,6 +99,93 @@ def _smart_retrieve_agents(
                 scored[idx] = (definition, score + 4)
     scored.sort(key=lambda item: item[1], reverse=True)
     return [definition for definition, _ in scored[:limit]]
+
+
+def _build_cache_key(
+    query: str,
+    route_hint: str | None,
+    recent_agents: list[str] | None,
+) -> tuple[str, str]:
+    tokens = [
+        token
+        for token in _tokenize(query)
+        if token and token not in _AGENT_STOPWORDS
+    ]
+    token_slice = " ".join(tokens[:6])
+    recent_slice = ",".join((recent_agents or [])[-2:])
+    pattern = f"{route_hint or 'none'}|{recent_slice}|{token_slice}"
+    key = hashlib.sha256(pattern.encode("utf-8")).hexdigest()
+    return key, pattern
+
+
+def _get_cached_combo(cache_key: str) -> list[str] | None:
+    entry = _AGENT_COMBO_CACHE.get(cache_key)
+    if not entry:
+        return None
+    expires_at, agents = entry
+    if expires_at < datetime.now(UTC):
+        _AGENT_COMBO_CACHE.pop(cache_key, None)
+        return None
+    return agents
+
+
+def _set_cached_combo(cache_key: str, agents: list[str]) -> None:
+    _AGENT_COMBO_CACHE[cache_key] = (datetime.now(UTC) + _AGENT_CACHE_TTL, agents)
+
+
+async def _fetch_cached_combo_db(
+    session: AsyncSession | None, cache_key: str
+) -> list[str] | None:
+    if session is None:
+        return None
+    result = await session.execute(
+        select(AgentComboCache).where(AgentComboCache.cache_key == cache_key)
+    )
+    row = result.scalars().first()
+    if not row:
+        return None
+    agents = row.agents if isinstance(row.agents, list) else []
+    row.hit_count = int(row.hit_count or 0) + 1
+    row.last_used_at = datetime.now(UTC)
+    row.updated_at = datetime.now(UTC)
+    await session.commit()
+    return [str(agent) for agent in agents if agent]
+
+
+async def _store_cached_combo_db(
+    session: AsyncSession | None,
+    *,
+    cache_key: str,
+    route_hint: str | None,
+    pattern: str,
+    recent_agents: list[str],
+    agents: list[str],
+) -> None:
+    if session is None:
+        return
+    result = await session.execute(
+        select(AgentComboCache).where(AgentComboCache.cache_key == cache_key)
+    )
+    row = result.scalars().first()
+    if row:
+        row.agents = agents
+        row.recent_agents = recent_agents
+        row.route_hint = route_hint
+        row.pattern = pattern
+        row.updated_at = datetime.now(UTC)
+        row.last_used_at = datetime.now(UTC)
+    else:
+        row = AgentComboCache(
+            cache_key=cache_key,
+            route_hint=route_hint,
+            pattern=pattern,
+            recent_agents=recent_agents,
+            agents=agents,
+            hit_count=0,
+            last_used_at=datetime.now(UTC),
+        )
+        session.add(row)
+    await session.commit()
 
 
 def _replace(left: Any, right: Any) -> Any:
@@ -279,6 +403,9 @@ async def create_supervisor_agent(
         ),
     ]
 
+    agent_by_name = {definition.name: definition for definition in agent_definitions}
+    db_session = dependencies.get("db_session")
+
     @tool
     async def retrieve_agents(
         query: str,
@@ -289,6 +416,8 @@ async def create_supervisor_agent(
         recent_agents = []
         context_query = query
         route_hint = None
+        cache_key = None
+        cache_pattern = None
         if state:
             recent_calls = state.get("recent_agent_calls") or []
             recent_agents = [
@@ -307,28 +436,58 @@ async def create_supervisor_agent(
                 )
             if context_parts:
                 context_query = f"{query} {' '.join(context_parts)}"
-        selected = _smart_retrieve_agents(
-            context_query,
-            agent_definitions=agent_definitions,
-            recent_agents=recent_agents,
-            limit=limit,
+
+        cache_key, cache_pattern = _build_cache_key(
+            query, route_hint, recent_agents
         )
-        if route_hint:
-            preferred = {
-                "action": ["action", "media"],
-                "knowledge": ["knowledge", "browser"],
-                "statistics": ["statistics"],
-            }.get(str(route_hint), [])
-            if preferred:
-                preferred_defs = [
-                    agent
-                    for agent in agent_definitions
-                    if agent.name in preferred
-                ]
-                for agent in reversed(preferred_defs):
-                    if agent not in selected:
-                        selected.insert(0, agent)
-                selected = selected[:limit]
+        cached_agents = _get_cached_combo(cache_key)
+        if cached_agents is None:
+            cached_agents = await _fetch_cached_combo_db(db_session, cache_key)
+            if cached_agents:
+                _set_cached_combo(cache_key, cached_agents)
+
+        if cached_agents:
+            selected = [
+                agent_by_name[name]
+                for name in cached_agents
+                if name in agent_by_name
+            ]
+        else:
+            selected = _smart_retrieve_agents(
+                context_query,
+                agent_definitions=agent_definitions,
+                recent_agents=recent_agents,
+                limit=limit,
+            )
+            if route_hint:
+                preferred = {
+                    "action": ["action", "media"],
+                    "knowledge": ["knowledge", "browser"],
+                    "statistics": ["statistics"],
+                }.get(str(route_hint), [])
+                if preferred:
+                    preferred_defs = [
+                        agent
+                        for agent in agent_definitions
+                        if agent.name in preferred
+                    ]
+                    for agent in reversed(preferred_defs):
+                        if agent not in selected:
+                            selected.insert(0, agent)
+                    selected = selected[:limit]
+
+            selected_names = [agent.name for agent in selected]
+            if cache_key and cache_pattern:
+                await _store_cached_combo_db(
+                    db_session,
+                    cache_key=cache_key,
+                    route_hint=route_hint,
+                    pattern=cache_pattern,
+                    recent_agents=recent_agents,
+                    agents=selected_names,
+                )
+
+        selected = selected[:limit]
         payload = [
             {"name": agent.name, "description": agent.description}
             for agent in selected
