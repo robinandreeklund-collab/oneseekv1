@@ -10,7 +10,10 @@ export function RightSidebar() {
 	const t = useTranslations("navigation");
 
 	return (
-		<aside className="hidden lg:flex lg:flex-col lg:w-80 border-l border-gray-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 sticky top-0 h-screen overflow-y-auto">
+		<aside 
+			className="hidden lg:flex lg:flex-col lg:w-80 border-l border-gray-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 sticky top-0 h-screen overflow-y-auto"
+			aria-label="Main navigation sidebar"
+		>
 			{/* Logo at top */}
 			<div className="p-6 border-b border-gray-200 dark:border-neutral-800">
 				<Link href="/" className="flex items-center gap-2">
@@ -20,7 +23,7 @@ export function RightSidebar() {
 			</div>
 
 			{/* Navigation */}
-			<nav className="flex-1 p-6">
+			<nav className="flex-1 p-6" aria-label="Primary navigation">
 				<ul className="space-y-2">
 					<li>
 						<Link
