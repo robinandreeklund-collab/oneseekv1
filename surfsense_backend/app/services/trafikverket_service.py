@@ -6,11 +6,12 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape
 
 import httpx
 from dotenv import load_dotenv
 
-TRAFIKVERKET_BASE_URL = "https://api.trafikinfo.trafikverket.se/v3"
+TRAFIKVERKET_BASE_URL = "https://api.trafikinfo.trafikverket.se/v3/data.json"
 TRAFIKVERKET_SOURCE = "Trafikverket Open API"
 TRAFIKVERKET_DEFAULT_TIMEOUT = 15.0
 TRAFIKVERKET_CACHE_TTL = 60 * 5  # 5 minutes
@@ -61,26 +62,26 @@ class TrafikverketService:
             self._redis_client = None
         return self._redis_client
 
-    async def _request_json(
+    async def _request_xml(
         self,
-        method: str,
-        path: str,
         *,
-        params: dict[str, Any] | None = None,
-        json_body: dict[str, Any] | None = None,
+        xml_body: str,
         cache_ttl: int | None = None,
     ) -> tuple[dict[str, Any], bool]:
         if not self.api_key:
             raise ValueError("Missing TRAFIKVERKET_API_KEY for Trafikverket API.")
 
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        headers = {"X-Api-Key": self.api_key}
-        payload = {"params": params or {}, "json": json_body or {}}
+        url = self.base_url
+        headers = {
+            "Content-Type": "application/xml",
+            "Accept": "application/json",
+        }
+        payload = {"xml": xml_body}
         cache_key = None
         cache_hit = False
 
-        if method.upper() == "GET" and cache_ttl:
-            cache_key = _build_cache_key(method, url, payload)
+        if cache_ttl:
+            cache_key = _build_cache_key("POST", url, payload)
             client = self._get_redis()
             if client:
                 cached = client.get(cache_key)
@@ -94,12 +95,10 @@ class TrafikverketService:
         for attempt in range(TRAFIKVERKET_MAX_RETRIES):
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    response = await client.request(
-                        method,
+                    response = await client.post(
                         url,
                         headers=headers,
-                        params=params,
-                        json=json_body,
+                        content=xml_body.encode("utf-8"),
                     )
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After")
@@ -122,9 +121,32 @@ class TrafikverketService:
 
         raise RuntimeError(last_error or "Trafikverket API request failed.")
 
-    async def fetch(
-        self, path: str, *, params: dict[str, Any] | None = None
+    async def query(
+        self,
+        *,
+        objecttype: str,
+        schema_version: str = "1.0",
+        filter_field: str | None = None,
+        filter_value: str | None = None,
+        limit: int = 10,
     ) -> tuple[dict[str, Any], bool]:
-        return await self._request_json(
-            "GET", path, params=params, cache_ttl=TRAFIKVERKET_CACHE_TTL
+        if not self.api_key:
+            raise ValueError("Missing TRAFIKVERKET_API_KEY for Trafikverket API.")
+        filter_xml = ""
+        if filter_field and filter_value:
+            filter_xml = (
+                f"<FILTER><LIKE name=\"{escape(filter_field)}\" "
+                f"value=\"{escape(filter_value)}\" /></FILTER>"
+            )
+        query_xml = (
+            f"<REQUEST>"
+            f"<LOGIN authenticationkey=\"{escape(self.api_key)}\" />"
+            f"<QUERY objecttype=\"{escape(objecttype)}\" schemaversion=\"{escape(schema_version)}\" "
+            f"limit=\"{int(limit)}\">"
+            f"{filter_xml}"
+            f"</QUERY>"
+            f"</REQUEST>"
+        )
+        return await self._request_xml(
+            xml_body=query_xml, cache_ttl=TRAFIKVERKET_CACHE_TTL
         )

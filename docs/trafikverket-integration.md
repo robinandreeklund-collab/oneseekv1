@@ -56,6 +56,16 @@ Målet är realtidsnära trafikdata via fokuserade `langgraph-bigtool`‑verktyg
 21. trafikverket_prognos_vag  
 22. trafikverket_prognos_tag  
 
+## API‑endpoint
+
+Alla verktyg anropar Trafikverket Open API via:
+```
+https://api.trafikinfo.trafikverket.se/v3/data.json
+```
+
+Frågor skickas som XML‑request med `<LOGIN authenticationkey="...">` och ett
+`<QUERY objecttype="...">` per verktyg.
+
 ## Konfiguration
 
 Lägg till i `.env`:

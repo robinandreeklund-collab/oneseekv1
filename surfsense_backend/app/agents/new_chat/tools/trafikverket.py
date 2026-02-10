@@ -21,6 +21,9 @@ class TrafikverketToolDefinition:
     example_queries: list[str]
     base_path: str
     category: str
+    objecttype: str
+    schema_version: str = "1.0"
+    filter_field: str | None = None
 
 
 TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
@@ -33,8 +36,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Störningar på E4 idag",
             "Trafikstörningar i Stockholm",
         ],
-        base_path="/trafikinfo/storningar",
+        base_path="/data.json",
         category="trafikverket_trafikinfo",
+        objecttype="Situation",
+        filter_field="LocationDescriptor",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_olyckor",
@@ -45,8 +50,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Olyckor på E6",
             "Trafikolyckor i Skåne",
         ],
-        base_path="/trafikinfo/olyckor",
+        base_path="/data.json",
         category="trafikverket_trafikinfo",
+        objecttype="Situation",
+        filter_field="LocationDescriptor",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_koer",
@@ -57,8 +64,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Var är det köer i Göteborg?",
             "Köinformation E18",
         ],
-        base_path="/trafikinfo/koer",
+        base_path="/data.json",
         category="trafikverket_trafikinfo",
+        objecttype="Situation",
+        filter_field="LocationDescriptor",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_vagarbeten",
@@ -69,8 +78,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Pågående vägarbeten i Skåne",
             "Vägarbeten E4",
         ],
-        base_path="/trafikinfo/vagarbeten",
+        base_path="/data.json",
         category="trafikverket_trafikinfo",
+        objecttype="Situation",
+        filter_field="LocationDescriptor",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_tag_forseningar",
@@ -81,8 +92,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Tågförseningar Stockholm C",
             "Förseningar till Göteborg",
         ],
-        base_path="/tag/forseningar",
+        base_path="/data.json",
         category="trafikverket_tag",
+        objecttype="TrainAnnouncement",
+        filter_field="AdvertisedLocationName",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_tag_tidtabell",
@@ -93,8 +106,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Tidtabell Stockholm C idag",
             "Avgångar från Malmö C",
         ],
-        base_path="/tag/tidtabell",
+        base_path="/data.json",
         category="trafikverket_tag",
+        objecttype="TrainAnnouncement",
+        filter_field="AdvertisedLocationName",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_tag_stationer",
@@ -105,8 +120,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Hitta stationer i Uppsala",
             "Stationer som börjar med 'Sundsvall'",
         ],
-        base_path="/tag/stationer",
+        base_path="/data.json",
         category="trafikverket_tag",
+        objecttype="TrainStation",
+        filter_field="AdvertisedLocationName",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_tag_installda",
@@ -117,8 +134,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Inställda tåg i Göteborg",
             "Inställda avgångar Stockholm C",
         ],
-        base_path="/tag/installda",
+        base_path="/data.json",
         category="trafikverket_tag",
+        objecttype="TrainAnnouncement",
+        filter_field="AdvertisedLocationName",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vag_status",
@@ -129,8 +148,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Vägstatus E4",
             "Vägstatus i Västra Götaland",
         ],
-        base_path="/vag/status",
+        base_path="/data.json",
         category="trafikverket_vag",
+        objecttype="TrafficFlow",
+        filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vag_underhall",
@@ -141,8 +162,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Planerat underhåll på E18",
             "Underhållsarbeten i Skåne",
         ],
-        base_path="/vag/underhall",
+        base_path="/data.json",
         category="trafikverket_vag",
+        objecttype="RoadMaintenance",
+        filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vag_hastighet",
@@ -153,8 +176,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Hastighetsbegränsningar på E6",
             "Tillfälliga hastigheter i Stockholm",
         ],
-        base_path="/vag/hastighet",
+        base_path="/data.json",
         category="trafikverket_vag",
+        objecttype="TrafficFlow",
+        filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vag_avstangningar",
@@ -165,8 +190,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Vägavstängningar i Uppsala",
             "Avstängningar på E20",
         ],
-        base_path="/vag/avstangningar",
+        base_path="/data.json",
         category="trafikverket_vag",
+        objecttype="RoadCondition",
+        filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_stationer",
@@ -177,8 +204,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Väderstationer i Norrbotten",
             "Stationer i närheten av E4",
         ],
-        base_path="/vader/stationer",
+        base_path="/data.json",
         category="trafikverket_vader",
+        objecttype="WeatherStation",
+        filter_field="CountyName",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_halka",
@@ -189,8 +218,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Halka i Västerbotten",
             "Väglag E45",
         ],
-        base_path="/vader/halka",
+        base_path="/data.json",
         category="trafikverket_vader",
+        objecttype="RoadCondition",
+        filter_field="CountyName",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_vind",
@@ -201,8 +232,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Vindvarning på Öresundsbron",
             "Vindstyrka i Skåne",
         ],
-        base_path="/vader/vind",
+        base_path="/data.json",
         category="trafikverket_vader",
+        objecttype="WeatherStation",
+        filter_field="CountyName",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_temperatur",
@@ -213,8 +246,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Temperatur på E4 idag",
             "Temperaturer i Dalarna",
         ],
-        base_path="/vader/temperatur",
+        base_path="/data.json",
         category="trafikverket_vader",
+        objecttype="WeatherStation",
+        filter_field="CountyName",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_kameror_lista",
@@ -225,8 +260,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Visa trafikkameror i Stockholm",
             "Kameror längs E4",
         ],
-        base_path="/kameror",
+        base_path="/data.json",
         category="trafikverket_kameror",
+        objecttype="Camera",
+        filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_kameror_snapshot",
@@ -237,8 +274,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Snapshot för kamera 12345",
             "Senaste bild från kamera E6-01",
         ],
-        base_path="/kameror/{kamera_id}/snapshot",
+        base_path="/data.json",
         category="trafikverket_kameror",
+        objecttype="Camera",
+        filter_field="CameraId",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_kameror_status",
@@ -249,8 +288,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Status för kamera 12345",
             "Är kamera E4-10 online?",
         ],
-        base_path="/kameror/{kamera_id}/status",
+        base_path="/data.json",
         category="trafikverket_kameror",
+        objecttype="Camera",
+        filter_field="CameraId",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_prognos_trafik",
@@ -261,8 +302,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Trafikprognos för E4 nästa vecka",
             "Prognos för trafik i Stockholm",
         ],
-        base_path="/prognos/trafik",
+        base_path="/data.json",
         category="trafikverket_prognos",
+        objecttype="TrafficFlow",
+        filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_prognos_vag",
@@ -273,8 +316,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Vägprognos E18",
             "Planerade arbeten kommande vecka",
         ],
-        base_path="/prognos/vag",
+        base_path="/data.json",
         category="trafikverket_prognos",
+        objecttype="RoadCondition",
+        filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_prognos_tag",
@@ -285,8 +330,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Tågprognos Stockholm C",
             "Förväntade förseningar till Göteborg",
         ],
-        base_path="/prognos/tag",
+        base_path="/data.json",
         category="trafikverket_prognos",
+        objecttype="TrainAnnouncement",
+        filter_field="AdvertisedLocationName",
     ),
 ]
 
@@ -351,10 +398,21 @@ def build_trafikverket_tool_registry(
         tool_id: str,
         base_path: str,
         query: dict[str, Any],
-        params: dict[str, Any],
         title: str,
+        *,
+        objecttype: str,
+        schema_version: str,
+        filter_field: str | None,
+        filter_value: str | None,
+        limit: int,
     ) -> dict[str, Any]:
-        data, cached = await service.fetch(base_path, params=params)
+        data, cached = await service.query(
+            objecttype=objecttype,
+            schema_version=schema_version,
+            filter_field=filter_field,
+            filter_value=filter_value,
+            limit=limit,
+        )
         payload = _build_payload(
             tool_name=tool_id,
             base_path=base_path,
@@ -378,13 +436,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_trafikinfo_storningar",
                 TRAFIKVERKET_TOOL_DEFINITIONS[0].base_path,
                 {"region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket störningar {region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[0].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[0].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[0].filter_field,
+                filter_value=region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -394,13 +455,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_trafikinfo_olyckor",
                 TRAFIKVERKET_TOOL_DEFINITIONS[1].base_path,
                 {"region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket olyckor {region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[1].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[1].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[1].filter_field,
+                filter_value=region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -410,13 +474,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_trafikinfo_koer",
                 TRAFIKVERKET_TOOL_DEFINITIONS[2].base_path,
                 {"region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket köer {region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[2].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[2].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[2].filter_field,
+                filter_value=region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -426,13 +493,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_trafikinfo_vagarbeten",
                 TRAFIKVERKET_TOOL_DEFINITIONS[3].base_path,
                 {"region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket vägarbeten {region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[3].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[3].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[3].filter_field,
+                filter_value=region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -442,13 +512,16 @@ def build_trafikverket_tool_registry(
         station: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"station": station, "limit": limit}
             return await _wrap(
                 "trafikverket_tag_forseningar",
                 TRAFIKVERKET_TOOL_DEFINITIONS[4].base_path,
                 {"station": station, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket tågförseningar {station or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[4].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[4].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[4].filter_field,
+                filter_value=station,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -458,13 +531,16 @@ def build_trafikverket_tool_registry(
         station: str, date: str | None = None
     ) -> dict[str, Any]:
         try:
-            params = {"station": station, "date": date}
             return await _wrap(
                 "trafikverket_tag_tidtabell",
                 TRAFIKVERKET_TOOL_DEFINITIONS[5].base_path,
                 {"station": station, "date": date},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket tidtabell {station}",
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[5].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[5].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[5].filter_field,
+                filter_value=station,
+                limit=10,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -474,13 +550,16 @@ def build_trafikverket_tool_registry(
         query: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"query": query, "limit": limit}
             return await _wrap(
                 "trafikverket_tag_stationer",
                 TRAFIKVERKET_TOOL_DEFINITIONS[6].base_path,
                 {"query": query, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket stationer {query or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[6].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[6].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[6].filter_field,
+                filter_value=query,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -490,13 +569,16 @@ def build_trafikverket_tool_registry(
         station: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"station": station, "limit": limit}
             return await _wrap(
                 "trafikverket_tag_installda",
                 TRAFIKVERKET_TOOL_DEFINITIONS[7].base_path,
                 {"station": station, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket inställda {station or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[7].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[7].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[7].filter_field,
+                filter_value=station,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -506,13 +588,16 @@ def build_trafikverket_tool_registry(
         road: str | None = None, region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"road": road, "region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_vag_status",
                 TRAFIKVERKET_TOOL_DEFINITIONS[8].base_path,
                 {"road": road, "region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket vägstatus {road or region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[8].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[8].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[8].filter_field,
+                filter_value=road or region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -522,13 +607,16 @@ def build_trafikverket_tool_registry(
         road: str | None = None, region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"road": road, "region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_vag_underhall",
                 TRAFIKVERKET_TOOL_DEFINITIONS[9].base_path,
                 {"road": road, "region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket underhåll {road or region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[9].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[9].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[9].filter_field,
+                filter_value=road or region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -538,13 +626,16 @@ def build_trafikverket_tool_registry(
         road: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"road": road, "limit": limit}
             return await _wrap(
                 "trafikverket_vag_hastighet",
                 TRAFIKVERKET_TOOL_DEFINITIONS[10].base_path,
                 {"road": road, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket hastighet {road or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[10].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[10].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[10].filter_field,
+                filter_value=road,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -554,13 +645,16 @@ def build_trafikverket_tool_registry(
         road: str | None = None, region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"road": road, "region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_vag_avstangningar",
                 TRAFIKVERKET_TOOL_DEFINITIONS[11].base_path,
                 {"road": road, "region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket avstängningar {road or region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[11].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[11].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[11].filter_field,
+                filter_value=road or region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -570,13 +664,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_vader_stationer",
                 TRAFIKVERKET_TOOL_DEFINITIONS[12].base_path,
                 {"region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket väderstationer {region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[12].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[12].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[12].filter_field,
+                filter_value=region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -586,13 +683,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_vader_halka",
                 TRAFIKVERKET_TOOL_DEFINITIONS[13].base_path,
                 {"region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket halka {region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[13].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[13].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[13].filter_field,
+                filter_value=region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -602,13 +702,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_vader_vind",
                 TRAFIKVERKET_TOOL_DEFINITIONS[14].base_path,
                 {"region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket vind {region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[14].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[14].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[14].filter_field,
+                filter_value=region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -618,13 +721,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "limit": limit}
             return await _wrap(
                 "trafikverket_vader_temperatur",
                 TRAFIKVERKET_TOOL_DEFINITIONS[15].base_path,
                 {"region": region, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket temperatur {region or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[15].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[15].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[15].filter_field,
+                filter_value=region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -634,13 +740,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, road: str | None = None, limit: int = 10
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "road": road, "limit": limit}
             return await _wrap(
                 "trafikverket_kameror_lista",
                 TRAFIKVERKET_TOOL_DEFINITIONS[16].base_path,
                 {"region": region, "road": road, "limit": limit},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket kameror {region or road or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[16].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[16].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[16].filter_field,
+                filter_value=road or region,
+                limit=limit,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -648,13 +757,16 @@ def build_trafikverket_tool_registry(
     @tool("trafikverket_kameror_snapshot", description=TRAFIKVERKET_TOOL_DEFINITIONS[17].description)
     async def trafikverket_kameror_snapshot(kamera_id: str) -> dict[str, Any]:
         try:
-            params = {"kamera_id": kamera_id}
             return await _wrap(
                 "trafikverket_kameror_snapshot",
                 TRAFIKVERKET_TOOL_DEFINITIONS[17].base_path.format(kamera_id=kamera_id),
                 {"kamera_id": kamera_id},
-                params,
                 f"Trafikverket snapshot {kamera_id}",
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[17].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[17].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[17].filter_field,
+                filter_value=kamera_id,
+                limit=1,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -662,13 +774,16 @@ def build_trafikverket_tool_registry(
     @tool("trafikverket_kameror_status", description=TRAFIKVERKET_TOOL_DEFINITIONS[18].description)
     async def trafikverket_kameror_status(kamera_id: str) -> dict[str, Any]:
         try:
-            params = {"kamera_id": kamera_id}
             return await _wrap(
                 "trafikverket_kameror_status",
                 TRAFIKVERKET_TOOL_DEFINITIONS[18].base_path.format(kamera_id=kamera_id),
                 {"kamera_id": kamera_id},
-                params,
                 f"Trafikverket kamera status {kamera_id}",
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[18].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[18].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[18].filter_field,
+                filter_value=kamera_id,
+                limit=1,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -678,13 +793,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, road: str | None = None
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "road": road}
             return await _wrap(
                 "trafikverket_prognos_trafik",
                 TRAFIKVERKET_TOOL_DEFINITIONS[19].base_path,
                 {"region": region, "road": road},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket trafikprognos {region or road or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[19].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[19].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[19].filter_field,
+                filter_value=road or region,
+                limit=10,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -694,13 +812,16 @@ def build_trafikverket_tool_registry(
         region: str | None = None, road: str | None = None
     ) -> dict[str, Any]:
         try:
-            params = {"region": region, "road": road}
             return await _wrap(
                 "trafikverket_prognos_vag",
                 TRAFIKVERKET_TOOL_DEFINITIONS[20].base_path,
                 {"region": region, "road": road},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket vägprognos {region or road or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[20].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[20].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[20].filter_field,
+                filter_value=road or region,
+                limit=10,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -708,13 +829,16 @@ def build_trafikverket_tool_registry(
     @tool("trafikverket_prognos_tag", description=TRAFIKVERKET_TOOL_DEFINITIONS[21].description)
     async def trafikverket_prognos_tag(station: str | None = None) -> dict[str, Any]:
         try:
-            params = {"station": station}
             return await _wrap(
                 "trafikverket_prognos_tag",
                 TRAFIKVERKET_TOOL_DEFINITIONS[21].base_path,
                 {"station": station},
-                {k: v for k, v in params.items() if v is not None},
                 f"Trafikverket tågprognos {station or ''}".strip(),
+                objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[21].objecttype,
+                schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[21].schema_version,
+                filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[21].filter_field,
+                filter_value=station,
+                limit=10,
             )
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
