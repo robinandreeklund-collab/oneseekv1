@@ -329,7 +329,13 @@ async def create_supervisor_agent(
     llm_with_tools = llm.bind_tools(list(tool_registry.values()))
     tool_node = ToolNode(tool_registry.values())
 
-    def call_model(state: SupervisorState, config: dict, *, store=None) -> SupervisorState:
+    def call_model(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
         messages = list(state.get("messages") or [])
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
@@ -341,7 +347,11 @@ async def create_supervisor_agent(
         return {"messages": [response]}
 
     async def acall_model(
-        state: SupervisorState, config: dict, *, store=None
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
     ) -> SupervisorState:
         messages = list(state.get("messages") or [])
         plan_context = _format_plan_context(state)
@@ -353,7 +363,13 @@ async def create_supervisor_agent(
         response = await llm_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
-    async def post_tools(state: SupervisorState, config: dict, *, store=None) -> SupervisorState:
+    async def post_tools(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
         updates: dict[str, Any] = {}
         recent_updates: list[dict[str, Any]] = []
         plan_update: list[dict[str, Any]] | None = None
