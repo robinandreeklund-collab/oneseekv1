@@ -33,6 +33,7 @@ from app.agents.new_chat.bigtool_prompts import (
     DEFAULT_WORKER_KNOWLEDGE_PROMPT,
     build_worker_prompt,
 )
+from app.agents.new_chat.bigtool_store import get_tool_rerank_trace
 from app.agents.new_chat.compare_prompts import (
     COMPARE_SUPERVISOR_INSTRUCTIONS,
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
@@ -720,6 +721,7 @@ async def stream_new_chat(
         thinking_step_counter = 0
         # Map run_id -> step_id for tool calls so we can update them on completion
         tool_step_ids: dict[str, str] = {}
+        tool_inputs: dict[str, dict[str, Any]] = {}
         write_todos_step_id: str | None = None
         # Track the last active step so we can mark it complete at the end
         last_active_step_id: str | None = None
@@ -1347,6 +1349,12 @@ async def stream_new_chat(
                 )
                 yield streaming_service.format_tool_input_start(tool_call_id, tool_name)
                 safe_tool_input = _coerce_jsonable(tool_input)
+                if run_id:
+                    tool_inputs[run_id] = (
+                        safe_tool_input
+                        if isinstance(safe_tool_input, dict)
+                        else {"input": safe_tool_input}
+                    )
                 yield streaming_service.format_tool_input_available(
                     tool_call_id,
                     tool_name,
@@ -1589,6 +1597,23 @@ async def stream_new_chat(
                         if tool_ids
                         else ["Tools selected"]
                     )
+                    rerank_query = ""
+                    tool_input = tool_inputs.get(run_id) if run_id else None
+                    if isinstance(tool_input, dict):
+                        rerank_query = str(tool_input.get("query") or "")
+                    rerank_trace = get_tool_rerank_trace(
+                        str(chat_id) if chat_id else None, query=rerank_query
+                    )
+                    if rerank_trace:
+                        for entry in rerank_trace[:8]:
+                            name = entry.get("name") or entry.get("tool_id")
+                            score = entry.get("rerank_score")
+                            if score is None:
+                                score = entry.get("score")
+                            if name and score is not None:
+                                completed_items.append(
+                                    f"{name}: rerank {float(score):.3f}"
+                                )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Selecting tools"),

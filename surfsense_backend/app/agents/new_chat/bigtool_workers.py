@@ -55,11 +55,13 @@ async def create_bigtool_worker(
     )
     tool_index = build_tool_index(tool_registry)
     store = build_bigtool_store(tool_index)
+    trace_key = str(dependencies.get("thread_id") or "")
     retrieve_tools, aretrieve_tools = make_smart_retriever(
         tool_index=tool_index,
         primary_namespaces=config.primary_namespaces,
         fallback_namespaces=config.fallback_namespaces,
         limit=config.tool_limit,
+        trace_key=trace_key,
     )
     graph = create_bigtool_agent(
         llm,

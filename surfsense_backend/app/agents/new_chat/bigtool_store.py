@@ -103,6 +103,7 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
 TOOL_RERANK_CANDIDATES = 24
 TOOL_EMBEDDING_WEIGHT = 4.0
 _TOOL_EMBED_CACHE: dict[str, list[float]] = {}
+_TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
 
 def _normalize_text(text: str) -> str:
@@ -223,13 +224,13 @@ def _rerank_tool_candidates(
     *,
     candidate_ids: list[str],
     tool_index_by_id: dict[str, ToolIndexEntry],
-    scores_by_id: dict[str, int],
-) -> list[str]:
+    scores_by_id: dict[str, float],
+) -> tuple[list[str], dict[str, float]]:
     if len(candidate_ids) <= 1:
-        return candidate_ids
+        return candidate_ids, {}
     reranker = RerankerService.get_reranker_instance()
     if not reranker:
-        return candidate_ids
+        return candidate_ids, {}
     documents: list[dict[str, Any]] = []
     for tool_id in candidate_ids:
         entry = tool_index_by_id.get(tool_id)
@@ -249,22 +250,49 @@ def _rerank_tool_candidates(
             }
         )
     if not documents:
-        return candidate_ids
+        return candidate_ids, {}
     reranked = reranker.rerank_documents(query, documents)
     if not reranked:
-        return candidate_ids
+        return candidate_ids, {}
     reranked_ids = [
         str(doc.get("document_id"))
         for doc in reranked
         if doc.get("document_id")
     ]
+    rerank_scores = {
+        str(doc.get("document_id")): float(doc.get("score") or 0.0)
+        for doc in reranked
+        if doc.get("document_id")
+    }
     seen: set[str] = set()
     ordered: list[str] = []
     for tool_id in reranked_ids + candidate_ids:
         if tool_id and tool_id not in seen:
             ordered.append(tool_id)
             seen.add(tool_id)
-    return ordered
+    return ordered, rerank_scores
+
+
+def record_tool_rerank(
+    trace_key: str | None,
+    *,
+    query_norm: str,
+    ranked_tools: list[dict[str, Any]],
+) -> None:
+    if not trace_key or not query_norm:
+        return
+    _TOOL_RERANK_TRACE[(str(trace_key), query_norm)] = ranked_tools
+
+
+def get_tool_rerank_trace(
+    trace_key: str | None,
+    *,
+    query: str,
+) -> list[dict[str, Any]] | None:
+    if not trace_key or not query:
+        return None
+    query_norm = _normalize_text(query)
+    return _TOOL_RERANK_TRACE.get((str(trace_key), query_norm))
 
 
 def smart_retrieve_tools(
@@ -274,6 +302,7 @@ def smart_retrieve_tools(
     primary_namespaces: list[tuple[str, ...]],
     fallback_namespaces: list[tuple[str, ...]] | None = None,
     limit: int = 2,
+    trace_key: str | None = None,
 ) -> list[str]:
     query_norm = _normalize_text(query)
     query_tokens = set(_tokenize(query_norm))
@@ -330,12 +359,25 @@ def smart_retrieve_tools(
             tool_id for tool_id, _ in fallback_scored[:TOOL_RERANK_CANDIDATES]
         ]
 
-    reranked_ids = _rerank_tool_candidates(
+    reranked_ids, rerank_scores = _rerank_tool_candidates(
         query,
         candidate_ids=candidate_ids,
         tool_index_by_id=tool_index_by_id,
         scores_by_id=scores_by_id,
     )
+    if trace_key and candidate_ids:
+        ranked_tools: list[dict[str, Any]] = []
+        for tool_id in reranked_ids:
+            entry = tool_index_by_id.get(tool_id)
+            ranked_tools.append(
+                {
+                    "tool_id": tool_id,
+                    "name": entry.name if entry else tool_id,
+                    "rerank_score": rerank_scores.get(tool_id),
+                    "score": float(scores_by_id.get(tool_id, 0.0)),
+                }
+            )
+        record_tool_rerank(trace_key, query_norm=query_norm, ranked_tools=ranked_tools)
     return reranked_ids[:limit]
 
 
@@ -345,6 +387,7 @@ def make_smart_retriever(
     primary_namespaces: list[tuple[str, ...]],
     fallback_namespaces: list[tuple[str, ...]],
     limit: int = 2,
+    trace_key: str | None = None,
 ):
     def retrieve_tools(query: str) -> list[str]:
         """Select relevant tool IDs using namespace-aware scoring."""
@@ -354,6 +397,7 @@ def make_smart_retriever(
             primary_namespaces=primary_namespaces,
             fallback_namespaces=fallback_namespaces,
             limit=limit,
+            trace_key=trace_key,
         )
 
     async def aretrieve_tools(query: str) -> list[str]:
