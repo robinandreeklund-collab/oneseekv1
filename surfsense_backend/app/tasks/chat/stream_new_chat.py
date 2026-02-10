@@ -230,6 +230,13 @@ def format_todo_items(todos: list[dict] | None) -> list[str]:
     return items
 
 
+def _coerce_jsonable(value: object) -> object:
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        return str(value)
+
+
 async def stream_new_chat(
     user_query: str,
     search_space_id: int,
@@ -1248,12 +1255,13 @@ async def stream_new_chat(
                     else streaming_service.generate_tool_call_id()
                 )
                 yield streaming_service.format_tool_input_start(tool_call_id, tool_name)
+                safe_tool_input = _coerce_jsonable(tool_input)
                 yield streaming_service.format_tool_input_available(
                     tool_call_id,
                     tool_name,
-                    tool_input
-                    if isinstance(tool_input, dict)
-                    else {"input": tool_input},
+                    safe_tool_input
+                    if isinstance(safe_tool_input, dict)
+                    else {"input": safe_tool_input},
                 )
 
             elif event_type == "on_tool_end":
