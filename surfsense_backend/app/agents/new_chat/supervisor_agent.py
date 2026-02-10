@@ -274,7 +274,7 @@ async def create_supervisor_agent(
                     f"{call.get('agent')}: {call.get('task')} {response}"
                 )
             if context_parts:
-                context_query = f\"{query} {' '.join(context_parts)}\"
+                context_query = f"{query} {' '.join(context_parts)}"
         selected = _smart_retrieve_agents(
             context_query,
             agent_definitions=agent_definitions,
