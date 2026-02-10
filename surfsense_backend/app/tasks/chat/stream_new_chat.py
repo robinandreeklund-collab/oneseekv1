@@ -645,6 +645,8 @@ async def stream_new_chat(
         }
         if route == Route.SMALLTALK:
             input_state["search_space_id"] = search_space_id
+        else:
+            input_state["route_hint"] = route.value
 
         # Configure LangGraph with thread_id for memory
         # If checkpoint_id is provided, fork from that checkpoint (for edit/reload)

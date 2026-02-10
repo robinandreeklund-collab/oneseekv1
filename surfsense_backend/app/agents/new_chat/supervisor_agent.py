@@ -79,6 +79,8 @@ class SupervisorState(TypedDict, total=False):
     active_plan: Annotated[list[dict[str, Any]], _replace]
     plan_complete: Annotated[bool, _replace]
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
+    route_hint: Annotated[str | None, _replace]
+    critic_notes: Annotated[str | None, _replace]
 
 
 def _format_plan_context(state: dict[str, Any]) -> str | None:
@@ -113,6 +115,23 @@ def _format_recent_calls(state: dict[str, Any]) -> str | None:
     if not lines:
         return None
     return "<recent_agent_calls>\n" + "\n".join(lines) + "\n</recent_agent_calls>"
+
+
+def _format_route_hint(state: dict[str, Any]) -> str | None:
+    hint = state.get("route_hint")
+    if not hint:
+        return None
+    return f"<route_hint>{hint}</route_hint>"
+
+
+def _format_critic_notes(state: dict[str, Any]) -> str | None:
+    notes = state.get("critic_notes")
+    if not notes:
+        return None
+    return (
+        "<critic_notes>Internal note (do not mention in user response): "
+        f"{notes}</critic_notes>"
+    )
 
 
 def _safe_json(payload: Any) -> dict[str, Any]:
@@ -258,6 +277,7 @@ async def create_supervisor_agent(
         """Retrieve relevant agents for the task."""
         recent_agents = []
         context_query = query
+        route_hint = None
         if state:
             recent_calls = state.get("recent_agent_calls") or []
             recent_agents = [
@@ -265,6 +285,7 @@ async def create_supervisor_agent(
                 for call in recent_calls
                 if call.get("agent")
             ]
+            route_hint = state.get("route_hint")
             context_parts = []
             for call in recent_calls[-3:]:
                 response = str(call.get("response") or "")
@@ -281,6 +302,22 @@ async def create_supervisor_agent(
             recent_agents=recent_agents,
             limit=limit,
         )
+        if route_hint:
+            preferred = {
+                "action": ["action", "media"],
+                "knowledge": ["knowledge", "browser"],
+                "statistics": ["statistics"],
+            }.get(str(route_hint), [])
+            if preferred:
+                preferred_defs = [
+                    agent
+                    for agent in agent_definitions
+                    if agent.name in preferred
+                ]
+                for agent in reversed(preferred_defs):
+                    if agent not in selected:
+                        selected.insert(0, agent)
+                selected = selected[:limit]
         payload = [
             {"name": agent.name, "description": agent.description}
             for agent in selected
@@ -339,10 +376,14 @@ async def create_supervisor_agent(
         messages = list(state.get("messages") or [])
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
-        if plan_context:
-            messages = [SystemMessage(content=plan_context)] + messages
-        if recent_context:
-            messages = [SystemMessage(content=recent_context)] + messages
+        route_context = _format_route_hint(state)
+        critic_context = _format_critic_notes(state)
+        system_bits = [
+            item for item in (plan_context, recent_context, route_context, critic_context)
+            if item
+        ]
+        if system_bits:
+            messages = [SystemMessage(content="\n".join(system_bits))] + messages
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}
 
@@ -356,10 +397,14 @@ async def create_supervisor_agent(
         messages = list(state.get("messages") or [])
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
-        if plan_context:
-            messages = [SystemMessage(content=plan_context)] + messages
-        if recent_context:
-            messages = [SystemMessage(content=recent_context)] + messages
+        route_context = _format_route_hint(state)
+        critic_context = _format_critic_notes(state)
+        system_bits = [
+            item for item in (plan_context, recent_context, route_context, critic_context)
+            if item
+        ]
+        if system_bits:
+            messages = [SystemMessage(content="\n".join(system_bits))] + messages
         response = await llm_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
@@ -432,7 +477,7 @@ async def create_supervisor_agent(
                 ]
             )
             critic_text = str(getattr(critic_msg, "content", "") or "").strip()
-            updates["messages"] = [SystemMessage(content=f"<critic>{critic_text}</critic>")]
+            updates["critic_notes"] = critic_text
             critic_payload = _safe_json(critic_text)
             if critic_payload.get("status") == "needs_more":
                 updates["plan_complete"] = False
