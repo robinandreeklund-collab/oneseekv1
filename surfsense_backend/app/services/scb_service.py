@@ -345,7 +345,9 @@ class ScbService:
                     selected = [child for child in children if child[0] > 0]
                     if len(selected) < max_children:
                         selected = children[:max_children]
-                queue.extend(selected)
+                queue.extend(
+                    [(path, next_depth, next_breadcrumb) for _, path, next_depth, next_breadcrumb in selected]
+                )
 
         return tables
 
