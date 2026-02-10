@@ -700,10 +700,21 @@ def append_datetime_context(prompt: str, *, today: datetime | None = None) -> st
             )
         except Exception:
             pass
-    if "Today's date" in prompt and "Current time" in prompt:
-        return prompt
+    updated = prompt
+    updated = re.sub(
+        r"(?m)^Today's date \(UTC\):.*$",
+        f"Today's date (UTC): {resolved_today}",
+        updated,
+    )
+    updated = re.sub(
+        r"(?m)^Current time \(UTC\):.*$",
+        f"Current time (UTC): {resolved_time}",
+        updated,
+    )
+    if "Today's date (UTC):" in updated or "Current time (UTC):" in updated:
+        return updated
     return (
-        f"{prompt}\n\nToday's date (UTC): {resolved_today}\n"
+        f"{updated}\n\nToday's date (UTC): {resolved_today}\n"
         f"Current time (UTC): {resolved_time}\n"
     )
 
