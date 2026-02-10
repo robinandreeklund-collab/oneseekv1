@@ -716,6 +716,8 @@ async def stream_new_chat(
 
         # Reset text tracking for this stream
         accumulated_text = ""
+        critic_buffer = ""
+        suppress_critic = False
 
         # Track thinking steps for chain-of-thought display
         thinking_step_counter = 0
@@ -857,6 +859,33 @@ async def stream_new_chat(
                 return str(parents[-1])
             return None
 
+        def filter_critic_json(text: str) -> str:
+            nonlocal suppress_critic, critic_buffer
+            if not text:
+                return text
+            output = ""
+            remaining = text
+            while remaining:
+                if not suppress_critic:
+                    start_idx = remaining.find("{\"status\"")
+                    if start_idx == -1:
+                        output += remaining
+                        break
+                    output += remaining[:start_idx]
+                    remaining = remaining[start_idx:]
+                    suppress_critic = True
+                    critic_buffer = ""
+                if suppress_critic:
+                    end_idx = remaining.find("}")
+                    if end_idx == -1:
+                        critic_buffer += remaining
+                        remaining = ""
+                    else:
+                        remaining = remaining[end_idx + 1 :]
+                        suppress_critic = False
+                        critic_buffer = ""
+            return output
+
         # Stream the agent response with thread config for memory
         async for event in agent.astream_events(
             input_state, config=config, version="v2"
@@ -940,6 +969,9 @@ async def stream_new_chat(
                 if chunk and hasattr(chunk, "content"):
                     content = chunk.content
                     if content and isinstance(content, str):
+                        content = filter_critic_json(content)
+                        if not content:
+                            continue
                         # Start a new text block if needed
                         if current_text_id is None:
                             # Complete any previous step

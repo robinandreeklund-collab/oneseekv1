@@ -447,23 +447,51 @@ def _safe_json(payload: Any) -> dict[str, Any]:
 def _sanitize_messages(messages: list[Any]) -> list[Any]:
     sanitized: list[Any] = []
     for message in messages:
-        if isinstance(message, ToolMessage) and (message.name or "") == "call_agent":
+        if isinstance(message, ToolMessage):
             payload = _safe_json(message.content)
-            agent = payload.get("agent") or "agent"
-            response = payload.get("response") or ""
-            if response:
-                content = f"{agent}: {response}"
-            else:
-                content = f"{agent}: completed"
-            sanitized.append(
-                ToolMessage(
-                    content=content,
-                    name=message.name,
-                    tool_call_id=getattr(message, "tool_call_id", None),
-                )
-            )
-        else:
-            sanitized.append(message)
+            if payload:
+                response = payload.get("response")
+                if isinstance(response, str):
+                    agent = payload.get("agent") or message.name or "agent"
+                    content = f"{agent}: {response}" if response else f"{agent}: completed"
+                    sanitized.append(
+                        ToolMessage(
+                            content=content,
+                            name=message.name,
+                            tool_call_id=getattr(message, "tool_call_id", None),
+                        )
+                    )
+                    continue
+                if payload.get("status") and payload.get("reason"):
+                    tool_name = message.name or "tool"
+                    sanitized.append(
+                        ToolMessage(
+                            content=f"{tool_name}: completed",
+                            name=message.name,
+                            tool_call_id=getattr(message, "tool_call_id", None),
+                        )
+                    )
+                    continue
+            if isinstance(message.content, str) and "{\"status\"" in message.content:
+                trimmed = message.content.split("{\"status\"", 1)[0].rstrip()
+                if trimmed:
+                    sanitized.append(
+                        ToolMessage(
+                            content=trimmed,
+                            name=message.name,
+                            tool_call_id=getattr(message, "tool_call_id", None),
+                        )
+                    )
+                else:
+                    sanitized.append(
+                        ToolMessage(
+                            content=f"{message.name or 'tool'}: completed",
+                            name=message.name,
+                            tool_call_id=getattr(message, "tool_call_id", None),
+                        )
+                    )
+                continue
+        sanitized.append(message)
     return sanitized
 
 
