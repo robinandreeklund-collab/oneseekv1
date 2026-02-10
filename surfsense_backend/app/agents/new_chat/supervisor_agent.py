@@ -376,6 +376,9 @@ async def create_supervisor_agent(
         if not critic_payload:
             critic_payload = {"status": "ok", "reason": critic_text}
 
+        if response_text:
+            response_text = response_text.split("{\"status\":", 1)[0].rstrip()
+
         return json.dumps(
             {
                 "agent": name,
