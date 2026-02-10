@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from langgraph.types import Checkpointer
+from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph_bigtool import create_agent as create_bigtool_agent
+from langgraph_bigtool.graph import ToolNode as BigtoolToolNode
 
 from app.agents.new_chat.bigtool_store import (
     build_bigtool_store,
@@ -29,6 +31,24 @@ async def create_bigtool_worker(
     checkpointer: Checkpointer | None,
     config: WorkerConfig,
 ):
+    if not hasattr(BigtoolToolNode, "inject_tool_args") and hasattr(
+        BigtoolToolNode, "_inject_tool_args"
+    ):
+        def _inject_tool_args_compat(self, tool_call, state, store):
+            tool_call_id = None
+            if isinstance(tool_call, dict):
+                tool_call_id = tool_call.get("id")
+            runtime = ToolRuntime(
+                state,
+                {},
+                {},
+                lambda _: None,
+                tool_call_id,
+                store,
+            )
+            return self._inject_tool_args(tool_call, runtime)
+
+        BigtoolToolNode.inject_tool_args = _inject_tool_args_compat  # type: ignore[attr-defined]
     tool_registry = await build_global_tool_registry(
         dependencies=dependencies,
         include_mcp_tools=True,
