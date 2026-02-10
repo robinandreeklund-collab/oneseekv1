@@ -40,7 +40,7 @@ export function HeroSection() {
 	return (
 		<div
 			ref={parentRef}
-			className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-16 md:px-8"
+			className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-20 md:px-8 md:py-32"
 		>
 			{/* Simplified background - OpenAI style */}
 			<div className="absolute inset-0 bg-gradient-to-b from-white via-gray-50 to-white dark:from-neutral-950 dark:via-neutral-900 dark:to-neutral-950" />
