@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 
 from app.agents.new_chat.action_router import DEFAULT_ACTION_ROUTE_PROMPT
+from app.agents.new_chat.bigtool_prompts import (
+    DEFAULT_WORKER_ACTION_PROMPT,
+    DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+)
 from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.dispatcher import DEFAULT_ROUTE_SYSTEM_PROMPT
 from app.agents.new_chat.knowledge_router import DEFAULT_KNOWLEDGE_ROUTE_PROMPT
@@ -92,6 +96,18 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Smalltalk instructions",
         description="Instructions for casual chat without tools.",
         default_prompt=SMALLTALK_INSTRUCTIONS,
+    ),
+    PromptDefinition(
+        key="agent.worker.knowledge",
+        label="Worker · Knowledge prompt",
+        description="System prompt for knowledge bigtool worker.",
+        default_prompt=DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+    ),
+    PromptDefinition(
+        key="agent.worker.action",
+        label="Worker · Action prompt",
+        description="System prompt for action bigtool worker.",
+        default_prompt=DEFAULT_WORKER_ACTION_PROMPT,
     ),
     PromptDefinition(
         key="agent.statistics.system",

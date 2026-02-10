@@ -28,34 +28,25 @@ from app.agents.new_chat.llm_config import (
     load_agent_config,
     load_llm_config_from_yaml,
 )
-from app.agents.new_chat.action_router import (
-    ActionRoute,
-    DEFAULT_ACTION_ROUTE_PROMPT,
-    dispatch_action_route,
+from app.agents.new_chat.bigtool_prompts import (
+    DEFAULT_WORKER_ACTION_PROMPT,
+    DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+    build_worker_prompt,
 )
+from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
 from app.agents.new_chat.dispatcher import (
     DEFAULT_ROUTE_SYSTEM_PROMPT,
     dispatch_route,
 )
-from app.agents.new_chat.knowledge_router import (
-    KnowledgeRoute,
-    DEFAULT_KNOWLEDGE_ROUTE_PROMPT,
-    dispatch_knowledge_route,
-)
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.routing import Route, ROUTE_CITATIONS_ENABLED, ROUTE_TOOL_SETS
-from app.agents.new_chat.statistics_agent import create_statistics_agent
 from app.agents.new_chat.statistics_prompts import (
     DEFAULT_STATISTICS_SYSTEM_PROMPT,
     build_statistics_system_prompt,
 )
 from app.agents.new_chat.subagent_utils import (
-    action_route_instructions,
-    action_route_label,
-    build_subagent_config,
     SMALLTALK_INSTRUCTIONS,
-    knowledge_route_instructions,
-    knowledge_route_label,
+    build_subagent_config,
 )
 from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.db import ChatTraceSession, Document, SurfsenseDocsDocument, async_session_maker
@@ -403,154 +394,80 @@ async def stream_new_chat(
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
             system_prompt_override=router_prompt,
         )
-        knowledge_route: KnowledgeRoute | None = None
-        action_route: ActionRoute | None = None
-        statistics_prompt: str | None = None
-        effective_agent_config = agent_config
+        worker_config: WorkerConfig | None = None
+        worker_system_prompt: str | None = None
+        smalltalk_prompt: str | None = None
+
+        citations_enabled = ROUTE_CITATIONS_ENABLED.get(route, True)
         if route == Route.KNOWLEDGE:
-            knowledge_router_prompt = resolve_prompt(
-                prompt_overrides, "router.knowledge", DEFAULT_KNOWLEDGE_ROUTE_PROMPT
-            )
-            knowledge_route = await dispatch_knowledge_route(
-                user_query,
-                llm,
-                has_attachments=bool(attachments),
-                has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
-                allow_external=True,
-                system_prompt_override=knowledge_router_prompt,
-            )
-            docs_instructions = resolve_prompt(
+            knowledge_prompt = resolve_prompt(
                 prompt_overrides,
-                "agent.knowledge.docs",
-                knowledge_route_instructions(KnowledgeRoute.DOCS),
+                "agent.worker.knowledge",
+                DEFAULT_WORKER_KNOWLEDGE_PROMPT,
             )
-            internal_instructions = resolve_prompt(
-                prompt_overrides,
-                "agent.knowledge.internal",
-                knowledge_route_instructions(KnowledgeRoute.INTERNAL),
+            worker_system_prompt = build_worker_prompt(
+                knowledge_prompt, citations_enabled=citations_enabled
             )
-            external_instructions = resolve_prompt(
-                prompt_overrides,
-                "agent.knowledge.external",
-                knowledge_route_instructions(KnowledgeRoute.EXTERNAL),
+            worker_config = WorkerConfig(
+                name="knowledge-worker",
+                primary_namespaces=[("tools", "knowledge")],
+                fallback_namespaces=[
+                    ("tools", "action"),
+                    ("tools", "statistics"),
+                    ("tools", "general"),
+                ],
             )
-            if knowledge_route == KnowledgeRoute.DOCS:
-                enabled_tools = ["search_surfsense_docs", "reflect_on_progress"]
-                effective_agent_config = build_subagent_config(
-                    agent_config, docs_instructions
-                )
-            elif knowledge_route == KnowledgeRoute.EXTERNAL:
-                enabled_tools = ["search_tavily", "reflect_on_progress"]
-                effective_agent_config = build_subagent_config(
-                    agent_config, external_instructions
-                )
-            else:
-                enabled_tools = [
-                    "search_knowledge_base",
-                    "save_memory",
-                    "recall_memory",
-                    "reflect_on_progress",
-                ]
-                effective_agent_config = build_subagent_config(
-                    agent_config, internal_instructions
-                )
         elif route == Route.ACTION:
-            action_router_prompt = resolve_prompt(
-                prompt_overrides, "router.action", DEFAULT_ACTION_ROUTE_PROMPT
-            )
-            action_route = await dispatch_action_route(
-                user_query, llm, system_prompt_override=action_router_prompt
-            )
-            web_instructions = resolve_prompt(
+            action_prompt = resolve_prompt(
                 prompt_overrides,
-                "agent.action.web",
-                action_route_instructions(ActionRoute.WEB),
+                "agent.worker.action",
+                DEFAULT_WORKER_ACTION_PROMPT,
             )
-            media_instructions = resolve_prompt(
-                prompt_overrides,
-                "agent.action.media",
-                action_route_instructions(ActionRoute.MEDIA),
+            worker_system_prompt = build_worker_prompt(
+                action_prompt, citations_enabled=citations_enabled
             )
-            travel_instructions = resolve_prompt(
-                prompt_overrides,
-                "agent.action.travel",
-                action_route_instructions(ActionRoute.TRAVEL),
+            worker_config = WorkerConfig(
+                name="action-worker",
+                primary_namespaces=[("tools", "action")],
+                fallback_namespaces=[
+                    ("tools", "knowledge"),
+                    ("tools", "statistics"),
+                    ("tools", "general"),
+                ],
             )
-            data_instructions = resolve_prompt(
-                prompt_overrides,
-                "agent.action.data",
-                action_route_instructions(ActionRoute.DATA),
-            )
-            if action_route == ActionRoute.MEDIA:
-                enabled_tools = [
-                    "generate_podcast",
-                    "search_knowledge_base",
-                    "reflect_on_progress",
-                ]
-                effective_agent_config = build_subagent_config(
-                    agent_config, media_instructions
-                )
-            elif action_route == ActionRoute.TRAVEL:
-                enabled_tools = ["smhi_weather", "trafiklab_route", "reflect_on_progress"]
-                effective_agent_config = build_subagent_config(
-                    agent_config, travel_instructions
-                )
-            elif action_route == ActionRoute.DATA:
-                enabled_tools = [
-                    "libris_search",
-                    "jobad_links_search",
-                    "reflect_on_progress",
-                ]
-                effective_agent_config = build_subagent_config(
-                    agent_config, data_instructions
-                )
-            else:
-                enabled_tools = [
-                    "link_preview",
-                    "scrape_webpage",
-                    "display_image",
-                    "reflect_on_progress",
-                ]
-                effective_agent_config = build_subagent_config(
-                    agent_config, web_instructions
-                )
         elif route == Route.STATISTICS:
-            enabled_tools = []
             statistics_prompt = resolve_prompt(
                 prompt_overrides,
                 "agent.statistics.system",
                 DEFAULT_STATISTICS_SYSTEM_PROMPT,
             )
-            effective_agent_config = agent_config
-        else:
-            enabled_tools = ROUTE_TOOL_SETS.get(
-                route, ROUTE_TOOL_SETS[Route.KNOWLEDGE]
+            worker_system_prompt = build_statistics_system_prompt(statistics_prompt)
+            worker_config = WorkerConfig(
+                name="statistics-worker",
+                primary_namespaces=[("tools", "statistics")],
+                fallback_namespaces=[
+                    ("tools", "action"),
+                    ("tools", "knowledge"),
+                    ("tools", "general"),
+                ],
             )
-            effective_agent_config = agent_config
-            if route == Route.SMALLTALK:
-                smalltalk_instructions = resolve_prompt(
-                    prompt_overrides,
-                    "agent.smalltalk.system",
-                    SMALLTALK_INSTRUCTIONS,
-                )
-                effective_agent_config = build_subagent_config(
-                    agent_config, smalltalk_instructions
-                )
-        citations_enabled = ROUTE_CITATIONS_ENABLED.get(route, True)
-        prompt_tool_names = list(enabled_tools) if enabled_tools else []
-        if route in (Route.KNOWLEDGE, Route.ACTION):
-            if "write_todos" not in prompt_tool_names:
-                prompt_tool_names.append("write_todos")
-            if "reflect_on_progress" not in prompt_tool_names:
-                prompt_tool_names.append("reflect_on_progress")
+        elif route == Route.SMALLTALK:
+            smalltalk_prompt = resolve_prompt(
+                prompt_overrides,
+                "agent.smalltalk.system",
+                SMALLTALK_INSTRUCTIONS,
+            )
+
+        effective_agent_config = agent_config
+        if route == Route.SMALLTALK and smalltalk_prompt:
+            effective_agent_config = build_subagent_config(
+                agent_config, smalltalk_prompt
+            )
+
         if trace_recorder:
             route_span_id = f"route-{uuid.uuid4().hex[:8]}"
             route_meta = {
                 "route": route.value,
-                "knowledge_route": knowledge_route.value
-                if knowledge_route is not None
-                else None,
-                "action_route": action_route.value if action_route is not None else None,
                 "citations_enabled": citations_enabled,
             }
             route_start = await trace_recorder.start_span(
@@ -589,17 +506,22 @@ async def stream_new_chat(
         # Get the PostgreSQL checkpointer for persistent conversation memory
         checkpointer = await get_checkpointer()
 
-        if route == Route.STATISTICS:
-            agent = create_statistics_agent(
+        if worker_config:
+            agent = await create_bigtool_worker(
                 llm=llm,
-                connector_service=connector_service,
-                search_space_id=search_space_id,
-                user_id=user_id,
-                thread_id=chat_id,
+                dependencies={
+                    "search_space_id": search_space_id,
+                    "db_session": session,
+                    "connector_service": connector_service,
+                    "firecrawl_api_key": firecrawl_api_key,
+                    "user_id": user_id,
+                    "thread_id": chat_id,
+                },
                 checkpointer=checkpointer,
+                config=worker_config,
             )
         else:
-            # Create the deep agent with checkpointer and configurable prompts
+            # Fallback to deep agent for smalltalk and legacy flows
             agent = await create_surfsense_deep_agent(
                 llm=llm,
                 search_space_id=search_space_id,
@@ -610,8 +532,8 @@ async def stream_new_chat(
                 thread_id=chat_id,  # Pass chat ID for podcast association
                 agent_config=effective_agent_config,  # Pass prompt configuration
                 firecrawl_api_key=firecrawl_api_key,  # Pass Firecrawl API key if configured
-                enabled_tools=enabled_tools,
-                tool_names_for_prompt=prompt_tool_names,
+                enabled_tools=ROUTE_TOOL_SETS.get(route, []),
+                tool_names_for_prompt=[],
                 force_citations_enabled=citations_enabled,
             )
 
@@ -719,17 +641,17 @@ async def stream_new_chat(
         #             langchain_messages.append(AIMessage(content=msg.content))
         # else:
         # Fallback: just use the current user query with attachment context
-        if route == Route.STATISTICS:
-            stats_prompt = build_statistics_system_prompt(statistics_prompt)
-            langchain_messages.append(SystemMessage(content=stats_prompt))
+        if worker_system_prompt:
+            langchain_messages.append(SystemMessage(content=worker_system_prompt))
         langchain_messages.append(HumanMessage(content=final_query))
 
         input_state = {
             # Lets not pass this message atm because we are using the checkpointer to manage the conversation history
             # We will use this to simulate group chat functionality in the future
             "messages": langchain_messages,
-            "search_space_id": search_space_id,
         }
+        if not worker_config:
+            input_state["search_space_id"] = search_space_id
 
         # Configure LangGraph with thread_id for memory
         # If checkpoint_id is provided, fork from that checkpoint (for edit/reload)
@@ -783,13 +705,7 @@ async def stream_new_chat(
         # Track write_todos calls to show "Creating plan" vs "Updating plan"
         write_todos_call_count: int = 0
 
-        route_label = route.value.capitalize()
-        if route == Route.KNOWLEDGE and knowledge_route is not None:
-            route_label = f"Knowledge/{knowledge_route_label(knowledge_route)}"
-        elif route == Route.ACTION and action_route is not None:
-            route_label = f"Action/{action_route_label(action_route)}"
-        elif route == Route.STATISTICS:
-            route_label = "Statistics/SCB"
+        route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
 
         def format_step_title(title: str) -> str:
@@ -819,10 +735,6 @@ async def stream_new_chat(
 
         route_step_id = next_thinking_step_id()
         route_items = [f"Route: {route.value}"]
-        if knowledge_route is not None:
-            route_items.append(f"Sub-route: {knowledge_route.value}")
-        if action_route is not None:
-            route_items.append(f"Sub-route: {action_route.value}")
         yield streaming_service.format_thinking_step(
             step_id=route_step_id,
             title=format_step_title("Routing request"),

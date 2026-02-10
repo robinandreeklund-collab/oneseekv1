@@ -59,6 +59,7 @@ from .smhi_weather import create_smhi_weather_tool
 from .tavily_search import create_tavily_search_tool
 from .trafiklab_route import create_trafiklab_route_tool
 from .user_memory import create_recall_memory_tool, create_save_memory_tool
+from .write_todos import create_write_todos_tool
 
 # =============================================================================
 # Tool Definition
@@ -192,6 +193,13 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         name="reflect_on_progress",
         description="Log a brief reflection on progress, gaps, and next steps",
         factory=lambda deps: create_reflect_on_progress_tool(),
+        requires=[],
+        enabled_by_default=False,
+    ),
+    ToolDefinition(
+        name="write_todos",
+        description="Create or update a short todo list for multi-step work",
+        factory=lambda deps: create_write_todos_tool(),
         requires=[],
         enabled_by_default=False,
     ),
