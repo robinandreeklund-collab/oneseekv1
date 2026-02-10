@@ -235,6 +235,7 @@ class ScbService:
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout = timeout
         self._node_cache: dict[str, list[dict[str, Any]]] = {}
+        self._metadata_cache: dict[str, dict[str, Any]] = {}
 
     def _build_url(self, path: str, *, trailing: bool) -> str:
         cleaned = (path or "").lstrip("/")
@@ -267,8 +268,11 @@ class ScbService:
 
     async def get_table_metadata(self, table_path: str) -> dict[str, Any]:
         url = self._build_url(table_path, trailing=False)
+        if url in self._metadata_cache:
+            return dict(self._metadata_cache[url])
         data = await self._get_json(url)
         if isinstance(data, dict):
+            self._metadata_cache[url] = data
             return data
         return {}
 
@@ -345,17 +349,18 @@ class ScbService:
 
         return tables
 
-    async def find_best_table(
+    async def find_best_table_candidates(
         self,
         base_path: str,
         query: str,
         *,
         max_tables: int = 80,
         metadata_limit: int = 10,
-    ) -> ScbTable | None:
+        candidate_limit: int = 5,
+    ) -> tuple[ScbTable | None, list[ScbTable]]:
         tables = await self.collect_tables(base_path, query, max_tables=max_tables)
         if not tables:
-            return None
+            return None, []
         query_tokens = set(_tokenize(query))
         query_norm = _normalize_text(query)
         requested_years = _extract_years(query)
@@ -373,13 +378,14 @@ class ScbService:
 
         tables.sort(key=rank, reverse=True)
         top_candidates = tables[:metadata_limit]
-        best_table = tables[0]
-        best_score = rank(best_table)[0]
+        scored: list[tuple[ScbTable, float]] = []
 
         for table in top_candidates:
+            base_score = rank(table)[0]
             try:
                 metadata = await self.get_table_metadata(table.path)
             except httpx.HTTPError:
+                scored.append((table, float(base_score)))
                 continue
             meta_score = _score_table_metadata(
                 metadata=metadata,
@@ -390,12 +396,62 @@ class ScbService:
                 wants_gender=wants_gender,
                 wants_age=wants_age,
             )
-            total_score = rank(table)[0] + meta_score
-            if total_score > best_score:
-                best_score = total_score
-                best_table = table
+            scored.append((table, float(base_score + meta_score)))
 
+        if not scored:
+            return None, []
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        best_table = scored[0][0]
+        candidates = [item[0] for item in scored[1 : candidate_limit + 1]]
+        return best_table, candidates
+
+    async def find_best_table(
+        self,
+        base_path: str,
+        query: str,
+        *,
+        max_tables: int = 80,
+        metadata_limit: int = 10,
+    ) -> ScbTable | None:
+        best_table, _ = await self.find_best_table_candidates(
+            base_path,
+            query,
+            max_tables=max_tables,
+            metadata_limit=metadata_limit,
+        )
         return best_table
+
+    def build_query_payloads(
+        self,
+        metadata: dict[str, Any],
+        query: str,
+        *,
+        max_cells: int = SCB_MAX_CELLS,
+        max_values_per_variable: int = 6,
+        max_batches: int = 8,
+    ) -> tuple[list[dict[str, Any]], list[str], list[str], list[list[str]]]:
+        selections, summary = self._build_selections(
+            metadata,
+            query,
+            max_values_per_variable=max_values_per_variable,
+        )
+        if not selections:
+            return [], [], ["No selectable variables found in SCB metadata."], []
+
+        batches, warnings = self._split_selection_batches(
+            selections,
+            max_cells=max_cells,
+            max_batches=max_batches,
+        )
+        if len(batches) > 1:
+            warnings.append(
+                f"Split into {len(batches)} requests to stay under {max_cells} cells."
+            )
+
+        payloads = [self._payload_from_selections(batch) for batch in batches]
+        batch_summaries = [self._format_selection_summary(batch) for batch in batches]
+        return payloads, summary, warnings, batch_summaries
 
     def build_query_payload(
         self,
@@ -405,6 +461,24 @@ class ScbService:
         max_cells: int = SCB_MAX_CELLS,
         max_values_per_variable: int = 6,
     ) -> tuple[dict[str, Any], list[str], list[str]]:
+        payloads, summary, warnings, _ = self.build_query_payloads(
+            metadata,
+            query,
+            max_cells=max_cells,
+            max_values_per_variable=max_values_per_variable,
+            max_batches=1,
+        )
+        if not payloads:
+            return {}, summary, warnings
+        return payloads[0], summary, warnings
+
+    def _build_selections(
+        self,
+        metadata: dict[str, Any],
+        query: str,
+        *,
+        max_values_per_variable: int = 6,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         variables = metadata.get("variables") or []
         if not isinstance(variables, list):
             variables = []
@@ -414,8 +488,6 @@ class ScbService:
         years = _extract_years(query)
 
         selections: list[dict[str, Any]] = []
-        summaries: list[str] = []
-        warnings: list[str] = []
 
         for var in variables:
             code = str(var.get("code") or "")
@@ -442,10 +514,14 @@ class ScbService:
                 if not selected:
                     selected = values[-max_values_per_variable:]
             elif _is_region_variable(code, label):
-                selected = _match_values_by_text(values, value_texts, query_norm, query_tokens)
+                selected = _match_values_by_text(
+                    values, value_texts, query_norm, query_tokens
+                )
                 explicit = bool(selected)
                 if not selected:
-                    selected = _pick_preferred_value(values, value_texts, ["riket", "sverige"])
+                    selected = _pick_preferred_value(
+                        values, value_texts, ["riket", "sverige"]
+                    )
             elif _is_gender_variable(code, label):
                 if any(token.startswith("kvin") for token in query_tokens):
                     selected = _match_values_by_text(values, value_texts, "kvin", {"kvin"})
@@ -455,15 +531,21 @@ class ScbService:
                     selected = _pick_preferred_value(values, value_texts, ["tot", "total"])
                 explicit = bool(selected)
             elif _is_age_variable(code, label):
-                selected = _match_values_by_text(values, value_texts, query_norm, query_tokens)
+                selected = _match_values_by_text(
+                    values, value_texts, query_norm, query_tokens
+                )
                 explicit = bool(selected)
                 if not selected:
                     selected = _pick_preferred_value(values, value_texts, ["tot", "total"])
             else:
-                selected = _match_values_by_text(values, value_texts, query_norm, query_tokens)
+                selected = _match_values_by_text(
+                    values, value_texts, query_norm, query_tokens
+                )
                 explicit = bool(selected)
                 if not selected:
-                    selected = _pick_preferred_value(values, value_texts, ["tot", "total", "alla"])
+                    selected = _pick_preferred_value(
+                        values, value_texts, ["tot", "total", "alla"]
+                    )
 
             if not selected:
                 selected = values[:1]
@@ -478,54 +560,125 @@ class ScbService:
                     "values": selected,
                     "value_texts": value_texts,
                     "explicit": explicit,
+                    "is_time": _is_time_variable(code, label),
+                    "is_region": _is_region_variable(code, label),
                 }
             )
 
-        def cell_count() -> int:
-            lengths = [max(len(sel["values"]), 1) for sel in selections]
-            return prod(lengths) if lengths else 0
+        return selections, self._format_selection_summary(selections)
 
-        total_cells = cell_count()
-        if total_cells > max_cells:
-            warnings.append(
-                f"Estimated {total_cells} cells; trimming selection to stay under {max_cells}."
-            )
+    def _format_selection_summary(self, selections: list[dict[str, Any]]) -> list[str]:
+        summaries: list[str] = []
+        for selection in selections:
+            label = selection.get("label", "")
+            value_texts = selection.get("value_texts") or []
+            text_map = {
+                val: text
+                for val, text in zip(selection.get("values") or [], value_texts, strict=False)
+            }
+            display = [text_map.get(value, value) for value in selection.get("values") or []]
+            if display and label:
+                summaries.append(f"{label}: {', '.join(display)}")
+        return summaries
 
-            selections.sort(key=lambda item: len(item["values"]), reverse=True)
-            for selection in selections:
-                if total_cells <= max_cells:
-                    break
-                if selection["explicit"] and any(
-                    len(other["values"]) > 1 and not other["explicit"]
-                    for other in selections
-                ):
-                    continue
-                if len(selection["values"]) > 1:
-                    selection["values"] = selection["values"][:1]
-                    total_cells = cell_count()
-
-        if total_cells > max_cells:
-            warnings.append(
-                "Selection still exceeds cell limit; consider narrowing the query."
-            )
-
-        query_payload = {
+    def _payload_from_selections(
+        self, selections: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
             "query": [
                 {
                     "code": sel["code"],
                     "selection": {"filter": "item", "values": sel["values"]},
                 }
                 for sel in selections
+                if sel.get("values")
             ],
             "response": {"format": "json-stat2"},
         }
 
-        for selection in selections:
-            label = selection["label"]
-            value_texts = selection["value_texts"]
-            text_map = {val: text for val, text in zip(selection["values"], value_texts, strict=False)}
-            display = [text_map.get(value, value) for value in selection["values"]]
-            if display:
-                summaries.append(f"{label}: {', '.join(display)}")
+    def _selection_cell_count(self, selections: list[dict[str, Any]]) -> int:
+        lengths = [max(len(sel.get("values") or []), 1) for sel in selections]
+        return prod(lengths) if lengths else 0
 
-        return query_payload, summaries, warnings
+    def _choose_split_index(
+        self, selections: list[dict[str, Any]]
+    ) -> int | None:
+        candidates = [
+            idx
+            for idx, sel in enumerate(selections)
+            if len(sel.get("values") or []) > 1
+        ]
+        if not candidates:
+            return None
+        time_candidates = [idx for idx in candidates if selections[idx].get("is_time")]
+        if time_candidates:
+            return time_candidates[0]
+        region_candidates = [
+            idx for idx in candidates if selections[idx].get("is_region")
+        ]
+        if region_candidates:
+            return region_candidates[0]
+        return max(candidates, key=lambda idx: len(selections[idx].get("values") or []))
+
+    def _split_selection_batches(
+        self,
+        selections: list[dict[str, Any]],
+        *,
+        max_cells: int,
+        max_batches: int,
+    ) -> tuple[list[list[dict[str, Any]]], list[str]]:
+        warnings: list[str] = []
+        batches: list[list[dict[str, Any]]] = []
+        pending: list[list[dict[str, Any]]] = [selections]
+
+        while pending:
+            current = pending.pop(0)
+            total_cells = self._selection_cell_count(current)
+            if total_cells <= max_cells:
+                batches.append(current)
+                if len(batches) >= max_batches:
+                    break
+                continue
+
+            split_idx = self._choose_split_index(current)
+            if split_idx is None:
+                warnings.append(
+                    "Selection exceeds cell limit; please narrow the query."
+                )
+                batches.append(current)
+                break
+
+            values = list(current[split_idx].get("values") or [])
+            if len(values) <= 1:
+                warnings.append(
+                    "Selection exceeds cell limit; please narrow the query."
+                )
+                batches.append(current)
+                break
+
+            other_prod = 1
+            for idx, sel in enumerate(current):
+                if idx == split_idx:
+                    continue
+                other_prod *= max(len(sel.get("values") or []), 1)
+            max_chunk = max(1, max_cells // max(other_prod, 1))
+            if max_chunk >= len(values):
+                max_chunk = max(1, len(values) // 2)
+
+            chunks = [
+                values[i : i + max_chunk] for i in range(0, len(values), max_chunk)
+            ]
+            for chunk in chunks:
+                next_sel = [dict(sel) for sel in current]
+                next_sel[split_idx] = {**current[split_idx], "values": chunk}
+                pending.append(next_sel)
+                if len(batches) + len(pending) > max_batches:
+                    break
+            if len(batches) + len(pending) > max_batches:
+                break
+
+        if pending and len(batches) >= max_batches:
+            warnings.append(
+                f"Too many batches requested; returning first {max_batches} batches."
+            )
+        return batches[:max_batches], warnings

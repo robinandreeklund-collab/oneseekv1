@@ -554,6 +554,300 @@ SCB_TOOL_DEFINITIONS: list[ScbToolDefinition] = [
         table_codes=["AA0003"],
         typical_filters=["region", "tid", "kommun", "lan"],
     ),
+    ScbToolDefinition(
+        tool_id="scb_befolkning_folkmangd",
+        name="SCB Befolkning - Folkmangd",
+        base_path="BE/BE0101/BE0101A/",
+        description="Folkmangd och befolkning per region, alder och kon.",
+        keywords=["folkmangd", "befolkning", "alder", "kon", "region"],
+        example_queries=[
+            "Folkmangd Sverige 2010-2024",
+            "Befolkning per lan 2024",
+            "Aldersfordelning Goteborg 2023",
+        ],
+        table_codes=["BE0101A"],
+        typical_filters=["tid", "region", "kon", "alder"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_befolkning_forandringar",
+        name="SCB Befolkning - Forandringar",
+        base_path="BE/BE0101/BE0101G/",
+        description="Befolkningsforandringar och flyttningar over tid.",
+        keywords=["flytt", "migration", "forandring", "netto", "inrikes", "utrikes"],
+        example_queries=[
+            "Flyttnetto per lan 2020-2024",
+            "Befolkningsforandringar Sverige 2015-2024",
+            "Inflyttning och utflyttning per region 2023",
+        ],
+        table_codes=["BE0101G"],
+        typical_filters=["tid", "region", "typ"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_befolkning_fodda",
+        name="SCB Befolkning - Fodda",
+        base_path="BE/BE0101/BE0101H/",
+        description="Fodda, barn och nativitet per region.",
+        keywords=["fodda", "nativitet", "barn", "forlossning"],
+        example_queries=[
+            "Antal fodda per lan 2015-2024",
+            "Fodda per alder 2023",
+            "Fodda i Skane 2020-2024",
+        ],
+        table_codes=["BE0101H"],
+        typical_filters=["tid", "region", "kon", "alder"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_arbetsmarknad_arbetsloshet",
+        name="SCB Arbetsmarknad - Arbetsloshet",
+        base_path="AM/AM0401/",
+        description="Arbetsloshet och arbetssokande over tid.",
+        keywords=["arbetsloshet", "arbetslos", "arbetssokande"],
+        example_queries=[
+            "Arbetsloshet per lan 2018-2024",
+            "Arbetsloshet kvinnor 2023",
+            "Arbetsloshet Sverige 2010-2024",
+        ],
+        table_codes=["AM0401"],
+        typical_filters=["tid", "region", "kon", "alder"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_arbetsmarknad_sysselsattning",
+        name="SCB Arbetsmarknad - Sysselsattning",
+        base_path="AM/AM0301/",
+        description="Sysselsattning och arbetskraft over tid.",
+        keywords=["sysselsattning", "arbetskraft", "sysselsatta"],
+        example_queries=[
+            "Sysselsattning per lan 2015-2024",
+            "Sysselsattning kvinnor 2023",
+            "Sysselsattning per alder 2024",
+        ],
+        table_codes=["AM0301"],
+        typical_filters=["tid", "region", "kon", "alder"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_arbetsmarknad_lon",
+        name="SCB Arbetsmarknad - Lon",
+        base_path="AM/AM0403/",
+        description="Loner och inkomstrelaterad arbetsmarknadsstatistik.",
+        keywords=["lon", "inkomst", "medianlon", "timlon"],
+        example_queries=[
+            "Genomsnittlig lon per sektor 2022",
+            "Lon per lan 2024",
+            "Medianlon kvinnor 2023",
+        ],
+        table_codes=["AM0403"],
+        typical_filters=["tid", "region", "kon", "sektor"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_utbildning_gymnasie",
+        name="SCB Utbildning - Gymnasie",
+        base_path="UF/UF0104/",
+        description="Gymnasieskola och gymnasieexamen.",
+        keywords=["gymnasie", "examen", "betyg", "skolresultat"],
+        example_queries=[
+            "Gymnasieexamen per lan 2022",
+            "Gymnasieexamen kvinnor 2023",
+            "Gymnasieresultat per kommun 2024",
+        ],
+        table_codes=["UF0104"],
+        typical_filters=["tid", "region", "kon", "program"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_utbildning_hogskola",
+        name="SCB Utbildning - Hogskola",
+        base_path="UF/UF0202/",
+        description="Hogskola och universitet, studenter och examina.",
+        keywords=["hogskola", "universitet", "student", "examen"],
+        example_queries=[
+            "Antal studenter i hogskolan 2015-2024",
+            "Hogskoleutbildade per lan 2023",
+            "Examina per utbildningsomrade 2022",
+        ],
+        table_codes=["UF0202"],
+        typical_filters=["tid", "region", "kon", "utbildningsniva"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_utbildning_forskning",
+        name="SCB Utbildning - Forskning",
+        base_path="UF/UF0301/",
+        description="Forskning, forskningsutgifter och FoU.",
+        keywords=["forskning", "fou", "forskningsutgifter"],
+        example_queries=[
+            "Forskningsutgifter Sverige 2018-2024",
+            "FoU per sektor 2022",
+            "Forskning per lan 2023",
+        ],
+        table_codes=["UF0301"],
+        typical_filters=["tid", "sektor", "region"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_naringsliv_foretag",
+        name="SCB Naringsliv - Foretag",
+        base_path="NV/NV0101/",
+        description="Foretag och foretagsbestand per bransch.",
+        keywords=["foretag", "foretagsbestand", "bransch"],
+        example_queries=[
+            "Antal foretag per bransch 2023",
+            "Foretagsbestand per lan 2024",
+            "Foretag efter storleksklass 2022",
+        ],
+        table_codes=["NV0101"],
+        typical_filters=["tid", "region", "bransch", "storlek"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_naringsliv_omsattning",
+        name="SCB Naringsliv - Omsattning",
+        base_path="NV/NV0109/",
+        description="Omsattning och ekonomisk statistik for naringslivet.",
+        keywords=["omsattning", "intakt", "foretagsekonomi"],
+        example_queries=[
+            "Omsattning i industrin 2018-2024",
+            "Omsattning per bransch 2023",
+            "Omsattning per lan 2022",
+        ],
+        table_codes=["NV0109"],
+        typical_filters=["tid", "region", "bransch"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_naringsliv_nyforetagande",
+        name="SCB Naringsliv - Nyforetagande",
+        base_path="NV/NV0006/",
+        description="Nyregistrerade foretag och nyforetagande.",
+        keywords=["nyforetagande", "nyregistrerade", "starta foretag"],
+        example_queries=[
+            "Nyregistrerade foretag per lan 2024",
+            "Nyforetagande per bransch 2023",
+            "Startade foretag per kommun 2022",
+        ],
+        table_codes=["NV0006"],
+        typical_filters=["tid", "region", "bransch"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_miljo_utslapp",
+        name="SCB Miljo - Utslapp",
+        base_path="MI/MI0106/",
+        description="Utslapp och klimatrelaterade indikatorer.",
+        keywords=["utslapp", "co2", "klimat", "vaxthusgaser"],
+        example_queries=[
+            "CO2-utslapp Sverige 2010-2024",
+            "Utslapp per sektor 2020-2024",
+            "Utslapp per lan 2023",
+        ],
+        table_codes=["MI0106"],
+        typical_filters=["tid", "region", "sektor"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_miljo_energi",
+        name="SCB Miljo - Energi",
+        base_path="MI/MI0107/",
+        description="Miljorelaterad energistatistik.",
+        keywords=["energi", "forbrukning", "fornybar"],
+        example_queries=[
+            "Energianvandning per sektor 2015-2024",
+            "Fornybar energi andel 2010-2024",
+            "Energi per region 2023",
+        ],
+        table_codes=["MI0107"],
+        typical_filters=["tid", "region", "energislag", "sektor"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_priser_kpi",
+        name="SCB Priser - KPI",
+        base_path="PR/PR0101/",
+        description="KPI och prisindex over tid.",
+        keywords=["kpi", "konsumentprisindex", "inflation"],
+        example_queries=[
+            "KPI Sverige 2010-2024",
+            "KPI per manad senaste 24 manaderna",
+            "KPI per varugrupp 2023",
+        ],
+        table_codes=["PR0101"],
+        typical_filters=["tid", "varukategori"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_priser_inflation",
+        name="SCB Priser - Inflation",
+        base_path="PR/PR0301/",
+        description="Inflation och prisforandringar.",
+        keywords=["inflation", "prisforandring"],
+        example_queries=[
+            "Inflation 2021-2024",
+            "Inflation per ar 2010-2024",
+            "Prisforandring per varugrupp 2023",
+        ],
+        table_codes=["PR0301"],
+        typical_filters=["tid", "varukategori"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_transporter_person",
+        name="SCB Transporter - Persontransporter",
+        base_path="TK/TK1001/",
+        description="Persontransporter och resor per trafikslag.",
+        keywords=["persontransporter", "resor", "kollektivtrafik"],
+        example_queries=[
+            "Resor med kollektivtrafik 2015-2024",
+            "Persontransporter per trafikslag 2018-2024",
+            "Resor per region 2023",
+        ],
+        table_codes=["TK1001"],
+        typical_filters=["tid", "region", "trafikslag"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_transporter_gods",
+        name="SCB Transporter - Godstransporter",
+        base_path="TK/TK1201/",
+        description="Godstransporter och transportarbete.",
+        keywords=["gods", "godstransporter", "transportarbete"],
+        example_queries=[
+            "Godstransporter Sverige 2010-2024",
+            "Transportarbete per region 2022-2024",
+            "Gods per trafikslag 2023",
+        ],
+        table_codes=["TK1201"],
+        typical_filters=["tid", "region", "trafikslag"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_boende_bygglov",
+        name="SCB Boende - Bygglov",
+        base_path="BO/BO0301/",
+        description="Bygglov och byggstarter for bostader.",
+        keywords=["bygglov", "byggstarter", "bostad"],
+        example_queries=[
+            "Bygglov bostader 2018-2024",
+            "Byggstarter per lan 2022",
+            "Bygglov per kommun 2023",
+        ],
+        table_codes=["BO0301"],
+        typical_filters=["tid", "region", "bostadstyp"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_boende_nybyggnation",
+        name="SCB Boende - Nybyggnation",
+        base_path="BO/BO0101/",
+        description="Nybyggnation och fardigstallda bostader.",
+        keywords=["nybyggnation", "fardigstallda", "bostader"],
+        example_queries=[
+            "Antal fardigstallda bostader 2015-2024",
+            "Nybyggnation per lan 2020-2024",
+            "Bostader per upplatelseform 2023",
+        ],
+        table_codes=["BO0101"],
+        typical_filters=["tid", "region", "bostadstyp", "upplatelseform"],
+    ),
+    ScbToolDefinition(
+        tool_id="scb_boende_bestand",
+        name="SCB Boende - Bostadsbestand",
+        base_path="BO/BO0201/",
+        description="Bostadsbestand och bestandsstatistik.",
+        keywords=["bostadsbestand", "bestand", "bostader"],
+        example_queries=[
+            "Bostadsbestand per kommun 2024",
+            "Antal bostader i Stockholm 2010-2024",
+            "Bostadsbestand per lan 2023",
+        ],
+        table_codes=["BO0201"],
+        typical_filters=["tid", "region", "bostadstyp"],
+    ),
 ]
 
 
@@ -632,6 +926,7 @@ def _build_scb_tool(
         question: str,
         max_tables: int = 80,
         max_cells: int = 150_000,
+        max_batches: int = 6,
     ) -> str:
         query = (question or "").strip()
         if not query:
@@ -649,7 +944,7 @@ def _build_scb_tool(
                 ]
             ).strip()
             enriched_query = f"{query} {query_hint}".strip()
-            table = await scb_service.find_best_table(
+            table, candidates = await scb_service.find_best_table_candidates(
                 definition.base_path,
                 enriched_query,
                 max_tables=max_tables,
@@ -659,10 +954,27 @@ def _build_scb_tool(
                     {"error": "No matching SCB table found."}, ensure_ascii=True
                 )
             metadata = await scb_service.get_table_metadata(table.path)
-            payload, selection_summary, warnings = scb_service.build_query_payload(
-                metadata, query, max_cells=max_cells
+            payloads, selection_summary, warnings, batch_summaries = (
+                scb_service.build_query_payloads(
+                    metadata,
+                    query,
+                    max_cells=max_cells,
+                    max_batches=max_batches,
+                )
             )
-            data = await scb_service.query_table(table.path, payload)
+            if not payloads:
+                return json.dumps(
+                    {"error": "No valid SCB query payloads could be built."},
+                    ensure_ascii=True,
+                )
+
+            data_batches: list[dict[str, Any]] = []
+            for index, payload in enumerate(payloads, start=1):
+                data = await scb_service.query_table(table.path, payload)
+                entry: dict[str, Any] = {"batch": index, "data": data}
+                if index - 1 < len(batch_summaries):
+                    entry["selection"] = batch_summaries[index - 1]
+                data_batches.append(entry)
         except httpx.HTTPError as exc:
             return json.dumps(
                 {"error": f"SCB request failed: {exc!s}"}, ensure_ascii=True
@@ -679,10 +991,20 @@ def _build_scb_tool(
                 "source_url": source_url,
             },
             "selection": selection_summary,
-            "query": payload,
-            "data": data,
+            "query": payloads,
+            "data": data_batches,
             "warnings": warnings,
         }
+        if candidates:
+            tool_output["candidates"] = [
+                {
+                    "id": candidate.id,
+                    "title": candidate.title,
+                    "path": candidate.path,
+                    "updated": candidate.updated,
+                }
+                for candidate in candidates
+            ]
 
         document = await connector_service.ingest_tool_output(
             tool_name=definition.tool_id,
@@ -714,9 +1036,12 @@ def _build_scb_tool(
             "selection": selection_summary,
             "warnings": warnings,
             "results": formatted_docs,
+            "batches": len(data_batches),
         }
+        if candidates:
+            response_payload["candidates"] = tool_output["candidates"]
         if not formatted_docs:
-            response_payload["data"] = data
+            response_payload["data"] = data_batches
         return json.dumps(response_payload, ensure_ascii=True)
 
     return tool(
