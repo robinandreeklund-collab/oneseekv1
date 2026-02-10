@@ -1528,14 +1528,20 @@ async def stream_new_chat(
                 elif tool_name == "call_agent":
                     agent_name = ""
                     response = ""
+                    critic = {}
                     if isinstance(tool_output, dict):
                         agent_name = tool_output.get("agent") or ""
                         response = tool_output.get("response") or ""
+                        critic = tool_output.get("critic") or {}
                     completed_items = []
                     if agent_name:
                         completed_items.append(f"Agent: {agent_name}")
                     if response:
                         completed_items.append(f"Result: {_summarize_text(response)}")
+                    if isinstance(critic, dict) and critic.get("reason"):
+                        completed_items.append(
+                            f"Critic: {_summarize_text(critic.get('reason'))}"
+                        )
                     if not completed_items:
                         completed_items = ["Delegation completed"]
                     title = (

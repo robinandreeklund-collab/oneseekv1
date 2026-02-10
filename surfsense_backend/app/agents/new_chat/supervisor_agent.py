@@ -80,7 +80,6 @@ class SupervisorState(TypedDict, total=False):
     plan_complete: Annotated[bool, _replace]
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
     route_hint: Annotated[str | None, _replace]
-    critic_notes: Annotated[str | None, _replace]
 
 
 def _format_plan_context(state: dict[str, Any]) -> str | None:
@@ -124,14 +123,6 @@ def _format_route_hint(state: dict[str, Any]) -> str | None:
     return f"<route_hint>{hint}</route_hint>"
 
 
-def _format_critic_notes(state: dict[str, Any]) -> str | None:
-    notes = state.get("critic_notes")
-    if not notes:
-        return None
-    return (
-        "<critic_notes>Internal note (do not mention in user response): "
-        f"{notes}</critic_notes>"
-    )
 
 
 def _safe_json(payload: Any) -> dict[str, Any]:
@@ -371,8 +362,27 @@ async def create_supervisor_agent(
                 response_text = str(getattr(messages_out[-1], "content", "") or "")
         if not response_text:
             response_text = str(result)
+
+        critic_prompt = (
+            "Du ar en kritisk granskare. Bedom om svaret ar komplett och korrekt. "
+            "Svara kort i JSON med {\"status\": \"ok\"|\"needs_more\", \"reason\": \"...\"}."
+        )
+        critic_input = f"Uppgift: {task}\nSvar: {response_text}"
+        critic_msg = await llm.ainvoke(
+            [SystemMessage(content=critic_prompt), HumanMessage(content=critic_input)]
+        )
+        critic_text = str(getattr(critic_msg, "content", "") or "").strip()
+        critic_payload = _safe_json(critic_text)
+        if not critic_payload:
+            critic_payload = {"status": "ok", "reason": critic_text}
+
         return json.dumps(
-            {"agent": name, "task": task, "response": response_text},
+            {
+                "agent": name,
+                "task": task,
+                "response": response_text,
+                "critic": critic_payload,
+            },
             ensure_ascii=True,
         )
 
@@ -397,10 +407,8 @@ async def create_supervisor_agent(
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
         route_context = _format_route_hint(state)
-        critic_context = _format_critic_notes(state)
         system_bits = [
-            item for item in (plan_context, recent_context, route_context, critic_context)
-            if item
+            item for item in (plan_context, recent_context, route_context) if item
         ]
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
@@ -418,10 +426,8 @@ async def create_supervisor_agent(
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
         route_context = _format_route_hint(state)
-        critic_context = _format_critic_notes(state)
         system_bits = [
-            item for item in (plan_context, recent_context, route_context, critic_context)
-            if item
+            item for item in (plan_context, recent_context, route_context) if item
         ]
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
@@ -481,26 +487,11 @@ async def create_supervisor_agent(
         if recent_updates:
             updates["recent_agent_calls"] = recent_updates
 
-        if last_call_payload and last_call_payload.get("response"):
-            critic_prompt = (
-                "Du ar en kritisk granskare. Bedom om svaret ar komplett och korrekt. "
-                "Svara kort i JSON med {\"status\": \"ok\"|\"needs_more\", \"reason\": \"...\"}."
-            )
-            critic_input = (
-                f"Uppgift: {last_call_payload.get('task')}\n"
-                f"Svar: {last_call_payload.get('response')}"
-            )
-            critic_msg = await llm.ainvoke(
-                [
-                    SystemMessage(content=critic_prompt),
-                    HumanMessage(content=critic_input),
-                ]
-            )
-            critic_text = str(getattr(critic_msg, "content", "") or "").strip()
-            updates["critic_notes"] = critic_text
-            critic_payload = _safe_json(critic_text)
-            if critic_payload.get("status") == "needs_more":
-                updates["plan_complete"] = False
+        if last_call_payload:
+            critic_payload = last_call_payload.get("critic") or {}
+            if isinstance(critic_payload, dict):
+                if critic_payload.get("status") == "needs_more":
+                    updates["plan_complete"] = False
 
         return updates
 
