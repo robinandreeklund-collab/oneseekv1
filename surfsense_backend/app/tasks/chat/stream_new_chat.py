@@ -237,6 +237,15 @@ def _coerce_jsonable(value: object) -> object:
         return str(value)
 
 
+def _summarize_text(value: object, limit: int = 140) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
 async def stream_new_chat(
     user_query: str,
     search_space_id: int,
@@ -1195,10 +1204,67 @@ async def stream_new_chat(
                         status="in_progress",
                         items=last_active_step_items,
                     )
+                elif tool_name == "retrieve_agents":
+                    query = tool_input.get("query") if isinstance(tool_input, dict) else tool_input
+                    limit = tool_input.get("limit") if isinstance(tool_input, dict) else None
+                    last_active_step_title = format_step_title("Selecting agents")
+                    last_active_step_items = [
+                        f"Query: {_summarize_text(query)}"
+                    ]
+                    if limit:
+                        last_active_step_items.append(f"Limit: {limit}")
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title=last_active_step_title,
+                        status="in_progress",
+                        items=last_active_step_items,
+                    )
+                elif tool_name == "call_agent":
+                    agent_name = ""
+                    task = ""
+                    if isinstance(tool_input, dict):
+                        agent_name = tool_input.get("agent_name") or tool_input.get("agent") or ""
+                        task = tool_input.get("task") or ""
+                    else:
+                        task = str(tool_input)
+                    title_agent = agent_name or "worker"
+                    last_active_step_title = format_step_title(
+                        f"Delegating to {title_agent}"
+                    )
+                    last_active_step_items = []
+                    if agent_name:
+                        last_active_step_items.append(f"Agent: {agent_name}")
+                    if task:
+                        last_active_step_items.append(
+                            f"Task: {_summarize_text(task)}"
+                        )
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title=last_active_step_title,
+                        status="in_progress",
+                        items=last_active_step_items,
+                    )
+                elif tool_name == "retrieve_tools":
+                    query = tool_input.get("query") if isinstance(tool_input, dict) else tool_input
+                    last_active_step_title = format_step_title("Selecting tools")
+                    last_active_step_items = [f"Query: {_summarize_text(query)}"]
+                    yield streaming_service.format_thinking_step(
+                        step_id=tool_step_id,
+                        title=last_active_step_title,
+                        status="in_progress",
+                        items=last_active_step_items,
+                    )
                 elif tool_name == "reflect_on_progress":
+                    reflection = (
+                        tool_input.get("thoughts")
+                        if isinstance(tool_input, dict)
+                        else ""
+                    )
                     last_active_step_title = format_step_title("Reflecting on progress")
                     last_active_step_items = [
-                        "Reviewing findings, gaps, and next steps"
+                        _summarize_text(reflection)
+                        if reflection
+                        else "Reviewing findings, gaps, and next steps"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -1436,6 +1502,82 @@ async def stream_new_chat(
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Plan"),
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "retrieve_agents":
+                    agents = []
+                    if isinstance(tool_output, dict):
+                        agents = tool_output.get("agents") or []
+                    agent_names = [
+                        agent.get("name")
+                        for agent in agents
+                        if isinstance(agent, dict) and agent.get("name")
+                    ]
+                    completed_items = (
+                        [f"Agents: {', '.join(agent_names)}"]
+                        if agent_names
+                        else ["Agents selected"]
+                    )
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title=format_step_title("Selecting agents"),
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "call_agent":
+                    agent_name = ""
+                    response = ""
+                    if isinstance(tool_output, dict):
+                        agent_name = tool_output.get("agent") or ""
+                        response = tool_output.get("response") or ""
+                    completed_items = []
+                    if agent_name:
+                        completed_items.append(f"Agent: {agent_name}")
+                    if response:
+                        completed_items.append(f"Result: {_summarize_text(response)}")
+                    if not completed_items:
+                        completed_items = ["Delegation completed"]
+                    title = (
+                        f"Delegated to {agent_name}"
+                        if agent_name
+                        else "Delegation completed"
+                    )
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title=format_step_title(title),
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "retrieve_tools":
+                    tool_ids = []
+                    if isinstance(tool_output, list):
+                        tool_ids = [str(item) for item in tool_output]
+                    elif isinstance(tool_output, dict):
+                        tool_ids = tool_output.get("tools") or []
+                    completed_items = (
+                        [f"Tools: {', '.join(tool_ids)}"]
+                        if tool_ids
+                        else ["Tools selected"]
+                    )
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title=format_step_title("Selecting tools"),
+                        status="completed",
+                        items=completed_items,
+                    )
+                elif tool_name == "reflect_on_progress":
+                    reflection = ""
+                    if isinstance(tool_output, dict):
+                        reflection = tool_output.get("reflection") or ""
+                    completed_items = (
+                        [_summarize_text(reflection)]
+                        if reflection
+                        else ["Reflection logged"]
+                    )
+                    yield streaming_service.format_thinking_step(
+                        step_id=original_step_id,
+                        title=format_step_title("Reflecting on progress"),
                         status="completed",
                         items=completed_items,
                     )
