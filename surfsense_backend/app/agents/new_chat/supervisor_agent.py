@@ -1003,7 +1003,9 @@ async def create_supervisor_agent(
         **kwargs,
     ) -> SupervisorState:
         final_response = state.get("final_agent_response")
-        if final_response:
+        messages_state = state.get("messages") or []
+        last_message = messages_state[-1] if messages_state else None
+        if final_response and isinstance(last_message, ToolMessage):
             return {"messages": [AIMessage(content=final_response)]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
@@ -1015,7 +1017,11 @@ async def create_supervisor_agent(
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
         response = llm_with_tools.invoke(messages)
-        return {"messages": [response]}
+        updates: SupervisorState = {"messages": [response]}
+        if final_response and isinstance(last_message, HumanMessage):
+            updates["final_agent_response"] = None
+            updates["final_agent_name"] = None
+        return updates
 
     async def acall_model(
         state: SupervisorState,
@@ -1025,7 +1031,9 @@ async def create_supervisor_agent(
         **kwargs,
     ) -> SupervisorState:
         final_response = state.get("final_agent_response")
-        if final_response:
+        messages_state = state.get("messages") or []
+        last_message = messages_state[-1] if messages_state else None
+        if final_response and isinstance(last_message, ToolMessage):
             return {"messages": [AIMessage(content=final_response)]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
@@ -1037,7 +1045,11 @@ async def create_supervisor_agent(
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
         response = await llm_with_tools.ainvoke(messages)
-        return {"messages": [response]}
+        updates: SupervisorState = {"messages": [response]}
+        if final_response and isinstance(last_message, HumanMessage):
+            updates["final_agent_response"] = None
+            updates["final_agent_name"] = None
+        return updates
 
     async def post_tools(
         state: SupervisorState,
