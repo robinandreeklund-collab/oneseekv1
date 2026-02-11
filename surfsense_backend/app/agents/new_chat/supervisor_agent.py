@@ -63,25 +63,36 @@ _AGENT_STOPWORDS = {
 }
 
 
-def _has_map_intent(text: str | None) -> bool:
-    if not text:
-        return False
-    lowered = text.lower()
-    return any(
-        token in lowered
-        for token in (
-            "karta",
-            "kartor",
-            "kartbild",
-            "kartvy",
-            "map",
-            "geoapify",
-        )
-    )
 _EXTERNAL_MODEL_TOOL_NAMES = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
 _AGENT_EMBED_CACHE: dict[str, list[float]] = {}
 AGENT_RERANK_CANDIDATES = 6
 AGENT_EMBEDDING_WEIGHT = 4.0
+_TRAFFIC_INTENT_RE = re.compile(
+    r"\b("
+    r"trafikverket|trafikinfo|trafik|"
+    r"olycka|storing|storning|störning|"
+    r"koer|köer|ko|kö|"
+    r"vagarbete|vägarbete|avstangning|avstängning|omledning|framkomlighet|"
+    r"tag|tåg|jarnvag|järnväg|"
+    r"kamera|kameror|"
+    r"vaglag|väglag|hastighet|"
+    r"e\d+|rv\s?\d+|riksvag|riksväg|vag\s?\d+|väg\s?\d+"
+    r")\b",
+    re.IGNORECASE,
+)
+_MAP_INTENT_RE = re.compile(
+    r"\b(karta|kartbild|kartor|map|marker|markor|pin|"
+    r"rutt|route|vagbeskrivning|vägbeskrivning)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_trafik_intent(text: str) -> bool:
+    return bool(text and _TRAFFIC_INTENT_RE.search(text))
+
+
+def _has_map_intent(text: str) -> bool:
+    return bool(text and _MAP_INTENT_RE.search(text))
 
 
 @dataclass(frozen=True)
@@ -897,6 +908,9 @@ async def create_supervisor_agent(
             if context_parts:
                 context_query = f"{query} {' '.join(context_parts)}"
 
+        has_trafik_intent = _has_trafik_intent(context_query)
+        has_map_intent = _has_map_intent(context_query)
+
         cache_key, cache_pattern = _build_cache_key(
             query, route_hint, recent_agents
         )
@@ -905,6 +919,8 @@ async def create_supervisor_agent(
             cached_agents = await _fetch_cached_combo_db(db_session, cache_key)
             if cached_agents:
                 _set_cached_combo(cache_key, cached_agents)
+        if cached_agents and has_trafik_intent and "trafik" not in cached_agents:
+            cached_agents = None
 
         if cached_agents:
             selected = [
@@ -927,8 +943,11 @@ async def create_supervisor_agent(
                     "compare": ["synthesis", "knowledge", "statistics"],
                     "trafik": ["trafik", "action"],
                 }.get(str(route_hint), [])
-                if str(route_hint) == "action" and _has_map_intent(context_query):
-                    preferred = ["kartor", *preferred]
+                if str(route_hint) == "action":
+                    if has_map_intent and "kartor" not in preferred:
+                        preferred.insert(0, "kartor")
+                    if has_trafik_intent and "trafik" not in preferred:
+                        preferred.insert(0, "trafik")
                 if preferred:
                     preferred_defs = [
                         agent
@@ -938,6 +957,12 @@ async def create_supervisor_agent(
                     for agent in reversed(preferred_defs):
                         if agent not in selected:
                             selected.insert(0, agent)
+                    selected = selected[:limit]
+
+            if has_trafik_intent:
+                trafik_agent = agent_by_name.get("trafik")
+                if trafik_agent and trafik_agent not in selected:
+                    selected.insert(0, trafik_agent)
                     selected = selected[:limit]
 
             selected_names = [agent.name for agent in selected]
