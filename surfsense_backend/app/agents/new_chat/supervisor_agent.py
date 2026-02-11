@@ -525,6 +525,16 @@ async def create_supervisor_agent(
             fallback_namespaces=[
                 ("tools", "knowledge"),
                 ("tools", "statistics"),
+                ("tools", "kartor"),
+                ("tools", "general"),
+            ],
+        ),
+        "kartor": WorkerConfig(
+            name="kartor-worker",
+            primary_namespaces=[("tools", "kartor")],
+            fallback_namespaces=[
+                ("tools", "action"),
+                ("tools", "knowledge"),
                 ("tools", "general"),
             ],
         ),
@@ -534,6 +544,7 @@ async def create_supervisor_agent(
             fallback_namespaces=[
                 ("tools", "knowledge"),
                 ("tools", "statistics"),
+                ("tools", "kartor"),
                 ("tools", "general"),
             ],
         ),
@@ -598,6 +609,7 @@ async def create_supervisor_agent(
     worker_prompts: dict[str, str] = {
         "knowledge": knowledge_prompt,
         "action": action_prompt,
+        "kartor": action_prompt,
         "media": action_prompt,
         "statistics": statistics_prompt,
         "browser": knowledge_prompt,
@@ -633,9 +645,33 @@ async def create_supervisor_agent(
                 "tidtabell",
                 "trafik",
                 "rutt",
+                "karta",
+                "kartbild",
+                "geoapify",
+                "adress",
             ],
             namespace=("agents", "action"),
             prompt_key="action",
+        ),
+        AgentDefinition(
+            name="kartor",
+            description="Skapa statiska kartbilder och markörer",
+            keywords=[
+                "karta",
+                "kartor",
+                "kartbild",
+                "map",
+                "geoapify",
+                "adress",
+                "plats",
+                "koordinat",
+                "vägarbete",
+                "vag",
+                "väg",
+                "rutt",
+            ],
+            namespace=("agents", "kartor"),
+            prompt_key="kartor",
         ),
         AgentDefinition(
             name="statistics",
@@ -824,7 +860,7 @@ async def create_supervisor_agent(
             )
             if route_hint:
                 preferred = {
-                    "action": ["action", "media"],
+                    "action": ["kartor", "action", "media"],
                     "knowledge": ["knowledge", "browser"],
                     "statistics": ["statistics"],
                     "compare": ["synthesis", "knowledge", "statistics"],
