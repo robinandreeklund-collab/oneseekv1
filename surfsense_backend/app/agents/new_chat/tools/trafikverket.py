@@ -55,7 +55,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         objecttype="Situation",
         schema_version="1.6",
         namespace="road.trafficinfo.new",
-        filter_field="LocationDescriptor",
+        filter_field="Deviation.LocationDescriptor",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_olyckor",
@@ -81,7 +81,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         objecttype="Situation",
         schema_version="1.6",
         namespace="road.trafficinfo.new",
-        filter_field="LocationDescriptor",
+        filter_field="Deviation.LocationDescriptor",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_koer",
@@ -107,7 +107,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         objecttype="Situation",
         schema_version="1.6",
         namespace="road.trafficinfo.new",
-        filter_field="LocationDescriptor",
+        filter_field="Deviation.LocationDescriptor",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_vagarbeten",
@@ -133,7 +133,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         objecttype="Situation",
         schema_version="1.6",
         namespace="road.trafficinfo.new",
-        filter_field="LocationDescriptor",
+        filter_field="Deviation.LocationDescriptor",
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_tag_forseningar",

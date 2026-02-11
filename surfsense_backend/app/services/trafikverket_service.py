@@ -145,20 +145,31 @@ class TrafikverketService:
             raise ValueError("Missing TRAFIKVERKET_API_KEY for Trafikverket API.")
         resolved_schema = (schema_version or self.default_schema_version).strip()
         resolved_namespace = (namespace or "").strip()
-        filter_xml = ""
-        if filter_field and filter_value:
-            filter_xml = (
-                f"<FILTER><LIKE name=\"{escape(filter_field)}\" "
-                f"value=\"{escape(filter_value)}\" /></FILTER>"
-            )
+        def build_filter_xml(field_override: str | None = None) -> str:
+            field = field_override if field_override is not None else filter_field
+            if field and filter_value:
+                return (
+                    f"<FILTER><LIKE name=\"{escape(field)}\" "
+                    f"value=\"{escape(filter_value)}\" /></FILTER>"
+                )
+            return ""
 
-        def build_query(schema: str) -> str:
+        def filter_field_fallbacks(field: str) -> list[str]:
+            fallbacks: list[str] = []
+            if "." not in field:
+                fallbacks.append(f"Deviation.{field}")
+            if field != "Deviation.Message":
+                fallbacks.append("Deviation.Message")
+            return fallbacks
+
+        def build_query(schema: str, field_override: str | None = None) -> str:
             schema_attr = f" schemaversion=\"{escape(schema)}\""
             namespace_attr = (
                 f" namespace=\"{escape(resolved_namespace)}\""
                 if resolved_namespace
                 else ""
             )
+            filter_xml = build_filter_xml(field_override)
             return (
                 f"<REQUEST>"
                 f"<LOGIN authenticationkey=\"{escape(self.api_key)}\" />"
@@ -175,8 +186,18 @@ class TrafikverketService:
                 cache_ttl=TRAFIKVERKET_CACHE_TTL,
             )
         except RuntimeError as exc:
-            if "ResourceNotFound" not in str(exc):
-                raise
+            error_text = str(exc)
+            if "Invalid query attribute" in error_text and filter_field and filter_value:
+                for fallback_field in filter_field_fallbacks(filter_field):
+                    try:
+                        return await self._request_xml(
+                            xml_body=build_query(resolved_schema, fallback_field),
+                            cache_ttl=TRAFIKVERKET_CACHE_TTL,
+                        )
+                    except RuntimeError as fallback_exc:
+                        error_text = str(fallback_exc)
+            if "ResourceNotFound" not in error_text:
+                raise RuntimeError(error_text)
             fallback_versions = [
                 version
                 for version in [*self.schema_fallbacks]
