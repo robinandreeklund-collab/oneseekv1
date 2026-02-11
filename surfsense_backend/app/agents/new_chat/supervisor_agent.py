@@ -407,8 +407,6 @@ class SupervisorState(TypedDict, total=False):
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
     route_hint: Annotated[str | None, _replace]
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
-    final_agent_response: Annotated[str | None, _replace]
-    final_agent_name: Annotated[str | None, _replace]
 
 
 def _format_plan_context(state: dict[str, Any]) -> str | None:
@@ -502,18 +500,12 @@ def _force_agent_instruction(messages: list[Any]) -> str | None:
     if not names:
         return None
     user_query = _last_user_query(messages) or "user request"
-    if len(names) == 1:
-        return (
-            "VIKTIGT: Du har precis valt agent. Du MASTE nu anropa "
-            f"call_agent(agent_name=\"{names[0]}\", task=\"{user_query}\", final=true). "
-            "Svara inte sjalv."
-        )
     ordered = ", ".join(names)
     return (
-        "VIKTIGT: Du har precis valt flera agenter. Anropa call_agent for varje agent i "
-        f"denna ordning: {ordered} (final=false). "
-        "Nar alla har svarat: anropa call_agent(agent_name=\"synthesis\", "
-        f"task=\"{user_query}\", final=true). Svara inte sjalv."
+        "VIKTIGT: Du har precis valt agenter. Anropa call_agent for varje agent i "
+        f"denna ordning: {ordered}. "
+        "Efter att alla svarat: sammanfatta och skapa ett strukturerat slutligt svar "
+        f"till anvandaren baserat pa uppgiften: \"{user_query}\"."
     )
 
 
@@ -1051,11 +1043,6 @@ async def create_supervisor_agent(
         store=None,
         **kwargs,
     ) -> SupervisorState:
-        final_response = state.get("final_agent_response")
-        messages_state = state.get("messages") or []
-        last_message = messages_state[-1] if messages_state else None
-        if final_response and isinstance(last_message, ToolMessage):
-            return {"messages": [AIMessage(content=final_response)]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
@@ -1069,11 +1056,7 @@ async def create_supervisor_agent(
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
         response = llm_with_tools.invoke(messages)
-        updates: SupervisorState = {"messages": [response]}
-        if final_response and isinstance(last_message, HumanMessage):
-            updates["final_agent_response"] = None
-            updates["final_agent_name"] = None
-        return updates
+        return {"messages": [response]}
 
     async def acall_model(
         state: SupervisorState,
@@ -1082,11 +1065,6 @@ async def create_supervisor_agent(
         store=None,
         **kwargs,
     ) -> SupervisorState:
-        final_response = state.get("final_agent_response")
-        messages_state = state.get("messages") or []
-        last_message = messages_state[-1] if messages_state else None
-        if final_response and isinstance(last_message, ToolMessage):
-            return {"messages": [AIMessage(content=final_response)]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
@@ -1100,11 +1078,7 @@ async def create_supervisor_agent(
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
         response = await llm_with_tools.ainvoke(messages)
-        updates: SupervisorState = {"messages": [response]}
-        if final_response and isinstance(last_message, HumanMessage):
-            updates["final_agent_response"] = None
-            updates["final_agent_name"] = None
-        return updates
+        return {"messages": [response]}
 
     async def post_tools(
         state: SupervisorState,
@@ -1150,14 +1124,6 @@ async def create_supervisor_agent(
                             "response": payload.get("response"),
                         }
                     )
-                    if payload.get("final") and payload.get("response"):
-                        critic_payload = payload.get("critic") or {}
-                        if not (
-                            isinstance(critic_payload, dict)
-                            and critic_payload.get("status") == "needs_more"
-                        ):
-                            updates["final_agent_response"] = payload.get("response")
-                            updates["final_agent_name"] = payload.get("agent")
             elif tool_name in _EXTERNAL_MODEL_TOOL_NAMES:
                 if payload and payload.get("status") == "success":
                     compare_updates.append(
