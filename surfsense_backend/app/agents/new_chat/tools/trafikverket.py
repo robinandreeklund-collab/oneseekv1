@@ -23,6 +23,7 @@ class TrafikverketToolDefinition:
     category: str
     objecttype: str
     schema_version: str | None = "1.0"
+    namespace: str | None = None
     filter_field: str | None = None
 
 
@@ -39,6 +40,8 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_trafikinfo",
         objecttype="Situation",
+        schema_version="1.6",
+        namespace="road.trafficinfo.new",
         filter_field="LocationDescriptor",
     ),
     TrafikverketToolDefinition(
@@ -53,6 +56,8 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_trafikinfo",
         objecttype="Situation",
+        schema_version="1.6",
+        namespace="road.trafficinfo.new",
         filter_field="LocationDescriptor",
     ),
     TrafikverketToolDefinition(
@@ -67,6 +72,8 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_trafikinfo",
         objecttype="Situation",
+        schema_version="1.6",
+        namespace="road.trafficinfo.new",
         filter_field="LocationDescriptor",
     ),
     TrafikverketToolDefinition(
@@ -81,6 +88,8 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_trafikinfo",
         objecttype="Situation",
+        schema_version="1.6",
+        namespace="road.trafficinfo.new",
         filter_field="LocationDescriptor",
     ),
     TrafikverketToolDefinition(
@@ -95,6 +104,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_tag",
         objecttype="TrainAnnouncement",
+        schema_version="1.9",
         filter_field="AdvertisedLocationName",
     ),
     TrafikverketToolDefinition(
@@ -109,6 +119,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_tag",
         objecttype="TrainAnnouncement",
+        schema_version="1.9",
         filter_field="AdvertisedLocationName",
     ),
     TrafikverketToolDefinition(
@@ -123,6 +134,8 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_tag",
         objecttype="TrainStation",
+        schema_version="1.5",
+        namespace="rail.infrastructure",
         filter_field="AdvertisedLocationName",
     ),
     TrafikverketToolDefinition(
@@ -137,6 +150,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_tag",
         objecttype="TrainAnnouncement",
+        schema_version="1.9",
         filter_field="AdvertisedLocationName",
     ),
     TrafikverketToolDefinition(
@@ -151,6 +165,8 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_vag",
         objecttype="TrafficFlow",
+        schema_version="1.5",
+        namespace="road.trafficinfo",
         filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
@@ -164,7 +180,9 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         base_path="/data.json",
         category="trafikverket_vag",
-        objecttype="RoadMaintenance",
+        objecttype="RoadCondition",
+        schema_version="1.3",
+        namespace="road.trafficinfo",
         filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
@@ -178,8 +196,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         base_path="/data.json",
         category="trafikverket_vag",
-        objecttype="TrafficFlow",
-        filter_field="RoadNumber",
+        objecttype="Hastighetsgräns",
+        schema_version="1.4",
+        namespace="vägdata.nvdb_dk_o",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vag_avstangningar",
@@ -193,6 +213,8 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_vag",
         objecttype="RoadCondition",
+        schema_version="1.3",
+        namespace="road.trafficinfo",
         filter_field="RoadNumber",
     ),
     TrafikverketToolDefinition(
@@ -206,8 +228,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         base_path="/data.json",
         category="trafikverket_vader",
-        objecttype="WeatherStation",
-        filter_field="CountyName",
+        objecttype="WeatherMeasurepoint",
+        schema_version="2.1",
+        namespace="road.weatherinfo",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_halka",
@@ -220,8 +244,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         base_path="/data.json",
         category="trafikverket_vader",
-        objecttype="RoadCondition",
-        filter_field="CountyName",
+        objecttype="WeatherObservation",
+        schema_version="2.1",
+        namespace="road.weatherinfo",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_vind",
@@ -234,8 +260,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         base_path="/data.json",
         category="trafikverket_vader",
-        objecttype="WeatherStation",
-        filter_field="CountyName",
+        objecttype="WeatherObservation",
+        schema_version="2.1",
+        namespace="road.weatherinfo",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_temperatur",
@@ -248,8 +276,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         base_path="/data.json",
         category="trafikverket_vader",
-        objecttype="WeatherStation",
-        filter_field="CountyName",
+        objecttype="WeatherObservation",
+        schema_version="2.1",
+        namespace="road.weatherinfo",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_kameror_lista",
@@ -263,7 +293,9 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_kameror",
         objecttype="Camera",
-        filter_field="RoadNumber",
+        schema_version="1.1",
+        namespace="road.infrastructure",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_kameror_snapshot",
@@ -277,7 +309,9 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_kameror",
         objecttype="Camera",
-        filter_field="CameraId",
+        schema_version="1.1",
+        namespace="road.infrastructure",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_kameror_status",
@@ -291,7 +325,9 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         base_path="/data.json",
         category="trafikverket_kameror",
         objecttype="Camera",
-        filter_field="CameraId",
+        schema_version="1.1",
+        namespace="road.infrastructure",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_prognos_trafik",
@@ -304,8 +340,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         base_path="/data.json",
         category="trafikverket_prognos",
-        objecttype="TrafficFlow",
-        filter_field="RoadNumber",
+        objecttype="TravelTimeRoute",
+        schema_version="1.6",
+        namespace="road.trafficinfo",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_prognos_vag",
@@ -318,8 +356,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         base_path="/data.json",
         category="trafikverket_prognos",
-        objecttype="RoadCondition",
-        filter_field="RoadNumber",
+        objecttype="TravelTimeRoute",
+        schema_version="1.6",
+        namespace="road.trafficinfo",
+        filter_field=None,
     ),
     TrafikverketToolDefinition(
         tool_id="trafikverket_prognos_tag",
@@ -332,8 +372,10 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         base_path="/data.json",
         category="trafikverket_prognos",
-        objecttype="TrainAnnouncement",
-        filter_field="AdvertisedLocationName",
+        objecttype="TrainPosition",
+        schema_version="1.1",
+        namespace="järnväg.trafikinfo",
+        filter_field=None,
     ),
 ]
 
@@ -401,7 +443,8 @@ def build_trafikverket_tool_registry(
         title: str,
         *,
         objecttype: str,
-        schema_version: str,
+        schema_version: str | None,
+        namespace: str | None,
         filter_field: str | None,
         filter_value: str | None,
         limit: int,
@@ -409,6 +452,7 @@ def build_trafikverket_tool_registry(
         data, cached = await service.query(
             objecttype=objecttype,
             schema_version=schema_version,
+            namespace=namespace,
             filter_field=filter_field,
             filter_value=filter_value,
             limit=limit,
@@ -443,6 +487,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket störningar {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[0].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[0].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[0].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[0].filter_field,
                 filter_value=region,
                 limit=limit,
@@ -453,6 +498,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[0].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[0].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[0].namespace,
             }
 
     @tool("trafikverket_trafikinfo_olyckor", description=TRAFIKVERKET_TOOL_DEFINITIONS[1].description)
@@ -467,6 +513,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket olyckor {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[1].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[1].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[1].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[1].filter_field,
                 filter_value=region,
                 limit=limit,
@@ -477,6 +524,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[1].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[1].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[1].namespace,
             }
 
     @tool("trafikverket_trafikinfo_koer", description=TRAFIKVERKET_TOOL_DEFINITIONS[2].description)
@@ -491,6 +539,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket köer {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[2].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[2].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[2].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[2].filter_field,
                 filter_value=region,
                 limit=limit,
@@ -501,6 +550,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[2].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[2].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[2].namespace,
             }
 
     @tool("trafikverket_trafikinfo_vagarbeten", description=TRAFIKVERKET_TOOL_DEFINITIONS[3].description)
@@ -515,6 +565,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket vägarbeten {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[3].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[3].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[3].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[3].filter_field,
                 filter_value=region,
                 limit=limit,
@@ -525,6 +576,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[3].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[3].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[3].namespace,
             }
 
     @tool("trafikverket_tag_forseningar", description=TRAFIKVERKET_TOOL_DEFINITIONS[4].description)
@@ -539,6 +591,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket tågförseningar {station or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[4].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[4].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[4].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[4].filter_field,
                 filter_value=station,
                 limit=limit,
@@ -549,6 +602,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[4].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[4].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[4].namespace,
             }
 
     @tool("trafikverket_tag_tidtabell", description=TRAFIKVERKET_TOOL_DEFINITIONS[5].description)
@@ -563,6 +617,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket tidtabell {station}",
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[5].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[5].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[5].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[5].filter_field,
                 filter_value=station,
                 limit=10,
@@ -573,6 +628,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[5].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[5].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[5].namespace,
             }
 
     @tool("trafikverket_tag_stationer", description=TRAFIKVERKET_TOOL_DEFINITIONS[6].description)
@@ -587,6 +643,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket stationer {query or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[6].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[6].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[6].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[6].filter_field,
                 filter_value=query,
                 limit=limit,
@@ -597,6 +654,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[6].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[6].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[6].namespace,
             }
 
     @tool("trafikverket_tag_installda", description=TRAFIKVERKET_TOOL_DEFINITIONS[7].description)
@@ -611,6 +669,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket inställda {station or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[7].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[7].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[7].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[7].filter_field,
                 filter_value=station,
                 limit=limit,
@@ -621,6 +680,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[7].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[7].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[7].namespace,
             }
 
     @tool("trafikverket_vag_status", description=TRAFIKVERKET_TOOL_DEFINITIONS[8].description)
@@ -635,6 +695,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket vägstatus {road or region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[8].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[8].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[8].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[8].filter_field,
                 filter_value=road or region,
                 limit=limit,
@@ -645,6 +706,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[8].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[8].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[8].namespace,
             }
 
     @tool("trafikverket_vag_underhall", description=TRAFIKVERKET_TOOL_DEFINITIONS[9].description)
@@ -659,6 +721,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket underhåll {road or region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[9].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[9].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[9].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[9].filter_field,
                 filter_value=road or region,
                 limit=limit,
@@ -669,6 +732,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[9].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[9].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[9].namespace,
             }
 
     @tool("trafikverket_vag_hastighet", description=TRAFIKVERKET_TOOL_DEFINITIONS[10].description)
@@ -683,6 +747,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket hastighet {road or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[10].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[10].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[10].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[10].filter_field,
                 filter_value=road,
                 limit=limit,
@@ -693,6 +758,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[10].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[10].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[10].namespace,
             }
 
     @tool("trafikverket_vag_avstangningar", description=TRAFIKVERKET_TOOL_DEFINITIONS[11].description)
@@ -707,6 +773,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket avstängningar {road or region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[11].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[11].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[11].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[11].filter_field,
                 filter_value=road or region,
                 limit=limit,
@@ -717,6 +784,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[11].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[11].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[11].namespace,
             }
 
     @tool("trafikverket_vader_stationer", description=TRAFIKVERKET_TOOL_DEFINITIONS[12].description)
@@ -731,6 +799,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket väderstationer {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[12].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[12].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[12].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[12].filter_field,
                 filter_value=region,
                 limit=limit,
@@ -741,6 +810,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[12].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[12].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[12].namespace,
             }
 
     @tool("trafikverket_vader_halka", description=TRAFIKVERKET_TOOL_DEFINITIONS[13].description)
@@ -755,6 +825,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket halka {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[13].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[13].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[13].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[13].filter_field,
                 filter_value=region,
                 limit=limit,
@@ -765,6 +836,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[13].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[13].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[13].namespace,
             }
 
     @tool("trafikverket_vader_vind", description=TRAFIKVERKET_TOOL_DEFINITIONS[14].description)
@@ -779,6 +851,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket vind {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[14].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[14].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[14].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[14].filter_field,
                 filter_value=region,
                 limit=limit,
@@ -789,6 +862,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[14].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[14].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[14].namespace,
             }
 
     @tool("trafikverket_vader_temperatur", description=TRAFIKVERKET_TOOL_DEFINITIONS[15].description)
@@ -803,6 +877,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket temperatur {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[15].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[15].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[15].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[15].filter_field,
                 filter_value=region,
                 limit=limit,
@@ -813,6 +888,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[15].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[15].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[15].namespace,
             }
 
     @tool("trafikverket_kameror_lista", description=TRAFIKVERKET_TOOL_DEFINITIONS[16].description)
@@ -827,6 +903,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket kameror {region or road or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[16].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[16].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[16].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[16].filter_field,
                 filter_value=road or region,
                 limit=limit,
@@ -837,6 +914,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[16].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[16].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[16].namespace,
             }
 
     @tool("trafikverket_kameror_snapshot", description=TRAFIKVERKET_TOOL_DEFINITIONS[17].description)
@@ -849,6 +927,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket snapshot {kamera_id}",
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[17].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[17].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[17].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[17].filter_field,
                 filter_value=kamera_id,
                 limit=1,
@@ -859,6 +938,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[17].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[17].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[17].namespace,
             }
 
     @tool("trafikverket_kameror_status", description=TRAFIKVERKET_TOOL_DEFINITIONS[18].description)
@@ -871,6 +951,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket kamera status {kamera_id}",
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[18].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[18].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[18].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[18].filter_field,
                 filter_value=kamera_id,
                 limit=1,
@@ -881,6 +962,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[18].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[18].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[18].namespace,
             }
 
     @tool("trafikverket_prognos_trafik", description=TRAFIKVERKET_TOOL_DEFINITIONS[19].description)
@@ -895,6 +977,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket trafikprognos {region or road or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[19].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[19].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[19].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[19].filter_field,
                 filter_value=road or region,
                 limit=10,
@@ -905,6 +988,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[19].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[19].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[19].namespace,
             }
 
     @tool("trafikverket_prognos_vag", description=TRAFIKVERKET_TOOL_DEFINITIONS[20].description)
@@ -919,6 +1003,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket vägprognos {region or road or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[20].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[20].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[20].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[20].filter_field,
                 filter_value=road or region,
                 limit=10,
@@ -929,6 +1014,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[20].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[20].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[20].namespace,
             }
 
     @tool("trafikverket_prognos_tag", description=TRAFIKVERKET_TOOL_DEFINITIONS[21].description)
@@ -941,6 +1027,7 @@ def build_trafikverket_tool_registry(
                 f"Trafikverket tågprognos {station or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[21].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[21].schema_version,
+                namespace=TRAFIKVERKET_TOOL_DEFINITIONS[21].namespace,
                 filter_field=TRAFIKVERKET_TOOL_DEFINITIONS[21].filter_field,
                 filter_value=station,
                 limit=10,
@@ -951,6 +1038,7 @@ def build_trafikverket_tool_registry(
                 "error": str(exc),
                 "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[21].objecttype,
                 "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[21].schema_version,
+                "namespace": TRAFIKVERKET_TOOL_DEFINITIONS[21].namespace,
             }
 
     registry = {

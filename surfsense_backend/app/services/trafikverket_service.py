@@ -136,6 +136,7 @@ class TrafikverketService:
         *,
         objecttype: str,
         schema_version: str | None = None,
+        namespace: str | None = None,
         filter_field: str | None = None,
         filter_value: str | None = None,
         limit: int = 10,
@@ -143,6 +144,7 @@ class TrafikverketService:
         if not self.api_key:
             raise ValueError("Missing TRAFIKVERKET_API_KEY for Trafikverket API.")
         resolved_schema = (schema_version or self.default_schema_version).strip()
+        resolved_namespace = (namespace or "").strip()
         filter_xml = ""
         if filter_field and filter_value:
             filter_xml = (
@@ -152,10 +154,15 @@ class TrafikverketService:
 
         def build_query(schema: str) -> str:
             schema_attr = f" schemaversion=\"{escape(schema)}\""
+            namespace_attr = (
+                f" namespace=\"{escape(resolved_namespace)}\""
+                if resolved_namespace
+                else ""
+            )
             return (
                 f"<REQUEST>"
                 f"<LOGIN authenticationkey=\"{escape(self.api_key)}\" />"
-                f"<QUERY objecttype=\"{escape(objecttype)}\"{schema_attr} "
+                f"<QUERY objecttype=\"{escape(objecttype)}\"{namespace_attr}{schema_attr} "
                 f"limit=\"{int(limit)}\">"
                 f"{filter_xml}"
                 f"</QUERY>"
