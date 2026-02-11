@@ -30,6 +30,13 @@ export {
 	DisplayImageResultSchema,
 	DisplayImageToolUI,
 } from "./display-image";
+export {
+	type ImageGalleryArgs,
+	ImageGalleryArgsSchema,
+	type ImageGalleryResult,
+	ImageGalleryResultSchema,
+	DisplayImageGalleryToolUI,
+} from "./image-gallery";
 export { GeneratePodcastToolUI } from "./generate-podcast";
 export {
 	Image,

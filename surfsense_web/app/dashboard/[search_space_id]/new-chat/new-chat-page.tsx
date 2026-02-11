@@ -41,6 +41,7 @@ import { TraceSheet } from "@/components/assistant-ui/trace-sheet";
 import { ChatHeader } from "@/components/new-chat/chat-header";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
+import { DisplayImageGalleryToolUI } from "@/components/tool-ui/image-gallery";
 import { GeneratePodcastToolUI } from "@/components/tool-ui/generate-podcast";
 import { JobAdLinksToolUI } from "@/components/tool-ui/jobad-links";
 import { LinkPreviewToolUI } from "@/components/tool-ui/link-preview";
@@ -225,6 +226,7 @@ const TOOLS_WITH_UI = new Set([
 	"generate_podcast",
 	"link_preview",
 	"display_image",
+	"display_image_gallery",
 	"scrape_webpage",
 	"smhi_weather",
 	"trafiklab_route",
@@ -2119,6 +2121,7 @@ export default function NewChatPage() {
 			{!isPublicChat && <GeneratePodcastToolUI />}
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
+			<DisplayImageGalleryToolUI />
 			<ScrapeWebpageToolUI />
 			<SmhiWeatherToolUI />
 			<TrafiklabRouteToolUI />

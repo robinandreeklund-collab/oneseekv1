@@ -272,6 +272,7 @@ def _build_image_payload(
     alt: str,
     title: str | None = None,
     description: str | None = None,
+    href: str | None = None,
 ) -> dict[str, Any]:
     image_id = generate_image_id(src)
     if not src.startswith(("http://", "https://")):
@@ -285,6 +286,7 @@ def _build_image_payload(
         "alt": alt,
         "title": title,
         "description": description,
+        "href": href,
         "domain": domain,
         "ratio": ratio,
     }
@@ -304,13 +306,19 @@ def _collect_trafikverket_photos(payload: Any) -> list[dict[str, str]]:
                     "PhotoUrlSketch",
                 )
             ):
-                src = (
+                fullsize = (
                     node.get("PhotoUrlFullsize")
                     or node.get("PhotoUrl")
                     or node.get("PhotoUrlThumbnail")
                     or node.get("PhotoUrlSketch")
                 )
-                if isinstance(src, str) and src:
+                thumbnail = (
+                    node.get("PhotoUrlThumbnail")
+                    or node.get("PhotoUrl")
+                    or node.get("PhotoUrlSketch")
+                    or node.get("PhotoUrlFullsize")
+                )
+                if isinstance(thumbnail, str) and thumbnail:
                     title = str(
                         node.get("CameraId")
                         or node.get("Name")
@@ -323,7 +331,8 @@ def _collect_trafikverket_photos(payload: Any) -> list[dict[str, str]]:
                     ).strip()
                     photos.append(
                         {
-                            "src": src,
+                            "src": thumbnail,
+                            "fullsize": fullsize or thumbnail,
                             "title": title,
                             "description": description,
                         }
@@ -2393,24 +2402,51 @@ async def stream_new_chat(
                 }:
                     photos = _collect_trafikverket_photos(tool_output)
                     if photos:
-                        photo = photos[0]
-                        display_call_id = streaming_service.generate_tool_call_id()
-                        image_args = {
-                            "src": photo["src"],
-                            "alt": "Trafikverket kamera",
-                            "title": photo.get("title"),
-                            "description": photo.get("description"),
-                        }
-                        image_result = _build_image_payload(**image_args)
-                        yield streaming_service.format_tool_input_start(
-                            display_call_id, "display_image"
-                        )
-                        yield streaming_service.format_tool_input_available(
-                            display_call_id, "display_image", image_args
-                        )
-                        yield streaming_service.format_tool_output_available(
-                            display_call_id, image_result
-                        )
+                        photos = photos[:6]
+                        if len(photos) > 1:
+                            display_call_id = streaming_service.generate_tool_call_id()
+                            gallery_args = {"images": []}
+                            gallery_result = {"images": []}
+                            for photo in photos:
+                                image_args = {
+                                    "src": photo["src"],
+                                    "alt": "Trafikverket kamera",
+                                    "title": photo.get("title"),
+                                    "description": photo.get("description"),
+                                    "href": photo.get("fullsize"),
+                                }
+                                image_result = _build_image_payload(**image_args)
+                                gallery_args["images"].append(image_args)
+                                gallery_result["images"].append(image_result)
+                            yield streaming_service.format_tool_input_start(
+                                display_call_id, "display_image_gallery"
+                            )
+                            yield streaming_service.format_tool_input_available(
+                                display_call_id, "display_image_gallery", gallery_args
+                            )
+                            yield streaming_service.format_tool_output_available(
+                                display_call_id, gallery_result
+                            )
+                        else:
+                            photo = photos[0]
+                            display_call_id = streaming_service.generate_tool_call_id()
+                            image_args = {
+                                "src": photo["src"],
+                                "alt": "Trafikverket kamera",
+                                "title": photo.get("title"),
+                                "description": photo.get("description"),
+                                "href": photo.get("fullsize"),
+                            }
+                            image_result = _build_image_payload(**image_args)
+                            yield streaming_service.format_tool_input_start(
+                                display_call_id, "display_image"
+                            )
+                            yield streaming_service.format_tool_input_available(
+                                display_call_id, "display_image", image_args
+                            )
+                            yield streaming_service.format_tool_output_available(
+                                display_call_id, image_result
+                            )
                     yield streaming_service.format_terminal_info(
                         f"Tool {tool_name} completed", "success"
                     )
