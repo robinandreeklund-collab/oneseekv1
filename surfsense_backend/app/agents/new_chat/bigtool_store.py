@@ -512,7 +512,11 @@ def build_tool_index(
             description = definition.description
             keywords = list(definition.keywords)
             example_queries = list(definition.example_queries)
-            category = definition.category
+            category = (
+                definition.category.value
+                if hasattr(definition.category, "value")
+                else definition.category
+            )
             base_path = definition.base_path
         if tool_id in geoapify_by_id:
             definition = geoapify_by_id[tool_id]

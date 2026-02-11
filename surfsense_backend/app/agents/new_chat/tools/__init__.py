@@ -14,6 +14,7 @@ Available tools:
 - scrape_webpage: Extract content from webpages
 - smhi_weather: Fetch weather data from SMHI
 - trafiklab_route: Find departures using Trafiklab realtime APIs
+- trafikverket_auto: Route Trafikverket queries automatically
 - libris_search: Search the Libris XL catalog
 - jobad_links_search: Search job ads via Arbetsformedlingen
 - search_web: Search the public web with global API keys

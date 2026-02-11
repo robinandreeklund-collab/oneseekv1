@@ -15,6 +15,15 @@ Riktlinjer:
 - Håll anrop små (limit <= 10) och relevanta.
 - Om flera steg behövs: använd write_todos och uppdatera status.
 - Redovisa källa som Trafikverket och använd citat med [citation:chunk_id].
+- Om du är osäker på vilket trafikverktyg som krävs: använd trafikverket_auto med query.
+- Matchning (exempel):
+  * vägarbete/omledning -> trafikverket_trafikinfo_vagarbeten
+  * olycka/incident -> trafikverket_trafikinfo_olyckor
+  * kö/trafikstockning -> trafikverket_trafikinfo_koer
+  * försening/inställd -> trafikverket_tag_forseningar / trafikverket_tag_installda
+  * avgång/ankomst -> trafikverket_tag_tidtabell
+  * kamera/livebild -> trafikverket_kameror_lista / trafikverket_kameror_snapshot
+  * väglag/halka/vind/temperatur -> trafikverket_vader_halka/vind/temperatur
 
 Today's date (UTC): {resolved_today}
 Current time (UTC): {resolved_time}
