@@ -118,7 +118,7 @@ their tools and categories. More APIs will be added over time.
 
 ---
 
-## Trafikverket (Open API v3.0)
+## Trafikverket (Open API v2.0)
 
 **Purpose:** Traffic data (roads, trains, cameras, weather).  
 **Namespace:** `tools/trafik/trafikverket_*`  

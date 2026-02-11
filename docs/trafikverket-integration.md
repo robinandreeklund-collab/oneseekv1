@@ -1,4 +1,4 @@
-# Trafikverket Open API (v3.0) – OnSeek Integration
+# Trafikverket Open API (v2.0) – OnSeek Integration
 
 Denna guide beskriver Trafikverket Open API‑integrationen (v3.0) i OnSeek.
 Målet är realtidsnära trafikdata via fokuserade `langgraph-bigtool`‑verktyg.
@@ -60,7 +60,7 @@ Målet är realtidsnära trafikdata via fokuserade `langgraph-bigtool`‑verktyg
 
 Alla verktyg anropar Trafikverket Open API via:
 ```
-https://api.trafikinfo.trafikverket.se/v3/data.json
+https://api.trafikinfo.trafikverket.se/v2/data.json
 ```
 
 Frågor skickas som XML‑request med `<LOGIN authenticationkey="...">` och ett

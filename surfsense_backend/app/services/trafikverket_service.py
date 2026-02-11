@@ -11,7 +11,7 @@ from xml.sax.saxutils import escape
 import httpx
 from dotenv import load_dotenv
 
-TRAFIKVERKET_BASE_URL = "https://api.trafikinfo.trafikverket.se/v3/data.json"
+TRAFIKVERKET_BASE_URL = "https://api.trafikinfo.trafikverket.se/v2/data.json"
 TRAFIKVERKET_SOURCE = "Trafikverket Open API"
 TRAFIKVERKET_DEFAULT_TIMEOUT = 15.0
 TRAFIKVERKET_CACHE_TTL = 60 * 5  # 5 minutes
