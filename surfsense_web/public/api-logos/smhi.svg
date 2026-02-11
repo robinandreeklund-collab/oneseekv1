@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" fill="none">
+  <rect width="200" height="100" fill="#FF6B35"/>
+  <text x="100" y="45" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="white" text-anchor="middle">SMHI</text>
+  <text x="100" y="70" font-family="Arial, sans-serif" font-size="10" fill="white" text-anchor="middle" opacity="0.9">Swedish Meteorological Institute</text>
+</svg>
