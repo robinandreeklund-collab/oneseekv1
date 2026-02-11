@@ -740,6 +740,9 @@ async def stream_new_chat(
         accumulated_text = ""
         critic_buffer = ""
         suppress_critic = False
+        repeat_buffer = ""
+        suppress_repeat = False
+        repeat_candidate = False
 
         # Track thinking steps for chain-of-thought display
         thinking_step_counter = 0
@@ -908,6 +911,32 @@ async def stream_new_chat(
                         critic_buffer = ""
             return output
 
+        def filter_repeated_output(text: str) -> str:
+            nonlocal repeat_buffer, suppress_repeat, repeat_candidate, accumulated_text
+            if not text or suppress_repeat:
+                return ""
+            if len(accumulated_text) < 200:
+                return text
+            stripped_existing = accumulated_text.lstrip()
+            if not stripped_existing:
+                return text
+            if not repeat_candidate:
+                if text.lstrip().startswith(stripped_existing[:10]):
+                    repeat_candidate = True
+                else:
+                    return text
+            repeat_buffer += text
+            if len(repeat_buffer) < 60:
+                return ""
+            if stripped_existing.startswith(repeat_buffer[:60].lstrip()):
+                suppress_repeat = True
+                repeat_buffer = ""
+                return ""
+            repeat_candidate = False
+            output = repeat_buffer
+            repeat_buffer = ""
+            return output
+
         # Stream the agent response with thread config for memory
         async for event in agent.astream_events(
             input_state, config=config, version="v2"
@@ -992,6 +1021,7 @@ async def stream_new_chat(
                     content = chunk.content
                     if content and isinstance(content, str):
                         content = filter_critic_json(content)
+                        content = filter_repeated_output(content)
                         if not content:
                             continue
                         # Start a new text block if needed
@@ -2295,6 +2325,13 @@ async def stream_new_chat(
                     current_text_id = None
 
         # Ensure text block is closed
+        if repeat_buffer and not suppress_repeat:
+            if current_text_id is None:
+                current_text_id = streaming_service.generate_text_id()
+                yield streaming_service.format_text_start(current_text_id)
+            yield streaming_service.format_text_delta(current_text_id, repeat_buffer)
+            accumulated_text += repeat_buffer
+            repeat_buffer = ""
         if current_text_id is not None:
             yield streaming_service.format_text_end(current_text_id)
 
