@@ -460,6 +460,46 @@ def _strip_critic_json(text: str) -> str:
     return cleaned.rstrip()
 
 
+def _last_user_query(messages: list[Any]) -> str:
+    for message in reversed(messages or []):
+        if isinstance(message, HumanMessage):
+            return str(message.content or "").strip()
+    return ""
+
+
+def _force_agent_instruction(messages: list[Any]) -> str | None:
+    if not messages:
+        return None
+    last_message = messages[-1]
+    if not isinstance(last_message, ToolMessage):
+        return None
+    if (last_message.name or "") != "retrieve_agents":
+        return None
+    payload = _safe_json(last_message.content)
+    agents = payload.get("agents") or []
+    names = [
+        str(agent.get("name"))
+        for agent in agents
+        if isinstance(agent, dict) and agent.get("name")
+    ]
+    if not names:
+        return None
+    user_query = _last_user_query(messages) or "user request"
+    if len(names) == 1:
+        return (
+            "VIKTIGT: Du har precis valt agent. Du MASTE nu anropa "
+            f"call_agent(agent_name=\"{names[0]}\", task=\"{user_query}\", final=true). "
+            "Svara inte sjalv."
+        )
+    ordered = ", ".join(names)
+    return (
+        "VIKTIGT: Du har precis valt flera agenter. Anropa call_agent for varje agent i "
+        f"denna ordning: {ordered} (final=false). "
+        "Nar alla har svarat: anropa call_agent(agent_name=\"synthesis\", "
+        f"task=\"{user_query}\", final=true). Svara inte sjalv."
+    )
+
+
 def _sanitize_messages(messages: list[Any]) -> list[Any]:
     sanitized: list[Any] = []
     for message in messages:
@@ -1011,8 +1051,11 @@ async def create_supervisor_agent(
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
         route_context = _format_route_hint(state)
+        force_instruction = _force_agent_instruction(messages)
         system_bits = [
-            item for item in (plan_context, recent_context, route_context) if item
+            item
+            for item in (force_instruction, plan_context, recent_context, route_context)
+            if item
         ]
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
@@ -1039,8 +1082,11 @@ async def create_supervisor_agent(
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
         route_context = _format_route_hint(state)
+        force_instruction = _force_agent_instruction(messages)
         system_bits = [
-            item for item in (plan_context, recent_context, route_context) if item
+            item
+            for item in (force_instruction, plan_context, recent_context, route_context)
+            if item
         ]
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
