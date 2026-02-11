@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import type { AgentPromptItem } from "@/contracts/types/agent-prompts.types";
 import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -43,6 +44,13 @@ const AGENT_PROMPT_ORDER: Record<string, string[]> = {
 };
 
 const SYSTEM_SECTION_ORDER = ["router", "supervisor", "worker", "compare", "other"];
+const SYSTEM_SECTION_LABELS: Record<string, string> = {
+	router: "Router",
+	supervisor: "Supervisor",
+	worker: "Workers",
+	compare: "Compare",
+	other: "Övrigt",
+};
 
 export function AdminPromptsPage() {
 	const { data: currentUser } = useAtomValue(currentUserAtom);
@@ -133,7 +141,7 @@ export function AdminPromptsPage() {
 		}
 	}, [availableAgents, selectedAgent]);
 
-	const filteredItems = useMemo(() => {
+	const filteredMeta = useMemo(() => {
 		const normalizedSearch = searchTerm.trim().toLowerCase();
 		const applySearch = (item: AgentPromptItem) => {
 			if (!normalizedSearch) return true;
@@ -178,12 +186,98 @@ export function AdminPromptsPage() {
 			});
 		}
 
-		return results.map((meta) => meta.item);
+		return results;
 	}, [promptMeta, viewMode, selectedAgent, searchTerm]);
+
+	const filteredItems = useMemo(
+		() => filteredMeta.map((meta) => meta.item),
+		[filteredMeta]
+	);
+
+	const systemSections = useMemo(() => {
+		if (viewMode !== "system") return [];
+		return SYSTEM_SECTION_ORDER.map((section) => {
+			const sectionItems = filteredMeta
+				.filter((meta) => meta.group === "system" && meta.section === section)
+				.map((meta) => meta.item);
+			return {
+				section,
+				label: SYSTEM_SECTION_LABELS[section] ?? section,
+				items: sectionItems,
+			};
+		}).filter((group) => group.items.length > 0);
+	}, [filteredMeta, viewMode]);
 
 	const hasChanges = useMemo(() => {
 		return items.some((item) => (overrides[item.key] ?? "") !== (item.override_prompt ?? ""));
 	}, [items, overrides]);
+
+	const renderPromptCard = (item: AgentPromptItem) => {
+		const overrideValue = overrides[item.key] ?? "";
+		const isActive = Boolean(item.override_prompt?.trim());
+		const isDirty = overrideValue !== (item.override_prompt ?? "");
+
+		return (
+			<div key={item.key} className="rounded-lg border border-border/50 bg-card p-4 shadow-sm">
+				<div className="flex items-start justify-between gap-4">
+					<div>
+						<div className="flex flex-wrap items-center gap-2">
+							<h3 className="text-sm font-semibold">{item.label}</h3>
+							{isActive && (
+								<Badge
+									variant="secondary"
+									className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-200"
+								>
+									Aktiv
+								</Badge>
+							)}
+							{isDirty && (
+								<Badge
+									variant="secondary"
+									className="bg-amber-500/15 text-amber-700 dark:text-amber-200"
+								>
+									Osparad ändring
+								</Badge>
+							)}
+						</div>
+						<p className="text-xs text-muted-foreground">{item.description}</p>
+						<p className="mt-1 text-[11px] text-muted-foreground">
+							Nyckel: <span className="font-mono">{item.key}</span>
+						</p>
+					</div>
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => handleReset(item)}
+						disabled={isSaving}
+					>
+						Återställ
+					</Button>
+				</div>
+
+				<div className="mt-3">
+					<Textarea
+						value={overrideValue}
+						onChange={(event) =>
+							setOverrides((prev) => ({ ...prev, [item.key]: event.target.value }))
+						}
+						placeholder="Skriv override‑prompt här..."
+						className={cn("min-h-[140px] text-xs leading-5")}
+					/>
+				</div>
+
+				<details className="mt-3">
+					<summary className="cursor-pointer text-xs text-muted-foreground">
+						Visa standardprompt
+					</summary>
+					<pre className="mt-2 whitespace-pre-wrap rounded-md border border-border/50 bg-muted/40 p-3 text-xs text-muted-foreground">
+						{item.default_prompt}
+					</pre>
+				</details>
+				<PromptHistory promptKey={item.key} isSaving={isSaving} />
+			</div>
+		);
+	};
 
 	const handleSave = async () => {
 		setIsSaving(true);
@@ -296,52 +390,24 @@ export function AdminPromptsPage() {
 				</p>
 			)}
 
-			<div className="mt-6 space-y-4">
-				{filteredItems.map((item) => (
-					<div
-						key={item.key}
-						className="rounded-lg border border-border/50 bg-card p-4 shadow-sm"
-					>
-						<div className="flex items-start justify-between gap-4">
-							<div>
-								<h3 className="text-sm font-semibold">{item.label}</h3>
-								<p className="text-xs text-muted-foreground">{item.description}</p>
-								<p className="mt-1 text-[11px] text-muted-foreground">
-									Nyckel: <span className="font-mono">{item.key}</span>
-								</p>
+			<div className="mt-6 space-y-6">
+				{viewMode === "system" ? (
+					systemSections.map((group) => (
+						<div key={group.section} className="space-y-4">
+							<div className="flex items-center justify-between">
+								<h3 className="text-xs font-semibold uppercase text-muted-foreground">
+									{group.label}
+								</h3>
+								<span className="text-[11px] text-muted-foreground">
+									{group.items.length} promtar
+								</span>
 							</div>
-							<Button
-								variant="ghost"
-								size="sm"
-								onClick={() => handleReset(item)}
-								disabled={isSaving}
-							>
-								Återställ
-							</Button>
+							{group.items.map(renderPromptCard)}
 						</div>
-
-						<div className="mt-3">
-							<Textarea
-								value={overrides[item.key] ?? ""}
-								onChange={(event) =>
-									setOverrides((prev) => ({ ...prev, [item.key]: event.target.value }))
-								}
-								placeholder="Skriv override‑prompt här..."
-								className={cn("min-h-[140px] text-xs leading-5")}
-							/>
-						</div>
-
-						<details className="mt-3">
-							<summary className="cursor-pointer text-xs text-muted-foreground">
-								Visa standardprompt
-							</summary>
-							<pre className="mt-2 whitespace-pre-wrap rounded-md border border-border/50 bg-muted/40 p-3 text-xs text-muted-foreground">
-								{item.default_prompt}
-							</pre>
-						</details>
-						<PromptHistory promptKey={item.key} isSaving={isSaving} />
-					</div>
-				))}
+					))
+				) : (
+					<div className="space-y-4">{filteredItems.map(renderPromptCard)}</div>
+				)}
 			</div>
 		</div>
 	);
