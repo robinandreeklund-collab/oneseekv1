@@ -1012,12 +1012,12 @@ async def stream_new_chat(
             remaining = text
             while remaining:
                 if not suppress_critic:
-                    start_idx = remaining.find("{\"status\"")
-                    if start_idx == -1:
+                    match = re.search(r"\{\s*\"status\"\s*:", remaining)
+                    if not match:
                         output += remaining
                         break
-                    output += remaining[:start_idx]
-                    remaining = remaining[start_idx:]
+                    output += remaining[: match.start()]
+                    remaining = remaining[match.start() :]
                     suppress_critic = True
                     critic_buffer = ""
                 if suppress_critic:

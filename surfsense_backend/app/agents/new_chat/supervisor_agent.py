@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Annotated, TypedDict
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
+from app.agents.new_chat.system_prompt import append_datetime_context
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
     EXTERNAL_MODEL_SPECS,
@@ -446,6 +448,18 @@ def _safe_json(payload: Any) -> dict[str, Any]:
         return {}
 
 
+_CRITIC_SNIPPET_RE = re.compile(
+    r"\{\s*\"status\"\s*:\s*\"(?:ok|needs_more)\"[^}]*\}", re.DOTALL
+)
+
+
+def _strip_critic_json(text: str) -> str:
+    if not text:
+        return text
+    cleaned = _CRITIC_SNIPPET_RE.sub("", text)
+    return cleaned.rstrip()
+
+
 def _sanitize_messages(messages: list[Any]) -> list[Any]:
     sanitized: list[Any] = []
     for message in messages:
@@ -455,6 +469,7 @@ def _sanitize_messages(messages: list[Any]) -> list[Any]:
                 response = payload.get("response")
                 if isinstance(response, str):
                     agent = payload.get("agent") or message.name or "agent"
+                    response = _strip_critic_json(response)
                     content = f"{agent}: {response}" if response else f"{agent}: completed"
                     sanitized.append(
                         ToolMessage(
@@ -941,7 +956,7 @@ async def create_supervisor_agent(
         if not response_text:
             response_text = str(result)
 
-        critic_prompt = (
+        critic_prompt = append_datetime_context(
             "Du ar en kritisk granskare. Bedom om svaret ar komplett och korrekt. "
             "Svara kort i JSON med {\"status\": \"ok\"|\"needs_more\", \"reason\": \"...\"}."
         )
@@ -954,8 +969,7 @@ async def create_supervisor_agent(
         if not critic_payload:
             critic_payload = {"status": "ok", "reason": critic_text}
 
-        if response_text:
-            response_text = response_text.split("{\"status\":", 1)[0].rstrip()
+        response_text = _strip_critic_json(response_text)
 
         return json.dumps(
             {
