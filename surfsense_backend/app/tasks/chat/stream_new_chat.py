@@ -1779,6 +1779,7 @@ async def stream_new_chat(
                         agent_name = tool_output.get("agent") or ""
                         response = tool_output.get("response") or ""
                         critic = tool_output.get("critic") or {}
+                    final_response = False
                     completed_items = []
                     if agent_name:
                         completed_items.append(f"Agent: {agent_name}")
