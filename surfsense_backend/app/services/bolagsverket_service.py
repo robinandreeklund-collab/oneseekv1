@@ -15,6 +15,7 @@ BOLAGSVERKET_SOURCE = "Bolagsverket Open Data API"
 BOLAGSVERKET_DEFAULT_TIMEOUT = 20.0
 BOLAGSVERKET_CACHE_TTL = 60 * 60 * 24  # 1 day
 BOLAGSVERKET_MAX_RETRIES = 4
+BOLAGSVERKET_USER_AGENT = "SurfSense/1.0 (Bolagsverket)"
 
 
 def _clean_orgnr(value: str) -> str:
@@ -29,6 +30,14 @@ def _build_cache_key(method: str, url: str, payload: Any) -> str:
         default=str,
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _format_request_error(exc: Exception, *, url: str | None = None) -> str:
+    message = str(exc).strip()
+    details = message if message else type(exc).__name__
+    if url:
+        return f"{details} (url={url})"
+    return details
 
 
 class BolagsverketService:
@@ -126,6 +135,8 @@ class BolagsverketService:
     ) -> tuple[dict[str, Any], bool]:
         url = f"{self.base_url}/{path.lstrip('/')}"
         headers = await self._get_auth_headers()
+        headers.setdefault("Accept", "application/json")
+        headers.setdefault("User-Agent", BOLAGSVERKET_USER_AGENT)
         payload = {"params": params or {}, "json": json_body or {}}
         cache_key = None
         cache_hit = False
@@ -144,7 +155,9 @@ class BolagsverketService:
         last_error: str | None = None
         for attempt in range(BOLAGSVERKET_MAX_RETRIES):
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with httpx.AsyncClient(
+                    timeout=self.timeout, follow_redirects=True
+                ) as client:
                     response = await client.request(
                         method,
                         url,
@@ -172,9 +185,13 @@ class BolagsverketService:
                         cache_hit = False
                 return data, cache_hit
             except httpx.HTTPStatusError as exc:
-                last_error = f"{exc.response.status_code}: {exc.response.text}"
-            except (httpx.RequestError, ValueError) as exc:
-                last_error = str(exc)
+                last_error = (
+                    f"{exc.response.status_code}: {exc.response.text} (url={url})"
+                )
+            except httpx.RequestError as exc:
+                last_error = _format_request_error(exc, url=url)
+            except ValueError as exc:
+                last_error = f"Invalid JSON response: {_format_request_error(exc, url=url)}"
             await asyncio.sleep(0.5 * (2**attempt))
 
         raise RuntimeError(last_error or "Bolagsverket API request failed.")
