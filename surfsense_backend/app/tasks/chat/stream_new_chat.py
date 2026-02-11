@@ -1016,6 +1016,7 @@ async def stream_new_chat(
             return cleaned.rstrip()
 
         heading_prefix_re = re.compile(r"([^\n])(?=##\s)")
+        heading_line_re = re.compile(r"(##\s[^\n]+)(?=[^\n])")
 
         def format_headings(text: str) -> str:
             nonlocal format_tail
@@ -1023,6 +1024,7 @@ async def stream_new_chat(
                 return text
             combined = f"{format_tail}{text}"
             formatted = heading_prefix_re.sub(r"\1\n\n", combined)
+            formatted = heading_line_re.sub(r"\1\n", formatted)
             if len(formatted) <= 2:
                 format_tail = formatted
                 return ""
