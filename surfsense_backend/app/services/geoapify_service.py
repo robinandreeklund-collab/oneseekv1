@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+import re
 from urllib.parse import urlencode
 
 GEOAPIFY_STATIC_MAP_BASE_URL = "https://maps.geoapify.com/v1/staticmap"
@@ -28,16 +29,34 @@ GEOAPIFY_STYLE_OPTIONS = {
     "positron-red",
 }
 
+GEOAPIFY_NAMED_COLORS = {
+    "red": "#ef4444",
+    "blue": "#3b82f6",
+    "green": "#22c55e",
+    "yellow": "#eab308",
+    "orange": "#f97316",
+    "purple": "#a855f7",
+    "pink": "#ec4899",
+    "black": "#111827",
+    "white": "#ffffff",
+    "gray": "#6b7280",
+    "grey": "#6b7280",
+}
+
 
 def _normalize_color(value: str | None) -> str | None:
     if not value:
         return None
-    cleaned = value.strip()
+    cleaned = value.strip().lower()
     if not cleaned:
         return None
+    if cleaned in GEOAPIFY_NAMED_COLORS:
+        return GEOAPIFY_NAMED_COLORS[cleaned]
     if not cleaned.startswith("#"):
         cleaned = f"#{cleaned}"
-    return cleaned
+    if re.fullmatch(r"#([0-9a-f]{6}|[0-9a-f]{3})", cleaned):
+        return cleaned
+    return None
 
 
 def _normalize_style(value: str | None) -> str:

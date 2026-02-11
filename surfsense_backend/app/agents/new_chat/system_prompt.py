@@ -117,7 +117,7 @@ You have access to the following tools:
   - Useful for showing road works, addresses, and landmarks with markers.
   - Args:
     - location: Place name or address (e.g., "Slussen, Stockholm")
-    - center: "lon,lat" string if you already have coordinates
+    - center: "lat,lon" string if you already have coordinates
     - lat/lon: Coordinates if known
     - zoom: Zoom level (default: 12)
     - width/height: Image size in pixels

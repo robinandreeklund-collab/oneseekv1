@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from langchain_core.tools import BaseTool, tool
@@ -57,7 +58,9 @@ GEOAPIFY_TOOL_DEFINITIONS: list[GeoapifyToolDefinition] = [
 ]
 
 
-def _parse_center_string(value: str) -> tuple[float | None, float | None]:
+def _parse_center_string(
+    value: str, markers: list[dict[str, Any]] | None = None
+) -> tuple[float | None, float | None]:
     cleaned = (value or "").strip()
     if not cleaned or "," not in cleaned:
         return None, None
@@ -65,9 +68,19 @@ def _parse_center_string(value: str) -> tuple[float | None, float | None]:
     if len(parts) != 2:
         return None, None
     try:
-        lon = float(parts[0])
-        lat = float(parts[1])
-        return lat, lon
+        first = float(parts[0])
+        second = float(parts[1])
+        if abs(first) > 90 and abs(second) <= 90:
+            return second, first
+        if markers:
+            marker = markers[0]
+            cand_a = (first, second)
+            cand_b = (second, first)
+            dist_a = abs(marker["lat"] - cand_a[0]) + abs(marker["lon"] - cand_a[1])
+            dist_b = abs(marker["lat"] - cand_b[0]) + abs(marker["lon"] - cand_b[1])
+            if dist_b < dist_a:
+                return cand_b
+        return first, second
     except ValueError:
         return None, None
 
@@ -80,13 +93,19 @@ def _normalize_markers(markers: list[dict[str, Any]] | None) -> list[dict[str, A
             lon = marker.get("lon")
             if lat is None or lon is None:
                 continue
+            label = str(marker.get("label") or "").strip().upper()
+            label = re.sub(r"[^A-Z0-9]", "", label)
+            label = label[:2] if label else None
+            size = str(marker.get("size") or "").strip().lower()
+            if size not in {"tiny", "small", "medium", "large"}:
+                size = "medium"
             normalized.append(
                 {
                     "lat": float(lat),
                     "lon": float(lon),
                     "color": marker.get("color"),
-                    "label": marker.get("label"),
-                    "size": marker.get("size") or "medium",
+                    "label": label,
+                    "size": size,
                 }
             )
         except (TypeError, ValueError):
@@ -138,9 +157,10 @@ def create_geoapify_static_map_tool() -> BaseTool:
             center_lat = lat
             center_lon = lon
             resolved_location: dict[str, Any] | None = None
+            marker_list = _normalize_markers(markers)
 
             if (center_lat is None or center_lon is None) and center:
-                parsed_lat, parsed_lon = _parse_center_string(center)
+                parsed_lat, parsed_lon = _parse_center_string(center, marker_list)
                 center_lat = center_lat if center_lat is not None else parsed_lat
                 center_lon = center_lon if center_lon is not None else parsed_lon
 
@@ -154,7 +174,6 @@ def create_geoapify_static_map_tool() -> BaseTool:
                 center_lat = float(resolved_location.get("lat"))
                 center_lon = float(resolved_location.get("lon"))
 
-            marker_list = _normalize_markers(markers)
             if (center_lat is None or center_lon is None) and marker_list:
                 center_lat = marker_list[0]["lat"]
                 center_lon = marker_list[0]["lon"]
