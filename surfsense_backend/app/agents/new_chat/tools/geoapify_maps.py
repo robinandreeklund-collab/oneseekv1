@@ -9,6 +9,7 @@ from app.agents.new_chat.tools.smhi_weather import _geocode_location
 from app.services.geoapify_service import (
     GEOAPIFY_SOURCE,
     GEOAPIFY_STATIC_MAP_BASE_URL,
+    GEOAPIFY_STYLE_OPTIONS,
     GeoapifyService,
 )
 
@@ -93,6 +94,15 @@ def _normalize_markers(markers: list[dict[str, Any]] | None) -> list[dict[str, A
     return normalized
 
 
+def _normalize_style(value: str | None) -> str:
+    if not value:
+        return "osm-carto"
+    cleaned = value.strip().lower().replace("_", "-")
+    if cleaned in GEOAPIFY_STYLE_OPTIONS:
+        return cleaned
+    return "osm-carto"
+
+
 def create_geoapify_static_map_tool() -> BaseTool:
     service = GeoapifyService()
 
@@ -160,13 +170,14 @@ def create_geoapify_static_map_tool() -> BaseTool:
                     {"lat": center_lat, "lon": center_lon, "color": "#e11d48", "size": "medium"}
                 ]
 
+            style_value = _normalize_style(style)
             image_url = service.build_static_map_url(
                 center_lat=center_lat,
                 center_lon=center_lon,
                 zoom=int(zoom or 12),
                 width=int(width or 640),
                 height=int(height or 400),
-                style=style or "osm-carto",
+                style=style_value,
                 image_format=image_format or "png",
                 markers=marker_list,
             )
@@ -183,7 +194,7 @@ def create_geoapify_static_map_tool() -> BaseTool:
                     "zoom": zoom,
                     "width": width,
                     "height": height,
-                    "style": style,
+                    "style": style_value,
                     "format": image_format,
                 },
                 "center": {

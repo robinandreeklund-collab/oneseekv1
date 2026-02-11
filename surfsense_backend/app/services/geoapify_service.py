@@ -6,6 +6,27 @@ from urllib.parse import urlencode
 
 GEOAPIFY_STATIC_MAP_BASE_URL = "https://maps.geoapify.com/v1/staticmap"
 GEOAPIFY_SOURCE = "Geoapify Static Maps API"
+GEOAPIFY_STYLE_OPTIONS = {
+    "osm-carto",
+    "carto",
+    "dark-matter",
+    "klokantech-basic",
+    "osm-bright",
+    "toner",
+    "toner-grey",
+    "osm-liberty",
+    "maptiler-3d",
+    "positron",
+    "dark-matter-brown",
+    "dark-matter-dark-grey",
+    "dark-matter-dark-purple",
+    "dark-matter-purple-roads",
+    "dark-matter-yellow-roads",
+    "osm-bright-grey",
+    "osm-bright-smooth",
+    "positron-blue",
+    "positron-red",
+}
 
 
 def _normalize_color(value: str | None) -> str | None:
@@ -17,6 +38,15 @@ def _normalize_color(value: str | None) -> str | None:
     if not cleaned.startswith("#"):
         cleaned = f"#{cleaned}"
     return cleaned
+
+
+def _normalize_style(value: str | None) -> str:
+    if not value:
+        return "osm-carto"
+    cleaned = value.strip().lower().replace("_", "-")
+    if cleaned in GEOAPIFY_STYLE_OPTIONS:
+        return cleaned
+    return "osm-carto"
 
 
 class GeoapifyService:
@@ -45,7 +75,7 @@ class GeoapifyService:
             raise ValueError("Missing GEOAPIFY_API_KEY for Geoapify Static Maps.")
 
         params: list[tuple[str, str]] = []
-        params.append(("style", style))
+        params.append(("style", _normalize_style(style)))
         params.append(("width", str(width)))
         params.append(("height", str(height)))
         params.append(("zoom", str(zoom)))
