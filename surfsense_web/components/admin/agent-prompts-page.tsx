@@ -298,50 +298,6 @@ export function AdminPromptsPage() {
 		return () => window.clearTimeout(timer);
 	}, [pendingScrollKey, promptRefs, filteredItems, viewMode]);
 
-	useEffect(() => {
-		const updateLines = () => {
-			const container = graphRef.current;
-			if (!container) return;
-			const containerRect = container.getBoundingClientRect();
-			const edges = buildGraphEdges(visibleAgentNodes);
-			const next: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
-			for (const edge of edges) {
-				const fromNode = nodeRefs.current.get(edge.from);
-				const toNode = nodeRefs.current.get(edge.to);
-				if (!fromNode || !toNode) continue;
-				const fromRect = fromNode.getBoundingClientRect();
-				const toRect = toNode.getBoundingClientRect();
-				next.push({
-					x1: fromRect.right - containerRect.left,
-					y1: fromRect.top - containerRect.top + fromRect.height / 2,
-					x2: toRect.left - containerRect.left,
-					y2: toRect.top - containerRect.top + toRect.height / 2,
-				});
-			}
-			setGraphLines(next);
-		};
-
-		const handleResize = () => {
-			window.requestAnimationFrame(updateLines);
-		};
-
-		window.requestAnimationFrame(updateLines);
-		window.addEventListener("resize", handleResize);
-		const observer =
-			graphRef.current && typeof ResizeObserver !== "undefined"
-				? new ResizeObserver(handleResize)
-				: null;
-		if (graphRef.current && observer) {
-			observer.observe(graphRef.current);
-		}
-		return () => {
-			window.removeEventListener("resize", handleResize);
-			if (observer && graphRef.current) {
-				observer.unobserve(graphRef.current);
-			}
-		};
-	}, [visibleAgentNodes]);
-
 	const hasChanges = useMemo(() => {
 		return items.some((item) => (overrides[item.key] ?? "") !== (item.override_prompt ?? ""));
 	}, [items, overrides]);
@@ -462,6 +418,50 @@ export function AdminPromptsPage() {
 		() => AGENT_NODES.filter((node) => availableAgents.includes(node.agent)),
 		[availableAgents]
 	);
+
+	useEffect(() => {
+		const updateLines = () => {
+			const container = graphRef.current;
+			if (!container) return;
+			const containerRect = container.getBoundingClientRect();
+			const edges = buildGraphEdges(visibleAgentNodes);
+			const next: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+			for (const edge of edges) {
+				const fromNode = nodeRefs.current.get(edge.from);
+				const toNode = nodeRefs.current.get(edge.to);
+				if (!fromNode || !toNode) continue;
+				const fromRect = fromNode.getBoundingClientRect();
+				const toRect = toNode.getBoundingClientRect();
+				next.push({
+					x1: fromRect.right - containerRect.left,
+					y1: fromRect.top - containerRect.top + fromRect.height / 2,
+					x2: toRect.left - containerRect.left,
+					y2: toRect.top - containerRect.top + toRect.height / 2,
+				});
+			}
+			setGraphLines(next);
+		};
+
+		const handleResize = () => {
+			window.requestAnimationFrame(updateLines);
+		};
+
+		window.requestAnimationFrame(updateLines);
+		window.addEventListener("resize", handleResize);
+		const observer =
+			graphRef.current && typeof ResizeObserver !== "undefined"
+				? new ResizeObserver(handleResize)
+				: null;
+		if (graphRef.current && observer) {
+			observer.observe(graphRef.current);
+		}
+		return () => {
+			window.removeEventListener("resize", handleResize);
+			if (observer && graphRef.current) {
+				observer.unobserve(graphRef.current);
+			}
+		};
+	}, [visibleAgentNodes]);
 
 	const handleSave = async () => {
 		setIsSaving(true);
