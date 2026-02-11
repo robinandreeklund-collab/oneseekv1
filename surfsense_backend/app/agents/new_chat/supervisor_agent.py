@@ -61,6 +61,23 @@ _AGENT_STOPWORDS = {
     "det",
     "de",
 }
+
+
+def _has_map_intent(text: str | None) -> bool:
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "karta",
+            "kartor",
+            "kartbild",
+            "kartvy",
+            "map",
+            "geoapify",
+        )
+    )
 _EXTERNAL_MODEL_TOOL_NAMES = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
 _AGENT_EMBED_CACHE: dict[str, list[float]] = {}
 AGENT_RERANK_CANDIDATES = 6
@@ -707,10 +724,6 @@ async def create_supervisor_agent(
                 "tidtabell",
                 "trafik",
                 "rutt",
-                "karta",
-                "kartbild",
-                "geoapify",
-                "adress",
             ],
             namespace=("agents", "action"),
             prompt_key="action",
@@ -722,15 +735,9 @@ async def create_supervisor_agent(
                 "karta",
                 "kartor",
                 "kartbild",
+                "kartvy",
                 "map",
                 "geoapify",
-                "adress",
-                "plats",
-                "koordinat",
-                "vägarbete",
-                "vag",
-                "väg",
-                "rutt",
             ],
             namespace=("agents", "kartor"),
             prompt_key="kartor",
@@ -922,12 +929,14 @@ async def create_supervisor_agent(
             )
             if route_hint:
                 preferred = {
-                    "action": ["kartor", "action", "media"],
+                    "action": ["action", "media"],
                     "knowledge": ["knowledge", "browser"],
                     "statistics": ["statistics"],
                     "compare": ["synthesis", "knowledge", "statistics"],
                     "trafik": ["trafik", "action"],
                 }.get(str(route_hint), [])
+                if str(route_hint) == "action" and _has_map_intent(context_query):
+                    preferred = ["kartor", *preferred]
                 if preferred:
                     preferred_defs = [
                         agent

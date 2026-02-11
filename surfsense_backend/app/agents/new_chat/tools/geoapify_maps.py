@@ -36,16 +36,12 @@ GEOAPIFY_TOOL_DEFINITIONS: list[GeoapifyToolDefinition] = [
         ),
         keywords=[
             "karta",
+            "kartor",
             "kartbild",
             "statisk karta",
+            "kartvy",
             "map",
             "geoapify",
-            "plats",
-            "adress",
-            "vägarbete",
-            "trafik",
-            "position",
-            "koordinat",
         ],
         example_queries=[
             "Visa en karta över Slussen i Stockholm",
