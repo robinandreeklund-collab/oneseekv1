@@ -1016,20 +1016,23 @@ async def stream_new_chat(
             return cleaned.rstrip()
 
         heading_prefix_re = re.compile(r"([^\n])(?=##\s)")
-        heading_line_re = re.compile(r"(##\s[^\n]+)(?=[^\n])")
+        heading_line_re = re.compile(r"(##\s[^\n]+)(?=\S)")
+        list_prefix_re = re.compile(r"([^\n])(?=\s*(-|\*|\d+\.)\s)")
 
-        def format_headings(text: str) -> str:
+        def format_markdown(text: str) -> str:
             nonlocal format_tail
             if not text:
                 return text
             combined = f"{format_tail}{text}"
-            formatted = heading_prefix_re.sub(r"\1\n\n", combined)
+            formatted = combined.replace("\r\n", "\n")
+            formatted = heading_prefix_re.sub(r"\1\n\n", formatted)
             formatted = heading_line_re.sub(r"\1\n", formatted)
-            if len(formatted) <= 2:
+            formatted = list_prefix_re.sub(r"\1\n", formatted)
+            if len(formatted) <= 50:
                 format_tail = formatted
                 return ""
-            format_tail = formatted[-2:]
-            return formatted[:-2]
+            format_tail = formatted[-50:]
+            return formatted[:-50]
 
         def filter_critic_json(text: str) -> str:
             nonlocal suppress_critic, critic_buffer
@@ -1170,7 +1173,7 @@ async def stream_new_chat(
                     if content and isinstance(content, str):
                         content = filter_critic_json(content)
                         content = filter_repeated_output(content)
-                        content = format_headings(content)
+                        content = format_markdown(content)
                         if not content:
                             continue
                         # Start a new text block if needed
