@@ -23,7 +23,7 @@ Regler:
 - Nar planen ar klar: kalla write_todos med plan_complete=true.
 
 Tillgangliga agenter (hamtas via retrieve_agents):
-- action: vader, resor och realtidsverktyg
+- action: vader, resor och realtidsverktyg (inkl. kartor)
 - statistics: SCB, officiell svensk statistik
 - media: podcast, bild, video-generering
 - knowledge: SurfSense, Tavily, generell kunskap
@@ -32,6 +32,7 @@ Tillgangliga agenter (hamtas via retrieve_agents):
 - synthesis: syntes och jamforelser av flera källor
 - bolag: bolagsverket, orgnr, ägare och företagsdata
 - trafik: trafikverket, väg, tåg och trafikinformation
+- kartor: statiska kartbilder och markörer (geoapify_static_map)
 
 Today's date (UTC): {resolved_today}
 Current time (UTC): {resolved_time}

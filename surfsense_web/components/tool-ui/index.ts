@@ -31,6 +31,13 @@ export {
 	DisplayImageToolUI,
 } from "./display-image";
 export {
+	type GeoapifyStaticMapArgs,
+	GeoapifyStaticMapArgsSchema,
+	type GeoapifyStaticMapResult,
+	GeoapifyStaticMapResultSchema,
+	GeoapifyStaticMapToolUI,
+} from "./geoapify-static-map";
+export {
 	type ImageGalleryArgs,
 	ImageGalleryArgsSchema,
 	type ImageGalleryResult,

@@ -20,6 +20,7 @@ ROUTE_TOOL_SETS: dict[Route, list[str]] = {
         "link_preview",
         "scrape_webpage",
         "display_image",
+        "geoapify_static_map",
         "generate_podcast",
         "smhi_weather",
         "trafiklab_route",

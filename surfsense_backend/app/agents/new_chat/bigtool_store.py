@@ -11,6 +11,7 @@ from app.agents.new_chat.statistics_agent import (
     build_scb_tool_registry,
 )
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.services.reranker_service import RerankerService
 from app.agents.new_chat.tools.registry import (
@@ -63,6 +64,15 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "search_tavily": ["nyheter", "webb", "news", "tavily", "extern"],
     "generate_podcast": ["podcast", "podd", "audio", "ljud"],
     "display_image": ["image", "bild", "illustration"],
+    "geoapify_static_map": [
+        "karta",
+        "kartbild",
+        "map",
+        "geoapify",
+        "plats",
+        "adress",
+        "koordinat",
+    ],
     "link_preview": ["lank", "link", "preview", "url"],
     "scrape_webpage": ["scrape", "skrapa", "webb", "article"],
     "smhi_weather": [
@@ -145,6 +155,13 @@ def _namespace_for_trafikverket_tool(tool_id: str) -> tuple[str, ...]:
     return ("tools", "trafik")
 
 
+def _namespace_for_geoapify_tool(tool_id: str) -> tuple[str, ...]:
+    parts = tool_id.split("_")
+    if len(parts) >= 2:
+        return ("tools", "kartor", f"geoapify_{parts[1]}")
+    return ("tools", "kartor")
+
+
 def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
     if tool_id.startswith("scb_"):
         return _namespace_for_scb_tool(tool_id)
@@ -152,6 +169,8 @@ def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
         return _namespace_for_bolagsverket_tool(tool_id)
     if tool_id.startswith("trafikverket_"):
         return _namespace_for_trafikverket_tool(tool_id)
+    if tool_id.startswith("geoapify_"):
+        return _namespace_for_geoapify_tool(tool_id)
     return TOOL_NAMESPACE_OVERRIDES.get(tool_id, ("tools", "general"))
 
 
@@ -463,6 +482,9 @@ def build_tool_index(
     trafikverket_by_id = {
         definition.tool_id: definition for definition in TRAFIKVERKET_TOOL_DEFINITIONS
     }
+    geoapify_by_id = {
+        definition.tool_id: definition for definition in GEOAPIFY_TOOL_DEFINITIONS
+    }
     entries: list[ToolIndexEntry] = []
 
     for tool_id, tool in tool_registry.items():
@@ -487,6 +509,13 @@ def build_tool_index(
             base_path = definition.base_path
         if tool_id in trafikverket_by_id:
             definition = trafikverket_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = definition.category
+            base_path = definition.base_path
+        if tool_id in geoapify_by_id:
+            definition = geoapify_by_id[tool_id]
             description = definition.description
             keywords = list(definition.keywords)
             example_queries = list(definition.example_queries)

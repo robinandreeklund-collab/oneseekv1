@@ -42,6 +42,7 @@ import { ChatHeader } from "@/components/new-chat/chat-header";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
 import { DisplayImageGalleryToolUI } from "@/components/tool-ui/image-gallery";
+import { GeoapifyStaticMapToolUI } from "@/components/tool-ui/geoapify-static-map";
 import { GeneratePodcastToolUI } from "@/components/tool-ui/generate-podcast";
 import { JobAdLinksToolUI } from "@/components/tool-ui/jobad-links";
 import { LinkPreviewToolUI } from "@/components/tool-ui/link-preview";
@@ -227,6 +228,7 @@ const TOOLS_WITH_UI = new Set([
 	"link_preview",
 	"display_image",
 	"display_image_gallery",
+	"geoapify_static_map",
 	"scrape_webpage",
 	"smhi_weather",
 	"trafiklab_route",
@@ -2122,6 +2124,7 @@ export default function NewChatPage() {
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
 			<DisplayImageGalleryToolUI />
+			<GeoapifyStaticMapToolUI />
 			<ScrapeWebpageToolUI />
 			<SmhiWeatherToolUI />
 			<TrafiklabRouteToolUI />

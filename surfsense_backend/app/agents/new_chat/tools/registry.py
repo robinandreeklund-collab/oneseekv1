@@ -44,6 +44,7 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from .display_image import create_display_image_tool
+from .geoapify_maps import create_geoapify_static_map_tool
 from .bolagsverket import (
     BOLAGSVERKET_TOOL_DEFINITIONS,
     create_bolagsverket_tool,
@@ -150,6 +151,12 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         name="display_image",
         description="Display an image in the chat with metadata",
         factory=lambda deps: create_display_image_tool(),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="geoapify_static_map",
+        description="Generate a static map image with optional markers via Geoapify",
+        factory=lambda deps: create_geoapify_static_map_tool(),
         requires=[],
     ),
     # Web scraping tool - extracts content from webpages
