@@ -24,6 +24,14 @@ function stripPossibleNextStepsComment(text: string): string {
 	return text.replace(POSSIBLE_NEXT_STEPS_COMMENT_REGEX, "");
 }
 
+function normalizeMarkdown(text: string): string {
+	let normalized = text.replace(/\r\n/g, "\n");
+	normalized = normalized.replace(/([^\n])(?=##\s)/g, "$1\n\n");
+	normalized = normalized.replace(/(##\s[^\n]+)(?=\S)/g, "$1\n");
+	normalized = normalized.replace(/([^\n])(?=\s*(-|\*|\d+\.)\s)/g, "$1\n");
+	return normalized;
+}
+
 // Track chunk IDs to citation numbers mapping for consistent numbering
 // This map is reset when a new message starts rendering
 // Uses string keys to differentiate between doc and regular chunks (e.g., "doc-123" vs "123")
@@ -56,7 +64,7 @@ function getCitationNumber(chunkId: number, isDocsChunk: boolean): number {
  * Supports both regular chunks [citation:123] and docs chunks [citation:doc-123]
  */
 function parseTextWithCitations(text: string): ReactNode[] {
-	const cleanedText = stripPossibleNextStepsComment(text);
+	const cleanedText = normalizeMarkdown(stripPossibleNextStepsComment(text));
 	const parts: ReactNode[] = [];
 	let lastIndex = 0;
 	let match: RegExpExecArray | null;
@@ -93,7 +101,7 @@ function parseTextWithCitations(text: string): ReactNode[] {
 		parts.push(cleanedText.substring(lastIndex));
 	}
 
-	return parts.length > 0 ? parts : [text];
+	return parts.length > 0 ? parts : [cleanedText];
 }
 
 const MarkdownTextImpl = () => {
@@ -146,18 +154,16 @@ const useCopyToClipboard = ({ copiedDuration = 3000 }: { copiedDuration?: number
  */
 function processChildrenWithCitations(children: ReactNode): ReactNode {
 	if (typeof children === "string") {
-		const cleaned = stripPossibleNextStepsComment(children);
-		const parsed = parseTextWithCitations(cleaned);
-		return parsed.length === 1 && typeof parsed[0] === "string" ? cleaned : <>{parsed}</>;
+		const parsed = parseTextWithCitations(children);
+		return parsed.length === 1 && typeof parsed[0] === "string" ? children : <>{parsed}</>;
 	}
 
 	if (Array.isArray(children)) {
 		return children.map((child, index) => {
 			if (typeof child === "string") {
-				const cleaned = stripPossibleNextStepsComment(child);
-				const parsed = parseTextWithCitations(cleaned);
+				const parsed = parseTextWithCitations(child);
 				return parsed.length === 1 && typeof parsed[0] === "string" ? (
-					cleaned
+					child
 				) : (
 					<span key={index}>{parsed}</span>
 				);
