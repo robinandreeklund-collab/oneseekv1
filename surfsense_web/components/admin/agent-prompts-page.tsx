@@ -9,13 +9,48 @@ import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import type { AgentPromptItem } from "@/contracts/types/agent-prompts.types";
 import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+
+type PromptViewMode = "all" | "agent" | "system";
+
+const AGENT_ORDER = [
+	"knowledge",
+	"action",
+	"media",
+	"browser",
+	"code",
+	"kartor",
+	"statistics",
+	"bolag",
+	"trafik",
+	"synthesis",
+	"smalltalk",
+];
+
+const AGENT_PROMPT_ORDER: Record<string, string[]> = {
+	knowledge: ["system", "docs", "internal", "external"],
+	action: ["system", "web", "media", "travel", "data"],
+};
+
+const SYSTEM_SECTION_ORDER = ["router", "supervisor", "worker", "compare", "other"];
 
 export function AdminPromptsPage() {
 	const { data: currentUser } = useAtomValue(currentUserAtom);
 	const [overrides, setOverrides] = useState<Record<string, string>>({});
 	const [isSaving, setIsSaving] = useState(false);
+	const [viewMode, setViewMode] = useState<PromptViewMode>("all");
+	const [selectedAgent, setSelectedAgent] = useState<string>("action");
+	const [searchTerm, setSearchTerm] = useState("");
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-prompts"],
@@ -33,6 +68,119 @@ export function AdminPromptsPage() {
 	}, [data?.items]);
 
 	const items = data?.items ?? [];
+	const promptMeta = useMemo(() => {
+		return items.map((item) => {
+			const key = item.key;
+			if (key.startsWith("agent.worker.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "worker",
+				};
+			}
+			if (key.startsWith("agent.supervisor.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "supervisor",
+				};
+			}
+			if (key.startsWith("router.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "router",
+				};
+			}
+			if (key.startsWith("compare.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "compare",
+				};
+			}
+			if (key.startsWith("agent.")) {
+				const parts = key.split(".");
+				const agent = parts[1] ?? "unknown";
+				const variant = parts[2] ?? "";
+				return {
+					item,
+					group: "agent" as const,
+					agent,
+					variant,
+				};
+			}
+			return { item, group: "system" as const, section: "other" };
+		});
+	}, [items]);
+
+	const availableAgents = useMemo(() => {
+		const discovered = new Set<string>();
+		promptMeta.forEach((meta) => {
+			if (meta.group === "agent" && meta.agent) {
+				discovered.add(meta.agent);
+			}
+		});
+		const ordered = AGENT_ORDER.filter((agent) => discovered.has(agent));
+		const remaining = Array.from(discovered).filter((agent) => !ordered.includes(agent));
+		return [...ordered, ...remaining.sort()];
+	}, [promptMeta]);
+
+	useEffect(() => {
+		if (!availableAgents.length) return;
+		if (!availableAgents.includes(selectedAgent)) {
+			setSelectedAgent(availableAgents[0]);
+		}
+	}, [availableAgents, selectedAgent]);
+
+	const filteredItems = useMemo(() => {
+		const normalizedSearch = searchTerm.trim().toLowerCase();
+		const applySearch = (item: AgentPromptItem) => {
+			if (!normalizedSearch) return true;
+			return (
+				item.label.toLowerCase().includes(normalizedSearch) ||
+				item.description.toLowerCase().includes(normalizedSearch) ||
+				item.key.toLowerCase().includes(normalizedSearch)
+			);
+		};
+
+		let results = promptMeta.filter(({ item, group, agent }) => {
+			if (!applySearch(item)) return false;
+			if (viewMode === "agent") {
+				return group === "agent" && agent === selectedAgent;
+			}
+			if (viewMode === "system") {
+				return group === "system";
+			}
+			return true;
+		});
+
+		if (viewMode === "agent") {
+			const order = AGENT_PROMPT_ORDER[selectedAgent] ?? [];
+			results = results.sort((a, b) => {
+				const aVariant = a.variant ?? "";
+				const bVariant = b.variant ?? "";
+				const aRank = order.includes(aVariant) ? order.indexOf(aVariant) : 99;
+				const bRank = order.includes(bVariant) ? order.indexOf(bVariant) : 99;
+				if (aRank !== bRank) return aRank - bRank;
+				return a.item.label.localeCompare(b.item.label);
+			});
+		}
+
+		if (viewMode === "system") {
+			results = results.sort((a, b) => {
+				const aSection = (a.section ?? "other") as string;
+				const bSection = (b.section ?? "other") as string;
+				const aRank = SYSTEM_SECTION_ORDER.indexOf(aSection);
+				const bRank = SYSTEM_SECTION_ORDER.indexOf(bSection);
+				if (aRank !== bRank) return aRank - bRank;
+				return a.item.label.localeCompare(b.item.label);
+			});
+		}
+
+		return results.map((meta) => meta.item);
+	}, [promptMeta, viewMode, selectedAgent, searchTerm]);
+
 	const hasChanges = useMemo(() => {
 		return items.some((item) => (overrides[item.key] ?? "") !== (item.override_prompt ?? ""));
 	}, [items, overrides]);
@@ -101,6 +249,44 @@ export function AdminPromptsPage() {
 				</div>
 			</div>
 
+			<div className="mt-4 flex flex-col gap-3 rounded-lg border border-border/40 bg-card/60 p-4">
+				<div className="flex flex-wrap items-center gap-3">
+					<Tabs value={viewMode} onValueChange={(value) => setViewMode(value as PromptViewMode)}>
+						<TabsList>
+							<TabsTrigger value="all">Alla</TabsTrigger>
+							<TabsTrigger value="agent">Agent</TabsTrigger>
+							<TabsTrigger value="system">System</TabsTrigger>
+						</TabsList>
+					</Tabs>
+
+					{viewMode === "agent" && (
+						<Select value={selectedAgent} onValueChange={setSelectedAgent}>
+							<SelectTrigger className="min-w-[180px]">
+								<SelectValue placeholder="Välj agent" />
+							</SelectTrigger>
+							<SelectContent>
+								{availableAgents.map((agent) => (
+									<SelectItem key={agent} value={agent}>
+										{agent}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					)}
+
+					<div className="flex-1 min-w-[220px]">
+						<Input
+							value={searchTerm}
+							onChange={(event) => setSearchTerm(event.target.value)}
+							placeholder="Sök prompt, nyckel eller beskrivning..."
+						/>
+					</div>
+				</div>
+				<p className="text-xs text-muted-foreground">
+					Visar {filteredItems.length} av {items.length} promtar
+				</p>
+			</div>
+
 			{isLoading && (
 				<p className="mt-6 text-sm text-muted-foreground">Laddar promtar...</p>
 			)}
@@ -111,7 +297,7 @@ export function AdminPromptsPage() {
 			)}
 
 			<div className="mt-6 space-y-4">
-				{items.map((item) => (
+				{filteredItems.map((item) => (
 					<div
 						key={item.key}
 						className="rounded-lg border border-border/50 bg-card p-4 shadow-sm"
