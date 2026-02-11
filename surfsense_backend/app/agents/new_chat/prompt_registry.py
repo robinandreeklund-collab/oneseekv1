@@ -113,15 +113,57 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         default_prompt=DEFAULT_WORKER_KNOWLEDGE_PROMPT,
     ),
     PromptDefinition(
+        key="agent.knowledge.system",
+        label="Knowledge agent prompt",
+        description="System prompt for the knowledge agent.",
+        default_prompt=DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+    ),
+    PromptDefinition(
         key="agent.worker.action",
         label="Worker · Action prompt",
         description="System prompt for action bigtool worker.",
         default_prompt=DEFAULT_WORKER_ACTION_PROMPT,
     ),
     PromptDefinition(
+        key="agent.action.system",
+        label="Action agent prompt",
+        description="System prompt for the action agent.",
+        default_prompt=DEFAULT_WORKER_ACTION_PROMPT,
+    ),
+    PromptDefinition(
+        key="agent.media.system",
+        label="Media agent prompt",
+        description="System prompt for the media agent.",
+        default_prompt=DEFAULT_WORKER_ACTION_PROMPT,
+    ),
+    PromptDefinition(
+        key="agent.browser.system",
+        label="Browser agent prompt",
+        description="System prompt for the browser agent.",
+        default_prompt=DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+    ),
+    PromptDefinition(
+        key="agent.code.system",
+        label="Code agent prompt",
+        description="System prompt for the code agent.",
+        default_prompt=DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+    ),
+    PromptDefinition(
+        key="agent.kartor.system",
+        label="Kartor agent prompt",
+        description="System prompt for the maps agent.",
+        default_prompt=DEFAULT_WORKER_ACTION_PROMPT,
+    ),
+    PromptDefinition(
         key="agent.statistics.system",
         label="Statistics agent prompt",
         description="System prompt for the SCB statistics agent.",
+        default_prompt=DEFAULT_STATISTICS_SYSTEM_PROMPT,
+    ),
+    PromptDefinition(
+        key="agent.synthesis.system",
+        label="Synthesis agent prompt",
+        description="System prompt for the synthesis agent.",
         default_prompt=DEFAULT_STATISTICS_SYSTEM_PROMPT,
     ),
     PromptDefinition(

@@ -527,19 +527,47 @@ async def stream_new_chat(
 
         knowledge_prompt = resolve_prompt(
             prompt_overrides,
-            "agent.worker.knowledge",
-            DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+            "agent.knowledge.system",
+            resolve_prompt(
+                prompt_overrides,
+                "agent.worker.knowledge",
+                DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+            ),
         )
         knowledge_worker_prompt = build_worker_prompt(
             knowledge_prompt, citations_enabled=True
         )
         action_prompt = resolve_prompt(
             prompt_overrides,
-            "agent.worker.action",
-            DEFAULT_WORKER_ACTION_PROMPT,
+            "agent.action.system",
+            resolve_prompt(
+                prompt_overrides,
+                "agent.worker.action",
+                DEFAULT_WORKER_ACTION_PROMPT,
+            ),
         )
         action_worker_prompt = build_worker_prompt(
             action_prompt, citations_enabled=False
+        )
+        media_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.media.system",
+            action_prompt,
+        )
+        browser_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.browser.system",
+            knowledge_prompt,
+        )
+        code_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.code.system",
+            knowledge_prompt,
+        )
+        kartor_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.kartor.system",
+            action_prompt,
         )
         statistics_prompt = resolve_prompt(
             prompt_overrides,
@@ -547,6 +575,11 @@ async def stream_new_chat(
             DEFAULT_STATISTICS_SYSTEM_PROMPT,
         )
         statistics_worker_prompt = build_statistics_system_prompt(statistics_prompt)
+        synthesis_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.synthesis.system",
+            statistics_prompt,
+        )
         bolag_prompt = resolve_prompt(
             prompt_overrides,
             "agent.bolag.system",
@@ -645,11 +678,15 @@ async def stream_new_chat(
                 knowledge_prompt=knowledge_worker_prompt,
                 action_prompt=action_worker_prompt,
                 statistics_prompt=statistics_worker_prompt,
-                synthesis_prompt=compare_synthesis_prompt,
+                synthesis_prompt=compare_synthesis_prompt or synthesis_prompt,
                 compare_mode=route == Route.COMPARE,
                 external_model_prompt=compare_external_prompt,
                 bolag_prompt=bolag_worker_prompt,
                 trafik_prompt=trafik_worker_prompt,
+                media_prompt=build_worker_prompt(media_prompt, citations_enabled=False),
+                browser_prompt=build_worker_prompt(browser_prompt, citations_enabled=True),
+                code_prompt=build_worker_prompt(code_prompt, citations_enabled=True),
+                kartor_prompt=build_worker_prompt(kartor_prompt, citations_enabled=False),
             )
         else:
             # Fallback to deep agent for smalltalk

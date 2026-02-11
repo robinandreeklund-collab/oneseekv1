@@ -388,6 +388,8 @@ class SupervisorState(TypedDict, total=False):
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
     route_hint: Annotated[str | None, _replace]
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
+    final_agent_response: Annotated[str | None, _replace]
+    final_agent_name: Annotated[str | None, _replace]
 
 
 def _format_plan_context(state: dict[str, Any]) -> str | None:
@@ -508,6 +510,10 @@ async def create_supervisor_agent(
     external_model_prompt: str | None = None,
     bolag_prompt: str | None = None,
     trafik_prompt: str | None = None,
+    media_prompt: str | None = None,
+    browser_prompt: str | None = None,
+    code_prompt: str | None = None,
+    kartor_prompt: str | None = None,
 ):
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
@@ -610,12 +616,13 @@ async def create_supervisor_agent(
         "knowledge": knowledge_prompt,
         "action": action_prompt,
         "kartor": action_prompt,
-        "media": action_prompt,
+        "media": media_prompt or action_prompt,
         "statistics": statistics_prompt,
-        "browser": knowledge_prompt,
-        "code": knowledge_prompt,
+        "browser": browser_prompt or knowledge_prompt,
+        "code": code_prompt or knowledge_prompt,
         "bolag": bolag_prompt or knowledge_prompt,
         "trafik": trafik_prompt or action_prompt,
+        "kartor": kartor_prompt or action_prompt,
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
@@ -899,6 +906,7 @@ async def create_supervisor_agent(
     async def call_agent(
         agent_name: str,
         task: str,
+        final: bool = False,
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
         """Call a specialized agent with a task."""
@@ -955,6 +963,7 @@ async def create_supervisor_agent(
                 "task": task,
                 "response": response_text,
                 "critic": critic_payload,
+                "final": bool(final),
             },
             ensure_ascii=True,
         )
@@ -979,6 +988,9 @@ async def create_supervisor_agent(
         store=None,
         **kwargs,
     ) -> SupervisorState:
+        final_response = state.get("final_agent_response")
+        if final_response:
+            return {"messages": [AIMessage(content=final_response)]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
@@ -998,6 +1010,9 @@ async def create_supervisor_agent(
         store=None,
         **kwargs,
     ) -> SupervisorState:
+        final_response = state.get("final_agent_response")
+        if final_response:
+            return {"messages": [AIMessage(content=final_response)]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
         recent_context = _format_recent_calls(state)
@@ -1054,6 +1069,9 @@ async def create_supervisor_agent(
                             "response": payload.get("response"),
                         }
                     )
+                    if payload.get("final") and payload.get("response"):
+                        updates["final_agent_response"] = payload.get("response")
+                        updates["final_agent_name"] = payload.get("agent")
             elif tool_name in _EXTERNAL_MODEL_TOOL_NAMES:
                 if payload and payload.get("status") == "success":
                     compare_updates.append(

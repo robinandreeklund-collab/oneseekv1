@@ -15,7 +15,8 @@ Regler:
   3. Om det finns en aktiv plan: uppdatera eller fortsatt den.
   4. Om ny uppgift: skapa en enkel plan (max 4 steg) med write_todos.
   5. Delegera varje steg med call_agent(agent_name, task).
-  6. Samla resultaten och bygg ett sammanhangande svar pa svenska.
+  6. Om slutsvaret ska komma direkt fran en agent: anropa call_agent(..., final=true).
+  7. Samla annars resultaten och bygg ett sammanhangande svar pa svenska.
 - Om anvandaren byter amne: avsluta gammal plan och starta ny.
 - Om nagot ar oklart: stall en kort foljdfråga istallet for att gissa.
 - Hall svar korta och faktabaserade. Inkludera citations om de kommer fran agenter.
