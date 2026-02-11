@@ -125,7 +125,7 @@ class TrafikverketService:
         self,
         *,
         objecttype: str,
-        schema_version: str = "1.0",
+        schema_version: str | None = None,
         filter_field: str | None = None,
         filter_value: str | None = None,
         limit: int = 10,
@@ -138,15 +138,30 @@ class TrafikverketService:
                 f"<FILTER><LIKE name=\"{escape(filter_field)}\" "
                 f"value=\"{escape(filter_value)}\" /></FILTER>"
             )
-        query_xml = (
-            f"<REQUEST>"
-            f"<LOGIN authenticationkey=\"{escape(self.api_key)}\" />"
-            f"<QUERY objecttype=\"{escape(objecttype)}\" schemaversion=\"{escape(schema_version)}\" "
-            f"limit=\"{int(limit)}\">"
-            f"{filter_xml}"
-            f"</QUERY>"
-            f"</REQUEST>"
-        )
-        return await self._request_xml(
-            xml_body=query_xml, cache_ttl=TRAFIKVERKET_CACHE_TTL
-        )
+
+        def build_query(schema: str | None) -> str:
+            schema_attr = (
+                f" schemaversion=\"{escape(schema)}\"" if schema else ""
+            )
+            return (
+                f"<REQUEST>"
+                f"<LOGIN authenticationkey=\"{escape(self.api_key)}\" />"
+                f"<QUERY objecttype=\"{escape(objecttype)}\"{schema_attr} "
+                f"limit=\"{int(limit)}\">"
+                f"{filter_xml}"
+                f"</QUERY>"
+                f"</REQUEST>"
+            )
+
+        try:
+            return await self._request_xml(
+                xml_body=build_query(schema_version),
+                cache_ttl=TRAFIKVERKET_CACHE_TTL,
+            )
+        except RuntimeError as exc:
+            if schema_version and "ResourceNotFound" in str(exc):
+                return await self._request_xml(
+                    xml_body=build_query(None),
+                    cache_ttl=TRAFIKVERKET_CACHE_TTL,
+                )
+            raise

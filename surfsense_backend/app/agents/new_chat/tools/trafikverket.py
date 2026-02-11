@@ -22,7 +22,7 @@ class TrafikverketToolDefinition:
     base_path: str
     category: str
     objecttype: str
-    schema_version: str = "1.0"
+    schema_version: str | None = None
     filter_field: str | None = None
 
 
@@ -448,7 +448,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[0].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[0].schema_version,
+            }
 
     @tool("trafikverket_trafikinfo_olyckor", description=TRAFIKVERKET_TOOL_DEFINITIONS[1].description)
     async def trafikverket_trafikinfo_olyckor(
@@ -467,7 +472,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[1].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[1].schema_version,
+            }
 
     @tool("trafikverket_trafikinfo_koer", description=TRAFIKVERKET_TOOL_DEFINITIONS[2].description)
     async def trafikverket_trafikinfo_koer(
@@ -486,7 +496,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[2].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[2].schema_version,
+            }
 
     @tool("trafikverket_trafikinfo_vagarbeten", description=TRAFIKVERKET_TOOL_DEFINITIONS[3].description)
     async def trafikverket_trafikinfo_vagarbeten(
@@ -505,7 +520,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[3].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[3].schema_version,
+            }
 
     @tool("trafikverket_tag_forseningar", description=TRAFIKVERKET_TOOL_DEFINITIONS[4].description)
     async def trafikverket_tag_forseningar(
@@ -524,7 +544,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[4].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[4].schema_version,
+            }
 
     @tool("trafikverket_tag_tidtabell", description=TRAFIKVERKET_TOOL_DEFINITIONS[5].description)
     async def trafikverket_tag_tidtabell(
@@ -543,7 +568,12 @@ def build_trafikverket_tool_registry(
                 limit=10,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[5].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[5].schema_version,
+            }
 
     @tool("trafikverket_tag_stationer", description=TRAFIKVERKET_TOOL_DEFINITIONS[6].description)
     async def trafikverket_tag_stationer(
@@ -562,7 +592,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[6].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[6].schema_version,
+            }
 
     @tool("trafikverket_tag_installda", description=TRAFIKVERKET_TOOL_DEFINITIONS[7].description)
     async def trafikverket_tag_installda(
@@ -581,7 +616,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[7].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[7].schema_version,
+            }
 
     @tool("trafikverket_vag_status", description=TRAFIKVERKET_TOOL_DEFINITIONS[8].description)
     async def trafikverket_vag_status(
@@ -600,7 +640,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[8].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[8].schema_version,
+            }
 
     @tool("trafikverket_vag_underhall", description=TRAFIKVERKET_TOOL_DEFINITIONS[9].description)
     async def trafikverket_vag_underhall(
@@ -619,7 +664,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[9].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[9].schema_version,
+            }
 
     @tool("trafikverket_vag_hastighet", description=TRAFIKVERKET_TOOL_DEFINITIONS[10].description)
     async def trafikverket_vag_hastighet(
@@ -638,7 +688,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[10].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[10].schema_version,
+            }
 
     @tool("trafikverket_vag_avstangningar", description=TRAFIKVERKET_TOOL_DEFINITIONS[11].description)
     async def trafikverket_vag_avstangningar(
@@ -657,7 +712,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[11].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[11].schema_version,
+            }
 
     @tool("trafikverket_vader_stationer", description=TRAFIKVERKET_TOOL_DEFINITIONS[12].description)
     async def trafikverket_vader_stationer(
@@ -676,7 +736,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[12].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[12].schema_version,
+            }
 
     @tool("trafikverket_vader_halka", description=TRAFIKVERKET_TOOL_DEFINITIONS[13].description)
     async def trafikverket_vader_halka(
@@ -695,7 +760,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[13].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[13].schema_version,
+            }
 
     @tool("trafikverket_vader_vind", description=TRAFIKVERKET_TOOL_DEFINITIONS[14].description)
     async def trafikverket_vader_vind(
@@ -714,7 +784,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[14].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[14].schema_version,
+            }
 
     @tool("trafikverket_vader_temperatur", description=TRAFIKVERKET_TOOL_DEFINITIONS[15].description)
     async def trafikverket_vader_temperatur(
@@ -733,7 +808,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[15].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[15].schema_version,
+            }
 
     @tool("trafikverket_kameror_lista", description=TRAFIKVERKET_TOOL_DEFINITIONS[16].description)
     async def trafikverket_kameror_lista(
@@ -752,7 +832,12 @@ def build_trafikverket_tool_registry(
                 limit=limit,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[16].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[16].schema_version,
+            }
 
     @tool("trafikverket_kameror_snapshot", description=TRAFIKVERKET_TOOL_DEFINITIONS[17].description)
     async def trafikverket_kameror_snapshot(kamera_id: str) -> dict[str, Any]:
@@ -769,7 +854,12 @@ def build_trafikverket_tool_registry(
                 limit=1,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[17].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[17].schema_version,
+            }
 
     @tool("trafikverket_kameror_status", description=TRAFIKVERKET_TOOL_DEFINITIONS[18].description)
     async def trafikverket_kameror_status(kamera_id: str) -> dict[str, Any]:
@@ -786,7 +876,12 @@ def build_trafikverket_tool_registry(
                 limit=1,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[18].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[18].schema_version,
+            }
 
     @tool("trafikverket_prognos_trafik", description=TRAFIKVERKET_TOOL_DEFINITIONS[19].description)
     async def trafikverket_prognos_trafik(
@@ -805,7 +900,12 @@ def build_trafikverket_tool_registry(
                 limit=10,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[19].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[19].schema_version,
+            }
 
     @tool("trafikverket_prognos_vag", description=TRAFIKVERKET_TOOL_DEFINITIONS[20].description)
     async def trafikverket_prognos_vag(
@@ -824,7 +924,12 @@ def build_trafikverket_tool_registry(
                 limit=10,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[20].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[20].schema_version,
+            }
 
     @tool("trafikverket_prognos_tag", description=TRAFIKVERKET_TOOL_DEFINITIONS[21].description)
     async def trafikverket_prognos_tag(station: str | None = None) -> dict[str, Any]:
@@ -841,7 +946,12 @@ def build_trafikverket_tool_registry(
                 limit=10,
             )
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {
+                "status": "error",
+                "error": str(exc),
+                "objecttype": TRAFIKVERKET_TOOL_DEFINITIONS[21].objecttype,
+                "schema_version": TRAFIKVERKET_TOOL_DEFINITIONS[21].schema_version,
+            }
 
     registry = {
         "trafikverket_trafikinfo_storningar": trafikverket_trafikinfo_storningar,
