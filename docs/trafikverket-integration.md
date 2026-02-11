@@ -72,6 +72,9 @@ Lägg till i `.env`:
 
 ```
 TRAFIKVERKET_API_KEY="..."
+TRAFIKVERKET_SCHEMA_VERSION="1.0"
+# (valfritt) provade fallback-versioner om ResourceNotFound:
+TRAFIKVERKET_SCHEMA_VERSION_FALLBACKS="1.1,1.2"
 ```
 
 Redis används om `REDIS_APP_URL` är satt. Utan Redis körs verktygen utan cache.

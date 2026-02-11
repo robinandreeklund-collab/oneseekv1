@@ -22,7 +22,7 @@ class TrafikverketToolDefinition:
     base_path: str
     category: str
     objecttype: str
-    schema_version: str | None = None
+    schema_version: str | None = "1.0"
     filter_field: str | None = None
 
 

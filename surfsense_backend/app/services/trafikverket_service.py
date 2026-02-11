@@ -42,6 +42,16 @@ class TrafikverketService:
             base_dir = Path(__file__).resolve().parent.parent.parent
             load_dotenv(base_dir / ".env")
             self.api_key = (os.getenv("TRAFIKVERKET_API_KEY") or "").strip()
+        self.default_schema_version = (
+            os.getenv("TRAFIKVERKET_SCHEMA_VERSION") or "1.0"
+        ).strip()
+        self.schema_fallbacks = [
+            value.strip()
+            for value in (
+                os.getenv("TRAFIKVERKET_SCHEMA_VERSION_FALLBACKS") or ""
+            ).split(",")
+            if value.strip()
+        ]
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._redis_url = redis_url or os.getenv("REDIS_APP_URL") or ""
@@ -132,6 +142,7 @@ class TrafikverketService:
     ) -> tuple[dict[str, Any], bool]:
         if not self.api_key:
             raise ValueError("Missing TRAFIKVERKET_API_KEY for Trafikverket API.")
+        resolved_schema = (schema_version or self.default_schema_version).strip()
         filter_xml = ""
         if filter_field and filter_value:
             filter_xml = (
@@ -139,10 +150,8 @@ class TrafikverketService:
                 f"value=\"{escape(filter_value)}\" /></FILTER>"
             )
 
-        def build_query(schema: str | None) -> str:
-            schema_attr = (
-                f" schemaversion=\"{escape(schema)}\"" if schema else ""
-            )
+        def build_query(schema: str) -> str:
+            schema_attr = f" schemaversion=\"{escape(schema)}\""
             return (
                 f"<REQUEST>"
                 f"<LOGIN authenticationkey=\"{escape(self.api_key)}\" />"
@@ -155,13 +164,24 @@ class TrafikverketService:
 
         try:
             return await self._request_xml(
-                xml_body=build_query(schema_version),
+                xml_body=build_query(resolved_schema),
                 cache_ttl=TRAFIKVERKET_CACHE_TTL,
             )
         except RuntimeError as exc:
-            if schema_version and "ResourceNotFound" in str(exc):
-                return await self._request_xml(
-                    xml_body=build_query(None),
-                    cache_ttl=TRAFIKVERKET_CACHE_TTL,
-                )
+            if "ResourceNotFound" not in str(exc):
+                raise
+            fallback_versions = [
+                version
+                for version in [*self.schema_fallbacks]
+                if version and version != resolved_schema
+            ]
+            for fallback in fallback_versions:
+                try:
+                    return await self._request_xml(
+                        xml_body=build_query(fallback),
+                        cache_ttl=TRAFIKVERKET_CACHE_TTL,
+                    )
+                except RuntimeError as fallback_exc:
+                    if "ResourceNotFound" not in str(fallback_exc):
+                        raise
             raise
