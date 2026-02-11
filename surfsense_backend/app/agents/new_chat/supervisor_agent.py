@@ -1070,8 +1070,13 @@ async def create_supervisor_agent(
                         }
                     )
                     if payload.get("final") and payload.get("response"):
-                        updates["final_agent_response"] = payload.get("response")
-                        updates["final_agent_name"] = payload.get("agent")
+                        critic_payload = payload.get("critic") or {}
+                        if not (
+                            isinstance(critic_payload, dict)
+                            and critic_payload.get("status") == "needs_more"
+                        ):
+                            updates["final_agent_response"] = payload.get("response")
+                            updates["final_agent_name"] = payload.get("agent")
             elif tool_name in _EXTERNAL_MODEL_TOOL_NAMES:
                 if payload and payload.get("status") == "success":
                     compare_updates.append(
