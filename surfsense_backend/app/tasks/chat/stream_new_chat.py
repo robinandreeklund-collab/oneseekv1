@@ -1764,10 +1764,12 @@ async def stream_new_chat(
                     agent_name = ""
                     response = ""
                     critic = {}
+                    final_response = False
                     if isinstance(tool_output, dict):
                         agent_name = tool_output.get("agent") or ""
                         response = tool_output.get("response") or ""
                         critic = tool_output.get("critic") or {}
+                        final_response = bool(tool_output.get("final"))
                     completed_items = []
                     if agent_name:
                         completed_items.append(f"Agent: {agent_name}")
@@ -1790,6 +1792,21 @@ async def stream_new_chat(
                         status="completed",
                         items=completed_items,
                     )
+                    if final_response and response:
+                        response_text = str(response)
+                        response_text = filter_critic_json(response_text)
+                        response_text = filter_repeated_output(response_text)
+                        if response_text:
+                            completion_event = complete_current_step()
+                            if completion_event:
+                                yield completion_event
+                            if current_text_id is None:
+                                current_text_id = streaming_service.generate_text_id()
+                                yield streaming_service.format_text_start(current_text_id)
+                            yield streaming_service.format_text_delta(
+                                current_text_id, response_text
+                            )
+                            accumulated_text += response_text
                 elif tool_name == "retrieve_tools":
                     tool_ids = []
                     if isinstance(tool_output, list):
