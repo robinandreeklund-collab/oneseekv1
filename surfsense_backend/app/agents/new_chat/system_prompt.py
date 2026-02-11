@@ -660,19 +660,30 @@ def build_configurable_system_prompt(
     resolved_today = now.date().isoformat()
     resolved_time = now.strftime("%H:%M:%S")
 
+    class _SafeFormatDict(dict):
+        def __missing__(self, key: str) -> str:
+            return "{" + key + "}"
+
+    def _safe_format(template: str) -> str:
+        if not template:
+            return template
+        try:
+            return template.format_map(
+                _SafeFormatDict(
+                    resolved_today=resolved_today,
+                    resolved_time=resolved_time,
+                )
+            )
+        except Exception:
+            return template
+
     # Determine system instructions
     if custom_system_instructions and custom_system_instructions.strip():
         # Use custom instructions, injecting the date placeholder if present
-        system_instructions = custom_system_instructions.format(
-            resolved_today=resolved_today,
-            resolved_time=resolved_time,
-        )
+        system_instructions = _safe_format(custom_system_instructions)
     elif use_default_system_instructions:
         # Use default instructions
-        system_instructions = SURFSENSE_SYSTEM_INSTRUCTIONS.format(
-            resolved_today=resolved_today,
-            resolved_time=resolved_time,
-        )
+        system_instructions = _safe_format(SURFSENSE_SYSTEM_INSTRUCTIONS)
     else:
         # No system instructions (edge case)
         system_instructions = ""
