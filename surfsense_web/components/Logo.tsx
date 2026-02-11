@@ -17,3 +17,15 @@ export const Logo = ({ className }: { className?: string }) => {
 		</Link>
 	);
 };
+
+export const LogoImage = ({ className }: { className?: string }) => {
+	return (
+		<Image
+			src="/icon-128.svg"
+			className={cn("dark:invert", className)}
+			alt="logo"
+			width={128}
+			height={128}
+		/>
+	);
+};
