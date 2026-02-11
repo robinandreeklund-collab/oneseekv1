@@ -44,6 +44,15 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from .display_image import create_display_image_tool
+from .geoapify_maps import create_geoapify_static_map_tool
+from .bolagsverket import (
+    BOLAGSVERKET_TOOL_DEFINITIONS,
+    create_bolagsverket_tool,
+)
+from .trafikverket import (
+    TRAFIKVERKET_TOOL_DEFINITIONS,
+    create_trafikverket_tool,
+)
 from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
@@ -52,11 +61,14 @@ from .libris_search import create_libris_search_tool
 from .mcp_tool import load_mcp_tools
 from .podcast import create_generate_podcast_tool
 from .public_web_search import create_public_web_search_tool
+from .reflect_on_progress import create_reflect_on_progress_tool
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
 from .smhi_weather import create_smhi_weather_tool
+from .tavily_search import create_tavily_search_tool
 from .trafiklab_route import create_trafiklab_route_tool
 from .user_memory import create_recall_memory_tool, create_save_memory_tool
+from .write_todos import create_write_todos_tool
 
 # =============================================================================
 # Tool Definition
@@ -106,6 +118,16 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         requires=["search_space_id", "db_session", "connector_service"],
         # Note: available_connectors and available_document_types are optional
     ),
+    ToolDefinition(
+        name="search_tavily",
+        description="Search the public web via the Tavily connector (live)",
+        factory=lambda deps: create_tavily_search_tool(
+            connector_service=deps["connector_service"],
+            search_space_id=deps["search_space_id"],
+            user_id=deps.get("user_id"),
+        ),
+        requires=["connector_service", "search_space_id"],
+    ),
     # Podcast generation tool
     ToolDefinition(
         name="generate_podcast",
@@ -129,6 +151,12 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         name="display_image",
         description="Display an image in the chat with metadata",
         factory=lambda deps: create_display_image_tool(),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="geoapify_static_map",
+        description="Generate a static map image with optional markers via Geoapify",
+        factory=lambda deps: create_geoapify_static_map_tool(),
         requires=[],
     ),
     # Web scraping tool - extracts content from webpages
@@ -176,6 +204,20 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         enabled_by_default=False,
     ),
     # Note: write_todos is now provided by TodoListMiddleware from deepagents
+    ToolDefinition(
+        name="reflect_on_progress",
+        description="Log a brief reflection on progress, gaps, and next steps",
+        factory=lambda deps: create_reflect_on_progress_tool(),
+        requires=[],
+        enabled_by_default=False,
+    ),
+    ToolDefinition(
+        name="write_todos",
+        description="Create or update a short todo list for multi-step work",
+        factory=lambda deps: create_write_todos_tool(),
+        requires=[],
+        enabled_by_default=False,
+    ),
     # Surfsense documentation search tool
     ToolDefinition(
         name="search_surfsense_docs",
@@ -210,6 +252,42 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         ),
         requires=["user_id", "search_space_id", "db_session"],
     ),
+    # =========================================================================
+    # BOLAGSVERKET OPEN DATA TOOLS
+    # =========================================================================
+    *[
+        ToolDefinition(
+            name=definition.tool_id,
+            description=definition.description,
+            factory=lambda deps, definition=definition: create_bolagsverket_tool(
+                definition,
+                connector_service=deps["connector_service"],
+                search_space_id=deps["search_space_id"],
+                user_id=deps.get("user_id"),
+                thread_id=deps.get("thread_id"),
+            ),
+            requires=["connector_service", "search_space_id"],
+        )
+        for definition in BOLAGSVERKET_TOOL_DEFINITIONS
+    ],
+    # =========================================================================
+    # TRAFIKVERKET OPEN API TOOLS
+    # =========================================================================
+    *[
+        ToolDefinition(
+            name=definition.tool_id,
+            description=definition.description,
+            factory=lambda deps, definition=definition: create_trafikverket_tool(
+                definition,
+                connector_service=deps["connector_service"],
+                search_space_id=deps["search_space_id"],
+                user_id=deps.get("user_id"),
+                thread_id=deps.get("thread_id"),
+            ),
+            requires=["connector_service", "search_space_id"],
+        )
+        for definition in TRAFIKVERKET_TOOL_DEFINITIONS
+    ],
     # =========================================================================
     # EXTERNAL MODEL TOOLS (COMPARE FLOW)
     # =========================================================================

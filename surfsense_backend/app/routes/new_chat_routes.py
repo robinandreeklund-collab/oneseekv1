@@ -27,6 +27,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db import (
     ChatComment,
+    ChatTraceSession,
     ChatVisibility,
     NewChatMessage,
     NewChatMessageRole,
@@ -52,6 +53,7 @@ from app.schemas.new_chat import (
     ThreadListItem,
     ThreadListResponse,
 )
+from app.schemas.chat_trace import TraceSessionAttachRequest, TraceSessionRead
 from app.tasks.chat.stream_new_chat import stream_new_chat
 from app.users import current_active_user
 from app.utils.rbac import check_permission
@@ -996,6 +998,163 @@ async def list_messages(
         raise HTTPException(
             status_code=500,
             detail=f"An unexpected error occurred while fetching messages: {e!s}",
+        ) from None
+
+
+# =============================================================================
+# Trace Endpoints
+# =============================================================================
+
+
+@router.get(
+    "/threads/{thread_id}/messages/{message_id}/traces",
+    response_model=TraceSessionRead,
+)
+async def get_message_trace(
+    thread_id: int,
+    message_id: int,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """
+    Fetch the trace session and spans for a specific assistant message.
+    """
+    try:
+        thread_result = await session.execute(
+            select(NewChatThread).filter(NewChatThread.id == thread_id)
+        )
+        thread = thread_result.scalars().first()
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+
+        await check_permission(
+            session,
+            user,
+            thread.search_space_id,
+            Permission.CHATS_READ.value,
+            "You don't have permission to read chats in this search space",
+        )
+        await check_thread_access(session, thread, user)
+
+        message_result = await session.execute(
+            select(NewChatMessage).filter(
+                NewChatMessage.id == message_id,
+                NewChatMessage.thread_id == thread_id,
+            )
+        )
+        message = message_result.scalars().first()
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        trace_result = await session.execute(
+            select(ChatTraceSession)
+            .options(selectinload(ChatTraceSession.spans))
+            .filter(
+                ChatTraceSession.thread_id == thread_id,
+                ChatTraceSession.message_id == message_id,
+            )
+        )
+        trace_session = trace_result.scalars().first()
+        if not trace_session:
+            raise HTTPException(status_code=404, detail="Trace session not found")
+
+        spans = sorted(
+            trace_session.spans, key=lambda span: (span.sequence, span.created_at)
+        )
+        span_payloads = [
+            {
+                "id": span.span_id,
+                "parent_id": span.parent_span_id,
+                "name": span.name,
+                "kind": span.kind,
+                "status": span.status,
+                "sequence": span.sequence,
+                "start_ts": span.start_ts,
+                "end_ts": span.end_ts,
+                "duration_ms": span.duration_ms,
+                "input": span.input,
+                "output": span.output,
+                "meta": span.meta,
+            }
+            for span in spans
+        ]
+        return TraceSessionRead(
+            session_id=trace_session.session_id,
+            thread_id=trace_session.thread_id,
+            message_id=trace_session.message_id,
+            created_at=trace_session.created_at,
+            ended_at=trace_session.ended_at,
+            spans=span_payloads,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"An unexpected error occurred while fetching trace: {e!s}",
+        ) from None
+
+
+@router.post("/threads/{thread_id}/trace-sessions/{trace_session_id}/attach")
+async def attach_trace_session(
+    thread_id: int,
+    trace_session_id: str,
+    request: TraceSessionAttachRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """
+    Attach a trace session to a persisted assistant message.
+    """
+    try:
+        thread_result = await session.execute(
+            select(NewChatThread).filter(NewChatThread.id == thread_id)
+        )
+        thread = thread_result.scalars().first()
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+
+        await check_permission(
+            session,
+            user,
+            thread.search_space_id,
+            Permission.CHATS_UPDATE.value,
+            "You don't have permission to update chats in this search space",
+        )
+        await check_thread_access(session, thread, user)
+
+        message_result = await session.execute(
+            select(NewChatMessage).filter(
+                NewChatMessage.id == request.message_id,
+                NewChatMessage.thread_id == thread_id,
+            )
+        )
+        message = message_result.scalars().first()
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        trace_result = await session.execute(
+            select(ChatTraceSession).filter(
+                ChatTraceSession.session_id == trace_session_id,
+                ChatTraceSession.thread_id == thread_id,
+            )
+        )
+        trace_session = trace_result.scalars().first()
+        if not trace_session:
+            raise HTTPException(status_code=404, detail="Trace session not found")
+
+        trace_session.message_id = request.message_id
+        await session.commit()
+        return {"status": "ok"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"An unexpected error occurred while attaching trace: {e!s}",
         ) from None
 
 

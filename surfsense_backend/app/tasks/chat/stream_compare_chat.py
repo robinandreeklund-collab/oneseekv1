@@ -15,92 +15,60 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
+from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
-from app.agents.new_chat.chat_deepagent import create_surfsense_deep_agent
 from app.agents.new_chat.llm_config import (
     create_chat_litellm_from_agent_config,
     load_agent_config,
     load_llm_config_from_yaml,
 )
+from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.tools.external_models import (
+    DEFAULT_EXTERNAL_SYSTEM_PROMPT,
     EXTERNAL_MODEL_SPECS,
     call_external_model,
     describe_external_model_config,
 )
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
-from app.db import Document, NewChatThread, SurfsenseDocsDocument
+from app.agents.new_chat.prompt_registry import resolve_prompt
+from app.agents.new_chat.system_prompt import append_datetime_context
+from app.db import (
+    ChatTraceSession,
+    Document,
+    NewChatThread,
+    SurfsenseDocsDocument,
+    async_session_maker,
+)
 from app.schemas.new_chat import ChatAttachment
 from app.services.connector_service import ConnectorService
+from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.services.new_streaming_service import VercelStreamingService
+from app.services.trace_service import TraceRecorder
 from app.tasks.chat.context_formatters import (
     format_attachments_as_context,
     format_mentioned_documents_as_context,
     format_mentioned_surfsense_docs_as_context,
 )
+from app.utils.context_metrics import (
+    estimate_tokens_from_text,
+    serialize_context_payload,
+)
 
 COMPARE_PREFIX = "/compare"
 COMPARE_TIMEOUT_SECONDS = 90
 COMPARE_RAW_ANSWER_CHARS = 12000
-MAX_TAVILY_RESULTS = 6
+MAX_TAVILY_RESULTS = 3
 COMPARE_SUMMARY_ANSWER_CHARS = 600
 COMPARE_SUMMARY_FINAL_CHARS = 700
+TAVILY_RESULT_CHUNK_CHARS = 320
+TAVILY_RESULT_MAX_CHUNKS = 1
 
-LOCAL_ANALYSIS_SYSTEM_PROMPT = (
-    "You are Oneseek Compare Analyzer. Your role is to synthesize a high-quality "
-    "response from a user query, multiple tool responses from external models, and "
-    "Tavily web snippets.\n\n"
-    "**Input Structure**:\n"
-    "- User query: The original question.\n"
-    "- Tool responses: Outputs from external models (labeled as MODEL_ANSWER with "
-    "model names).\n"
-    "- Tavily snippets: Web sources in <sources> section with <chunk id='...'> tags.\n\n"
-    "**Core Tasks**:\n"
-    "1. Evaluate correctness: Cross-check facts across all inputs.\n"
-    "2. Resolve conflicts: If sources disagree, prioritize Tavily for factual "
-    "claims, then most recent/up-to-date info. Mention uncertainties and explain "
-    "reasons (e.g., \"Source A claims X, but Tavily indicates Y due to recent "
-    "updates\").\n"
-    "3. Fill gaps: Use your own knowledge to add context where inputs are "
-    "incomplete, but clearly state when doing so (e.g., \"Based on general "
-    "knowledge...\").\n"
-    "4. Produce optimized response: Create a coherent, accurate, well-structured "
-    "answer. Attribute key facts to models (e.g., \"According to Model X...\"). "
-    "For Tavily info, cite inline as [citation:chunk_id]. Do not cite MODEL_ANSWER "
-    "outputs with brackets; mention model names directly in the text. Avoid "
-    "numbered brackets like [1] and do not include a separate references list.\n\n"
-    "**Response Guidelines**:\n"
-    "- Respond in the same language as the user query.\n"
-    "- Keep the main answer concise, factual, clear and engaging.\n"
-    "- If information is limited, uncertain or conflicting, state this "
-    "transparently and explain why.\n"
-    "- Prioritize reliable, up-to-date sources (Tavily > recency > model consensus "
-    "> your internal knowledge).\n\n"
-    "**Follow-up Questions**:\n"
-    "After the main synthesized answer, always include a section called "
-    "**Possible next steps** (or equivalent in the user's language) and suggest "
-    "2-4 targeted follow-up questions that:\n"
-    "- help the user dig deeper into model differences\n"
-    "- explore resolution of remaining conflicts or uncertainties\n"
-    "- request deeper analysis of specific aspects\n\n"
-    "Examples of good follow-up questions (adapt to the context):\n"
-    "- Would you like me to do a point-by-point comparison of the most important "
-    "claims from Model X vs Model Y?\n"
-    "- Should I extract and rank all factual statements where the models disagree?\n"
-    "- Do you want a meta-analysis of the strengths/weaknesses of each model in "
-    "this topic?\n"
-    "- Should I examine linguistic bias, uncertainty markers, confidence levels or "
-    "truthfulness in the different responses?\n"
-    "- Would you like me to check source criticism, time aspects, or methodological "
-    "differences between the models?\n"
-    "- Do you need a summary of what is consensus vs what is controversial here?\n\n"
-    "Do not fabricate information. Stay factual and transparent."
-)
+DEFAULT_ANALYSIS_SYSTEM_PROMPT = DEFAULT_COMPARE_ANALYSIS_PROMPT
 
 COMPARE_CITATION_INSTRUCTIONS = ""
 
@@ -128,6 +96,135 @@ def _truncate_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "..."
+
+
+def _extract_todos_from_deepagents(command_output) -> dict:
+    """
+    Extract todos from deepagents' TodoListMiddleware Command output.
+
+    deepagents returns a Command object with:
+    - Command.update['todos'] = [{'content': '...', 'status': '...'}]
+    """
+    todos_data = []
+    if hasattr(command_output, "update"):
+        update = command_output.update
+        todos_data = update.get("todos", [])
+    elif isinstance(command_output, dict):
+        if "todos" in command_output:
+            todos_data = command_output.get("todos", [])
+        elif "update" in command_output and isinstance(command_output["update"], dict):
+            todos_data = command_output["update"].get("todos", [])
+    return {"todos": todos_data}
+
+
+def _format_todo_items(todos: list[dict] | None) -> list[str]:
+    if not todos:
+        return []
+    items: list[str] = []
+    for todo in todos:
+        if not isinstance(todo, dict):
+            continue
+        content = str(todo.get("content") or "").strip()
+        status = str(todo.get("status") or "").lower()
+        if not content:
+            continue
+        marker = "[ ]"
+        if status == "completed":
+            marker = "[x]"
+        elif status == "in_progress":
+            marker = "[>]"
+        elif status == "cancelled":
+            marker = "[!]"
+        items.append(f"{marker} {content}")
+    return items
+
+
+def _estimate_documents_chars(documents: list[dict[str, Any]]) -> int:
+    total_chars = 0
+    for doc in documents:
+        if not isinstance(doc, dict):
+            continue
+        content = doc.get("content")
+        if isinstance(content, str):
+            total_chars += len(content)
+            continue
+        chunks = doc.get("chunks")
+        if isinstance(chunks, list):
+            for chunk in chunks:
+                if not isinstance(chunk, dict):
+                    continue
+                chunk_content = chunk.get("content")
+                if isinstance(chunk_content, str):
+                    total_chars += len(chunk_content)
+    return total_chars
+
+
+def _build_tavily_query(query: str) -> str:
+    trimmed = (query or "").strip()
+    if not trimmed:
+        return ""
+    lowered = trimmed.lower()
+    if "site:.se" in lowered or "site:se" in lowered:
+        return trimmed
+    return f"{trimmed} site:.se"
+
+
+def _minimize_documents_for_prompt(
+    documents: list[dict[str, Any]],
+    *,
+    max_documents: int,
+    max_chunks_per_doc: int,
+    max_chunk_chars: int,
+) -> list[dict[str, Any]]:
+    trimmed: list[dict[str, Any]] = []
+    for doc in documents[:max_documents]:
+        if not isinstance(doc, dict):
+            continue
+        document_info = doc.get("document") if isinstance(doc, dict) else None
+        document_info = document_info if isinstance(document_info, dict) else {}
+        metadata = document_info.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        title = (
+            document_info.get("title")
+            or metadata.get("title")
+            or "Tavily source"
+        )
+        url = (
+            metadata.get("url")
+            or metadata.get("source")
+            or metadata.get("page_url")
+            or ""
+        )
+        fallback_content = "\n".join([part for part in [title, url] if part]).strip()
+        raw_chunks = doc.get("chunks") if isinstance(doc, dict) else None
+        raw_chunks = raw_chunks if isinstance(raw_chunks, list) else []
+        new_chunks: list[dict[str, Any]] = []
+        for chunk in raw_chunks[:max_chunks_per_doc]:
+            if not isinstance(chunk, dict):
+                continue
+            content = fallback_content or (chunk.get("content") or "").strip()
+            if len(content) > max_chunk_chars:
+                content = content[:max_chunk_chars].rstrip() + "..."
+            new_chunks.append(
+                {"chunk_id": chunk.get("chunk_id") or chunk.get("id"), "content": content}
+            )
+        if not new_chunks:
+            new_chunks = [
+                {
+                    "chunk_id": document_info.get("id"),
+                    "content": fallback_content[:max_chunk_chars]
+                    if fallback_content
+                    else "Tavily source",
+                }
+            ]
+        minimized_doc = dict(doc)
+        minimized_doc["chunks"] = new_chunks
+        minimized_doc["content"] = "\n\n".join(
+            [chunk["content"] for chunk in new_chunks if chunk.get("content")]
+        )
+        trimmed.append(minimized_doc)
+    return trimmed
 
 
 def _build_compare_summary(
@@ -220,6 +317,78 @@ def _normalize_citations(text: str, valid_chunk_ids: set[str]) -> str:
     return pattern.sub(replace_match, text)
 
 
+def _filter_invalid_citations(text: str, valid_chunk_ids: set[str]) -> str:
+    if not text:
+        return text
+
+    pattern = re.compile(r"\[citation:([^\]]+)\]")
+
+    def replace_match(match: re.Match) -> str:
+        token = match.group(1).strip()
+        if not token:
+            return ""
+        parts = [p.strip() for p in token.split(",") if p.strip()]
+        valid_parts = [p for p in parts if p in valid_chunk_ids]
+        if not valid_parts:
+            return ""
+        return ", ".join([f"[citation:{part}]" for part in valid_parts])
+
+    return pattern.sub(replace_match, text)
+
+
+async def _ingest_compare_outputs(
+    connector_service: ConnectorService,
+    provider_results: dict[str, dict],
+    *,
+    user_id: str | None,
+    search_space_id: int,
+    chat_id: int,
+) -> list[dict]:
+    documents: list[dict] = []
+    for provider_key, result in provider_results.items():
+        if not isinstance(result, dict):
+            continue
+        if result.get("status") != "success":
+            continue
+        response = result.get("response") or ""
+        if not response:
+            continue
+        tool_payload = {
+            "provider_key": provider_key,
+            "provider": result.get("provider"),
+            "model": result.get("model"),
+            "model_display_name": result.get("model_display_name"),
+            "response": response,
+            "latency_ms": result.get("latency_ms"),
+            "source": result.get("source"),
+            "truncated": result.get("truncated"),
+        }
+        display_name = result.get("model_display_name") or provider_key
+        title = f"Compare: {display_name} response"
+        document = await connector_service.ingest_tool_output(
+            tool_name="compare_model",
+            tool_output=tool_payload,
+            title=title,
+            metadata={
+                "compare_mode": True,
+                "provider_key": provider_key,
+                "provider": result.get("provider"),
+                "model": result.get("model"),
+                "model_display_name": result.get("model_display_name"),
+                "source": "MODEL_ANSWER",
+                "document_type": "MODEL_ANSWER",
+            },
+            user_id=user_id,
+            origin_search_space_id=search_space_id,
+            thread_id=chat_id,
+        )
+        if document:
+            documents.append(
+                connector_service._serialize_external_document(document, score=1.0)
+            )
+    return documents
+
+
 async def _build_query_with_context(
     user_query: str,
     session: AsyncSession,
@@ -227,7 +396,7 @@ async def _build_query_with_context(
     attachments: list[ChatAttachment] | None,
     mentioned_document_ids: list[int] | None,
     mentioned_surfsense_doc_ids: list[int] | None,
-) -> str:
+) -> tuple[str, dict[str, object]]:
     mentioned_documents: list[Document] = []
     if mentioned_document_ids:
         result = await session.execute(
@@ -250,20 +419,50 @@ async def _build_query_with_context(
         mentioned_surfsense_docs = list(result.scalars().all())
 
     context_parts: list[str] = []
+    attachments_context = ""
+    mentioned_documents_context = ""
+    mentioned_surfsense_context = ""
     if attachments:
-        context_parts.append(format_attachments_as_context(attachments))
+        attachments_context = format_attachments_as_context(attachments)
+        if attachments_context:
+            context_parts.append(attachments_context)
     if mentioned_documents:
-        context_parts.append(format_mentioned_documents_as_context(mentioned_documents))
-    if mentioned_surfsense_docs:
-        context_parts.append(
-            format_mentioned_surfsense_docs_as_context(mentioned_surfsense_docs)
+        mentioned_documents_context = format_mentioned_documents_as_context(
+            mentioned_documents
         )
+        if mentioned_documents_context:
+            context_parts.append(mentioned_documents_context)
+    if mentioned_surfsense_docs:
+        mentioned_surfsense_context = format_mentioned_surfsense_docs_as_context(
+            mentioned_surfsense_docs
+        )
+        if mentioned_surfsense_context:
+            context_parts.append(mentioned_surfsense_context)
 
+    final_query = user_query
     if context_parts:
         context = "\n\n".join(context_parts)
-        return f"{context}\n\n<user_query>{user_query}</user_query>"
+        final_query = f"{context}\n\n<user_query>{user_query}</user_query>"
 
-    return user_query
+    base_tokens = estimate_tokens_from_text(user_query)
+    total_tokens = estimate_tokens_from_text(final_query)
+    context_stats: dict[str, object] = {
+        "base_chars": len(user_query),
+        "base_tokens": base_tokens,
+        "context_chars": max(0, len(final_query) - len(user_query)),
+        "context_tokens": max(0, total_tokens - base_tokens),
+        "tool_chars": 0,
+        "tool_tokens": 0,
+        "total_chars": len(final_query),
+        "total_tokens": total_tokens,
+        "breakdown": {
+            "attachments_chars": len(attachments_context),
+            "mentioned_docs_chars": len(mentioned_documents_context),
+            "mentioned_surfsense_docs_chars": len(mentioned_surfsense_context),
+        },
+    }
+
+    return final_query, context_stats
 
 
 async def stream_compare_chat(
@@ -278,6 +477,15 @@ async def stream_compare_chat(
     mentioned_surfsense_doc_ids: list[int] | None = None,
 ) -> AsyncGenerator[str, None]:
     streaming_service = VercelStreamingService()
+    tokenizer_model: str | None = None
+    route_prefix = "[Compare] "
+
+    def format_step_title(title: str) -> str:
+        if not title:
+            return title
+        if title.startswith(route_prefix):
+            return title
+        return f"{route_prefix}{title}"
 
     compare_query = extract_compare_query(user_query)
     if not compare_query:
@@ -288,7 +496,41 @@ async def stream_compare_chat(
         yield streaming_service.format_done()
         return
 
+    trace_recorder: TraceRecorder | None = None
+    trace_db_session: AsyncSession | None = None
+
     try:
+        try:
+            trace_db_session = async_session_maker()
+            trace_session = ChatTraceSession(
+                session_id=uuid.uuid4().hex,
+                thread_id=chat_id,
+                created_by_id=UUID(user_id) if user_id else None,
+            )
+            trace_db_session.add(trace_session)
+            await trace_db_session.commit()
+            await trace_db_session.refresh(trace_session)
+            trace_recorder = TraceRecorder(
+                db_session=trace_db_session,
+                trace_session=trace_session,
+                streaming_service=streaming_service,
+                root_name="Compare Response",
+                root_input={
+                    "query": compare_query,
+                    "attachments": [a.name for a in attachments or []],
+                    "mentioned_document_ids": mentioned_document_ids or [],
+                    "mentioned_surfsense_doc_ids": mentioned_surfsense_doc_ids or [],
+                },
+            )
+            yield await trace_recorder.emit_session_start()
+            root_event = await trace_recorder.start_root_span()
+            if root_event:
+                yield root_event
+        except Exception as exc:
+            if trace_db_session:
+                await trace_db_session.rollback()
+            trace_recorder = None
+            print(f"[compare-trace] Failed to initialize trace session: {exc!s}")
         try:
             thread_result = await session.execute(
                 select(NewChatThread).filter(NewChatThread.id == chat_id)
@@ -300,7 +542,7 @@ async def stream_compare_chat(
         except Exception as exc:
             print(f"[compare] Failed to mark history bootstrap: {exc!s}")
 
-        query_with_context = await _build_query_with_context(
+        query_with_context, context_stats = await _build_query_with_context(
             user_query=compare_query,
             session=session,
             search_space_id=search_space_id,
@@ -308,11 +550,77 @@ async def stream_compare_chat(
             mentioned_document_ids=mentioned_document_ids,
             mentioned_surfsense_doc_ids=mentioned_surfsense_doc_ids,
         )
+        prompt_overrides = await get_global_prompt_overrides(session)
+        analysis_system_prompt = resolve_prompt(
+            prompt_overrides,
+            "compare.analysis.system",
+            DEFAULT_ANALYSIS_SYSTEM_PROMPT,
+        )
+        analysis_system_prompt = append_datetime_context(analysis_system_prompt)
+        external_system_prompt = resolve_prompt(
+            prompt_overrides,
+            "compare.external.system",
+            DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+        )
+        external_system_prompt = append_datetime_context(external_system_prompt)
 
-        connector_service = ConnectorService(session, search_space_id=search_space_id)
+        connector_service = ConnectorService(
+            session, search_space_id=search_space_id, user_id=user_id
+        )
 
         yield streaming_service.format_message_start()
         yield streaming_service.format_start_step()
+        route_step_id = f"compare-route-{uuid.uuid4().hex[:8]}"
+        route_items = ["Route: compare"]
+        yield streaming_service.format_thinking_step(
+            step_id=route_step_id,
+            title=format_step_title("Routing request"),
+            status="in_progress",
+            items=route_items,
+        )
+        yield streaming_service.format_thinking_step(
+            step_id=route_step_id,
+            title=format_step_title("Routing request"),
+            status="completed",
+            items=route_items,
+        )
+        if trace_recorder:
+            route_span_id = f"compare-route-{uuid.uuid4().hex[:8]}"
+            route_start = await trace_recorder.start_span(
+                span_id=route_span_id,
+                name="Routing request",
+                kind="middleware",
+                parent_id=trace_recorder.root_span_id,
+                input_data={"query": compare_query},
+                meta={"route": "compare"},
+            )
+            if route_start:
+                yield route_start
+            route_end = await trace_recorder.end_span(
+                span_id=route_span_id,
+                output_data={"route": "compare"},
+                status="completed",
+            )
+            if route_end:
+                yield route_end
+        yield streaming_service.format_data(
+            "context-stats",
+            {
+                "phase": "initial",
+                "label": "Initial context",
+                "delta_chars": context_stats.get("context_chars", 0),
+                "delta_tokens": context_stats.get("context_tokens", 0),
+                "total_chars": context_stats.get("total_chars", 0),
+                "total_tokens": context_stats.get("total_tokens", 0),
+                "base_chars": context_stats.get("base_chars", 0),
+                "base_tokens": context_stats.get("base_tokens", 0),
+                "context_chars": context_stats.get("context_chars", 0),
+                "context_tokens": context_stats.get("context_tokens", 0),
+                "tool_chars": context_stats.get("tool_chars", 0),
+                "tool_tokens": context_stats.get("tool_tokens", 0),
+                "breakdown": context_stats.get("breakdown", {}),
+            },
+        )
 
         short_query = _truncate_text(compare_query, 80)
 
@@ -322,6 +630,7 @@ async def stream_compare_chat(
         provider_configs: dict[str, dict] = {}
         provider_tool_call_ids: dict[str, str] = {}
         provider_results: dict[str, dict] = {}
+        provider_trace_spans: dict[str, str] = {}
         spec_by_key = {spec.key: spec for spec in EXTERNAL_MODEL_SPECS}
 
         for spec in EXTERNAL_MODEL_SPECS:
@@ -358,15 +667,41 @@ async def stream_compare_chat(
             items.append(f"Tool: {spec.tool_name}")
             items.append(f"Query: {short_query}")
 
+            step_title = format_step_title(f"Asking {spec.display}")
             provider_steps[spec.key] = {
                 "id": step_id,
-                "title": f"Asking {spec.display}",
+                "title": step_title,
                 "items": items,
             }
 
+            if trace_recorder:
+                span_id = f"compare-model-{spec.key}-{uuid.uuid4().hex[:8]}"
+                provider_trace_spans[spec.key] = span_id
+                trace_start = await trace_recorder.start_span(
+                    span_id=span_id,
+                    name=str(spec.display),
+                    kind="model",
+                    parent_id=trace_recorder.root_span_id,
+                    input_data={
+                        "query": compare_query,
+                        "context": query_with_context,
+                        "provider": provider_label,
+                        "model": model_name,
+                        "model_string": model_string,
+                    },
+                    meta={
+                        "provider": provider_label,
+                        "model": model_name,
+                        "model_string": model_string,
+                        "api_base": api_base_value,
+                    },
+                )
+                if trace_start:
+                    yield trace_start
+
             yield streaming_service.format_thinking_step(
                 step_id=step_id,
-                title=f"Asking {spec.display}",
+                title=step_title,
                 status="in_progress",
                 items=items,
             )
@@ -390,7 +725,7 @@ async def stream_compare_chat(
                 ]
                 yield streaming_service.format_thinking_step(
                     step_id=step_id,
-                    title=f"Asking {spec.display}",
+                    title=step_title,
                     status="completed",
                     items=completed_items,
                 )
@@ -411,6 +746,16 @@ async def stream_compare_chat(
                     "status": "error",
                     "error": _truncate_text(error_msg, 200),
                 }
+                if trace_recorder:
+                    span_id = provider_trace_spans.get(spec.key, "")
+                    if span_id:
+                        trace_end = await trace_recorder.end_span(
+                            span_id=span_id,
+                            output_data=error_result,
+                            status="error",
+                        )
+                        if trace_end:
+                            yield trace_end
 
         answers: dict[str, str] = {}
         results_queue: asyncio.Queue[
@@ -426,6 +771,7 @@ async def stream_compare_chat(
                     query=query_with_context,
                     timeout_seconds=COMPARE_TIMEOUT_SECONDS,
                     config=config,
+                    system_prompt=external_system_prompt,
                 )
                 await results_queue.put(
                     (spec_key, result, None, time.monotonic() - start_time)
@@ -488,6 +834,42 @@ async def stream_compare_chat(
                                 COMPARE_SUMMARY_ANSWER_CHARS,
                             ),
                         }
+                        delta_chars = len(response_text)
+                        if delta_chars > 0:
+                            delta_tokens = estimate_tokens_from_text(
+                                response_text, model=tokenizer_model
+                            )
+                            context_stats["tool_chars"] = (
+                                int(context_stats.get("tool_chars", 0)) + delta_chars
+                            )
+                            context_stats["tool_tokens"] = (
+                                int(context_stats.get("tool_tokens", 0)) + delta_tokens
+                            )
+                            context_stats["total_chars"] = (
+                                int(context_stats.get("total_chars", 0)) + delta_chars
+                            )
+                            context_stats["total_tokens"] = (
+                                int(context_stats.get("total_tokens", 0)) + delta_tokens
+                            )
+                            yield streaming_service.format_data(
+                                "context-stats",
+                                {
+                                    "phase": "model",
+                                    "label": f"Model: {spec.display}",
+                                    "delta_chars": delta_chars,
+                                    "delta_tokens": delta_tokens,
+                                    "total_chars": context_stats.get("total_chars", 0),
+                                    "total_tokens": context_stats.get("total_tokens", 0),
+                                    "base_chars": context_stats.get("base_chars", 0),
+                                    "base_tokens": context_stats.get("base_tokens", 0),
+                                    "context_chars": context_stats.get("context_chars", 0),
+                                    "context_tokens": context_stats.get(
+                                        "context_tokens", 0
+                                    ),
+                                    "tool_chars": context_stats.get("tool_chars", 0),
+                                    "tool_tokens": context_stats.get("tool_tokens", 0),
+                                },
+                            )
                         completed_items = [
                             *base_items,
                             f"Response length: {len(response_text)} chars",
@@ -514,6 +896,27 @@ async def stream_compare_chat(
                         "error": _truncate_text(str(error_msg), 200),
                     }
 
+                if trace_recorder:
+                    span_id = provider_trace_spans.get(provider_key, "")
+                    if span_id:
+                        trace_status = (
+                            "completed"
+                            if result_payload.get("status") == "success"
+                            else "error"
+                        )
+                        trace_output = (
+                            result_payload
+                            if result_payload
+                            else {"status": "error", "error": "Empty response"}
+                        )
+                        trace_end = await trace_recorder.end_span(
+                            span_id=span_id,
+                            output_data=trace_output,
+                            status=trace_status,
+                        )
+                        if trace_end:
+                            yield trace_end
+
                 yield streaming_service.format_thinking_step(
                     step_id=step_id,
                     title=title,
@@ -528,22 +931,104 @@ async def stream_compare_chat(
                 await asyncio.gather(*tasks, return_exceptions=True)
 
         tavily_step_id = f"compare-tavily-{uuid.uuid4().hex[:8]}"
+        tavily_sources_info: dict[str, Any] | None = None
+        tavily_documents: list[dict[str, Any]] = []
+        tavily_documents_for_prompt: list[dict[str, Any]] = []
         yield streaming_service.format_thinking_step(
             step_id=tavily_step_id,
-            title="Fetching latest sources",
+            title=format_step_title("Fetching latest sources"),
             status="in_progress",
             items=[f"Query: {short_query}"],
         )
 
-        _, tavily_documents = await connector_service.search_tavily(
-            user_query=compare_query,
+        tavily_query = _build_tavily_query(compare_query)
+        tavily_span_id = f"tavily-{uuid.uuid4().hex[:8]}"
+        if trace_recorder:
+            tavily_start = await trace_recorder.start_span(
+                span_id=tavily_span_id,
+                name="tavily_search",
+                kind="tool",
+                parent_id=trace_recorder.root_span_id,
+                input_data={"query": tavily_query or compare_query, "top_k": MAX_TAVILY_RESULTS},
+                meta={"source": "tavily"},
+            )
+            if tavily_start:
+                yield tavily_start
+        tavily_sources_info, tavily_documents = await connector_service.search_tavily(
+            user_query=tavily_query or compare_query,
             search_space_id=search_space_id,
             top_k=MAX_TAVILY_RESULTS,
+            user_id=user_id,
         )
+        fallback_used = False
+        if not tavily_documents and tavily_query and tavily_query != compare_query:
+            fallback_used = True
+            tavily_sources_info, tavily_documents = await connector_service.search_tavily(
+                user_query=compare_query,
+                search_space_id=search_space_id,
+                top_k=MAX_TAVILY_RESULTS,
+                user_id=user_id,
+            )
+        if trace_recorder:
+            tavily_end = await trace_recorder.end_span(
+                span_id=tavily_span_id,
+                output_data={
+                    "sources": tavily_sources_info,
+                    "result_count": len(tavily_documents),
+                    "fallback_used": fallback_used,
+                    "query": tavily_query or compare_query,
+                },
+                status="completed",
+            )
+            if tavily_end:
+                yield tavily_end
+        tavily_documents_for_prompt = _minimize_documents_for_prompt(
+            tavily_documents,
+            max_documents=MAX_TAVILY_RESULTS,
+            max_chunks_per_doc=TAVILY_RESULT_MAX_CHUNKS,
+            max_chunk_chars=TAVILY_RESULT_CHUNK_CHARS,
+        )
+        tavily_chars = _estimate_documents_chars(tavily_documents_for_prompt)
+        if tavily_chars <= 0:
+            tavily_chars = len(serialize_context_payload(tavily_documents_for_prompt))
+        if tavily_chars > 0:
+            tavily_payload_text = serialize_context_payload(tavily_documents_for_prompt)
+            tavily_tokens = estimate_tokens_from_text(
+                tavily_payload_text or (" " * tavily_chars), model=tokenizer_model
+            )
+            context_stats["tool_chars"] = (
+                int(context_stats.get("tool_chars", 0)) + tavily_chars
+            )
+            context_stats["tool_tokens"] = (
+                int(context_stats.get("tool_tokens", 0)) + tavily_tokens
+            )
+            context_stats["total_chars"] = (
+                int(context_stats.get("total_chars", 0)) + tavily_chars
+            )
+            context_stats["total_tokens"] = (
+                int(context_stats.get("total_tokens", 0)) + tavily_tokens
+            )
+            yield streaming_service.format_data(
+                "context-stats",
+                {
+                    "phase": "source",
+                    "label": "Tavily results",
+                    "delta_chars": tavily_chars,
+                    "delta_tokens": tavily_tokens,
+                    "total_chars": context_stats.get("total_chars", 0),
+                    "total_tokens": context_stats.get("total_tokens", 0),
+                    "base_chars": context_stats.get("base_chars", 0),
+                    "base_tokens": context_stats.get("base_tokens", 0),
+                    "context_chars": context_stats.get("context_chars", 0),
+                    "context_tokens": context_stats.get("context_tokens", 0),
+                    "tool_chars": context_stats.get("tool_chars", 0),
+                    "tool_tokens": context_stats.get("tool_tokens", 0),
+                },
+            )
         tavily_count = len(tavily_documents)
         yield streaming_service.format_thinking_step(
             step_id=tavily_step_id,
-            title="Fetching latest sources",
+            title=format_step_title("Fetching latest sources"),
             status="completed",
             items=[f"Tavily results: {tavily_count}"],
         )
@@ -558,6 +1043,14 @@ async def stream_compare_chat(
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
             yield streaming_service.format_done()
+            if trace_recorder:
+                trace_end = await trace_recorder.end_span(
+                    span_id=trace_recorder.root_span_id,
+                    output_data={"status": "error", "error": "Missing local LLM configuration"},
+                    status="error",
+                )
+                if trace_end:
+                    yield trace_end
             return
 
         local_llm = create_chat_litellm_from_agent_config(agent_config)
@@ -566,253 +1059,71 @@ async def stream_compare_chat(
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
             yield streaming_service.format_done()
+            if trace_recorder:
+                trace_end = await trace_recorder.end_span(
+                    span_id=trace_recorder.root_span_id,
+                    output_data={"status": "error", "error": "Missing local LLM instance"},
+                    status="error",
+                )
+                if trace_end:
+                    yield trace_end
             return
 
-        from app.db import SearchSourceConnectorType
-
-        firecrawl_api_key = None
-        webcrawler_connector = await connector_service.get_connector_by_type(
-            SearchSourceConnectorType.WEBCRAWLER_CONNECTOR, search_space_id
-        )
-        if webcrawler_connector and webcrawler_connector.config:
-            firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
-
-        oneseek_checkpointer = MemorySaver()
-        oneseek_agent = await create_surfsense_deep_agent(
-            llm=local_llm,
-            search_space_id=search_space_id,
-            db_session=session,
-            connector_service=connector_service,
-            checkpointer=oneseek_checkpointer,
-            user_id=user_id,
-            thread_id=chat_id,
-            agent_config=agent_config,
-            firecrawl_api_key=firecrawl_api_key,
-        )
-
-        local_step_id = f"compare-oneseek-{uuid.uuid4().hex[:8]}"
-        local_tool_call_id = streaming_service.generate_tool_call_id()
         local_model_name = str(agent_config.model_name or "")
-        local_provider = str(agent_config.provider or "")
-        local_api_base = str(agent_config.api_base or "")
         local_model_string = str(getattr(local_llm, "model", "") or "")
-        local_items = [
-            item
-            for item in [
-                f"Model: {local_model_name}" if local_model_name else None,
-                f"Provider: {local_provider}" if local_provider else None,
-                f"API base: {local_api_base}" if local_api_base else None,
-                f"Model string: {local_model_string}" if local_model_string else None,
-                "Tool: call_oneseek",
-                f"Query: {short_query}",
-            ]
-            if item
-        ]
-        provider_steps["oneseek"] = {
-            "id": local_step_id,
-            "title": "Asking Oneseek",
-            "items": local_items,
-        }
-        provider_tool_call_ids["oneseek"] = local_tool_call_id
+        if not tokenizer_model:
+            tokenizer_model = local_model_name or local_model_string or None
+        if trace_recorder and tokenizer_model:
+            trace_recorder.set_tokenizer_model(tokenizer_model)
+        # Oneseek answer disabled in compare mode; use synthesis only.
 
-        yield streaming_service.format_thinking_step(
-            step_id=local_step_id,
-            title="Asking Oneseek",
-            status="in_progress",
-            items=local_items,
-        )
-        yield streaming_service.format_tool_input_start(
-            local_tool_call_id, "call_oneseek"
-        )
-        yield streaming_service.format_tool_input_available(
-            local_tool_call_id, "call_oneseek", {"query": compare_query}
-        )
-
-        oneseek_start = time.monotonic()
-        oneseek_error: str | None = None
-        oneseek_text = ""
-        oneseek_tool_steps: dict[str, str] = {}
-        oneseek_tool_calls: dict[str, str] = {}
-
-        input_state = {
-            "messages": [HumanMessage(content=query_with_context)],
-            "search_space_id": search_space_id,
-        }
-        config = {
-            "configurable": {"thread_id": f"{chat_id}-compare-oneseek"},
-            "recursion_limit": 80,
-        }
-
+        model_output_documents: list[dict] = []
         try:
-            async for event in oneseek_agent.astream_events(
-                input_state, config=config, version="v2"
-            ):
-                event_type = event.get("event", "")
-                if event_type == "on_chat_model_stream":
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content"):
-                        content = chunk.content
-                        if content and isinstance(content, str):
-                            oneseek_text += content
-                elif event_type == "on_tool_start":
-                    tool_name = event.get("name", "unknown_tool")
-                    run_id = event.get("run_id", "")
-                    tool_input = event.get("data", {}).get("input", {})
-
-                    tool_step_id = f"compare-oneseek-tool-{uuid.uuid4().hex[:8]}"
-                    oneseek_tool_steps[run_id] = tool_step_id
-                    tool_title = f"Using {tool_name.replace('_', ' ')}"
-                    tool_items: list[str] = []
-                    if isinstance(tool_input, dict):
-                        for key in (
-                            "query",
-                            "location",
-                            "url",
-                            "origin",
-                            "destination",
-                            "record_id",
-                            "podcast_title",
-                        ):
-                            if tool_input.get(key):
-                                tool_items.append(
-                                    f"{key.replace('_', ' ').title()}: {tool_input.get(key)}"
-                                )
-                                break
-                    if not tool_items:
-                        tool_items = [f"Tool: {tool_name}"]
-                    yield streaming_service.format_thinking_step(
-                        step_id=tool_step_id,
-                        title=tool_title,
-                        status="in_progress",
-                        items=tool_items,
-                    )
-
-                    tool_call_id = (
-                        f"call_{run_id[:32]}"
-                        if run_id
-                        else streaming_service.generate_tool_call_id()
-                    )
-                    oneseek_tool_calls[run_id] = tool_call_id
-                    yield streaming_service.format_tool_input_start(
-                        tool_call_id, tool_name
-                    )
-                    yield streaming_service.format_tool_input_available(
-                        tool_call_id,
-                        tool_name,
-                        tool_input if isinstance(tool_input, dict) else {"input": tool_input},
-                    )
-                elif event_type == "on_tool_end":
-                    tool_name = event.get("name", "unknown_tool")
-                    run_id = event.get("run_id", "")
-                    raw_output = event.get("data", {}).get("output")
-                    tool_output = raw_output
-                    if hasattr(raw_output, "content"):
-                        content = raw_output.content
-                        if isinstance(content, str):
-                            try:
-                                tool_output = json.loads(content)
-                            except Exception:
-                                tool_output = {"result": content}
-                        else:
-                            tool_output = content
-                    elif isinstance(raw_output, str):
-                        try:
-                            tool_output = json.loads(raw_output)
-                        except Exception:
-                            tool_output = {"result": raw_output}
-                    elif raw_output is None:
-                        tool_output = {"result": "No output"}
-
-                    tool_call_id = oneseek_tool_calls.get(run_id) or (
-                        f"call_{run_id[:32]}"
-                        if run_id
-                        else streaming_service.generate_tool_call_id()
-                    )
-                    yield streaming_service.format_tool_output_available(
-                        tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
-                    )
-
-                    tool_step_id = oneseek_tool_steps.get(run_id)
-                    if tool_step_id:
-                        yield streaming_service.format_thinking_step(
-                            step_id=tool_step_id,
-                            title=f"Using {tool_name.replace('_', ' ')}",
-                            status="completed",
-                            items=[f"Completed: {tool_name.replace('_', ' ')}"],
-                        )
+            model_output_documents = await _ingest_compare_outputs(
+                connector_service,
+                provider_results,
+                user_id=user_id,
+                search_space_id=search_space_id,
+                chat_id=chat_id,
+            )
         except Exception as exc:
-            oneseek_error = str(exc)
+            print(f"[compare] Failed to ingest model outputs: {exc!s}")
 
-        oneseek_elapsed = time.monotonic() - oneseek_start
-        if oneseek_error or not oneseek_text.strip():
-            error_msg = oneseek_error or "Empty response"
-            provider_summaries["Oneseek"] = {
-                "status": "error",
-                "error": _truncate_text(error_msg, 200),
-            }
-            yield streaming_service.format_tool_output_available(
-                local_tool_call_id,
-                {
-                    "status": "error",
-                    "error": error_msg,
-                    "model_display_name": "Oneseek",
-                    "provider": local_provider,
-                    "model": local_model_name,
-                    "model_string": local_model_string,
-                    "api_base": local_api_base,
-                    "source": "Oneseek",
-                    "latency_ms": int(oneseek_elapsed * 1000),
-                },
+        tavily_answer_documents: list[dict] = []
+        tavily_answer_text = ""
+        if tavily_sources_info and isinstance(tavily_sources_info.get("answer"), str):
+            tavily_answer_text = tavily_sources_info.get("answer", "").strip()
+        if tavily_answer_text:
+            try:
+                tavily_answer_doc = await connector_service.ingest_tool_output(
+                    tool_name="tavily_answer",
+                    tool_output=tavily_answer_text,
+                    title=f"Tavily answer: {_truncate_text(short_query, 60)}",
+                    metadata={
+                        "source": "TAVILY_API",
+                        "query": compare_query,
+                        "result_count": len(tavily_documents),
+                    },
+                    user_id=user_id,
+                    origin_search_space_id=search_space_id,
+                    thread_id=chat_id,
+                )
+                if tavily_answer_doc:
+                    tavily_answer_documents.append(
+                        connector_service._serialize_external_document(
+                            tavily_answer_doc, score=1.0
+                        )
+                    )
+            except Exception as exc:
+                print(f"[compare] Failed to ingest Tavily answer: {exc!s}")
+
+        if not tavily_documents_for_prompt:
+            tavily_documents_for_prompt = _minimize_documents_for_prompt(
+                tavily_documents,
+                max_documents=MAX_TAVILY_RESULTS,
+                max_chunks_per_doc=TAVILY_RESULT_MAX_CHUNKS,
+                max_chunk_chars=TAVILY_RESULT_CHUNK_CHARS,
             )
-            completed_items = [
-                *local_items,
-                f"Error: {_truncate_text(error_msg, 120)}",
-            ]
-        else:
-            oneseek_text = oneseek_text.strip()
-            was_truncated = len(oneseek_text) > COMPARE_RAW_ANSWER_CHARS
-            oneseek_text = _truncate_text(oneseek_text, COMPARE_RAW_ANSWER_CHARS)
-            answers["oneseek"] = oneseek_text
-            provider_results["oneseek"] = {
-                "status": "success",
-                "model_display_name": "Oneseek",
-                "provider": local_provider,
-                "model": local_model_name,
-                "model_string": local_model_string,
-                "api_base": local_api_base,
-                "source": "Oneseek",
-                "latency_ms": int(oneseek_elapsed * 1000),
-                "usage": None,
-                "summary": _truncate_text(oneseek_text, COMPARE_SUMMARY_ANSWER_CHARS),
-                "response": oneseek_text,
-                "truncated": was_truncated,
-            }
-            provider_summaries["Oneseek"] = {
-                "status": "success",
-                "answer": _truncate_text(oneseek_text, COMPARE_SUMMARY_ANSWER_CHARS),
-            }
-            yield streaming_service.format_tool_output_available(
-                local_tool_call_id, provider_results["oneseek"]
-            )
-            completed_items = [
-                *local_items,
-                f"Response length: {len(oneseek_text)} chars",
-                f"Elapsed: {oneseek_elapsed:.1f}s",
-            ]
-
-        yield streaming_service.format_thinking_step(
-            step_id=local_step_id,
-            title="Asking Oneseek",
-            status="completed",
-            items=completed_items,
-        )
-
-        _, tavily_documents = await connector_service.search_tavily(
-            user_query=compare_query,
-            search_space_id=search_space_id,
-            top_k=MAX_TAVILY_RESULTS,
-        )
 
         if not answers:
             yield streaming_service.format_error(
@@ -821,15 +1132,23 @@ async def stream_compare_chat(
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
             yield streaming_service.format_done()
+            if trace_recorder:
+                trace_end = await trace_recorder.end_span(
+                    span_id=trace_recorder.root_span_id,
+                    output_data={"status": "error", "error": "No model answers"},
+                    status="error",
+                )
+                if trace_end:
+                    yield trace_end
             return
 
         analysis_step_id = f"compare-analysis-{uuid.uuid4().hex[:8]}"
-        total_models = len(EXTERNAL_MODEL_SPECS) + 1
+        total_models = max(1, len(provider_steps))
         analysis_items = [f"Responses received: {len(answers)}/{total_models}"]
 
         yield streaming_service.format_thinking_step(
             step_id=analysis_step_id,
-            title="Analyzing and validating responses",
+            title=format_step_title("Analyzing and validating responses"),
             status="in_progress",
             items=analysis_items,
         )
@@ -840,11 +1159,8 @@ async def stream_compare_chat(
             analysis_items.append("Tavily results: 0")
 
         compare_specs = [
-            *[
-                {"key": spec.key, "display": spec.display, "tool": spec.tool_name}
-                for spec in EXTERNAL_MODEL_SPECS
-            ],
-            {"key": "oneseek", "display": "Oneseek", "tool": "call_oneseek"},
+            {"key": spec.key, "display": spec.display, "tool": spec.tool_name}
+            for spec in EXTERNAL_MODEL_SPECS
         ]
 
         answers_block = "\n".join(
@@ -862,11 +1178,22 @@ async def stream_compare_chat(
             ]
         )
 
-        model_answer_documents = _build_model_answer_documents(
-            provider_results,
-            specs=[{"key": spec["key"], "display": spec["display"]} for spec in compare_specs],
+        model_answer_documents = (
+            model_output_documents
+            if model_output_documents
+            else _build_model_answer_documents(
+                provider_results,
+                specs=[
+                    {"key": spec["key"], "display": spec["display"]}
+                    for spec in compare_specs
+                ],
+            )
         )
-        source_documents = [*model_answer_documents, *tavily_documents]
+        source_documents = [
+            *model_answer_documents,
+            *tavily_answer_documents,
+            *tavily_documents_for_prompt,
+        ]
         sources_context = (
             format_documents_for_context(source_documents)
             if source_documents
@@ -885,24 +1212,83 @@ async def stream_compare_chat(
         ]
 
         analysis_prompt = "\n".join(prompt_parts)
+        analysis_prompt_chars = len(analysis_prompt)
+        analysis_prompt_tokens = estimate_tokens_from_text(
+            analysis_prompt, model=tokenizer_model
+        )
+        delta_chars = analysis_prompt_chars - int(context_stats.get("total_chars", 0))
+        delta_tokens = analysis_prompt_tokens - int(
+            context_stats.get("total_tokens", 0)
+        )
+        context_stats["total_chars"] = analysis_prompt_chars
+        context_stats["total_tokens"] = analysis_prompt_tokens
+        yield streaming_service.format_data(
+            "context-stats",
+            {
+                "phase": "analysis-prompt",
+                "label": "Analysis prompt total",
+                "delta_chars": max(0, delta_chars),
+                "delta_tokens": max(0, delta_tokens),
+                "total_chars": context_stats.get("total_chars", 0),
+                "total_tokens": context_stats.get("total_tokens", 0),
+                "base_chars": context_stats.get("base_chars", 0),
+                "base_tokens": context_stats.get("base_tokens", 0),
+                "context_chars": context_stats.get("context_chars", 0),
+                "context_tokens": context_stats.get("context_tokens", 0),
+                "tool_chars": context_stats.get("tool_chars", 0),
+                "tool_tokens": context_stats.get("tool_tokens", 0),
+            },
+        )
 
+        analysis_span_id = ""
+        if trace_recorder:
+            analysis_span_id = f"compare-analysis-{uuid.uuid4().hex[:8]}"
+            analysis_start = await trace_recorder.start_span(
+                span_id=analysis_span_id,
+                name="Compare analysis",
+                kind="model",
+                parent_id=trace_recorder.root_span_id,
+                input_data={
+                    "system_prompt": analysis_system_prompt,
+                    "analysis_prompt": analysis_prompt,
+                },
+                meta={"phase": "analysis"},
+            )
+            if analysis_start:
+                yield analysis_start
         try:
             local_response = await local_llm.ainvoke(
                 [
                     SystemMessage(
-                        content=f"{LOCAL_ANALYSIS_SYSTEM_PROMPT}\n\n{COMPARE_CITATION_INSTRUCTIONS}"
+                        content=f"{analysis_system_prompt}\n\n{COMPARE_CITATION_INSTRUCTIONS}"
                     ),
                     HumanMessage(content=analysis_prompt),
                 ]
             )
             final_answer = str(getattr(local_response, "content", "") or "").strip()
+            if trace_recorder and analysis_span_id:
+                analysis_end = await trace_recorder.end_span(
+                    span_id=analysis_span_id,
+                    output_data={"final_answer": final_answer},
+                    status="completed",
+                )
+                if analysis_end:
+                    yield analysis_end
         except Exception as exc:
             analysis_items.append(
                 f"Error: {_truncate_text(str(exc), 120)}"
             )
+            if trace_recorder and analysis_span_id:
+                analysis_end = await trace_recorder.end_span(
+                    span_id=analysis_span_id,
+                    output_data={"error": str(exc)},
+                    status="error",
+                )
+                if analysis_end:
+                    yield analysis_end
             yield streaming_service.format_thinking_step(
                 step_id=analysis_step_id,
-                title="Analyzing and validating responses",
+                title=format_step_title("Analyzing and validating responses"),
                 status="completed",
                 items=analysis_items,
             )
@@ -912,16 +1298,42 @@ async def stream_compare_chat(
             yield streaming_service.format_finish_step()
             yield streaming_service.format_finish()
             yield streaming_service.format_done()
+            if trace_recorder:
+                trace_end = await trace_recorder.end_span(
+                    span_id=trace_recorder.root_span_id,
+                    output_data={"status": "error", "error": str(exc)},
+                    status="error",
+                )
+                if trace_end:
+                    yield trace_end
             return
         if not final_answer:
             final_answer = "I could not generate a response."
         else:
             final_answer = _normalize_citations(final_answer, valid_chunk_ids)
+            final_answer = _filter_invalid_citations(final_answer, valid_chunk_ids)
+
+        try:
+            await connector_service.ingest_tool_output(
+                tool_name="compare_summary",
+                tool_output={
+                    "query": compare_query,
+                    "final_answer": final_answer,
+                    "providers": provider_summaries,
+                },
+                title="Compare: synthesized answer",
+                metadata={"compare_mode": True, "type": "summary"},
+                user_id=user_id,
+                origin_search_space_id=search_space_id,
+                thread_id=chat_id,
+            )
+        except Exception as exc:
+            print(f"[compare] Failed to ingest summary: {exc!s}")
 
         analysis_items.append(f"Final answer length: {len(final_answer)} chars")
         yield streaming_service.format_thinking_step(
             step_id=analysis_step_id,
-            title="Analyzing and validating responses",
+            title=format_step_title("Analyzing and validating responses"),
             status="completed",
             items=analysis_items,
         )
@@ -939,6 +1351,18 @@ async def stream_compare_chat(
             yield part
         yield streaming_service.format_text_end(text_id)
 
+        if trace_recorder:
+            trace_end = await trace_recorder.end_span(
+                span_id=trace_recorder.root_span_id,
+                output_data={
+                    "status": "completed",
+                    "final_answer_length": len(final_answer),
+                },
+                status="completed",
+            )
+            if trace_end:
+                yield trace_end
+
         yield streaming_service.format_finish_step()
         yield streaming_service.format_finish()
         yield streaming_service.format_done()
@@ -948,3 +1372,16 @@ async def stream_compare_chat(
         yield streaming_service.format_finish_step()
         yield streaming_service.format_finish()
         yield streaming_service.format_done()
+        if trace_recorder:
+            trace_end = await trace_recorder.end_span(
+                span_id=trace_recorder.root_span_id,
+                output_data={"status": "error", "error": str(exc)},
+                status="error",
+            )
+            if trace_end:
+                yield trace_end
+    finally:
+        if trace_recorder:
+            await trace_recorder.end_session()
+        if trace_db_session:
+            await trace_db_session.close()

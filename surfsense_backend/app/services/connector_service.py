@@ -1,31 +1,56 @@
 import asyncio
-from datetime import datetime
+import json
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urljoin
 
 import httpx
 from linkup import LinkupClient
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 from tavily import TavilyClient
 
+from app.config import config
 from app.db import (
     Chunk,
     Document,
+    DocumentType,
     SearchSourceConnector,
     SearchSourceConnectorType,
+    SearchSpace,
+    SearchSpaceMembership,
+    SearchSpaceRole,
+    get_default_roles_config,
 )
 from app.retriever.chunks_hybrid_search import ChucksHybridSearchRetriever
 from app.retriever.documents_hybrid_search import DocumentHybridSearchRetriever
+from app.utils.document_converters import (
+    create_document_chunks,
+    generate_content_hash,
+    generate_unique_identifier_hash,
+)
+
+
+SEARCH_HISTORY_NAME = "Search History"
+SEARCH_HISTORY_DESCRIPTION = "System workspace for external search history"
+TOOL_OUTPUT_MAX_CHARS = 12000
 
 
 class ConnectorService:
-    def __init__(self, session: AsyncSession, search_space_id: int | None = None):
+    def __init__(
+        self,
+        session: AsyncSession,
+        search_space_id: int | None = None,
+        user_id: str | None = None,
+    ):
         self.session = session
         self.chunk_retriever = ChucksHybridSearchRetriever(session)
         self.document_retriever = DocumentHybridSearchRetriever(session)
         self.search_space_id = search_space_id
+        self.user_id = user_id
         self.source_id_counter = (
             100000  # High starting value to avoid collisions with existing IDs
         )
@@ -400,6 +425,299 @@ class ConnectorService:
                 sources.append(source)
         return sources
 
+    async def _get_or_create_search_history_space_id(
+        self, user_id: str | None
+    ) -> int | None:
+        if not user_id:
+            return None
+
+        try:
+            user_id_value = uuid.UUID(str(user_id))
+        except Exception:
+            user_id_value = user_id
+
+        result = await self.session.execute(
+            select(SearchSpace).filter(
+                SearchSpace.user_id == user_id_value,
+                SearchSpace.name == SEARCH_HISTORY_NAME,
+            )
+        )
+        existing = result.scalars().first()
+        if existing:
+            return existing.id
+
+        db_search_space = SearchSpace(
+            name=SEARCH_HISTORY_NAME,
+            description=SEARCH_HISTORY_DESCRIPTION,
+            user_id=user_id_value,
+            citations_enabled=True,
+            qna_custom_instructions="",
+        )
+        self.session.add(db_search_space)
+        await self.session.flush()
+
+        default_roles = get_default_roles_config()
+        owner_role_id = None
+        for role_config in default_roles:
+            db_role = SearchSpaceRole(
+                name=role_config["name"],
+                description=role_config["description"],
+                permissions=role_config["permissions"],
+                is_default=role_config["is_default"],
+                is_system_role=role_config["is_system_role"],
+                search_space_id=db_search_space.id,
+            )
+            self.session.add(db_role)
+            await self.session.flush()
+            if role_config["name"] == "Owner":
+                owner_role_id = db_role.id
+
+        owner_membership = SearchSpaceMembership(
+            user_id=user_id_value,
+            search_space_id=db_search_space.id,
+            role_id=owner_role_id,
+            is_owner=True,
+        )
+        self.session.add(owner_membership)
+        await self.session.flush()
+
+        return db_search_space.id
+
+    async def _resolve_search_history_space_id(
+        self, user_id: str | None
+    ) -> int | None:
+        return await self._get_or_create_search_history_space_id(user_id)
+
+    def _build_tool_output_content(self, tool_output: Any) -> str:
+        if isinstance(tool_output, str):
+            content = tool_output
+        else:
+            try:
+                content = json.dumps(tool_output, ensure_ascii=False, indent=2, default=str)
+            except TypeError:
+                content = str(tool_output)
+
+        if len(content) > TOOL_OUTPUT_MAX_CHARS:
+            content = (
+                content[:TOOL_OUTPUT_MAX_CHARS].rstrip()
+                + "\n\n...[truncated tool output]..."
+            )
+
+        return content.strip()
+
+    async def _find_existing_external_document(
+        self,
+        *,
+        search_space_id: int,
+        unique_identifier_hash: str | None,
+        content_hash: str,
+        document_type: DocumentType,
+    ) -> Document | None:
+        base_filters = [
+            Document.search_space_id == search_space_id,
+            Document.document_type == document_type,
+        ]
+        if unique_identifier_hash:
+            result = await self.session.execute(
+                select(Document)
+                .options(selectinload(Document.chunks))
+                .filter(*base_filters, Document.unique_identifier_hash == unique_identifier_hash)
+            )
+            existing = result.scalars().first()
+            if existing:
+                return existing
+
+        result = await self.session.execute(
+            select(Document)
+            .options(selectinload(Document.chunks))
+            .filter(*base_filters, Document.content_hash == content_hash)
+        )
+        return result.scalars().first()
+
+    async def _upsert_external_document(
+        self,
+        *,
+        search_space_id: int,
+        document_type: DocumentType,
+        title: str,
+        content: str,
+        metadata: dict[str, Any],
+        unique_identifier: str | None = None,
+        connector_id: int | None = None,
+    ) -> tuple[Document | None, bool]:
+        if not await self._document_type_supported(document_type):
+            print(
+                f"[ingest] documenttype '{document_type.value}' missing in DB enum; "
+                "skipping ingestion."
+            )
+            return None, False
+
+        normalized_content = (content or "").strip()
+        if not normalized_content:
+            return None, False
+
+        content_hash = generate_content_hash(normalized_content, search_space_id)
+        unique_identifier_hash = (
+            generate_unique_identifier_hash(document_type, unique_identifier, search_space_id)
+            if unique_identifier
+            else None
+        )
+
+        existing_document = await self._find_existing_external_document(
+            search_space_id=search_space_id,
+            unique_identifier_hash=unique_identifier_hash,
+            content_hash=content_hash,
+            document_type=document_type,
+        )
+
+        if existing_document:
+            metadata_changed = (existing_document.document_metadata or {}) != metadata
+            title_changed = existing_document.title != title
+            content_changed = existing_document.content_hash != content_hash
+
+            if not (metadata_changed or title_changed or content_changed):
+                return existing_document, False
+
+            existing_document.title = title
+            existing_document.content = normalized_content
+            existing_document.content_hash = content_hash
+            existing_document.unique_identifier_hash = unique_identifier_hash
+            existing_document.document_metadata = metadata
+            existing_document.embedding = config.embedding_model_instance.embed(
+                normalized_content
+            )
+            existing_document.chunks = await create_document_chunks(normalized_content)
+            existing_document.updated_at = datetime.now(UTC)
+            if connector_id and existing_document.connector_id is None:
+                existing_document.connector_id = connector_id
+            await self.session.flush()
+            return existing_document, True
+
+        embedding = config.embedding_model_instance.embed(normalized_content)
+        chunks = await create_document_chunks(normalized_content)
+        document = Document(
+            search_space_id=search_space_id,
+            title=title,
+            document_type=document_type,
+            document_metadata=metadata,
+            content=normalized_content,
+            embedding=embedding,
+            chunks=chunks,
+            content_hash=content_hash,
+            unique_identifier_hash=unique_identifier_hash,
+            updated_at=datetime.now(UTC),
+            connector_id=connector_id,
+        )
+        self.session.add(document)
+        await self.session.flush()
+        return document, True
+
+    async def _document_type_supported(self, doc_type: DocumentType) -> bool:
+        label = doc_type.value if hasattr(doc_type, "value") else str(doc_type)
+        try:
+            result = await self.session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM pg_type t
+                    JOIN pg_enum e ON t.oid = e.enumtypid
+                    WHERE t.typname = 'documenttype'
+                      AND e.enumlabel = :label
+                    LIMIT 1
+                    """
+                ),
+                {"label": label},
+            )
+            return result.first() is not None
+        except Exception as exc:
+            print(f"[ingest] Failed to check documenttype enum: {exc!s}")
+            return True
+
+    def _serialize_external_document(
+        self,
+        document: Document,
+        *,
+        score: float = 0.0,
+    ) -> dict[str, Any]:
+        sorted_chunks = sorted(
+            document.chunks, key=lambda chunk: chunk.created_at or chunk.id
+        )
+        chunk_payload = [
+            {"chunk_id": chunk.id, "content": chunk.content} for chunk in sorted_chunks
+        ]
+        return {
+            "document_id": document.id,
+            "content": "\n\n".join([chunk["content"] for chunk in chunk_payload]),
+            "score": float(score),
+            "chunks": chunk_payload,
+            "document": {
+                "id": document.id,
+                "title": document.title,
+                "document_type": document.document_type.value,
+                "metadata": document.document_metadata or {},
+            },
+            "source": document.document_type.value,
+        }
+
+    async def ingest_tool_output(
+        self,
+        *,
+        tool_name: str,
+        tool_output: Any,
+        title: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        origin_search_space_id: int | None = None,
+        thread_id: int | None = None,
+    ) -> Document | None:
+        if not tool_output:
+            return None
+        if isinstance(tool_output, dict) and (
+            tool_output.get("status") == "error" or "error" in tool_output
+        ):
+            return None
+
+        resolved_user_id = user_id or self.user_id
+        history_space_id = await self._resolve_search_history_space_id(resolved_user_id)
+        if not history_space_id:
+            return None
+
+        output_content = self._build_tool_output_content(tool_output)
+        if not output_content:
+            return None
+
+        cleaned_tool = tool_name.replace("_", " ").strip() if tool_name else "tool"
+        title = title or f"{cleaned_tool.title()} output"
+
+        merged_metadata = {
+            "tool_name": tool_name,
+            "source": "TOOL_OUTPUT",
+            "origin_search_space_id": origin_search_space_id or self.search_space_id,
+            "thread_id": thread_id,
+        }
+        if metadata:
+            merged_metadata.update(metadata)
+
+        unique_identifier = f"{tool_name}:{thread_id or 'unknown'}:{uuid.uuid4().hex}"
+
+        try:
+            document, wrote = await self._upsert_external_document(
+                search_space_id=history_space_id,
+                document_type=DocumentType.TOOL_OUTPUT,
+                title=title,
+                content=output_content,
+                metadata=merged_metadata,
+                unique_identifier=unique_identifier,
+                connector_id=None,
+            )
+            if wrote:
+                await self.session.commit()
+            return document
+        except Exception as exc:
+            await self.session.rollback()
+            print(f"[ingest] Failed to ingest tool output: {exc!s}")
+            return None
+
     async def get_connector_by_type(
         self,
         connector_type: SearchSourceConnectorType,
@@ -424,7 +742,11 @@ class ConnectorService:
         return result.scalars().first()
 
     async def search_tavily(
-        self, user_query: str, search_space_id: int, top_k: int = 20
+        self,
+        user_query: str,
+        search_space_id: int,
+        top_k: int = 20,
+        user_id: str | None = None,
     ) -> tuple:
         """
         Search using Tavily API and return both the source information and documents
@@ -455,16 +777,31 @@ class ConnectorService:
         tavily_api_key = tavily_connector.config.get("TAVILY_API_KEY")
         tavily_client = TavilyClient(api_key=tavily_api_key)
 
+        storage_search_space_id = await self._resolve_search_history_space_id(
+            user_id or self.user_id
+        )
+        if storage_search_space_id is None:
+            storage_search_space_id = search_space_id
+        storage_connector_id = (
+            tavily_connector.id
+            if storage_search_space_id == search_space_id
+            else None
+        )
+
         # Perform search with Tavily
         try:
             response = tavily_client.search(
                 query=user_query,
                 max_results=top_k,
                 search_depth="advanced",  # Use advanced search for better results
+                include_answer=True,
+                include_raw_content=False,
+                include_images=False,
             )
 
             # Extract results from Tavily response
             tavily_results = response.get("results", [])
+            tavily_answer = response.get("answer") if isinstance(response, dict) else None
 
             # Early return if no results
             if not tavily_results:
@@ -475,52 +812,63 @@ class ConnectorService:
                     "sources": [],
                 }, []
 
-            # Process each result and create sources directly without deduplication
-            sources_list = []
-            documents = []
+            documents: list[dict[str, Any]] = []
+            did_write = False
 
-            async with self.counter_lock:
-                for _i, result in enumerate(tavily_results):
-                    # Create a source entry
-                    source = {
-                        "id": self.source_id_counter,
-                        "title": result.get("title", "Tavily Result"),
-                        "description": result.get("content", ""),
-                        "url": result.get("url", ""),
-                    }
-                    sources_list.append(source)
+            for result in tavily_results:
+                content = result.get("content", "") or ""
+                title = result.get("title", "Tavily Result")
+                url = result.get("url", "") or ""
+                metadata = {
+                    "url": url,
+                    "published_date": result.get("published_date", ""),
+                    "source": "TAVILY_API",
+                    "query": user_query,
+                    "origin_search_space_id": search_space_id,
+                }
 
-                    # Create a document entry
-                    document = {
-                        "chunk_id": self.source_id_counter,
-                        "content": result.get("content", ""),
-                        "score": result.get("score", 0.0),
-                        "document": {
-                            "id": self.source_id_counter,
-                            "title": result.get("title", "Tavily Result"),
-                            "document_type": "TAVILY_API",
-                            "metadata": {
-                                "url": result.get("url", ""),
-                                "published_date": result.get("published_date", ""),
-                                "source": "TAVILY_API",
-                            },
-                        },
-                    }
-                    documents.append(document)
-                    self.source_id_counter += 1
+                document, wrote = await self._upsert_external_document(
+                    search_space_id=storage_search_space_id,
+                    document_type=DocumentType.TAVILY_API,
+                    title=title,
+                    content=content,
+                    metadata=metadata,
+                    unique_identifier=url or title,
+                    connector_id=storage_connector_id,
+                )
+                if not document:
+                    continue
+                did_write = did_write or wrote
+                documents.append(
+                    self._serialize_external_document(
+                        document, score=float(result.get("score", 0.0))
+                    )
+                )
 
-            # Create result object
+            if did_write:
+                await self.session.commit()
+
+            sources_list = self._build_chunk_sources_from_documents(
+                documents,
+                description_fn=lambda chunk, _doc_info, _metadata: self._chunk_preview(
+                    chunk.get("content", "")
+                ),
+            )
+
             result_object = {
                 "id": 3,
                 "name": "Tavily Search",
                 "type": "TAVILY_API",
                 "sources": sources_list,
             }
+            if tavily_answer:
+                result_object["answer"] = tavily_answer
 
             return result_object, documents
 
         except Exception as e:
             # Log the error and return empty results
+            await self.session.rollback()
             print(f"Error searching with Tavily: {e!s}")
             return {
                 "id": 3,
@@ -534,6 +882,7 @@ class ConnectorService:
         user_query: str,
         search_space_id: int,
         top_k: int = 20,
+        user_id: str | None = None,
     ) -> tuple:
         """
         Search using a configured SearxNG instance and return both sources and documents.
@@ -567,6 +916,17 @@ class ConnectorService:
         categories = config.get("SEARXNG_CATEGORIES")
         language = config.get("SEARXNG_LANGUAGE")
         safesearch = config.get("SEARXNG_SAFESEARCH")
+
+        storage_search_space_id = await self._resolve_search_history_space_id(
+            user_id or self.user_id
+        )
+        if storage_search_space_id is None:
+            storage_search_space_id = search_space_id
+        storage_connector_id = (
+            searx_connector.id
+            if storage_search_space_id == search_space_id
+            else None
+        )
 
         def _parse_bool(value: Any, default: bool = True) -> bool:
             if isinstance(value, bool):
@@ -667,43 +1027,49 @@ class ConnectorService:
                 "sources": [],
             }, []
 
-        sources_list: list[dict[str, Any]] = []
         documents: list[dict[str, Any]] = []
+        did_write = False
 
-        async with self.counter_lock:
-            for result in searx_results:
-                description = result.get("content") or result.get("snippet") or ""
-                if len(description) > 160:
-                    description = f"{description}"
+        for result in searx_results:
+            description = result.get("content") or result.get("snippet") or ""
+            title = result.get("title", "SearxNG Result")
+            url = result.get("url", "") or ""
+            metadata = {
+                "url": url,
+                "engines": result.get("engines", []),
+                "category": result.get("category"),
+                "source": "SEARXNG_API",
+                "query": user_query,
+                "origin_search_space_id": search_space_id,
+            }
 
-                source = {
-                    "id": self.source_id_counter,
-                    "title": result.get("title", "SearxNG Result"),
-                    "description": description,
-                    "url": result.get("url", ""),
-                }
-                sources_list.append(source)
+            document, wrote = await self._upsert_external_document(
+                search_space_id=storage_search_space_id,
+                document_type=DocumentType.SEARXNG_API,
+                title=title,
+                content=description or result.get("content", ""),
+                metadata=metadata,
+                unique_identifier=url or title,
+                connector_id=storage_connector_id,
+            )
+            if not document:
+                continue
+            did_write = did_write or wrote
+            documents.append(
+                self._serialize_external_document(
+                    document, score=float(result.get("score", 0.0))
+                )
+            )
 
-                metadata = {
-                    "url": result.get("url", ""),
-                    "engines": result.get("engines", []),
-                    "category": result.get("category"),
-                    "source": "SEARXNG_API",
-                }
+        if did_write:
+            await self.session.commit()
 
-                document = {
-                    "chunk_id": self.source_id_counter,
-                    "content": description or result.get("content", ""),
-                    "score": result.get("score", 0.0),
-                    "document": {
-                        "id": self.source_id_counter,
-                        "title": result.get("title", "SearxNG Result"),
-                        "document_type": "SEARXNG_API",
-                        "metadata": metadata,
-                    },
-                }
-                documents.append(document)
-                self.source_id_counter += 1
+        sources_list = self._build_chunk_sources_from_documents(
+            documents,
+            description_fn=lambda chunk, _doc_info, _metadata: self._chunk_preview(
+                chunk.get("content", "")
+            ),
+        )
 
         result_object = {
             "id": 11,
@@ -719,6 +1085,7 @@ class ConnectorService:
         user_query: str,
         search_space_id: int,
         top_k: int = 20,
+        user_id: str | None = None,
     ) -> tuple:
         """
         Search using Baidu AI Search API and return both sources and documents.
@@ -764,6 +1131,17 @@ class ConnectorService:
         model = config.get("BAIDU_MODEL", "ernie-3.5-8k")
         search_source = config.get("BAIDU_SEARCH_SOURCE", "baidu_search_v2")
         enable_deep_search = config.get("BAIDU_ENABLE_DEEP_SEARCH", False)
+
+        storage_search_space_id = await self._resolve_search_history_space_id(
+            user_id or self.user_id
+        )
+        if storage_search_space_id is None:
+            storage_search_space_id = search_space_id
+        storage_connector_id = (
+            baidu_connector.id
+            if storage_search_space_id == search_space_id
+            else None
+        )
 
         # Baidu AI Search API endpoint
         baidu_endpoint = "https://qianfan.baidubce.com/v2/ai_search/chat/completions"
@@ -875,59 +1253,54 @@ class ConnectorService:
                 "sources": [],
             }, []
 
-        sources_list: list[dict[str, Any]] = []
         documents: list[dict[str, Any]] = []
+        did_write = False
 
-        async with self.counter_lock:
-            for reference in baidu_references:
-                # Extract basic fields
-                title = reference.get("title", "Baidu Search Result")
-                url = reference.get("url", "")
-                content = reference.get("content", "")
-                date = reference.get("date", "")
-                ref_type = reference.get("type", "web")  # web, image, video
+        for reference in baidu_references:
+            title = reference.get("title", "Baidu Search Result")
+            url = reference.get("url", "") or ""
+            content = reference.get("content", "") or ""
+            date = reference.get("date", "")
+            ref_type = reference.get("type", "web")
 
-                # Create a source entry
-                source = {
-                    "id": self.source_id_counter,
-                    "title": title,
-                    "description": content[:300]
-                    if content
-                    else "",  # Limit description length
-                    "url": url,
-                }
-                sources_list.append(source)
+            metadata = {
+                "url": url,
+                "date": date,
+                "type": ref_type,
+                "source": "BAIDU_SEARCH_API",
+                "web_anchor": reference.get("web_anchor", ""),
+                "website": reference.get("website", ""),
+                "query": user_query,
+                "origin_search_space_id": search_space_id,
+            }
+            if ref_type == "image" and reference.get("image"):
+                metadata["image"] = reference["image"]
+            elif ref_type == "video" and reference.get("video"):
+                metadata["video"] = reference["video"]
 
-                # Prepare metadata
-                metadata = {
-                    "url": url,
-                    "date": date,
-                    "type": ref_type,
-                    "source": "BAIDU_SEARCH_API",
-                    "web_anchor": reference.get("web_anchor", ""),
-                    "website": reference.get("website", ""),
-                }
+            document, wrote = await self._upsert_external_document(
+                search_space_id=storage_search_space_id,
+                document_type=DocumentType.BAIDU_SEARCH_API,
+                title=title,
+                content=content,
+                metadata=metadata,
+                unique_identifier=url or title,
+                connector_id=storage_connector_id,
+            )
+            if not document:
+                continue
+            did_write = did_write or wrote
+            documents.append(self._serialize_external_document(document, score=1.0))
 
-                # Add type-specific metadata
-                if ref_type == "image" and reference.get("image"):
-                    metadata["image"] = reference["image"]
-                elif ref_type == "video" and reference.get("video"):
-                    metadata["video"] = reference["video"]
+        if did_write:
+            await self.session.commit()
 
-                # Create a document entry
-                document = {
-                    "chunk_id": self.source_id_counter,
-                    "content": content,
-                    "score": 1.0,  # Baidu doesn't provide relevance scores
-                    "document": {
-                        "id": self.source_id_counter,
-                        "title": title,
-                        "document_type": "BAIDU_SEARCH_API",
-                        "metadata": metadata,
-                    },
-                }
-                documents.append(document)
-                self.source_id_counter += 1
+        sources_list = self._build_chunk_sources_from_documents(
+            documents,
+            description_fn=lambda chunk, _doc_info, _metadata: self._chunk_preview(
+                chunk.get("content", "")
+            ),
+        )
 
         result_object = {
             "id": 12,
@@ -2078,6 +2451,7 @@ class ConnectorService:
         user_query: str,
         search_space_id: int,
         mode: str = "standard",
+        user_id: str | None = None,
     ) -> tuple:
         """
         Search using Linkup API and return both the source information and documents
@@ -2108,6 +2482,17 @@ class ConnectorService:
         linkup_api_key = linkup_connector.config.get("LINKUP_API_KEY")
         linkup_client = LinkupClient(api_key=linkup_api_key)
 
+        storage_search_space_id = await self._resolve_search_history_space_id(
+            user_id or self.user_id
+        )
+        if storage_search_space_id is None:
+            storage_search_space_id = search_space_id
+        storage_connector_id = (
+            linkup_connector.id
+            if storage_search_space_id == search_space_id
+            else None
+        )
+
         # Perform search with Linkup
         try:
             response = linkup_client.search(
@@ -2128,53 +2513,48 @@ class ConnectorService:
                     "sources": [],
                 }, []
 
-            # Process each result and create sources directly without deduplication
-            sources_list = []
-            documents = []
+            documents: list[dict[str, Any]] = []
+            did_write = False
 
-            async with self.counter_lock:
-                for _i, result in enumerate(linkup_results):
-                    # Only process results that have content
-                    if not hasattr(result, "content") or not result.content:
-                        continue
+            for result in linkup_results:
+                if not hasattr(result, "content") or not result.content:
+                    continue
 
-                    # Create a source entry
-                    source = {
-                        "id": self.source_id_counter,
-                        "title": (
-                            result.name if hasattr(result, "name") else "Linkup Result"
-                        ),
-                        "description": (
-                            result.content if hasattr(result, "content") else ""
-                        ),
-                        "url": result.url if hasattr(result, "url") else "",
-                    }
-                    sources_list.append(source)
+                title = result.name if hasattr(result, "name") else "Linkup Result"
+                url = result.url if hasattr(result, "url") else ""
+                content = result.content if hasattr(result, "content") else ""
+                metadata = {
+                    "url": url,
+                    "type": result.type if hasattr(result, "type") else "",
+                    "source": "LINKUP_API",
+                    "query": user_query,
+                    "origin_search_space_id": search_space_id,
+                }
 
-                    # Create a document entry
-                    document = {
-                        "chunk_id": self.source_id_counter,
-                        "content": result.content if hasattr(result, "content") else "",
-                        "score": 1.0,  # Default score since not provided by Linkup
-                        "document": {
-                            "id": self.source_id_counter,
-                            "title": (
-                                result.name
-                                if hasattr(result, "name")
-                                else "Linkup Result"
-                            ),
-                            "document_type": "LINKUP_API",
-                            "metadata": {
-                                "url": result.url if hasattr(result, "url") else "",
-                                "type": result.type if hasattr(result, "type") else "",
-                                "source": "LINKUP_API",
-                            },
-                        },
-                    }
-                    documents.append(document)
-                    self.source_id_counter += 1
+                document, wrote = await self._upsert_external_document(
+                    search_space_id=storage_search_space_id,
+                    document_type=DocumentType.LINKUP_API,
+                    title=title,
+                    content=content,
+                    metadata=metadata,
+                    unique_identifier=url or title,
+                    connector_id=storage_connector_id,
+                )
+                if not document:
+                    continue
+                did_write = did_write or wrote
+                documents.append(self._serialize_external_document(document, score=1.0))
 
-            # Create result object
+            if did_write:
+                await self.session.commit()
+
+            sources_list = self._build_chunk_sources_from_documents(
+                documents,
+                description_fn=lambda chunk, _doc_info, _metadata: self._chunk_preview(
+                    chunk.get("content", "")
+                ),
+            )
+
             result_object = {
                 "id": 10,
                 "name": "Linkup Search",
@@ -2186,6 +2566,7 @@ class ConnectorService:
 
         except Exception as e:
             # Log the error and return empty results
+            await self.session.rollback()
             print(f"Error searching with Linkup: {e!s}")
             return {
                 "id": 10,

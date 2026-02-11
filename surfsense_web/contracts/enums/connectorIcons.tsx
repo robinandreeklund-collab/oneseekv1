@@ -101,6 +101,8 @@ export const getConnectorIcon = (connectorType: EnumConnectorName | string, clas
 			return <Image src="/connectors/google-calendar.svg" alt="Google Calendar" {...imgProps} />;
 		case "NOTE":
 			return <FileText {...iconProps} />;
+		case "TOOL_OUTPUT":
+			return <Sparkles {...iconProps} />;
 		case "EXTENSION":
 			return <Webhook {...iconProps} />;
 		case "SURFSENSE_DOCS":

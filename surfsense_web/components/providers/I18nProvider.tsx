@@ -9,9 +9,10 @@ import { useLocaleContext } from "@/contexts/LocaleContext";
  */
 export function I18nProvider({ children }: { children: React.ReactNode }) {
 	const { locale, messages } = useLocaleContext();
+	const timeZone = "Europe/Stockholm";
 
 	return (
-		<NextIntlClientProvider messages={messages} locale={locale}>
+		<NextIntlClientProvider messages={messages} locale={locale} timeZone={timeZone}>
 			{children}
 		</NextIntlClientProvider>
 	);

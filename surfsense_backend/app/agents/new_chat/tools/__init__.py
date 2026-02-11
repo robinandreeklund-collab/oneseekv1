@@ -10,6 +10,7 @@ Available tools:
 - generate_podcast: Generate audio podcasts from content
 - link_preview: Fetch rich previews for URLs
 - display_image: Display images in chat
+- geoapify_static_map: Generate static map images via Geoapify
 - scrape_webpage: Extract content from webpages
 - smhi_weather: Fetch weather data from SMHI
 - trafiklab_route: Find departures using Trafiklab realtime APIs
@@ -18,11 +19,13 @@ Available tools:
 - search_web: Search the public web with global API keys
 - save_memory: Store facts/preferences about the user
 - recall_memory: Retrieve relevant user memories
+- reflect_on_progress: Log a brief reflection on progress
 """
 
 # Registry exports
 # Tool factory exports (for direct use)
 from .display_image import create_display_image_tool
+from .geoapify_maps import create_geoapify_static_map_tool
 from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import (
@@ -35,6 +38,7 @@ from .link_preview import create_link_preview_tool
 from .libris_search import create_libris_search_tool
 from .podcast import create_generate_podcast_tool
 from .public_web_search import create_public_web_search_tool
+from .reflect_on_progress import create_reflect_on_progress_tool
 from .registry import (
     BUILTIN_TOOLS,
     ToolDefinition,
@@ -58,12 +62,15 @@ __all__ = [
     "build_tools",
     # Tool factories
     "create_display_image_tool",
+    "create_geoapify_static_map_tool",
     "create_external_model_tool",
+    "create_geoapify_static_map_tool",
     "create_generate_podcast_tool",
     "create_jobad_links_search_tool",
     "create_link_preview_tool",
     "create_libris_search_tool",
     "create_public_web_search_tool",
+    "create_reflect_on_progress_tool",
     "create_recall_memory_tool",
     "create_save_memory_tool",
     "create_scrape_webpage_tool",

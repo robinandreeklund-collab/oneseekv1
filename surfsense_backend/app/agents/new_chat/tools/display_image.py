@@ -45,6 +45,7 @@ def create_display_image_tool():
         alt: str = "Image",
         title: str | None = None,
         description: str | None = None,
+        href: str | None = None,
     ) -> dict[str, Any]:
         """
         Display an image in the chat with metadata.
@@ -72,6 +73,7 @@ def create_display_image_tool():
             - alt: Alt text for accessibility
             - title: Image title (if provided)
             - description: Image description (if provided)
+            - href: Click-through URL for full-size view
             - domain: Source domain
         """
         image_id = generate_image_id(src)
@@ -98,6 +100,7 @@ def create_display_image_tool():
             "alt": alt,
             "title": title,
             "description": description,
+            "href": href,
             "domain": domain,
             "ratio": ratio,
         }

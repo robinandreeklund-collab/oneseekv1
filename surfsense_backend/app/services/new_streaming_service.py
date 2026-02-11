@@ -425,6 +425,33 @@ class VercelStreamingService:
         """
         return self._format_sse({"type": f"data-{data_type}", "data": data})
 
+    def format_trace_session(self, trace_session_id: str, thread_id: int) -> str:
+        """
+        Format trace session metadata for live trace streaming.
+        """
+        return self.format_data(
+            "trace-session",
+            {
+                "trace_session_id": trace_session_id,
+                "thread_id": thread_id,
+            },
+        )
+
+    def format_trace_span(
+        self, trace_session_id: str, event: str, span: dict[str, Any]
+    ) -> str:
+        """
+        Format a trace span event for live trace streaming.
+        """
+        return self.format_data(
+            "trace-span",
+            {
+                "trace_session_id": trace_session_id,
+                "event": event,
+                "span": span,
+            },
+        )
+
     def format_terminal_info(self, text: str, message_type: str = "info") -> str:
         """
         Format terminal info as custom data (SurfSense specific).

@@ -49,6 +49,10 @@ class DocumentType(str, Enum):
     GOOGLE_GMAIL_CONNECTOR = "GOOGLE_GMAIL_CONNECTOR"
     GOOGLE_DRIVE_FILE = "GOOGLE_DRIVE_FILE"
     AIRTABLE_CONNECTOR = "AIRTABLE_CONNECTOR"
+    TAVILY_API = "TAVILY_API"
+    SEARXNG_API = "SEARXNG_API"
+    LINKUP_API = "LINKUP_API"
+    BAIDU_SEARCH_API = "BAIDU_SEARCH_API"
     LUMA_CONNECTOR = "LUMA_CONNECTOR"
     ELASTICSEARCH_CONNECTOR = "ELASTICSEARCH_CONNECTOR"
     BOOKSTACK_CONNECTOR = "BOOKSTACK_CONNECTOR"
@@ -58,6 +62,7 @@ class DocumentType(str, Enum):
     COMPOSIO_GOOGLE_DRIVE_CONNECTOR = "COMPOSIO_GOOGLE_DRIVE_CONNECTOR"
     COMPOSIO_GMAIL_CONNECTOR = "COMPOSIO_GMAIL_CONNECTOR"
     COMPOSIO_GOOGLE_CALENDAR_CONNECTOR = "COMPOSIO_GOOGLE_CALENDAR_CONNECTOR"
+    TOOL_OUTPUT = "TOOL_OUTPUT"
 
 
 class SearchSourceConnectorType(str, Enum):
@@ -462,6 +467,11 @@ class NewChatThread(BaseModel, TimestampMixin):
         order_by="NewChatMessage.created_at",
         cascade="all, delete-orphan",
     )
+    trace_sessions = relationship(
+        "ChatTraceSession",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+    )
     snapshots = relationship(
         "PublicChatSnapshot",
         back_populates="thread",
@@ -648,6 +658,88 @@ class ChatCommentMention(BaseModel, TimestampMixin):
     # Relationships
     comment = relationship("ChatComment", back_populates="mentions")
     mentioned_user = relationship("User")
+
+
+class ChatTraceSession(BaseModel, TimestampMixin):
+    """
+    Trace session for a single AI response.
+    Stores metadata for all trace spans emitted during generation.
+    """
+
+    __tablename__ = "chat_trace_sessions"
+
+    session_id = Column(String(64), nullable=False, unique=True, index=True)
+    thread_id = Column(
+        Integer,
+        ForeignKey("new_chat_threads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    message_id = Column(
+        Integer,
+        ForeignKey("new_chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_by_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("user.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    ended_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+
+    thread = relationship("NewChatThread", back_populates="trace_sessions")
+    message = relationship("NewChatMessage")
+    created_by = relationship("User")
+    spans = relationship(
+        "ChatTraceSpan",
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+
+class ChatTraceSpan(BaseModel, TimestampMixin):
+    """
+    Individual trace span within a trace session.
+    """
+
+    __tablename__ = "chat_trace_spans"
+
+    session_id = Column(
+        Integer,
+        ForeignKey("chat_trace_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    span_id = Column(String(80), nullable=False)
+    parent_span_id = Column(String(80), nullable=True, index=True)
+    name = Column(String(200), nullable=False)
+    kind = Column(String(50), nullable=False)
+    status = Column(
+        String(32),
+        nullable=False,
+        default="running",
+        server_default="running",
+    )
+    sequence = Column(Integer, nullable=False)
+    start_ts = Column(TIMESTAMP(timezone=True), nullable=False)
+    end_ts = Column(TIMESTAMP(timezone=True), nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    input = Column(JSONB, nullable=True)
+    output = Column(JSONB, nullable=True)
+    meta = Column(JSONB, nullable=True)
+
+    session = relationship("ChatTraceSession", back_populates="spans")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id", "span_id", name="uq_chat_trace_span_session_span"
+        ),
+    )
 
 
 class ChatSessionState(BaseModel):
@@ -953,6 +1045,18 @@ class SearchSpace(BaseModel, TimestampMixin):
         order_by="NewLLMConfig.id",
         cascade="all, delete-orphan",
     )
+    agent_prompt_overrides = relationship(
+        "AgentPromptOverride",
+        back_populates="search_space",
+        order_by="AgentPromptOverride.id",
+        cascade="all, delete-orphan",
+    )
+    agent_prompt_override_history = relationship(
+        "AgentPromptOverrideHistory",
+        back_populates="search_space",
+        order_by="AgentPromptOverrideHistory.created_at.desc()",
+        cascade="all, delete-orphan",
+    )
 
     # RBAC relationships
     roles = relationship(
@@ -1071,6 +1175,105 @@ class NewLLMConfig(BaseModel, TimestampMixin):
         Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
     )
     search_space = relationship("SearchSpace", back_populates="new_llm_configs")
+
+
+class AgentPromptOverride(BaseModel, TimestampMixin):
+    __tablename__ = "agent_prompt_overrides"
+    __table_args__ = (
+        UniqueConstraint(
+            "search_space_id", "key", name="uq_agent_prompt_override_space_key"
+        ),
+    )
+
+    key = Column(String(120), nullable=False, index=True)
+    prompt_text = Column(Text, nullable=False, default="")
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    search_space = relationship(
+        "SearchSpace", back_populates="agent_prompt_overrides"
+    )
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class AgentPromptOverrideHistory(BaseModel, TimestampMixin):
+    __tablename__ = "agent_prompt_override_history"
+
+    key = Column(String(120), nullable=False, index=True)
+    previous_prompt_text = Column(Text, nullable=True)
+    new_prompt_text = Column(Text, nullable=True)
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    search_space = relationship(
+        "SearchSpace", back_populates="agent_prompt_override_history"
+    )
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class GlobalAgentPromptOverride(BaseModel, TimestampMixin):
+    __tablename__ = "agent_prompt_overrides_global"
+    __table_args__ = (
+        UniqueConstraint(
+            "key", name="uq_agent_prompt_override_global_key"
+        ),
+    )
+
+    key = Column(String(120), nullable=False, index=True)
+    prompt_text = Column(Text, nullable=False, default="")
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class GlobalAgentPromptOverrideHistory(BaseModel, TimestampMixin):
+    __tablename__ = "agent_prompt_override_history_global"
+
+    key = Column(String(120), nullable=False, index=True)
+    previous_prompt_text = Column(Text, nullable=True)
+    new_prompt_text = Column(Text, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class AgentComboCache(BaseModel, TimestampMixin):
+    __tablename__ = "agent_combo_cache"
+    __table_args__ = (
+        UniqueConstraint("cache_key", name="uq_agent_combo_cache_key"),
+    )
+
+    cache_key = Column(String(128), nullable=False, index=True)
+    route_hint = Column(String(32), nullable=True, index=True)
+    pattern = Column(Text, nullable=True)
+    recent_agents = Column(JSONB, nullable=True)
+    agents = Column(JSONB, nullable=False)
+    hit_count = Column(Integer, nullable=False, default=0)
+    last_used_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
 
 
 class Log(BaseModel, TimestampMixin):

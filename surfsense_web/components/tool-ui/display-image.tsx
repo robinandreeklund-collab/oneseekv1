@@ -22,6 +22,7 @@ const DisplayImageArgsSchema = z.object({
 	alt: z.string().nullish(),
 	title: z.string().nullish(),
 	description: z.string().nullish(),
+	href: z.string().nullish(),
 });
 
 /**
@@ -34,6 +35,7 @@ const DisplayImageResultSchema = z.object({
 	alt: z.string().nullish(),
 	title: z.string().nullish(),
 	description: z.string().nullish(),
+	href: z.string().nullish(),
 	domain: z.string().nullish(),
 	ratio: z.string().nullish(),
 	error: z.string().nullish(),

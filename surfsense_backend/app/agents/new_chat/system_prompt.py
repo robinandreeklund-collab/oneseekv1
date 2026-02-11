@@ -10,6 +10,7 @@ The prompt is composed of three parts:
 3. Citation Instructions (toggleable via NewLLMConfig.citations_enabled)
 """
 
+import re
 from datetime import UTC, datetime
 
 # Default system instructions - can be overridden via NewLLMConfig.system_instructions
@@ -49,9 +50,17 @@ You have access to the following tools:
     - connectors_to_search: Optional list of connector enums to search. If omitted, searches all.
   - Returns: Formatted string with relevant documents and their content
 
-2. generate_podcast: Generate an audio podcast from provided content.
+2. search_tavily: Live web search (Tavily connector).
+  - Use this for latest news, current events, or real-time web info.
+  - Args:
+    - query: The search query
+    - top_k: Max results (default: 3)
+  - Returns: JSON with {query, answer, results}. The results include chunk IDs for citations.
+
+3. generate_podcast: Generate an audio podcast from provided content.
   - Use this when the user asks to create, generate, or make a podcast.
   - Trigger phrases: "give me a podcast about", "create a podcast", "generate a podcast", "make a podcast", "turn this into a podcast"
+  - Swedish triggers: "gör en podcast", "skapa en podcast", "gör en podd", "gör en podd av detta"
   - Args:
     - source_content: The text content to convert into a podcast. This MUST be comprehensive and include:
       * If discussing the current conversation: Include a detailed summary of the FULL chat history (all user questions and your responses)
@@ -62,9 +71,10 @@ You have access to the following tools:
     - user_prompt: Optional instructions for podcast style/format (e.g., "Make it casual and fun")
   - Returns: A task_id for tracking. The podcast will be generated in the background.
   - IMPORTANT: Only one podcast can be generated at a time. If a podcast is already being generated, the tool will return status "already_generating".
+  - CRITICAL: If the user asks for a podcast, you MUST call generate_podcast. Do NOT write the podcast script yourself.
   - After calling this tool, inform the user that podcast generation has started and they will see the player when it's ready (takes 3-5 minutes).
 
-3. link_preview: Fetch metadata for a URL to display a rich preview card.
+4. link_preview: Fetch metadata for a URL to display a rich preview card.
   - IMPORTANT: Use this tool WHENEVER the user shares or mentions a URL/link in their message.
   - This fetches the page's Open Graph metadata (title, description, thumbnail) to show a preview card.
   - NOTE: This tool only fetches metadata, NOT the full page content. It cannot read the article text.
@@ -77,7 +87,7 @@ You have access to the following tools:
   - Returns: A rich preview card with title, description, thumbnail, and domain
   - The preview card will automatically be displayed in the chat.
 
-4. display_image: Display an image in the chat with metadata.
+5. display_image: Display an image in the chat with metadata.
   - Use this tool ONLY when you have a valid public HTTP/HTTPS image URL to show.
   - This displays the image with an optional title, description, and source attribution.
   - Valid use cases:
@@ -101,7 +111,21 @@ You have access to the following tools:
   - Returns: An image card with the image, title, and description
   - The image will automatically be displayed in the chat.
 
-5. scrape_webpage: Scrape and extract the main content from a webpage.
+6. geoapify_static_map: Generate a static map image via Geoapify.
+  - Use this when the user asks for a visual map of a place, address, event, or route.
+  - Supports center by coordinates OR location name (geocoded like SMHI).
+  - Useful for showing road works, addresses, and landmarks with markers.
+  - Args:
+    - location: Place name or address (e.g., "Slussen, Stockholm")
+    - center: "lat,lon" string if you already have coordinates
+    - lat/lon: Coordinates if known
+    - zoom: Zoom level (default: 12)
+    - width/height: Image size in pixels
+    - markers: List of markers {lat, lon, color, label, size}
+  - Returns: image_url for the static map (rendered directly in chat).
+  - NOTE: Include attribution (OpenStreetMap) when describing the map.
+
+7. scrape_webpage: Scrape and extract the main content from a webpage.
   - Use this when the user wants you to READ and UNDERSTAND the actual content of a webpage.
   - IMPORTANT: This is different from link_preview:
     * link_preview: Only fetches metadata (title, description, thumbnail) for display
@@ -124,7 +148,7 @@ You have access to the following tools:
     * Prioritize showing: diagrams, charts, infographics, key illustrations, or images that help explain the content.
     * Don't show every image - just the most relevant 1-3 images that enhance understanding.
 
-6. save_memory: Save facts, preferences, or context about the user for personalized responses.
+8. save_memory: Save facts, preferences, or context about the user for personalized responses.
   - Use this when the user explicitly or implicitly shares information worth remembering.
   - Trigger scenarios:
     * User says "remember this", "keep this in mind", "note that", or similar
@@ -147,7 +171,7 @@ You have access to the following tools:
   - IMPORTANT: Only save information that would be genuinely useful for future conversations.
     Don't save trivial or temporary information.
 
-7. recall_memory: Retrieve relevant memories about the user for personalized responses.
+9. recall_memory: Retrieve relevant memories about the user for personalized responses.
   - Use this to access stored information about the user.
   - Trigger scenarios:
     * You need user context to give a better, more personalized answer
@@ -163,7 +187,7 @@ You have access to the following tools:
   - IMPORTANT: Use the recalled memories naturally in your response without explicitly
     stating "Based on your memory..." - integrate the context seamlessly.
 
-8. smhi_weather: Fetch weather data from SMHI using a place name or coordinates.
+10. smhi_weather: Fetch weather data from SMHI using a place name or coordinates.
   - Use this when the user asks about current weather or forecasts for a location.
   - You can pass a location name (the tool will geocode to lat/lon), or pass lat/lon directly.
   - Args:
@@ -176,7 +200,7 @@ You have access to the following tools:
   - Returns: Weather data including current conditions and forecast time series (truncated to max_hours)
   - NOTE: Include attribution when using the data (e.g., "Data from SMHI").
 
-9. trafiklab_route: Find public transport departures using Trafiklab realtime APIs.
+11. trafiklab_route: Find public transport departures using Trafiklab realtime APIs.
   - Use this when the user asks for public transport routes or departures.
   - This tool uses stop lookup + timetables to find departures from an origin stop,
     and optionally filters them to match a destination.
@@ -194,7 +218,7 @@ You have access to the following tools:
   - NOTE: This is departure-based matching and does not compute multi-leg routes.
   - NOTE: Include attribution when using the data (e.g., "Data from Trafiklab.se").
 
-10. libris_search: Search the Libris XL catalog (Kungliga biblioteket).
+12. libris_search: Search the Libris XL catalog (Kungliga biblioteket).
   - Use this when the user asks for books, journals, articles, or library materials.
   - Supports free text and advanced query syntax (e.g., "tove (jansson|lindgren)").
   - Args:
@@ -206,7 +230,7 @@ You have access to the following tools:
     - extra_params: Optional advanced filters (e.g., instanceOf.subject.@id, min-publication.year)
   - Returns: Summarized results with title, authors, year, subjects, summary, and availability
 
-11. jobad_links_search: Search Swedish job ads via Arbetsförmedlingen JobAd Links API.
+13. jobad_links_search: Search Swedish job ads via Arbetsförmedlingen JobAd Links API.
   - Use this when the user asks for job listings, openings, or vacancies.
   - Supports free text and best-effort filters (location, occupation, industry, remote, dates).
   - Args:
@@ -222,11 +246,34 @@ You have access to the following tools:
     - extra_params: Optional additional query params supported by API
   - Returns: Structured job ad info with application links (Jobtech Links).
   - NOTE: Location/occupation/industry/remote are appended to the search query.
+
+13. write_todos: Plan and track multi-step work.
+  - Use this for complex tasks before calling other tools.
+  - Provide a short todo list and update statuses as you progress.
+  - Args:
+    - todos: List of items with content + status ("pending", "in_progress", "completed")
+  - Returns: The updated todo list.
+
+14. reflect_on_progress: Log a brief reflection on progress, gaps, and next steps.
+  - Use this after a major action or tool call to verify completeness.
+  - Keep reflections concise and focused on next actions (avoid verbosity).
+  - Args:
+    - thoughts: Short reflection covering what was found, gaps, and next step
+  - Returns: Logged reflection status.
 </tools>
 <tool_call_examples>
 - User: "What time is the team meeting today?"
   - Call: `search_knowledge_base(query="team meeting time today")` (searches ALL sources - calendar, notes, Obsidian, etc.)
   - DO NOT limit to just calendar - the info might be in notes!
+
+- User: "Kan du ge mig de senaste nyheterna?"
+  - Call: `search_tavily(query="senaste nyheterna Sverige", top_k=3)`
+  - Summarize results with citations.
+
+- User: "Research the user's policy memo and summarize key risks."
+  - Call: `write_todos(todos=[{"content":"Search internal memos for policy risks","status":"pending"},{"content":"Extract key risks and evidence","status":"pending"},{"content":"Summarize with citations","status":"pending"}])`
+  - Call: `search_knowledge_base(query="policy memo risk analysis")`
+  - Call: `reflect_on_progress(thoughts="Found 3 internal memos; need external sources for recent regulation changes")`
 
 - User: "When is my gym session?"
   - Call: `search_knowledge_base(query="gym session time schedule")` (searches ALL sources)
@@ -289,6 +336,9 @@ You have access to the following tools:
 
 - User: "Give me a podcast about AI trends based on what we discussed"
   - First search for relevant content, then call: `generate_podcast(source_content="Based on our conversation and search results: [detailed summary of chat + search findings]", podcast_title="AI Trends Podcast")`
+
+- User: "Gör en podcast av SMHI-prognosen"
+  - Call: `generate_podcast(source_content="Sammanfattning av senaste SMHI-data: [väder, temperatur, vind, varningar, tidsperioder] samt kort kontext från chatten", podcast_title="Väderpodden")`
 
 - User: "Create a podcast summary of this conversation"
   - Call: `generate_podcast(source_content="Complete conversation summary:\\n\\nUser asked about [topic 1]:\\n[Your detailed response]\\n\\nUser then asked about [topic 2]:\\n[Your detailed response]\\n\\n[Continue for all exchanges in the conversation]", podcast_title="Conversation Summary")`
@@ -456,8 +506,97 @@ Your goal is to provide helpful, informative answers in a clean, readable format
 """
 
 
+_TOOL_HEADER_REGEX = re.compile(r"(?m)^\d+\.\s+([a-zA-Z0-9_]+)\s*:")
+
+
+def _extract_tool_sections(tools_text: str) -> tuple[str, list[tuple[str, str]]]:
+    matches = list(_TOOL_HEADER_REGEX.finditer(tools_text))
+    if not matches:
+        return tools_text, []
+    header = tools_text[: matches[0].start()]
+    sections: list[tuple[str, str]] = []
+    for idx, match in enumerate(matches):
+        start = match.start()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(tools_text)
+        tool_name = match.group(1)
+        sections.append((tool_name, tools_text[start:end]))
+    return header, sections
+
+
+def _filter_tool_examples(examples_block: str, tool_names: set[str]) -> str:
+    if not examples_block or not tool_names:
+        return ""
+    if "<tool_call_examples>" not in examples_block:
+        return ""
+    before, _, after = examples_block.partition("<tool_call_examples>")
+    examples_body, _, tail = after.partition("</tool_call_examples>")
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in examples_body.splitlines():
+        if line.startswith("- User:") and current:
+            blocks.append("\n".join(current).strip())
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current).strip())
+
+    selected = [
+        block
+        for block in blocks
+        if any(tool in block for tool in tool_names)
+    ]
+    if not selected:
+        return ""
+    return "\n".join(
+        [
+            before.strip(),
+            "<tool_call_examples>",
+            "\n\n".join(selected).strip(),
+            "</tool_call_examples>",
+            tail.strip(),
+        ]
+    ).strip()
+
+
+def build_tools_instructions(tool_names: list[str] | None = None) -> str:
+    if tool_names is None:
+        return SURFSENSE_TOOLS_INSTRUCTIONS
+    tool_set = {name for name in tool_names if name}
+    if not tool_set:
+        return ""
+
+    tools_block, _, examples_block = SURFSENSE_TOOLS_INSTRUCTIONS.partition(
+        "<tool_call_examples>"
+    )
+
+    tools_close_idx = tools_block.find("</tools>")
+    tools_body = tools_block
+    tools_tail = ""
+    if tools_close_idx != -1:
+        tools_body = tools_block[:tools_close_idx]
+        tools_tail = tools_block[tools_close_idx:]
+
+    header, sections = _extract_tool_sections(tools_body)
+    selected_sections = [
+        section for name, section in sections if name in tool_set
+    ]
+    if not selected_sections:
+        return ""
+
+    filtered_tools = (header + "".join(selected_sections) + tools_tail).strip()
+    filtered_examples = _filter_tool_examples(
+        "<tool_call_examples>" + examples_block, tool_set
+    )
+    if filtered_examples:
+        return "\n\n".join([filtered_tools, filtered_examples]).strip()
+    return filtered_tools
+
+
 def build_surfsense_system_prompt(
     today: datetime | None = None,
+    tool_names: list[str] | None = None,
+    citations_enabled: bool = True,
 ) -> str:
     """
     Build the SurfSense system prompt with default settings.
@@ -469,6 +608,8 @@ def build_surfsense_system_prompt(
 
     Args:
         today: Optional datetime for today's date (defaults to current UTC date)
+        tool_names: Optional list of tool names to filter tool instructions/examples.
+        citations_enabled: Whether to include citation instructions.
 
     Returns:
         Complete system prompt string
@@ -477,13 +618,12 @@ def build_surfsense_system_prompt(
     resolved_today = now.date().isoformat()
     resolved_time = now.strftime("%H:%M:%S")
 
-    return (
-        SURFSENSE_SYSTEM_INSTRUCTIONS.format(
-            resolved_today=resolved_today,
-            resolved_time=resolved_time,
-        )
-        + SURFSENSE_TOOLS_INSTRUCTIONS
-        + SURFSENSE_CITATION_INSTRUCTIONS
+    return build_configurable_system_prompt(
+        custom_system_instructions=None,
+        use_default_system_instructions=True,
+        citations_enabled=citations_enabled,
+        today=today,
+        tool_names=tool_names,
     )
 
 
@@ -492,6 +632,7 @@ def build_configurable_system_prompt(
     use_default_system_instructions: bool = True,
     citations_enabled: bool = True,
     today: datetime | None = None,
+    tool_names: list[str] | None = None,
 ) -> str:
     """
     Build a configurable SurfSense system prompt based on NewLLMConfig settings.
@@ -510,6 +651,7 @@ def build_configurable_system_prompt(
         citations_enabled: Whether to include citation instructions (True) or
                           anti-citation instructions (False).
         today: Optional datetime for today's date (defaults to current UTC date)
+        tool_names: Optional list of tool names to filter tool instructions/examples.
 
     Returns:
         Complete system prompt string
@@ -535,17 +677,60 @@ def build_configurable_system_prompt(
         # No system instructions (edge case)
         system_instructions = ""
 
-    # Tools instructions are always included
-    tools_instructions = SURFSENSE_TOOLS_INSTRUCTIONS
-
-    # Citation instructions based on toggle
-    citation_instructions = (
-        SURFSENSE_CITATION_INSTRUCTIONS
-        if citations_enabled
-        else SURFSENSE_NO_CITATION_INSTRUCTIONS
+    system_instructions = append_datetime_context(
+        system_instructions, today=today
     )
 
+    # Tools instructions can be filtered for routed agents
+    tools_instructions = build_tools_instructions(tool_names)
+
+    # Citation instructions based on toggle
+    if not tools_instructions and not citations_enabled:
+        citation_instructions = ""
+    else:
+        citation_instructions = (
+            SURFSENSE_CITATION_INSTRUCTIONS
+            if citations_enabled
+            else SURFSENSE_NO_CITATION_INSTRUCTIONS
+        )
+
+    system_instructions = append_datetime_context(
+        system_instructions, today=today
+    )
     return system_instructions + tools_instructions + citation_instructions
+
+
+def append_datetime_context(prompt: str, *, today: datetime | None = None) -> str:
+    if not prompt:
+        return prompt
+    now = (today or datetime.now(UTC)).astimezone(UTC)
+    resolved_today = now.date().isoformat()
+    resolved_time = now.strftime("%H:%M:%S")
+    if "{resolved_today}" in prompt or "{resolved_time}" in prompt:
+        try:
+            return prompt.format(
+                resolved_today=resolved_today,
+                resolved_time=resolved_time,
+            )
+        except Exception:
+            pass
+    updated = prompt
+    updated = re.sub(
+        r"(?m)^Today's date \(UTC\):.*$",
+        f"Today's date (UTC): {resolved_today}",
+        updated,
+    )
+    updated = re.sub(
+        r"(?m)^Current time \(UTC\):.*$",
+        f"Current time (UTC): {resolved_time}",
+        updated,
+    )
+    if "Today's date (UTC):" in updated or "Current time (UTC):" in updated:
+        return updated
+    return (
+        f"{updated}\n\nToday's date (UTC): {resolved_today}\n"
+        f"Current time (UTC): {resolved_time}\n"
+    )
 
 
 def get_default_system_instructions() -> str:

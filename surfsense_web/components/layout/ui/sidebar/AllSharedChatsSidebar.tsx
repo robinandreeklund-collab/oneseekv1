@@ -6,6 +6,7 @@ import {
 	ArchiveIcon,
 	MessageCircleMore,
 	MoreHorizontal,
+	Pencil,
 	RotateCcwIcon,
 	Search,
 	Trash2,
@@ -19,6 +20,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -68,6 +77,10 @@ export function AllSharedChatsSidebar({
 	const [showArchived, setShowArchived] = useState(false);
 	const [mounted, setMounted] = useState(false);
 	const [openDropdownId, setOpenDropdownId] = useState<number | null>(null);
+	const [renameThreadId, setRenameThreadId] = useState<number | null>(null);
+	const [renameValue, setRenameValue] = useState("");
+	const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+	const [isRenaming, setIsRenaming] = useState(false);
 	const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
 
 	const isSearchMode = !!debouncedSearchQuery.trim();
@@ -95,6 +108,12 @@ export function AllSharedChatsSidebar({
 		return () => {
 			document.body.style.overflow = "";
 		};
+	}, [open]);
+
+	useEffect(() => {
+		if (!open) {
+			setRenameDialogOpen(false);
+		}
 	}, [open]);
 
 	const {
@@ -200,6 +219,38 @@ export function AllSharedChatsSidebar({
 		},
 		[queryClient, searchSpaceId, t]
 	);
+
+	const openRenameDialog = useCallback((threadId: number, currentTitle: string) => {
+		setRenameThreadId(threadId);
+		setRenameValue(currentTitle || "");
+		setRenameDialogOpen(true);
+	}, []);
+
+	const handleRenameThread = useCallback(async () => {
+		if (!renameThreadId) return;
+		const trimmedTitle = renameValue.trim();
+		if (!trimmedTitle) {
+			toast.error("Ange ett namn för chatten.");
+			return;
+		}
+		setIsRenaming(true);
+		try {
+			await updateThread(renameThreadId, { title: trimmedTitle });
+			toast.success("Chatten har bytt namn.");
+			queryClient.invalidateQueries({ queryKey: ["all-threads", searchSpaceId] });
+			queryClient.invalidateQueries({ queryKey: ["search-threads", searchSpaceId] });
+			queryClient.invalidateQueries({ queryKey: ["threads", searchSpaceId] });
+			queryClient.invalidateQueries({
+				queryKey: ["threads", "detail", renameThreadId],
+			});
+			setRenameDialogOpen(false);
+		} catch (error) {
+			console.error("Error renaming thread:", error);
+			toast.error("Det gick inte att byta namn på chatten.");
+		} finally {
+			setIsRenaming(false);
+		}
+	}, [queryClient, renameThreadId, renameValue, searchSpaceId]);
 
 	const handleClearSearch = useCallback(() => {
 		setSearchQuery("");
@@ -374,6 +425,14 @@ export function AllSharedChatsSidebar({
 													</DropdownMenuTrigger>
 													<DropdownMenuContent align="end" className="w-40 z-80">
 														<DropdownMenuItem
+															onClick={() => openRenameDialog(thread.id, thread.title)}
+															disabled={isBusy}
+														>
+															<Pencil className="mr-2 h-4 w-4" />
+															<span>Byt namn</span>
+														</DropdownMenuItem>
+														<DropdownMenuSeparator />
+														<DropdownMenuItem
 															onClick={() => handleToggleArchive(thread.id, thread.archived)}
 															disabled={isArchiving}
 														>
@@ -432,6 +491,44 @@ export function AllSharedChatsSidebar({
 					</motion.div>
 				</>
 			)}
+			<Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+				<DialogContent className="sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>Byt namn på chatt</DialogTitle>
+						<DialogDescription>Ge chatten ett nytt namn.</DialogDescription>
+					</DialogHeader>
+					<div className="space-y-3">
+						<Input
+							value={renameValue}
+							onChange={(event) => setRenameValue(event.target.value)}
+							placeholder="Skriv ett namn"
+							onKeyDown={(event) => {
+								if (event.key === "Enter") {
+									event.preventDefault();
+									handleRenameThread();
+								}
+							}}
+						/>
+					</div>
+					<DialogFooter>
+						<Button
+							type="button"
+							variant="outline"
+							onClick={() => setRenameDialogOpen(false)}
+							disabled={isRenaming}
+						>
+							Avbryt
+						</Button>
+						<Button
+							type="button"
+							onClick={handleRenameThread}
+							disabled={isRenaming || !renameValue.trim()}
+						>
+							Spara
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</AnimatePresence>,
 		document.body
 	);

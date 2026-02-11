@@ -30,6 +30,20 @@ export {
 	DisplayImageResultSchema,
 	DisplayImageToolUI,
 } from "./display-image";
+export {
+	type GeoapifyStaticMapArgs,
+	GeoapifyStaticMapArgsSchema,
+	type GeoapifyStaticMapResult,
+	GeoapifyStaticMapResultSchema,
+	GeoapifyStaticMapToolUI,
+} from "./geoapify-static-map";
+export {
+	type ImageGalleryArgs,
+	ImageGalleryArgsSchema,
+	type ImageGalleryResult,
+	ImageGalleryResultSchema,
+	DisplayImageGalleryToolUI,
+} from "./image-gallery";
 export { GeneratePodcastToolUI } from "./generate-podcast";
 export {
 	Image,

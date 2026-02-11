@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from .admin_prompts_routes import router as admin_prompts_router
 from .airtable_add_connector_route import (
     router as airtable_add_connector_router,
 )
@@ -73,3 +74,4 @@ router.include_router(composio_router)  # Composio OAuth and toolkit management
 router.include_router(public_chat_router)  # Public chat sharing and cloning
 router.include_router(public_global_chat_router)  # Public global model chat
 router.include_router(incentive_tasks_router)  # Incentive tasks for earning free pages
+router.include_router(admin_prompts_router)  # Admin prompt overrides

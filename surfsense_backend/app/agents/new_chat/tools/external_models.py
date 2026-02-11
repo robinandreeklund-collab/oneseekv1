@@ -17,7 +17,7 @@ from langchain_core.tools import tool
 
 from app.agents.new_chat.llm_config import PROVIDER_MAP, load_llm_config_from_yaml
 
-EXTERNAL_SYSTEM_PROMPT = (
+DEFAULT_EXTERNAL_SYSTEM_PROMPT = (
     "You are a helpful assistant. Answer the user's question clearly and concisely."
 )
 EXTERNAL_MODEL_TIMEOUT_SECONDS = 90
@@ -208,7 +208,10 @@ def describe_external_model_config(config: dict) -> dict[str, str]:
 
 
 async def _call_litellm(
-    config: dict, query: str, timeout_seconds: int
+    config: dict,
+    query: str,
+    timeout_seconds: int,
+    system_prompt: str,
 ) -> tuple[str, dict[str, int] | None]:
     model_string = _build_model_string(config)
     api_key = str(config.get("api_key") or "").strip()
@@ -219,7 +222,7 @@ async def _call_litellm(
         response = await litellm.acompletion(
             model=model_string,
             messages=[
-                {"role": "system", "content": EXTERNAL_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query},
             ],
             api_key=api_key,
@@ -245,6 +248,7 @@ async def call_external_model(
     query: str,
     timeout_seconds: int = EXTERNAL_MODEL_TIMEOUT_SECONDS,
     config: dict | None = None,
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     config = config or load_llm_config_from_yaml(spec.config_id)
     if not config:
@@ -273,7 +277,12 @@ async def call_external_model(
 
     start = time.monotonic()
     try:
-        content, usage = await _call_litellm(config, query, timeout_seconds)
+        content, usage = await _call_litellm(
+            config,
+            query,
+            timeout_seconds,
+            system_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+        )
     except Exception as exc:
         latency_ms = int((time.monotonic() - start) * 1000)
         return {
@@ -329,7 +338,6 @@ def create_external_model_tool(spec: ExternalModelSpec):
     The tool uses the global LLM config ID specified in the spec.
     """
 
-    @tool(name=spec.tool_name)
     async def external_model_tool(query: str) -> dict[str, Any]:
         """
         Call an externally configured model for compare mode.
@@ -343,4 +351,7 @@ def create_external_model_tool(spec: ExternalModelSpec):
 
         return await call_external_model(spec=spec, query=query)
 
-    return external_model_tool
+    return tool(
+        spec.tool_name,
+        description=f"Call the external model {spec.display} for compare.",
+    )(external_model_tool)
