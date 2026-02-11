@@ -863,6 +863,7 @@ async def stream_new_chat(
         repeat_buffer = ""
         suppress_repeat = False
         repeat_candidate = False
+        format_tail = ""
 
         # Track thinking steps for chain-of-thought display
         thinking_step_counter = 0
@@ -1014,6 +1015,20 @@ async def stream_new_chat(
             cleaned = critic_inline_re.sub("", text)
             return cleaned.rstrip()
 
+        heading_prefix_re = re.compile(r"([^\n])(?=##\s)")
+
+        def format_headings(text: str) -> str:
+            nonlocal format_tail
+            if not text:
+                return text
+            combined = f"{format_tail}{text}"
+            formatted = heading_prefix_re.sub(r"\1\n\n", combined)
+            if len(formatted) <= 2:
+                format_tail = formatted
+                return ""
+            format_tail = formatted[-2:]
+            return formatted[:-2]
+
         def filter_critic_json(text: str) -> str:
             nonlocal suppress_critic, critic_buffer
             if not text:
@@ -1153,6 +1168,7 @@ async def stream_new_chat(
                     if content and isinstance(content, str):
                         content = filter_critic_json(content)
                         content = filter_repeated_output(content)
+                        content = format_headings(content)
                         if not content:
                             continue
                         # Start a new text block if needed
@@ -2510,6 +2526,13 @@ async def stream_new_chat(
                     current_text_id = None
 
         # Ensure text block is closed
+        if format_tail:
+            if current_text_id is None:
+                current_text_id = streaming_service.generate_text_id()
+                yield streaming_service.format_text_start(current_text_id)
+            yield streaming_service.format_text_delta(current_text_id, format_tail)
+            accumulated_text += format_tail
+            format_tail = ""
         if repeat_buffer and not suppress_repeat:
             if current_text_id is None:
                 current_text_id = streaming_service.generate_text_id()
