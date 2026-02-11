@@ -10,7 +10,8 @@ from typing import Any
 
 import httpx
 
-BOLAGSVERKET_BASE_URL = "https://api.bolagsverket.se/open-data/v2"
+BOLAGSVERKET_DEFAULT_BASE_URL = "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1"
+BOLAGSVERKET_BASE_URL = os.getenv("BOLAGSVERKET_BASE_URL", BOLAGSVERKET_DEFAULT_BASE_URL)
 BOLAGSVERKET_SOURCE = "Bolagsverket Open Data API"
 BOLAGSVERKET_DEFAULT_TIMEOUT = 20.0
 BOLAGSVERKET_CACHE_TTL = 60 * 60 * 24  # 1 day
@@ -45,11 +46,17 @@ class BolagsverketService:
         self,
         *,
         api_key: str | None = None,
-        base_url: str = BOLAGSVERKET_BASE_URL,
+        base_url: str | None = None,
         timeout: float = BOLAGSVERKET_DEFAULT_TIMEOUT,
         redis_url: str | None = None,
     ) -> None:
         self.api_key = (api_key or os.getenv("BOLAGSVERKET_API_KEY") or "").strip()
+        self.subscription_key = (
+            os.getenv("BOLAGSVERKET_SUBSCRIPTION_KEY") or ""
+        ).strip()
+        self.force_oauth = (
+            os.getenv("BOLAGSVERKET_USE_OAUTH", "").strip().lower() in {"1", "true", "yes"}
+        )
         self.client_id = (
             os.getenv("BOLAGSVERKET_CLIENT_ID") or ""
         ).strip()
@@ -62,7 +69,10 @@ class BolagsverketService:
         self.token_scope = (
             os.getenv("BOLAGSVERKET_SCOPE") or ""
         ).strip()
-        self.base_url = base_url.rstrip("/")
+        resolved_base_url = (
+            base_url or os.getenv("BOLAGSVERKET_BASE_URL") or BOLAGSVERKET_BASE_URL
+        )
+        self.base_url = resolved_base_url.rstrip("/")
         self.timeout = timeout
         self._redis_url = redis_url or os.getenv("REDIS_APP_URL") or ""
         self._redis_client = None
@@ -166,8 +176,17 @@ class BolagsverketService:
         return access_token
 
     async def _get_auth_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
         if self.api_key:
-            return {"X-Api-Key": self.api_key}
+            headers["X-Api-Key"] = self.api_key
+        if self.subscription_key:
+            headers["Ocp-Apim-Subscription-Key"] = self.subscription_key
+        if headers:
+            return headers
+        if self._uses_vardefulla_api() and not self.force_oauth:
+            return {}
+        if not (self.client_id and self.client_secret and self.token_url):
+            return {}
         if self._token and time.time() < self._token_expires_at:
             return {"Authorization": f"Bearer {self._token}"}
         async with self._token_lock:
@@ -175,6 +194,67 @@ class BolagsverketService:
                 return {"Authorization": f"Bearer {self._token}"}
             token = await self._fetch_token()
             return {"Authorization": f"Bearer {token}"}
+
+    def _uses_vardefulla_api(self) -> bool:
+        return "vardefulla-datamangder" in self.base_url
+
+    async def _post_with_fallbacks(
+        self, path: str, bodies: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any], bool]:
+        last_error: str | None = None
+        for body in bodies:
+            try:
+                return await self._request_json("POST", path, json_body=body)
+            except RuntimeError as exc:
+                last_error = str(exc)
+        raise RuntimeError(last_error or "Bolagsverket API request failed.")
+
+    def _build_orgnr_bodies(self, orgnr: str) -> list[dict[str, Any]]:
+        cleaned = _clean_orgnr(orgnr)
+        return [
+            {"organisationsnummer": cleaned},
+            {"organisationsnummer": [cleaned]},
+            {"organisationsnummerLista": [cleaned]},
+            {"orgnr": cleaned},
+        ]
+
+    async def is_alive(self) -> tuple[dict[str, Any], bool]:
+        return await self._request_json("GET", "isalive")
+
+    async def get_organisationer(
+        self,
+        *,
+        orgnr: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        bodies: list[dict[str, Any]] = []
+        if payload:
+            bodies.append(payload)
+        if orgnr:
+            bodies.extend(self._build_orgnr_bodies(orgnr))
+        if not bodies:
+            raise ValueError("Missing orgnr/payload for organisationer request.")
+        return await self._post_with_fallbacks("organisationer", bodies)
+
+    async def get_dokumentlista(
+        self,
+        *,
+        orgnr: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        bodies: list[dict[str, Any]] = []
+        if payload:
+            bodies.append(payload)
+        if orgnr:
+            bodies.extend(self._build_orgnr_bodies(orgnr))
+        if not bodies:
+            raise ValueError("Missing orgnr/payload for dokumentlista request.")
+        return await self._post_with_fallbacks("dokumentlista", bodies)
+
+    async def get_dokument(self, dokument_id: str) -> tuple[dict[str, Any], bool]:
+        return await self._request_json(
+            "GET", f"dokument/{dokument_id}", cache_ttl=BOLAGSVERKET_CACHE_TTL
+        )
 
     async def _request_json(
         self,
@@ -250,18 +330,24 @@ class BolagsverketService:
 
     async def get_company_basic(self, orgnr: str) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET", f"foretag/{orgnr}", cache_ttl=BOLAGSVERKET_CACHE_TTL
         )
 
     async def get_company_status(self, orgnr: str) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET", f"foretag/{orgnr}/status", cache_ttl=BOLAGSVERKET_CACHE_TTL
         )
 
     async def get_company_address(self, orgnr: str) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET", f"foretag/{orgnr}/adress", cache_ttl=BOLAGSVERKET_CACHE_TTL
         )
@@ -269,6 +355,8 @@ class BolagsverketService:
     async def search_by_name(
         self, name: str, *, limit: int = 5, offset: int = 0
     ) -> tuple[dict[str, Any], bool]:
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(payload={"namn": name})
         return await self._request_json(
             "GET",
             "foretag",
@@ -280,6 +368,8 @@ class BolagsverketService:
         self, orgnr: str
     ) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET",
             "foretag",
@@ -290,6 +380,8 @@ class BolagsverketService:
     async def search_by_industry(
         self, sni: str, *, limit: int = 5, offset: int = 0
     ) -> tuple[dict[str, Any], bool]:
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(payload={"sni": sni})
         return await self._request_json(
             "GET",
             "foretag",
@@ -300,6 +392,8 @@ class BolagsverketService:
     async def search_by_region(
         self, region: str, *, limit: int = 5, offset: int = 0
     ) -> tuple[dict[str, Any], bool]:
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(payload={"lan": region})
         return await self._request_json(
             "GET",
             "foretag",
@@ -310,6 +404,8 @@ class BolagsverketService:
     async def search_by_status(
         self, status: str, *, limit: int = 5, offset: int = 0
     ) -> tuple[dict[str, Any], bool]:
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(payload={"status": status})
         return await self._request_json(
             "GET",
             "foretag",
@@ -321,6 +417,8 @@ class BolagsverketService:
         self, orgnr: str, *, year: int | None = None
     ) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_dokumentlista(orgnr=orgnr)
         params = {"ar": year} if year else None
         return await self._request_json(
             "GET", f"foretag/{orgnr}/bokslut", params=params, cache_ttl=BOLAGSVERKET_CACHE_TTL
@@ -330,6 +428,8 @@ class BolagsverketService:
         self, orgnr: str, *, year: int | None = None
     ) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_dokumentlista(orgnr=orgnr)
         params = {"ar": year} if year else None
         return await self._request_json(
             "GET",
@@ -342,6 +442,8 @@ class BolagsverketService:
         self, orgnr: str, *, year: int | None = None
     ) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_dokumentlista(orgnr=orgnr)
         params = {"ar": year} if year else None
         return await self._request_json(
             "GET", f"foretag/{orgnr}/nyckeltal", params=params, cache_ttl=BOLAGSVERKET_CACHE_TTL
@@ -349,30 +451,40 @@ class BolagsverketService:
 
     async def get_board(self, orgnr: str) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET", f"foretag/{orgnr}/styrelse", cache_ttl=BOLAGSVERKET_CACHE_TTL
         )
 
     async def get_owners(self, orgnr: str) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET", f"foretag/{orgnr}/agare", cache_ttl=BOLAGSVERKET_CACHE_TTL
         )
 
     async def get_signatories(self, orgnr: str) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET", f"foretag/{orgnr}/firmatecknare", cache_ttl=BOLAGSVERKET_CACHE_TTL
         )
 
     async def get_f_tax_status(self, orgnr: str) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET", f"foretag/{orgnr}/fskatt", cache_ttl=BOLAGSVERKET_CACHE_TTL
         )
 
     async def get_vat_status(self, orgnr: str) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET", f"foretag/{orgnr}/moms", cache_ttl=BOLAGSVERKET_CACHE_TTL
         )
@@ -381,6 +493,8 @@ class BolagsverketService:
         self, orgnr: str
     ) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         return await self._request_json(
             "GET", f"foretag/{orgnr}/konkurs", cache_ttl=BOLAGSVERKET_CACHE_TTL
         )
@@ -393,6 +507,8 @@ class BolagsverketService:
         to_date: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         orgnr = _clean_orgnr(orgnr)
+        if self._uses_vardefulla_api():
+            return await self.get_organisationer(orgnr=orgnr)
         params: dict[str, Any] = {}
         if from_date:
             params["from"] = from_date

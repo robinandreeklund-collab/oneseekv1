@@ -1,6 +1,6 @@
-# Bolagsverket Open Data API (v2.0) – OnSeek Integration
+# Bolagsverket API – OnSeek Integration
 
-Denna guide beskriver hur Bolagsverket Open Data API (v2.0) är integrerad i OnSeek via `langgraph-bigtool`.
+Denna guide beskriver hur Bolagsverket‑API:er är integrerade i OnSeek via `langgraph-bigtool`.
 Syftet är att ge snabba, fokuserade verktyg för bolagsdata utan att explodera kontexten.
 
 ## Översikt
@@ -8,10 +8,27 @@ Syftet är att ge snabba, fokuserade verktyg för bolagsdata utan att explodera 
 - **Namespace:** `tools/bolag/bolagsverket_*`
 - **Autentisering:**  
   - `X-Api-Key` via `BOLAGSVERKET_API_KEY`, eller  
-  - OAuth2 client credentials via `BOLAGSVERKET_CLIENT_ID` + `BOLAGSVERKET_CLIENT_SECRET`
+  - `Ocp-Apim-Subscription-Key` via `BOLAGSVERKET_SUBSCRIPTION_KEY`, eller  
+  - OAuth2 client credentials via `BOLAGSVERKET_CLIENT_ID` + `BOLAGSVERKET_CLIENT_SECRET`  
 - **Caching:** Redis TTL 1 dag (för GET‑anrop)
 - **Rate‑limit:** Exponentiell backoff vid 429 (retry)
 - **Citations:** Alla verktyg ingestas som `TOOL_OUTPUT` för citat med `chunk_id`
+
+## Endpoint‑varianter
+
+OnSeek stödjer två varianter (styrt av `BOLAGSVERKET_BASE_URL`):
+
+### 1) Värdefulla datamängder (gateway)
+- **Base URL:** `https://gw.api.bolagsverket.se/vardefulla-datamangder/v1`
+- **Endpoints:**
+  - `GET /isalive`
+  - `POST /organisationer`
+  - `POST /dokumentlista`
+  - `GET /dokument/{dokumentId}`
+
+### 2) Open Data API (v2)
+- **Base URL:** `https://api.bolagsverket.se/open-data/v2`
+- **Endpoints:** `/foretag/...` m.fl.
 
 ## Namespace‑struktur
 
@@ -111,18 +128,33 @@ Syftet är att ge snabba, fokuserade verktyg för bolagsdata utan att explodera 
 
 Lägg till i `.env` (välj ett av alternativen):
 
+**Base URL (gateway eller open data):**
+```
+BOLAGSVERKET_BASE_URL="https://gw.api.bolagsverket.se/vardefulla-datamangder/v1"
+```
+
 **Alternativ A – API‑nyckel**
 ```
 BOLAGSVERKET_API_KEY="..."
 ```
 
-**Alternativ B – Client credentials**
+**Alternativ B – API‑gateway subscription key**
+```
+BOLAGSVERKET_SUBSCRIPTION_KEY="..."
+```
+
+**Alternativ C – Client credentials**
 ```
 BOLAGSVERKET_CLIENT_ID="..."
 BOLAGSVERKET_CLIENT_SECRET="..."
 BOLAGSVERKET_TOKEN_URL="..."
 # (valfritt)
 BOLAGSVERKET_SCOPE=""
+```
+
+**Tvinga OAuth även mot gateway (valfritt)**
+```
+BOLAGSVERKET_USE_OAUTH=TRUE
 ```
 
 Redis används om `REDIS_APP_URL` är satt. Om Redis saknas körs verktygen utan cache.
