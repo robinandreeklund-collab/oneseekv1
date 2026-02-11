@@ -20,6 +20,7 @@ from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
 from app.agents.new_chat.system_prompt import append_datetime_context
+from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
     EXTERNAL_MODEL_SPECS,
@@ -837,6 +838,7 @@ async def create_supervisor_agent(
     search_space_id = dependencies.get("search_space_id")
     user_id = dependencies.get("user_id")
     thread_id = dependencies.get("thread_id")
+    trafik_tool_ids = [definition.tool_id for definition in TRAFIKVERKET_TOOL_DEFINITIONS]
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
     def _build_compare_external_tool(spec):
@@ -1008,7 +1010,10 @@ async def create_supervisor_agent(
         if prompt:
             messages.append(SystemMessage(content=prompt))
         messages.append(HumanMessage(content=task))
-        state = {"messages": messages, "selected_tool_ids": []}
+        selected_tool_ids: list[str] = []
+        if name == "trafik":
+            selected_tool_ids = list(trafik_tool_ids)
+        state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
         config = {
             "configurable": {"thread_id": f"{dependencies['thread_id']}:{name}"},
             "recursion_limit": 60,
@@ -1019,6 +1024,30 @@ async def create_supervisor_agent(
             messages_out = result.get("messages") or []
             if messages_out:
                 response_text = str(getattr(messages_out[-1], "content", "") or "")
+            if name == "trafik":
+                used_trafik_tool = any(
+                    isinstance(message, ToolMessage)
+                    and getattr(message, "name", "").startswith("trafikverket_")
+                    for message in messages_out
+                )
+                if not used_trafik_tool:
+                    enforced_prompt = (
+                        f"{prompt}\n\n"
+                        "Du måste använda retrieve_tools och sedan minst ett "
+                        "trafikverket_* verktyg innan du svarar."
+                    )
+                    enforced_messages = [SystemMessage(content=enforced_prompt), HumanMessage(content=task)]
+                    retry_state = {
+                        "messages": enforced_messages,
+                        "selected_tool_ids": selected_tool_ids,
+                    }
+                    result = await worker.ainvoke(retry_state, config=config)
+                    if isinstance(result, dict):
+                        messages_out = result.get("messages") or []
+                        if messages_out:
+                            response_text = str(
+                                getattr(messages_out[-1], "content", "") or ""
+                            )
         if not response_text:
             response_text = str(result)
 
