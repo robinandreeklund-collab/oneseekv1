@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { diffLines } from "diff";
 import { useAtomValue } from "jotai";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import type { AgentPromptItem } from "@/contracts/types/agent-prompts.types";
@@ -100,6 +100,29 @@ const AGENT_NODES = [
 	{ label: "Smalltalk", agent: "smalltalk", keys: ["agent.smalltalk.system"] },
 ];
 
+function buildGraphEdges(agents: Array<{ agent: string }>) {
+	const edges: Array<{ from: string; to: string }> = [];
+	for (const node of ROUTER_NODES) {
+		edges.push({
+			from: `prompt:${node.key}`,
+			to: "prompt:agent.supervisor.system",
+		});
+	}
+	for (const agent of agents) {
+		edges.push({
+			from: "prompt:agent.supervisor.system",
+			to: `agent:${agent.agent}`,
+		});
+		for (const systemNode of SYSTEM_NODES) {
+			edges.push({
+				from: `agent:${agent.agent}`,
+				to: `prompt:${systemNode.key}`,
+			});
+		}
+	}
+	return edges;
+}
+
 export function AdminPromptsPage() {
 	const { data: currentUser } = useAtomValue(currentUserAtom);
 	const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -110,6 +133,11 @@ export function AdminPromptsPage() {
 	const [pendingScrollKey, setPendingScrollKey] = useState<string | null>(null);
 	const [highlightKey, setHighlightKey] = useState<string | null>(null);
 	const promptRefs = useMemo(() => new Map<string, HTMLDivElement>(), []);
+	const graphRef = useRef<HTMLDivElement | null>(null);
+	const nodeRefs = useRef(new Map<string, HTMLButtonElement>());
+	const [graphLines, setGraphLines] = useState<
+		Array<{ x1: number; y1: number; x2: number; y2: number }>
+	>([]);
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-prompts"],
@@ -270,6 +298,50 @@ export function AdminPromptsPage() {
 		return () => window.clearTimeout(timer);
 	}, [pendingScrollKey, promptRefs, filteredItems, viewMode]);
 
+	useEffect(() => {
+		const updateLines = () => {
+			const container = graphRef.current;
+			if (!container) return;
+			const containerRect = container.getBoundingClientRect();
+			const edges = buildGraphEdges(visibleAgentNodes);
+			const next: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+			for (const edge of edges) {
+				const fromNode = nodeRefs.current.get(edge.from);
+				const toNode = nodeRefs.current.get(edge.to);
+				if (!fromNode || !toNode) continue;
+				const fromRect = fromNode.getBoundingClientRect();
+				const toRect = toNode.getBoundingClientRect();
+				next.push({
+					x1: fromRect.right - containerRect.left,
+					y1: fromRect.top - containerRect.top + fromRect.height / 2,
+					x2: toRect.left - containerRect.left,
+					y2: toRect.top - containerRect.top + toRect.height / 2,
+				});
+			}
+			setGraphLines(next);
+		};
+
+		const handleResize = () => {
+			window.requestAnimationFrame(updateLines);
+		};
+
+		window.requestAnimationFrame(updateLines);
+		window.addEventListener("resize", handleResize);
+		const observer =
+			graphRef.current && typeof ResizeObserver !== "undefined"
+				? new ResizeObserver(handleResize)
+				: null;
+		if (graphRef.current && observer) {
+			observer.observe(graphRef.current);
+		}
+		return () => {
+			window.removeEventListener("resize", handleResize);
+			if (observer && graphRef.current) {
+				observer.unobserve(graphRef.current);
+			}
+		};
+	}, [visibleAgentNodes]);
+
 	const hasChanges = useMemo(() => {
 		return items.some((item) => (overrides[item.key] ?? "") !== (item.override_prompt ?? ""));
 	}, [items, overrides]);
@@ -300,6 +372,14 @@ export function AdminPromptsPage() {
 		}
 		setViewMode("system");
 		setPendingScrollKey(target.key ?? null);
+	};
+
+	const registerNode = (id: string) => (node: HTMLButtonElement | null) => {
+		if (node) {
+			nodeRefs.current.set(id, node);
+		} else {
+			nodeRefs.current.delete(id);
+		}
 	};
 
 	const renderPromptCard = (item: AgentPromptItem) => {
@@ -485,8 +565,25 @@ export function AdminPromptsPage() {
 				</p>
 			</div>
 
-			<div className="mt-6 rounded-xl border border-border/40 bg-muted/20 p-4">
-				<div className="flex flex-wrap items-center justify-between gap-2">
+			<div
+				ref={graphRef}
+				className="mt-6 rounded-xl border border-border/40 bg-muted/20 p-4 relative overflow-hidden"
+			>
+				<svg className="pointer-events-none absolute inset-0 h-full w-full z-0">
+					{graphLines.map((line, index) => (
+						<line
+							key={`line-${index}`}
+							x1={line.x1}
+							y1={line.y1}
+							x2={line.x2}
+							y2={line.y2}
+							stroke="hsl(var(--border))"
+							strokeWidth="1"
+							opacity="0.6"
+						/>
+					))}
+				</svg>
+				<div className="relative z-10 flex flex-wrap items-center justify-between gap-2">
 					<div>
 						<h3 className="text-sm font-semibold">Prompt-översikt</h3>
 						<p className="text-xs text-muted-foreground">
@@ -498,8 +595,8 @@ export function AdminPromptsPage() {
 					</Badge>
 				</div>
 
-				<div className="mt-4 grid items-start gap-4 lg:grid-cols-[1fr_auto_1fr_auto_2fr_auto_1fr]">
-					<div className="space-y-2">
+				<div className="relative z-10 mt-4 grid items-start gap-4 lg:grid-cols-[1fr_auto_1fr_auto_2fr_auto_1fr]">
+					<div className="space-y-2 relative">
 						<p className="text-xs font-semibold uppercase text-muted-foreground">Router</p>
 						{ROUTER_NODES.map((node) => (
 							<button
@@ -508,6 +605,7 @@ export function AdminPromptsPage() {
 								onClick={() =>
 									handleNodeClick({ mode: "system", key: node.key })
 								}
+								ref={registerNode(`prompt:${node.key}`)}
 								className={cn(
 									"w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
 								)}
@@ -526,13 +624,14 @@ export function AdminPromptsPage() {
 						<ArrowRightIcon className="size-4" />
 					</div>
 
-					<div className="space-y-2">
+					<div className="space-y-2 relative">
 						<p className="text-xs font-semibold uppercase text-muted-foreground">Supervisor</p>
 						<button
 							type="button"
 							onClick={() =>
 								handleNodeClick({ mode: "system", key: "agent.supervisor.system" })
 							}
+							ref={registerNode("prompt:agent.supervisor.system")}
 							className={cn(
 								"w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
 							)}
@@ -550,7 +649,7 @@ export function AdminPromptsPage() {
 						<ArrowRightIcon className="size-4" />
 					</div>
 
-					<div className="space-y-2">
+					<div className="space-y-2 relative">
 						<p className="text-xs font-semibold uppercase text-muted-foreground">Agenter</p>
 						<div className="grid gap-2 sm:grid-cols-2">
 							{visibleAgentNodes.map((node) => (
@@ -564,6 +663,7 @@ export function AdminPromptsPage() {
 											key: node.keys[0],
 										})
 									}
+									ref={registerNode(`agent:${node.agent}`)}
 									className={cn(
 										"rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
 									)}
@@ -583,7 +683,7 @@ export function AdminPromptsPage() {
 						<ArrowRightIcon className="size-4" />
 					</div>
 
-					<div className="space-y-2">
+					<div className="space-y-2 relative">
 						<p className="text-xs font-semibold uppercase text-muted-foreground">System</p>
 						{SYSTEM_NODES.map((node) => (
 							<button
@@ -592,6 +692,7 @@ export function AdminPromptsPage() {
 								onClick={() =>
 									handleNodeClick({ mode: "system", key: node.key })
 								}
+								ref={registerNode(`prompt:${node.key}`)}
 								className={cn(
 									"w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
 								)}
