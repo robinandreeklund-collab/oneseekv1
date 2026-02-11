@@ -21,6 +21,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { ArrowRightIcon } from "lucide-react";
 
 type PromptViewMode = "all" | "agent" | "system";
 
@@ -52,6 +53,53 @@ const SYSTEM_SECTION_LABELS: Record<string, string> = {
 	other: "Övrigt",
 };
 
+const ROUTER_NODES = [
+	{ label: "Top-level router", key: "router.top_level" },
+	{ label: "Knowledge router", key: "router.knowledge" },
+	{ label: "Action router", key: "router.action" },
+];
+
+const SYSTEM_NODES = [
+	{ label: "Supervisor", key: "agent.supervisor.system" },
+	{ label: "Worker · Knowledge", key: "agent.worker.knowledge" },
+	{ label: "Worker · Action", key: "agent.worker.action" },
+	{ label: "Compare · Analysis", key: "compare.analysis.system" },
+	{ label: "Compare · External", key: "compare.external.system" },
+];
+
+const AGENT_NODES = [
+	{
+		label: "Knowledge",
+		agent: "knowledge",
+		keys: [
+			"agent.knowledge.system",
+			"agent.knowledge.docs",
+			"agent.knowledge.internal",
+			"agent.knowledge.external",
+		],
+	},
+	{
+		label: "Action",
+		agent: "action",
+		keys: [
+			"agent.action.system",
+			"agent.action.web",
+			"agent.action.media",
+			"agent.action.travel",
+			"agent.action.data",
+		],
+	},
+	{ label: "Media", agent: "media", keys: ["agent.media.system"] },
+	{ label: "Browser", agent: "browser", keys: ["agent.browser.system"] },
+	{ label: "Code", agent: "code", keys: ["agent.code.system"] },
+	{ label: "Kartor", agent: "kartor", keys: ["agent.kartor.system"] },
+	{ label: "Statistics", agent: "statistics", keys: ["agent.statistics.system"] },
+	{ label: "Bolag", agent: "bolag", keys: ["agent.bolag.system"] },
+	{ label: "Trafik", agent: "trafik", keys: ["agent.trafik.system"] },
+	{ label: "Synthesis", agent: "synthesis", keys: ["agent.synthesis.system"] },
+	{ label: "Smalltalk", agent: "smalltalk", keys: ["agent.smalltalk.system"] },
+];
+
 export function AdminPromptsPage() {
 	const { data: currentUser } = useAtomValue(currentUserAtom);
 	const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -59,6 +107,9 @@ export function AdminPromptsPage() {
 	const [viewMode, setViewMode] = useState<PromptViewMode>("all");
 	const [selectedAgent, setSelectedAgent] = useState<string>("action");
 	const [searchTerm, setSearchTerm] = useState("");
+	const [pendingScrollKey, setPendingScrollKey] = useState<string | null>(null);
+	const [highlightKey, setHighlightKey] = useState<string | null>(null);
+	const promptRefs = useMemo(() => new Map<string, HTMLDivElement>(), []);
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-prompts"],
@@ -208,9 +259,48 @@ export function AdminPromptsPage() {
 		}).filter((group) => group.items.length > 0);
 	}, [filteredMeta, viewMode]);
 
+	useEffect(() => {
+		if (!pendingScrollKey) return;
+		const node = promptRefs.get(pendingScrollKey);
+		if (!node) return;
+		node.scrollIntoView({ behavior: "smooth", block: "start" });
+		setHighlightKey(pendingScrollKey);
+		setPendingScrollKey(null);
+		const timer = window.setTimeout(() => setHighlightKey(null), 1800);
+		return () => window.clearTimeout(timer);
+	}, [pendingScrollKey, promptRefs, filteredItems, viewMode]);
+
 	const hasChanges = useMemo(() => {
 		return items.some((item) => (overrides[item.key] ?? "") !== (item.override_prompt ?? ""));
 	}, [items, overrides]);
+
+	const activeKeys = useMemo(() => {
+		const active = new Set<string>();
+		for (const item of items) {
+			if (item.override_prompt?.trim()) {
+				active.add(item.key);
+			}
+		}
+		return active;
+	}, [items]);
+
+	const isNodeActive = (keys: string[]) => keys.some((key) => activeKeys.has(key));
+
+	const handleNodeClick = (target: {
+		mode: PromptViewMode;
+		key?: string;
+		agent?: string;
+	}) => {
+		setSearchTerm("");
+		if (target.mode === "agent" && target.agent) {
+			setViewMode("agent");
+			setSelectedAgent(target.agent);
+			setPendingScrollKey(target.key ?? null);
+			return;
+		}
+		setViewMode("system");
+		setPendingScrollKey(target.key ?? null);
+	};
 
 	const renderPromptCard = (item: AgentPromptItem) => {
 		const overrideValue = overrides[item.key] ?? "";
@@ -218,7 +308,16 @@ export function AdminPromptsPage() {
 		const isDirty = overrideValue !== (item.override_prompt ?? "");
 
 		return (
-			<div key={item.key} className="rounded-lg border border-border/50 bg-card p-4 shadow-sm">
+			<div
+				key={item.key}
+				ref={(node) => {
+					if (node) promptRefs.set(item.key, node);
+				}}
+				className={cn(
+					"rounded-lg border border-border/50 bg-card p-4 shadow-sm scroll-mt-24",
+					highlightKey === item.key && "ring-2 ring-primary/40"
+				)}
+			>
 				<div className="flex items-start justify-between gap-4">
 					<div>
 						<div className="flex flex-wrap items-center gap-2">
@@ -278,6 +377,11 @@ export function AdminPromptsPage() {
 			</div>
 		);
 	};
+
+	const visibleAgentNodes = useMemo(
+		() => AGENT_NODES.filter((node) => availableAgents.includes(node.agent)),
+		[availableAgents]
+	);
 
 	const handleSave = async () => {
 		setIsSaving(true);
@@ -379,6 +483,129 @@ export function AdminPromptsPage() {
 				<p className="text-xs text-muted-foreground">
 					Visar {filteredItems.length} av {items.length} promtar
 				</p>
+			</div>
+
+			<div className="mt-6 rounded-xl border border-border/40 bg-muted/20 p-4">
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<div>
+						<h3 className="text-sm font-semibold">Prompt-översikt</h3>
+						<p className="text-xs text-muted-foreground">
+							Klicka på en nod för att öppna och redigera prompten.
+						</p>
+					</div>
+					<Badge variant="secondary" className="text-[11px]">
+						Visar kopplingar mellan router, supervisor, agenter och systempromtar
+					</Badge>
+				</div>
+
+				<div className="mt-4 grid items-start gap-4 lg:grid-cols-[1fr_auto_1fr_auto_2fr_auto_1fr]">
+					<div className="space-y-2">
+						<p className="text-xs font-semibold uppercase text-muted-foreground">Router</p>
+						{ROUTER_NODES.map((node) => (
+							<button
+								key={node.key}
+								type="button"
+								onClick={() =>
+									handleNodeClick({ mode: "system", key: node.key })
+								}
+								className={cn(
+									"w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
+								)}
+							>
+								<div className="flex items-center justify-between gap-2">
+									<span>{node.label}</span>
+									{isNodeActive([node.key]) && (
+										<span className="h-2 w-2 rounded-full bg-emerald-500" />
+									)}
+								</div>
+							</button>
+						))}
+					</div>
+
+					<div className="hidden h-full items-center justify-center text-muted-foreground lg:flex">
+						<ArrowRightIcon className="size-4" />
+					</div>
+
+					<div className="space-y-2">
+						<p className="text-xs font-semibold uppercase text-muted-foreground">Supervisor</p>
+						<button
+							type="button"
+							onClick={() =>
+								handleNodeClick({ mode: "system", key: "agent.supervisor.system" })
+							}
+							className={cn(
+								"w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
+							)}
+						>
+							<div className="flex items-center justify-between gap-2">
+								<span>Supervisor</span>
+								{isNodeActive(["agent.supervisor.system"]) && (
+									<span className="h-2 w-2 rounded-full bg-emerald-500" />
+								)}
+							</div>
+						</button>
+					</div>
+
+					<div className="hidden h-full items-center justify-center text-muted-foreground lg:flex">
+						<ArrowRightIcon className="size-4" />
+					</div>
+
+					<div className="space-y-2">
+						<p className="text-xs font-semibold uppercase text-muted-foreground">Agenter</p>
+						<div className="grid gap-2 sm:grid-cols-2">
+							{visibleAgentNodes.map((node) => (
+								<button
+									key={node.agent}
+									type="button"
+									onClick={() =>
+										handleNodeClick({
+											mode: "agent",
+											agent: node.agent,
+											key: node.keys[0],
+										})
+									}
+									className={cn(
+										"rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
+									)}
+								>
+									<div className="flex items-center justify-between gap-2">
+										<span>{node.label}</span>
+										{isNodeActive(node.keys) && (
+											<span className="h-2 w-2 rounded-full bg-emerald-500" />
+										)}
+									</div>
+								</button>
+							))}
+						</div>
+					</div>
+
+					<div className="hidden h-full items-center justify-center text-muted-foreground lg:flex">
+						<ArrowRightIcon className="size-4" />
+					</div>
+
+					<div className="space-y-2">
+						<p className="text-xs font-semibold uppercase text-muted-foreground">System</p>
+						{SYSTEM_NODES.map((node) => (
+							<button
+								key={node.key}
+								type="button"
+								onClick={() =>
+									handleNodeClick({ mode: "system", key: node.key })
+								}
+								className={cn(
+									"w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
+								)}
+							>
+								<div className="flex items-center justify-between gap-2">
+									<span>{node.label}</span>
+									{isNodeActive([node.key]) && (
+										<span className="h-2 w-2 rounded-full bg-emerald-500" />
+									)}
+								</div>
+							</button>
+						))}
+					</div>
+				</div>
 			</div>
 
 			{isLoading && (
