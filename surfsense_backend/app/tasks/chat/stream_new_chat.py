@@ -863,6 +863,7 @@ async def stream_new_chat(
         repeat_buffer = ""
         suppress_repeat = False
         repeat_candidate = False
+        final_emitted = False
 
         # Track thinking steps for chain-of-thought display
         thinking_step_counter = 0
@@ -1004,10 +1005,21 @@ async def stream_new_chat(
                 return str(parents[-1])
             return None
 
+        critic_inline_re = re.compile(
+            r"\{\s*\"status\"\s*:\s*\"(?:ok|needs_more)\"[^}]*\}", re.DOTALL
+        )
+
+        def strip_critic_inline(text: str) -> str:
+            if not text:
+                return text
+            cleaned = critic_inline_re.sub("", text)
+            return cleaned.rstrip()
+
         def filter_critic_json(text: str) -> str:
             nonlocal suppress_critic, critic_buffer
             if not text:
                 return text
+            text = strip_critic_inline(text)
             output = ""
             remaining = text
             while remaining:
@@ -1136,6 +1148,8 @@ async def stream_new_chat(
 
             # Handle chat model stream events (text streaming)
             if event_type == "on_chat_model_stream":
+                if final_emitted:
+                    continue
                 chunk = event.get("data", {}).get("chunk")
                 if chunk and hasattr(chunk, "content"):
                     content = chunk.content
@@ -1793,10 +1807,13 @@ async def stream_new_chat(
                         items=completed_items,
                     )
                     if final_response and response:
-                        response_text = str(response)
+                        response_text = strip_critic_inline(str(response))
                         response_text = filter_critic_json(response_text)
                         response_text = filter_repeated_output(response_text)
                         if response_text:
+                            final_emitted = True
+                            suppress_repeat = True
+                            repeat_buffer = ""
                             completion_event = complete_current_step()
                             if completion_event:
                                 yield completion_event
