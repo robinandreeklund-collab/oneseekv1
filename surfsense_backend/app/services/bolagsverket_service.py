@@ -90,17 +90,46 @@ class BolagsverketService:
             raise ValueError(
                 "Missing Bolagsverket OAuth credentials (client_id, client_secret, token_url)."
             )
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            data = {
-                "grant_type": "client_credentials",
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-            }
-            if self.token_scope:
-                data["scope"] = self.token_scope
-            response = await client.post(self.token_url, data=data)
-            response.raise_for_status()
-            payload = response.json()
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": BOLAGSVERKET_USER_AGENT,
+        }
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+        }
+        if self.token_scope:
+            data["scope"] = self.token_scope
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout, follow_redirects=True
+            ) as client:
+                response = await client.post(self.token_url, data=data, headers=headers)
+                if response.status_code in {400, 401}:
+                    fallback_data = {"grant_type": "client_credentials"}
+                    if self.token_scope:
+                        fallback_data["scope"] = self.token_scope
+                    response = await client.post(
+                        self.token_url,
+                        data=fallback_data,
+                        headers=headers,
+                        auth=(self.client_id, self.client_secret),
+                    )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"{exc.response.status_code}: {exc.response.text} (url={self.token_url})"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError(
+                _format_request_error(exc, url=self.token_url)
+            ) from exc
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Invalid JSON response: {_format_request_error(exc, url=self.token_url)}"
+            ) from exc
         access_token = str(payload.get("access_token") or "").strip()
         if not access_token:
             raise RuntimeError("Bolagsverket OAuth token missing access_token.")
