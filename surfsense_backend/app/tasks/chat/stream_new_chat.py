@@ -68,6 +68,7 @@ from app.agents.new_chat.trafik_prompts import (
 )
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
 from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
+from app.agents.new_chat.tools.display_image import extract_domain, generate_image_id
 from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.db import ChatTraceSession, Document, SurfsenseDocsDocument, async_session_maker
 from app.schemas.new_chat import ChatAttachment
@@ -263,6 +264,78 @@ def _summarize_text(value: object, limit: int = 140) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
+
+
+def _build_image_payload(
+    *,
+    src: str,
+    alt: str,
+    title: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    image_id = generate_image_id(src)
+    if not src.startswith(("http://", "https://")):
+        src = f"https://{src}"
+    domain = extract_domain(src)
+    ratio = "16:9"
+    return {
+        "id": image_id,
+        "assetId": src,
+        "src": src,
+        "alt": alt,
+        "title": title,
+        "description": description,
+        "domain": domain,
+        "ratio": ratio,
+    }
+
+
+def _collect_trafikverket_photos(payload: Any) -> list[dict[str, str]]:
+    photos: list[dict[str, str]] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if any(
+                key in node
+                for key in (
+                    "PhotoUrlFullsize",
+                    "PhotoUrl",
+                    "PhotoUrlThumbnail",
+                    "PhotoUrlSketch",
+                )
+            ):
+                src = (
+                    node.get("PhotoUrlFullsize")
+                    or node.get("PhotoUrl")
+                    or node.get("PhotoUrlThumbnail")
+                    or node.get("PhotoUrlSketch")
+                )
+                if isinstance(src, str) and src:
+                    title = str(
+                        node.get("CameraId")
+                        or node.get("Name")
+                        or "Trafikverket kamera"
+                    )
+                    description = str(
+                        node.get("Description")
+                        or node.get("LocationDescriptor")
+                        or ""
+                    ).strip()
+                    photos.append(
+                        {
+                            "src": src,
+                            "title": title,
+                            "description": description,
+                        }
+                    )
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(payload)
+    return photos
 
 
 async def stream_new_chat(
@@ -2314,6 +2387,30 @@ async def stream_new_chat(
                         tool_call_id,
                         payload,
                     )
+                if tool_name in {
+                    "trafikverket_kameror_snapshot",
+                    "trafikverket_kameror_lista",
+                }:
+                    photos = _collect_trafikverket_photos(tool_output)
+                    if photos:
+                        photo = photos[0]
+                        display_call_id = streaming_service.generate_tool_call_id()
+                        image_args = {
+                            "src": photo["src"],
+                            "alt": "Trafikverket kamera",
+                            "title": photo.get("title"),
+                            "description": photo.get("description"),
+                        }
+                        image_result = _build_image_payload(**image_args)
+                        yield streaming_service.format_tool_input_start(
+                            display_call_id, "display_image"
+                        )
+                        yield streaming_service.format_tool_input_available(
+                            display_call_id, "display_image", image_args
+                        )
+                        yield streaming_service.format_tool_output_available(
+                            display_call_id, image_result
+                        )
                     yield streaming_service.format_terminal_info(
                         f"Tool {tool_name} completed", "success"
                     )
