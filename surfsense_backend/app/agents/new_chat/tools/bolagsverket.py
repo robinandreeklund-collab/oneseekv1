@@ -262,6 +262,13 @@ def _build_payload(
     }
 
 
+def _format_error(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return message
+    return type(exc).__name__
+
+
 async def _ingest_output(
     *,
     connector_service: ConnectorService | None,
@@ -321,7 +328,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_info_status", description=BOLAGSVERKET_TOOL_DEFINITIONS[1].description)
     async def bolagsverket_info_status(orgnr: str) -> dict[str, Any]:
@@ -345,7 +352,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_info_adress", description=BOLAGSVERKET_TOOL_DEFINITIONS[2].description)
     async def bolagsverket_info_adress(orgnr: str) -> dict[str, Any]:
@@ -369,7 +376,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_sok_namn", description=BOLAGSVERKET_TOOL_DEFINITIONS[3].description)
     async def bolagsverket_sok_namn(name: str, limit: int = 5, offset: int = 0) -> dict[str, Any]:
@@ -393,7 +400,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_sok_orgnr", description=BOLAGSVERKET_TOOL_DEFINITIONS[4].description)
     async def bolagsverket_sok_orgnr(orgnr: str) -> dict[str, Any]:
@@ -417,7 +424,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_sok_bransch", description=BOLAGSVERKET_TOOL_DEFINITIONS[5].description)
     async def bolagsverket_sok_bransch(sni: str, limit: int = 5, offset: int = 0) -> dict[str, Any]:
@@ -441,7 +448,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_sok_region", description=BOLAGSVERKET_TOOL_DEFINITIONS[6].description)
     async def bolagsverket_sok_region(region: str, limit: int = 5, offset: int = 0) -> dict[str, Any]:
@@ -465,7 +472,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_sok_status", description=BOLAGSVERKET_TOOL_DEFINITIONS[7].description)
     async def bolagsverket_sok_status(status: str, limit: int = 5, offset: int = 0) -> dict[str, Any]:
@@ -489,7 +496,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_ekonomi_bokslut", description=BOLAGSVERKET_TOOL_DEFINITIONS[8].description)
     async def bolagsverket_ekonomi_bokslut(orgnr: str, year: int | None = None) -> dict[str, Any]:
@@ -513,7 +520,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_ekonomi_arsredovisning", description=BOLAGSVERKET_TOOL_DEFINITIONS[9].description)
     async def bolagsverket_ekonomi_arsredovisning(orgnr: str, year: int | None = None) -> dict[str, Any]:
@@ -537,7 +544,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_ekonomi_nyckeltal", description=BOLAGSVERKET_TOOL_DEFINITIONS[10].description)
     async def bolagsverket_ekonomi_nyckeltal(orgnr: str, year: int | None = None) -> dict[str, Any]:
@@ -561,7 +568,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_styrelse_ledning", description=BOLAGSVERKET_TOOL_DEFINITIONS[11].description)
     async def bolagsverket_styrelse_ledning(orgnr: str) -> dict[str, Any]:
@@ -585,7 +592,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_styrelse_agarstruktur", description=BOLAGSVERKET_TOOL_DEFINITIONS[12].description)
     async def bolagsverket_styrelse_agarstruktur(orgnr: str) -> dict[str, Any]:
@@ -609,7 +616,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_styrelse_firmatecknare", description=BOLAGSVERKET_TOOL_DEFINITIONS[13].description)
     async def bolagsverket_styrelse_firmatecknare(orgnr: str) -> dict[str, Any]:
@@ -633,7 +640,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_registrering_fskatt", description=BOLAGSVERKET_TOOL_DEFINITIONS[14].description)
     async def bolagsverket_registrering_fskatt(orgnr: str) -> dict[str, Any]:
@@ -657,7 +664,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_registrering_moms", description=BOLAGSVERKET_TOOL_DEFINITIONS[15].description)
     async def bolagsverket_registrering_moms(orgnr: str) -> dict[str, Any]:
@@ -681,7 +688,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_registrering_konkurs", description=BOLAGSVERKET_TOOL_DEFINITIONS[16].description)
     async def bolagsverket_registrering_konkurs(orgnr: str) -> dict[str, Any]:
@@ -705,7 +712,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_registrering_andringar", description=BOLAGSVERKET_TOOL_DEFINITIONS[17].description)
     async def bolagsverket_registrering_andringar(
@@ -733,7 +740,7 @@ def build_bolagsverket_tool_registry(
             )
             return payload
         except Exception as exc:
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _format_error(exc)}
 
     registry = {
         "bolagsverket_info_basic": bolagsverket_info_basic,
