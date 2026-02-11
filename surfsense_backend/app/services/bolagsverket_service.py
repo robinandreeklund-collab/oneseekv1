@@ -93,43 +93,66 @@ class BolagsverketService:
         headers = {
             "Accept": "application/json",
             "User-Agent": BOLAGSVERKET_USER_AGENT,
+            "Content-Type": "application/x-www-form-urlencoded",
         }
-        data = {
-            "grant_type": "client_credentials",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-        }
-        if self.token_scope:
-            data["scope"] = self.token_scope
-        try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout, follow_redirects=True
-            ) as client:
-                response = await client.post(self.token_url, data=data, headers=headers)
-                if response.status_code in {400, 401}:
-                    fallback_data = {"grant_type": "client_credentials"}
-                    if self.token_scope:
-                        fallback_data["scope"] = self.token_scope
+        timeout = httpx.Timeout(self.timeout, connect=min(10.0, self.timeout))
+        modes = [
+            {"label": "basic", "use_basic_auth": True, "include_secret": False, "http2": False},
+            {"label": "body", "use_basic_auth": False, "include_secret": True, "http2": False},
+            {"label": "basic-http2", "use_basic_auth": True, "include_secret": False, "http2": True},
+        ]
+        last_error: str | None = None
+        payload: dict[str, Any] | None = None
+        for idx, mode in enumerate(modes):
+            data = {"grant_type": "client_credentials"}
+            if self.token_scope:
+                data["scope"] = self.token_scope
+            if mode["include_secret"]:
+                data["client_id"] = self.client_id
+                data["client_secret"] = self.client_secret
+            try:
+                async with httpx.AsyncClient(
+                    timeout=timeout,
+                    follow_redirects=True,
+                    http2=mode["http2"],
+                ) as client:
                     response = await client.post(
                         self.token_url,
-                        data=fallback_data,
+                        data=data,
                         headers=headers,
-                        auth=(self.client_id, self.client_secret),
+                        auth=(self.client_id, self.client_secret)
+                        if mode["use_basic_auth"]
+                        else None,
                     )
-                response.raise_for_status()
-                payload = response.json()
-        except httpx.HTTPStatusError as exc:
-            raise RuntimeError(
-                f"{exc.response.status_code}: {exc.response.text} (url={self.token_url})"
-            ) from exc
-        except httpx.RequestError as exc:
-            raise RuntimeError(
-                _format_request_error(exc, url=self.token_url)
-            ) from exc
-        except ValueError as exc:
-            raise RuntimeError(
-                f"Invalid JSON response: {_format_request_error(exc, url=self.token_url)}"
-            ) from exc
+                    if response.status_code in {400, 401} and not mode["use_basic_auth"]:
+                        last_error = (
+                            f"{response.status_code}: {response.text} "
+                            f"(url={self.token_url}, mode={mode['label']})"
+                        )
+                        continue
+                    response.raise_for_status()
+                    payload = response.json()
+                    break
+            except httpx.HTTPStatusError as exc:
+                last_error = (
+                    f"{exc.response.status_code}: {exc.response.text} "
+                    f"(url={self.token_url}, mode={mode['label']})"
+                )
+            except httpx.RequestError as exc:
+                last_error = (
+                    f"{_format_request_error(exc, url=self.token_url)} "
+                    f"(mode={mode['label']})"
+                )
+            except ValueError as exc:
+                last_error = (
+                    f"Invalid JSON response: {_format_request_error(exc, url=self.token_url)} "
+                    f"(mode={mode['label']})"
+                )
+            await asyncio.sleep(0.5 * (2**idx))
+        else:
+            raise RuntimeError(last_error or "Bolagsverket OAuth token request failed.")
+        if payload is None:
+            raise RuntimeError(last_error or "Bolagsverket OAuth token request failed.")
         access_token = str(payload.get("access_token") or "").strip()
         if not access_token:
             raise RuntimeError("Bolagsverket OAuth token missing access_token.")
