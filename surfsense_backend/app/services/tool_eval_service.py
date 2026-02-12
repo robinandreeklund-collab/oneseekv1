@@ -552,7 +552,7 @@ def evaluate_single(
             result.failure_reasons.append(f"Agent selection failed: {str(e)}")
     
     # Layer 4: Tool retrieval
-    if tc.expected_tools:
+    if tc.expected_tools is not None:  # Fixed: handle empty list [] as valid expectation
         try:
             tool_config = config.tool_retrieval
             primary_namespaces = [tuple(ns) for ns in tool_config.get("primary_namespaces", [["tools"]])]
@@ -613,25 +613,28 @@ def evaluate_single(
             result.failure_reasons.append(f"Tool retrieval failed: {str(e)}")
     
     # Calculate composite score
+    # Fixed: Use explicit match type scores that are monotonically decreasing
+    # exact > acceptable > partial > no_match
     weights = config.scoring
     route_score = 1.0 if result.route_correct else 0.0
     sub_route_score = 1.0 if result.sub_route_correct else 0.0
     agent_score = result.agent_overlap
     
-    tool_score = 0.0
-    if result.tool_match_type == "exact_match":
-        tool_score = 1.0
-    elif result.tool_match_type == "acceptable_match":
-        tool_score = 0.8
-    elif result.tool_match_type == "partial_match":
-        tool_score = 0.4
+    # Fixed scoring: monotonic tool_score based on match_type
+    tool_score_map = {
+        "exact_match": 1.0,
+        "acceptable_match": 0.7,  # Changed from 0.8 to ensure exact > acceptable
+        "partial_match": 0.4,
+        "no_match": 0.0,
+    }
+    tool_score = tool_score_map.get(result.tool_match_type, 0.0)
     
+    # Fixed: Simpler composite formula without double-counting
     result.composite_score = (
         route_score * weights.get("route_correct_weight", 0.15) +
         sub_route_score * weights.get("sub_route_correct_weight", 0.10) +
         agent_score * weights.get("agent_correct_weight", 0.25) +
-        tool_score * weights.get("exact_match_weight", 0.30) +
-        (tool_score if result.tool_match_type == "acceptable_match" else 0.0) * weights.get("acceptable_match_weight", 0.20)
+        tool_score * weights.get("tool_weight", 0.50)  # Single tool weight
     )
     
     # Track latency
@@ -673,30 +676,56 @@ def run_evaluation(
             all_results.append(result)
         
         # Aggregate category metrics
+        # Fixed: Calculate metrics only on applicable test cases
         if category_results:
-            cat_result.route_accuracy = sum(
-                1 for r in category_results if r.route_correct
-            ) / len(category_results)
+            # Route accuracy: only on cases with expected_route
+            route_cases = [r for r in category_results if r.test_case_id]  # All have routes
+            if route_cases:
+                cat_result.route_accuracy = sum(
+                    1 for r in route_cases if r.route_correct
+                ) / len(route_cases)
             
-            cat_result.sub_route_accuracy = sum(
-                1 for r in category_results if r.sub_route_correct
-            ) / len(category_results)
+            # Sub-route accuracy: only on cases with expected_sub_route
+            sub_route_cases = [
+                r for r in category_results 
+                if any(tc.id == r.test_case_id and tc.expected_sub_route is not None 
+                       for tc in category.test_cases)
+            ]
+            if sub_route_cases:
+                cat_result.sub_route_accuracy = sum(
+                    1 for r in sub_route_cases if r.sub_route_correct
+                ) / len(sub_route_cases)
             
-            cat_result.agent_exact_rate = sum(
-                1 for r in category_results if r.agent_correct
-            ) / len(category_results)
+            # Agent metrics: only if agent_definitions provided
+            if agent_definitions is not None:
+                agent_cases = [
+                    r for r in category_results
+                    if any(tc.id == r.test_case_id and tc.expected_agents is not None
+                           for tc in category.test_cases)
+                ]
+                if agent_cases:
+                    cat_result.agent_exact_rate = sum(
+                        1 for r in agent_cases if r.agent_correct
+                    ) / len(agent_cases)
+                    
+                    cat_result.agent_avg_overlap = sum(
+                        r.agent_overlap for r in agent_cases
+                    ) / len(agent_cases)
             
-            cat_result.agent_avg_overlap = sum(
-                r.agent_overlap for r in category_results
-            ) / len(category_results)
-            
-            cat_result.tool_exact_rate = sum(
-                1 for r in category_results if r.tool_match_type == "exact_match"
-            ) / len(category_results)
-            
-            cat_result.tool_acceptable_rate = sum(
-                1 for r in category_results if r.tool_match_type in ("exact_match", "acceptable_match")
-            ) / len(category_results)
+            # Tool metrics: only on cases with expected_tools
+            tool_cases = [
+                r for r in category_results
+                if any(tc.id == r.test_case_id and tc.expected_tools is not None
+                       for tc in category.test_cases)
+            ]
+            if tool_cases:
+                cat_result.tool_exact_rate = sum(
+                    1 for r in tool_cases if r.tool_match_type == "exact_match"
+                ) / len(tool_cases)
+                
+                cat_result.tool_acceptable_rate = sum(
+                    1 for r in tool_cases if r.tool_match_type in ("exact_match", "acceptable_match")
+                ) / len(tool_cases)
             
             cat_result.tool_partial_rate = sum(
                 1 for r in category_results if r.tool_match_type == "partial_match"
@@ -718,35 +747,65 @@ def run_evaluation(
         report.category_results.append(cat_result)
     
     # Aggregate overall metrics
+    # Fixed: Calculate only on applicable test cases per layer
     report.total_tests = len(all_results)
     if all_results:
-        report.overall_route_accuracy = sum(
-            1 for r in all_results if r.route_correct
-        ) / len(all_results)
+        # Get all test cases for filtering
+        all_test_cases = []
+        for category in suite.categories:
+            all_test_cases.extend(category.test_cases)
         
-        report.overall_sub_route_accuracy = sum(
-            1 for r in all_results if r.sub_route_correct
-        ) / len(all_results)
+        tc_by_id = {tc.id: tc for tc in all_test_cases}
         
-        report.overall_agent_exact_rate = sum(
-            1 for r in all_results if r.agent_correct
-        ) / len(all_results)
+        # Route accuracy: all cases
+        route_results = all_results  # All have expected_route
+        if route_results:
+            report.overall_route_accuracy = sum(
+                1 for r in route_results if r.route_correct
+            ) / len(route_results)
         
-        report.overall_agent_avg_overlap = sum(
-            r.agent_overlap for r in all_results
-        ) / len(all_results)
+        # Sub-route accuracy: only cases with expected_sub_route
+        sub_route_results = [
+            r for r in all_results
+            if tc_by_id.get(r.test_case_id) and tc_by_id[r.test_case_id].expected_sub_route is not None
+        ]
+        if sub_route_results:
+            report.overall_sub_route_accuracy = sum(
+                1 for r in sub_route_results if r.sub_route_correct
+            ) / len(sub_route_results)
         
-        report.overall_tool_exact_rate = sum(
-            1 for r in all_results if r.tool_match_type == "exact_match"
-        ) / len(all_results)
+        # Agent metrics: only if agent_definitions provided and cases with expected_agents
+        if agent_definitions is not None:
+            agent_results = [
+                r for r in all_results
+                if tc_by_id.get(r.test_case_id) and tc_by_id[r.test_case_id].expected_agents is not None
+            ]
+            if agent_results:
+                report.overall_agent_exact_rate = sum(
+                    1 for r in agent_results if r.agent_correct
+                ) / len(agent_results)
+                
+                report.overall_agent_avg_overlap = sum(
+                    r.agent_overlap for r in agent_results
+                ) / len(agent_results)
         
-        report.overall_tool_acceptable_rate = sum(
-            1 for r in all_results if r.tool_match_type in ("exact_match", "acceptable_match")
-        ) / len(all_results)
-        
-        report.overall_tool_partial_rate = sum(
-            1 for r in all_results if r.tool_match_type == "partial_match"
-        ) / len(all_results)
+        # Tool metrics: only cases with expected_tools
+        tool_results = [
+            r for r in all_results
+            if tc_by_id.get(r.test_case_id) and tc_by_id[r.test_case_id].expected_tools is not None
+        ]
+        if tool_results:
+            report.overall_tool_exact_rate = sum(
+                1 for r in tool_results if r.tool_match_type == "exact_match"
+            ) / len(tool_results)
+            
+            report.overall_tool_acceptable_rate = sum(
+                1 for r in tool_results if r.tool_match_type in ("exact_match", "acceptable_match")
+            ) / len(tool_results)
+            
+            report.overall_tool_partial_rate = sum(
+                1 for r in tool_results if r.tool_match_type == "partial_match"
+            ) / len(tool_results)
         
         report.overall_avg_composite_score = sum(
             r.composite_score for r in all_results
