@@ -47,10 +47,7 @@ from app.agents.new_chat.supervisor_agent import (
     AgentDefinition,
 )
 
-from app.agents.new_chat.llm_config import (
-    load_llm_config_from_yaml,
-    create_chat_litellm_from_config,
-)
+from app.agents.new_chat.llm_config import create_chat_litellm_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -379,8 +376,14 @@ async def test_single_query_live(
     await _require_admin(session, user)
     
     try:
-        # Get LLM configuration (use default config ID = 1)
-        llm_config = load_llm_config_from_yaml(llm_config_id=1)
+        # Get LLM configuration - use first global config (same as public chat)
+        llm_config = None
+        if config.GLOBAL_LLM_CONFIGS:
+            for cfg in config.GLOBAL_LLM_CONFIGS:
+                if isinstance(cfg, dict) and cfg.get("id") is not None:
+                    llm_config = cfg
+                    break
+        
         if not llm_config:
             raise HTTPException(
                 status_code=503,
