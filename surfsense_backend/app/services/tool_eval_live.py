@@ -28,9 +28,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.new_chat.supervisor_agent import create_supervisor_agent
 from app.agents.new_chat.llm_config import get_default_llm
 
-# Import tool registry builder
-from app.agents.new_chat.tools.registry import build_tools_async
-
 # Import stub tool builder from eval service
 from app.services.tool_eval_service import _build_stub_tool_registry
 
