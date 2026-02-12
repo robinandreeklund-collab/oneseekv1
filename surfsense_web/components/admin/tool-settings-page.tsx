@@ -248,6 +248,8 @@ export function ToolSettingsPage() {
 	const [includeDraftMetadata, setIncludeDraftMetadata] = useState(true);
 	const [evaluationResult, setEvaluationResult] =
 		useState<ToolEvaluationResponse | null>(null);
+	const [evalJobId, setEvalJobId] = useState<string | null>(null);
+	const [lastEvalJobNotice, setLastEvalJobNotice] = useState<string | null>(null);
 	const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(
 		new Set()
 	);
@@ -258,6 +260,17 @@ export function ToolSettingsPage() {
 		queryKey: ["admin-tool-settings"],
 		queryFn: () => adminToolSettingsApiService.getToolSettings(),
 		enabled: !!currentUser,
+	});
+
+	const { data: evalJobStatus } = useQuery({
+		queryKey: ["admin-tool-evaluation-job", evalJobId],
+		queryFn: () => adminToolSettingsApiService.getToolEvaluationStatus(evalJobId as string),
+		enabled: !!evalJobId,
+		refetchInterval: (query) => {
+			const status = query.state.data?.status;
+			if (!status) return 1200;
+			return status === "pending" || status === "running" ? 1200 : false;
+		},
 	});
 
 	const originalTools = useMemo(() => {
@@ -284,6 +297,26 @@ export function ToolSettingsPage() {
 		}
 	}, [data?.categories]);
 
+	useEffect(() => {
+		if (!evalJobStatus || !evalJobId) return;
+		if (evalJobStatus.status === "completed" && evalJobStatus.result) {
+			setEvaluationResult(evalJobStatus.result);
+			setSelectedSuggestionIds(new Set());
+			const noticeKey = `${evalJobId}:completed`;
+			if (lastEvalJobNotice !== noticeKey) {
+				toast.success("Eval-run klar");
+				setLastEvalJobNotice(noticeKey);
+			}
+		}
+		if (evalJobStatus.status === "failed") {
+			const noticeKey = `${evalJobId}:failed`;
+			if (lastEvalJobNotice !== noticeKey) {
+				toast.error(evalJobStatus.error || "Eval-run misslyckades");
+				setLastEvalJobNotice(noticeKey);
+			}
+		}
+	}, [evalJobStatus, evalJobId, lastEvalJobNotice]);
+
 	const changedToolIds = useMemo(() => {
 		return Object.keys(draftTools).filter((toolId) => {
 			const original = originalTools[toolId];
@@ -302,6 +335,12 @@ export function ToolSettingsPage() {
 		if (!draftRetrievalTuning || !data?.retrieval_tuning) return false;
 		return !isEqualTuning(draftRetrievalTuning, data.retrieval_tuning);
 	}, [draftRetrievalTuning, data?.retrieval_tuning]);
+
+	const isEvalJobRunning =
+		!!evalJobId &&
+		(!evalJobStatus ||
+			evalJobStatus.status === "pending" ||
+			evalJobStatus.status === "running");
 
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((prev) => ({
@@ -451,7 +490,7 @@ export function ToolSettingsPage() {
 		if (!parsedInput) return;
 		setIsEvaluating(true);
 		try {
-			const response = await adminToolSettingsApiService.evaluateToolSettings({
+			const started = await adminToolSettingsApiService.startToolEvaluation({
 				eval_name: parsedInput.eval_name,
 				target_success_rate: parsedInput.target_success_rate,
 				search_space_id: data?.search_space_id,
@@ -463,9 +502,11 @@ export function ToolSettingsPage() {
 						? draftRetrievalTuning
 						: undefined,
 			});
-			setEvaluationResult(response);
+			setEvalJobId(started.job_id);
+			setLastEvalJobNotice(null);
+			setEvaluationResult(null);
 			setSelectedSuggestionIds(new Set());
-			toast.success("Eval-run klar");
+			toast.info(`Eval-run startad (${started.total_tests} frågor)`);
 		} catch (err) {
 			toast.error("Eval-run misslyckades");
 		} finally {
@@ -948,8 +989,15 @@ export function ToolSettingsPage() {
 										Inkludera osparad draft (metadata + retrieval-vikter)
 									</span>
 								</div>
-								<Button onClick={handleRunEvaluation} disabled={isEvaluating}>
-									{isEvaluating ? "Kör eval..." : "Run Tool Evaluation"}
+								<Button
+									onClick={handleRunEvaluation}
+									disabled={isEvaluating || isEvalJobRunning}
+								>
+									{isEvaluating
+										? "Startar eval..."
+										: isEvalJobRunning
+											? "Eval körs..."
+											: "Run Tool Evaluation"}
 								</Button>
 							</div>
 							<Textarea
@@ -967,6 +1015,81 @@ export function ToolSettingsPage() {
 							)}
 						</CardContent>
 					</Card>
+
+					{evalJobId && (
+						<Card>
+							<CardHeader>
+								<CardTitle>Körstatus per fråga</CardTitle>
+								<CardDescription>
+									Jobb {evalJobId} · status {evalJobStatus?.status ?? "pending"}
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-3">
+								<div className="flex flex-wrap items-center gap-2 text-sm">
+									<Badge
+										variant={
+											evalJobStatus?.status === "failed"
+												? "destructive"
+												: evalJobStatus?.status === "completed"
+													? "default"
+													: "secondary"
+										}
+									>
+										{evalJobStatus?.status ?? "pending"}
+									</Badge>
+									<span>
+										{evalJobStatus?.completed_tests ?? 0}/
+										{evalJobStatus?.total_tests ?? 0} frågor färdiga
+									</span>
+								</div>
+								{evalJobStatus?.error && (
+									<Alert variant="destructive">
+										<AlertCircle className="h-4 w-4" />
+										<AlertDescription>{evalJobStatus.error}</AlertDescription>
+									</Alert>
+								)}
+								<div className="space-y-2">
+									{(evalJobStatus?.case_statuses ?? []).map((caseStatus) => (
+										<div
+											key={caseStatus.test_id}
+											className="rounded border p-2 text-xs space-y-1"
+										>
+											<div className="flex items-center justify-between gap-2">
+												<p className="font-medium">{caseStatus.test_id}</p>
+												<Badge
+													variant={
+														caseStatus.status === "failed"
+															? "destructive"
+															: caseStatus.status === "completed"
+																? "default"
+																: caseStatus.status === "running"
+																	? "secondary"
+																	: "outline"
+													}
+												>
+													{caseStatus.status}
+												</Badge>
+											</div>
+											<p className="text-muted-foreground">{caseStatus.question}</p>
+											{caseStatus.selected_tool && (
+												<p className="text-muted-foreground">
+													Valt verktyg: {caseStatus.selected_tool}
+												</p>
+											)}
+											{typeof caseStatus.passed === "boolean" && (
+												<p className="text-muted-foreground">
+													Resultat: {caseStatus.passed ? "Rätt" : "Fel"}
+												</p>
+											)}
+											{caseStatus.error && (
+												<p className="text-red-500">{caseStatus.error}</p>
+											)}
+										</div>
+									))}
+								</div>
+							</CardContent>
+						</Card>
+					)}
 
 					{evaluationResult && (
 						<>
@@ -1206,7 +1329,10 @@ export function ToolSettingsPage() {
 										>
 											Spara valda förslag
 										</Button>
-										<Button onClick={handleRunEvaluation} disabled={isEvaluating}>
+										<Button
+											onClick={handleRunEvaluation}
+											disabled={isEvaluating || isEvalJobRunning}
+										>
 											Kör om eval
 										</Button>
 										<Badge variant="outline">

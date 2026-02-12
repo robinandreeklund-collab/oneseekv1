@@ -172,3 +172,32 @@ def test_suggest_retrieval_tuning_fallback():
 
     assert suggestion is not None
     assert suggestion["proposed_tuning"]["embedding_weight"] >= 4.0
+
+
+def test_suggest_retrieval_tuning_when_all_passed_returns_no_change():
+    suggestion = asyncio.run(
+        suggest_retrieval_tuning(
+            evaluation_results=[
+                {
+                    "test_id": "t1",
+                    "question": "fraga",
+                    "passed": True,
+                    "passed_tool": True,
+                    "retrieval_hit_expected_tool": True,
+                }
+            ],
+            current_tuning={
+                "name_match_weight": 5.0,
+                "keyword_weight": 3.0,
+                "description_token_weight": 1.0,
+                "example_query_weight": 2.0,
+                "namespace_boost": 3.0,
+                "embedding_weight": 4.0,
+                "rerank_candidates": 24,
+            },
+            llm=None,
+        )
+    )
+
+    assert suggestion is not None
+    assert suggestion["proposed_tuning"] == suggestion["current_tuning"]

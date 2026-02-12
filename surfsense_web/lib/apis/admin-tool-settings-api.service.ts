@@ -8,6 +8,8 @@ import {
 	toolApplySuggestionsResponse,
 	toolEvaluationRequest,
 	toolEvaluationResponse,
+	toolEvaluationJobStatusResponse,
+	toolEvaluationStartResponse,
 	toolRetrievalTuning,
 	toolRetrievalTuningResponse,
 	toolSettingsResponse,
@@ -70,6 +72,28 @@ class AdminToolSettingsApiService {
 		return baseApiService.post("/api/v1/admin/tool-settings/evaluate", toolEvaluationResponse, {
 			body: parsed.data,
 		});
+	}
+
+	async startToolEvaluation(request: ToolEvaluationRequest) {
+		const parsed = toolEvaluationRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/evaluate/start",
+			toolEvaluationStartResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async getToolEvaluationStatus(jobId: string) {
+		return baseApiService.get(
+			`/api/v1/admin/tool-settings/evaluate/${jobId}`,
+			toolEvaluationJobStatusResponse
+		);
 	}
 
 	async generateSuggestions(request: ToolSuggestionRequest) {

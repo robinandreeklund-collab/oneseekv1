@@ -131,6 +131,35 @@ class ToolEvaluationResponse(BaseModel):
     search_space_id: int
 
 
+class ToolEvaluationStartResponse(BaseModel):
+    job_id: str
+    status: str
+    total_tests: int
+
+
+class ToolEvaluationCaseStatus(BaseModel):
+    test_id: str
+    question: str
+    status: str
+    selected_tool: str | None = None
+    selected_category: str | None = None
+    passed: bool | None = None
+    error: str | None = None
+
+
+class ToolEvaluationJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    total_tests: int
+    completed_tests: int
+    started_at: str | None = None
+    completed_at: str | None = None
+    updated_at: str
+    case_statuses: list[ToolEvaluationCaseStatus] = Field(default_factory=list)
+    result: ToolEvaluationResponse | None = None
+    error: str | None = None
+
+
 class ToolSuggestionRequest(BaseModel):
     search_space_id: int | None = None
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)

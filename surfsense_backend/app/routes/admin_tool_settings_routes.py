@@ -1,5 +1,8 @@
+import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,14 +16,18 @@ from app.db import (
     GlobalToolMetadataOverrideHistory,
     SearchSpaceMembership,
     User,
+    async_session_maker,
     get_async_session,
 )
 from app.schemas.admin_tool_settings import (
     ToolApplySuggestionsRequest,
     ToolApplySuggestionsResponse,
     ToolCategoryResponse,
+    ToolEvaluationCaseStatus,
+    ToolEvaluationJobStatusResponse,
     ToolEvaluationRequest,
     ToolEvaluationResponse,
+    ToolEvaluationStartResponse,
     ToolMetadataHistoryResponse,
     ToolMetadataItem,
     ToolMetadataUpdateItem,
@@ -57,6 +64,13 @@ from sqlalchemy.future import select
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+_EVAL_JOBS: dict[str, dict[str, Any]] = {}
+_EVAL_JOBS_LOCK = asyncio.Lock()
+_MAX_EVAL_JOBS = 100
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 async def _require_admin(
@@ -83,6 +97,44 @@ def _category_name(category_id: str) -> str:
     cleaned = (category_id or "general").replace("_", " ").replace("/", " / ")
     words = [word.capitalize() for word in cleaned.split()]
     return " ".join(words) or "General"
+
+
+async def _prune_eval_jobs() -> None:
+    if len(_EVAL_JOBS) <= _MAX_EVAL_JOBS:
+        return
+    finished = [
+        (job_id, payload)
+        for job_id, payload in _EVAL_JOBS.items()
+        if payload.get("status") in {"completed", "failed"}
+    ]
+    finished.sort(key=lambda item: str(item[1].get("updated_at") or ""))
+    overflow = len(_EVAL_JOBS) - _MAX_EVAL_JOBS
+    for job_id, _payload in finished[: max(0, overflow)]:
+        _EVAL_JOBS.pop(job_id, None)
+
+
+async def _update_eval_job(job_id: str, **updates: Any) -> None:
+    async with _EVAL_JOBS_LOCK:
+        job = _EVAL_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job["updated_at"] = _utcnow_iso()
+
+
+def _serialize_eval_job(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "total_tests": int(job.get("total_tests", 0)),
+        "completed_tests": int(job.get("completed_tests", 0)),
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+        "updated_at": job.get("updated_at") or _utcnow_iso(),
+        "case_statuses": job.get("case_statuses") or [],
+        "result": job.get("result"),
+        "error": job.get("error"),
+    }
 
 
 def _metadata_payload_from_item(item: ToolMetadataUpdateItem) -> dict[str, Any]:
@@ -237,6 +289,72 @@ async def _build_tool_settings_response(
         metadata_version_hash=compute_metadata_version_hash(tool_index),
         search_space_id=search_space_id,
     )
+
+
+async def _execute_tool_evaluation(
+    session: AsyncSession,
+    user: User,
+    *,
+    payload: ToolEvaluationRequest,
+    resolved_search_space_id: int,
+    progress_callback=None,
+) -> dict[str, Any]:
+    patch_map = _patch_map_from_updates(payload.metadata_patch)
+    tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=patch_map,
+        )
+    )
+    persisted_tuning = await get_global_tool_retrieval_tuning(session)
+    effective_tuning = (
+        normalize_tool_retrieval_tuning(payload.retrieval_tuning_override.model_dump())
+        if payload.retrieval_tuning_override
+        else persisted_tuning
+    )
+    llm = await get_agent_llm(session, resolved_search_space_id)
+    evaluation = await run_tool_evaluation(
+        tests=[
+            {
+                "id": test.id,
+                "question": test.question,
+                "expected": {
+                    "tool": test.expected.tool if test.expected else None,
+                    "category": test.expected.category if test.expected else None,
+                },
+                "allowed_tools": list(test.allowed_tools),
+            }
+            for test in payload.tests
+        ],
+        tool_index=tool_index,
+        llm=llm,
+        retrieval_limit=payload.retrieval_limit,
+        retrieval_tuning=effective_tuning,
+        progress_callback=progress_callback,
+    )
+    suggestions = await generate_tool_metadata_suggestions(
+        evaluation_results=evaluation["results"],
+        tool_index=tool_index,
+        llm=llm,
+    )
+    retrieval_tuning_suggestion = await suggest_retrieval_tuning(
+        evaluation_results=evaluation["results"],
+        current_tuning=effective_tuning,
+        llm=llm,
+    )
+    return {
+        "eval_name": payload.eval_name,
+        "target_success_rate": payload.target_success_rate,
+        "metrics": evaluation["metrics"],
+        "results": evaluation["results"],
+        "suggestions": suggestions,
+        "retrieval_tuning": effective_tuning,
+        "retrieval_tuning_suggestion": retrieval_tuning_suggestion,
+        "metadata_version_hash": compute_metadata_version_hash(tool_index),
+        "search_space_id": resolved_search_space_id,
+    }
 
 
 async def _apply_tool_metadata_updates(
@@ -438,61 +556,169 @@ async def evaluate_tool_settings(
         user,
         requested_search_space_id=payload.search_space_id,
     )
-    patch_map = _patch_map_from_updates(payload.metadata_patch)
-    tool_index, _persisted_overrides, _effective_overrides = (
-        await _build_tool_index_for_search_space(
-            session,
-            user,
-            search_space_id=resolved_search_space_id,
-            metadata_patch=patch_map,
+    return await _execute_tool_evaluation(
+        session,
+        user,
+        payload=payload,
+        resolved_search_space_id=resolved_search_space_id,
+    )
+
+
+async def _run_eval_job_background(
+    *,
+    job_id: str,
+    payload_data: dict[str, Any],
+    user_id: Any,
+) -> None:
+    await _update_eval_job(
+        job_id,
+        status="running",
+        started_at=_utcnow_iso(),
+        error=None,
+    )
+    try:
+        async with async_session_maker() as job_session:
+            payload = ToolEvaluationRequest(**payload_data)
+            user_result = await job_session.execute(select(User).filter(User.id == user_id))
+            job_user = user_result.scalars().first()
+            if job_user is None:
+                raise RuntimeError("Evaluation user context could not be loaded")
+            _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+                job_session,
+                job_user,
+                requested_search_space_id=payload.search_space_id,
+            )
+
+            async def _progress_callback(event: dict[str, Any]) -> None:
+                test_id = str(event.get("test_id") or "")
+                event_type = str(event.get("type") or "")
+                async with _EVAL_JOBS_LOCK:
+                    job = _EVAL_JOBS.get(job_id)
+                    if not job:
+                        return
+                    case_statuses = job.get("case_statuses") or []
+                    for case in case_statuses:
+                        if case.get("test_id") != test_id:
+                            continue
+                        if event_type == "test_started":
+                            case["status"] = "running"
+                            case["error"] = None
+                        elif event_type == "test_completed":
+                            case["status"] = "completed"
+                            case["selected_tool"] = event.get("selected_tool")
+                            case["selected_category"] = event.get("selected_category")
+                            case["passed"] = event.get("passed")
+                        elif event_type == "test_failed":
+                            case["status"] = "failed"
+                            case["error"] = str(event.get("error") or "Unknown error")
+                        break
+                    job["completed_tests"] = sum(
+                        1
+                        for case in case_statuses
+                        if case.get("status") in {"completed", "failed"}
+                    )
+                    job["updated_at"] = _utcnow_iso()
+
+            result = await _execute_tool_evaluation(
+                job_session,
+                job_user,
+                payload=payload,
+                resolved_search_space_id=resolved_search_space_id,
+                progress_callback=_progress_callback,
+            )
+            await _update_eval_job(
+                job_id,
+                status="completed",
+                completed_at=_utcnow_iso(),
+                completed_tests=len(payload.tests),
+                result=result,
+            )
+    except Exception as exc:
+        logger.exception("Tool evaluation job failed")
+        await _update_eval_job(
+            job_id,
+            status="failed",
+            completed_at=_utcnow_iso(),
+            error=str(exc),
+        )
+
+
+@router.post(
+    "/tool-settings/evaluate/start",
+    response_model=ToolEvaluationStartResponse,
+)
+async def start_tool_settings_evaluation(
+    payload: ToolEvaluationRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    if not payload.tests:
+        raise HTTPException(
+            status_code=400,
+            detail="Evaluation payload must include at least one test case",
+        )
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    normalized_payload = payload.model_copy(
+        update={"search_space_id": resolved_search_space_id}
+    )
+    case_statuses = [
+        ToolEvaluationCaseStatus(
+            test_id=test.id,
+            question=test.question,
+            status="pending",
+        ).model_dump()
+        for test in normalized_payload.tests
+    ]
+    job_id = uuid4().hex
+    job_payload = {
+        "job_id": job_id,
+        "status": "pending",
+        "total_tests": len(normalized_payload.tests),
+        "completed_tests": 0,
+        "started_at": None,
+        "completed_at": None,
+        "updated_at": _utcnow_iso(),
+        "created_at": _utcnow_iso(),
+        "case_statuses": case_statuses,
+        "result": None,
+        "error": None,
+    }
+    async with _EVAL_JOBS_LOCK:
+        _EVAL_JOBS[job_id] = job_payload
+        await _prune_eval_jobs()
+    asyncio.create_task(
+        _run_eval_job_background(
+            job_id=job_id,
+            payload_data=normalized_payload.model_dump(),
+            user_id=user.id,
         )
     )
-    persisted_tuning = await get_global_tool_retrieval_tuning(session)
-    effective_tuning = (
-        normalize_tool_retrieval_tuning(payload.retrieval_tuning_override.model_dump())
-        if payload.retrieval_tuning_override
-        else persisted_tuning
-    )
-    llm = await get_agent_llm(session, resolved_search_space_id)
-    evaluation = await run_tool_evaluation(
-        tests=[
-            {
-                "id": test.id,
-                "question": test.question,
-                "expected": {
-                    "tool": test.expected.tool if test.expected else None,
-                    "category": test.expected.category if test.expected else None,
-                },
-                "allowed_tools": list(test.allowed_tools),
-            }
-            for test in payload.tests
-        ],
-        tool_index=tool_index,
-        llm=llm,
-        retrieval_limit=payload.retrieval_limit,
-        retrieval_tuning=effective_tuning,
-    )
-    suggestions = await generate_tool_metadata_suggestions(
-        evaluation_results=evaluation["results"],
-        tool_index=tool_index,
-        llm=llm,
-    )
-    retrieval_tuning_suggestion = await suggest_retrieval_tuning(
-        evaluation_results=evaluation["results"],
-        current_tuning=effective_tuning,
-        llm=llm,
-    )
     return {
-        "eval_name": payload.eval_name,
-        "target_success_rate": payload.target_success_rate,
-        "metrics": evaluation["metrics"],
-        "results": evaluation["results"],
-        "suggestions": suggestions,
-        "retrieval_tuning": effective_tuning,
-        "retrieval_tuning_suggestion": retrieval_tuning_suggestion,
-        "metadata_version_hash": compute_metadata_version_hash(tool_index),
-        "search_space_id": resolved_search_space_id,
+        "job_id": job_id,
+        "status": "pending",
+        "total_tests": len(normalized_payload.tests),
     }
+
+
+@router.get(
+    "/tool-settings/evaluate/{job_id}",
+    response_model=ToolEvaluationJobStatusResponse,
+)
+async def get_tool_settings_evaluation_status(
+    job_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    await _require_admin(session, user)
+    async with _EVAL_JOBS_LOCK:
+        job = _EVAL_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Evaluation job not found")
+        return _serialize_eval_job(job)
 
 
 @router.post(

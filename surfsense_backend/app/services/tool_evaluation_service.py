@@ -374,6 +374,7 @@ async def run_tool_evaluation(
     llm,
     retrieval_limit: int = 5,
     retrieval_tuning: dict[str, Any] | None = None,
+    progress_callback=None,
 ) -> dict[str, Any]:
     retrieval_limit = max(1, min(int(retrieval_limit or 5), 15))
     normalized_tuning = normalize_retrieval_tuning(retrieval_tuning)
@@ -387,6 +388,16 @@ async def run_tool_evaluation(
     for idx, test in enumerate(tests):
         test_id = str(test.get("id") or f"case-{idx + 1}")
         question = str(test.get("question") or "").strip()
+        if progress_callback is not None:
+            event = {
+                "type": "test_started",
+                "test_id": test_id,
+                "index": idx,
+                "question": question,
+            }
+            maybe_result = progress_callback(event)
+            if hasattr(maybe_result, "__await__"):
+                await maybe_result
         expected = test.get("expected") or {}
         if not isinstance(expected, dict):
             expected = {}
@@ -400,63 +411,63 @@ async def run_tool_evaluation(
         if expected_tool and not allowed_tools:
             allowed_tools = [expected_tool]
 
-        retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
-            question,
-            tool_index=tool_index,
-            primary_namespaces=[("tools",)],
-            fallback_namespaces=[],
-            limit=max(retrieval_limit, 8),
-            trace_key=None,
-            tuning=normalized_tuning,
-        )
-        retrieved_entries = [
-            index_by_id[tool_id]
-            for tool_id in retrieved_ids
-            if tool_id in index_by_id
-        ]
-        planning = await _plan_tool_choice(
-            question=question,
-            candidates=retrieved_entries[:8],
-            llm=llm,
-        )
-        selected_tool = planning.get("selected_tool_id")
-        if selected_tool and selected_tool not in index_by_id:
-            selected_tool = retrieved_ids[0] if retrieved_ids else None
-        if not selected_tool:
-            selected_tool = retrieved_ids[0] if retrieved_ids else None
-        selected_entry = index_by_id.get(selected_tool) if selected_tool else None
-        selected_category = (
-            selected_entry.category
-            if selected_entry
-            else planning.get("selected_category")
-        )
-        passed_category = (
-            selected_category == expected_category
-            if expected_category is not None
-            else None
-        )
-        passed_tool = (
-            selected_tool in set(allowed_tools)
-            if expected_tool is not None
-            else None
-        )
-        checks = [check for check in (passed_category, passed_tool) if check is not None]
-        passed = all(checks) if checks else True
-        retrieval_hit_expected_tool = (
-            expected_tool in retrieved_ids[:retrieval_limit]
-            if expected_tool is not None
-            else None
-        )
+        try:
+            retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
+                question,
+                tool_index=tool_index,
+                primary_namespaces=[("tools",)],
+                fallback_namespaces=[],
+                limit=max(retrieval_limit, 8),
+                trace_key=None,
+                tuning=normalized_tuning,
+            )
+            retrieved_entries = [
+                index_by_id[tool_id]
+                for tool_id in retrieved_ids
+                if tool_id in index_by_id
+            ]
+            planning = await _plan_tool_choice(
+                question=question,
+                candidates=retrieved_entries[:8],
+                llm=llm,
+            )
+            selected_tool = planning.get("selected_tool_id")
+            if selected_tool and selected_tool not in index_by_id:
+                selected_tool = retrieved_ids[0] if retrieved_ids else None
+            if not selected_tool:
+                selected_tool = retrieved_ids[0] if retrieved_ids else None
+            selected_entry = index_by_id.get(selected_tool) if selected_tool else None
+            selected_category = (
+                selected_entry.category
+                if selected_entry
+                else planning.get("selected_category")
+            )
+            passed_category = (
+                selected_category == expected_category
+                if expected_category is not None
+                else None
+            )
+            passed_tool = (
+                selected_tool in set(allowed_tools)
+                if expected_tool is not None
+                else None
+            )
+            checks = [check for check in (passed_category, passed_tool) if check is not None]
+            passed = all(checks) if checks else True
+            retrieval_hit_expected_tool = (
+                expected_tool in retrieved_ids[:retrieval_limit]
+                if expected_tool is not None
+                else None
+            )
 
-        if passed_category is not None:
-            category_checks.append(bool(passed_category))
-        if passed_tool is not None:
-            tool_checks.append(bool(passed_tool))
-        if retrieval_hit_expected_tool is not None:
-            retrieval_checks.append(bool(retrieval_hit_expected_tool))
+            if passed_category is not None:
+                category_checks.append(bool(passed_category))
+            if passed_tool is not None:
+                tool_checks.append(bool(passed_tool))
+            if retrieval_hit_expected_tool is not None:
+                retrieval_checks.append(bool(retrieval_hit_expected_tool))
 
-        results.append(
-            {
+            case_result = {
                 "test_id": test_id,
                 "question": question,
                 "expected_category": expected_category,
@@ -478,7 +489,55 @@ async def run_tool_evaluation(
                 "passed_tool": passed_tool,
                 "passed": passed,
             }
-        )
+            results.append(case_result)
+            if progress_callback is not None:
+                event = {
+                    "type": "test_completed",
+                    "test_id": test_id,
+                    "index": idx,
+                    "selected_tool": selected_tool,
+                    "selected_category": selected_category,
+                    "passed": passed,
+                }
+                maybe_result = progress_callback(event)
+                if hasattr(maybe_result, "__await__"):
+                    await maybe_result
+        except Exception as exc:
+            results.append(
+                {
+                    "test_id": test_id,
+                    "question": question,
+                    "expected_category": expected_category,
+                    "expected_tool": expected_tool,
+                    "allowed_tools": allowed_tools,
+                    "selected_category": None,
+                    "selected_tool": None,
+                    "planning_analysis": f"Evaluation failed for this case: {exc}",
+                    "planning_steps": [],
+                    "retrieval_top_tools": [],
+                    "retrieval_top_categories": [],
+                    "retrieval_breakdown": [],
+                    "retrieval_hit_expected_tool": None,
+                    "passed_category": False if expected_category is not None else None,
+                    "passed_tool": False if expected_tool is not None else None,
+                    "passed": False,
+                }
+            )
+            if expected_category is not None:
+                category_checks.append(False)
+            if expected_tool is not None:
+                tool_checks.append(False)
+                retrieval_checks.append(False)
+            if progress_callback is not None:
+                event = {
+                    "type": "test_failed",
+                    "test_id": test_id,
+                    "index": idx,
+                    "error": str(exc),
+                }
+                maybe_result = progress_callback(event)
+                if hasattr(maybe_result, "__await__"):
+                    await maybe_result
 
     total_tests = len(results)
     passed_count = sum(1 for item in results if item.get("passed"))
@@ -594,7 +653,14 @@ async def suggest_retrieval_tuning(
         return None
     failed = [result for result in evaluation_results if not result.get("passed")]
     if not failed:
-        return None
+        return {
+            "current_tuning": normalized_current.__dict__,
+            "proposed_tuning": normalized_current.__dict__,
+            "rationale": (
+                "No tuning changes recommended from this run. Current retrieval "
+                "weights already produced successful results."
+            ),
+        }
 
     retrieval_checks = [
         result.get("retrieval_hit_expected_tool")

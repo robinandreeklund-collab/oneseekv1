@@ -128,6 +128,35 @@ export const toolEvaluationResponse = z.object({
 	search_space_id: z.number(),
 });
 
+export const toolEvaluationStartResponse = z.object({
+	job_id: z.string(),
+	status: z.string(),
+	total_tests: z.number(),
+});
+
+export const toolEvaluationCaseStatus = z.object({
+	test_id: z.string(),
+	question: z.string(),
+	status: z.string(),
+	selected_tool: z.string().nullable().optional(),
+	selected_category: z.string().nullable().optional(),
+	passed: z.boolean().nullable().optional(),
+	error: z.string().nullable().optional(),
+});
+
+export const toolEvaluationJobStatusResponse = z.object({
+	job_id: z.string(),
+	status: z.string(),
+	total_tests: z.number(),
+	completed_tests: z.number(),
+	started_at: z.string().nullable().optional(),
+	completed_at: z.string().nullable().optional(),
+	updated_at: z.string(),
+	case_statuses: z.array(toolEvaluationCaseStatus).default([]),
+	result: toolEvaluationResponse.nullable().optional(),
+	error: z.string().nullable().optional(),
+});
+
 export const toolSuggestionRequest = z.object({
 	search_space_id: z.number().nullable().optional(),
 	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
@@ -167,6 +196,11 @@ export type ToolEvaluationMetrics = z.infer<typeof toolEvaluationMetrics>;
 export type ToolEvaluationCaseResult = z.infer<typeof toolEvaluationCaseResult>;
 export type ToolMetadataSuggestion = z.infer<typeof toolMetadataSuggestion>;
 export type ToolEvaluationResponse = z.infer<typeof toolEvaluationResponse>;
+export type ToolEvaluationStartResponse = z.infer<typeof toolEvaluationStartResponse>;
+export type ToolEvaluationCaseStatus = z.infer<typeof toolEvaluationCaseStatus>;
+export type ToolEvaluationJobStatusResponse = z.infer<
+	typeof toolEvaluationJobStatusResponse
+>;
 export type ToolSuggestionRequest = z.infer<typeof toolSuggestionRequest>;
 export type ToolSuggestionResponse = z.infer<typeof toolSuggestionResponse>;
 export type ToolApplySuggestionItem = z.infer<typeof toolApplySuggestionItem>;
