@@ -2375,6 +2375,7 @@ def _build_fallback_prompt_suggestion(
             "- Håll denna prompt minimal: koordinera endast route, agentanrop och slutsammanfattning.",
             "- Delegera domänresonemang och argumentdetaljer till specialiserade agent-/tool-prompts.",
             "- Lägg inte in långa verktygslistor eller endpointdetaljer i supervisorprompten.",
+            "- Lista inte alla agenter statiskt; använd retrieve_agents för dynamiskt urval.",
             "- Använd retrieval-resultat för dynamiskt val av kandidater innan körning.",
         ]
     elif prompt_key.startswith("tool."):
@@ -2389,6 +2390,7 @@ def _build_fallback_prompt_suggestion(
             "- Välj verktyg som matchar agentens domän innan argument genereras.",
             "- Avvisa verktyg utanför domänen om inte användarintentionen tydligt byter domän.",
             "- Håll planeringen kort: domänträff -> verktygsträff -> kompletta argument.",
+            "- Undvik statisk endpoint-listning; använd retrieve_tools för dynamiskt urval.",
             "- Om domänkritiska fält saknas: ställ en fokuserad förtydligande fråga.",
         ]
     else:
@@ -2436,6 +2438,7 @@ async def _build_llm_prompt_suggestion(
         "Du optimerar en routing-/agentprompt för bättre kvalitet i dry-run-evaluering.\n"
         "Behåll stil och syfte, men lägg till precisa instruktioner för route, planering och argumentextraktion.\n"
         "All text ska vara på svenska.\n"
+        "Undvik statiska listor över alla agenter eller endpoints. Förlita dig på retrieve_agents/retrieve_tools.\n"
         "Returnera strikt JSON:\n"
         "{\n"
         '  "proposed_prompt": "fullständig reviderad prompt på svenska",\n'
