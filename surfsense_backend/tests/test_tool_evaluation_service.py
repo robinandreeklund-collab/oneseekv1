@@ -328,7 +328,7 @@ def test_suggest_agent_prompt_improvements_for_api_input_fallback():
     assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]
 
 
-def test_run_tool_evaluation_includes_route_and_plan_metrics(monkeypatch):
+def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
     tool_index = [
         _entry(
             "tool_weather",
@@ -354,9 +354,19 @@ def test_run_tool_evaluation_includes_route_and_plan_metrics(monkeypatch):
             "plan_steps": ["Use tool_weather for weather lookup."],
         }
 
+    async def _fake_plan_agent_choice(*_args, **_kwargs):
+        return {
+            "selected_agent": "trafik",
+            "analysis": "Travel/weather should go to trafik agent.",
+        }
+
     monkeypatch.setattr(
         "app.services.tool_evaluation_service._dispatch_route_from_start",
         _fake_dispatch_route,
+    )
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._plan_agent_choice",
+        _fake_plan_agent_choice,
     )
     monkeypatch.setattr(
         "app.services.tool_evaluation_service._plan_tool_choice",
@@ -374,7 +384,12 @@ def test_run_tool_evaluation_includes_route_and_plan_metrics(monkeypatch):
                         "category": "weather",
                         "route": "action",
                         "sub_route": "travel",
-                        "plan_requirements": ["route:action", "tool:tool_weather"],
+                        "agent": "trafik",
+                        "plan_requirements": [
+                            "route:action",
+                            "agent:trafik",
+                            "tool:tool_weather",
+                        ],
                     },
                     "allowed_tools": ["tool_weather"],
                 }
@@ -387,9 +402,12 @@ def test_run_tool_evaluation_includes_route_and_plan_metrics(monkeypatch):
 
     assert output["metrics"]["route_accuracy"] == 1.0
     assert output["metrics"]["sub_route_accuracy"] == 1.0
+    assert output["metrics"]["agent_accuracy"] == 1.0
     assert output["metrics"]["plan_accuracy"] == 1.0
     assert output["results"][0]["passed_route"] is True
     assert output["results"][0]["passed_sub_route"] is True
+    assert output["results"][0]["passed_agent"] is True
+    assert output["results"][0]["selected_agent"] == "trafik"
     assert output["results"][0]["passed_plan"] is True
 
 
@@ -414,4 +432,28 @@ def test_suggest_agent_prompt_improvements_includes_router_prompt():
     )
     assert len(suggestions) == 1
     assert suggestions[0]["prompt_key"] == "router.top_level"
+    assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]
+
+
+def test_suggest_agent_prompt_improvements_includes_agent_prompt():
+    suggestions = asyncio.run(
+        suggest_agent_prompt_improvements_for_api_input(
+            evaluation_results=[
+                {
+                    "test_id": "case-agent-1",
+                    "question": "Vad är vädret i Malmö i helgen?",
+                    "expected_agent": "trafik",
+                    "selected_agent": "action",
+                    "passed_agent": False,
+                    "passed": False,
+                }
+            ],
+            current_prompts={
+                "agent.trafik.system": "Du är trafikagenten.",
+            },
+            llm=None,
+        )
+    )
+    assert len(suggestions) == 1
+    assert suggestions[0]["prompt_key"] == "agent.trafik.system"
     assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]

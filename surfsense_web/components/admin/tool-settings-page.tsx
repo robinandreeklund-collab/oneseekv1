@@ -653,6 +653,7 @@ export function ToolSettingsPage() {
 						item.expected ||
 						item.expected_tool ||
 						item.expected_category ||
+						item.expected_agent ||
 						item.expected_route ||
 						item.expected_sub_route ||
 						item.plan_requirements
@@ -660,6 +661,7 @@ export function ToolSettingsPage() {
 									tool: item.expected?.tool ?? item.expected_tool ?? null,
 									category:
 										item.expected?.category ?? item.expected_category ?? null,
+									agent: item.expected?.agent ?? item.expected_agent ?? null,
 									route: item.expected?.route ?? item.expected_route ?? null,
 									sub_route:
 										item.expected?.sub_route ?? item.expected_sub_route ?? null,
@@ -705,6 +707,7 @@ export function ToolSettingsPage() {
 				item.expected ||
 				item.expected_tool ||
 				item.expected_category ||
+				item.expected_agent ||
 				item.expected_route ||
 				item.expected_sub_route ||
 				item.plan_requirements ||
@@ -714,6 +717,7 @@ export function ToolSettingsPage() {
 					? {
 							tool: item.expected?.tool ?? item.expected_tool ?? null,
 							category: item.expected?.category ?? item.expected_category ?? null,
+							agent: item.expected?.agent ?? item.expected_agent ?? null,
 							route: item.expected?.route ?? item.expected_route ?? null,
 							sub_route: item.expected?.sub_route ?? item.expected_sub_route ?? null,
 							plan_requirements: Array.isArray(
@@ -1570,7 +1574,7 @@ export function ToolSettingsPage() {
 						<CardHeader>
 							<CardTitle>Steg 0: Guide och arbetssätt</CardTitle>
 							<CardDescription>
-								Följ stegen nedan i ordning för att trimma route, tool-val,
+								Följ stegen nedan i ordning för att trimma route, agentval, tool-val,
 								API-input och prompts på ett säkert sätt (dry-run).
 							</CardDescription>
 						</CardHeader>
@@ -1610,7 +1614,7 @@ export function ToolSettingsPage() {
 
 							<div className="rounded border p-3 space-y-2">
 								<p className="font-medium">
-									Steg 3: Kör Agentval Eval (route + sub-route + tool + plan)
+									Steg 3: Kör Agentval Eval (route + sub-route + agent + tool + plan)
 								</p>
 								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
 									<li>
@@ -1626,7 +1630,8 @@ export function ToolSettingsPage() {
 										Följ “Körstatus per fråga” och kontrollera:
 										<span className="font-medium">
 											{" "}
-											Route accuracy, Sub-route accuracy, Plan accuracy, Tool accuracy
+											Route accuracy, Sub-route accuracy, Agent accuracy, Plan
+											accuracy, Tool accuracy
 										</span>
 										.
 									</li>
@@ -1691,9 +1696,10 @@ export function ToolSettingsPage() {
       "expected": {
         "route": "action",
         "sub_route": "travel",
+        "agent": "trafik",
         "tool": "smhi_weather",
         "category": "weather",
-        "plan_requirements": ["route:action", "tool:smhi_weather"]
+        "plan_requirements": ["route:action", "agent:trafik", "tool:smhi_weather"]
       },
       "allowed_tools": ["smhi_weather"]
     }
@@ -1713,9 +1719,10 @@ export function ToolSettingsPage() {
       "expected": {
         "route": "action",
         "sub_route": "travel",
+        "agent": "trafik",
         "tool": "smhi_weather",
         "category": "weather",
-        "plan_requirements": ["route:action", "field:city"],
+        "plan_requirements": ["route:action", "agent:trafik", "field:city"],
         "required_fields": ["city", "date"],
         "field_values": {"city": "Malmö"},
         "allow_clarification": false
@@ -1737,7 +1744,9 @@ export function ToolSettingsPage() {
 						</CardHeader>
 						<CardContent className="flex flex-wrap items-center gap-2 text-xs">
 							<Badge variant="secondary">Steg 1: Generera/Ladda frågor</Badge>
-							<Badge variant="secondary">Steg 2: Agentval Eval (route + tool + plan)</Badge>
+							<Badge variant="secondary">
+								Steg 2: Agentval Eval (route + agent + tool + plan)
+							</Badge>
 							<Badge variant="secondary">Steg 3: API Input Eval</Badge>
 							<Badge variant="secondary">Steg 4: Holdout + spara förbättringar</Badge>
 						</CardContent>
@@ -1932,7 +1941,8 @@ export function ToolSettingsPage() {
 						<CardHeader>
 							<CardTitle>Steg 2: Kör Agentval Eval och API Input Eval</CardTitle>
 							<CardDescription>
-								Här testar du hela agentvalet från route/sub-route till tool-val och plan,
+								Här testar du hela agentvalet från route/sub-route till agentval,
+								tool-val och plan,
 								samt API-input i dry-run.
 							</CardDescription>
 						</CardHeader>
@@ -1975,7 +1985,7 @@ export function ToolSettingsPage() {
 										? "Startar agentval-eval..."
 										: isEvalJobRunning
 											? "Agentval-eval körs..."
-											: "Run Agentval Eval (route + tool + plan)"}
+											: "Run Agentval Eval (route + agent + tool + plan)"}
 								</Button>
 								<Button
 									variant="outline"
@@ -1994,7 +2004,8 @@ export function ToolSettingsPage() {
 								eval-runen. 5 är bra standard; höj till 8-10 för breda/svåra frågor.
 							</p>
 							<p className="text-xs text-muted-foreground">
-								Agentval Eval = starten av pipelinen: route/sub-route, valt verktyg och
+								Agentval Eval = starten av pipelinen: route/sub-route, valt agentsteg,
+								valt verktyg och
 								om planen uppfyller plan_requirements.
 							</p>
 							<div className="rounded border p-3 space-y-3">
@@ -2010,7 +2021,7 @@ export function ToolSettingsPage() {
 								</div>
 								{showEvalJsonInput ? (
 									<Textarea
-										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","expected":{"route":"action","sub_route":"travel","tool":"...","category":"...","plan_requirements":["route:action","tool:..."]}}]}'
+										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","expected":{"route":"action","sub_route":"travel","agent":"trafik","tool":"...","category":"...","plan_requirements":["route:action","agent:trafik","tool:..."]}}]}'
 										value={evalInput}
 										onChange={(e) => setEvalInput(e.target.value)}
 										rows={12}
@@ -2048,7 +2059,7 @@ export function ToolSettingsPage() {
 								</p>
 								{showHoldoutJsonInput ? (
 									<Textarea
-										placeholder='{"tests":[{"id":"h1","question":"...","expected":{"route":"action","sub_route":"travel","tool":"...","category":"...","plan_requirements":["route:action","field:city"],"required_fields":["city","date"]}}]}'
+										placeholder='{"tests":[{"id":"h1","question":"...","expected":{"route":"action","sub_route":"travel","agent":"trafik","tool":"...","category":"...","plan_requirements":["route:action","agent:trafik","field:city"],"required_fields":["city","date"]}}]}'
 										value={holdoutInput}
 										onChange={(e) => setHoldoutInput(e.target.value)}
 										rows={8}
@@ -2131,6 +2142,11 @@ export function ToolSettingsPage() {
 													{caseStatus.selected_sub_route
 														? ` / ${caseStatus.selected_sub_route}`
 														: ""}
+												</p>
+											)}
+											{caseStatus.selected_agent && (
+												<p className="text-muted-foreground">
+													Vald agent: {caseStatus.selected_agent}
 												</p>
 											)}
 											{caseStatus.selected_tool && (
@@ -2217,6 +2233,11 @@ export function ToolSettingsPage() {
 														: ""}
 												</p>
 											)}
+											{caseStatus.selected_agent && (
+												<p className="text-muted-foreground">
+													Vald agent: {caseStatus.selected_agent}
+												</p>
+											)}
 											{caseStatus.selected_tool && (
 												<p className="text-muted-foreground">
 													Valt verktyg: {caseStatus.selected_tool}
@@ -2241,7 +2262,9 @@ export function ToolSettingsPage() {
 						<>
 							<Card>
 								<CardHeader>
-									<CardTitle>Steg 2B: Agentval Eval Resultat (route + tool + plan)</CardTitle>
+									<CardTitle>
+										Steg 2B: Agentval Eval Resultat (route + agent + tool + plan)
+									</CardTitle>
 									<CardDescription>
 										Metadata version {evaluationResult.metadata_version_hash} ·
 										search space {evaluationResult.search_space_id}
@@ -2271,6 +2294,16 @@ export function ToolSettingsPage() {
 												? "-"
 												: `${(
 														evaluationResult.metrics.sub_route_accuracy * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Agent accuracy</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.metrics.agent_accuracy == null
+												? "-"
+												: `${(
+														evaluationResult.metrics.agent_accuracy * 100
 													).toFixed(1)}%`}
 										</p>
 									</div>
@@ -2505,6 +2538,10 @@ export function ToolSettingsPage() {
 														: ""}
 												</div>
 												<div className="text-xs text-muted-foreground">
+													Agent: {result.expected_agent || "-"} →{" "}
+													{result.selected_agent || "-"}
+												</div>
+												<div className="text-xs text-muted-foreground">
 													Expected: {result.expected_category || "-"} /{" "}
 													{result.expected_tool || "-"} · Selected:{" "}
 													{result.selected_category || "-"} /{" "}
@@ -2685,7 +2722,7 @@ export function ToolSettingsPage() {
 								<CardHeader>
 									<CardTitle>Steg 2F: Prompt-förslag från Agentval Eval</CardTitle>
 									<CardDescription>
-										Fixar route/sub-route och plan-kvalitet från starten av
+										Fixar route/sub-route, agentval och plan-kvalitet från starten av
 										pipelinen.
 									</CardDescription>
 								</CardHeader>
@@ -2805,6 +2842,16 @@ export function ToolSettingsPage() {
 										</p>
 									</div>
 									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Agent accuracy</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.agent_accuracy == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.agent_accuracy * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
 										<p className="text-xs text-muted-foreground">Plan accuracy</p>
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.plan_accuracy == null
@@ -2887,6 +2934,10 @@ export function ToolSettingsPage() {
 													{result.selected_sub_route
 														? ` / ${result.selected_sub_route}`
 														: ""}
+												</div>
+												<div className="text-xs text-muted-foreground">
+													Agent: {result.expected_agent || "-"} →{" "}
+													{result.selected_agent || "-"}
 												</div>
 												<div className="text-xs text-muted-foreground">
 													Expected: {result.expected_category || "-"} /{" "}

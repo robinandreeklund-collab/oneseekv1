@@ -438,6 +438,49 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
     return "action", "data"
 
 
+def _infer_agent_for_tool(
+    tool_id: str,
+    category: str | None = None,
+    route: str | None = None,
+    sub_route: str | None = None,
+) -> str:
+    normalized_tool = str(tool_id or "").strip().lower()
+    normalized_category = str(category or "").strip().lower()
+    normalized_route = str(route or "").strip().lower()
+    normalized_sub_route = str(sub_route or "").strip().lower()
+    if normalized_tool.startswith("scb_") or normalized_category in {"statistics", "scb_statistics"}:
+        return "statistics"
+    if normalized_tool.startswith("riksdag_") or normalized_category.startswith("riksdag"):
+        return "riksdagen"
+    if normalized_tool.startswith("trafikverket_") or normalized_tool in {"trafiklab_route", "smhi_weather"}:
+        return "trafik"
+    if normalized_tool.startswith("bolagsverket_"):
+        return "bolag"
+    if normalized_tool.startswith("geoapify_"):
+        return "kartor"
+    if normalized_tool in {"generate_podcast", "display_image"}:
+        return "media"
+    if normalized_tool in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
+        return "browser"
+    if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
+        return "knowledge"
+    if normalized_route == "statistics":
+        return "statistics"
+    if normalized_route == "compare":
+        return "synthesis"
+    if normalized_route == "knowledge":
+        return "knowledge"
+    if normalized_route == "action" and normalized_sub_route == "travel":
+        return "trafik"
+    if normalized_route == "action" and normalized_sub_route == "web":
+        return "browser"
+    if normalized_route == "action" and normalized_sub_route == "media":
+        return "media"
+    if normalized_route == "action":
+        return "action"
+    return "action"
+
+
 def _pick_reference(values: list[str], index: int, offset: int = 0) -> str:
     if not values:
         return ""
@@ -624,6 +667,16 @@ def _normalize_generated_tests(
             str(expected.get("sub_route") or source.get("expected_sub_route") or inferred_sub_route or "").strip()
             or None
         )
+        expected_agent = str(
+            expected.get("agent")
+            or source.get("expected_agent")
+            or _infer_agent_for_tool(
+                expected_tool,
+                expected_category or str(getattr(entry, "category", "")).strip(),
+                expected_route,
+                expected_sub_route,
+            )
+        ).strip()
         source_plan_requirements = expected.get("plan_requirements") or source.get(
             "plan_requirements"
         )
@@ -632,7 +685,11 @@ def _normalize_generated_tests(
                 str(item).strip() for item in source_plan_requirements if str(item).strip()
             ]
         else:
-            plan_requirements = [f"route:{expected_route}", f"tool:{expected_tool}"]
+            plan_requirements = [
+                f"route:{expected_route}",
+                f"agent:{expected_agent}",
+                f"tool:{expected_tool}",
+            ]
         question = str(source.get("question") or "").strip()
         if not question:
             examples = list(getattr(entry, "example_queries", []) or [])
@@ -652,6 +709,7 @@ def _normalize_generated_tests(
                     "category": expected_category or getattr(entry, "category", None),
                     "route": expected_route,
                     "sub_route": expected_sub_route,
+                    "agent": expected_agent,
                     "plan_requirements": plan_requirements,
                 },
                 "allowed_tools": [expected_tool] if include_allowed_tools else [],
@@ -685,6 +743,12 @@ def _build_fallback_generated_tests(
             tool_id,
             str(getattr(entry, "category", "")).strip(),
         )
+        agent = _infer_agent_for_tool(
+            tool_id,
+            str(getattr(entry, "category", "")).strip(),
+            route,
+            sub_route,
+        )
         tests.append(
             {
                 "id": f"case-{idx + 1}",
@@ -694,7 +758,12 @@ def _build_fallback_generated_tests(
                     "category": str(getattr(entry, "category", "")).strip(),
                     "route": route,
                     "sub_route": sub_route,
-                    "plan_requirements": [f"route:{route}", f"tool:{tool_id}"],
+                    "agent": agent,
+                    "plan_requirements": [
+                        f"route:{route}",
+                        f"agent:{agent}",
+                        f"tool:{tool_id}",
+                    ],
                 },
                 "allowed_tools": [tool_id] if include_allowed_tools else [],
             }
@@ -855,7 +924,17 @@ def _enrich_api_input_generated_tests(
             expected_tool,
             str(getattr(entry, "category", "") if entry else ""),
         )
-        plan_requirements: list[str] = [f"route:{route}", f"tool:{expected_tool}"]
+        agent = _infer_agent_for_tool(
+            expected_tool,
+            str(getattr(entry, "category", "") if entry else ""),
+            route,
+            sub_route,
+        )
+        plan_requirements: list[str] = [
+            f"route:{route}",
+            f"agent:{agent}",
+            f"tool:{expected_tool}",
+        ]
         for field_name in required_fields[:2]:
             plan_requirements.append(f"field:{field_name}")
         expected_payload = {
@@ -864,6 +943,7 @@ def _enrich_api_input_generated_tests(
             or (str(getattr(entry, "category", "")).strip() if entry else None),
             "route": route,
             "sub_route": sub_route,
+            "agent": str(expected.get("agent") or agent).strip(),
             "plan_requirements": plan_requirements,
             "required_fields": required_fields,
             "field_values": field_values,
@@ -972,7 +1052,8 @@ async def _generate_eval_tests(
         '        "category": "category",\n'
         '        "route": "action|knowledge|statistics|smalltalk|compare",\n'
         '        "sub_route": "web|media|travel|data|docs|internal|external|null",\n'
-        '        "plan_requirements": ["route:action", "tool:tool_id"]\n'
+        '        "agent": "trafik|statistics|riksdagen|bolag|kartor|media|browser|knowledge|action|synthesis",\n'
+        '        "plan_requirements": ["route:action", "agent:trafik", "tool:tool_id"]\n'
         "      },\n"
         '      "allowed_tools": ["tool_id"]\n'
         "    }\n"
@@ -1530,6 +1611,7 @@ async def _execute_tool_evaluation(
                 "expected": {
                     "tool": test.expected.tool if test.expected else None,
                     "category": test.expected.category if test.expected else None,
+                    "agent": test.expected.agent if test.expected else None,
                     "route": test.expected.route if test.expected else None,
                     "sub_route": test.expected.sub_route if test.expected else None,
                     "plan_requirements": (
@@ -1592,6 +1674,7 @@ async def _execute_api_input_evaluation(
                 "expected": {
                     "tool": test.expected.tool if test.expected else None,
                     "category": test.expected.category if test.expected else None,
+                    "agent": test.expected.agent if test.expected else None,
                     "route": test.expected.route if test.expected else None,
                     "sub_route": test.expected.sub_route if test.expected else None,
                     "plan_requirements": (
@@ -2102,6 +2185,7 @@ async def _run_eval_job_background(
                             case["status"] = "completed"
                             case["selected_route"] = event.get("selected_route")
                             case["selected_sub_route"] = event.get("selected_sub_route")
+                            case["selected_agent"] = event.get("selected_agent")
                             case["selected_tool"] = event.get("selected_tool")
                             case["selected_category"] = event.get("selected_category")
                             case["passed"] = event.get("passed")
@@ -2301,6 +2385,7 @@ async def _run_api_input_eval_job_background(
                             case["status"] = "completed"
                             case["selected_route"] = event.get("selected_route")
                             case["selected_sub_route"] = event.get("selected_sub_route")
+                            case["selected_agent"] = event.get("selected_agent")
                             case["selected_tool"] = event.get("selected_tool")
                             case["selected_category"] = event.get("selected_category")
                             case["passed"] = event.get("passed")

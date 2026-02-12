@@ -54,6 +54,31 @@ _SUGGESTION_STOPWORDS = {
     "vad",
     "vilka",
 }
+_EVAL_AGENT_CHOICES = (
+    "statistics",
+    "riksdagen",
+    "trafik",
+    "bolag",
+    "kartor",
+    "media",
+    "browser",
+    "knowledge",
+    "action",
+    "synthesis",
+)
+
+_EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
+    "statistics": "SCB/statistics and official data in Sweden.",
+    "riksdagen": "Swedish parliament and political documents.",
+    "trafik": "Traffic, roads, routes, weather-related transport context.",
+    "bolag": "Swedish company/organization registry context.",
+    "kartor": "Geospatial/maps/geocoding context.",
+    "media": "Podcast and media generation context.",
+    "browser": "Web browsing, URL scraping, and page lookup tasks.",
+    "knowledge": "Knowledge lookup in docs/internal/external sources.",
+    "action": "General action/data tasks not covered by a specialist agent.",
+    "synthesis": "Cross-source compare/synthesis tasks.",
+}
 
 
 def compute_metadata_version_hash(tool_index: list[ToolIndexEntry]) -> str:
@@ -153,6 +178,206 @@ def _normalize_sub_route_value(value: Any) -> str | None:
     return None
 
 
+def _normalize_agent_name(value: Any) -> str | None:
+    agent = str(value or "").strip().lower()
+    if not agent:
+        return None
+    aliases = {
+        "statistik": "statistics",
+        "stats": "statistics",
+        "scb": "statistics",
+        "riksdag": "riksdagen",
+        "traffic": "trafik",
+        "trafikverket": "trafik",
+        "weather": "trafik",
+        "maps": "kartor",
+        "map": "kartor",
+        "geo": "kartor",
+        "geography": "kartor",
+        "bolagsverket": "bolag",
+        "companies": "bolag",
+        "company": "bolag",
+        "web": "browser",
+        "docs": "knowledge",
+        "internal": "knowledge",
+        "external": "knowledge",
+        "compare": "synthesis",
+    }
+    normalized = aliases.get(agent, agent)
+    return normalized if normalized in _EVAL_AGENT_CHOICES else None
+
+
+def _agent_for_route_hint(route_value: str | None, sub_route_value: str | None) -> str | None:
+    route_norm = _normalize_route_value(route_value)
+    sub_norm = _normalize_sub_route_value(sub_route_value)
+    if route_norm == Route.STATISTICS.value:
+        return "statistics"
+    if route_norm == Route.COMPARE.value:
+        return "synthesis"
+    if route_norm == Route.KNOWLEDGE.value:
+        return "knowledge"
+    if route_norm == Route.ACTION.value:
+        if sub_norm == ActionRoute.TRAVEL.value:
+            return "trafik"
+        if sub_norm == ActionRoute.WEB.value:
+            return "browser"
+        if sub_norm == ActionRoute.MEDIA.value:
+            return "media"
+        if sub_norm == ActionRoute.DATA.value:
+            return "action"
+        return "action"
+    return None
+
+
+def _agent_for_tool(
+    tool_id: str | None,
+    category: str | None = None,
+    route_value: str | None = None,
+    sub_route_value: str | None = None,
+) -> str | None:
+    tool = str(tool_id or "").strip().lower()
+    cat = str(category or "").strip().lower()
+    if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
+        return "statistics"
+    if tool.startswith("riksdag_") or cat.startswith("riksdag"):
+        return "riksdagen"
+    if tool.startswith("trafikverket_") or tool in {"trafiklab_route", "smhi_weather"}:
+        return "trafik"
+    if tool.startswith("bolagsverket_"):
+        return "bolag"
+    if tool.startswith("geoapify_"):
+        return "kartor"
+    if tool in {"generate_podcast", "display_image"}:
+        return "media"
+    if tool in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
+        return "browser"
+    if tool in {"search_surfsense_docs", "search_knowledge_base"}:
+        return "knowledge"
+    return _agent_for_route_hint(route_value, sub_route_value)
+
+
+def _candidate_agents_for_route(
+    route_value: str | None,
+    sub_route_value: str | None,
+) -> list[str]:
+    route_norm = _normalize_route_value(route_value)
+    sub_norm = _normalize_sub_route_value(sub_route_value)
+    if route_norm == Route.STATISTICS.value:
+        return ["statistics", "riksdagen", "knowledge"]
+    if route_norm == Route.COMPARE.value:
+        return ["synthesis", "statistics", "knowledge"]
+    if route_norm == Route.KNOWLEDGE.value:
+        return ["knowledge", "riksdagen", "statistics", "browser"]
+    if route_norm == Route.ACTION.value:
+        if sub_norm == ActionRoute.TRAVEL.value:
+            return ["trafik", "action", "kartor"]
+        if sub_norm == ActionRoute.WEB.value:
+            return ["browser", "action", "knowledge"]
+        if sub_norm == ActionRoute.MEDIA.value:
+            return ["media", "action"]
+        if sub_norm == ActionRoute.DATA.value:
+            return ["action", "statistics", "riksdagen", "bolag", "kartor"]
+        return ["action", "browser", "trafik", "media", "bolag", "kartor"]
+    return ["knowledge", "action"]
+
+
+def _heuristic_agent_choice(
+    question: str,
+    route_value: str | None,
+    sub_route_value: str | None,
+    candidates: list[str],
+) -> str | None:
+    text = str(question or "").casefold()
+    if any(token in text for token in ("riksdag", "interpellation", "motion", "utskott")):
+        return "riksdagen" if "riksdagen" in candidates else candidates[0]
+    if any(token in text for token in ("scb", "statistik", "inflation", "arbetslös", "befolkning")):
+        return "statistics" if "statistics" in candidates else candidates[0]
+    if any(token in text for token in ("trafik", "väg", "halka", "smhi", "rutt", "resa", "avgång")):
+        return "trafik" if "trafik" in candidates else candidates[0]
+    if any(token in text for token in ("bolag", "organisationsnummer", "företag")):
+        return "bolag" if "bolag" in candidates else candidates[0]
+    if any(token in text for token in ("karta", "koordinat", "lat", "lon", "adress")):
+        return "kartor" if "kartor" in candidates else candidates[0]
+    if any(token in text for token in ("podcast", "podd", "bild", "image")):
+        return "media" if "media" in candidates else candidates[0]
+    if "http://" in text or "https://" in text or "webb" in text or "url" in text:
+        return "browser" if "browser" in candidates else candidates[0]
+    inferred = _agent_for_route_hint(route_value, sub_route_value)
+    if inferred and inferred in candidates:
+        return inferred
+    return candidates[0] if candidates else None
+
+
+async def _plan_agent_choice(
+    *,
+    question: str,
+    route_value: str | None,
+    sub_route_value: str | None,
+    llm,
+) -> dict[str, Any]:
+    candidates = _candidate_agents_for_route(route_value, sub_route_value)
+    fallback_agent = _heuristic_agent_choice(
+        question,
+        route_value=route_value,
+        sub_route_value=sub_route_value,
+        candidates=candidates,
+    )
+    fallback_payload = {
+        "selected_agent": fallback_agent,
+        "analysis": "Agent planner fallback selected the closest route-compatible agent.",
+    }
+    if llm is None:
+        return fallback_payload
+    planner_prompt = (
+        "You evaluate next-stage agent routing in dry-run mode.\n"
+        "Given route context and allowed agent candidates, pick exactly one agent.\n"
+        "Return strict JSON only:\n"
+        "{\n"
+        '  "selected_agent": "one of candidate names",\n'
+        '  "analysis": "short explanation"\n'
+        "}\n"
+        "Do not include markdown."
+    )
+    payload = {
+        "question": question,
+        "route": route_value,
+        "sub_route": sub_route_value,
+        "candidates": [
+            {"name": name, "description": _EVAL_AGENT_DESCRIPTIONS.get(name, "")}
+            for name in candidates
+        ],
+    }
+    model = llm
+    try:
+        if hasattr(llm, "bind"):
+            model = llm.bind(temperature=0)
+    except Exception:
+        model = llm
+    try:
+        response = await model.ainvoke(
+            [
+                SystemMessage(content=planner_prompt),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+            ]
+        )
+        parsed = _extract_json_object(_response_content_to_text(getattr(response, "content", "")))
+        selected_agent = _normalize_agent_name(
+            parsed.get("selected_agent") if isinstance(parsed, dict) else None
+        )
+        if selected_agent not in candidates:
+            selected_agent = fallback_agent
+        analysis = (
+            str(parsed.get("analysis") or "").strip()
+            if isinstance(parsed, dict)
+            else ""
+        )
+        if not analysis:
+            analysis = fallback_payload["analysis"]
+        return {"selected_agent": selected_agent, "analysis": analysis}
+    except Exception:
+        return fallback_payload
+
+
 async def _dispatch_route_from_start(
     *,
     question: str,
@@ -235,6 +460,12 @@ def _evaluate_plan_requirements(
             selected_route = str(context_payload.get("selected_route") or "").casefold()
             passed = bool(
                 expected_route and selected_route and expected_route == selected_route
+            )
+        elif lowered.startswith("agent:"):
+            expected_agent = requirement.split(":", 1)[1].strip().casefold()
+            selected_agent = str(context_payload.get("selected_agent") or "").casefold()
+            passed = bool(
+                expected_agent and selected_agent and expected_agent == selected_agent
             )
         else:
             passed = lowered in merged_text
@@ -567,6 +798,7 @@ async def run_tool_evaluation(
 
     route_checks: list[bool] = []
     sub_route_checks: list[bool] = []
+    agent_checks: list[bool] = []
     plan_checks: list[bool] = []
     category_checks: list[bool] = []
     tool_checks: list[bool] = []
@@ -597,14 +829,24 @@ async def run_tool_evaluation(
         expected_category = (
             str(expected_category).strip() if expected_category else None
         )
+        expected_agent = _normalize_agent_name(expected.get("agent"))
+        if expected_agent is None:
+            expected_agent = _agent_for_tool(
+                expected_tool,
+                expected_category,
+                expected_route,
+                expected_sub_route,
+            )
         allowed_tools = _safe_string_list(test.get("allowed_tools"))
         if expected_tool and not allowed_tools:
             allowed_tools = [expected_tool]
 
         selected_route: str | None = None
         selected_sub_route: str | None = None
+        selected_agent: str | None = None
         passed_route: bool | None = None
         passed_sub_route: bool | None = None
+        passed_agent: bool | None = None
         passed_plan: bool | None = None
         plan_requirement_checks: list[dict[str, Any]] = []
 
@@ -621,6 +863,16 @@ async def run_tool_evaluation(
                 selected_sub_route == expected_sub_route
                 if expected_sub_route is not None
                 else None
+            )
+            selected_agent_plan = await _plan_agent_choice(
+                question=question,
+                route_value=selected_route,
+                sub_route_value=selected_sub_route,
+                llm=llm,
+            )
+            selected_agent = _normalize_agent_name(selected_agent_plan.get("selected_agent"))
+            passed_agent = (
+                selected_agent == expected_agent if expected_agent is not None else None
             )
             retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
                 question,
@@ -652,6 +904,15 @@ async def run_tool_evaluation(
                 if selected_entry
                 else planning.get("selected_category")
             )
+            if selected_agent is None:
+                selected_agent = _agent_for_tool(
+                    selected_tool,
+                    selected_category,
+                    selected_route,
+                    selected_sub_route,
+                )
+                if expected_agent is not None:
+                    passed_agent = selected_agent == expected_agent
             plan_requirement_checks, passed_plan = _evaluate_plan_requirements(
                 requirements=plan_requirements,
                 planning_analysis=str(planning.get("analysis") or ""),
@@ -659,6 +920,7 @@ async def run_tool_evaluation(
                 context={
                     "selected_tool": selected_tool,
                     "selected_route": selected_route,
+                    "selected_agent": selected_agent,
                     "proposed_arguments": {},
                     "needs_clarification": False,
                 },
@@ -678,6 +940,7 @@ async def run_tool_evaluation(
                 for check in (
                     passed_route,
                     passed_sub_route,
+                    passed_agent,
                     passed_plan,
                     passed_category,
                     passed_tool,
@@ -695,6 +958,8 @@ async def run_tool_evaluation(
                 route_checks.append(bool(passed_route))
             if passed_sub_route is not None:
                 sub_route_checks.append(bool(passed_sub_route))
+            if passed_agent is not None:
+                agent_checks.append(bool(passed_agent))
             if passed_plan is not None:
                 plan_checks.append(bool(passed_plan))
             if passed_category is not None:
@@ -709,11 +974,13 @@ async def run_tool_evaluation(
                 "question": question,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
+                "expected_agent": expected_agent,
                 "expected_category": expected_category,
                 "expected_tool": expected_tool,
                 "allowed_tools": allowed_tools,
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
+                "selected_agent": selected_agent,
                 "selected_category": selected_category,
                 "selected_tool": selected_tool,
                 "planning_analysis": planning.get("analysis") or "",
@@ -729,6 +996,7 @@ async def run_tool_evaluation(
                 "retrieval_hit_expected_tool": retrieval_hit_expected_tool,
                 "passed_route": passed_route,
                 "passed_sub_route": passed_sub_route,
+                "passed_agent": passed_agent,
                 "passed_plan": passed_plan,
                 "passed_category": passed_category,
                 "passed_tool": passed_tool,
@@ -742,6 +1010,7 @@ async def run_tool_evaluation(
                     "index": idx,
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
+                    "selected_agent": selected_agent,
                     "selected_tool": selected_tool,
                     "selected_category": selected_category,
                     "passed": passed,
@@ -756,11 +1025,13 @@ async def run_tool_evaluation(
                     "question": question,
                     "expected_route": expected_route,
                     "expected_sub_route": expected_sub_route,
+                    "expected_agent": expected_agent,
                     "expected_category": expected_category,
                     "expected_tool": expected_tool,
                     "allowed_tools": allowed_tools,
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
+                    "selected_agent": selected_agent,
                     "selected_category": None,
                     "selected_tool": None,
                     "planning_analysis": f"Evaluation failed for this case: {exc}",
@@ -772,6 +1043,7 @@ async def run_tool_evaluation(
                     "retrieval_hit_expected_tool": None,
                     "passed_route": False if expected_route is not None else None,
                     "passed_sub_route": False if expected_sub_route is not None else None,
+                    "passed_agent": False if expected_agent is not None else None,
                     "passed_plan": False if plan_requirements else None,
                     "passed_category": False if expected_category is not None else None,
                     "passed_tool": False if expected_tool is not None else None,
@@ -782,6 +1054,8 @@ async def run_tool_evaluation(
                 route_checks.append(False)
             if expected_sub_route is not None:
                 sub_route_checks.append(False)
+            if expected_agent is not None:
+                agent_checks.append(False)
             if plan_requirements:
                 plan_checks.append(False)
             if expected_category is not None:
@@ -814,6 +1088,11 @@ async def run_tool_evaluation(
         "sub_route_accuracy": (
             sum(1 for check in sub_route_checks if check) / len(sub_route_checks)
             if sub_route_checks
+            else None
+        ),
+        "agent_accuracy": (
+            sum(1 for check in agent_checks if check) / len(agent_checks)
+            if agent_checks
             else None
         ),
         "plan_accuracy": (
@@ -1183,6 +1462,23 @@ def _prompt_key_for_tool(tool_id: str | None, category: str | None = None) -> st
     return "agent.action.system"
 
 
+def _prompt_key_for_agent(agent_name: str | None) -> str | None:
+    normalized = _normalize_agent_name(agent_name)
+    mapping = {
+        "statistics": "agent.statistics.system",
+        "riksdagen": "agent.riksdagen.system",
+        "trafik": "agent.trafik.system",
+        "bolag": "agent.bolag.system",
+        "kartor": "agent.kartor.system",
+        "media": "agent.media.system",
+        "browser": "agent.browser.system",
+        "knowledge": "agent.knowledge.system",
+        "action": "agent.action.system",
+        "synthesis": "agent.synthesis.system",
+    }
+    return mapping.get(normalized) if normalized else None
+
+
 def _prompt_key_for_sub_route(route_value: str | None) -> str | None:
     normalized = _normalize_route_value(route_value)
     if normalized == Route.ACTION.value:
@@ -1328,6 +1624,7 @@ async def run_tool_api_input_evaluation(
 
     route_checks: list[bool] = []
     sub_route_checks: list[bool] = []
+    agent_checks: list[bool] = []
     plan_checks: list[bool] = []
     category_checks: list[bool] = []
     tool_checks: list[bool] = []
@@ -1359,6 +1656,14 @@ async def run_tool_api_input_evaluation(
         expected_tool = str(expected_tool).strip() if expected_tool else None
         expected_category = expected.get("category")
         expected_category = str(expected_category).strip() if expected_category else None
+        expected_agent = _normalize_agent_name(expected.get("agent"))
+        if expected_agent is None:
+            expected_agent = _agent_for_tool(
+                expected_tool,
+                expected_category,
+                expected_route,
+                expected_sub_route,
+            )
         expected_required_fields = _normalize_field_list(expected.get("required_fields"))
         expected_field_values = (
             expected.get("field_values") if isinstance(expected.get("field_values"), dict) else {}
@@ -1375,8 +1680,10 @@ async def run_tool_api_input_evaluation(
 
         selected_route: str | None = None
         selected_sub_route: str | None = None
+        selected_agent: str | None = None
         passed_route: bool | None = None
         passed_sub_route: bool | None = None
+        passed_agent: bool | None = None
         passed_plan: bool | None = None
         plan_requirement_checks: list[dict[str, Any]] = []
 
@@ -1393,6 +1700,16 @@ async def run_tool_api_input_evaluation(
                 selected_sub_route == expected_sub_route
                 if expected_sub_route is not None
                 else None
+            )
+            selected_agent_plan = await _plan_agent_choice(
+                question=question,
+                route_value=selected_route,
+                sub_route_value=selected_sub_route,
+                llm=llm,
+            )
+            selected_agent = _normalize_agent_name(selected_agent_plan.get("selected_agent"))
+            passed_agent = (
+                selected_agent == expected_agent if expected_agent is not None else None
             )
             retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
                 question,
@@ -1425,6 +1742,15 @@ async def run_tool_api_input_evaluation(
                 if selected_entry
                 else planning.get("selected_category")
             )
+            if selected_agent is None:
+                selected_agent = _agent_for_tool(
+                    selected_tool,
+                    selected_category,
+                    selected_route,
+                    selected_sub_route,
+                )
+                if expected_agent is not None:
+                    passed_agent = selected_agent == expected_agent
             proposed_arguments = _coerce_arguments(planning.get("proposed_arguments"))
             needs_clarification = bool(planning.get("needs_clarification"))
             clarification_question = (
@@ -1437,6 +1763,7 @@ async def run_tool_api_input_evaluation(
                 context={
                     "selected_tool": selected_tool,
                     "selected_route": selected_route,
+                    "selected_agent": selected_agent,
                     "proposed_arguments": proposed_arguments,
                     "needs_clarification": needs_clarification,
                 },
@@ -1518,6 +1845,8 @@ async def run_tool_api_input_evaluation(
                 route_checks.append(bool(passed_route))
             if passed_sub_route is not None:
                 sub_route_checks.append(bool(passed_sub_route))
+            if passed_agent is not None:
+                agent_checks.append(bool(passed_agent))
             if passed_plan is not None:
                 plan_checks.append(bool(passed_plan))
 
@@ -1554,6 +1883,7 @@ async def run_tool_api_input_evaluation(
                 for check in (
                     passed_route,
                     passed_sub_route,
+                    passed_agent,
                     passed_plan,
                     passed_category,
                     passed_tool,
@@ -1567,11 +1897,13 @@ async def run_tool_api_input_evaluation(
                 "question": question,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
+                "expected_agent": expected_agent,
                 "expected_category": expected_category,
                 "expected_tool": expected_tool,
                 "allowed_tools": allowed_tools,
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
+                "selected_agent": selected_agent,
                 "selected_category": selected_category,
                 "selected_tool": selected_tool,
                 "planning_analysis": planning.get("analysis") or "",
@@ -1597,6 +1929,7 @@ async def run_tool_api_input_evaluation(
                 "clarification_question": clarification_question,
                 "passed_route": passed_route,
                 "passed_sub_route": passed_sub_route,
+                "passed_agent": passed_agent,
                 "passed_plan": passed_plan,
                 "passed_category": passed_category,
                 "passed_tool": passed_tool,
@@ -1611,6 +1944,7 @@ async def run_tool_api_input_evaluation(
                     "index": idx,
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
+                    "selected_agent": selected_agent,
                     "selected_tool": selected_tool,
                     "selected_category": selected_category,
                     "passed": passed,
@@ -1624,11 +1958,13 @@ async def run_tool_api_input_evaluation(
                 "question": question,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
+                "expected_agent": expected_agent,
                 "expected_category": expected_category,
                 "expected_tool": expected_tool,
                 "allowed_tools": allowed_tools,
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
+                "selected_agent": selected_agent,
                 "selected_category": None,
                 "selected_tool": None,
                 "planning_analysis": f"API input evaluation failed for this case: {exc}",
@@ -1650,6 +1986,7 @@ async def run_tool_api_input_evaluation(
                 "clarification_question": None,
                 "passed_route": False if expected_route is not None else None,
                 "passed_sub_route": False if expected_sub_route is not None else None,
+                "passed_agent": False if expected_agent is not None else None,
                 "passed_plan": False if plan_requirements else None,
                 "passed_category": False if expected_category is not None else None,
                 "passed_tool": False if expected_tool is not None else None,
@@ -1661,6 +1998,8 @@ async def run_tool_api_input_evaluation(
                 route_checks.append(False)
             if expected_sub_route is not None:
                 sub_route_checks.append(False)
+            if expected_agent is not None:
+                agent_checks.append(False)
             if plan_requirements:
                 plan_checks.append(False)
             if expected_category is not None:
@@ -1700,6 +2039,11 @@ async def run_tool_api_input_evaluation(
         "sub_route_accuracy": (
             sum(1 for check in sub_route_checks if check) / len(sub_route_checks)
             if sub_route_checks
+            else None
+        ),
+        "agent_accuracy": (
+            sum(1 for check in agent_checks if check) / len(agent_checks)
+            if agent_checks
             else None
         ),
         "plan_accuracy": (
@@ -1775,6 +2119,13 @@ def _build_fallback_prompt_suggestion(
                 "- Use internal for user data/notes/calendar/search space content.",
                 "- Use external only for explicit realtime/public-web requests.",
             ]
+    elif prompt_key.startswith("agent."):
+        lines = [
+            "- Choose tools that match the selected agent domain before generating arguments.",
+            "- Reject tools outside your domain unless user intent explicitly shifts domain.",
+            "- Keep planning concise: domain fit -> tool fit -> argument completeness.",
+            "- If domain-critical fields are missing, ask a focused clarification question.",
+        ]
     else:
         lines = [
             "- Validate argument completeness before emitting a tool call.",
@@ -1891,6 +2242,8 @@ async def suggest_agent_prompt_improvements_for_api_input(
                 "selected_route": result.get("selected_route"),
                 "expected_sub_route": result.get("expected_sub_route"),
                 "selected_sub_route": result.get("selected_sub_route"),
+                "expected_agent": result.get("expected_agent"),
+                "selected_agent": result.get("selected_agent"),
                 "expected_tool": expected_tool,
                 "selected_tool": selected_tool,
                 "missing_required_fields": list(result.get("missing_required_fields") or []),
@@ -1908,16 +2261,27 @@ async def suggest_agent_prompt_improvements_for_api_input(
         passed_api_input = result.get("passed_api_input")
         passed_route = result.get("passed_route")
         passed_sub_route = result.get("passed_sub_route")
+        passed_agent = result.get("passed_agent")
         passed_plan = result.get("passed_plan")
         has_api_input = "passed_api_input" in result
         failed_route = passed_route is False
         failed_sub_route = passed_sub_route is False
+        failed_agent = passed_agent is False
         failed_plan = passed_plan is False
         failed_api_input = passed_api_input is False if has_api_input else False
-        if not (failed_route or failed_sub_route or failed_plan or failed_api_input or not passed):
+        if not (
+            failed_route
+            or failed_sub_route
+            or failed_agent
+            or failed_plan
+            or failed_api_input
+            or not passed
+        ):
             continue
         expected_tool = str(result.get("expected_tool") or "").strip() or None
         selected_tool = str(result.get("selected_tool") or "").strip() or None
+        expected_agent = _normalize_agent_name(result.get("expected_agent"))
+        selected_agent = _normalize_agent_name(result.get("selected_agent"))
         selected_category = str(result.get("selected_category") or "").strip() or None
         expected_category = str(result.get("expected_category") or "").strip() or None
         expected_route = _normalize_route_value(result.get("expected_route"))
@@ -1935,6 +2299,16 @@ async def suggest_agent_prompt_improvements_for_api_input(
             if sub_route_prompt_key:
                 _append_failure(
                     sub_route_prompt_key,
+                    result=result,
+                    expected_tool=expected_tool,
+                    selected_tool=selected_tool,
+                )
+
+        if failed_agent:
+            agent_prompt_key = _prompt_key_for_agent(expected_agent or selected_agent)
+            if agent_prompt_key:
+                _append_failure(
+                    agent_prompt_key,
                     result=result,
                     expected_tool=expected_tool,
                     selected_tool=selected_tool,
