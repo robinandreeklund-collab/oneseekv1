@@ -4,9 +4,10 @@ from pydantic import BaseModel
 
 from app.agents.new_chat.bigtool_store import ToolIndexEntry
 from app.services.tool_evaluation_service import (
+    _apply_prompt_architecture_guard,
     _compute_agent_gate_score,
-    _repair_expected_routing,
     _enrich_metadata_suggestion_fields,
+    _repair_expected_routing,
     compute_metadata_version_hash,
     generate_tool_metadata_suggestions,
     run_tool_api_input_evaluation,
@@ -327,7 +328,7 @@ def test_suggest_agent_prompt_improvements_for_api_input_fallback():
     )
     assert len(suggestions) == 1
     assert suggestions[0]["prompt_key"] == "agent.trafik.system"
-    assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]
+    assert "API INPUT EVAL-FÖRBÄTTRING" in suggestions[0]["proposed_prompt"]
 
 
 def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
@@ -411,9 +412,17 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
     assert output["results"][0]["passed_sub_route"] is True
     assert output["results"][0]["passed_agent"] is True
     assert output["results"][0]["selected_agent"] == "trafik"
+    assert (
+        output["results"][0]["agent_selection_analysis"]
+        == "Travel/weather should go to trafik agent."
+    )
     assert output["results"][0]["passed_plan"] is True
     assert output["results"][0]["agent_gate_score"] == 1.0
     assert output["results"][0]["passed_with_agent_gate"] is True
+    assert output["metrics"]["supervisor_review_score"] is not None
+    assert output["metrics"]["supervisor_review_pass_rate"] == 1.0
+    assert output["results"][0]["supervisor_review_passed"] is True
+    assert output["results"][0]["supervisor_trace"]["selected"]["agent"] == "trafik"
 
 
 def test_suggest_agent_prompt_improvements_includes_router_prompt():
@@ -437,7 +446,7 @@ def test_suggest_agent_prompt_improvements_includes_router_prompt():
     )
     assert len(suggestions) == 1
     assert suggestions[0]["prompt_key"] == "router.top_level"
-    assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]
+    assert "API INPUT EVAL-FÖRBÄTTRING" in suggestions[0]["proposed_prompt"]
 
 
 def test_suggest_agent_prompt_improvements_includes_agent_prompt():
@@ -461,7 +470,34 @@ def test_suggest_agent_prompt_improvements_includes_agent_prompt():
     )
     assert len(suggestions) == 1
     assert suggestions[0]["prompt_key"] == "agent.trafik.system"
-    assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]
+    assert "API INPUT EVAL-FÖRBÄTTRING" in suggestions[0]["proposed_prompt"]
+
+
+def test_prompt_architecture_guard_rejects_static_supervisor_agent_list():
+    prompt = (
+        "Tillgängliga agenter:\n"
+        "- action: väder\n"
+        "- statistics: SCB\n"
+        "- knowledge: docs\n"
+        "- trafik: väg\n"
+    )
+    guarded, violations, severe = _apply_prompt_architecture_guard(
+        prompt_key="agent.supervisor.system",
+        prompt_text=prompt,
+    )
+    assert severe is True
+    assert guarded == prompt.strip()
+    assert any("statisk agentlista" in violation.casefold() for violation in violations)
+
+
+def test_prompt_architecture_guard_adds_retrieval_rules_for_agent_prompt():
+    guarded, violations, severe = _apply_prompt_architecture_guard(
+        prompt_key="agent.trafik.system",
+        prompt_text="Du är trafikagent.",
+    )
+    assert severe is False
+    assert "retrieve_tools" in guarded
+    assert any("retrieve_tools" in violation for violation in violations)
 
 
 def test_compute_agent_gate_score_skips_downstream_when_upstream_fails():

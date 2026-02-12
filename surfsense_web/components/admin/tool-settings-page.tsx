@@ -73,6 +73,8 @@ function buildFailureReasons(result: Record<string, unknown>): string[] {
 	if (result.passed_plan === false) reasons.push("Plankrav ej uppfyllda");
 	if (result.passed_tool === false) reasons.push("Tool mismatch");
 	if (result.passed_api_input === false) reasons.push("API-input mismatch");
+	if (result.supervisor_review_passed === false)
+		reasons.push("Supervisor-spår behöver förbättras");
 	return reasons;
 }
 
@@ -1940,6 +1942,31 @@ export function ToolSettingsPage() {
 							</div>
 
 							<div className="rounded border p-3 space-y-2">
+								<p className="font-medium">
+									Retrieval refresh triggers (arkitekturregel)
+								</p>
+								<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+									<li>
+										Om vald agent inte kan lösa frågan med tillgängliga verktyg:
+										kör <span className="font-medium">retrieve_agents()</span> igen.
+									</li>
+									<li>
+										Om valda verktyg inte matchar uppgiften:
+										kör <span className="font-medium">retrieve_tools</span> igen med
+										omformulerad intent.
+									</li>
+									<li>
+										Om användaren byter riktning/ämne:
+										sluta forcera tidigare val och gör ny retrieval innan nästa steg.
+									</li>
+									<li>
+										Eval-systemet visar nu supervisor-spår och en automatisk
+										supervisor-granskning per test för att upptäcka detta tidigt.
+									</li>
+								</ul>
+							</div>
+
+							<div className="rounded border p-3 space-y-2">
 								<p className="font-medium">Steg 5: Kör API Input Eval (utan API-anrop)</p>
 								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
 									<li>
@@ -2632,6 +2659,30 @@ export function ToolSettingsPage() {
 										</p>
 									</div>
 									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Supervisor review score
+										</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.metrics.supervisor_review_score == null
+												? "-"
+												: `${(
+														evaluationResult.metrics.supervisor_review_score * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Supervisor review pass rate
+										</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.metrics.supervisor_review_pass_rate == null
+												? "-"
+												: `${(
+														evaluationResult.metrics.supervisor_review_pass_rate * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
 										<p className="text-xs text-muted-foreground">Tool accuracy</p>
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.tool_accuracy == null
@@ -2867,9 +2918,19 @@ export function ToolSettingsPage() {
 												</div>
 											</div>
 											<p className="text-sm">{result.question}</p>
+											{result.agent_selection_analysis && (
+												<p className="text-xs text-muted-foreground">
+													Agentval-analys: {result.agent_selection_analysis}
+												</p>
+											)}
 											{result.planning_analysis && (
 												<p className="text-xs text-muted-foreground">
 													Analys: {result.planning_analysis}
+												</p>
+											)}
+											{result.planning_steps?.length > 0 && (
+												<p className="text-xs text-muted-foreground">
+													Plansteg: {result.planning_steps.join(" → ")}
 												</p>
 											)}
 											<div className="flex flex-wrap gap-2">
@@ -2925,6 +2986,36 @@ export function ToolSettingsPage() {
 														? ` (${(result.agent_gate_score * 100).toFixed(1)}%)`
 														: ""}
 												</p>
+											)}
+											{typeof result.supervisor_review_passed === "boolean" && (
+												<p className="text-xs text-muted-foreground">
+													Supervisor review:{" "}
+													{result.supervisor_review_passed ? "PASS" : "FAIL"}
+													{typeof result.supervisor_review_score === "number"
+														? ` (${(result.supervisor_review_score * 100).toFixed(1)}%)`
+														: ""}
+												</p>
+											)}
+											{result.supervisor_review_rationale && (
+												<p className="text-xs text-muted-foreground">
+													Supervisor-granskning: {result.supervisor_review_rationale}
+												</p>
+											)}
+											{result.supervisor_review_issues?.length > 0 && (
+												<p className="text-xs text-amber-600">
+													Supervisor-issues:{" "}
+													{result.supervisor_review_issues.join(" · ")}
+												</p>
+											)}
+											{Object.keys(result.supervisor_trace ?? {}).length > 0 && (
+												<details className="rounded bg-muted/30 p-2">
+													<summary className="cursor-pointer text-xs font-medium">
+														Visa supervisor-spår
+													</summary>
+													<pre className="mt-2 text-[11px] whitespace-pre-wrap break-all text-muted-foreground max-h-48 overflow-y-auto">
+														{JSON.stringify(result.supervisor_trace ?? {}, null, 2)}
+													</pre>
+												</details>
 											)}
 											{result.plan_requirement_checks?.length > 0 && (
 												<div className="flex flex-wrap gap-2">
@@ -3247,6 +3338,32 @@ export function ToolSettingsPage() {
 										</p>
 									</div>
 									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Supervisor review score
+										</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.supervisor_review_score == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.supervisor_review_score * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Supervisor review pass rate
+										</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.supervisor_review_pass_rate ==
+											null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics
+															.supervisor_review_pass_rate * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
 										<p className="text-xs text-muted-foreground">Schema validity</p>
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.schema_validity_rate == null
@@ -3336,9 +3453,19 @@ export function ToolSettingsPage() {
 												</div>
 											</div>
 											<p className="text-sm">{result.question}</p>
+											{result.agent_selection_analysis && (
+												<p className="text-xs text-muted-foreground">
+													Agentval-analys: {result.agent_selection_analysis}
+												</p>
+											)}
 											{result.planning_analysis && (
 												<p className="text-xs text-muted-foreground">
 													Analys: {result.planning_analysis}
+												</p>
+											)}
+											{result.planning_steps?.length > 0 && (
+												<p className="text-xs text-muted-foreground">
+													Plansteg: {result.planning_steps.join(" → ")}
 												</p>
 											)}
 											<div className="flex flex-wrap gap-2">
@@ -3403,6 +3530,36 @@ export function ToolSettingsPage() {
 														? ` (${(result.agent_gate_score * 100).toFixed(1)}%)`
 														: ""}
 												</p>
+											)}
+											{typeof result.supervisor_review_passed === "boolean" && (
+												<p className="text-xs text-muted-foreground">
+													Supervisor review:{" "}
+													{result.supervisor_review_passed ? "PASS" : "FAIL"}
+													{typeof result.supervisor_review_score === "number"
+														? ` (${(result.supervisor_review_score * 100).toFixed(1)}%)`
+														: ""}
+												</p>
+											)}
+											{result.supervisor_review_rationale && (
+												<p className="text-xs text-muted-foreground">
+													Supervisor-granskning: {result.supervisor_review_rationale}
+												</p>
+											)}
+											{result.supervisor_review_issues?.length > 0 && (
+												<p className="text-xs text-amber-600">
+													Supervisor-issues:{" "}
+													{result.supervisor_review_issues.join(" · ")}
+												</p>
+											)}
+											{Object.keys(result.supervisor_trace ?? {}).length > 0 && (
+												<details className="rounded bg-muted/30 p-2">
+													<summary className="cursor-pointer text-xs font-medium">
+														Visa supervisor-spår
+													</summary>
+													<pre className="mt-2 text-[11px] whitespace-pre-wrap break-all text-muted-foreground max-h-48 overflow-y-auto">
+														{JSON.stringify(result.supervisor_trace ?? {}, null, 2)}
+													</pre>
+												</details>
 											)}
 											{result.plan_requirement_checks?.length > 0 && (
 												<div className="flex flex-wrap gap-2">

@@ -135,6 +135,8 @@ class ToolEvaluationMetrics(BaseModel):
     sub_route_accuracy: float | None = None
     agent_accuracy: float | None = None
     plan_accuracy: float | None = None
+    supervisor_review_score: float | None = None
+    supervisor_review_pass_rate: float | None = None
     category_accuracy: float | None = None
     tool_accuracy: float | None = None
     retrieval_recall_at_k: float | None = None
@@ -152,10 +154,16 @@ class ToolEvaluationCaseResult(BaseModel):
     selected_route: str | None = None
     selected_sub_route: str | None = None
     selected_agent: str | None = None
+    agent_selection_analysis: str = ""
     selected_category: str | None = None
     selected_tool: str | None = None
     planning_analysis: str = ""
     planning_steps: list[str] = Field(default_factory=list)
+    supervisor_trace: dict[str, Any] = Field(default_factory=dict)
+    supervisor_review_score: float | None = None
+    supervisor_review_passed: bool | None = None
+    supervisor_review_rationale: str | None = None
+    supervisor_review_issues: list[str] = Field(default_factory=list)
     plan_requirement_checks: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_top_tools: list[str] = Field(default_factory=list)
     retrieval_top_categories: list[str] = Field(default_factory=list)
@@ -191,10 +199,16 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     selected_route: str | None = None
     selected_sub_route: str | None = None
     selected_agent: str | None = None
+    agent_selection_analysis: str = ""
     selected_category: str | None = None
     selected_tool: str | None = None
     planning_analysis: str = ""
     planning_steps: list[str] = Field(default_factory=list)
+    supervisor_trace: dict[str, Any] = Field(default_factory=dict)
+    supervisor_review_score: float | None = None
+    supervisor_review_passed: bool | None = None
+    supervisor_review_rationale: str | None = None
+    supervisor_review_issues: list[str] = Field(default_factory=list)
     plan_requirement_checks: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_top_tools: list[str] = Field(default_factory=list)
     retrieval_top_categories: list[str] = Field(default_factory=list)
@@ -231,6 +245,8 @@ class ToolApiInputEvaluationMetrics(BaseModel):
     sub_route_accuracy: float | None = None
     agent_accuracy: float | None = None
     plan_accuracy: float | None = None
+    supervisor_review_score: float | None = None
+    supervisor_review_pass_rate: float | None = None
     category_accuracy: float | None = None
     tool_accuracy: float | None = None
     schema_validity_rate: float | None = None
