@@ -169,8 +169,6 @@ _AGENT_NAME_ALIAS_MAP = {
     "roadworks_planner": "trafik",
     "road_work_planner": "trafik",
     "roadworks": "trafik",
-    "local_authorities": "knowledge",
-    "local_authority": "knowledge",
     "municipality_agent": "statistics",
     "map_agent": "kartor",
     "maps_agent": "kartor",
