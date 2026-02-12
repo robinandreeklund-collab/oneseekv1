@@ -5,6 +5,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
+from app.agents.new_chat.circuit_breaker import get_breaker
 from app.services.bolagsverket_service import (
     BOLAGSVERKET_SOURCE,
     BolagsverketService,
@@ -308,6 +309,13 @@ def build_bolagsverket_tool_registry(
 
     @tool("bolagsverket_info_basic", description=BOLAGSVERKET_TOOL_DEFINITIONS[0].description)
     async def bolagsverket_info_basic(orgnr: str) -> dict[str, Any]:
+        breaker = get_breaker("bolagsverket")
+        if not breaker.can_execute():
+            return {
+                "status": "error",
+                "error": f"Service {breaker.name} temporarily unavailable (circuit open)",
+                "query": {"orgnr": orgnr},
+            }
         try:
             data, cached = await service.get_company_basic(orgnr)
             payload = _build_payload(
@@ -326,8 +334,10 @@ def build_bolagsverket_tool_registry(
                 user_id=user_id,
                 thread_id=thread_id,
             )
+            breaker.record_success()
             return payload
         except Exception as exc:
+            breaker.record_failure()
             return {"status": "error", "error": _format_error(exc)}
 
     @tool("bolagsverket_info_status", description=BOLAGSVERKET_TOOL_DEFINITIONS[1].description)

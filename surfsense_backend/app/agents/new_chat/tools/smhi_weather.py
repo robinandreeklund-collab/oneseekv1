@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 from langchain_core.tools import tool
 
+from app.agents.new_chat.circuit_breaker import get_breaker
 from app.config import config
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,13 @@ def create_smhi_weather_tool():
             A dictionary containing location info, current conditions,
             time series data, and optional raw payload.
         """
+        breaker = get_breaker("smhi")
+        if not breaker.can_execute():
+            return {
+                "status": "error",
+                "error": f"Service {breaker.name} temporarily unavailable (circuit open)",
+            }
+        
         if lat is None or lon is None:
             if not location:
                 return {
@@ -220,7 +228,9 @@ def create_smhi_weather_tool():
             forecast, smhi_lat, smhi_lon, smhi_decimals = await _fetch_smhi_forecast(
                 lat=lat, lon=lon
             )
+            breaker.record_success()
         except Exception as exc:
+            breaker.record_failure()
             logger.error("SMHI forecast fetch failed: %s", exc)
             return {
                 "status": "error",

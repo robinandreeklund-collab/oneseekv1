@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import hashlib
 import re
@@ -18,6 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
+from app.agents.new_chat.lazy_worker_pool import LazyWorkerPool
+from app.agents.new_chat.response_compressor import compress_response
+from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
 from app.agents.new_chat.system_prompt import append_datetime_context
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
@@ -67,6 +71,12 @@ _EXTERNAL_MODEL_TOOL_NAMES = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
 _AGENT_EMBED_CACHE: dict[str, list[float]] = {}
 AGENT_RERANK_CANDIDATES = 6
 AGENT_EMBEDDING_WEIGHT = 4.0
+
+# Message pruning constants for progressive context management
+MESSAGE_PRUNING_THRESHOLD = 20  # Start pruning when total messages exceed this
+TOOL_MSG_THRESHOLD = 8  # Trigger aggressive pruning when tool messages exceed this
+KEEP_TOOL_MSG_COUNT = 6  # Number of recent tool message exchanges to preserve
+
 _TRAFFIC_INTENT_RE = re.compile(
     r"\b("
     r"trafikverket|trafikinfo|trafik|"
@@ -684,14 +694,13 @@ async def create_supervisor_agent(
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
-    workers = {}
-    for name, config in worker_configs.items():
-        workers[name] = await create_bigtool_worker(
-            llm=llm,
-            dependencies=dependencies,
-            checkpointer=checkpointer,
-            config=config,
-        )
+    # Create lazy worker pool for on-demand initialization
+    worker_pool = LazyWorkerPool(
+        configs=worker_configs,
+        llm=llm,
+        dependencies=dependencies,
+        checkpointer=checkpointer,
+    )
 
     agent_definitions = [
         AgentDefinition(
@@ -977,6 +986,17 @@ async def create_supervisor_agent(
         ]
         return json.dumps({"agents": payload}, ensure_ascii=True)
 
+    def _prepare_task_for_synthesis(task: str, state: dict[str, Any] | None) -> str:
+        """Add compare_outputs context for synthesis agent if applicable."""
+        if not state:
+            return task
+        compare_context = _format_compare_outputs_for_prompt(
+            state.get("compare_outputs") or []
+        )
+        if compare_context and "<compare_outputs>" not in task:
+            return f"{task}\n\n{compare_context}"
+        return task
+
     @tool
     async def call_agent(
         agent_name: str,
@@ -986,17 +1006,13 @@ async def create_supervisor_agent(
     ) -> str:
         """Call a specialized agent with a task."""
         name = (agent_name or "").strip().lower()
-        worker = workers.get(name)
+        worker = await worker_pool.get(name)
         if not worker:
             return json.dumps(
                 {"error": f"Agent '{agent_name}' not available."}, ensure_ascii=True
             )
         if name == "synthesis" and state:
-            compare_context = _format_compare_outputs_for_prompt(
-                state.get("compare_outputs") or []
-            )
-            if compare_context and "<compare_outputs>" not in task:
-                task = f"{task}\n\n{compare_context}"
+            task = _prepare_task_for_synthesis(task, state)
         prompt = worker_prompts.get(name, "")
         messages = []
         if prompt:
@@ -1058,6 +1074,10 @@ async def create_supervisor_agent(
 
         response_text = _strip_critic_json(response_text)
 
+        # Compress response for context efficiency when not final
+        if not final:
+            response_text = compress_response(response_text, agent_name=name)
+
         return json.dumps(
             {
                 "agent": name,
@@ -1069,9 +1089,69 @@ async def create_supervisor_agent(
             ensure_ascii=True,
         )
 
+    @tool
+    async def call_agents_parallel(
+        calls: list[dict],
+        state: Annotated[dict[str, Any], InjectedState] | None = None,
+    ) -> str:
+        """Call multiple agents in parallel. Each call dict has 'agent' and 'task' keys.
+        Use when tasks are independent and don't depend on each other's results."""
+        
+        async def _run_one(call_spec: dict) -> dict:
+            agent_name = (call_spec.get("agent") or "").strip().lower()
+            task = call_spec.get("task") or ""
+            worker = await worker_pool.get(agent_name)
+            if not worker:
+                return {"agent": agent_name, "error": f"Agent '{agent_name}' not available."}
+            try:
+                # Reuse same worker invocation logic as call_agent
+                if agent_name == "synthesis" and state:
+                    task = _prepare_task_for_synthesis(task, state)
+                prompt = worker_prompts.get(agent_name, "")
+                messages = []
+                if prompt:
+                    messages.append(SystemMessage(content=prompt))
+                messages.append(HumanMessage(content=task))
+                selected_tool_ids = list(trafik_tool_ids) if agent_name == "trafik" else []
+                worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
+                config = {
+                    "configurable": {"thread_id": f"{dependencies['thread_id']}:{agent_name}"},
+                    "recursion_limit": 60,
+                }
+                result = await worker.ainvoke(worker_state, config=config)
+                response_text = ""
+                if isinstance(result, dict):
+                    messages_out = result.get("messages") or []
+                    if messages_out:
+                        last_msg = messages_out[-1]
+                        response_text = str(getattr(last_msg, "content", "") or "")
+                return {"agent": agent_name, "task": task, "response": response_text}
+            except Exception as exc:
+                return {
+                    "agent": agent_name,
+                    "task": task,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+        
+        results = await asyncio.gather(
+            *[_run_one(c) for c in calls],
+            return_exceptions=True,
+        )
+        
+        processed = []
+        for r in results:
+            if isinstance(r, Exception):
+                processed.append({"error": str(r)})
+            else:
+                processed.append(r)
+        
+        return json.dumps({"results": processed}, ensure_ascii=True)
+
     tool_registry = {
         "retrieve_agents": retrieve_agents,
         "call_agent": call_agent,
+        "call_agents_parallel": call_agents_parallel,
         "write_todos": create_write_todos_tool(),
         "reflect_on_progress": create_reflect_on_progress_tool(),
     }
@@ -1103,6 +1183,13 @@ async def create_supervisor_agent(
         ]
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
+        
+        # Apply token budget
+        model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
+        if model_name:
+            budget = TokenBudget(model_name=str(model_name))
+            messages = budget.fit_messages(messages)
+        
         response = llm_with_tools.invoke(messages)
         updates: SupervisorState = {"messages": [response]}
         if final_response and isinstance(last_message, HumanMessage):
@@ -1131,6 +1218,13 @@ async def create_supervisor_agent(
         ]
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
+        
+        # Apply token budget
+        model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
+        if model_name:
+            budget = TokenBudget(model_name=str(model_name))
+            messages = budget.fit_messages(messages)
+        
         response = await llm_with_tools.ainvoke(messages)
         updates: SupervisorState = {"messages": [response]}
         if final_response and isinstance(last_message, HumanMessage):
@@ -1220,6 +1314,28 @@ async def create_supervisor_agent(
             if isinstance(critic_payload, dict):
                 if critic_payload.get("status") == "needs_more":
                     updates["plan_complete"] = False
+
+        # Progressive message pruning when messages get long
+        messages = state.get("messages") or []
+        if len(messages) > MESSAGE_PRUNING_THRESHOLD:
+            # Count ToolMessages
+            tool_msgs = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
+            if len(tool_msgs) > TOOL_MSG_THRESHOLD:
+                # Keep only the last KEEP_TOOL_MSG_COUNT tool messages and their context
+                keep_from = tool_msgs[-KEEP_TOOL_MSG_COUNT]
+                # Find the AI message that triggered the first kept tool message
+                keep_start = max(0, keep_from - 1)
+                
+                # Summarize what we're dropping
+                dropped_count = keep_start
+                if dropped_count > 0:
+                    pruned = messages[keep_start:]
+                    summary_msg = SystemMessage(
+                        content=f"[{dropped_count} earlier messages (including tool calls) condensed. Recent context retained.]"
+                    )
+                    # Preserve any leading system messages
+                    leading_system = [m for m in messages[:keep_start] if isinstance(m, SystemMessage)]
+                    updates["messages"] = leading_system + [summary_msg] + pruned
 
         return updates
 
