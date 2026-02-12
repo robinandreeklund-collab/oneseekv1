@@ -244,6 +244,16 @@ export function ToolSettingsPage() {
 	const [evalInput, setEvalInput] = useState("");
 	const [showEvalJsonInput, setShowEvalJsonInput] = useState(false);
 	const [evalInputError, setEvalInputError] = useState<string | null>(null);
+	const [generationMode, setGenerationMode] = useState<"category" | "global_random">(
+		"category"
+	);
+	const [generationProvider, setGenerationProvider] = useState("scb");
+	const [generationCategory, setGenerationCategory] = useState("");
+	const [generationQuestionCount, setGenerationQuestionCount] = useState(12);
+	const [generationEvalName, setGenerationEvalName] = useState("");
+	const [isGeneratingEvalFile, setIsGeneratingEvalFile] = useState(false);
+	const [selectedLibraryPath, setSelectedLibraryPath] = useState("");
+	const [isLoadingLibraryFile, setIsLoadingLibraryFile] = useState(false);
 	const [isEvaluating, setIsEvaluating] = useState(false);
 	const [retrievalLimit, setRetrievalLimit] = useState(5);
 	const [includeDraftMetadata, setIncludeDraftMetadata] = useState(true);
@@ -269,6 +279,12 @@ export function ToolSettingsPage() {
 		enabled: !!currentUser,
 	});
 
+	const { data: evalLibraryFiles } = useQuery({
+		queryKey: ["admin-tool-eval-library-files"],
+		queryFn: () => adminToolSettingsApiService.listEvalLibraryFiles(),
+		enabled: !!currentUser,
+	});
+
 	const { data: evalJobStatus } = useQuery({
 		queryKey: ["admin-tool-evaluation-job", evalJobId],
 		queryFn: () => adminToolSettingsApiService.getToolEvaluationStatus(evalJobId as string),
@@ -279,6 +295,26 @@ export function ToolSettingsPage() {
 			return status === "pending" || status === "running" ? 1200 : false;
 		},
 	});
+
+	const apiProviders = useMemo(() => apiCategories?.providers ?? [], [apiCategories?.providers]);
+
+	const generationCategoryOptions = useMemo(() => {
+		const provider = apiProviders.find(
+			(item) => item.provider_key === generationProvider
+		);
+		const deduped = new Map<string, { category_id: string; category_name: string }>();
+		for (const item of provider?.categories ?? []) {
+			if (!deduped.has(item.category_id)) {
+				deduped.set(item.category_id, {
+					category_id: item.category_id,
+					category_name: item.category_name,
+				});
+			}
+		}
+		return Array.from(deduped.values()).sort((left, right) =>
+			left.category_name.localeCompare(right.category_name, "sv")
+		);
+	}, [apiProviders, generationProvider]);
 
 	const originalTools = useMemo(() => {
 		const byId: Record<string, ToolMetadataItem> = {};
@@ -303,6 +339,35 @@ export function ToolSettingsPage() {
 			setDraftRetrievalTuning(data.retrieval_tuning);
 		}
 	}, [data?.categories]);
+
+	useEffect(() => {
+		if (!apiProviders.length) return;
+		if (generationMode === "global_random" && generationProvider === "all") {
+			return;
+		}
+		const hasCurrent = apiProviders.some(
+			(provider) => provider.provider_key === generationProvider
+		);
+		if (!hasCurrent) {
+			setGenerationProvider(apiProviders[0].provider_key);
+		}
+	}, [apiProviders, generationProvider, generationMode]);
+
+	useEffect(() => {
+		if (generationMode !== "category") return;
+		if (!generationCategoryOptions.length) {
+			if (generationCategory) {
+				setGenerationCategory("");
+			}
+			return;
+		}
+		const exists = generationCategoryOptions.some(
+			(option) => option.category_id === generationCategory
+		);
+		if (!exists) {
+			setGenerationCategory(generationCategoryOptions[0].category_id);
+		}
+	}, [generationMode, generationCategoryOptions, generationCategory]);
 
 	useEffect(() => {
 		if (!evalJobStatus || !evalJobId) return;
@@ -434,6 +499,64 @@ export function ToolSettingsPage() {
 			toast.error("Kunde inte spara retrieval-vikter");
 		} finally {
 			setIsSavingRetrievalTuning(false);
+		}
+	};
+
+	const handleGenerateEvalLibraryFile = async () => {
+		if (!data?.search_space_id) return;
+		if (generationMode === "category" && !generationCategory) {
+			toast.error("Välj en kategori innan du genererar.");
+			return;
+		}
+		const normalizedQuestionCount = Number.isFinite(generationQuestionCount)
+			? generationQuestionCount
+			: 12;
+		setIsGeneratingEvalFile(true);
+		try {
+			const response = await adminToolSettingsApiService.generateEvalLibraryFile({
+				search_space_id: data.search_space_id,
+				mode: generationMode,
+				provider_key: generationMode === "global_random" && generationProvider === "all"
+					? null
+					: generationProvider,
+				category_id: generationMode === "category" ? generationCategory : null,
+				question_count: Math.max(1, Math.min(100, Math.round(normalizedQuestionCount))),
+				eval_name: generationEvalName.trim() || null,
+				include_allowed_tools: true,
+			});
+			setEvalInput(JSON.stringify(response.payload, null, 2));
+			setEvalInputError(null);
+			setShowEvalJsonInput(true);
+			setSelectedLibraryPath(response.relative_path);
+			await queryClient.invalidateQueries({
+				queryKey: ["admin-tool-eval-library-files"],
+			});
+			const generatedTests = Array.isArray(response.payload.tests)
+				? response.payload.tests.length
+				: 0;
+			toast.success(
+				`Genererade ${generatedTests} frågor och sparade ${response.file_name}`
+			);
+		} catch (error) {
+			toast.error("Kunde inte generera eval-fil");
+		} finally {
+			setIsGeneratingEvalFile(false);
+		}
+	};
+
+	const loadEvalLibraryFile = async (relativePath: string) => {
+		setIsLoadingLibraryFile(true);
+		try {
+			const response = await adminToolSettingsApiService.readEvalLibraryFile(relativePath);
+			setEvalInput(response.content);
+			setEvalInputError(null);
+			setShowEvalJsonInput(true);
+			setSelectedLibraryPath(relativePath);
+			toast.success(`Laddade ${response.relative_path}`);
+		} catch (error) {
+			toast.error("Kunde inte ladda eval-fil");
+		} finally {
+			setIsLoadingLibraryFile(false);
 		}
 	};
 
@@ -651,6 +774,7 @@ export function ToolSettingsPage() {
 		const content = await file.text();
 		setEvalInput(content);
 		setEvalInputError(null);
+		setSelectedLibraryPath("");
 	};
 
 	if (isLoading) {
@@ -1100,6 +1224,172 @@ export function ToolSettingsPage() {
 									</li>
 									<li>Lås in en global regression-suite och kör den vid varje ändring.</li>
 								</ol>
+							</div>
+						</CardContent>
+					</Card>
+
+					<Card>
+						<CardHeader>
+							<CardTitle>Generera eval-frågor (API-kategori / global mix)</CardTitle>
+							<CardDescription>
+								Skapa JSON i rätt format, spara i /eval/api och ladda direkt in i
+								eval-run.
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="space-y-4">
+							<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+								<div className="space-y-2">
+									<Label htmlFor="generation-mode">Läge</Label>
+									<select
+										id="generation-mode"
+										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+										value={generationMode}
+										onChange={(event) =>
+											setGenerationMode(
+												event.target.value === "global_random"
+													? "global_random"
+													: "category"
+											)
+										}
+									>
+										<option value="category">Per kategori/API</option>
+										<option value="global_random">
+											Random mix från flera kategorier (global tuning)
+										</option>
+									</select>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="generation-provider">Provider</Label>
+									<select
+										id="generation-provider"
+										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+										value={generationProvider}
+										onChange={(event) => setGenerationProvider(event.target.value)}
+									>
+										{generationMode === "global_random" && (
+											<option value="all">Alla providers</option>
+										)}
+										{apiProviders.map((provider) => (
+											<option
+												key={provider.provider_key}
+												value={provider.provider_key}
+											>
+												{provider.provider_name}
+											</option>
+										))}
+									</select>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="generation-question-count">Antal frågor</Label>
+									<Input
+										id="generation-question-count"
+										type="number"
+										min={1}
+										max={100}
+										value={generationQuestionCount}
+										onChange={(event) =>
+											setGenerationQuestionCount(
+												Number.parseInt(event.target.value || "12", 10)
+											)
+										}
+									/>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="generation-eval-name">Eval-namn (valfritt)</Label>
+									<Input
+										id="generation-eval-name"
+										placeholder="scb-prisindex-mars-2026"
+										value={generationEvalName}
+										onChange={(event) => setGenerationEvalName(event.target.value)}
+									/>
+								</div>
+							</div>
+
+							{generationMode === "category" && (
+								<div className="space-y-2">
+									<Label htmlFor="generation-category">Kategori</Label>
+									<select
+										id="generation-category"
+										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+										value={generationCategory}
+										onChange={(event) => setGenerationCategory(event.target.value)}
+									>
+										{generationCategoryOptions.length === 0 && (
+											<option value="">Inga kategorier hittades</option>
+										)}
+										{generationCategoryOptions.map((option) => (
+											<option key={option.category_id} value={option.category_id}>
+												{option.category_name} ({option.category_id})
+											</option>
+										))}
+									</select>
+								</div>
+							)}
+
+							<div className="flex flex-wrap items-center gap-2">
+								<Button
+									onClick={handleGenerateEvalLibraryFile}
+									disabled={isGeneratingEvalFile}
+								>
+									{isGeneratingEvalFile ? "Genererar..." : "Generera + spara eval JSON"}
+								</Button>
+								{selectedLibraryPath && (
+									<Badge variant="outline">Vald fil: {selectedLibraryPath}</Badge>
+								)}
+							</div>
+
+							<div className="rounded border p-3 space-y-2">
+								<div className="flex items-center justify-between gap-2">
+									<p className="text-sm font-medium">Sparade eval-filer (/eval/api)</p>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() =>
+											queryClient.invalidateQueries({
+												queryKey: ["admin-tool-eval-library-files"],
+											})
+										}
+									>
+										Uppdatera lista
+									</Button>
+								</div>
+								<div className="space-y-2">
+									{(evalLibraryFiles?.items ?? []).length === 0 ? (
+										<p className="text-xs text-muted-foreground">
+											Inga sparade filer ännu.
+										</p>
+									) : (
+										(evalLibraryFiles?.items ?? []).slice(0, 25).map((item) => (
+											<div
+												key={item.relative_path}
+												className="flex flex-wrap items-center justify-between gap-2 rounded border p-2"
+											>
+												<div className="space-y-1">
+													<p className="text-xs font-medium">{item.file_name}</p>
+													<p className="text-xs text-muted-foreground">
+														{item.relative_path} ·{" "}
+														{new Date(item.created_at).toLocaleString("sv-SE")}
+														{typeof item.test_count === "number"
+															? ` · ${item.test_count} frågor`
+															: ""}
+													</p>
+												</div>
+												<Button
+													variant={
+														selectedLibraryPath === item.relative_path
+															? "default"
+															: "outline"
+													}
+													size="sm"
+													onClick={() => loadEvalLibraryFile(item.relative_path)}
+													disabled={isLoadingLibraryFile}
+												>
+													Ladda i eval-input
+												</Button>
+											</div>
+										))
+									)}
+								</div>
 							</div>
 						</CardContent>
 					</Card>

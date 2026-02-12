@@ -1,5 +1,6 @@
 import {
 	type ToolApplySuggestionsRequest,
+	type ToolEvalLibraryGenerateRequest,
 	type ToolEvaluationRequest,
 	type ToolRetrievalTuning,
 	type ToolSettingsUpdateRequest,
@@ -7,6 +8,10 @@ import {
 	toolApplySuggestionsRequest,
 	toolApplySuggestionsResponse,
 	toolApiCategoriesResponse,
+	toolEvalLibraryFileResponse,
+	toolEvalLibraryGenerateRequest,
+	toolEvalLibraryGenerateResponse,
+	toolEvalLibraryListResponse,
 	toolEvaluationRequest,
 	toolEvaluationResponse,
 	toolEvaluationJobStatusResponse,
@@ -26,6 +31,40 @@ class AdminToolSettingsApiService {
 		return baseApiService.get(
 			"/api/v1/admin/tool-settings/api-categories",
 			toolApiCategoriesResponse
+		);
+	}
+
+	async listEvalLibraryFiles(providerKey?: string, categoryId?: string) {
+		const params = new URLSearchParams();
+		if (providerKey) params.set("provider_key", providerKey);
+		if (categoryId) params.set("category_id", categoryId);
+		const query = params.toString() ? `?${params.toString()}` : "";
+		return baseApiService.get(
+			`/api/v1/admin/tool-settings/eval-library/files${query}`,
+			toolEvalLibraryListResponse
+		);
+	}
+
+	async readEvalLibraryFile(relativePath: string) {
+		const query = `?relative_path=${encodeURIComponent(relativePath)}`;
+		return baseApiService.get(
+			`/api/v1/admin/tool-settings/eval-library/file${query}`,
+			toolEvalLibraryFileResponse
+		);
+	}
+
+	async generateEvalLibraryFile(request: ToolEvalLibraryGenerateRequest) {
+		const parsed = toolEvalLibraryGenerateRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/eval-library/generate",
+			toolEvalLibraryGenerateResponse,
+			{
+				body: parsed.data,
+			}
 		);
 	}
 

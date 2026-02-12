@@ -223,3 +223,42 @@ class ToolApiCategoryProvider(BaseModel):
 
 class ToolApiCategoriesResponse(BaseModel):
     providers: list[ToolApiCategoryProvider] = Field(default_factory=list)
+
+
+class ToolEvalLibraryGenerateRequest(BaseModel):
+    search_space_id: int | None = None
+    mode: str = "category"
+    provider_key: str | None = None
+    category_id: str | None = None
+    question_count: int = 12
+    eval_name: str | None = None
+    target_success_rate: float | None = None
+    include_allowed_tools: bool = True
+
+
+class ToolEvalLibraryFileItem(BaseModel):
+    relative_path: str
+    file_name: str
+    provider_key: str | None = None
+    category_id: str | None = None
+    created_at: str
+    size_bytes: int
+    test_count: int | None = None
+
+
+class ToolEvalLibraryListResponse(BaseModel):
+    items: list[ToolEvalLibraryFileItem] = Field(default_factory=list)
+
+
+class ToolEvalLibraryFileResponse(BaseModel):
+    relative_path: str
+    content: str
+    payload: dict[str, Any]
+
+
+class ToolEvalLibraryGenerateResponse(BaseModel):
+    relative_path: str
+    file_name: str
+    version: int
+    created_at: str
+    payload: dict[str, Any]

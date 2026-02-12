@@ -75,6 +75,45 @@ export const toolApiCategoriesResponse = z.object({
 	providers: z.array(toolApiCategoryProvider).default([]),
 });
 
+export const toolEvalLibraryGenerateRequest = z.object({
+	search_space_id: z.number().nullable().optional(),
+	mode: z.string().optional().default("category"),
+	provider_key: z.string().nullable().optional(),
+	category_id: z.string().nullable().optional(),
+	question_count: z.number().int().optional().default(12),
+	eval_name: z.string().nullable().optional(),
+	target_success_rate: z.number().nullable().optional(),
+	include_allowed_tools: z.boolean().optional().default(true),
+});
+
+export const toolEvalLibraryFileItem = z.object({
+	relative_path: z.string(),
+	file_name: z.string(),
+	provider_key: z.string().nullable().optional(),
+	category_id: z.string().nullable().optional(),
+	created_at: z.string(),
+	size_bytes: z.number(),
+	test_count: z.number().nullable().optional(),
+});
+
+export const toolEvalLibraryListResponse = z.object({
+	items: z.array(toolEvalLibraryFileItem).default([]),
+});
+
+export const toolEvalLibraryFileResponse = z.object({
+	relative_path: z.string(),
+	content: z.string(),
+	payload: z.record(z.string(), z.unknown()),
+});
+
+export const toolEvalLibraryGenerateResponse = z.object({
+	relative_path: z.string(),
+	file_name: z.string(),
+	version: z.number().int(),
+	created_at: z.string(),
+	payload: z.record(z.string(), z.unknown()),
+});
+
 export const toolSettingsResponse = z.object({
 	categories: z.array(toolCategoryResponse),
 	retrieval_tuning: toolRetrievalTuning,
@@ -220,6 +259,15 @@ export type ToolLatestEvaluationSummary = z.infer<typeof toolLatestEvaluationSum
 export type ToolApiCategoryItem = z.infer<typeof toolApiCategoryItem>;
 export type ToolApiCategoryProvider = z.infer<typeof toolApiCategoryProvider>;
 export type ToolApiCategoriesResponse = z.infer<typeof toolApiCategoriesResponse>;
+export type ToolEvalLibraryGenerateRequest = z.infer<
+	typeof toolEvalLibraryGenerateRequest
+>;
+export type ToolEvalLibraryFileItem = z.infer<typeof toolEvalLibraryFileItem>;
+export type ToolEvalLibraryListResponse = z.infer<typeof toolEvalLibraryListResponse>;
+export type ToolEvalLibraryFileResponse = z.infer<typeof toolEvalLibraryFileResponse>;
+export type ToolEvalLibraryGenerateResponse = z.infer<
+	typeof toolEvalLibraryGenerateResponse
+>;
 export type ToolSettingsResponse = z.infer<typeof toolSettingsResponse>;
 export type ToolSettingsUpdateRequest = z.infer<typeof toolSettingsUpdateRequest>;
 export type ToolEvaluationExpected = z.infer<typeof toolEvaluationExpected>;

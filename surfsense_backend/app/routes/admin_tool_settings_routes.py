@@ -1,10 +1,15 @@
 import asyncio
+import json
 import logging
+import random
+import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
+from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.bigtool_store import (
@@ -25,6 +30,10 @@ from app.schemas.admin_tool_settings import (
     ToolApplySuggestionsResponse,
     ToolApiCategoriesResponse,
     ToolCategoryResponse,
+    ToolEvalLibraryFileResponse,
+    ToolEvalLibraryGenerateRequest,
+    ToolEvalLibraryGenerateResponse,
+    ToolEvalLibraryListResponse,
     ToolEvaluationCaseStatus,
     ToolEvaluationJobStatusResponse,
     ToolEvaluationRequest,
@@ -69,6 +78,16 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _EVAL_JOBS: dict[str, dict[str, Any]] = {}
 _EVAL_JOBS_LOCK = asyncio.Lock()
 _MAX_EVAL_JOBS = 100
+_EVAL_LIBRARY_ROOT = Path(__file__).resolve().parents[3] / "eval" / "api"
+_EVAL_INTERNAL_TOOL_IDS = {
+    "write_todos",
+    "reflect_on_progress",
+    "retrieve_agents",
+    "call_agent",
+    "call_agents_parallel",
+    "save_memory",
+    "recall_memory",
+}
 
 
 def _utcnow_iso() -> str:
@@ -174,6 +193,390 @@ def _build_tool_api_categories_response() -> dict[str, Any]:
         logger.exception("Failed to load Riksdagen API categories")
 
     return {"providers": providers}
+
+
+def _slugify(value: str, fallback: str = "eval") -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", (value or "").strip().lower())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned or fallback
+
+
+def _provider_for_tool_id(tool_id: str) -> str:
+    if tool_id.startswith("scb_"):
+        return "scb"
+    if tool_id.startswith("riksdag_"):
+        return "riksdagen"
+    return "other"
+
+
+def _is_eval_candidate_entry(entry: Any) -> bool:
+    tool_id = str(getattr(entry, "tool_id", "") or "")
+    if not tool_id or tool_id in _EVAL_INTERNAL_TOOL_IDS:
+        return False
+    return True
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    if not text:
+        return None
+    stripped = text.strip()
+    try:
+        parsed = json.loads(stripped)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    candidate = stripped[start : end + 1]
+    try:
+        parsed = json.loads(candidate)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _normalize_generated_tests(
+    *,
+    tests: list[dict[str, Any]],
+    selected_entries: list[Any],
+    question_count: int,
+    include_allowed_tools: bool,
+) -> list[dict[str, Any]]:
+    if not selected_entries:
+        return []
+    by_tool_id = {str(entry.tool_id): entry for entry in selected_entries}
+    normalized: list[dict[str, Any]] = []
+    for idx in range(question_count):
+        source = tests[idx] if idx < len(tests) else {}
+        if not isinstance(source, dict):
+            source = {}
+        fallback_entry = selected_entries[idx % len(selected_entries)]
+        expected = source.get("expected") or {}
+        if not isinstance(expected, dict):
+            expected = {}
+        expected_tool = str(
+            expected.get("tool")
+            or source.get("expected_tool")
+            or getattr(fallback_entry, "tool_id", "")
+        ).strip()
+        if expected_tool not in by_tool_id:
+            expected_tool = str(getattr(fallback_entry, "tool_id", "") or "")
+        entry = by_tool_id.get(expected_tool, fallback_entry)
+        expected_category = str(
+            expected.get("category")
+            or source.get("expected_category")
+            or getattr(entry, "category", "")
+        ).strip()
+        question = str(source.get("question") or "").strip()
+        if not question:
+            examples = list(getattr(entry, "example_queries", []) or [])
+            if examples:
+                question = examples[idx % len(examples)]
+            else:
+                question = (
+                    f"Vilket verktyg ska användas för: {getattr(entry, 'name', expected_tool)}?"
+                )
+        normalized.append(
+            {
+                "id": str(source.get("id") or f"case-{idx + 1}"),
+                "question": question,
+                "expected": {
+                    "tool": expected_tool,
+                    "category": expected_category or getattr(entry, "category", None),
+                },
+                "allowed_tools": [expected_tool] if include_allowed_tools else [],
+            }
+        )
+    return normalized
+
+
+def _build_fallback_generated_tests(
+    *,
+    selected_entries: list[Any],
+    question_count: int,
+    include_allowed_tools: bool,
+) -> list[dict[str, Any]]:
+    tests: list[dict[str, Any]] = []
+    for idx in range(question_count):
+        entry = selected_entries[idx % len(selected_entries)]
+        examples = list(getattr(entry, "example_queries", []) or [])
+        if examples:
+            question = str(examples[idx % len(examples)]).strip()
+        else:
+            tool_name = str(getattr(entry, "name", getattr(entry, "tool_id", "verktyg")))
+            description = str(getattr(entry, "description", "")).strip()
+            if description:
+                question = f"Hjälp mig med: {description[:120]}"
+            else:
+                question = f"När ska verktyget {tool_name} användas?"
+        tool_id = str(getattr(entry, "tool_id", "")).strip()
+        tests.append(
+            {
+                "id": f"case-{idx + 1}",
+                "question": question,
+                "expected": {
+                    "tool": tool_id,
+                    "category": str(getattr(entry, "category", "")).strip(),
+                },
+                "allowed_tools": [tool_id] if include_allowed_tools else [],
+            }
+        )
+    return tests
+
+
+def _build_eval_library_payload(
+    *,
+    eval_name: str | None,
+    target_success_rate: float | None,
+    tests: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "eval_name": eval_name,
+        "target_success_rate": target_success_rate,
+        "tests": tests,
+    }
+
+
+def _resolve_eval_library_file(relative_path: str) -> Path:
+    root = _EVAL_LIBRARY_ROOT.resolve()
+    candidate = (root / relative_path).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise HTTPException(status_code=400, detail="Invalid eval library path")
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Eval library file not found")
+    if candidate.suffix.lower() != ".json":
+        raise HTTPException(status_code=400, detail="Only JSON eval files are supported")
+    return candidate
+
+
+def _save_eval_library_payload(
+    *,
+    payload: dict[str, Any],
+    mode: str,
+    provider_key: str | None,
+    category_id: str | None,
+    eval_name: str | None,
+) -> tuple[str, str, int, str]:
+    root = _EVAL_LIBRARY_ROOT
+    root.mkdir(parents=True, exist_ok=True)
+
+    provider_slug = _slugify(provider_key or ("global" if mode == "global_random" else "custom"))
+    category_slug = _slugify(category_id or ("mixed" if mode == "global_random" else "general"))
+    target_dir = root / provider_slug / category_slug
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    base_name = _slugify(eval_name or f"{provider_slug}_{category_slug}", fallback="eval")
+    date_part = datetime.now(UTC).strftime("%Y%m%d")
+    version_pattern = re.compile(rf"^{re.escape(base_name)}_{date_part}_v(\d+)\.json$")
+    versions: list[int] = []
+    for item in target_dir.glob(f"{base_name}_{date_part}_v*.json"):
+        match = version_pattern.match(item.name)
+        if match:
+            versions.append(int(match.group(1)))
+    version = (max(versions) if versions else 0) + 1
+    file_name = f"{base_name}_{date_part}_v{version}.json"
+    file_path = target_dir / file_name
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+    file_path.write_text(serialized, encoding="utf-8")
+    relative_path = file_path.relative_to(root).as_posix()
+    return relative_path, file_name, version, _utcnow_iso()
+
+
+async def _generate_eval_tests(
+    *,
+    llm,
+    selected_entries: list[Any],
+    question_count: int,
+    include_allowed_tools: bool,
+) -> list[dict[str, Any]]:
+    fallback_tests = _build_fallback_generated_tests(
+        selected_entries=selected_entries,
+        question_count=question_count,
+        include_allowed_tools=include_allowed_tools,
+    )
+    if llm is None:
+        return fallback_tests
+    prompt = (
+        "Generate evaluation tests for tool routing.\n"
+        "Return strict JSON only:\n"
+        "{\n"
+        '  "tests": [\n'
+        "    {\n"
+        '      "id": "case-1",\n'
+        '      "question": "string",\n'
+        '      "expected": {"tool": "tool_id", "category": "category"},\n'
+        '      "allowed_tools": ["tool_id"]\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Rules:\n"
+        "- Generate exactly the requested number of tests.\n"
+        "- Use only provided tool_ids.\n"
+        "- Cover different intents and at least one harder/confusable case.\n"
+        "- Keep questions in Swedish.\n"
+        "- Do not include markdown."
+    )
+    candidate_tools = [
+        {
+            "tool_id": str(entry.tool_id),
+            "name": str(entry.name),
+            "category": str(entry.category),
+            "description": str(entry.description or ""),
+            "keywords": list(entry.keywords or []),
+            "example_queries": list(entry.example_queries or []),
+        }
+        for entry in selected_entries[:40]
+    ]
+    payload = {
+        "question_count": question_count,
+        "candidate_tools": candidate_tools,
+    }
+    model = llm
+    try:
+        if hasattr(llm, "bind"):
+            model = llm.bind(temperature=0.2)
+    except Exception:
+        model = llm
+    try:
+        response = await model.ainvoke(
+            [
+                SystemMessage(content=prompt),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+            ]
+        )
+        parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
+        generated_tests = parsed.get("tests") if isinstance(parsed, dict) else None
+        if not isinstance(generated_tests, list):
+            return fallback_tests
+        normalized = _normalize_generated_tests(
+            tests=[item for item in generated_tests if isinstance(item, dict)],
+            selected_entries=selected_entries,
+            question_count=question_count,
+            include_allowed_tools=include_allowed_tools,
+        )
+        return normalized or fallback_tests
+    except Exception:
+        return fallback_tests
+
+
+def _select_generation_entries(
+    *,
+    tool_index: list[Any],
+    mode: str,
+    provider_key: str | None,
+    category_id: str | None,
+    question_count: int,
+) -> list[Any]:
+    provider_filter = str(provider_key or "").strip().lower()
+    category_filter = str(category_id or "").strip()
+    candidates = [entry for entry in tool_index if _is_eval_candidate_entry(entry)]
+
+    if provider_filter and provider_filter != "all":
+        candidates = [
+            entry
+            for entry in candidates
+            if _provider_for_tool_id(str(entry.tool_id)) == provider_filter
+        ]
+
+    if mode == "category":
+        if not category_filter:
+            raise HTTPException(
+                status_code=400,
+                detail="category_id is required when mode=category",
+            )
+        api_categories = _build_tool_api_categories_response().get("providers") or []
+        selected_tool_ids: set[str] = set()
+        for provider in api_categories:
+            provider_id = str(provider.get("provider_key") or "").strip().lower()
+            if provider_filter and provider_filter != "all" and provider_id != provider_filter:
+                continue
+            for item in provider.get("categories") or []:
+                if str(item.get("category_id") or "").strip() == category_filter:
+                    tool_id = str(item.get("tool_id") or "").strip()
+                    if tool_id:
+                        selected_tool_ids.add(tool_id)
+        pool = [entry for entry in candidates if str(entry.tool_id) in selected_tool_ids]
+        if not pool:
+            pool = [
+                entry
+                for entry in candidates
+                if str(getattr(entry, "category", "")).strip() == category_filter
+            ]
+        if not pool:
+            raise HTTPException(
+                status_code=404,
+                detail="No tools found for selected API category",
+            )
+        return pool
+
+    by_category: dict[str, list[Any]] = {}
+    for entry in candidates:
+        category = str(getattr(entry, "category", "") or "general").strip() or "general"
+        by_category.setdefault(category, []).append(entry)
+    categories = list(by_category.keys())
+    random.shuffle(categories)
+    selected: list[Any] = []
+    for category in categories:
+        bucket = list(by_category.get(category) or [])
+        random.shuffle(bucket)
+        if bucket:
+            selected.append(bucket[0])
+        if len(selected) >= question_count:
+            break
+    if len(selected) < question_count:
+        remaining = [entry for entry in candidates if entry not in selected]
+        random.shuffle(remaining)
+        needed = question_count - len(selected)
+        selected.extend(remaining[:needed])
+    return selected or candidates
+
+
+def _list_eval_library_files(
+    *,
+    provider_key: str | None = None,
+    category_id: str | None = None,
+) -> list[dict[str, Any]]:
+    root = _EVAL_LIBRARY_ROOT
+    if not root.exists():
+        return []
+    provider_filter = _slugify(provider_key, fallback="").strip("_") if provider_key else ""
+    category_filter = _slugify(category_id, fallback="").strip("_") if category_id else ""
+    items: list[dict[str, Any]] = []
+    for path in root.rglob("*.json"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        parts = rel.split("/")
+        provider = parts[0] if len(parts) >= 2 else None
+        category = parts[1] if len(parts) >= 3 else None
+        if provider_filter and provider != provider_filter:
+            continue
+        if category_filter and category != category_filter:
+            continue
+        test_count: int | None = None
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict) and isinstance(parsed.get("tests"), list):
+                test_count = len(parsed["tests"])
+        except Exception:
+            test_count = None
+        stat = path.stat()
+        created_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
+        items.append(
+            {
+                "relative_path": rel,
+                "file_name": path.name,
+                "provider_key": provider,
+                "category_id": category,
+                "created_at": created_at,
+                "size_bytes": int(stat.st_size),
+                "test_count": test_count,
+            }
+        )
+    items.sort(key=lambda item: item["created_at"], reverse=True)
+    return items
 
 
 async def _prune_eval_jobs() -> None:
@@ -595,6 +998,129 @@ async def get_tool_api_categories(
     """Return available SCB and Riksdagen API category lists for admin UI."""
     await _require_admin(session, user)
     return _build_tool_api_categories_response()
+
+
+@router.get(
+    "/tool-settings/eval-library/files",
+    response_model=ToolEvalLibraryListResponse,
+)
+async def list_eval_library_files(
+    provider_key: str | None = None,
+    category_id: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    await _require_admin(session, user)
+    return {
+        "items": _list_eval_library_files(
+            provider_key=provider_key,
+            category_id=category_id,
+        )
+    }
+
+
+@router.get(
+    "/tool-settings/eval-library/file",
+    response_model=ToolEvalLibraryFileResponse,
+)
+async def read_eval_library_file(
+    relative_path: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    await _require_admin(session, user)
+    path = _resolve_eval_library_file(relative_path)
+    content = path.read_text(encoding="utf-8")
+    try:
+        payload = json.loads(content)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Eval library file is not valid JSON: {exc!s}",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=500, detail="Eval library JSON must be an object")
+    return {
+        "relative_path": relative_path,
+        "content": content,
+        "payload": payload,
+    }
+
+
+@router.post(
+    "/tool-settings/eval-library/generate",
+    response_model=ToolEvalLibraryGenerateResponse,
+)
+async def generate_eval_library_file(
+    payload: ToolEvalLibraryGenerateRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    normalized_mode = str(payload.mode or "category").strip().lower()
+    if normalized_mode in {"random", "global", "global_mix"}:
+        normalized_mode = "global_random"
+    if normalized_mode not in {"category", "global_random"}:
+        raise HTTPException(
+            status_code=400,
+            detail="mode must be either 'category' or 'global_random'",
+        )
+    question_count = max(1, min(int(payload.question_count or 12), 100))
+    tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=None,
+        )
+    )
+    pool = _select_generation_entries(
+        tool_index=tool_index,
+        mode=normalized_mode,
+        provider_key=payload.provider_key,
+        category_id=payload.category_id,
+        question_count=question_count,
+    )
+    if not pool:
+        raise HTTPException(status_code=404, detail="No tools available for eval generation")
+    random.shuffle(pool)
+    selected_entries = pool[: max(question_count, min(len(pool), 30))]
+    llm = await get_agent_llm(session, resolved_search_space_id)
+    tests = await _generate_eval_tests(
+        llm=llm,
+        selected_entries=selected_entries,
+        question_count=question_count,
+        include_allowed_tools=bool(payload.include_allowed_tools),
+    )
+    if not tests:
+        raise HTTPException(status_code=500, detail="Could not generate eval tests")
+    default_eval_name = (
+        f"{payload.provider_key or 'global'}-{payload.category_id or normalized_mode}"
+    )
+    eval_name = str(payload.eval_name or default_eval_name)
+    eval_payload = _build_eval_library_payload(
+        eval_name=eval_name,
+        target_success_rate=payload.target_success_rate,
+        tests=tests,
+    )
+    relative_path, file_name, version, created_at = _save_eval_library_payload(
+        payload=eval_payload,
+        mode=normalized_mode,
+        provider_key=payload.provider_key,
+        category_id=payload.category_id,
+        eval_name=eval_name,
+    )
+    return {
+        "relative_path": relative_path,
+        "file_name": file_name,
+        "version": version,
+        "created_at": created_at,
+        "payload": eval_payload,
+    }
 
 
 @router.put(
