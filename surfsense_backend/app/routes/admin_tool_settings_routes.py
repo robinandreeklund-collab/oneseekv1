@@ -107,6 +107,83 @@ _EVAL_INTERNAL_TOOL_IDS = {
     "save_memory",
     "recall_memory",
 }
+_SWEDISH_CITIES = [
+    "Stockholm",
+    "Göteborg",
+    "Malmö",
+    "Uppsala",
+    "Västerås",
+    "Örebro",
+    "Linköping",
+    "Helsingborg",
+    "Jönköping",
+    "Norrköping",
+    "Lund",
+    "Umeå",
+    "Gävle",
+    "Sundsvall",
+    "Luleå",
+]
+_SWEDISH_REGIONS = [
+    "Stockholms län",
+    "Västra Götalands län",
+    "Skåne län",
+    "Uppsala län",
+    "Örebro län",
+    "Östergötlands län",
+    "Västerbottens län",
+    "Norrbottens län",
+]
+_SWEDISH_ROADS = [
+    "E4",
+    "E6",
+    "E18",
+    "E20",
+    "E22",
+    "Riksväg 40",
+    "Riksväg 50",
+    "Riksväg 73",
+    "Södra länken",
+    "Norra länken",
+]
+_SWEDISH_POLITICS_TOPICS = [
+    "arbetslöshet",
+    "inflation",
+    "bostadsbyggande",
+    "kollektivtrafik",
+    "sjukvård",
+    "skola",
+    "energi",
+    "klimatpolitik",
+]
+_NON_SWEDISH_MARKERS = (
+    "what",
+    "how",
+    "where",
+    "when",
+    "which",
+    "show me",
+    "give me",
+    "tell me",
+    "please",
+    "could you",
+    "can you",
+)
+_SWEDEN_CONTEXT_MARKERS = (
+    "sverige",
+    "svensk",
+    "riksdag",
+    "scb",
+    "kommun",
+    "län",
+    "stad",
+    "trafikverket",
+    "smhi",
+    "e4",
+    "e6",
+    "e18",
+    "e20",
+)
 
 
 def _utcnow_iso() -> str:
@@ -250,6 +327,121 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
     return "action", "data"
 
 
+def _pick_reference(values: list[str], index: int, offset: int = 0) -> str:
+    if not values:
+        return ""
+    return str(values[(index + offset) % len(values)])
+
+
+def _contains_sweden_context(text: str) -> bool:
+    lowered = str(text or "").strip().casefold()
+    if not lowered:
+        return False
+    if any(marker in lowered for marker in _SWEDEN_CONTEXT_MARKERS):
+        return True
+    if any(city.casefold() in lowered for city in _SWEDISH_CITIES):
+        return True
+    if any(road.casefold() in lowered for road in _SWEDISH_ROADS):
+        return True
+    return False
+
+
+def _looks_non_swedish(text: str) -> bool:
+    lowered = str(text or "").strip().casefold()
+    return any(marker in lowered for marker in _NON_SWEDISH_MARKERS)
+
+
+def _sweden_focus_hint_for_entry(entry: Any) -> str:
+    tool_id = str(getattr(entry, "tool_id", "") or "").strip().lower()
+    category = str(getattr(entry, "category", "") or "").strip().lower()
+    route, sub_route = _infer_route_for_tool(tool_id, category)
+    if tool_id.startswith("scb_") or route == "statistics":
+        return (
+            "Frågan ska handla om Sverige och använda svenska kommuner/län "
+            "samt officiell statistik-kontext."
+        )
+    if tool_id.startswith("riksdag_"):
+        return (
+            "Frågan ska handla om svensk politik/riksdagen, till exempel "
+            "motioner, interpellationer eller utskott."
+        )
+    if sub_route == "travel" or "trafik" in tool_id or "trafik" in category:
+        return (
+            "Frågan ska använda giltiga svenska städer och vägar "
+            "(t.ex. E4, E6, E18, E20)."
+        )
+    if "weather" in tool_id or "smhi" in tool_id:
+        return "Frågan ska gälla svenskt väder i svenska städer, gärna med vägkoppling."
+    if tool_id.startswith("bolagsverket_"):
+        return "Frågan ska gälla svenska företag och svensk bolagskontext."
+    if sub_route == "web":
+        return "Frågan ska gälla svensk information, svenska källor eller händelser i Sverige."
+    return "Frågan ska vara på svenska och tydligt ha svensk/sverige-kontext."
+
+
+def _build_swedish_question_for_entry(entry: Any, index: int) -> str:
+    tool_id = str(getattr(entry, "tool_id", "") or "").strip().lower()
+    category = str(getattr(entry, "category", "") or "").strip().lower()
+    route, sub_route = _infer_route_for_tool(tool_id, category)
+    city = _pick_reference(_SWEDISH_CITIES, index)
+    city_alt = _pick_reference(_SWEDISH_CITIES, index, offset=4)
+    region = _pick_reference(_SWEDISH_REGIONS, index)
+    road = _pick_reference(_SWEDISH_ROADS, index)
+    topic = _pick_reference(_SWEDISH_POLITICS_TOPICS, index)
+    if tool_id.startswith("scb_") or route == "statistics":
+        return (
+            f"Hur har {topic} utvecklats i {city} kommun och {region} "
+            "de senaste fem åren?"
+        )
+    if tool_id.startswith("riksdag_"):
+        return (
+            f"Vilka riksdagsdokument handlar om {topic} i Sverige "
+            "under det senaste året?"
+        )
+    if sub_route == "travel" or "trafik" in tool_id or "trafik" in category:
+        if "weather" in tool_id or "vader" in tool_id or "halka" in tool_id:
+            return (
+                f"Hur blir vädret i {city} i morgon och finns risk för halka på {road}?"
+            )
+        if "route" in tool_id:
+            return (
+                f"Vilken resa rekommenderas mellan {city} och {city_alt} i dag, "
+                f"med fokus på trafikläget på {road}?"
+            )
+        return f"Hur ser trafikläget ut på {road} mellan {city} och {city_alt} just nu?"
+    if "weather" in tool_id or "smhi" in tool_id:
+        return f"Hur blir vädret i {city} i morgon enligt svenska prognoser?"
+    if tool_id.startswith("bolagsverket_"):
+        return (
+            f"Kan du hämta information om ett svenskt företag med säte i {city}?"
+        )
+    if tool_id in {"libris_search"}:
+        return f"Hitta svenska böcker om {topic} med koppling till {city}."
+    if tool_id in {"jobad_links_search"}:
+        return f"Vilka jobbannonser finns i {city} inom offentlig sektor i Sverige?"
+    if tool_id in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
+        return f"Hitta aktuell information om {topic} i Sverige och sammanfatta kort."
+    if tool_id in {"search_surfsense_docs", "search_knowledge_base"}:
+        return f"Vad säger dokumentationen om {topic} för svenska användare i {city}?"
+    description = str(getattr(entry, "description", "") or "").strip()
+    if description:
+        return f"Kan du hjälpa mig med svensk data om {description[:80]} i {city}?"
+    return f"Vilket verktyg ska användas för en svensk fråga om {topic} i {city}?"
+
+
+def _ensure_swedish_question_context(question: str, entry: Any, index: int) -> str:
+    cleaned = str(question or "").strip()
+    if not cleaned:
+        return _build_swedish_question_for_entry(entry, index)
+    if _looks_non_swedish(cleaned) and not _contains_sweden_context(cleaned):
+        return _build_swedish_question_for_entry(entry, index)
+    if not _contains_sweden_context(cleaned):
+        city = _pick_reference(_SWEDISH_CITIES, index)
+        suffix = cleaned.rstrip("?.! ")
+        return f"{suffix} i {city}, Sverige?"
+    return cleaned
+
+
 def _is_eval_candidate_entry(entry: Any) -> bool:
     tool_id = str(getattr(entry, "tool_id", "") or "")
     if not tool_id or tool_id in _EVAL_INTERNAL_TOOL_IDS:
@@ -339,6 +531,7 @@ def _normalize_generated_tests(
                 question = (
                     f"Vilket verktyg ska användas för: {getattr(entry, 'name', expected_tool)}?"
                 )
+        question = _ensure_swedish_question_context(question, entry, idx)
         normalized.append(
             {
                 "id": str(source.get("id") or f"case-{idx + 1}"),
@@ -375,6 +568,7 @@ def _build_fallback_generated_tests(
                 question = f"Hjälp mig med: {description[:120]}"
             else:
                 question = f"När ska verktyget {tool_name} användas?"
+        question = _ensure_swedish_question_context(question, entry, idx)
         tool_id = str(getattr(entry, "tool_id", "")).strip()
         route, sub_route = _infer_route_for_tool(
             tool_id,
@@ -451,20 +645,35 @@ def _sample_expected_field_value(
 ) -> tuple[bool, Any]:
     lowered = field_name.lower()
     question_text = str(question or "").strip()
+    city = _pick_reference(_SWEDISH_CITIES, index)
+    city_alt = _pick_reference(_SWEDISH_CITIES, index, offset=5)
+    region = _pick_reference(_SWEDISH_REGIONS, index)
+    road = _pick_reference(_SWEDISH_ROADS, index)
     if lowered in {"question", "query", "text", "prompt"}:
         return True, question_text
+    if "country" in lowered or lowered in {"land", "nation"}:
+        return True, "Sverige"
+    if "language" in lowered or lowered in {"lang", "sprak", "språk"}:
+        return True, "sv"
+    if "road" in lowered or "vag" in lowered or "väg" in lowered or "highway" in lowered:
+        return True, road
+    if "kommun" in lowered or "municipality" in lowered:
+        return True, f"{city} kommun"
     if "city" in lowered or "stad" in lowered:
-        return True, "Stockholm"
+        return True, city
     if "region" in lowered or "lan" in lowered or "county" in lowered:
-        return True, "Stockholm"
+        return True, region
     if lowered in {"from", "origin", "from_city", "start", "start_location"}:
-        return True, "Stockholm"
+        return True, city
     if lowered in {"to", "destination", "to_city", "end", "end_location"}:
-        return True, "Uppsala"
+        return True, city_alt
     if "date" in lowered or "datum" in lowered:
-        return True, "2025-01-15"
+        month = 1 + (index % 12)
+        day = 1 + (index % 27)
+        return True, f"2025-{month:02d}-{day:02d}"
     if "time" in lowered or lowered in {"tid", "departure_time", "arrival_time"}:
-        return True, "08:00"
+        hour = 6 + (index % 14)
+        return True, f"{hour:02d}:00"
     if "table" in lowered and getattr(entry, "base_path", None):
         return True, str(getattr(entry, "base_path"))
     if "base_path" in lowered and getattr(entry, "base_path", None):
@@ -640,6 +849,7 @@ async def _generate_eval_tests(
         return fallback_tests
     prompt = (
         "Generate evaluation tests for tool routing.\n"
+        "Context: The system is optimized for Swedish users and Swedish domains.\n"
         "Return strict JSON only:\n"
         "{\n"
         '  "tests": [\n'
@@ -661,7 +871,13 @@ async def _generate_eval_tests(
         "- Generate exactly the requested number of tests.\n"
         "- Use only provided tool_ids.\n"
         "- Cover different intents and at least one harder/confusable case.\n"
-        "- Keep questions in Swedish.\n"
+        "- Questions must be in Swedish only.\n"
+        "- Every question must be Sweden-specific and realistic for Sweden.\n"
+        "- Use valid Swedish cities and rotate them across tests.\n"
+        "- For traffic/travel/weather tools, use valid Swedish roads (e.g. E4, E6, E18, E20) and vary roads.\n"
+        "- For politics/government tools, focus on Swedish politics and riksdag contexts.\n"
+        "- For statistics tools, focus on Swedish municipalities/regions and official Swedish statistics context.\n"
+        "- Never generate generic/global/non-Swedish examples.\n"
         "- Do not include markdown."
     )
     candidate_tools = [
@@ -672,11 +888,18 @@ async def _generate_eval_tests(
             "description": str(entry.description or ""),
             "keywords": list(entry.keywords or []),
             "example_queries": list(entry.example_queries or []),
+            "sweden_focus_hint": _sweden_focus_hint_for_entry(entry),
         }
         for entry in selected_entries[:40]
     ]
     payload = {
         "question_count": question_count,
+        "swedish_reference": {
+            "cities": _SWEDISH_CITIES,
+            "roads": _SWEDISH_ROADS,
+            "regions": _SWEDISH_REGIONS,
+            "politics_topics": _SWEDISH_POLITICS_TOPICS,
+        },
         "candidate_tools": candidate_tools,
     }
     model = llm

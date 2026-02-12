@@ -1730,7 +1730,8 @@ export function ToolSettingsPage() {
 							<CardTitle>Generera eval-frågor (API-kategori / global mix)</CardTitle>
 							<CardDescription>
 								Skapa JSON i rätt format, spara i /eval/api och ladda direkt in i
-								eval-run.
+								eval-run. Frågor genereras på svenska och med Sverige-fokus
+								(städer, vägar, politik, väder m.m.) utifrån vald tool-kategori.
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4">
