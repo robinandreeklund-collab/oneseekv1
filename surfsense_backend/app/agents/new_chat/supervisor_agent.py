@@ -72,10 +72,10 @@ _AGENT_EMBED_CACHE: dict[str, list[float]] = {}
 AGENT_RERANK_CANDIDATES = 6
 AGENT_EMBEDDING_WEIGHT = 4.0
 
-# Message pruning constants
-MESSAGE_PRUNING_THRESHOLD = 20  # Trigger pruning when message count exceeds this
-TOOL_MSG_THRESHOLD = 8  # Start pruning when tool messages exceed this
-KEEP_TOOL_MSG_COUNT = 6  # Number of recent tool messages to keep
+# Message pruning constants for progressive context management
+MESSAGE_PRUNING_THRESHOLD = 20  # Start pruning when total messages exceed this
+TOOL_MSG_THRESHOLD = 8  # Trigger aggressive pruning when tool messages exceed this
+KEEP_TOOL_MSG_COUNT = 6  # Number of recent tool message exchanges to preserve
 
 _TRAFFIC_INTENT_RE = re.compile(
     r"\b("

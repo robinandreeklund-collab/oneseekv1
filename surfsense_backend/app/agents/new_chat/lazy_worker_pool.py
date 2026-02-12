@@ -11,7 +11,16 @@ from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_wor
 
 
 class LazyWorkerPool:
-    """Pool that creates workers lazily on first access."""
+    """Pool that creates workers lazily on first access.
+    
+    This reduces startup time by deferring worker initialization until needed.
+    Thread-safe via async locks to prevent race conditions during concurrent access.
+    
+    Attributes:
+        _configs: Worker configuration mapping
+        _workers: Cache of initialized workers
+        _locks: Per-worker locks for thread-safe initialization
+    """
     
     def __init__(
         self,
@@ -20,6 +29,14 @@ class LazyWorkerPool:
         dependencies: dict[str, Any],
         checkpointer: Checkpointer | None,
     ):
+        """Initialize the lazy worker pool.
+        
+        Args:
+            configs: Worker configurations by name
+            llm: Language model instance to use for workers
+            dependencies: Shared dependencies for worker initialization
+            checkpointer: Optional checkpointer for state persistence
+        """
         self._configs = configs
         self._llm = llm
         self._dependencies = dependencies
@@ -30,7 +47,17 @@ class LazyWorkerPool:
         }
     
     async def get(self, name: str) -> Any | None:
-        """Get or create a worker by name. Returns None if name not in configs."""
+        """Get or create a worker by name.
+        
+        Uses double-checked locking pattern to ensure thread-safe initialization
+        while minimizing lock contention for already-initialized workers.
+        
+        Args:
+            name: Worker name (e.g., 'statistics', 'bolag', 'trafik')
+            
+        Returns:
+            Worker instance if found, None if name not in configs
+        """
         if name not in self._configs:
             return None
         

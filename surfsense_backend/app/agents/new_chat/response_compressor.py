@@ -7,8 +7,16 @@ from typing import Any
 
 from app.utils.context_metrics import estimate_tokens_from_text
 
+# Maximum tokens for compressed responses - balances context efficiency vs information retention
+# 800 tokens ≈ 600 words, enough for key data while reducing supervisor context by ~70%
 MAX_RESPONSE_TOKENS = 800
+
+# Maximum number of top-level keys to include from Bolagsverket inner data
+# Limits detail while preserving essential company information
 MAX_BOLAG_KEYS = 10
+
+# Sentence boundary detection threshold (0.7 = last 30% of text)
+# Ensures truncation happens at natural sentence breaks for readability
 SENTENCE_BOUNDARY_THRESHOLD = 0.7
 
 

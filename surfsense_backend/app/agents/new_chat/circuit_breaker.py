@@ -1,4 +1,18 @@
-"""Circuit breaker for external API resilience."""
+"""Circuit breaker for external API resilience.
+
+Implements the circuit breaker pattern to prevent cascading failures when
+external services are unavailable. The breaker has three states:
+
+- CLOSED: Normal operation, requests pass through
+- OPEN: Failure threshold exceeded, requests blocked
+- HALF_OPEN: Testing recovery after timeout, limited requests allowed
+
+State transitions:
+    CLOSED --[failures >= threshold]--> OPEN
+    OPEN --[timeout elapsed]--> HALF_OPEN
+    HALF_OPEN --[success]--> CLOSED
+    HALF_OPEN --[failure]--> OPEN
+"""
 
 from __future__ import annotations
 
@@ -15,7 +29,25 @@ class CircuitState(str, Enum):
 
 @dataclass
 class CircuitBreaker:
-    """Simple circuit breaker for external service calls."""
+    """Simple circuit breaker for external service calls.
+    
+    Tracks failure count and transitions between states to protect against
+    cascading failures. When the breaker is OPEN, calls are immediately rejected
+    without attempting the external service call.
+    
+    Example:
+        breaker = get_breaker("my_service")
+        if not breaker.can_execute():
+            return {"error": "Service temporarily unavailable"}
+        
+        try:
+            result = await external_service.call()
+            breaker.record_success()
+            return result
+        except Exception:
+            breaker.record_failure()
+            raise
+    """
     
     name: str
     failure_threshold: int = 3

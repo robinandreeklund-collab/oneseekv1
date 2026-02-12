@@ -10,8 +10,9 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from app.utils.context_metrics import estimate_tokens_from_text
 from app.utils.document_converters import get_model_context_window
 
-# Constants for message management
-TAIL_MESSAGE_COUNT = 4  # Number of recent messages to always keep
+# Number of recent messages to always keep (4 messages = ~2 exchanges)
+# Preserves immediate conversation context for coherent responses
+TAIL_MESSAGE_COUNT = 4
 
 
 @dataclass
