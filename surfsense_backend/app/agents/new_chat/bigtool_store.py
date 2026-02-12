@@ -545,6 +545,9 @@ def build_tool_index(
     geoapify_by_id = {
         definition.tool_id: definition for definition in GEOAPIFY_TOOL_DEFINITIONS
     }
+    riksdagen_by_id = {
+        definition.tool_id: definition for definition in RIKSDAGEN_TOOL_DEFINITIONS
+    }
     entries: list[ToolIndexEntry] = []
 
     for tool_id, tool in tool_registry.items():
@@ -581,6 +584,13 @@ def build_tool_index(
             example_queries = list(definition.example_queries)
             category = definition.category
             base_path = definition.base_path
+        if tool_id in riksdagen_by_id:
+            definition = riksdagen_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = definition.category
+            base_path = None  # Riksdagen tools don't use base_path
         entry = ToolIndexEntry(
             tool_id=tool_id,
             namespace=namespace_for_tool(tool_id),
