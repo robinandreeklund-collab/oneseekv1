@@ -242,6 +242,7 @@ export function ToolSettingsPage() {
 		useState<ToolRetrievalTuning | null>(null);
 	const [isSavingRetrievalTuning, setIsSavingRetrievalTuning] = useState(false);
 	const [evalInput, setEvalInput] = useState("");
+	const [showEvalJsonInput, setShowEvalJsonInput] = useState(false);
 	const [evalInputError, setEvalInputError] = useState<string | null>(null);
 	const [isEvaluating, setIsEvaluating] = useState(false);
 	const [retrievalLimit, setRetrievalLimit] = useState(5);
@@ -953,6 +954,42 @@ export function ToolSettingsPage() {
 				<TabsContent value="evaluation" className="space-y-6 mt-6">
 					<Card>
 						<CardHeader>
+							<CardTitle>Guide: Tool Evaluation best use case</CardTitle>
+							<CardDescription>
+								Använd eval-loopen för att trimma metadata och retrieval-vikter innan
+								skarp produktionstrafik.
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="space-y-4 text-sm">
+							<div className="rounded border p-3 space-y-2">
+								<p className="font-medium">Rekommenderat antal frågor</p>
+								<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+									<li>Per kategori/API: 10-15 frågor (inklusive 2-3 edge cases)</li>
+									<li>
+										För större kategori: lägg till 5-10 svåra frågor med liknande ord
+									</li>
+									<li>
+										Global regression: 25-40 blandade frågor över flera kategorier
+									</li>
+								</ul>
+							</div>
+							<div className="rounded border p-3 space-y-2">
+								<p className="font-medium">Steg-för-steg arbetssätt</p>
+								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+									<li>Välj en kategori och kör en första bas-eval.</li>
+									<li>Justera metadata + retrieval-vikter baserat på resultat/förslag.</li>
+									<li>Kör om samma kategori tills träffsäkerheten stabiliserats.</li>
+									<li>
+										Kör därefter globala tester för att hitta kors-kategori-kollisioner.
+									</li>
+									<li>Lås in en global regression-suite och kör den vid varje ändring.</li>
+								</ol>
+							</div>
+						</CardContent>
+					</Card>
+
+					<Card>
+						<CardHeader>
 							<CardTitle>Eval Input (JSON)</CardTitle>
 							<CardDescription>
 								Ladda upp ett eval-JSON med testfrågor och förväntade tool/category.
@@ -1000,13 +1037,32 @@ export function ToolSettingsPage() {
 											: "Run Tool Evaluation"}
 								</Button>
 							</div>
-							<Textarea
-								placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","expected":{"tool":"...","category":"..."}}]}'
-								value={evalInput}
-								onChange={(e) => setEvalInput(e.target.value)}
-								rows={12}
-								className="font-mono text-xs"
-							/>
+							<div className="rounded border p-3 space-y-3">
+								<div className="flex items-center justify-between gap-2">
+									<p className="text-sm font-medium">Eval JSON</p>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() => setShowEvalJsonInput((prev) => !prev)}
+									>
+										{showEvalJsonInput ? "Minimera JSON-fält" : "Visa JSON-fält"}
+									</Button>
+								</div>
+								{showEvalJsonInput ? (
+									<Textarea
+										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","expected":{"tool":"...","category":"..."}}]}'
+										value={evalInput}
+										onChange={(e) => setEvalInput(e.target.value)}
+										rows={12}
+										className="font-mono text-xs"
+									/>
+								) : (
+									<p className="text-xs text-muted-foreground">
+										JSON-fältet är minimerat för bättre överblick. Klicka &quot;Visa
+										JSON-fält&quot; för att redigera manuellt.
+									</p>
+								)}
+							</div>
 							{evalInputError && (
 								<Alert variant="destructive">
 									<AlertCircle className="h-4 w-4" />
