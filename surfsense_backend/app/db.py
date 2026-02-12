@@ -12,6 +12,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     Enum as SQLAlchemyEnum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -1318,6 +1319,23 @@ class GlobalToolRetrievalTuningHistory(BaseModel, TimestampMixin):
     config_key = Column(String(40), nullable=False, index=True)
     previous_payload = Column(JSONB, nullable=True)
     new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class GlobalToolEvaluationRun(BaseModel, TimestampMixin):
+    __tablename__ = "tool_evaluation_runs_global"
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    eval_name = Column(String(160), nullable=True)
+    total_tests = Column(Integer, nullable=False, default=0)
+    passed_tests = Column(Integer, nullable=False, default=0)
+    success_rate = Column(Float, nullable=False, default=0.0)
 
     updated_by_id = Column(
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True

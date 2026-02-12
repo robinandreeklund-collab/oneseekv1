@@ -13,6 +13,7 @@ from app.agents.new_chat.bigtool_store import (
     clear_tool_caches,
 )
 from app.db import (
+    GlobalToolEvaluationRun,
     GlobalToolMetadataOverrideHistory,
     SearchSpaceMembership,
     User,
@@ -22,6 +23,7 @@ from app.db import (
 from app.schemas.admin_tool_settings import (
     ToolApplySuggestionsRequest,
     ToolApplySuggestionsResponse,
+    ToolApiCategoriesResponse,
     ToolCategoryResponse,
     ToolEvaluationCaseStatus,
     ToolEvaluationJobStatusResponse,
@@ -67,7 +69,6 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _EVAL_JOBS: dict[str, dict[str, Any]] = {}
 _EVAL_JOBS_LOCK = asyncio.Lock()
 _MAX_EVAL_JOBS = 100
-_LATEST_EVAL_SUMMARY: dict[int, dict[str, Any]] = {}
 
 
 def _utcnow_iso() -> str:
@@ -98,6 +99,81 @@ def _category_name(category_id: str) -> str:
     cleaned = (category_id or "general").replace("_", " ").replace("/", " / ")
     words = [word.capitalize() for word in cleaned.split()]
     return " ".join(words) or "General"
+
+
+def _build_tool_api_categories_response() -> dict[str, Any]:
+    providers: list[dict[str, Any]] = []
+    try:
+        from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
+
+        scb_items: list[dict[str, Any]] = []
+        for definition in SCB_TOOL_DEFINITIONS:
+            base_path = str(definition.base_path or "").strip()
+            top_level = base_path.endswith("/") and base_path.count("/") == 1
+            category_id = base_path.split("/", 1)[0] if base_path else definition.tool_id
+            category_name = str(definition.name or "").replace("SCB ", "").strip()
+            scb_items.append(
+                {
+                    "tool_id": definition.tool_id,
+                    "tool_name": definition.name,
+                    "category_id": category_id,
+                    "category_name": category_name,
+                    "level": "top_level" if top_level else "subcategory",
+                    "description": definition.description,
+                    "base_path": definition.base_path,
+                }
+            )
+        scb_items.sort(key=lambda item: (item["level"] != "top_level", item["category_name"].lower()))
+        providers.append(
+            {
+                "provider_key": "scb",
+                "provider_name": "SCB",
+                "categories": scb_items,
+            }
+        )
+    except Exception:
+        logger.exception("Failed to load SCB API categories")
+
+    try:
+        from app.agents.new_chat.riksdagen_agent import (
+            RIKSDAGEN_TOOL_DEFINITIONS,
+            RIKSDAGEN_TOP_LEVEL_TOOLS,
+        )
+
+        top_level_ids = {definition.tool_id for definition in RIKSDAGEN_TOP_LEVEL_TOOLS}
+        riksdag_items: list[dict[str, Any]] = []
+        for definition in RIKSDAGEN_TOOL_DEFINITIONS:
+            level = "top_level" if definition.tool_id in top_level_ids else "subcategory"
+            category_id = str(definition.category or "riksdagen").strip()
+            riksdag_items.append(
+                {
+                    "tool_id": definition.tool_id,
+                    "tool_name": definition.name,
+                    "category_id": category_id,
+                    "category_name": _category_name(category_id),
+                    "level": level,
+                    "description": definition.description,
+                    "base_path": None,
+                }
+            )
+        riksdag_items.sort(
+            key=lambda item: (
+                item["level"] != "top_level",
+                item["category_name"].lower(),
+                item["tool_name"].lower(),
+            )
+        )
+        providers.append(
+            {
+                "provider_key": "riksdagen",
+                "provider_name": "Riksdagen",
+                "categories": riksdag_items,
+            }
+        )
+    except Exception:
+        logger.exception("Failed to load Riksdagen API categories")
+
+    return {"providers": providers}
 
 
 async def _prune_eval_jobs() -> None:
@@ -153,24 +229,50 @@ def _build_eval_summary_payload(result: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _record_latest_eval_summary(
+    session: AsyncSession,
     *,
     search_space_id: int,
     result: dict[str, Any],
+    updated_by_id: Any | None = None,
 ) -> None:
     summary = _build_eval_summary_payload(result)
-    async with _EVAL_JOBS_LOCK:
-        _LATEST_EVAL_SUMMARY[search_space_id] = summary
+    row = GlobalToolEvaluationRun(
+        search_space_id=search_space_id,
+        eval_name=summary.get("eval_name"),
+        total_tests=int(summary.get("total_tests") or 0),
+        passed_tests=int(summary.get("passed_tests") or 0),
+        success_rate=float(summary.get("success_rate") or 0.0),
+        updated_by_id=updated_by_id,
+    )
+    try:
+        session.add(row)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("Failed to persist latest tool evaluation summary")
 
 
 async def _get_latest_eval_summary(
+    session: AsyncSession,
     *,
     search_space_id: int,
 ) -> dict[str, Any] | None:
-    async with _EVAL_JOBS_LOCK:
-        value = _LATEST_EVAL_SUMMARY.get(search_space_id)
-        if not value:
-            return None
-        return dict(value)
+    result = await session.execute(
+        select(GlobalToolEvaluationRun)
+        .filter(GlobalToolEvaluationRun.search_space_id == search_space_id)
+        .order_by(GlobalToolEvaluationRun.created_at.desc())
+        .limit(1)
+    )
+    latest = result.scalars().first()
+    if latest is None:
+        return None
+    return {
+        "run_at": latest.created_at.isoformat(),
+        "eval_name": latest.eval_name,
+        "total_tests": int(latest.total_tests or 0),
+        "passed_tests": int(latest.passed_tests or 0),
+        "success_rate": float(latest.success_rate or 0.0),
+    }
 
 
 def _metadata_payload_from_item(item: ToolMetadataUpdateItem) -> dict[str, Any]:
@@ -319,7 +421,10 @@ async def _build_tool_settings_response(
         persisted_overrides=persisted_overrides,
     )
     retrieval_tuning = await get_global_tool_retrieval_tuning(session)
-    latest_evaluation = await _get_latest_eval_summary(search_space_id=search_space_id)
+    latest_evaluation = await _get_latest_eval_summary(
+        session,
+        search_space_id=search_space_id,
+    )
     return ToolSettingsResponse(
         categories=categories,
         retrieval_tuning=ToolRetrievalTuning(**retrieval_tuning),
@@ -479,6 +584,19 @@ async def get_tool_settings(
     )
 
 
+@router.get(
+    "/tool-settings/api-categories",
+    response_model=ToolApiCategoriesResponse,
+)
+async def get_tool_api_categories(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Return available SCB and Riksdagen API category lists for admin UI."""
+    await _require_admin(session, user)
+    return _build_tool_api_categories_response()
+
+
 @router.put(
     "/tool-settings",
     response_model=ToolSettingsResponse,
@@ -601,8 +719,10 @@ async def evaluate_tool_settings(
         resolved_search_space_id=resolved_search_space_id,
     )
     await _record_latest_eval_summary(
+        session,
         search_space_id=resolved_search_space_id,
         result=result,
+        updated_by_id=user.id,
     )
     return result
 
@@ -670,8 +790,10 @@ async def _run_eval_job_background(
                 progress_callback=_progress_callback,
             )
             await _record_latest_eval_summary(
+                job_session,
                 search_space_id=resolved_search_space_id,
                 result=result,
+                updated_by_id=job_user.id,
             )
             await _update_eval_job(
                 job_id,

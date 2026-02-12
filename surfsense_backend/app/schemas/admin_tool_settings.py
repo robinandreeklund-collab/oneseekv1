@@ -203,3 +203,23 @@ class ToolMetadataHistoryItem(BaseModel):
 
 class ToolMetadataHistoryResponse(BaseModel):
     items: list[ToolMetadataHistoryItem]
+
+
+class ToolApiCategoryItem(BaseModel):
+    tool_id: str
+    tool_name: str
+    category_id: str
+    category_name: str
+    level: str
+    description: str
+    base_path: str | None = None
+
+
+class ToolApiCategoryProvider(BaseModel):
+    provider_key: str
+    provider_name: str
+    categories: list[ToolApiCategoryItem] = Field(default_factory=list)
+
+
+class ToolApiCategoriesResponse(BaseModel):
+    providers: list[ToolApiCategoryProvider] = Field(default_factory=list)

@@ -55,6 +55,26 @@ export const toolLatestEvaluationSummary = z.object({
 	success_rate: z.number(),
 });
 
+export const toolApiCategoryItem = z.object({
+	tool_id: z.string(),
+	tool_name: z.string(),
+	category_id: z.string(),
+	category_name: z.string(),
+	level: z.string(),
+	description: z.string(),
+	base_path: z.string().nullable().optional(),
+});
+
+export const toolApiCategoryProvider = z.object({
+	provider_key: z.string(),
+	provider_name: z.string(),
+	categories: z.array(toolApiCategoryItem).default([]),
+});
+
+export const toolApiCategoriesResponse = z.object({
+	providers: z.array(toolApiCategoryProvider).default([]),
+});
+
 export const toolSettingsResponse = z.object({
 	categories: z.array(toolCategoryResponse),
 	retrieval_tuning: toolRetrievalTuning,
@@ -197,6 +217,9 @@ export type ToolRetrievalTuning = z.infer<typeof toolRetrievalTuning>;
 export type ToolRetrievalTuningResponse = z.infer<typeof toolRetrievalTuningResponse>;
 export type ToolRetrievalTuningSuggestion = z.infer<typeof toolRetrievalTuningSuggestion>;
 export type ToolLatestEvaluationSummary = z.infer<typeof toolLatestEvaluationSummary>;
+export type ToolApiCategoryItem = z.infer<typeof toolApiCategoryItem>;
+export type ToolApiCategoryProvider = z.infer<typeof toolApiCategoryProvider>;
+export type ToolApiCategoriesResponse = z.infer<typeof toolApiCategoriesResponse>;
 export type ToolSettingsResponse = z.infer<typeof toolSettingsResponse>;
 export type ToolSettingsUpdateRequest = z.infer<typeof toolSettingsUpdateRequest>;
 export type ToolEvaluationExpected = z.infer<typeof toolEvaluationExpected>;

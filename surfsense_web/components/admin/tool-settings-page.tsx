@@ -263,6 +263,12 @@ export function ToolSettingsPage() {
 		enabled: !!currentUser,
 	});
 
+	const { data: apiCategories } = useQuery({
+		queryKey: ["admin-tool-api-categories"],
+		queryFn: () => adminToolSettingsApiService.getToolApiCategories(),
+		enabled: !!currentUser,
+	});
+
 	const { data: evalJobStatus } = useQuery({
 		queryKey: ["admin-tool-evaluation-job", evalJobId],
 		queryFn: () => adminToolSettingsApiService.getToolEvaluationStatus(evalJobId as string),
@@ -713,6 +719,77 @@ export function ToolSettingsPage() {
 				</TabsList>
 
 				<TabsContent value="metadata" className="space-y-6 mt-6">
+					{apiCategories?.providers?.length ? (
+						<Card>
+							<CardHeader>
+								<CardTitle>API-kategorier (SCB & Riksdagen)</CardTitle>
+								<CardDescription>
+									Översikt av tillgängliga API-kategorier och underkategorier för
+									testdesign i Tool Evaluation.
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-4">
+								{apiCategories.providers.map((provider) => {
+									const topLevel = provider.categories.filter(
+										(item) => item.level === "top_level"
+									);
+									const subcategories = provider.categories.filter(
+										(item) => item.level !== "top_level"
+									);
+									return (
+										<div key={provider.provider_key} className="rounded border p-3 space-y-3">
+											<div className="flex flex-wrap items-center gap-2">
+												<Badge variant="secondary">{provider.provider_name}</Badge>
+												<Badge variant="outline">
+													{topLevel.length} toppnivå
+												</Badge>
+												<Badge variant="outline">
+													{subcategories.length} underkategorier
+												</Badge>
+											</div>
+											<div className="grid gap-4 lg:grid-cols-2">
+												<div className="space-y-2">
+													<p className="text-sm font-medium">Toppnivå</p>
+													<div className="max-h-72 overflow-auto rounded border p-2 space-y-1">
+														{topLevel.map((item) => (
+															<div
+																key={`${provider.provider_key}-${item.tool_id}`}
+																className="rounded bg-muted/40 px-2 py-1 text-xs"
+															>
+																<p className="font-medium">{item.category_name}</p>
+																<p className="text-muted-foreground">
+																	{item.tool_id}
+																	{item.base_path ? ` · ${item.base_path}` : ""}
+																</p>
+															</div>
+														))}
+													</div>
+												</div>
+												<div className="space-y-2">
+													<p className="text-sm font-medium">Underkategorier</p>
+													<div className="max-h-72 overflow-auto rounded border p-2 space-y-1">
+														{subcategories.map((item) => (
+															<div
+																key={`${provider.provider_key}-${item.tool_id}`}
+																className="rounded bg-muted/40 px-2 py-1 text-xs"
+															>
+																<p className="font-medium">{item.tool_name}</p>
+																<p className="text-muted-foreground">
+																	{item.category_name} · {item.tool_id}
+																	{item.base_path ? ` · ${item.base_path}` : ""}
+																</p>
+															</div>
+														))}
+													</div>
+												</div>
+											</div>
+										</div>
+									);
+								})}
+							</CardContent>
+						</Card>
+					) : null}
+
 					{data?.latest_evaluation && (
 						<Card>
 							<CardHeader>
