@@ -164,66 +164,68 @@ async def evaluate_single_live(
             stub_tool_registry=stub_tool_registry,  # Use stubs instead of real tools
         )
         
-        # Run the query with event streaming
+        # Run the query through the supervisor graph to completion
+        # Use astream to get updates as the graph executes, but it will automatically
+        # stop when the graph reaches a terminal state
         state = {"messages": [HumanMessage(content=query)]}
         
-        async for event in graph.astream_events(state, version="v1"):
+        final_state = None
+        async for s in graph.astream(state):
+            # Track each state update
             step_number += 1
-            event_type = event.get("event")
             
-            if event_type == "on_chat_model_start":
-                # Capture model input (reasoning opportunity)
-                messages = event.get("data", {}).get("input", {}).get("messages", [])
-                if messages:
-                    last_msg = messages[-1]
-                    content = str(last_msg.content) if hasattr(last_msg, "content") else str(last_msg)
+            # Get messages from current state
+            messages = s.get("messages", [])
+            if not messages:
+                continue
+                
+            last_message = messages[-1]
+            
+            # Determine step type and capture trace
+            if isinstance(last_message, HumanMessage):
+                trace.append(LiveEvalTrace(
+                    step_number=step_number,
+                    step_type="system_message",
+                    timestamp=time.time() - start_time,
+                    content=f"User: {last_message.content[:200]}",
+                ))
+            elif isinstance(last_message, AIMessage):
+                # Check if this is a tool call or final response
+                if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+                    for tool_call in last_message.tool_calls:
+                        step_number += 1
+                        trace.append(LiveEvalTrace(
+                            step_number=step_number,
+                            step_type="tool_call",
+                            timestamp=time.time() - start_time,
+                            content=f"Calling tool: {tool_call.get('name', 'unknown')}",
+                            tool_name=tool_call.get('name'),
+                            tool_args=tool_call.get('args', {}),
+                        ))
+                else:
+                    # Final AI response
                     trace.append(LiveEvalTrace(
                         step_number=step_number,
                         step_type="model_call",
                         timestamp=time.time() - start_time,
-                        content=content[:500],  # Truncate long messages
-                        model_reasoning="Processing query...",
+                        content=str(last_message.content)[:500],
+                        model_reasoning="Final response generated",
                     ))
-            
-            elif event_type == "on_tool_start":
-                # Capture tool invocation
-                tool_name = event.get("name")
-                tool_input = event.get("data", {}).get("input")
+            elif isinstance(last_message, ToolMessage):
                 trace.append(LiveEvalTrace(
                     step_number=step_number,
                     step_type="tool_call",
                     timestamp=time.time() - start_time,
-                    content=f"Calling tool: {tool_name}",
-                    tool_name=tool_name,
-                    tool_args=tool_input if isinstance(tool_input, dict) else {"input": str(tool_input)},
+                    content=f"Tool result: {last_message.content[:200]}",
+                    tool_name=last_message.name,
+                    tool_result=str(last_message.content)[:500],
                 ))
             
-            elif event_type == "on_tool_end":
-                # Capture tool result
-                tool_name = event.get("name")
-                tool_output = event.get("data", {}).get("output")
-                # Update the last tool call trace with result
-                for t in reversed(trace):
-                    if t.tool_name == tool_name and t.tool_result is None:
-                        t.tool_result = str(tool_output)[:500] if tool_output else None
-                        break
-            
-            elif event_type == "on_chat_model_end":
-                # Capture model response
-                output = event.get("data", {}).get("output")
-                if hasattr(output, "content"):
-                    content = str(output.content)
-                    trace.append(LiveEvalTrace(
-                        step_number=step_number,
-                        step_type="model_call",
-                        timestamp=time.time() - start_time,
-                        content=content[:500],  # Truncate long responses
-                        model_reasoning="Generated response",
-                    ))
+            final_state = s
         
-        # Extract final response from state
-        final_messages = state.get("messages", [])
-        if final_messages:
+        # Extract final response from final state
+        if final_state and "messages" in final_state:
+            final_messages = final_state["messages"]
             last_message = final_messages[-1]
             final_response = str(last_message.content) if hasattr(last_message, "content") else str(last_message)
         else:
