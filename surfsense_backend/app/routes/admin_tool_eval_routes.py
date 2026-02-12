@@ -39,7 +39,6 @@ from app.agents.new_chat.bigtool_store import (
 
 from app.agents.new_chat.supervisor_agent import (
     AgentDefinition,
-    AGENT_DEFINITIONS,
 )
 
 logger = logging.getLogger(__name__)
@@ -273,13 +272,10 @@ async def run_eval_suite(
         # Get tool index
         tool_index = await _get_eval_tool_index()
         
-        # Get agent definitions (optional, may not be available in eval context)
+        # Get agent definitions (not available at module level, so agent evaluation is skipped)
+        # Agent definitions are created dynamically in supervisor graph creation
         agent_definitions = None
-        try:
-            # Import agent definitions if available
-            agent_definitions = list(AGENT_DEFINITIONS.values())
-        except Exception as e:
-            logger.warning(f"Could not load agent definitions: {e}")
+        logger.info("Agent evaluation will be skipped (agent_definitions not available at module level)")
         
         # Run evaluation
         report = run_evaluation(suite, tool_index, agent_definitions)

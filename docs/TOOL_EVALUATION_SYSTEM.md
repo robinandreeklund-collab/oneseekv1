@@ -20,6 +20,7 @@ The system uses the **exact same scoring/embedding/reranking pipeline** as produ
 3. **Agent Selection** - Tests `_smart_retrieve_agents()` from supervisor_agent.py
    - Evaluates which agents are selected for a query
    - Measures Jaccard similarity for partial matches
+   - **Note**: Currently disabled as agent definitions are not exported at module level
 
 4. **Tool Retrieval** - Tests `smart_retrieve_tools()` from bigtool_store.py
    - Full scoring pipeline: keyword matching + semantic embeddings + reranking
