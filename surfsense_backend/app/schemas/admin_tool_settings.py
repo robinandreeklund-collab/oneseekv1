@@ -113,6 +113,7 @@ class ToolApiInputEvaluationRequest(BaseModel):
     search_space_id: int | None = None
     retrieval_limit: int = 5
     tests: list[ToolApiInputEvaluationTestCase]
+    holdout_tests: list[ToolApiInputEvaluationTestCase] = Field(default_factory=list)
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
     retrieval_tuning_override: ToolRetrievalTuning | None = None
 
@@ -228,6 +229,8 @@ class ToolApiInputEvaluationResponse(BaseModel):
     target_success_rate: float | None = None
     metrics: ToolApiInputEvaluationMetrics
     results: list[ToolApiInputEvaluationCaseResult]
+    holdout_metrics: ToolApiInputEvaluationMetrics | None = None
+    holdout_results: list[ToolApiInputEvaluationCaseResult] = Field(default_factory=list)
     prompt_suggestions: list[ToolApiInputPromptSuggestion] = Field(default_factory=list)
     retrieval_tuning: ToolRetrievalTuning
     metadata_version_hash: str
@@ -353,6 +356,7 @@ class ToolApiCategoriesResponse(BaseModel):
 
 class ToolEvalLibraryGenerateRequest(BaseModel):
     search_space_id: int | None = None
+    eval_type: str = "tool_selection"
     mode: str = "category"
     provider_key: str | None = None
     category_id: str | None = None

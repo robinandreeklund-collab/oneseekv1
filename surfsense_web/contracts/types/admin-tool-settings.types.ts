@@ -77,6 +77,7 @@ export const toolApiCategoriesResponse = z.object({
 
 export const toolEvalLibraryGenerateRequest = z.object({
 	search_space_id: z.number().nullable().optional(),
+	eval_type: z.string().optional().default("tool_selection"),
 	mode: z.string().optional().default("category"),
 	provider_key: z.string().nullable().optional(),
 	category_id: z.string().nullable().optional(),
@@ -169,6 +170,7 @@ export const toolApiInputEvaluationRequest = z.object({
 	search_space_id: z.number().nullable().optional(),
 	retrieval_limit: z.number().int().optional().default(5),
 	tests: z.array(toolApiInputEvaluationTestCase),
+	holdout_tests: z.array(toolApiInputEvaluationTestCase).optional().default([]),
 	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
 	retrieval_tuning_override: toolRetrievalTuning.nullable().optional(),
 });
@@ -284,6 +286,8 @@ export const toolApiInputEvaluationResponse = z.object({
 	target_success_rate: z.number().nullable().optional(),
 	metrics: toolApiInputEvaluationMetrics,
 	results: z.array(toolApiInputEvaluationCaseResult),
+	holdout_metrics: toolApiInputEvaluationMetrics.nullable().optional(),
+	holdout_results: z.array(toolApiInputEvaluationCaseResult).default([]),
 	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
 	retrieval_tuning: toolRetrievalTuning,
 	metadata_version_hash: z.string(),

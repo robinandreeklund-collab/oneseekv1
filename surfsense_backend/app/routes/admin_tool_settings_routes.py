@@ -345,13 +345,172 @@ def _build_fallback_generated_tests(
     return tests
 
 
+def _tool_schema_for_generation(tool: Any) -> dict[str, Any]:
+    if tool is None:
+        return {}
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+        try:
+            schema = args_schema.model_json_schema()
+            if isinstance(schema, dict):
+                return schema
+        except Exception:
+            pass
+    get_input_schema = getattr(tool, "get_input_schema", None)
+    if callable(get_input_schema):
+        try:
+            model = get_input_schema()
+            if model is not None and hasattr(model, "model_json_schema"):
+                schema = model.model_json_schema()
+                if isinstance(schema, dict):
+                    return schema
+        except Exception:
+            pass
+    return {}
+
+
+def _required_fields_for_generation(tool: Any) -> list[str]:
+    schema = _tool_schema_for_generation(tool)
+    values = schema.get("required")
+    if not isinstance(values, list):
+        return []
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+def _property_schema_for_generation(tool: Any) -> dict[str, dict[str, Any]]:
+    schema = _tool_schema_for_generation(tool)
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for key, value in properties.items():
+        if isinstance(value, dict):
+            result[str(key)] = value
+    return result
+
+
+def _sample_expected_field_value(
+    *,
+    field_name: str,
+    field_schema: dict[str, Any],
+    question: str,
+    entry: Any,
+    index: int,
+) -> tuple[bool, Any]:
+    lowered = field_name.lower()
+    question_text = str(question or "").strip()
+    if lowered in {"question", "query", "text", "prompt"}:
+        return True, question_text
+    if "city" in lowered or "stad" in lowered:
+        return True, "Stockholm"
+    if "region" in lowered or "lan" in lowered or "county" in lowered:
+        return True, "Stockholm"
+    if lowered in {"from", "origin", "from_city", "start", "start_location"}:
+        return True, "Stockholm"
+    if lowered in {"to", "destination", "to_city", "end", "end_location"}:
+        return True, "Uppsala"
+    if "date" in lowered or "datum" in lowered:
+        return True, "2025-01-15"
+    if "time" in lowered or lowered in {"tid", "departure_time", "arrival_time"}:
+        return True, "08:00"
+    if "table" in lowered and getattr(entry, "base_path", None):
+        return True, str(getattr(entry, "base_path"))
+    if "base_path" in lowered and getattr(entry, "base_path", None):
+        return True, str(getattr(entry, "base_path"))
+    field_type = str(field_schema.get("type") or "").strip().lower()
+    if field_type == "boolean":
+        return True, True
+    if field_type == "integer":
+        if "limit" in lowered or "max" in lowered:
+            return True, 10
+        return True, 1
+    if field_type == "number":
+        if "lat" in lowered:
+            return True, 59.33
+        if "lon" in lowered or "lng" in lowered:
+            return True, 18.06
+        return True, 1.0
+    if field_type == "array":
+        item_schema = field_schema.get("items")
+        if isinstance(item_schema, dict):
+            ok, value = _sample_expected_field_value(
+                field_name=f"{field_name}_item",
+                field_schema=item_schema,
+                question=question,
+                entry=entry,
+                index=index,
+            )
+            if ok:
+                return True, [value]
+        return True, [question_text] if question_text else []
+    enum_values = field_schema.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        return True, enum_values[index % len(enum_values)]
+    return False, None
+
+
+def _enrich_api_input_generated_tests(
+    *,
+    tests: list[dict[str, Any]],
+    selected_entries: list[Any],
+    tool_registry: dict[str, Any],
+) -> list[dict[str, Any]]:
+    by_tool_id = {str(entry.tool_id): entry for entry in selected_entries}
+    enriched: list[dict[str, Any]] = []
+    for index, test in enumerate(tests):
+        expected = test.get("expected") if isinstance(test.get("expected"), dict) else {}
+        expected_tool = str(expected.get("tool") or "").strip()
+        entry = by_tool_id.get(expected_tool)
+        if entry is None and selected_entries:
+            entry = selected_entries[index % len(selected_entries)]
+            expected_tool = str(getattr(entry, "tool_id", "") or "")
+        tool = tool_registry.get(expected_tool) if expected_tool else None
+        required_fields = _required_fields_for_generation(tool)
+        properties = _property_schema_for_generation(tool)
+        field_values: dict[str, Any] = {}
+        for field_name in required_fields:
+            field_schema = properties.get(field_name) or {}
+            has_value, value = _sample_expected_field_value(
+                field_name=field_name,
+                field_schema=field_schema,
+                question=str(test.get("question") or ""),
+                entry=entry,
+                index=index,
+            )
+            if has_value:
+                field_values[field_name] = value
+        expected_payload = {
+            "tool": expected_tool or expected.get("tool"),
+            "category": expected.get("category")
+            or (str(getattr(entry, "category", "")).strip() if entry else None),
+            "required_fields": required_fields,
+            "field_values": field_values,
+            "allow_clarification": False,
+        }
+        enriched.append(
+            {
+                "id": str(test.get("id") or f"case-{index + 1}"),
+                "question": str(test.get("question") or ""),
+                "expected": expected_payload,
+                "allowed_tools": (
+                    list(test.get("allowed_tools"))
+                    if isinstance(test.get("allowed_tools"), list)
+                    else []
+                ),
+            }
+        )
+    return enriched
+
+
 def _build_eval_library_payload(
     *,
+    eval_type: str | None = None,
     eval_name: str | None,
     target_success_rate: float | None,
     tests: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
+        "eval_type": eval_type or "tool_selection",
         "eval_name": eval_name,
         "target_success_rate": target_success_rate,
         "tests": tests,
@@ -999,24 +1158,8 @@ async def _execute_api_input_evaluation(
     resolved_search_space_id: int,
     progress_callback=None,
 ) -> dict[str, Any]:
-    patch_map = _patch_map_from_updates(payload.metadata_patch)
-    tool_registry, tool_index, _persisted_overrides, _effective_overrides = (
-        await _build_tool_registry_and_index_for_search_space(
-            session,
-            user,
-            search_space_id=resolved_search_space_id,
-            metadata_patch=patch_map,
-        )
-    )
-    persisted_tuning = await get_global_tool_retrieval_tuning(session)
-    effective_tuning = (
-        normalize_tool_retrieval_tuning(payload.retrieval_tuning_override.model_dump())
-        if payload.retrieval_tuning_override
-        else persisted_tuning
-    )
-    llm = await get_agent_llm(session, resolved_search_space_id)
-    evaluation = await run_tool_api_input_evaluation(
-        tests=[
+    def _serialize_api_input_tests(test_cases: list[Any]) -> list[dict[str, Any]]:
+        return [
             {
                 "id": test.id,
                 "question": test.question,
@@ -1035,8 +1178,27 @@ async def _execute_api_input_evaluation(
                 },
                 "allowed_tools": list(test.allowed_tools),
             }
-            for test in payload.tests
-        ],
+            for test in test_cases
+        ]
+
+    patch_map = _patch_map_from_updates(payload.metadata_patch)
+    tool_registry, tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_registry_and_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=patch_map,
+        )
+    )
+    persisted_tuning = await get_global_tool_retrieval_tuning(session)
+    effective_tuning = (
+        normalize_tool_retrieval_tuning(payload.retrieval_tuning_override.model_dump())
+        if payload.retrieval_tuning_override
+        else persisted_tuning
+    )
+    llm = await get_agent_llm(session, resolved_search_space_id)
+    evaluation = await run_tool_api_input_evaluation(
+        tests=_serialize_api_input_tests(payload.tests),
         tool_index=tool_index,
         tool_registry=tool_registry,
         llm=llm,
@@ -1044,6 +1206,17 @@ async def _execute_api_input_evaluation(
         retrieval_tuning=effective_tuning,
         progress_callback=progress_callback,
     )
+    holdout_evaluation: dict[str, Any] | None = None
+    if payload.holdout_tests:
+        holdout_evaluation = await run_tool_api_input_evaluation(
+            tests=_serialize_api_input_tests(payload.holdout_tests),
+            tool_index=tool_index,
+            tool_registry=tool_registry,
+            llm=llm,
+            retrieval_limit=payload.retrieval_limit,
+            retrieval_tuning=effective_tuning,
+            progress_callback=None,
+        )
     overrides = await get_global_prompt_overrides(session)
     current_prompts: dict[str, str] = {}
     for prompt_key, definition in PROMPT_DEFINITION_MAP.items():
@@ -1062,6 +1235,12 @@ async def _execute_api_input_evaluation(
         "target_success_rate": payload.target_success_rate,
         "metrics": evaluation["metrics"],
         "results": evaluation["results"],
+        "holdout_metrics": (
+            holdout_evaluation["metrics"] if holdout_evaluation is not None else None
+        ),
+        "holdout_results": (
+            holdout_evaluation["results"] if holdout_evaluation is not None else []
+        ),
         "prompt_suggestions": prompt_suggestions,
         "retrieval_tuning": effective_tuning,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),
@@ -1227,6 +1406,14 @@ async def generate_eval_library_file(
         user,
         requested_search_space_id=payload.search_space_id,
     )
+    normalized_eval_type = str(payload.eval_type or "tool_selection").strip().lower()
+    if normalized_eval_type in {"api", "api_input_eval"}:
+        normalized_eval_type = "api_input"
+    if normalized_eval_type not in {"tool_selection", "api_input"}:
+        raise HTTPException(
+            status_code=400,
+            detail="eval_type must be either 'tool_selection' or 'api_input'",
+        )
     normalized_mode = str(payload.mode or "category").strip().lower()
     if normalized_mode in {"random", "global", "global_mix"}:
         normalized_mode = "global_random"
@@ -1236,8 +1423,8 @@ async def generate_eval_library_file(
             detail="mode must be either 'category' or 'global_random'",
         )
     question_count = max(1, min(int(payload.question_count or 12), 100))
-    tool_index, _persisted_overrides, _effective_overrides = (
-        await _build_tool_index_for_search_space(
+    tool_registry, tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_registry_and_index_for_search_space(
             session,
             user,
             search_space_id=resolved_search_space_id,
@@ -1262,6 +1449,12 @@ async def generate_eval_library_file(
         question_count=question_count,
         include_allowed_tools=bool(payload.include_allowed_tools),
     )
+    if normalized_eval_type == "api_input":
+        tests = _enrich_api_input_generated_tests(
+            tests=tests,
+            selected_entries=selected_entries,
+            tool_registry=tool_registry,
+        )
     if not tests:
         raise HTTPException(status_code=500, detail="Could not generate eval tests")
     default_eval_name = (
@@ -1269,6 +1462,7 @@ async def generate_eval_library_file(
     )
     eval_name = str(payload.eval_name or default_eval_name)
     eval_payload = _build_eval_library_payload(
+        eval_type=normalized_eval_type,
         eval_name=eval_name,
         target_success_rate=payload.target_success_rate,
         tests=tests,

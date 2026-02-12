@@ -245,10 +245,16 @@ export function ToolSettingsPage() {
 	const [isSavingRetrievalTuning, setIsSavingRetrievalTuning] = useState(false);
 	const [evalInput, setEvalInput] = useState("");
 	const [showEvalJsonInput, setShowEvalJsonInput] = useState(false);
+	const [useHoldoutSuite, setUseHoldoutSuite] = useState(false);
+	const [holdoutInput, setHoldoutInput] = useState("");
+	const [showHoldoutJsonInput, setShowHoldoutJsonInput] = useState(false);
 	const [evalInputError, setEvalInputError] = useState<string | null>(null);
 	const [generationMode, setGenerationMode] = useState<"category" | "global_random">(
 		"category"
 	);
+	const [generationEvalType, setGenerationEvalType] = useState<
+		"tool_selection" | "api_input"
+	>("tool_selection");
 	const [generationProvider, setGenerationProvider] = useState("scb");
 	const [generationCategory, setGenerationCategory] = useState("");
 	const [generationQuestionCount, setGenerationQuestionCount] = useState(12);
@@ -568,6 +574,7 @@ export function ToolSettingsPage() {
 		try {
 			const response = await adminToolSettingsApiService.generateEvalLibraryFile({
 				search_space_id: data.search_space_id,
+				eval_type: generationEvalType,
 				mode: generationMode,
 				provider_key: generationMode === "global_random" && generationProvider === "all"
 					? null
@@ -668,10 +675,51 @@ export function ToolSettingsPage() {
 		}
 	};
 
+	const parseApiInputCaseList = (items: any[]): ToolApiInputEvaluationTestCase[] => {
+		return items.map((item: any, index: number) => ({
+			id: String(item.id ?? `case-${index + 1}`),
+			question: String(item.question ?? ""),
+			expected:
+				item.expected ||
+				item.expected_tool ||
+				item.expected_category ||
+				item.required_fields ||
+				item.field_values ||
+				typeof item.allow_clarification === "boolean"
+					? {
+							tool: item.expected?.tool ?? item.expected_tool ?? null,
+							category: item.expected?.category ?? item.expected_category ?? null,
+							required_fields: Array.isArray(
+								item.expected?.required_fields ?? item.required_fields
+							)
+								? (item.expected?.required_fields ?? item.required_fields).map(
+										(value: unknown) => String(value)
+									)
+								: [],
+							field_values:
+								typeof (item.expected?.field_values ?? item.field_values) ===
+									"object" &&
+								(item.expected?.field_values ?? item.field_values) !== null
+									? (item.expected?.field_values ?? item.field_values)
+									: {},
+							allow_clarification:
+								typeof (item.expected?.allow_clarification ??
+									item.allow_clarification) === "boolean"
+									? (item.expected?.allow_clarification ?? item.allow_clarification)
+									: undefined,
+						}
+					: undefined,
+			allowed_tools: Array.isArray(item.allowed_tools)
+				? item.allowed_tools.map((value: unknown) => String(value))
+				: [],
+		}));
+	};
+
 	const parseApiInputEvalInput = (): {
 		eval_name?: string;
 		target_success_rate?: number;
 		tests: ToolApiInputEvaluationTestCase[];
+		holdout_tests: ToolApiInputEvaluationTestCase[];
 	} | null => {
 		setEvalInputError(null);
 		const trimmed = evalInput.trim();
@@ -686,50 +734,46 @@ export function ToolSettingsPage() {
 				setEvalInputError("JSON måste innehålla en tests-array.");
 				return null;
 			}
-			const tests: ToolApiInputEvaluationTestCase[] = envelope.tests.map(
-				(item: any, index: number) => ({
-					id: String(item.id ?? `case-${index + 1}`),
-					question: String(item.question ?? ""),
-					expected:
-						item.expected ||
-						item.expected_tool ||
-						item.expected_category ||
-						item.required_fields ||
-						item.field_values ||
-						typeof item.allow_clarification === "boolean"
-							? {
-									tool: item.expected?.tool ?? item.expected_tool ?? null,
-									category:
-										item.expected?.category ?? item.expected_category ?? null,
-									required_fields: Array.isArray(
-										item.expected?.required_fields ?? item.required_fields
-									)
-										? (
-												item.expected?.required_fields ?? item.required_fields
-											).map((value: unknown) => String(value))
-										: [],
-									field_values:
-										typeof (item.expected?.field_values ?? item.field_values) ===
-											"object" &&
-										(item.expected?.field_values ?? item.field_values) !== null
-											? (item.expected?.field_values ?? item.field_values)
-											: {},
-									allow_clarification:
-										typeof (item.expected?.allow_clarification ??
-											item.allow_clarification) === "boolean"
-											? (item.expected?.allow_clarification ??
-												item.allow_clarification)
-											: undefined,
-								}
-							: undefined,
-					allowed_tools: Array.isArray(item.allowed_tools)
-						? item.allowed_tools.map((value: unknown) => String(value))
-						: [],
-				})
-			);
+			const tests = parseApiInputCaseList(envelope.tests);
 			const invalidCase = tests.find((test) => !test.question.trim());
 			if (invalidCase) {
 				setEvalInputError(`Test ${invalidCase.id} saknar question.`);
+				return null;
+			}
+
+			let holdoutTestsRaw: any[] = Array.isArray(envelope.holdout_tests)
+				? envelope.holdout_tests
+				: [];
+			if (useHoldoutSuite) {
+				const holdoutTrimmed = holdoutInput.trim();
+				if (holdoutTrimmed) {
+					let parsedHoldout: any;
+					try {
+						parsedHoldout = JSON.parse(holdoutTrimmed);
+					} catch (_error) {
+						setEvalInputError("Ogiltig holdout-JSON. Kontrollera formatet.");
+						return null;
+					}
+					const holdoutEnvelope = Array.isArray(parsedHoldout)
+						? { tests: parsedHoldout }
+						: parsedHoldout;
+					if (!holdoutEnvelope || !Array.isArray(holdoutEnvelope.tests)) {
+						setEvalInputError("Holdout-JSON måste innehålla en tests-array.");
+						return null;
+					}
+					holdoutTestsRaw = holdoutEnvelope.tests;
+				}
+			}
+			const holdoutTests = parseApiInputCaseList(holdoutTestsRaw);
+			const invalidHoldoutCase = holdoutTests.find((test) => !test.question.trim());
+			if (invalidHoldoutCase) {
+				setEvalInputError(`Holdout test ${invalidHoldoutCase.id} saknar question.`);
+				return null;
+			}
+			if (useHoldoutSuite && holdoutTests.length === 0) {
+				setEvalInputError(
+					"Aktiverad holdout-suite men inga holdout tests hittades. Lägg till holdout-JSON eller holdout_tests i huvud-JSON."
+				);
 				return null;
 			}
 			return {
@@ -740,6 +784,7 @@ export function ToolSettingsPage() {
 						? envelope.target_success_rate
 						: undefined,
 				tests,
+				holdout_tests: holdoutTests,
 			};
 		} catch (_error) {
 			setEvalInputError("Ogiltig JSON. Kontrollera formatet och försök igen.");
@@ -787,6 +832,7 @@ export function ToolSettingsPage() {
 				search_space_id: data?.search_space_id,
 				retrieval_limit: retrievalLimit,
 				tests: parsedInput.tests,
+				holdout_tests: parsedInput.holdout_tests,
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
 				retrieval_tuning_override:
 					includeDraftMetadata && draftRetrievalTuning
@@ -1444,7 +1490,7 @@ export function ToolSettingsPage() {
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4">
-							<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+							<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
 								<div className="space-y-2">
 									<Label htmlFor="generation-mode">Läge</Label>
 									<select
@@ -1463,6 +1509,24 @@ export function ToolSettingsPage() {
 										<option value="global_random">
 											Random mix från flera kategorier (global tuning)
 										</option>
+									</select>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="generation-eval-type">Eval-typ</Label>
+									<select
+										id="generation-eval-type"
+										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+										value={generationEvalType}
+										onChange={(event) =>
+											setGenerationEvalType(
+												event.target.value === "api_input"
+													? "api_input"
+													: "tool_selection"
+											)
+										}
+									>
+										<option value="tool_selection">Tool selection</option>
+										<option value="api_input">API input (required fields)</option>
 									</select>
 								</div>
 								<div className="space-y-2">
@@ -1691,6 +1755,44 @@ export function ToolSettingsPage() {
 									</p>
 								)}
 							</div>
+							<div className="rounded border p-3 space-y-3">
+								<div className="flex flex-wrap items-center justify-between gap-2">
+									<div className="flex items-center gap-2">
+										<Switch
+											checked={useHoldoutSuite}
+											onCheckedChange={setUseHoldoutSuite}
+										/>
+										<p className="text-sm font-medium">Använd holdout-suite</p>
+									</div>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() => setShowHoldoutJsonInput((prev) => !prev)}
+									>
+										{showHoldoutJsonInput
+											? "Minimera holdout-fält"
+											: "Visa holdout-fält"}
+									</Button>
+								</div>
+								<p className="text-xs text-muted-foreground">
+									Holdout-suite används för anti-overfitting: promptförslag optimeras på
+									huvudtesterna men kvaliteten mäts separat på holdout.
+								</p>
+								{showHoldoutJsonInput ? (
+									<Textarea
+										placeholder='{"tests":[{"id":"h1","question":"...","expected":{"tool":"...","category":"...","required_fields":["city","date"]}}]}'
+										value={holdoutInput}
+										onChange={(e) => setHoldoutInput(e.target.value)}
+										rows={8}
+										className="font-mono text-xs"
+									/>
+								) : (
+									<p className="text-xs text-muted-foreground">
+										Holdout-fältet är minimerat. Du kan även lägga holdout_tests i
+										huvud-JSON.
+									</p>
+								)}
+							</div>
 							{evalInputError && (
 								<Alert variant="destructive">
 									<AlertCircle className="h-4 w-4" />
@@ -1900,6 +2002,62 @@ export function ToolSettingsPage() {
 									</div>
 								</CardContent>
 							</Card>
+
+							{apiInputEvaluationResult.holdout_metrics && (
+								<Card>
+									<CardHeader>
+										<CardTitle>Holdout-suite (anti-overfitting)</CardTitle>
+										<CardDescription>
+											Separat mätning på holdout för att verifiera att förbättringar
+											generaliserar.
+										</CardDescription>
+									</CardHeader>
+									<CardContent className="grid gap-4 md:grid-cols-4">
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">Holdout success</p>
+											<p className="text-2xl font-semibold">
+												{(
+													apiInputEvaluationResult.holdout_metrics.success_rate * 100
+												).toFixed(1)}
+												%
+											</p>
+										</div>
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">Holdout schema</p>
+											<p className="text-2xl font-semibold">
+												{apiInputEvaluationResult.holdout_metrics.schema_validity_rate ==
+												null
+													? "-"
+													: `${(
+															apiInputEvaluationResult.holdout_metrics
+																.schema_validity_rate * 100
+														).toFixed(1)}%`}
+											</p>
+										</div>
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">
+												Holdout required recall
+											</p>
+											<p className="text-2xl font-semibold">
+												{apiInputEvaluationResult.holdout_metrics.required_field_recall ==
+												null
+													? "-"
+													: `${(
+															apiInputEvaluationResult.holdout_metrics
+																.required_field_recall * 100
+														).toFixed(1)}%`}
+											</p>
+										</div>
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">Holdout cases</p>
+											<p className="text-2xl font-semibold">
+												{apiInputEvaluationResult.holdout_metrics.passed_tests}/
+												{apiInputEvaluationResult.holdout_metrics.total_tests}
+											</p>
+										</div>
+									</CardContent>
+								</Card>
+							)}
 
 							<Card>
 								<CardHeader>
