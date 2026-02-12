@@ -179,6 +179,8 @@ docs/
 ### Status
 **PRODUCTION READY** ✅
 
+**Update 2026-02-12 (post-integration):** Fixed critical tool discovery issue where `build_tool_index()` in bigtool_store.py was missing riksdagen_by_id lookup, preventing LLM from finding Riksdagen tools. Added proper metadata indexing following same pattern as other integrations. Commit [`47fd796`](https://github.com/robinandreeklund-collab/oneseekv1/commit/47fd796).
+
 ---
 
 ## 2026-02-12: Performance & Reliability Optimizations för Supervisor Architecture
