@@ -35,9 +35,11 @@ import { ValidationError } from "@/lib/error";
 import { baseApiService } from "@/lib/apis/base-api.service";
 
 class AdminToolSettingsApiService {
-	async getToolApiCategories() {
+	async getToolApiCategories(searchSpaceId?: number) {
+		const query =
+			typeof searchSpaceId === "number" ? `?search_space_id=${searchSpaceId}` : "";
 		return baseApiService.get(
-			"/api/v1/admin/tool-settings/api-categories",
+			`/api/v1/admin/tool-settings/api-categories${query}`,
 			toolApiCategoriesResponse
 		);
 	}

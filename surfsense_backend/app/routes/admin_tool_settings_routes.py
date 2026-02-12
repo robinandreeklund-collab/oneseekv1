@@ -184,10 +184,31 @@ _SWEDEN_CONTEXT_MARKERS = (
     "e18",
     "e20",
 )
+_SWEDISH_DIACRITIC_REPLACEMENTS: list[tuple[str, str]] = [
+    (r"\bgoteborg\b", "Göteborg"),
+    (r"\bmalmo\b", "Malmö"),
+    (r"\bvasteras\b", "Västerås"),
+    (r"\blinkoping\b", "Linköping"),
+    (r"\bjonkoping\b", "Jönköping"),
+    (r"\bnorrkoping\b", "Norrköping"),
+    (r"\bumea\b", "Umeå"),
+    (r"\bgavle\b", "Gävle"),
+    (r"\bvader\b", "väder"),
+    (r"\bvag(ar|en|s)?\b", r"väg\1"),
+    (r"\blan(et|s)?\b", r"län\1"),
+    (r"\bfraga(n|r|s)?\b", r"fråga\1"),
+]
 
 
 def _utcnow_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _restore_swedish_diacritics(text: str) -> str:
+    restored = str(text or "")
+    for pattern, replacement in _SWEDISH_DIACRITIC_REPLACEMENTS:
+        restored = re.sub(pattern, replacement, restored, flags=re.IGNORECASE)
+    return restored
 
 
 async def _require_admin(
@@ -216,18 +237,45 @@ def _category_name(category_id: str) -> str:
     return " ".join(words) or "General"
 
 
-def _build_tool_api_categories_response() -> dict[str, Any]:
-    providers: list[dict[str, Any]] = []
+def _build_tool_api_categories_response(
+    *,
+    tool_index: list[Any] | None = None,
+) -> dict[str, Any]:
+    providers_by_key: dict[str, dict[str, Any]] = {}
+    seen_tool_ids: dict[str, set[str]] = {}
+
+    def _ensure_provider(provider_key: str, provider_name: str | None = None) -> None:
+        key = str(provider_key or "other").strip().lower() or "other"
+        if key not in providers_by_key:
+            providers_by_key[key] = {
+                "provider_key": key,
+                "provider_name": provider_name or _provider_display_name(key),
+                "categories": [],
+            }
+        seen_tool_ids.setdefault(key, set())
+
+    def _append_item(provider_key: str, item: dict[str, Any]) -> None:
+        key = str(provider_key or "other").strip().lower() or "other"
+        _ensure_provider(key)
+        tool_id = str(item.get("tool_id") or "").strip()
+        if not tool_id:
+            return
+        if tool_id in seen_tool_ids[key]:
+            return
+        seen_tool_ids[key].add(tool_id)
+        providers_by_key[key]["categories"].append(item)
+
     try:
         from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 
-        scb_items: list[dict[str, Any]] = []
+        _ensure_provider("scb", "SCB")
         for definition in SCB_TOOL_DEFINITIONS:
             base_path = str(definition.base_path or "").strip()
             top_level = base_path.endswith("/") and base_path.count("/") == 1
             category_id = base_path.split("/", 1)[0] if base_path else definition.tool_id
             category_name = str(definition.name or "").replace("SCB ", "").strip()
-            scb_items.append(
+            _append_item(
+                "scb",
                 {
                     "tool_id": definition.tool_id,
                     "tool_name": definition.name,
@@ -236,16 +284,8 @@ def _build_tool_api_categories_response() -> dict[str, Any]:
                     "level": "top_level" if top_level else "subcategory",
                     "description": definition.description,
                     "base_path": definition.base_path,
-                }
+                },
             )
-        scb_items.sort(key=lambda item: (item["level"] != "top_level", item["category_name"].lower()))
-        providers.append(
-            {
-                "provider_key": "scb",
-                "provider_name": "SCB",
-                "categories": scb_items,
-            }
-        )
     except Exception:
         logger.exception("Failed to load SCB API categories")
 
@@ -255,12 +295,13 @@ def _build_tool_api_categories_response() -> dict[str, Any]:
             RIKSDAGEN_TOP_LEVEL_TOOLS,
         )
 
+        _ensure_provider("riksdagen", "Riksdagen")
         top_level_ids = {definition.tool_id for definition in RIKSDAGEN_TOP_LEVEL_TOOLS}
-        riksdag_items: list[dict[str, Any]] = []
         for definition in RIKSDAGEN_TOOL_DEFINITIONS:
             level = "top_level" if definition.tool_id in top_level_ids else "subcategory"
             category_id = str(definition.category or "riksdagen").strip()
-            riksdag_items.append(
+            _append_item(
+                "riksdagen",
                 {
                     "tool_id": definition.tool_id,
                     "tool_name": definition.name,
@@ -269,25 +310,52 @@ def _build_tool_api_categories_response() -> dict[str, Any]:
                     "level": level,
                     "description": definition.description,
                     "base_path": None,
-                }
+                },
             )
-        riksdag_items.sort(
+    except Exception:
+        logger.exception("Failed to load Riksdagen API categories")
+
+    for entry in tool_index or []:
+        if not _is_eval_candidate_entry(entry):
+            continue
+        tool_id = str(getattr(entry, "tool_id", "") or "").strip()
+        if not tool_id:
+            continue
+        provider_key = _provider_for_tool_id(tool_id)
+        category_id = str(getattr(entry, "category", "") or provider_key).strip() or provider_key
+        level = "top_level" if category_id == provider_key else "subcategory"
+        _append_item(
+            provider_key,
+            {
+                "tool_id": tool_id,
+                "tool_name": str(getattr(entry, "name", "") or tool_id),
+                "category_id": category_id,
+                "category_name": _category_name(category_id),
+                "level": level,
+                "description": str(getattr(entry, "description", "") or ""),
+                "base_path": getattr(entry, "base_path", None),
+            },
+        )
+
+    providers: list[dict[str, Any]] = []
+    for provider_key, provider in providers_by_key.items():
+        categories = list(provider.get("categories") or [])
+        categories.sort(
             key=lambda item: (
-                item["level"] != "top_level",
-                item["category_name"].lower(),
-                item["tool_name"].lower(),
+                str(item.get("level") or "") != "top_level",
+                str(item.get("category_name") or "").lower(),
+                str(item.get("tool_name") or "").lower(),
             )
         )
         providers.append(
             {
-                "provider_key": "riksdagen",
-                "provider_name": "Riksdagen",
-                "categories": riksdag_items,
+                "provider_key": provider_key,
+                "provider_name": provider.get("provider_name")
+                or _provider_display_name(provider_key),
+                "categories": categories,
             }
         )
-    except Exception:
-        logger.exception("Failed to load Riksdagen API categories")
-
+    providers.sort(key=lambda item: str(item.get("provider_name") or "").lower())
     return {"providers": providers}
 
 
@@ -298,11 +366,54 @@ def _slugify(value: str, fallback: str = "eval") -> str:
 
 
 def _provider_for_tool_id(tool_id: str) -> str:
-    if tool_id.startswith("scb_"):
+    normalized = str(tool_id or "").strip().lower()
+    if normalized.startswith("scb_"):
         return "scb"
-    if tool_id.startswith("riksdag_"):
+    if normalized.startswith("riksdag_"):
         return "riksdagen"
+    if normalized.startswith("trafikverket_"):
+        return "trafikverket"
+    if normalized.startswith("bolagsverket_"):
+        return "bolagsverket"
+    if normalized.startswith("geoapify_"):
+        return "geoapify"
+    if normalized.startswith("smhi_") or normalized == "smhi_weather":
+        return "smhi"
+    if normalized.startswith("trafiklab_") or normalized == "trafiklab_route":
+        return "trafiklab"
+    if normalized.startswith("libris_"):
+        return "libris"
+    if normalized.startswith("jobad_"):
+        return "jobad"
+    if normalized in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
+        return "web"
+    if normalized in {"search_surfsense_docs", "search_knowledge_base"}:
+        return "surfsense"
+    if normalized in {"generate_podcast", "display_image"}:
+        return "media"
     return "other"
+
+
+def _provider_display_name(provider_key: str) -> str:
+    mapping = {
+        "scb": "SCB",
+        "riksdagen": "Riksdagen",
+        "trafikverket": "Trafikverket",
+        "bolagsverket": "Bolagsverket",
+        "geoapify": "Geoapify",
+        "smhi": "SMHI",
+        "trafiklab": "Trafiklab",
+        "libris": "Libris",
+        "jobad": "JobAD",
+        "web": "Web Tools",
+        "surfsense": "SurfSense",
+        "media": "Media Tools",
+        "other": "Övriga",
+    }
+    key = str(provider_key or "").strip().lower()
+    if key in mapping:
+        return mapping[key]
+    return _category_name(key)
 
 
 def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[str, str | None]:
@@ -430,7 +541,7 @@ def _build_swedish_question_for_entry(entry: Any, index: int) -> str:
 
 
 def _ensure_swedish_question_context(question: str, entry: Any, index: int) -> str:
-    cleaned = str(question or "").strip()
+    cleaned = _restore_swedish_diacritics(str(question or "").strip())
     if not cleaned:
         return _build_swedish_question_for_entry(entry, index)
     if _looks_non_swedish(cleaned) and not _contains_sweden_context(cleaned):
@@ -438,8 +549,8 @@ def _ensure_swedish_question_context(question: str, entry: Any, index: int) -> s
     if not _contains_sweden_context(cleaned):
         city = _pick_reference(_SWEDISH_CITIES, index)
         suffix = cleaned.rstrip("?.! ")
-        return f"{suffix} i {city}, Sverige?"
-    return cleaned
+        return _restore_swedish_diacritics(f"{suffix} i {city}, Sverige?")
+    return _restore_swedish_diacritics(cleaned)
 
 
 def _is_eval_candidate_entry(entry: Any) -> bool:
@@ -872,6 +983,7 @@ async def _generate_eval_tests(
         "- Use only provided tool_ids.\n"
         "- Cover different intents and at least one harder/confusable case.\n"
         "- Questions must be in Swedish only.\n"
+        "- Use proper Swedish characters (å, ä, ö), not ASCII transliterations.\n"
         "- Every question must be Sweden-specific and realistic for Sweden.\n"
         "- Use valid Swedish cities and rotate them across tests.\n"
         "- For traffic/travel/weather tools, use valid Swedish roads (e.g. E4, E6, E18, E20) and vary roads.\n"
@@ -968,7 +1080,10 @@ def _select_generation_entries(
                 status_code=400,
                 detail="category_id is required when mode=category",
             )
-        api_categories = _build_tool_api_categories_response().get("providers") or []
+        api_categories = (
+            _build_tool_api_categories_response(tool_index=candidates).get("providers")
+            or []
+        )
         selected_tool_ids: set[str] = set()
         for provider in api_categories:
             provider_id = str(provider.get("provider_key") or "").strip().lower()
@@ -1655,12 +1770,25 @@ async def get_tool_settings(
     response_model=ToolApiCategoriesResponse,
 )
 async def get_tool_api_categories(
+    search_space_id: int | None = None,
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    """Return available SCB and Riksdagen API category lists for admin UI."""
-    await _require_admin(session, user)
-    return _build_tool_api_categories_response()
+    """Return available API category lists for all providers in the selected search space."""
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=search_space_id,
+    )
+    tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=None,
+        )
+    )
+    return _build_tool_api_categories_response(tool_index=tool_index)
 
 
 @router.get(

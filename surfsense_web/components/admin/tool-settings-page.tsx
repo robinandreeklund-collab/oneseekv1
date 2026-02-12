@@ -298,9 +298,10 @@ export function ToolSettingsPage() {
 	});
 
 	const { data: apiCategories } = useQuery({
-		queryKey: ["admin-tool-api-categories"],
-		queryFn: () => adminToolSettingsApiService.getToolApiCategories(),
-		enabled: !!currentUser,
+		queryKey: ["admin-tool-api-categories", data?.search_space_id],
+		queryFn: () =>
+			adminToolSettingsApiService.getToolApiCategories(data?.search_space_id),
+		enabled: !!currentUser && typeof data?.search_space_id === "number",
 	});
 
 	const { data: evalLibraryFiles } = useQuery({
@@ -1219,9 +1220,9 @@ export function ToolSettingsPage() {
 					{apiCategories?.providers?.length ? (
 						<Card>
 							<CardHeader>
-								<CardTitle>API-kategorier (SCB & Riksdagen)</CardTitle>
+								<CardTitle>API-kategorier (alla providers)</CardTitle>
 								<CardDescription>
-									Översikt av tillgängliga API-kategorier och underkategorier för
+									Översikt av tillgängliga providers, API-kategorier och underkategorier för
 									testdesign i Tool Evaluation.
 								</CardDescription>
 							</CardHeader>
@@ -1567,7 +1568,7 @@ export function ToolSettingsPage() {
 				<TabsContent value="evaluation" className="space-y-6 mt-6">
 					<Card>
 						<CardHeader>
-							<CardTitle>Guide: Exakt arbetsflöde i Admin Tool Settings</CardTitle>
+							<CardTitle>Steg 0: Guide och arbetssätt</CardTitle>
 							<CardDescription>
 								Följ stegen nedan i ordning för att trimma route, tool-val,
 								API-input och prompts på ett säkert sätt (dry-run).
@@ -1608,7 +1609,9 @@ export function ToolSettingsPage() {
 							</div>
 
 							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Steg 3: Kör Tool Evaluation (route + tool)</p>
+								<p className="font-medium">
+									Steg 3: Kör Agentval Eval (route + sub-route + tool + plan)
+								</p>
 								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
 									<li>
 										Sätt <span className="font-medium">Retrieval K</span> (5 är standard,
@@ -1727,7 +1730,22 @@ export function ToolSettingsPage() {
 
 					<Card>
 						<CardHeader>
-							<CardTitle>Generera eval-frågor (API-kategori / global mix)</CardTitle>
+							<CardTitle>Stegöversikt</CardTitle>
+							<CardDescription>
+								Arbeta i denna ordning för ett tydligt och repeterbart eval-flöde.
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="flex flex-wrap items-center gap-2 text-xs">
+							<Badge variant="secondary">Steg 1: Generera/Ladda frågor</Badge>
+							<Badge variant="secondary">Steg 2: Agentval Eval (route + tool + plan)</Badge>
+							<Badge variant="secondary">Steg 3: API Input Eval</Badge>
+							<Badge variant="secondary">Steg 4: Holdout + spara förbättringar</Badge>
+						</CardContent>
+					</Card>
+
+					<Card>
+						<CardHeader>
+							<CardTitle>Steg 1: Generera/Ladda eval-frågor</CardTitle>
 							<CardDescription>
 								Skapa JSON i rätt format, spara i /eval/api och ladda direkt in i
 								eval-run. Frågor genereras på svenska och med Sverige-fokus
@@ -1912,9 +1930,10 @@ export function ToolSettingsPage() {
 
 					<Card>
 						<CardHeader>
-							<CardTitle>Eval Input (JSON)</CardTitle>
+							<CardTitle>Steg 2: Kör Agentval Eval och API Input Eval</CardTitle>
 							<CardDescription>
-								Ladda upp ett eval-JSON med testfrågor och förväntade tool/category.
+								Här testar du hela agentvalet från route/sub-route till tool-val och plan,
+								samt API-input i dry-run.
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4">
@@ -1953,10 +1972,10 @@ export function ToolSettingsPage() {
 									disabled={isEvaluating || isEvalJobRunning}
 								>
 									{isEvaluating
-										? "Startar eval..."
+										? "Startar agentval-eval..."
 										: isEvalJobRunning
-											? "Eval körs..."
-											: "Run Tool Evaluation"}
+											? "Agentval-eval körs..."
+											: "Run Agentval Eval (route + tool + plan)"}
 								</Button>
 								<Button
 									variant="outline"
@@ -1973,6 +1992,10 @@ export function ToolSettingsPage() {
 							<p className="text-xs text-muted-foreground">
 								Retrieval K = antal top-kandidater som tas vidare från retrieval i
 								eval-runen. 5 är bra standard; höj till 8-10 för breda/svåra frågor.
+							</p>
+							<p className="text-xs text-muted-foreground">
+								Agentval Eval = starten av pipelinen: route/sub-route, valt verktyg och
+								om planen uppfyller plan_requirements.
 							</p>
 							<div className="rounded border p-3 space-y-3">
 								<div className="flex items-center justify-between gap-2">
@@ -2050,7 +2073,7 @@ export function ToolSettingsPage() {
 					{evalJobId && (
 						<Card>
 							<CardHeader>
-								<CardTitle>Körstatus per fråga</CardTitle>
+								<CardTitle>Steg 2A: Agentval-status per fråga</CardTitle>
 								<CardDescription>
 									Jobb {evalJobId} · status {evalJobStatus?.status ?? "pending"}
 								</CardDescription>
@@ -2133,7 +2156,7 @@ export function ToolSettingsPage() {
 					{apiInputEvalJobId && (
 						<Card>
 							<CardHeader>
-								<CardTitle>Körstatus per fråga (API input)</CardTitle>
+								<CardTitle>Steg 3A: API input-status per fråga</CardTitle>
 								<CardDescription>
 									Jobb {apiInputEvalJobId} · status{" "}
 									{apiInputEvalJobStatus?.status ?? "pending"}
@@ -2218,7 +2241,7 @@ export function ToolSettingsPage() {
 						<>
 							<Card>
 								<CardHeader>
-									<CardTitle>Eval Resultat</CardTitle>
+									<CardTitle>Steg 2B: Agentval Eval Resultat (route + tool + plan)</CardTitle>
 									<CardDescription>
 										Metadata version {evaluationResult.metadata_version_hash} ·
 										search space {evaluationResult.search_space_id}
@@ -2297,7 +2320,7 @@ export function ToolSettingsPage() {
 							{apiInputEvaluationResult?.holdout_metrics && (
 								<Card>
 									<CardHeader>
-										<CardTitle>Holdout-suite (anti-overfitting)</CardTitle>
+										<CardTitle>Steg 4: Holdout-suite (anti-overfitting)</CardTitle>
 										<CardDescription>
 											Separat mätning på holdout för att verifiera att förbättringar
 											generaliserar.
@@ -2352,7 +2375,7 @@ export function ToolSettingsPage() {
 
 							<Card>
 								<CardHeader>
-									<CardTitle>Retrieval-vikter i denna eval</CardTitle>
+									<CardTitle>Steg 2C: Retrieval-vikter i denna eval</CardTitle>
 								</CardHeader>
 								<CardContent className="space-y-3">
 									<div className="grid gap-2 md:grid-cols-3">
@@ -2459,7 +2482,7 @@ export function ToolSettingsPage() {
 
 							<Card>
 								<CardHeader>
-									<CardTitle>Resultat per test</CardTitle>
+									<CardTitle>Steg 2D: Agentval-resultat per test</CardTitle>
 								</CardHeader>
 								<CardContent className="space-y-3">
 									{evaluationResult.results.map((result) => (
@@ -2536,7 +2559,7 @@ export function ToolSettingsPage() {
 
 							<Card>
 								<CardHeader>
-									<CardTitle>Metadata-förslag</CardTitle>
+									<CardTitle>Steg 2E: Metadata-förslag</CardTitle>
 									<CardDescription>
 										Acceptera förslag, spara dem, och kör samma eval igen.
 									</CardDescription>
@@ -2660,7 +2683,7 @@ export function ToolSettingsPage() {
 
 							<Card>
 								<CardHeader>
-									<CardTitle>Prompt-förslag från Tool Eval</CardTitle>
+									<CardTitle>Steg 2F: Prompt-förslag från Agentval Eval</CardTitle>
 									<CardDescription>
 										Fixar route/sub-route och plan-kvalitet från starten av
 										pipelinen.
@@ -2748,7 +2771,7 @@ export function ToolSettingsPage() {
 						<>
 							<Card>
 								<CardHeader>
-									<CardTitle>API Input Eval Resultat</CardTitle>
+									<CardTitle>Steg 3B: API Input Eval Resultat</CardTitle>
 									<CardDescription>
 										Metadata version {apiInputEvaluationResult.metadata_version_hash} ·
 										search space {apiInputEvaluationResult.search_space_id}
@@ -2836,7 +2859,7 @@ export function ToolSettingsPage() {
 
 							<Card>
 								<CardHeader>
-									<CardTitle>API Input resultat per test</CardTitle>
+									<CardTitle>Steg 3C: API Input resultat per test</CardTitle>
 									<CardDescription>
 										Dry-run: vi validerar modellens föreslagna tool-input utan riktiga
 										API-anrop.
@@ -2959,7 +2982,7 @@ export function ToolSettingsPage() {
 
 							<Card>
 								<CardHeader>
-									<CardTitle>Prompt-förslag från API Input Eval</CardTitle>
+									<CardTitle>Steg 3D: Prompt-förslag från API Input Eval</CardTitle>
 									<CardDescription>
 										Välj förslag att spara direkt till Agent Prompts och kör om eval.
 									</CardDescription>
