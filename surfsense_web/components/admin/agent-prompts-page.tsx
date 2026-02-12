@@ -44,6 +44,7 @@ const AGENT_ORDER = [
 	"statistics",
 	"bolag",
 	"trafik",
+	"riksdagen",
 	"synthesis",
 	"smalltalk",
 ];
@@ -105,6 +106,7 @@ const AGENT_NODES = [
 	{ label: "Statistics", agent: "statistics", keys: ["agent.statistics.system"] },
 	{ label: "Bolag", agent: "bolag", keys: ["agent.bolag.system"] },
 	{ label: "Trafik", agent: "trafik", keys: ["agent.trafik.system"] },
+	{ label: "Riksdagen", agent: "riksdagen", keys: ["agent.riksdagen.system"] },
 	{ label: "Synthesis", agent: "synthesis", keys: ["agent.synthesis.system"] },
 	{ label: "Smalltalk", agent: "smalltalk", keys: ["agent.smalltalk.system"] },
 ];

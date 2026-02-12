@@ -9,6 +9,7 @@ from app.agents.new_chat.bigtool_prompts import (
 from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.dispatcher import DEFAULT_ROUTE_SYSTEM_PROMPT
 from app.agents.new_chat.knowledge_router import DEFAULT_KNOWLEDGE_ROUTE_PROMPT
+from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
 from app.agents.new_chat.subagent_utils import (
     ACTION_DATA_INSTRUCTIONS,
     ACTION_MEDIA_INSTRUCTIONS,
@@ -177,6 +178,12 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Trafik agent prompt",
         description="System prompt for Trafikverket tools.",
         default_prompt=DEFAULT_TRAFFIC_SYSTEM_PROMPT,
+    ),
+    PromptDefinition(
+        key="agent.riksdagen.system",
+        label="Riksdagen agent prompt",
+        description="System prompt for Riksdagen tools.",
+        default_prompt=DEFAULT_RIKSDAGEN_SYSTEM_PROMPT,
     ),
     PromptDefinition(
         key="compare.analysis.system",

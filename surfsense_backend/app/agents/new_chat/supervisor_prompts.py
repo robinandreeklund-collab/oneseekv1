@@ -36,6 +36,7 @@ Tillgangliga agenter (hamtas via retrieve_agents):
 - bolag: bolagsverket, orgnr, ägare och företagsdata
 - trafik: trafikverket, väg, tåg och trafikinformation
 - kartor: statiska kartbilder och markörer (geoapify_static_map)
+- riksdagen: propositioner, motioner, voteringar, ledamöter (Riksdagens öppna data)
 
 Today's date (UTC): {resolved_today}
 Current time (UTC): {resolved_time}

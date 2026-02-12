@@ -582,6 +582,7 @@ async def create_supervisor_agent(
     browser_prompt: str | None = None,
     code_prompt: str | None = None,
     kartor_prompt: str | None = None,
+    riksdagen_prompt: str | None = None,
 ):
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
@@ -669,6 +670,15 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
+        "riksdagen": WorkerConfig(
+            name="riksdagen-worker",
+            primary_namespaces=[("tools", "politik")],
+            fallback_namespaces=[
+                ("tools", "knowledge"),
+                ("tools", "action"),
+                ("tools", "general"),
+            ],
+        ),
         "synthesis": WorkerConfig(
             name="synthesis-worker",
             primary_namespaces=[("tools", "knowledge")],
@@ -691,6 +701,7 @@ async def create_supervisor_agent(
         "bolag": bolag_prompt or knowledge_prompt,
         "trafik": trafik_prompt or action_prompt,
         "kartor": kartor_prompt or action_prompt,
+        "riksdagen": riksdagen_prompt or knowledge_prompt,
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
@@ -823,6 +834,35 @@ async def create_supervisor_agent(
             ],
             namespace=("agents", "trafik"),
             prompt_key="trafik",
+        ),
+        AgentDefinition(
+            name="riksdagen",
+            description="Riksdagens öppna data: propositioner, motioner, voteringar, ledamöter",
+            keywords=[
+                "riksdag",
+                "riksdagen",
+                "proposition",
+                "prop",
+                "motion",
+                "mot",
+                "votering",
+                "omröstning",
+                "ledamot",
+                "ledamöter",
+                "betänkande",
+                "bet",
+                "interpellation",
+                "fråga",
+                "anförande",
+                "debatt",
+                "kammare",
+                "sou",
+                "ds",
+                "utskott",
+                "parti",
+            ],
+            namespace=("agents", "riksdagen"),
+            prompt_key="riksdagen",
         ),
         AgentDefinition(
             name="synthesis",
