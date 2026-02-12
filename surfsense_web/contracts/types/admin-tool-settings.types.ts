@@ -1,19 +1,25 @@
-export interface ToolMetadataItem {
-	tool_id: string;
-	name: string;
-	description: string;
-	keywords: string[];
-	example_queries: string[];
-	category: string;
-	base_path?: string | null;
-}
+import { z } from "zod";
 
-export interface ToolCategoryResponse {
-	category_id: string;
-	category_name: string;
-	tools: ToolMetadataItem[];
-}
+export const toolMetadataItem = z.object({
+	tool_id: z.string(),
+	name: z.string(),
+	description: z.string(),
+	keywords: z.array(z.string()),
+	example_queries: z.array(z.string()),
+	category: z.string(),
+	base_path: z.string().nullable().optional(),
+});
 
-export interface ToolSettingsResponse {
-	categories: ToolCategoryResponse[];
-}
+export const toolCategoryResponse = z.object({
+	category_id: z.string(),
+	category_name: z.string(),
+	tools: z.array(toolMetadataItem),
+});
+
+export const toolSettingsResponse = z.object({
+	categories: z.array(toolCategoryResponse),
+});
+
+export type ToolMetadataItem = z.infer<typeof toolMetadataItem>;
+export type ToolCategoryResponse = z.infer<typeof toolCategoryResponse>;
+export type ToolSettingsResponse = z.infer<typeof toolSettingsResponse>;

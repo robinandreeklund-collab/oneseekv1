@@ -1,20 +1,12 @@
-import type { ToolSettingsResponse } from "@/contracts/types/admin-tool-settings.types";
+import { toolSettingsResponse } from "@/contracts/types/admin-tool-settings.types";
+import { baseApiService } from "@/lib/apis/base-api.service";
 
 class AdminToolSettingsApiService {
-	async getToolSettings(): Promise<ToolSettingsResponse> {
-		const response = await fetch("/api/admin/tool-settings", {
-			method: "GET",
-			headers: {
-				"Content-Type": "application/json",
-			},
-			credentials: "include",
-		});
-
-		if (!response.ok) {
-			throw new Error(`Failed to fetch tool settings: ${response.statusText}`);
-		}
-
-		return response.json();
+	async getToolSettings() {
+		return baseApiService.get(
+			"/api/v1/admin/tool-settings",
+			toolSettingsResponse
+		);
 	}
 }
 
