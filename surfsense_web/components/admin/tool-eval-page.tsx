@@ -74,8 +74,11 @@ export function ToolEvalPage() {
 			setSingleResult(data);
 			toast.success("Query testad framgångsrikt");
 		},
-		onError: (error: Error) => {
-			toast.error(`Fel vid testning: ${error.message}`);
+		onError: (error: any) => {
+			// Handle AppError and other error types properly
+			const errorMessage = error?.message || error?.detail || String(error);
+			console.error("Test single query error:", error);
+			toast.error(`Fel vid testning: ${errorMessage}`);
 		},
 	});
 
@@ -86,8 +89,10 @@ export function ToolEvalPage() {
 			setEvalReport(data);
 			toast.success("Utvärdering slutförd!");
 		},
-		onError: (error: Error) => {
-			toast.error(`Fel vid utvärdering: ${error.message}`);
+		onError: (error: any) => {
+			const errorMessage = error?.message || error?.detail || String(error);
+			console.error("Run eval suite error:", error);
+			toast.error(`Fel vid utvärdering: ${errorMessage}`);
 		},
 	});
 
@@ -97,8 +102,10 @@ export function ToolEvalPage() {
 		onSuccess: () => {
 			toast.success("Cache rensad");
 		},
-		onError: (error: Error) => {
-			toast.error(`Fel vid cacherensning: ${error.message}`);
+		onError: (error: any) => {
+			const errorMessage = error?.message || error?.detail || String(error);
+			console.error("Invalidate cache error:", error);
+			toast.error(`Fel vid cacherensning: ${errorMessage}`);
 		},
 	});
 

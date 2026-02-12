@@ -149,6 +149,14 @@ class BaseApiService {
 
 				// For fastapi errors response
 				if (typeof data === "object" && "detail" in data) {
+					// Handle 422 validation errors with detailed field information
+					if (response.status === 422 && Array.isArray(data.detail)) {
+						const errorMessages = data.detail.map((err: any) => {
+							const field = err.loc ? err.loc.join(" -> ") : "unknown field";
+							return `${field}: ${err.msg}`;
+						}).join("; ");
+						throw new AppError(errorMessages, response.status, response.statusText);
+					}
 					throw new AppError(data.detail, response.status, response.statusText);
 				}
 
