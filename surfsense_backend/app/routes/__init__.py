@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from .admin_prompts_routes import router as admin_prompts_router
 from .admin_cache_routes import router as admin_cache_router
 from .admin_tool_settings_routes import router as admin_tool_settings_router
+from .admin_tool_eval_routes import router as admin_tool_eval_router
 from .airtable_add_connector_route import (
     router as airtable_add_connector_router,
 )
@@ -79,3 +80,4 @@ router.include_router(incentive_tasks_router)  # Incentive tasks for earning fre
 router.include_router(admin_prompts_router)  # Admin prompt overrides
 router.include_router(admin_cache_router)  # Admin cache controls
 router.include_router(admin_tool_settings_router)  # Admin tool settings
+router.include_router(admin_tool_eval_router)  # Admin tool evaluation
