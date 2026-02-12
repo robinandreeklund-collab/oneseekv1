@@ -736,71 +736,174 @@ def _build_supervisor_trace(
     }
 
 
-def _fallback_supervisor_trace_review(
+def _build_supervisor_review_rubric(
     *,
     supervisor_trace: dict[str, Any],
-) -> dict[str, Any]:
-    selected = supervisor_trace.get("selected") if isinstance(supervisor_trace, dict) else {}
-    reasoning = (
-        supervisor_trace.get("reasoning") if isinstance(supervisor_trace, dict) else {}
-    )
-    plan_steps = _safe_string_list(
-        supervisor_trace.get("plan_steps") if isinstance(supervisor_trace, dict) else []
-    )
-    plan_checks = (
-        supervisor_trace.get("plan_requirement_checks")
-        if isinstance(supervisor_trace, dict)
-        else []
-    )
-    if not isinstance(selected, dict):
-        selected = {}
-    if not isinstance(reasoning, dict):
-        reasoning = {}
+) -> list[dict[str, Any]]:
+    trace = supervisor_trace if isinstance(supervisor_trace, dict) else {}
+    expected = trace.get("expected") if isinstance(trace.get("expected"), dict) else {}
+    selected = trace.get("selected") if isinstance(trace.get("selected"), dict) else {}
+    reasoning = trace.get("reasoning") if isinstance(trace.get("reasoning"), dict) else {}
+    plan_steps = _safe_string_list(trace.get("plan_steps"))
+    plan_checks = trace.get("plan_requirement_checks")
     if not isinstance(plan_checks, list):
         plan_checks = []
 
-    coverage_checks = {
-        "route": bool(str(selected.get("route") or "").strip()),
-        "agent": bool(str(selected.get("agent") or "").strip()),
-        "tool": bool(str(selected.get("tool") or "").strip()),
-        "agent_analysis": bool(
-            str(reasoning.get("agent_selection_analysis") or "").strip()
-        ),
-        "tool_analysis": bool(
-            str(reasoning.get("tool_planning_analysis") or "").strip()
-        ),
-        "plan_steps": bool(plan_steps),
-    }
+    expected_route = str(expected.get("route") or "").strip()
+    expected_sub_route = str(expected.get("sub_route") or "").strip()
+    expected_agent = str(expected.get("agent") or "").strip()
+    expected_tool = str(expected.get("tool") or "").strip()
+    selected_route = str(selected.get("route") or "").strip()
+    selected_sub_route = str(selected.get("sub_route") or "").strip()
+    selected_agent = str(selected.get("agent") or "").strip()
+    selected_tool = str(selected.get("tool") or "").strip()
+    agent_analysis = str(reasoning.get("agent_selection_analysis") or "").strip()
+    tool_analysis = str(reasoning.get("tool_planning_analysis") or "").strip()
     failed_requirements = [
         str(item.get("requirement") or "").strip()
         for item in plan_checks
         if isinstance(item, dict) and item.get("passed") is False
     ]
-    score_components = list(coverage_checks.values())
-    if plan_checks:
-        score_components.append(len(failed_requirements) == 0)
-    score = sum(1.0 for item in score_components if item) / max(
-        1, len(score_components)
-    )
-    score = max(0.0, min(1.0, score))
-    passed = score >= 0.67
-    issues: list[str] = []
-    if not coverage_checks["route"]:
-        issues.append("Saknar vald route i supervisor-spåret.")
-    if not coverage_checks["agent"]:
-        issues.append("Saknar valt agentval i supervisor-spåret.")
-    if not coverage_checks["tool"]:
-        issues.append("Saknar valt tool i supervisor-spåret.")
-    if not coverage_checks["agent_analysis"]:
-        issues.append("Saknar agentvals-analys i supervisor-spåret.")
-    if not coverage_checks["tool_analysis"]:
-        issues.append("Saknar tool-planeringsanalys i supervisor-spåret.")
-    if not coverage_checks["plan_steps"]:
-        issues.append("Saknar plansteg i supervisor-spåret.")
-    if failed_requirements:
-        issues.append(
-            "Plan-krav missar: " + ", ".join(failed_requirements[:6])
+
+    rubric: list[dict[str, Any]] = []
+
+    def _item(
+        *,
+        key: str,
+        label: str,
+        passed: bool,
+        weight: float,
+        evidence: str,
+    ) -> None:
+        rubric.append(
+            {
+                "key": key,
+                "label": label,
+                "passed": bool(passed),
+                "weight": float(weight),
+                "evidence": evidence,
+            }
         )
+
+    _item(
+        key="route_presence",
+        label="Route är satt",
+        passed=bool(selected_route),
+        weight=1.0,
+        evidence=selected_route or "Saknas",
+    )
+    _item(
+        key="route_alignment",
+        label="Route matchar förväntad",
+        passed=(selected_route == expected_route) if expected_route else bool(selected_route),
+        weight=0.8,
+        evidence=f"expected={expected_route or '-'} selected={selected_route or '-'}",
+    )
+    _item(
+        key="sub_route_alignment",
+        label="Sub-route matchar förväntad",
+        passed=(
+            (selected_sub_route == expected_sub_route)
+            if expected_sub_route
+            else bool(selected_sub_route) or bool(selected_route)
+        ),
+        weight=0.7,
+        evidence=f"expected={expected_sub_route or '-'} selected={selected_sub_route or '-'}",
+    )
+    _item(
+        key="agent_presence",
+        label="Agent är satt",
+        passed=bool(selected_agent),
+        weight=1.0,
+        evidence=selected_agent or "Saknas",
+    )
+    _item(
+        key="agent_alignment",
+        label="Agent matchar förväntad",
+        passed=(selected_agent == expected_agent) if expected_agent else bool(selected_agent),
+        weight=0.8,
+        evidence=f"expected={expected_agent or '-'} selected={selected_agent or '-'}",
+    )
+    _item(
+        key="tool_presence",
+        label="Tool är satt",
+        passed=bool(selected_tool),
+        weight=1.0,
+        evidence=selected_tool or "Saknas",
+    )
+    _item(
+        key="tool_alignment",
+        label="Tool matchar förväntad",
+        passed=(selected_tool == expected_tool) if expected_tool else bool(selected_tool),
+        weight=0.8,
+        evidence=f"expected={expected_tool or '-'} selected={selected_tool or '-'}",
+    )
+    _item(
+        key="agent_reasoning_quality",
+        label="Agentvals-analys finns",
+        passed=bool(agent_analysis),
+        weight=0.8,
+        evidence=agent_analysis or "Saknas",
+    )
+    _item(
+        key="tool_reasoning_quality",
+        label="Tool-planeringsanalys finns",
+        passed=bool(tool_analysis),
+        weight=0.8,
+        evidence=tool_analysis or "Saknas",
+    )
+    _item(
+        key="plan_steps_quality",
+        label="Plansteg finns",
+        passed=bool(plan_steps),
+        weight=0.8,
+        evidence=f"{len(plan_steps)} steg",
+    )
+    _item(
+        key="plan_requirements_alignment",
+        label="Plan-krav är uppfyllda",
+        passed=(len(failed_requirements) == 0),
+        weight=0.9,
+        evidence=(
+            "Alla krav uppfyllda"
+            if not failed_requirements
+            else "Missar: " + ", ".join(failed_requirements[:6])
+        ),
+    )
+    return rubric
+
+
+def _score_supervisor_review_rubric(rubric: list[dict[str, Any]]) -> float:
+    if not rubric:
+        return 0.0
+    total_weight = 0.0
+    earned_weight = 0.0
+    for item in rubric:
+        if not isinstance(item, dict):
+            continue
+        raw_weight = item.get("weight", 1.0)
+        weight = float(raw_weight) if isinstance(raw_weight, (int, float)) else 1.0
+        weight = max(0.1, min(3.0, weight))
+        total_weight += weight
+        if bool(item.get("passed")):
+            earned_weight += weight
+    if total_weight <= 0:
+        return 0.0
+    return max(0.0, min(1.0, earned_weight / total_weight))
+
+
+def _fallback_supervisor_trace_review(
+    *,
+    supervisor_trace: dict[str, Any],
+) -> dict[str, Any]:
+    rubric = _build_supervisor_review_rubric(supervisor_trace=supervisor_trace)
+    score = _score_supervisor_review_rubric(rubric)
+    passed = score >= 0.67
+    issues = [
+        str(item.get("label") or "").strip()
+        for item in rubric
+        if isinstance(item, dict) and item.get("passed") is False
+    ][:8]
     rationale = (
         "Heuristisk granskning av supervisor-spår: "
         f"{'godkänd' if passed else 'otillräcklig'} struktur."
@@ -810,6 +913,7 @@ def _fallback_supervisor_trace_review(
         "passed": passed,
         "rationale": rationale,
         "issues": issues,
+        "rubric": rubric,
     }
 
 
@@ -865,7 +969,13 @@ async def _review_supervisor_trace(
         if not parsed:
             return fallback
         raw_score = parsed.get("score")
-        score = float(raw_score) if isinstance(raw_score, (int, float)) else fallback["score"]
+        llm_score = (
+            float(raw_score)
+            if isinstance(raw_score, (int, float))
+            else float(fallback["score"])
+        )
+        llm_score = max(0.0, min(1.0, llm_score))
+        score = (llm_score * 0.6) + (float(fallback["score"]) * 0.4)
         score = max(0.0, min(1.0, score))
         passed = (
             bool(parsed.get("passed"))
@@ -876,12 +986,17 @@ async def _review_supervisor_trace(
             str(parsed.get("rationale") or "").strip(),
             fallback["rationale"],
         )
-        issues = _safe_string_list(parsed.get("issues"))
+        issues = []
+        for item in [*list(fallback.get("issues") or []), *_safe_string_list(parsed.get("issues"))]:
+            cleaned = str(item).strip()
+            if cleaned and cleaned.casefold() not in {value.casefold() for value in issues}:
+                issues.append(cleaned)
         return {
             "score": score,
             "passed": passed,
             "rationale": rationale,
             "issues": issues,
+            "rubric": list(fallback.get("rubric") or []),
         }
     except Exception:
         return fallback
@@ -1254,6 +1369,7 @@ async def run_tool_evaluation(
     tool_index: list[ToolIndexEntry],
     llm,
     retrieval_limit: int = 5,
+    use_llm_supervisor_review: bool = True,
     retrieval_tuning: dict[str, Any] | None = None,
     prompt_overrides: dict[str, str] | None = None,
     progress_callback=None,
@@ -1331,6 +1447,7 @@ async def run_tool_evaluation(
         supervisor_review_passed: bool | None = None
         supervisor_review_rationale: str | None = None
         supervisor_review_issues: list[str] = []
+        supervisor_review_rubric: list[dict[str, Any]] = []
 
         try:
             selected_route, selected_sub_route = await _dispatch_route_from_start(
@@ -1427,7 +1544,7 @@ async def run_tool_evaluation(
             )
             supervisor_review = await _review_supervisor_trace(
                 supervisor_trace=supervisor_trace,
-                llm=llm,
+                llm=llm if use_llm_supervisor_review else None,
             )
             raw_supervisor_score = supervisor_review.get("score")
             supervisor_review_score = (
@@ -1451,6 +1568,7 @@ async def run_tool_evaluation(
             supervisor_review_issues = _safe_string_list(
                 supervisor_review.get("issues")
             )
+            supervisor_review_rubric = list(supervisor_review.get("rubric") or [])
             passed_category = (
                 selected_category == expected_category
                 if expected_category is not None
@@ -1528,6 +1646,7 @@ async def run_tool_evaluation(
                 "supervisor_review_passed": supervisor_review_passed,
                 "supervisor_review_rationale": supervisor_review_rationale,
                 "supervisor_review_issues": supervisor_review_issues,
+                "supervisor_review_rubric": supervisor_review_rubric,
                 "plan_requirement_checks": plan_requirement_checks,
                 "retrieval_top_tools": retrieved_ids[:retrieval_limit],
                 "retrieval_top_categories": [
@@ -1565,6 +1684,24 @@ async def run_tool_evaluation(
                 if hasattr(maybe_result, "__await__"):
                     await maybe_result
         except Exception as exc:
+            failed_supervisor_trace = _build_supervisor_trace(
+                question=question,
+                expected_route=expected_route,
+                expected_sub_route=expected_sub_route,
+                expected_agent=expected_agent,
+                expected_tool=expected_tool,
+                selected_route=selected_route,
+                selected_sub_route=selected_sub_route,
+                selected_agent=selected_agent,
+                selected_tool=None,
+                agent_selection_analysis=selected_agent_analysis,
+                planning_analysis=f"Evaluation failed for this case: {exc}",
+                planning_steps=[],
+                plan_requirement_checks=[],
+            )
+            failed_supervisor_review = _fallback_supervisor_trace_review(
+                supervisor_trace=failed_supervisor_trace
+            )
             results.append(
                 {
                     "test_id": test_id,
@@ -1583,25 +1720,14 @@ async def run_tool_evaluation(
                     "selected_tool": None,
                     "planning_analysis": f"Evaluation failed for this case: {exc}",
                     "planning_steps": [],
-                    "supervisor_trace": _build_supervisor_trace(
-                        question=question,
-                        expected_route=expected_route,
-                        expected_sub_route=expected_sub_route,
-                        expected_agent=expected_agent,
-                        expected_tool=expected_tool,
-                        selected_route=selected_route,
-                        selected_sub_route=selected_sub_route,
-                        selected_agent=selected_agent,
-                        selected_tool=None,
-                        agent_selection_analysis=selected_agent_analysis,
-                        planning_analysis=f"Evaluation failed for this case: {exc}",
-                        planning_steps=[],
-                        plan_requirement_checks=[],
-                    ),
+                    "supervisor_trace": failed_supervisor_trace,
                     "supervisor_review_score": 0.0,
                     "supervisor_review_passed": False,
                     "supervisor_review_rationale": "Supervisor-spåret kunde inte granskas eftersom eval-fallet avbröts av fel.",
                     "supervisor_review_issues": [str(exc)],
+                    "supervisor_review_rubric": list(
+                        failed_supervisor_review.get("rubric") or []
+                    ),
                     "plan_requirement_checks": [],
                     "retrieval_top_tools": [],
                     "retrieval_top_categories": [],
@@ -2205,6 +2331,7 @@ async def run_tool_api_input_evaluation(
     tool_registry: dict[str, Any],
     llm,
     retrieval_limit: int = 5,
+    use_llm_supervisor_review: bool = True,
     retrieval_tuning: dict[str, Any] | None = None,
     prompt_overrides: dict[str, str] | None = None,
     progress_callback=None,
@@ -2293,6 +2420,7 @@ async def run_tool_api_input_evaluation(
         supervisor_review_passed: bool | None = None
         supervisor_review_rationale: str | None = None
         supervisor_review_issues: list[str] = []
+        supervisor_review_rubric: list[dict[str, Any]] = []
 
         try:
             selected_route, selected_sub_route = await _dispatch_route_from_start(
@@ -2395,7 +2523,7 @@ async def run_tool_api_input_evaluation(
             )
             supervisor_review = await _review_supervisor_trace(
                 supervisor_trace=supervisor_trace,
-                llm=llm,
+                llm=llm if use_llm_supervisor_review else None,
             )
             raw_supervisor_score = supervisor_review.get("score")
             supervisor_review_score = (
@@ -2419,6 +2547,7 @@ async def run_tool_api_input_evaluation(
             supervisor_review_issues = _safe_string_list(
                 supervisor_review.get("issues")
             )
+            supervisor_review_rubric = list(supervisor_review.get("rubric") or [])
 
             target_tool_for_validation = None
             if expected_tool and expected_tool in tool_registry:
@@ -2576,6 +2705,7 @@ async def run_tool_api_input_evaluation(
                 "supervisor_review_passed": supervisor_review_passed,
                 "supervisor_review_rationale": supervisor_review_rationale,
                 "supervisor_review_issues": supervisor_review_issues,
+                "supervisor_review_rubric": supervisor_review_rubric,
                 "plan_requirement_checks": plan_requirement_checks,
                 "retrieval_top_tools": retrieved_ids[:retrieval_limit],
                 "retrieval_top_categories": [
@@ -2624,6 +2754,24 @@ async def run_tool_api_input_evaluation(
                 if hasattr(maybe_result, "__await__"):
                     await maybe_result
         except Exception as exc:
+            failed_supervisor_trace = _build_supervisor_trace(
+                question=question,
+                expected_route=expected_route,
+                expected_sub_route=expected_sub_route,
+                expected_agent=expected_agent,
+                expected_tool=expected_tool,
+                selected_route=selected_route,
+                selected_sub_route=selected_sub_route,
+                selected_agent=selected_agent,
+                selected_tool=None,
+                agent_selection_analysis=selected_agent_analysis,
+                planning_analysis=f"API input evaluation failed for this case: {exc}",
+                planning_steps=[],
+                plan_requirement_checks=[],
+            )
+            failed_supervisor_review = _fallback_supervisor_trace_review(
+                supervisor_trace=failed_supervisor_trace
+            )
             case_result = {
                 "test_id": test_id,
                 "question": question,
@@ -2641,25 +2789,14 @@ async def run_tool_api_input_evaluation(
                 "selected_tool": None,
                 "planning_analysis": f"API input evaluation failed for this case: {exc}",
                 "planning_steps": [],
-                "supervisor_trace": _build_supervisor_trace(
-                    question=question,
-                    expected_route=expected_route,
-                    expected_sub_route=expected_sub_route,
-                    expected_agent=expected_agent,
-                    expected_tool=expected_tool,
-                    selected_route=selected_route,
-                    selected_sub_route=selected_sub_route,
-                    selected_agent=selected_agent,
-                    selected_tool=None,
-                    agent_selection_analysis=selected_agent_analysis,
-                    planning_analysis=f"API input evaluation failed for this case: {exc}",
-                    planning_steps=[],
-                    plan_requirement_checks=[],
-                ),
+                "supervisor_trace": failed_supervisor_trace,
                 "supervisor_review_score": 0.0,
                 "supervisor_review_passed": False,
                 "supervisor_review_rationale": "Supervisor-spåret kunde inte granskas eftersom eval-fallet avbröts av fel.",
                 "supervisor_review_issues": [str(exc)],
+                "supervisor_review_rubric": list(
+                    failed_supervisor_review.get("rubric") or []
+                ),
                 "plan_requirement_checks": [],
                 "retrieval_top_tools": [],
                 "retrieval_top_categories": [],
@@ -3020,6 +3157,9 @@ async def suggest_agent_prompt_improvements_for_api_input(
                 "supervisor_review_issues": list(
                     result.get("supervisor_review_issues") or []
                 ),
+                "supervisor_review_rubric": list(
+                    result.get("supervisor_review_rubric") or []
+                ),
                 "missing_required_fields": list(result.get("missing_required_fields") or []),
                 "unexpected_fields": list(result.get("unexpected_fields") or []),
                 "schema_errors": list(result.get("schema_errors") or []),
@@ -3037,17 +3177,20 @@ async def suggest_agent_prompt_improvements_for_api_input(
         passed_sub_route = result.get("passed_sub_route")
         passed_agent = result.get("passed_agent")
         passed_plan = result.get("passed_plan")
+        passed_supervisor_review = result.get("supervisor_review_passed")
         has_api_input = "passed_api_input" in result
         failed_route = passed_route is False
         failed_sub_route = passed_sub_route is False
         failed_agent = passed_agent is False
         failed_plan = passed_plan is False
+        failed_supervisor_review = passed_supervisor_review is False
         failed_api_input = passed_api_input is False if has_api_input else False
         if not (
             failed_route
             or failed_sub_route
             or failed_agent
             or failed_plan
+            or failed_supervisor_review
             or failed_api_input
             or not passed
         ):

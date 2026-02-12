@@ -476,6 +476,7 @@ export function ToolSettingsPage() {
 	const [isEvaluating, setIsEvaluating] = useState(false);
 	const [isApiInputEvaluating, setIsApiInputEvaluating] = useState(false);
 	const [retrievalLimit, setRetrievalLimit] = useState(5);
+	const [useLlmSupervisorReview, setUseLlmSupervisorReview] = useState(true);
 	const [includeDraftMetadata, setIncludeDraftMetadata] = useState(true);
 	const [evaluationResult, setEvaluationResult] =
 		useState<ToolEvaluationResponse | null>(null);
@@ -1089,6 +1090,7 @@ export function ToolSettingsPage() {
 				target_success_rate: parsedInput.target_success_rate,
 				search_space_id: data?.search_space_id,
 				retrieval_limit: retrievalLimit,
+				use_llm_supervisor_review: useLlmSupervisorReview,
 				tests: parsedInput.tests,
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
 				retrieval_tuning_override:
@@ -1119,6 +1121,7 @@ export function ToolSettingsPage() {
 				target_success_rate: parsedInput.target_success_rate,
 				search_space_id: data?.search_space_id,
 				retrieval_limit: retrievalLimit,
+				use_llm_supervisor_review: useLlmSupervisorReview,
 				tests: parsedInput.tests,
 				holdout_tests: parsedInput.holdout_tests,
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
@@ -2305,6 +2308,15 @@ export function ToolSettingsPage() {
 										Inkludera osparad draft (metadata + retrieval-vikter)
 									</span>
 								</div>
+								<div className="flex items-center gap-2">
+									<Switch
+										checked={useLlmSupervisorReview}
+										onCheckedChange={setUseLlmSupervisorReview}
+									/>
+									<span className="text-sm">
+										LLM-granskning av supervisor-spår
+									</span>
+								</div>
 								<Button
 									onClick={handleRunEvaluation}
 									disabled={isEvaluating || isEvalJobRunning}
@@ -2335,6 +2347,10 @@ export function ToolSettingsPage() {
 								Agentval Eval = starten av pipelinen: route/sub-route, valt agentsteg,
 								valt verktyg och
 								om planen uppfyller plan_requirements.
+							</p>
+							<p className="text-xs text-muted-foreground">
+								När LLM-granskning är av används en heuristisk rubric för supervisor-spår.
+								När den är på får du mer kvalitativ granskning (högre latens/kostnad).
 							</p>
 							<div className="rounded border p-3 space-y-3">
 								<div className="flex items-center justify-between gap-2">
@@ -3007,6 +3023,20 @@ export function ToolSettingsPage() {
 													{result.supervisor_review_issues.join(" · ")}
 												</p>
 											)}
+											{result.supervisor_review_rubric?.length > 0 && (
+												<div className="flex flex-wrap gap-2">
+													{result.supervisor_review_rubric.map((item) => (
+														<Badge
+															key={`${result.test_id}-rubric-${item.key}`}
+															variant={item.passed ? "outline" : "destructive"}
+															title={item.evidence ?? undefined}
+														>
+															{item.label}: {item.passed ? "OK" : "MISS"} · v
+															{item.weight.toFixed(1)}
+														</Badge>
+													))}
+												</div>
+											)}
 											{Object.keys(result.supervisor_trace ?? {}).length > 0 && (
 												<details className="rounded bg-muted/30 p-2">
 													<summary className="cursor-pointer text-xs font-medium">
@@ -3550,6 +3580,20 @@ export function ToolSettingsPage() {
 													Supervisor-issues:{" "}
 													{result.supervisor_review_issues.join(" · ")}
 												</p>
+											)}
+											{result.supervisor_review_rubric?.length > 0 && (
+												<div className="flex flex-wrap gap-2">
+													{result.supervisor_review_rubric.map((item) => (
+														<Badge
+															key={`${result.test_id}-api-rubric-${item.key}`}
+															variant={item.passed ? "outline" : "destructive"}
+															title={item.evidence ?? undefined}
+														>
+															{item.label}: {item.passed ? "OK" : "MISS"} · v
+															{item.weight.toFixed(1)}
+														</Badge>
+													))}
+												</div>
 											)}
 											{Object.keys(result.supervisor_trace ?? {}).length > 0 && (
 												<details className="rounded bg-muted/30 p-2">

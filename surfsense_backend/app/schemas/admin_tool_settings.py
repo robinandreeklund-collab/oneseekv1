@@ -110,6 +110,7 @@ class ToolEvaluationRequest(BaseModel):
     target_success_rate: float | None = None
     search_space_id: int | None = None
     retrieval_limit: int = 5
+    use_llm_supervisor_review: bool = True
     tests: list[ToolEvaluationTestCase]
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
     retrieval_tuning_override: ToolRetrievalTuning | None = None
@@ -120,6 +121,7 @@ class ToolApiInputEvaluationRequest(BaseModel):
     target_success_rate: float | None = None
     search_space_id: int | None = None
     retrieval_limit: int = 5
+    use_llm_supervisor_review: bool = True
     tests: list[ToolApiInputEvaluationTestCase]
     holdout_tests: list[ToolApiInputEvaluationTestCase] = Field(default_factory=list)
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
@@ -140,6 +142,14 @@ class ToolEvaluationMetrics(BaseModel):
     category_accuracy: float | None = None
     tool_accuracy: float | None = None
     retrieval_recall_at_k: float | None = None
+
+
+class ToolSupervisorReviewRubricItem(BaseModel):
+    key: str
+    label: str
+    passed: bool
+    weight: float = 1.0
+    evidence: str | None = None
 
 
 class ToolEvaluationCaseResult(BaseModel):
@@ -164,6 +174,9 @@ class ToolEvaluationCaseResult(BaseModel):
     supervisor_review_passed: bool | None = None
     supervisor_review_rationale: str | None = None
     supervisor_review_issues: list[str] = Field(default_factory=list)
+    supervisor_review_rubric: list[ToolSupervisorReviewRubricItem] = Field(
+        default_factory=list
+    )
     plan_requirement_checks: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_top_tools: list[str] = Field(default_factory=list)
     retrieval_top_categories: list[str] = Field(default_factory=list)
@@ -209,6 +222,9 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     supervisor_review_passed: bool | None = None
     supervisor_review_rationale: str | None = None
     supervisor_review_issues: list[str] = Field(default_factory=list)
+    supervisor_review_rubric: list[ToolSupervisorReviewRubricItem] = Field(
+        default_factory=list
+    )
     plan_requirement_checks: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_top_tools: list[str] = Field(default_factory=list)
     retrieval_top_categories: list[str] = Field(default_factory=list)

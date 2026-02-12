@@ -206,6 +206,7 @@ export const toolEvaluationRequest = z.object({
 	target_success_rate: z.number().nullable().optional(),
 	search_space_id: z.number().nullable().optional(),
 	retrieval_limit: z.number().int().optional().default(5),
+	use_llm_supervisor_review: z.boolean().optional().default(true),
 	tests: z.array(toolEvaluationTestCase),
 	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
 	retrieval_tuning_override: toolRetrievalTuning.nullable().optional(),
@@ -216,6 +217,7 @@ export const toolApiInputEvaluationRequest = z.object({
 	target_success_rate: z.number().nullable().optional(),
 	search_space_id: z.number().nullable().optional(),
 	retrieval_limit: z.number().int().optional().default(5),
+	use_llm_supervisor_review: z.boolean().optional().default(true),
 	tests: z.array(toolApiInputEvaluationTestCase),
 	holdout_tests: z.array(toolApiInputEvaluationTestCase).optional().default([]),
 	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
@@ -243,6 +245,14 @@ export const toolPlanRequirementCheck = z.object({
 	passed: z.boolean(),
 });
 
+export const toolSupervisorReviewRubricItem = z.object({
+	key: z.string(),
+	label: z.string(),
+	passed: z.boolean(),
+	weight: z.number().optional().default(1),
+	evidence: z.string().nullable().optional(),
+});
+
 export const toolEvaluationCaseResult = z.object({
 	test_id: z.string(),
 	question: z.string(),
@@ -265,6 +275,7 @@ export const toolEvaluationCaseResult = z.object({
 	supervisor_review_passed: z.boolean().nullable().optional(),
 	supervisor_review_rationale: z.string().nullable().optional(),
 	supervisor_review_issues: z.array(z.string()).default([]),
+	supervisor_review_rubric: z.array(toolSupervisorReviewRubricItem).default([]),
 	plan_requirement_checks: z.array(toolPlanRequirementCheck).default([]),
 	retrieval_top_tools: z.array(z.string()).default([]),
 	retrieval_top_categories: z.array(z.string()).default([]),
@@ -310,6 +321,7 @@ export const toolApiInputEvaluationCaseResult = z.object({
 	supervisor_review_passed: z.boolean().nullable().optional(),
 	supervisor_review_rationale: z.string().nullable().optional(),
 	supervisor_review_issues: z.array(z.string()).default([]),
+	supervisor_review_rubric: z.array(toolSupervisorReviewRubricItem).default([]),
 	plan_requirement_checks: z.array(toolPlanRequirementCheck).default([]),
 	retrieval_top_tools: z.array(z.string()).default([]),
 	retrieval_top_categories: z.array(z.string()).default([]),
@@ -535,6 +547,9 @@ export type ToolApiInputEvaluationRequest = z.infer<
 >;
 export type ToolEvaluationMetrics = z.infer<typeof toolEvaluationMetrics>;
 export type ToolPlanRequirementCheck = z.infer<typeof toolPlanRequirementCheck>;
+export type ToolSupervisorReviewRubricItem = z.infer<
+	typeof toolSupervisorReviewRubricItem
+>;
 export type ToolEvaluationCaseResult = z.infer<typeof toolEvaluationCaseResult>;
 export type ToolApiInputFieldCheck = z.infer<typeof toolApiInputFieldCheck>;
 export type ToolApiInputEvaluationCaseResult = z.infer<

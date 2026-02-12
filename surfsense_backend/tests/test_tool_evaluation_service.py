@@ -473,6 +473,36 @@ def test_suggest_agent_prompt_improvements_includes_agent_prompt():
     assert "API INPUT EVAL-FÖRBÄTTRING" in suggestions[0]["proposed_prompt"]
 
 
+def test_suggest_agent_prompt_improvements_includes_supervisor_prompt_on_review_fail():
+    suggestions = asyncio.run(
+        suggest_agent_prompt_improvements_for_api_input(
+            evaluation_results=[
+                {
+                    "test_id": "case-supervisor-1",
+                    "question": "Hur är läget på E4 vid Gävle i kväll?",
+                    "passed": True,
+                    "passed_route": True,
+                    "passed_sub_route": True,
+                    "passed_agent": True,
+                    "passed_plan": True,
+                    "passed_tool": True,
+                    "supervisor_review_passed": False,
+                    "supervisor_review_issues": [
+                        "Saknar regel för ny retrieval vid ämnesbyte"
+                    ],
+                }
+            ],
+            current_prompts={
+                "agent.supervisor.system": "Du är supervisor.",
+            },
+            llm=None,
+        )
+    )
+    assert len(suggestions) == 1
+    assert suggestions[0]["prompt_key"] == "agent.supervisor.system"
+    assert "retrieve_agents" in suggestions[0]["proposed_prompt"]
+
+
 def test_prompt_architecture_guard_rejects_static_supervisor_agent_list():
     prompt = (
         "Tillgängliga agenter:\n"
