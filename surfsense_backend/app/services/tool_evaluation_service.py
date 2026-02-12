@@ -213,6 +213,7 @@ def _tokenize_for_suggestions(text: str) -> list[str]:
 
 def _build_fallback_suggestion(
     *,
+    tool_id: str,
     current: dict[str, Any],
     questions: list[str],
     failed_count: int,
@@ -260,6 +261,7 @@ def _build_fallback_suggestion(
             description = f"{description} {marker}".strip()
 
     proposed = {
+        "tool_id": tool_id,
         "name": str(current.get("name") or "").strip(),
         "description": description,
         "keywords": proposed_keywords,
@@ -276,6 +278,7 @@ def _build_fallback_suggestion(
 
 async def _build_llm_suggestion(
     *,
+    tool_id: str,
     llm,
     current: dict[str, Any],
     failures: list[dict[str, Any]],
@@ -320,6 +323,7 @@ async def _build_llm_suggestion(
         if not parsed:
             return None
         suggested = {
+            "tool_id": tool_id,
             "name": str(parsed.get("name") or current.get("name") or "").strip(),
             "description": str(
                 parsed.get("description") or current.get("description") or ""
@@ -549,6 +553,7 @@ async def generate_tool_metadata_suggestions(
         ]
 
         llm_suggestion = await _build_llm_suggestion(
+            tool_id=tool_id,
             llm=llm,
             current=current,
             failures=failures,
@@ -557,6 +562,7 @@ async def generate_tool_metadata_suggestions(
             proposed, rationale = llm_suggestion
         else:
             proposed, rationale = _build_fallback_suggestion(
+                tool_id=tool_id,
                 current=current,
                 questions=failure_data["questions"],
                 failed_count=len(failure_data["questions"]),

@@ -140,6 +140,7 @@ def test_generate_tool_metadata_suggestions_fallback():
     assert len(suggestions) == 1
     suggestion = suggestions[0]
     assert suggestion["tool_id"] == "trafikverket_vader_halka"
+    assert suggestion["proposed_metadata"]["tool_id"] == "trafikverket_vader_halka"
     assert suggestion["proposed_metadata"]["description"]
     assert len(suggestion["proposed_metadata"]["keywords"]) >= 2
 
