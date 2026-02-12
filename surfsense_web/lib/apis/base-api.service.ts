@@ -207,6 +207,13 @@ class BaseApiService {
 				if (!responseSchema) {
 					return data;
 				}
+				
+				// Additional check to ensure responseSchema has safeParse method
+				if (typeof responseSchema.safeParse !== 'function') {
+					console.error("Invalid responseSchema provided - missing safeParse method:", responseSchema);
+					return data;
+				}
+				
 				const parsedData = responseSchema.safeParse(data);
 
 				if (!parsedData.success) {
@@ -222,7 +229,16 @@ class BaseApiService {
 
 			return data;
 		} catch (error) {
-			console.error("Request failed:", JSON.stringify(error));
+			// Better error logging with more context
+			console.error("Request failed:", {
+				url,
+				method: options?.method || 'GET',
+				error: error instanceof Error ? {
+					message: error.message,
+					name: error.name,
+					stack: error.stack
+				} : error
+			});
 			throw error;
 		}
 	}
