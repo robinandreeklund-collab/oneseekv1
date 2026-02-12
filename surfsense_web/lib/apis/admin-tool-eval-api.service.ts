@@ -10,9 +10,12 @@ import {
 	type SingleQueryResponse,
 	type EvalRunResponse,
 	type InvalidateCacheResponse,
+	type LiveQueryRequest,
+	type LiveQueryResponse,
 	singleQueryResponseSchema,
 	evalRunResponseSchema,
 	invalidateCacheResponseSchema,
+	liveQueryResponseSchema,
 } from "@/contracts/types/admin-tool-eval.types";
 
 class AdminToolEvalApiService {
@@ -56,6 +59,22 @@ class AdminToolEvalApiService {
 			"/api/v1/admin/tool-eval/invalidate-cache",
 			invalidateCacheResponseSchema,
 			{}
+		);
+	}
+
+	/**
+	 * Test a single query through the FULL supervisor pipeline with trace.
+	 * Returns complete execution trace including model reasoning, agent selection, and tool retrieval.
+	 */
+	async testSingleQueryLive(
+		request: LiveQueryRequest
+	): Promise<LiveQueryResponse> {
+		return baseApiService.post(
+			"/api/v1/admin/tool-eval/single-live",
+			liveQueryResponseSchema,
+			{
+				body: request,
+			}
 		);
 	}
 }
