@@ -22,6 +22,7 @@ import {
 	toolEvalLibraryListResponse,
 	toolEvaluationRequest,
 	toolEvaluationResponse,
+	toolEvaluationStageHistoryResponse,
 	toolEvaluationJobStatusResponse,
 	toolEvaluationStartResponse,
 	toolRetrievalTuning,
@@ -41,6 +42,23 @@ class AdminToolSettingsApiService {
 		return baseApiService.get(
 			`/api/v1/admin/tool-settings/api-categories${query}`,
 			toolApiCategoriesResponse
+		);
+	}
+
+	async getToolEvaluationHistory(
+		stage: "agent" | "tool" | "api_input",
+		searchSpaceId?: number,
+		limit = 80
+	) {
+		const params = new URLSearchParams();
+		params.set("stage", stage);
+		params.set("limit", String(limit));
+		if (typeof searchSpaceId === "number") {
+			params.set("search_space_id", String(searchSpaceId));
+		}
+		return baseApiService.get(
+			`/api/v1/admin/tool-settings/eval-history?${params.toString()}`,
+			toolEvaluationStageHistoryResponse
 		);
 	}
 

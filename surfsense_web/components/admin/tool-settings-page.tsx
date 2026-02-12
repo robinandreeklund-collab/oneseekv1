@@ -9,6 +9,7 @@ import type {
 	ToolApiInputEvaluationResponse,
 	ToolApiInputEvaluationTestCase,
 	ToolEvaluationResponse,
+	ToolEvaluationStageHistoryResponse,
 	ToolEvaluationTestCase,
 	ToolMetadataItem,
 	ToolMetadataUpdateItem,
@@ -57,6 +58,200 @@ function isEqualTool(left: ToolMetadataUpdateItem, right: ToolMetadataUpdateItem
 
 function isEqualTuning(left: ToolRetrievalTuning, right: ToolRetrievalTuning) {
 	return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function formatPercent(value: number | null | undefined) {
+	if (value == null || Number.isNaN(value)) return "-";
+	return `${(value * 100).toFixed(1)}%`;
+}
+
+function HistoryTrendBars({
+	points,
+	valueKey,
+	label,
+}: {
+	points: Array<Record<string, unknown>>;
+	valueKey: string;
+	label: string;
+}) {
+	if (points.length === 0) {
+		return <p className="text-xs text-muted-foreground">Ingen historik ännu.</p>;
+	}
+	return (
+		<div className="space-y-2">
+			<p className="text-xs text-muted-foreground">{label}</p>
+			<div className="flex items-end gap-1 h-28 rounded border bg-muted/30 p-2">
+				{points.map((point, index) => {
+					const raw = point[valueKey];
+					const numeric = typeof raw === "number" ? raw : 0;
+					const normalized = Math.max(0.04, Math.min(1, numeric));
+					const runAt = String(point.run_at ?? "");
+					const evalName = String(point.eval_name ?? "");
+					const title = `${evalName || "Eval"} • ${
+						runAt ? new Date(runAt).toLocaleString("sv-SE") : "okänd tid"
+					} • ${formatPercent(numeric)}`;
+					return (
+						<div
+							key={`${valueKey}-${index}-${runAt}`}
+							className="flex-1 min-w-[6px] rounded bg-primary/80 hover:bg-primary transition-colors"
+							style={{ height: `${Math.round(normalized * 100)}%` }}
+							title={title}
+						/>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
+function StageHistoryTabContent({
+	title,
+	description,
+	history,
+	selectedCategory,
+	onSelectCategory,
+}: {
+	title: string;
+	description: string;
+	history: ToolEvaluationStageHistoryResponse | undefined;
+	selectedCategory: string;
+	onSelectCategory: (value: string) => void;
+}) {
+	const latest =
+		history?.items && history.items.length > 0
+			? history.items[history.items.length - 1]
+			: undefined;
+	const categoryOptions = history?.category_series?.map((series) => series.category_id) ?? [];
+	const effectiveCategory =
+		categoryOptions.includes(selectedCategory) && selectedCategory
+			? selectedCategory
+			: categoryOptions[0] ?? "";
+	const selectedSeries = history?.category_series?.find(
+		(series) => series.category_id === effectiveCategory
+	);
+
+	useEffect(() => {
+		if (effectiveCategory && effectiveCategory !== selectedCategory) {
+			onSelectCategory(effectiveCategory);
+		}
+	}, [effectiveCategory, selectedCategory, onSelectCategory]);
+
+	return (
+		<div className="space-y-6 mt-6">
+			<Card>
+				<CardHeader>
+					<CardTitle>{title}</CardTitle>
+					<CardDescription>{description}</CardDescription>
+				</CardHeader>
+				<CardContent className="grid gap-4 md:grid-cols-4">
+					<div className="rounded border p-3">
+						<p className="text-xs text-muted-foreground">Senaste run</p>
+						<p className="text-sm font-medium">
+							{latest?.run_at ? new Date(latest.run_at).toLocaleString("sv-SE") : "-"}
+						</p>
+					</div>
+					<div className="rounded border p-3">
+						<p className="text-xs text-muted-foreground">Senaste success</p>
+						<p className="text-sm font-medium">{formatPercent(latest?.success_rate)}</p>
+					</div>
+					<div className="rounded border p-3">
+						<p className="text-xs text-muted-foreground">Senaste stage-metric</p>
+						<p className="text-sm font-medium">
+							{latest?.stage_metric_name
+								? `${latest.stage_metric_name}: ${formatPercent(
+										latest.stage_metric_value ?? null
+									)}`
+								: "-"}
+						</p>
+					</div>
+					<div className="rounded border p-3">
+						<p className="text-xs text-muted-foreground">Antal historiska körningar</p>
+						<p className="text-sm font-medium">{history?.items?.length ?? 0}</p>
+					</div>
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle>Trenddiagram</CardTitle>
+					<CardDescription>Översikt och kategoriuppdelning över tid.</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-5">
+					<HistoryTrendBars
+						points={history?.items ?? []}
+						valueKey="success_rate"
+						label="Övergripande success rate över tid"
+					/>
+					<div className="space-y-2">
+						<Label htmlFor={`${history?.stage ?? "stage"}-history-category`}>
+							Kategori
+						</Label>
+						<select
+							id={`${history?.stage ?? "stage"}-history-category`}
+							className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+							value={effectiveCategory}
+							onChange={(event) => onSelectCategory(event.target.value)}
+						>
+							{categoryOptions.length === 0 && (
+								<option value="">Inga kategorier i historiken</option>
+							)}
+							{categoryOptions.map((categoryId) => (
+								<option key={categoryId} value={categoryId}>
+									{categoryId}
+								</option>
+							))}
+						</select>
+					</div>
+					<HistoryTrendBars
+						points={selectedSeries?.points ?? []}
+						valueKey="success_rate"
+						label={
+							effectiveCategory
+								? `Kategori ${effectiveCategory}: success rate`
+								: "Kategori-trend"
+						}
+					/>
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle>Historiska körningar</CardTitle>
+				</CardHeader>
+				<CardContent className="space-y-2">
+					{(history?.items ?? []).length === 0 ? (
+						<p className="text-sm text-muted-foreground">Inga körningar ännu.</p>
+					) : (
+						[...(history?.items ?? [])]
+							.reverse()
+							.slice(0, 30)
+							.map((item, index) => (
+								<div
+									key={`${item.run_at}-${index}`}
+									className="rounded border p-3 text-xs space-y-1"
+								>
+									<p className="font-medium">
+										{item.eval_name || "Utan namn"} ·{" "}
+										{new Date(item.run_at).toLocaleString("sv-SE")}
+									</p>
+									<p className="text-muted-foreground">
+										Success: {formatPercent(item.success_rate)} · Stage:{" "}
+										{item.stage_metric_name
+											? `${item.stage_metric_name} ${formatPercent(
+													item.stage_metric_value
+												)}`
+											: "-"}
+									</p>
+									<p className="text-muted-foreground">
+										Tester: {item.passed_tests}/{item.total_tests}
+									</p>
+								</div>
+							))
+					)}
+				</CardContent>
+			</Card>
+		</div>
+	);
 }
 
 function ToolEditor({
@@ -249,9 +444,12 @@ export function ToolSettingsPage() {
 	const [holdoutInput, setHoldoutInput] = useState("");
 	const [showHoldoutJsonInput, setShowHoldoutJsonInput] = useState(false);
 	const [evalInputError, setEvalInputError] = useState<string | null>(null);
-	const [generationMode, setGenerationMode] = useState<"category" | "global_random">(
-		"category"
-	);
+	const [generationMode, setGenerationMode] = useState<
+		"category" | "provider" | "global_random"
+	>("category");
+	const [evaluationStepTab, setEvaluationStepTab] = useState<
+		"all" | "guide" | "generation" | "agent_eval" | "api_input"
+	>("all");
 	const [generationEvalType, setGenerationEvalType] = useState<
 		"tool_selection" | "api_input"
 	>("tool_selection");
@@ -290,6 +488,9 @@ export function ToolSettingsPage() {
 	const [isSavingPromptSuggestions, setIsSavingPromptSuggestions] = useState(false);
 	const [isSavingToolPromptSuggestions, setIsSavingToolPromptSuggestions] =
 		useState(false);
+	const [agentHistoryCategory, setAgentHistoryCategory] = useState("");
+	const [toolHistoryCategory, setToolHistoryCategory] = useState("");
+	const [apiInputHistoryCategory, setApiInputHistoryCategory] = useState("");
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-tool-settings"],
@@ -308,6 +509,33 @@ export function ToolSettingsPage() {
 		queryKey: ["admin-tool-eval-library-files"],
 		queryFn: () => adminToolSettingsApiService.listEvalLibraryFiles(),
 		enabled: !!currentUser,
+	});
+
+	const { data: agentEvalHistory } = useQuery({
+		queryKey: ["admin-tool-eval-history", data?.search_space_id, "agent"],
+		queryFn: () =>
+			adminToolSettingsApiService.getToolEvaluationHistory(
+				"agent",
+				data?.search_space_id
+			),
+		enabled: !!currentUser && typeof data?.search_space_id === "number",
+	});
+
+	const { data: toolEvalHistory } = useQuery({
+		queryKey: ["admin-tool-eval-history", data?.search_space_id, "tool"],
+		queryFn: () =>
+			adminToolSettingsApiService.getToolEvaluationHistory("tool", data?.search_space_id),
+		enabled: !!currentUser && typeof data?.search_space_id === "number",
+	});
+
+	const { data: apiInputEvalHistory } = useQuery({
+		queryKey: ["admin-tool-eval-history", data?.search_space_id, "api_input"],
+		queryFn: () =>
+			adminToolSettingsApiService.getToolEvaluationHistory(
+				"api_input",
+				data?.search_space_id
+			),
+		enabled: !!currentUser && typeof data?.search_space_id === "number",
 	});
 
 	const { data: evalJobStatus } = useQuery({
@@ -414,6 +642,8 @@ export function ToolSettingsPage() {
 			setEvaluationResult(evalJobStatus.result);
 			setSelectedSuggestionIds(new Set());
 			setSelectedToolPromptSuggestionKeys(new Set());
+			void queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
+			void queryClient.invalidateQueries({ queryKey: ["admin-tool-eval-history"] });
 			const noticeKey = `${evalJobId}:completed`;
 			if (lastEvalJobNotice !== noticeKey) {
 				toast.success("Eval-run klar");
@@ -427,13 +657,15 @@ export function ToolSettingsPage() {
 				setLastEvalJobNotice(noticeKey);
 			}
 		}
-	}, [evalJobStatus, evalJobId, lastEvalJobNotice]);
+	}, [evalJobStatus, evalJobId, lastEvalJobNotice, queryClient]);
 
 	useEffect(() => {
 		if (!apiInputEvalJobStatus || !apiInputEvalJobId) return;
 		if (apiInputEvalJobStatus.status === "completed" && apiInputEvalJobStatus.result) {
 			setApiInputEvaluationResult(apiInputEvalJobStatus.result);
 			setSelectedPromptSuggestionKeys(new Set());
+			void queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
+			void queryClient.invalidateQueries({ queryKey: ["admin-tool-eval-history"] });
 			const noticeKey = `${apiInputEvalJobId}:completed`;
 			if (lastApiInputEvalJobNotice !== noticeKey) {
 				toast.success("API input eval-run klar");
@@ -447,7 +679,7 @@ export function ToolSettingsPage() {
 				setLastApiInputEvalJobNotice(noticeKey);
 			}
 		}
-	}, [apiInputEvalJobStatus, apiInputEvalJobId, lastApiInputEvalJobNotice]);
+	}, [apiInputEvalJobStatus, apiInputEvalJobId, lastApiInputEvalJobNotice, queryClient]);
 
 	const changedToolIds = useMemo(() => {
 		return Object.keys(draftTools).filter((toolId) => {
@@ -572,6 +804,10 @@ export function ToolSettingsPage() {
 		if (!data?.search_space_id) return;
 		if (generationMode === "category" && !generationCategory) {
 			toast.error("Välj en kategori innan du genererar.");
+			return;
+		}
+		if (generationMode === "provider" && (!generationProvider || generationProvider === "all")) {
+			toast.error("Välj en specifik provider för huvudkategori-läge.");
 			return;
 		}
 		const normalizedQuestionCount = Number.isFinite(generationQuestionCount)
@@ -1156,6 +1392,12 @@ export function ToolSettingsPage() {
 		(acc, cat) => acc + cat.tools.length,
 		0
 	);
+	const showGuideSections = evaluationStepTab === "all" || evaluationStepTab === "guide";
+	const showGenerationSections =
+		evaluationStepTab === "all" || evaluationStepTab === "generation";
+	const showAgentSections =
+		evaluationStepTab === "all" || evaluationStepTab === "agent_eval";
+	const showApiSections = evaluationStepTab === "all" || evaluationStepTab === "api_input";
 
 	return (
 		<div className="space-y-6">
@@ -1177,7 +1419,10 @@ export function ToolSettingsPage() {
 			<Tabs value={activeTab} onValueChange={setActiveTab}>
 				<TabsList>
 					<TabsTrigger value="metadata">Metadata</TabsTrigger>
-					<TabsTrigger value="evaluation">Tool Evaluation</TabsTrigger>
+					<TabsTrigger value="evaluation">Eval Workflow</TabsTrigger>
+					<TabsTrigger value="stats-agent">Statistik · Agentval</TabsTrigger>
+					<TabsTrigger value="stats-tool">Statistik · Toolval</TabsTrigger>
+					<TabsTrigger value="stats-api-input">Statistik · API Input</TabsTrigger>
 				</TabsList>
 
 				<TabsContent value="metadata" className="space-y-6 mt-6">
@@ -1572,6 +1817,34 @@ export function ToolSettingsPage() {
 				<TabsContent value="evaluation" className="space-y-6 mt-6">
 					<Card>
 						<CardHeader>
+							<CardTitle>Flikar för eval-steg</CardTitle>
+							<CardDescription>
+								Dela upp arbetsflödet i separata steg för tydligare körning och analys.
+							</CardDescription>
+						</CardHeader>
+						<CardContent>
+							<Tabs
+								value={evaluationStepTab}
+								onValueChange={(value) =>
+									setEvaluationStepTab(
+										value as "all" | "guide" | "generation" | "agent_eval" | "api_input"
+									)
+								}
+							>
+								<TabsList className="flex flex-wrap">
+									<TabsTrigger value="all">Alla steg</TabsTrigger>
+									<TabsTrigger value="guide">Guide</TabsTrigger>
+									<TabsTrigger value="generation">Generering</TabsTrigger>
+									<TabsTrigger value="agent_eval">Agentval Eval</TabsTrigger>
+									<TabsTrigger value="api_input">API Input Eval</TabsTrigger>
+								</TabsList>
+							</Tabs>
+						</CardContent>
+					</Card>
+
+					{showGuideSections && (
+					<Card>
+						<CardHeader>
 							<CardTitle>Steg 0: Guide och arbetssätt</CardTitle>
 							<CardDescription>
 								Följ stegen nedan i ordning för att trimma route, agentval, tool-val,
@@ -1734,7 +2007,9 @@ export function ToolSettingsPage() {
 							</div>
 						</CardContent>
 					</Card>
+					)}
 
+					{showGuideSections && (
 					<Card>
 						<CardHeader>
 							<CardTitle>Stegöversikt</CardTitle>
@@ -1751,7 +2026,9 @@ export function ToolSettingsPage() {
 							<Badge variant="secondary">Steg 4: Holdout + spara förbättringar</Badge>
 						</CardContent>
 					</Card>
+					)}
 
+					{showGenerationSections && (
 					<Card>
 						<CardHeader>
 							<CardTitle>Steg 1: Generera/Ladda eval-frågor</CardTitle>
@@ -1773,11 +2050,16 @@ export function ToolSettingsPage() {
 											setGenerationMode(
 												event.target.value === "global_random"
 													? "global_random"
-													: "category"
+													: event.target.value === "provider"
+														? "provider"
+														: "category"
 											)
 										}
 									>
 										<option value="category">Per kategori/API</option>
+										<option value="provider">
+											Huvudkategori/provider (alla underkategorier)
+										</option>
 										<option value="global_random">
 											Random mix från flera kategorier (global tuning)
 										</option>
@@ -1868,6 +2150,12 @@ export function ToolSettingsPage() {
 									</select>
 								</div>
 							)}
+							{generationMode === "provider" && (
+								<p className="text-xs text-muted-foreground">
+									Huvudkategori-läge: frågor genereras över hela vald provider
+									(underkategorier blandas automatiskt).
+								</p>
+							)}
 
 							<div className="flex flex-wrap items-center gap-2">
 								<Button
@@ -1936,7 +2224,9 @@ export function ToolSettingsPage() {
 							</div>
 						</CardContent>
 					</Card>
+					)}
 
+					{(showAgentSections || showApiSections) && (
 					<Card>
 						<CardHeader>
 							<CardTitle>Steg 2: Kör Agentval Eval och API Input Eval</CardTitle>
@@ -2080,8 +2370,9 @@ export function ToolSettingsPage() {
 							)}
 						</CardContent>
 					</Card>
+					)}
 
-					{evalJobId && (
+					{showAgentSections && evalJobId && (
 						<Card>
 							<CardHeader>
 								<CardTitle>Steg 2A: Agentval-status per fråga</CardTitle>
@@ -2169,7 +2460,7 @@ export function ToolSettingsPage() {
 						</Card>
 					)}
 
-					{apiInputEvalJobId && (
+					{showApiSections && apiInputEvalJobId && (
 						<Card>
 							<CardHeader>
 								<CardTitle>Steg 3A: API input-status per fråga</CardTitle>
@@ -2258,7 +2549,7 @@ export function ToolSettingsPage() {
 						</Card>
 					)}
 
-					{evaluationResult && (
+					{showAgentSections && evaluationResult && (
 						<>
 							<Card>
 								<CardHeader>
@@ -2275,6 +2566,18 @@ export function ToolSettingsPage() {
 										<p className="text-xs text-muted-foreground">Success rate</p>
 										<p className="text-2xl font-semibold">
 											{(evaluationResult.metrics.success_rate * 100).toFixed(1)}%
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Gated success (agent gate)
+										</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.metrics.gated_success_rate == null
+												? "-"
+												: `${(
+														evaluationResult.metrics.gated_success_rate * 100
+													).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -2350,7 +2653,7 @@ export function ToolSettingsPage() {
 								</CardContent>
 							</Card>
 
-							{apiInputEvaluationResult?.holdout_metrics && (
+							{showApiSections && apiInputEvaluationResult?.holdout_metrics && (
 								<Card>
 									<CardHeader>
 										<CardTitle>Steg 4: Holdout-suite (anti-overfitting)</CardTitle>
@@ -2552,6 +2855,15 @@ export function ToolSettingsPage() {
 											{result.planning_analysis && (
 												<p className="text-xs text-muted-foreground">
 													Analys: {result.planning_analysis}
+												</p>
+											)}
+											{typeof result.passed_with_agent_gate === "boolean" && (
+												<p className="text-xs text-muted-foreground">
+													Gated resultat (agent gate):{" "}
+													{result.passed_with_agent_gate ? "PASS" : "FAIL"}
+													{typeof result.agent_gate_score === "number"
+														? ` (${(result.agent_gate_score * 100).toFixed(1)}%)`
+														: ""}
 												</p>
 											)}
 											{result.plan_requirement_checks?.length > 0 && (
@@ -2804,7 +3116,7 @@ export function ToolSettingsPage() {
 						</>
 					)}
 
-					{apiInputEvaluationResult && (
+					{showApiSections && apiInputEvaluationResult && (
 						<>
 							<Card>
 								<CardHeader>
@@ -2819,6 +3131,18 @@ export function ToolSettingsPage() {
 										<p className="text-xs text-muted-foreground">Success rate</p>
 										<p className="text-2xl font-semibold">
 											{(apiInputEvaluationResult.metrics.success_rate * 100).toFixed(1)}%
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Gated success (agent gate)
+										</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.gated_success_rate == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.gated_success_rate * 100
+													).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -2950,6 +3274,15 @@ export function ToolSettingsPage() {
 											{result.planning_analysis && (
 												<p className="text-xs text-muted-foreground">
 													Analys: {result.planning_analysis}
+												</p>
+											)}
+											{typeof result.passed_with_agent_gate === "boolean" && (
+												<p className="text-xs text-muted-foreground">
+													Gated resultat (agent gate):{" "}
+													{result.passed_with_agent_gate ? "PASS" : "FAIL"}
+													{typeof result.agent_gate_score === "number"
+														? ` (${(result.agent_gate_score * 100).toFixed(1)}%)`
+														: ""}
 												</p>
 											)}
 											{result.plan_requirement_checks?.length > 0 && (
@@ -3123,6 +3456,36 @@ export function ToolSettingsPage() {
 							</Card>
 						</>
 					)}
+				</TabsContent>
+
+				<TabsContent value="stats-agent">
+					<StageHistoryTabContent
+						title="Historik: Agentval"
+						description="Utveckling över tid för agent_accuracy och success rate, uppdelat per kategori."
+						history={agentEvalHistory}
+						selectedCategory={agentHistoryCategory}
+						onSelectCategory={setAgentHistoryCategory}
+					/>
+				</TabsContent>
+
+				<TabsContent value="stats-tool">
+					<StageHistoryTabContent
+						title="Historik: Toolval"
+						description="Utveckling över tid för tool_accuracy och success rate, uppdelat per kategori."
+						history={toolEvalHistory}
+						selectedCategory={toolHistoryCategory}
+						onSelectCategory={setToolHistoryCategory}
+					/>
+				</TabsContent>
+
+				<TabsContent value="stats-api-input">
+					<StageHistoryTabContent
+						title="Historik: API Input"
+						description="Utveckling över tid för api_input och success rate, uppdelat per kategori."
+						history={apiInputEvalHistory}
+						selectedCategory={apiInputHistoryCategory}
+						onSelectCategory={setApiInputHistoryCategory}
+					/>
 				</TabsContent>
 			</Tabs>
 		</div>

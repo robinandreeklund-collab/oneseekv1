@@ -18,6 +18,7 @@ from app.agents.new_chat.bigtool_store import (
     clear_tool_caches,
 )
 from app.db import (
+    GlobalToolEvaluationStageRun,
     GlobalToolEvaluationRun,
     GlobalToolMetadataOverrideHistory,
     SearchSpaceMembership,
@@ -42,6 +43,7 @@ from app.schemas.admin_tool_settings import (
     ToolEvalLibraryListResponse,
     ToolEvaluationCaseStatus,
     ToolEvaluationJobStatusResponse,
+    ToolEvaluationStageHistoryResponse,
     ToolEvaluationRequest,
     ToolEvaluationResponse,
     ToolEvaluationStartResponse,
@@ -1003,7 +1005,13 @@ def _save_eval_library_payload(
     root.mkdir(parents=True, exist_ok=True)
 
     provider_slug = _slugify(provider_key or ("global" if mode == "global_random" else "custom"))
-    category_slug = _slugify(category_id or ("mixed" if mode == "global_random" else "general"))
+    if mode == "global_random":
+        category_fallback = "mixed"
+    elif mode == "provider":
+        category_fallback = "all_categories"
+    else:
+        category_fallback = "general"
+    category_slug = _slugify(category_id or category_fallback)
     target_dir = root / provider_slug / category_slug
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1144,6 +1152,9 @@ def _select_generation_entries(
     category_id: str | None,
     question_count: int,
 ) -> list[Any]:
+    normalized_mode = str(mode or "category").strip().lower()
+    if normalized_mode not in {"category", "global_random", "provider"}:
+        normalized_mode = "category"
     provider_filter = str(provider_key or "").strip().lower()
     category_filter = str(category_id or "").strip()
     candidates = [entry for entry in tool_index if _is_eval_candidate_entry(entry)]
@@ -1155,7 +1166,20 @@ def _select_generation_entries(
             if _provider_for_tool_id(str(entry.tool_id)) == provider_filter
         ]
 
-    if mode == "category":
+    if normalized_mode == "provider":
+        if not provider_filter or provider_filter == "all":
+            raise HTTPException(
+                status_code=400,
+                detail="provider_key is required when mode=provider",
+            )
+        if not candidates:
+            raise HTTPException(
+                status_code=404,
+                detail="No tools found for selected provider",
+            )
+        return candidates
+
+    if normalized_mode == "category":
         if not category_filter:
             raise HTTPException(
                 status_code=400,
@@ -1344,6 +1368,217 @@ def _build_eval_summary_payload(result: dict[str, Any]) -> dict[str, Any]:
         "total_tests": total_tests,
         "passed_tests": passed_tests,
         "success_rate": success_rate,
+    }
+
+
+def _normalize_eval_stage(stage: str) -> str:
+    normalized = str(stage or "").strip().lower()
+    if normalized in {"agent", "agent_eval", "agent_selection"}:
+        return "agent"
+    if normalized in {"tool", "tool_eval", "tool_selection"}:
+        return "tool"
+    if normalized in {"api", "api_input", "api-input"}:
+        return "api_input"
+    raise HTTPException(status_code=400, detail=f"Unsupported eval stage: {stage}")
+
+
+def _pass_field_for_stage(stage: str) -> str:
+    normalized = _normalize_eval_stage(stage)
+    if normalized == "agent":
+        return "passed_agent"
+    if normalized == "tool":
+        return "passed_tool"
+    return "passed_api_input"
+
+
+def _stage_metric_name(stage: str) -> str:
+    normalized = _normalize_eval_stage(stage)
+    if normalized == "agent":
+        return "agent_accuracy"
+    if normalized == "tool":
+        return "tool_accuracy"
+    return "api_input_accuracy"
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _build_stage_breakdown(
+    *,
+    stage: str,
+    result: dict[str, Any],
+) -> tuple[int, int, float, list[dict[str, Any]], float | None]:
+    pass_field = _pass_field_for_stage(stage)
+    metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+    rows = result.get("results") if isinstance(result.get("results"), list) else []
+    stage_total = 0
+    stage_passed = 0
+    grouped: dict[str, dict[str, int]] = {}
+
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        passed_value = item.get(pass_field)
+        if not isinstance(passed_value, bool):
+            continue
+        stage_total += 1
+        if passed_value:
+            stage_passed += 1
+        category = (
+            str(
+                item.get("expected_category")
+                or item.get("selected_category")
+                or "okänd_kategori"
+            )
+            .strip()
+            or "okänd_kategori"
+        )
+        bucket = grouped.setdefault(category, {"total": 0, "passed": 0})
+        bucket["total"] += 1
+        if passed_value:
+            bucket["passed"] += 1
+
+    category_breakdown: list[dict[str, Any]] = []
+    for category, counts in sorted(grouped.items(), key=lambda pair: pair[0]):
+        total = int(counts.get("total") or 0)
+        passed = int(counts.get("passed") or 0)
+        category_breakdown.append(
+            {
+                "category_id": category,
+                "total_tests": total,
+                "passed_tests": passed,
+                "success_rate": (passed / total) if total else 0.0,
+            }
+        )
+
+    if stage_total == 0:
+        stage_total = int(metrics.get("total_tests") or 0)
+        stage_passed = int(metrics.get("passed_tests") or 0)
+    stage_success_rate = (stage_passed / stage_total) if stage_total else 0.0
+
+    metric_name = _stage_metric_name(stage)
+    metric_value = _to_float(metrics.get(metric_name))
+    if metric_value is None:
+        metric_value = stage_success_rate if stage_total else None
+    return stage_total, stage_passed, stage_success_rate, category_breakdown, metric_value
+
+
+async def _record_eval_stage_summaries(
+    session: AsyncSession,
+    *,
+    search_space_id: int,
+    result: dict[str, Any],
+    stages: list[str],
+    updated_by_id: Any | None = None,
+) -> None:
+    eval_name = str(result.get("eval_name") or "").strip() or None
+    rows: list[GlobalToolEvaluationStageRun] = []
+    for raw_stage in stages:
+        stage = _normalize_eval_stage(raw_stage)
+        total_tests, passed_tests, success_rate, category_breakdown, metric_value = (
+            _build_stage_breakdown(stage=stage, result=result)
+        )
+        rows.append(
+            GlobalToolEvaluationStageRun(
+                search_space_id=search_space_id,
+                stage=stage,
+                eval_name=eval_name,
+                metric_name=_stage_metric_name(stage),
+                metric_value=metric_value,
+                total_tests=total_tests,
+                passed_tests=passed_tests,
+                success_rate=success_rate,
+                category_breakdown=category_breakdown,
+                run_metadata={
+                    "gated_success_rate": _to_float(
+                        (result.get("metrics") or {}).get("gated_success_rate")
+                        if isinstance(result.get("metrics"), dict)
+                        else None
+                    ),
+                },
+                updated_by_id=updated_by_id,
+            )
+        )
+    if not rows:
+        return
+    try:
+        for row in rows:
+            session.add(row)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("Failed to persist eval stage history")
+
+
+async def _get_eval_stage_history(
+    session: AsyncSession,
+    *,
+    search_space_id: int,
+    stage: str,
+    limit: int = 80,
+) -> dict[str, Any]:
+    normalized_stage = _normalize_eval_stage(stage)
+    normalized_limit = max(1, min(int(limit or 80), 300))
+    result = await session.execute(
+        select(GlobalToolEvaluationStageRun)
+        .filter(
+            GlobalToolEvaluationStageRun.search_space_id == search_space_id,
+            GlobalToolEvaluationStageRun.stage == normalized_stage,
+        )
+        .order_by(GlobalToolEvaluationStageRun.created_at.desc())
+        .limit(normalized_limit)
+    )
+    rows = list(result.scalars().all())
+    rows.reverse()
+    items: list[dict[str, Any]] = []
+    category_series: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        run_at = row.created_at.isoformat() if row.created_at else _utcnow_iso()
+        category_breakdown = (
+            row.category_breakdown if isinstance(row.category_breakdown, list) else []
+        )
+        items.append(
+            {
+                "run_at": run_at,
+                "stage": normalized_stage,
+                "eval_name": row.eval_name,
+                "total_tests": int(row.total_tests or 0),
+                "passed_tests": int(row.passed_tests or 0),
+                "success_rate": float(row.success_rate or 0.0),
+                "stage_metric_name": row.metric_name,
+                "stage_metric_value": _to_float(row.metric_value),
+                "category_breakdown": category_breakdown,
+            }
+        )
+        for category_entry in category_breakdown:
+            if not isinstance(category_entry, dict):
+                continue
+            category_id = str(category_entry.get("category_id") or "").strip()
+            if not category_id:
+                continue
+            category_series.setdefault(category_id, []).append(
+                {
+                    "run_at": run_at,
+                    "eval_name": row.eval_name,
+                    "total_tests": int(category_entry.get("total_tests") or 0),
+                    "passed_tests": int(category_entry.get("passed_tests") or 0),
+                    "success_rate": float(category_entry.get("success_rate") or 0.0),
+                    "stage_metric_value": _to_float(row.metric_value),
+                }
+            )
+    return {
+        "stage": normalized_stage,
+        "items": items,
+        "category_series": [
+            {"category_id": category_id, "points": points}
+            for category_id, points in sorted(category_series.items(), key=lambda pair: pair[0])
+        ],
     }
 
 
@@ -1875,6 +2110,30 @@ async def get_tool_api_categories(
 
 
 @router.get(
+    "/tool-settings/eval-history",
+    response_model=ToolEvaluationStageHistoryResponse,
+)
+async def get_tool_eval_stage_history(
+    stage: str,
+    limit: int = 80,
+    search_space_id: int | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=search_space_id,
+    )
+    return await _get_eval_stage_history(
+        session,
+        search_space_id=resolved_search_space_id,
+        stage=stage,
+        limit=limit,
+    )
+
+
+@router.get(
     "/tool-settings/eval-library/files",
     response_model=ToolEvalLibraryListResponse,
 )
@@ -1946,10 +2205,12 @@ async def generate_eval_library_file(
     normalized_mode = str(payload.mode or "category").strip().lower()
     if normalized_mode in {"random", "global", "global_mix"}:
         normalized_mode = "global_random"
-    if normalized_mode not in {"category", "global_random"}:
+    if normalized_mode in {"provider_mix", "provider_wide"}:
+        normalized_mode = "provider"
+    if normalized_mode not in {"category", "global_random", "provider"}:
         raise HTTPException(
             status_code=400,
-            detail="mode must be either 'category' or 'global_random'",
+            detail="mode must be one of: 'category', 'provider', 'global_random'",
         )
     question_count = max(1, min(int(payload.question_count or 12), 100))
     tool_registry, tool_index, _persisted_overrides, _effective_overrides = (
@@ -2139,6 +2400,13 @@ async def evaluate_tool_settings(
         result=result,
         updated_by_id=user.id,
     )
+    await _record_eval_stage_summaries(
+        session,
+        search_space_id=resolved_search_space_id,
+        result=result,
+        stages=["agent", "tool"],
+        updated_by_id=user.id,
+    )
     return result
 
 
@@ -2211,6 +2479,13 @@ async def _run_eval_job_background(
                 job_session,
                 search_space_id=resolved_search_space_id,
                 result=result,
+                updated_by_id=job_user.id,
+            )
+            await _record_eval_stage_summaries(
+                job_session,
+                search_space_id=resolved_search_space_id,
+                result=result,
+                stages=["agent", "tool"],
                 updated_by_id=job_user.id,
             )
             await _update_eval_job(
@@ -2339,6 +2614,13 @@ async def evaluate_tool_api_input(
         result=result,
         updated_by_id=user.id,
     )
+    await _record_eval_stage_summaries(
+        session,
+        search_space_id=resolved_search_space_id,
+        result=result,
+        stages=["api_input"],
+        updated_by_id=user.id,
+    )
     return result
 
 
@@ -2411,6 +2693,13 @@ async def _run_api_input_eval_job_background(
                 job_session,
                 search_space_id=resolved_search_space_id,
                 result=result,
+                updated_by_id=job_user.id,
+            )
+            await _record_eval_stage_summaries(
+                job_session,
+                search_space_id=resolved_search_space_id,
+                result=result,
+                stages=["api_input"],
                 updated_by_id=job_user.id,
             )
             await _update_api_input_eval_job(

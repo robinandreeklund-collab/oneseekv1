@@ -115,6 +115,45 @@ export const toolEvalLibraryGenerateResponse = z.object({
 	payload: z.record(z.string(), z.unknown()),
 });
 
+export const toolEvaluationStageHistoryCategoryItem = z.object({
+	category_id: z.string(),
+	total_tests: z.number(),
+	passed_tests: z.number(),
+	success_rate: z.number(),
+});
+
+export const toolEvaluationStageHistoryItem = z.object({
+	run_at: z.string(),
+	stage: z.string(),
+	eval_name: z.string().nullable().optional(),
+	total_tests: z.number(),
+	passed_tests: z.number(),
+	success_rate: z.number(),
+	stage_metric_name: z.string().nullable().optional(),
+	stage_metric_value: z.number().nullable().optional(),
+	category_breakdown: z.array(toolEvaluationStageHistoryCategoryItem).default([]),
+});
+
+export const toolEvaluationStageCategorySeriesPoint = z.object({
+	run_at: z.string(),
+	eval_name: z.string().nullable().optional(),
+	total_tests: z.number(),
+	passed_tests: z.number(),
+	success_rate: z.number(),
+	stage_metric_value: z.number().nullable().optional(),
+});
+
+export const toolEvaluationStageCategorySeries = z.object({
+	category_id: z.string(),
+	points: z.array(toolEvaluationStageCategorySeriesPoint).default([]),
+});
+
+export const toolEvaluationStageHistoryResponse = z.object({
+	stage: z.string(),
+	items: z.array(toolEvaluationStageHistoryItem).default([]),
+	category_series: z.array(toolEvaluationStageCategorySeries).default([]),
+});
+
 export const toolSettingsResponse = z.object({
 	categories: z.array(toolCategoryResponse),
 	retrieval_tuning: toolRetrievalTuning,
@@ -187,6 +226,7 @@ export const toolEvaluationMetrics = z.object({
 	total_tests: z.number(),
 	passed_tests: z.number(),
 	success_rate: z.number(),
+	gated_success_rate: z.number().nullable().optional(),
 	route_accuracy: z.number().nullable().optional(),
 	sub_route_accuracy: z.number().nullable().optional(),
 	agent_accuracy: z.number().nullable().optional(),
@@ -228,6 +268,8 @@ export const toolEvaluationCaseResult = z.object({
 	passed_plan: z.boolean().nullable().optional(),
 	passed_category: z.boolean().nullable().optional(),
 	passed_tool: z.boolean().nullable().optional(),
+	passed_with_agent_gate: z.boolean().nullable().optional(),
+	agent_gate_score: z.number().nullable().optional(),
 	passed: z.boolean(),
 });
 
@@ -276,6 +318,8 @@ export const toolApiInputEvaluationCaseResult = z.object({
 	passed_category: z.boolean().nullable().optional(),
 	passed_tool: z.boolean().nullable().optional(),
 	passed_api_input: z.boolean().nullable().optional(),
+	passed_with_agent_gate: z.boolean().nullable().optional(),
+	agent_gate_score: z.number().nullable().optional(),
 	passed: z.boolean(),
 });
 
@@ -283,6 +327,7 @@ export const toolApiInputEvaluationMetrics = z.object({
 	total_tests: z.number(),
 	passed_tests: z.number(),
 	success_rate: z.number(),
+	gated_success_rate: z.number().nullable().optional(),
 	route_accuracy: z.number().nullable().optional(),
 	sub_route_accuracy: z.number().nullable().optional(),
 	agent_accuracy: z.number().nullable().optional(),
@@ -444,6 +489,19 @@ export type ToolEvalLibraryListResponse = z.infer<typeof toolEvalLibraryListResp
 export type ToolEvalLibraryFileResponse = z.infer<typeof toolEvalLibraryFileResponse>;
 export type ToolEvalLibraryGenerateResponse = z.infer<
 	typeof toolEvalLibraryGenerateResponse
+>;
+export type ToolEvaluationStageHistoryCategoryItem = z.infer<
+	typeof toolEvaluationStageHistoryCategoryItem
+>;
+export type ToolEvaluationStageHistoryItem = z.infer<typeof toolEvaluationStageHistoryItem>;
+export type ToolEvaluationStageCategorySeriesPoint = z.infer<
+	typeof toolEvaluationStageCategorySeriesPoint
+>;
+export type ToolEvaluationStageCategorySeries = z.infer<
+	typeof toolEvaluationStageCategorySeries
+>;
+export type ToolEvaluationStageHistoryResponse = z.infer<
+	typeof toolEvaluationStageHistoryResponse
 >;
 export type ToolSettingsResponse = z.infer<typeof toolSettingsResponse>;
 export type ToolSettingsUpdateRequest = z.infer<typeof toolSettingsUpdateRequest>;

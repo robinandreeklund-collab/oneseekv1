@@ -1343,6 +1343,28 @@ class GlobalToolEvaluationRun(BaseModel, TimestampMixin):
     updated_by = relationship("User")
 
 
+class GlobalToolEvaluationStageRun(BaseModel, TimestampMixin):
+    __tablename__ = "tool_evaluation_stage_runs_global"
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stage = Column(String(40), nullable=False, index=True)
+    eval_name = Column(String(160), nullable=True)
+    metric_name = Column(String(80), nullable=True)
+    metric_value = Column(Float, nullable=True, default=0.0)
+    total_tests = Column(Integer, nullable=False, default=0)
+    passed_tests = Column(Integer, nullable=False, default=0)
+    success_rate = Column(Float, nullable=False, default=0.0)
+    category_breakdown = Column(JSONB, nullable=False, default=list)
+    run_metadata = Column(JSONB, nullable=False, default=dict)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
 class AgentComboCache(BaseModel, TimestampMixin):
     __tablename__ = "agent_combo_cache"
     __table_args__ = (

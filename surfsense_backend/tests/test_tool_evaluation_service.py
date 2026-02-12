@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from app.agents.new_chat.bigtool_store import ToolIndexEntry
 from app.services.tool_evaluation_service import (
+    _compute_agent_gate_score,
     _enrich_metadata_suggestion_fields,
     compute_metadata_version_hash,
     generate_tool_metadata_suggestions,
@@ -404,11 +405,14 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
     assert output["metrics"]["sub_route_accuracy"] == 1.0
     assert output["metrics"]["agent_accuracy"] == 1.0
     assert output["metrics"]["plan_accuracy"] == 1.0
+    assert output["metrics"]["gated_success_rate"] == 1.0
     assert output["results"][0]["passed_route"] is True
     assert output["results"][0]["passed_sub_route"] is True
     assert output["results"][0]["passed_agent"] is True
     assert output["results"][0]["selected_agent"] == "trafik"
     assert output["results"][0]["passed_plan"] is True
+    assert output["results"][0]["agent_gate_score"] == 1.0
+    assert output["results"][0]["passed_with_agent_gate"] is True
 
 
 def test_suggest_agent_prompt_improvements_includes_router_prompt():
@@ -457,3 +461,19 @@ def test_suggest_agent_prompt_improvements_includes_agent_prompt():
     assert len(suggestions) == 1
     assert suggestions[0]["prompt_key"] == "agent.trafik.system"
     assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]
+
+
+def test_compute_agent_gate_score_skips_downstream_when_upstream_fails():
+    score, passed = _compute_agent_gate_score(
+        upstream_checks=[False, True, True, True],
+        downstream_checks=[False, False],
+    )
+    assert score == 0.75
+    assert passed is False
+
+    score_ok, passed_ok = _compute_agent_gate_score(
+        upstream_checks=[True, True, True, True],
+        downstream_checks=[True, True],
+    )
+    assert score_ok == 1.0
+    assert passed_ok is True

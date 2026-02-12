@@ -478,6 +478,38 @@ def _evaluate_plan_requirements(
     return checks, all(check.get("passed") for check in checks)
 
 
+def _compute_agent_gate_score(
+    *,
+    upstream_checks: list[bool | None],
+    downstream_checks: list[bool | None],
+    downstream_weight: float = 0.35,
+) -> tuple[float | None, bool | None]:
+    valid_upstream = [check for check in upstream_checks if check is not None]
+    valid_downstream = [check for check in downstream_checks if check is not None]
+    if not valid_upstream and not valid_downstream:
+        return None, None
+    upstream_failed = any(check is False for check in valid_upstream)
+    total_weight = 0.0
+    earned_weight = 0.0
+
+    for check in valid_upstream:
+        total_weight += 1.0
+        if check:
+            earned_weight += 1.0
+
+    # Agent gate: when upstream routing fails, do not penalize tool/API checks.
+    if not upstream_failed:
+        for check in valid_downstream:
+            total_weight += downstream_weight
+            if check:
+                earned_weight += downstream_weight
+
+    if total_weight <= 0:
+        return None, None
+    score = earned_weight / total_weight
+    return score, bool(score >= 0.999)
+
+
 def _serialize_tool(entry: ToolIndexEntry) -> dict[str, Any]:
     return {
         "tool_id": entry.tool_id,
@@ -799,6 +831,7 @@ async def run_tool_evaluation(
     route_checks: list[bool] = []
     sub_route_checks: list[bool] = []
     agent_checks: list[bool] = []
+    gated_scores: list[float] = []
     plan_checks: list[bool] = []
     category_checks: list[bool] = []
     tool_checks: list[bool] = []
@@ -948,11 +981,22 @@ async def run_tool_evaluation(
                 if check is not None
             ]
             passed = all(checks) if checks else True
+            agent_gate_score, passed_with_agent_gate = _compute_agent_gate_score(
+                upstream_checks=[
+                    passed_route,
+                    passed_sub_route,
+                    passed_agent,
+                    passed_plan,
+                ],
+                downstream_checks=[passed_category, passed_tool],
+            )
             retrieval_hit_expected_tool = (
                 expected_tool in retrieved_ids[:retrieval_limit]
                 if expected_tool is not None
                 else None
             )
+            if agent_gate_score is not None:
+                gated_scores.append(float(agent_gate_score))
 
             if passed_route is not None:
                 route_checks.append(bool(passed_route))
@@ -1000,6 +1044,8 @@ async def run_tool_evaluation(
                 "passed_plan": passed_plan,
                 "passed_category": passed_category,
                 "passed_tool": passed_tool,
+                "passed_with_agent_gate": passed_with_agent_gate,
+                "agent_gate_score": agent_gate_score,
                 "passed": passed,
             }
             results.append(case_result)
@@ -1047,9 +1093,12 @@ async def run_tool_evaluation(
                     "passed_plan": False if plan_requirements else None,
                     "passed_category": False if expected_category is not None else None,
                     "passed_tool": False if expected_tool is not None else None,
+                    "passed_with_agent_gate": False,
+                    "agent_gate_score": 0.0,
                     "passed": False,
                 }
             )
+            gated_scores.append(0.0)
             if expected_route is not None:
                 route_checks.append(False)
             if expected_sub_route is not None:
@@ -1080,6 +1129,11 @@ async def run_tool_evaluation(
         "total_tests": total_tests,
         "passed_tests": passed_count,
         "success_rate": (passed_count / total_tests) if total_tests else 0.0,
+        "gated_success_rate": (
+            sum(gated_scores) / len(gated_scores)
+            if gated_scores
+            else None
+        ),
         "route_accuracy": (
             sum(1 for check in route_checks if check) / len(route_checks)
             if route_checks
@@ -1625,6 +1679,7 @@ async def run_tool_api_input_evaluation(
     route_checks: list[bool] = []
     sub_route_checks: list[bool] = []
     agent_checks: list[bool] = []
+    gated_scores: list[float] = []
     plan_checks: list[bool] = []
     category_checks: list[bool] = []
     tool_checks: list[bool] = []
@@ -1892,6 +1947,17 @@ async def run_tool_api_input_evaluation(
                 if check is not None
             ]
             passed = all(checks) if checks else True
+            agent_gate_score, passed_with_agent_gate = _compute_agent_gate_score(
+                upstream_checks=[
+                    passed_route,
+                    passed_sub_route,
+                    passed_agent,
+                    passed_plan,
+                ],
+                downstream_checks=[passed_category, passed_tool, passed_api_input],
+            )
+            if agent_gate_score is not None:
+                gated_scores.append(float(agent_gate_score))
             case_result = {
                 "test_id": test_id,
                 "question": question,
@@ -1934,6 +2000,8 @@ async def run_tool_api_input_evaluation(
                 "passed_category": passed_category,
                 "passed_tool": passed_tool,
                 "passed_api_input": passed_api_input,
+                "passed_with_agent_gate": passed_with_agent_gate,
+                "agent_gate_score": agent_gate_score,
                 "passed": passed,
             }
             results.append(case_result)
@@ -1991,9 +2059,12 @@ async def run_tool_api_input_evaluation(
                 "passed_category": False if expected_category is not None else None,
                 "passed_tool": False if expected_tool is not None else None,
                 "passed_api_input": False,
+                "passed_with_agent_gate": False,
+                "agent_gate_score": 0.0,
                 "passed": False,
             }
             results.append(case_result)
+            gated_scores.append(0.0)
             if expected_route is not None:
                 route_checks.append(False)
             if expected_sub_route is not None:
@@ -2031,6 +2102,11 @@ async def run_tool_api_input_evaluation(
         "total_tests": total_tests,
         "passed_tests": passed_count,
         "success_rate": (passed_count / total_tests) if total_tests else 0.0,
+        "gated_success_rate": (
+            sum(gated_scores) / len(gated_scores)
+            if gated_scores
+            else None
+        ),
         "route_accuracy": (
             sum(1 for check in route_checks if check) / len(route_checks)
             if route_checks

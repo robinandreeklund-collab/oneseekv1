@@ -130,6 +130,7 @@ class ToolEvaluationMetrics(BaseModel):
     total_tests: int
     passed_tests: int
     success_rate: float
+    gated_success_rate: float | None = None
     route_accuracy: float | None = None
     sub_route_accuracy: float | None = None
     agent_accuracy: float | None = None
@@ -166,6 +167,8 @@ class ToolEvaluationCaseResult(BaseModel):
     passed_plan: bool | None = None
     passed_category: bool | None = None
     passed_tool: bool | None = None
+    passed_with_agent_gate: bool | None = None
+    agent_gate_score: float | None = None
     passed: bool
 
 
@@ -214,6 +217,8 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     passed_category: bool | None = None
     passed_tool: bool | None = None
     passed_api_input: bool | None = None
+    passed_with_agent_gate: bool | None = None
+    agent_gate_score: float | None = None
     passed: bool
 
 
@@ -221,6 +226,7 @@ class ToolApiInputEvaluationMetrics(BaseModel):
     total_tests: int
     passed_tests: int
     success_rate: float
+    gated_success_rate: float | None = None
     route_accuracy: float | None = None
     sub_route_accuracy: float | None = None
     agent_accuracy: float | None = None
@@ -434,3 +440,44 @@ class ToolEvalLibraryGenerateResponse(BaseModel):
     version: int
     created_at: str
     payload: dict[str, Any]
+
+
+class ToolEvaluationStageHistoryCategoryItem(BaseModel):
+    category_id: str
+    total_tests: int
+    passed_tests: int
+    success_rate: float
+
+
+class ToolEvaluationStageHistoryItem(BaseModel):
+    run_at: str
+    stage: str
+    eval_name: str | None = None
+    total_tests: int
+    passed_tests: int
+    success_rate: float
+    stage_metric_name: str | None = None
+    stage_metric_value: float | None = None
+    category_breakdown: list[ToolEvaluationStageHistoryCategoryItem] = Field(
+        default_factory=list
+    )
+
+
+class ToolEvaluationStageCategorySeriesPoint(BaseModel):
+    run_at: str
+    eval_name: str | None = None
+    total_tests: int
+    passed_tests: int
+    success_rate: float
+    stage_metric_value: float | None = None
+
+
+class ToolEvaluationStageCategorySeries(BaseModel):
+    category_id: str
+    points: list[ToolEvaluationStageCategorySeriesPoint] = Field(default_factory=list)
+
+
+class ToolEvaluationStageHistoryResponse(BaseModel):
+    stage: str
+    items: list[ToolEvaluationStageHistoryItem] = Field(default_factory=list)
+    category_series: list[ToolEvaluationStageCategorySeries] = Field(default_factory=list)

@@ -21,9 +21,12 @@ from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
 from app.agents.new_chat.lazy_worker_pool import LazyWorkerPool
 from app.agents.new_chat.response_compressor import compress_response
+from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
 from app.agents.new_chat.system_prompt import append_datetime_context
+from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
@@ -71,6 +74,63 @@ _EXTERNAL_MODEL_TOOL_NAMES = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
 _AGENT_EMBED_CACHE: dict[str, list[float]] = {}
 AGENT_RERANK_CANDIDATES = 6
 AGENT_EMBEDDING_WEIGHT = 4.0
+
+
+@dataclass(frozen=True)
+class AgentToolProfile:
+    tool_id: str
+    category: str
+    description: str
+    keywords: tuple[str, ...]
+
+
+def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
+    profiles: dict[str, list[AgentToolProfile]] = {
+        "trafik": [],
+        "statistics": [],
+        "riksdagen": [],
+        "bolag": [],
+    }
+    for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
+        profiles["trafik"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "category", "trafik")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    for definition in SCB_TOOL_DEFINITIONS:
+        profiles["statistics"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "base_path", "statistics")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    for definition in RIKSDAGEN_TOOL_DEFINITIONS:
+        profiles["riksdagen"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "category", "riksdagen")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    for definition in BOLAGSVERKET_TOOL_DEFINITIONS:
+        profiles["bolag"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "category", "bolag")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    return profiles
+
+
+_AGENT_TOOL_PROFILES = _build_agent_tool_profiles()
 
 # Message pruning constants for progressive context management
 MESSAGE_PRUNING_THRESHOLD = 20  # Start pruning when total messages exceed this
@@ -120,6 +180,87 @@ def _has_trafik_intent(text: str) -> bool:
 
 def _has_map_intent(text: str) -> bool:
     return bool(text and _MAP_INTENT_RE.search(text))
+
+
+def _tokenize_focus_terms(text: str) -> set[str]:
+    tokens = re.findall(r"[a-zA-Z0-9åäöÅÄÖ]{3,}", str(text or "").lower())
+    return {token for token in tokens if token not in _AGENT_STOPWORDS}
+
+
+def _score_tool_profile(profile: AgentToolProfile, query_norm: str, tokens: set[str]) -> int:
+    score = 0
+    if profile.tool_id and profile.tool_id.lower() in query_norm:
+        score += 6
+    category_norm = _normalize_text(profile.category)
+    if category_norm and category_norm in query_norm:
+        score += 4
+    description_norm = _normalize_text(profile.description)
+    for keyword in profile.keywords:
+        keyword_norm = _normalize_text(keyword)
+        if keyword_norm and keyword_norm in query_norm:
+            score += 3
+    for token in tokens:
+        if token and description_norm and token in description_norm:
+            score += 1
+    return score
+
+
+def _select_focused_tool_profiles(
+    agent_name: str,
+    task: str,
+    *,
+    limit: int = 4,
+) -> list[AgentToolProfile]:
+    profiles = list(_AGENT_TOOL_PROFILES.get(str(agent_name or "").strip().lower(), []))
+    if not profiles:
+        return []
+    query_norm = _normalize_text(task)
+    tokens = _tokenize_focus_terms(task)
+    scored = [
+        (profile, _score_tool_profile(profile, query_norm, tokens))
+        for profile in profiles
+    ]
+    scored.sort(
+        key=lambda item: (
+            item[1],
+            len(item[0].keywords),
+            len(item[0].description),
+        ),
+        reverse=True,
+    )
+    selected = [profile for profile, score in scored if score > 0][: max(1, int(limit))]
+    if selected:
+        return selected
+    return profiles[: max(1, int(limit))]
+
+
+def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -> list[str]:
+    focused = _select_focused_tool_profiles(agent_name, task, limit=limit)
+    return [profile.tool_id for profile in focused if profile.tool_id]
+
+
+def _build_scoped_prompt_for_agent(agent_name: str, task: str) -> str | None:
+    focused = _select_focused_tool_profiles(agent_name, task, limit=3)
+    if not focused:
+        return None
+    lines = [
+        "[SCOPED TOOL PROMPT]",
+        "Fokusera pa dessa mest relevanta verktyg/kategorier for uppgiften:",
+    ]
+    for profile in focused:
+        keywords = ", ".join(profile.keywords[:4]) if profile.keywords else ""
+        snippet = profile.description.strip()
+        if len(snippet) > 140:
+            snippet = snippet[:137].rstrip() + "..."
+        lines.append(
+            f"- {profile.tool_id} ({profile.category})"
+            + (f": {snippet}" if snippet else "")
+            + (f" [nyckelord: {keywords}]" if keywords else "")
+        )
+    lines.append(
+        "Anvand i forsta hand ett av ovanstaende verktyg och hall argumenten strikt till valt verktygs schema."
+    )
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -1211,13 +1352,20 @@ async def create_supervisor_agent(
         if name == "synthesis" and state:
             task = _prepare_task_for_synthesis(task, state)
         prompt = worker_prompts.get(name, "")
+        scoped_prompt = _build_scoped_prompt_for_agent(name, task)
+        if scoped_prompt:
+            prompt = f"{prompt.rstrip()}\n\n{scoped_prompt}".strip() if prompt else scoped_prompt
         messages = []
         if prompt:
             messages.append(SystemMessage(content=prompt))
         messages.append(HumanMessage(content=task))
-        selected_tool_ids: list[str] = []
+        selected_tool_ids: list[str] = _focused_tool_ids_for_agent(name, task, limit=6)
         if name == "trafik":
-            selected_tool_ids = list(trafik_tool_ids)
+            selected_tool_ids = [
+                tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
+            ]
+            if not selected_tool_ids:
+                selected_tool_ids = list(trafik_tool_ids)
         state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
         config = {
             "configurable": {"thread_id": f"{dependencies['thread_id']}:{name}"},
@@ -1305,11 +1453,24 @@ async def create_supervisor_agent(
                 if agent_name == "synthesis" and state:
                     task = _prepare_task_for_synthesis(task, state)
                 prompt = worker_prompts.get(agent_name, "")
+                scoped_prompt = _build_scoped_prompt_for_agent(agent_name, task)
+                if scoped_prompt:
+                    prompt = (
+                        f"{prompt.rstrip()}\n\n{scoped_prompt}".strip()
+                        if prompt
+                        else scoped_prompt
+                    )
                 messages = []
                 if prompt:
                     messages.append(SystemMessage(content=prompt))
                 messages.append(HumanMessage(content=task))
-                selected_tool_ids = list(trafik_tool_ids) if agent_name == "trafik" else []
+                selected_tool_ids = _focused_tool_ids_for_agent(agent_name, task, limit=6)
+                if agent_name == "trafik":
+                    selected_tool_ids = [
+                        tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
+                    ]
+                    if not selected_tool_ids:
+                        selected_tool_ids = list(trafik_tool_ids)
                 worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
                 config = {
                     "configurable": {"thread_id": f"{dependencies['thread_id']}:{agent_name}"},
