@@ -130,11 +130,17 @@ export const toolSettingsUpdateRequest = z.object({
 export const toolEvaluationExpected = z.object({
 	category: z.string().nullable().optional(),
 	tool: z.string().nullable().optional(),
+	route: z.string().nullable().optional(),
+	sub_route: z.string().nullable().optional(),
+	plan_requirements: z.array(z.string()).optional().default([]),
 });
 
 export const toolApiInputEvaluationExpected = z.object({
 	category: z.string().nullable().optional(),
 	tool: z.string().nullable().optional(),
+	route: z.string().nullable().optional(),
+	sub_route: z.string().nullable().optional(),
+	plan_requirements: z.array(z.string()).optional().default([]),
 	required_fields: z.array(z.string()).optional().default([]),
 	field_values: z.record(z.string(), z.unknown()).optional().default({}),
 	allow_clarification: z.boolean().nullable().optional(),
@@ -179,25 +185,41 @@ export const toolEvaluationMetrics = z.object({
 	total_tests: z.number(),
 	passed_tests: z.number(),
 	success_rate: z.number(),
+	route_accuracy: z.number().nullable().optional(),
+	sub_route_accuracy: z.number().nullable().optional(),
+	plan_accuracy: z.number().nullable().optional(),
 	category_accuracy: z.number().nullable().optional(),
 	tool_accuracy: z.number().nullable().optional(),
 	retrieval_recall_at_k: z.number().nullable().optional(),
 });
 
+export const toolPlanRequirementCheck = z.object({
+	requirement: z.string(),
+	passed: z.boolean(),
+});
+
 export const toolEvaluationCaseResult = z.object({
 	test_id: z.string(),
 	question: z.string(),
+	expected_route: z.string().nullable().optional(),
+	expected_sub_route: z.string().nullable().optional(),
 	expected_category: z.string().nullable().optional(),
 	expected_tool: z.string().nullable().optional(),
 	allowed_tools: z.array(z.string()).default([]),
+	selected_route: z.string().nullable().optional(),
+	selected_sub_route: z.string().nullable().optional(),
 	selected_category: z.string().nullable().optional(),
 	selected_tool: z.string().nullable().optional(),
 	planning_analysis: z.string().default(""),
 	planning_steps: z.array(z.string()).default([]),
+	plan_requirement_checks: z.array(toolPlanRequirementCheck).default([]),
 	retrieval_top_tools: z.array(z.string()).default([]),
 	retrieval_top_categories: z.array(z.string()).default([]),
 	retrieval_breakdown: z.array(z.record(z.string(), z.unknown())).default([]),
 	retrieval_hit_expected_tool: z.boolean().nullable().optional(),
+	passed_route: z.boolean().nullable().optional(),
+	passed_sub_route: z.boolean().nullable().optional(),
+	passed_plan: z.boolean().nullable().optional(),
 	passed_category: z.boolean().nullable().optional(),
 	passed_tool: z.boolean().nullable().optional(),
 	passed: z.boolean(),
@@ -213,13 +235,18 @@ export const toolApiInputFieldCheck = z.object({
 export const toolApiInputEvaluationCaseResult = z.object({
 	test_id: z.string(),
 	question: z.string(),
+	expected_route: z.string().nullable().optional(),
+	expected_sub_route: z.string().nullable().optional(),
 	expected_category: z.string().nullable().optional(),
 	expected_tool: z.string().nullable().optional(),
 	allowed_tools: z.array(z.string()).default([]),
+	selected_route: z.string().nullable().optional(),
+	selected_sub_route: z.string().nullable().optional(),
 	selected_category: z.string().nullable().optional(),
 	selected_tool: z.string().nullable().optional(),
 	planning_analysis: z.string().default(""),
 	planning_steps: z.array(z.string()).default([]),
+	plan_requirement_checks: z.array(toolPlanRequirementCheck).default([]),
 	retrieval_top_tools: z.array(z.string()).default([]),
 	retrieval_top_categories: z.array(z.string()).default([]),
 	retrieval_breakdown: z.array(z.record(z.string(), z.unknown())).default([]),
@@ -234,6 +261,9 @@ export const toolApiInputEvaluationCaseResult = z.object({
 	schema_errors: z.array(z.string()).default([]),
 	needs_clarification: z.boolean().default(false),
 	clarification_question: z.string().nullable().optional(),
+	passed_route: z.boolean().nullable().optional(),
+	passed_sub_route: z.boolean().nullable().optional(),
+	passed_plan: z.boolean().nullable().optional(),
 	passed_category: z.boolean().nullable().optional(),
 	passed_tool: z.boolean().nullable().optional(),
 	passed_api_input: z.boolean().nullable().optional(),
@@ -244,6 +274,9 @@ export const toolApiInputEvaluationMetrics = z.object({
 	total_tests: z.number(),
 	passed_tests: z.number(),
 	success_rate: z.number(),
+	route_accuracy: z.number().nullable().optional(),
+	sub_route_accuracy: z.number().nullable().optional(),
+	plan_accuracy: z.number().nullable().optional(),
 	category_accuracy: z.number().nullable().optional(),
 	tool_accuracy: z.number().nullable().optional(),
 	schema_validity_rate: z.number().nullable().optional(),
@@ -260,18 +293,6 @@ export const toolMetadataSuggestion = z.object({
 	proposed_metadata: toolMetadataUpdateItem,
 });
 
-export const toolEvaluationResponse = z.object({
-	eval_name: z.string().nullable().optional(),
-	target_success_rate: z.number().nullable().optional(),
-	metrics: toolEvaluationMetrics,
-	results: z.array(toolEvaluationCaseResult),
-	suggestions: z.array(toolMetadataSuggestion),
-	retrieval_tuning: toolRetrievalTuning,
-	retrieval_tuning_suggestion: toolRetrievalTuningSuggestion.nullable().optional(),
-	metadata_version_hash: z.string(),
-	search_space_id: z.number(),
-});
-
 export const toolApiInputPromptSuggestion = z.object({
 	prompt_key: z.string(),
 	failed_test_ids: z.array(z.string()).default([]),
@@ -279,6 +300,19 @@ export const toolApiInputPromptSuggestion = z.object({
 	rationale: z.string(),
 	current_prompt: z.string(),
 	proposed_prompt: z.string(),
+});
+
+export const toolEvaluationResponse = z.object({
+	eval_name: z.string().nullable().optional(),
+	target_success_rate: z.number().nullable().optional(),
+	metrics: toolEvaluationMetrics,
+	results: z.array(toolEvaluationCaseResult),
+	suggestions: z.array(toolMetadataSuggestion),
+	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
+	retrieval_tuning: toolRetrievalTuning,
+	retrieval_tuning_suggestion: toolRetrievalTuningSuggestion.nullable().optional(),
+	metadata_version_hash: z.string(),
+	search_space_id: z.number(),
 });
 
 export const toolApiInputEvaluationResponse = z.object({
@@ -304,6 +338,8 @@ export const toolEvaluationCaseStatus = z.object({
 	test_id: z.string(),
 	question: z.string(),
 	status: z.string(),
+	selected_route: z.string().nullable().optional(),
+	selected_sub_route: z.string().nullable().optional(),
 	selected_tool: z.string().nullable().optional(),
 	selected_category: z.string().nullable().optional(),
 	passed: z.boolean().nullable().optional(),
@@ -413,6 +449,7 @@ export type ToolApiInputEvaluationRequest = z.infer<
 	typeof toolApiInputEvaluationRequest
 >;
 export type ToolEvaluationMetrics = z.infer<typeof toolEvaluationMetrics>;
+export type ToolPlanRequirementCheck = z.infer<typeof toolPlanRequirementCheck>;
 export type ToolEvaluationCaseResult = z.infer<typeof toolEvaluationCaseResult>;
 export type ToolApiInputFieldCheck = z.infer<typeof toolApiInputFieldCheck>;
 export type ToolApiInputEvaluationCaseResult = z.infer<

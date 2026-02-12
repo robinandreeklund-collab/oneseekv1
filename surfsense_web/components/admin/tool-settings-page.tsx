@@ -282,9 +282,14 @@ export function ToolSettingsPage() {
 	const [selectedPromptSuggestionKeys, setSelectedPromptSuggestionKeys] = useState<
 		Set<string>
 	>(new Set());
+	const [selectedToolPromptSuggestionKeys, setSelectedToolPromptSuggestionKeys] = useState<
+		Set<string>
+	>(new Set());
 	const [isApplyingSuggestions, setIsApplyingSuggestions] = useState(false);
 	const [isSavingSuggestions, setIsSavingSuggestions] = useState(false);
 	const [isSavingPromptSuggestions, setIsSavingPromptSuggestions] = useState(false);
+	const [isSavingToolPromptSuggestions, setIsSavingToolPromptSuggestions] =
+		useState(false);
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-tool-settings"],
@@ -407,6 +412,7 @@ export function ToolSettingsPage() {
 		if (evalJobStatus.status === "completed" && evalJobStatus.result) {
 			setEvaluationResult(evalJobStatus.result);
 			setSelectedSuggestionIds(new Set());
+			setSelectedToolPromptSuggestionKeys(new Set());
 			const noticeKey = `${evalJobId}:completed`;
 			if (lastEvalJobNotice !== noticeKey) {
 				toast.success("Eval-run klar");
@@ -643,11 +649,26 @@ export function ToolSettingsPage() {
 					id: String(item.id ?? `case-${index + 1}`),
 					question: String(item.question ?? ""),
 					expected:
-						item.expected || item.expected_tool || item.expected_category
+						item.expected ||
+						item.expected_tool ||
+						item.expected_category ||
+						item.expected_route ||
+						item.expected_sub_route ||
+						item.plan_requirements
 							? {
 									tool: item.expected?.tool ?? item.expected_tool ?? null,
 									category:
 										item.expected?.category ?? item.expected_category ?? null,
+									route: item.expected?.route ?? item.expected_route ?? null,
+									sub_route:
+										item.expected?.sub_route ?? item.expected_sub_route ?? null,
+									plan_requirements: Array.isArray(
+										item.expected?.plan_requirements ?? item.plan_requirements
+									)
+										? (
+												item.expected?.plan_requirements ?? item.plan_requirements
+											).map((value: unknown) => String(value))
+										: [],
 								}
 							: undefined,
 					allowed_tools: Array.isArray(item.allowed_tools)
@@ -683,12 +704,24 @@ export function ToolSettingsPage() {
 				item.expected ||
 				item.expected_tool ||
 				item.expected_category ||
+				item.expected_route ||
+				item.expected_sub_route ||
+				item.plan_requirements ||
 				item.required_fields ||
 				item.field_values ||
 				typeof item.allow_clarification === "boolean"
 					? {
 							tool: item.expected?.tool ?? item.expected_tool ?? null,
 							category: item.expected?.category ?? item.expected_category ?? null,
+							route: item.expected?.route ?? item.expected_route ?? null,
+							sub_route: item.expected?.sub_route ?? item.expected_sub_route ?? null,
+							plan_requirements: Array.isArray(
+								item.expected?.plan_requirements ?? item.plan_requirements
+							)
+								? (
+										item.expected?.plan_requirements ?? item.plan_requirements
+									).map((value: unknown) => String(value))
+								: [],
 							required_fields: Array.isArray(
 								item.expected?.required_fields ?? item.required_fields
 							)
@@ -813,6 +846,7 @@ export function ToolSettingsPage() {
 			setLastEvalJobNotice(null);
 			setEvaluationResult(null);
 			setSelectedSuggestionIds(new Set());
+			setSelectedToolPromptSuggestionKeys(new Set());
 			toast.info(`Eval-run startad (${started.total_tests} frågor)`);
 		} catch (err) {
 			toast.error("Eval-run misslyckades");
@@ -886,6 +920,44 @@ export function ToolSettingsPage() {
 			toast.error("Kunde inte spara valda promptförslag");
 		} finally {
 			setIsSavingPromptSuggestions(false);
+		}
+	};
+
+	const toggleToolPromptSuggestion = (promptKey: string) => {
+		setSelectedToolPromptSuggestionKeys((prev) => {
+			const next = new Set(prev);
+			if (next.has(promptKey)) {
+				next.delete(promptKey);
+			} else {
+				next.add(promptKey);
+			}
+			return next;
+		});
+	};
+
+	const saveSelectedToolPromptSuggestions = async () => {
+		if (!evaluationResult) return;
+		const selected = evaluationResult.prompt_suggestions.filter((suggestion) =>
+			selectedToolPromptSuggestionKeys.has(suggestion.prompt_key)
+		);
+		if (!selected.length) {
+			toast.info("Välj minst ett promptförslag att spara");
+			return;
+		}
+		setIsSavingToolPromptSuggestions(true);
+		try {
+			await adminToolSettingsApiService.applyApiInputPromptSuggestions({
+				suggestions: selected.map((suggestion) => ({
+					prompt_key: suggestion.prompt_key,
+					proposed_prompt: suggestion.proposed_prompt,
+				})),
+			});
+			setSelectedToolPromptSuggestionKeys(new Set());
+			toast.success(`Sparade ${selected.length} promptförslag`);
+		} catch (_error) {
+			toast.error("Kunde inte spara valda promptförslag");
+		} finally {
+			setIsSavingToolPromptSuggestions(false);
 		}
 	};
 
@@ -1019,6 +1091,14 @@ export function ToolSettingsPage() {
 				selectedPromptSuggestionKeys.has(suggestion.prompt_key)
 			) ?? [],
 		[apiInputEvaluationResult?.prompt_suggestions, selectedPromptSuggestionKeys]
+	);
+
+	const selectedToolPromptSuggestions = useMemo(
+		() =>
+			evaluationResult?.prompt_suggestions.filter((suggestion) =>
+				selectedToolPromptSuggestionKeys.has(suggestion.prompt_key)
+			) ?? [],
+		[evaluationResult?.prompt_suggestions, selectedToolPromptSuggestionKeys]
 	);
 
 	const uploadEvalFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1742,7 +1822,7 @@ export function ToolSettingsPage() {
 								</div>
 								{showEvalJsonInput ? (
 									<Textarea
-										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","expected":{"tool":"...","category":"..."}}]}'
+										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","expected":{"route":"action","sub_route":"travel","tool":"...","category":"...","plan_requirements":["route:action","tool:..."]}}]}'
 										value={evalInput}
 										onChange={(e) => setEvalInput(e.target.value)}
 										rows={12}
@@ -1780,7 +1860,7 @@ export function ToolSettingsPage() {
 								</p>
 								{showHoldoutJsonInput ? (
 									<Textarea
-										placeholder='{"tests":[{"id":"h1","question":"...","expected":{"tool":"...","category":"...","required_fields":["city","date"]}}]}'
+										placeholder='{"tests":[{"id":"h1","question":"...","expected":{"route":"action","sub_route":"travel","tool":"...","category":"...","plan_requirements":["route:action","field:city"],"required_fields":["city","date"]}}]}'
 										value={holdoutInput}
 										onChange={(e) => setHoldoutInput(e.target.value)}
 										rows={8}
@@ -1857,6 +1937,14 @@ export function ToolSettingsPage() {
 												</Badge>
 											</div>
 											<p className="text-muted-foreground">{caseStatus.question}</p>
+											{caseStatus.selected_route && (
+												<p className="text-muted-foreground">
+													Route: {caseStatus.selected_route}
+													{caseStatus.selected_sub_route
+														? ` / ${caseStatus.selected_sub_route}`
+														: ""}
+												</p>
+											)}
 											{caseStatus.selected_tool && (
 												<p className="text-muted-foreground">
 													Valt verktyg: {caseStatus.selected_tool}
@@ -1933,6 +2021,14 @@ export function ToolSettingsPage() {
 												</Badge>
 											</div>
 											<p className="text-muted-foreground">{caseStatus.question}</p>
+											{caseStatus.selected_route && (
+												<p className="text-muted-foreground">
+													Route: {caseStatus.selected_route}
+													{caseStatus.selected_sub_route
+														? ` / ${caseStatus.selected_sub_route}`
+														: ""}
+												</p>
+											)}
 											{caseStatus.selected_tool && (
 												<p className="text-muted-foreground">
 													Valt verktyg: {caseStatus.selected_tool}
@@ -1971,6 +2067,36 @@ export function ToolSettingsPage() {
 										</p>
 									</div>
 									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Route accuracy</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.metrics.route_accuracy == null
+												? "-"
+												: `${(evaluationResult.metrics.route_accuracy * 100).toFixed(
+														1
+													)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Sub-route accuracy</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.metrics.sub_route_accuracy == null
+												? "-"
+												: `${(
+														evaluationResult.metrics.sub_route_accuracy * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Plan accuracy</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.metrics.plan_accuracy == null
+												? "-"
+												: `${(evaluationResult.metrics.plan_accuracy * 100).toFixed(
+														1
+													)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
 										<p className="text-xs text-muted-foreground">Tool accuracy</p>
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.tool_accuracy == null
@@ -2003,7 +2129,7 @@ export function ToolSettingsPage() {
 								</CardContent>
 							</Card>
 
-							{apiInputEvaluationResult.holdout_metrics && (
+							{apiInputEvaluationResult?.holdout_metrics && (
 								<Card>
 									<CardHeader>
 										<CardTitle>Holdout-suite (anti-overfitting)</CardTitle>
@@ -2181,6 +2307,16 @@ export function ToolSettingsPage() {
 													</Badge>
 												</div>
 												<div className="text-xs text-muted-foreground">
+													Route: {result.expected_route || "-"}
+													{result.expected_sub_route
+														? ` / ${result.expected_sub_route}`
+														: ""}{" "}
+													→ {result.selected_route || "-"}
+													{result.selected_sub_route
+														? ` / ${result.selected_sub_route}`
+														: ""}
+												</div>
+												<div className="text-xs text-muted-foreground">
 													Expected: {result.expected_category || "-"} /{" "}
 													{result.expected_tool || "-"} · Selected:{" "}
 													{result.selected_category || "-"} /{" "}
@@ -2192,6 +2328,18 @@ export function ToolSettingsPage() {
 												<p className="text-xs text-muted-foreground">
 													Analys: {result.planning_analysis}
 												</p>
+											)}
+											{result.plan_requirement_checks?.length > 0 && (
+												<div className="flex flex-wrap gap-2">
+													{result.plan_requirement_checks.map((check, idx) => (
+														<Badge
+															key={`${result.test_id}-plan-${idx}`}
+															variant={check.passed ? "outline" : "destructive"}
+														>
+															{check.requirement}: {check.passed ? "OK" : "MISS"}
+														</Badge>
+													))}
+												</div>
 											)}
 											<p className="text-xs text-muted-foreground">
 												Retrieval: {result.retrieval_top_tools.join(", ") || "-"}
@@ -2344,6 +2492,90 @@ export function ToolSettingsPage() {
 									)}
 								</CardContent>
 							</Card>
+
+							<Card>
+								<CardHeader>
+									<CardTitle>Prompt-förslag från Tool Eval</CardTitle>
+									<CardDescription>
+										Fixar route/sub-route och plan-kvalitet från starten av
+										pipelinen.
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-4">
+									<div className="flex items-center gap-2">
+										<Button
+											onClick={saveSelectedToolPromptSuggestions}
+											disabled={
+												!selectedToolPromptSuggestionKeys.size ||
+												isSavingToolPromptSuggestions
+											}
+										>
+											Spara valda promptförslag
+										</Button>
+										<Badge variant="outline">
+											{selectedToolPromptSuggestions.length} valda
+										</Badge>
+									</div>
+
+									{evaluationResult.prompt_suggestions.length === 0 ? (
+										<p className="text-sm text-muted-foreground">
+											Inga promptförslag för denna run.
+										</p>
+									) : (
+										<div className="space-y-3">
+											{evaluationResult.prompt_suggestions.map((suggestion) => {
+												const isSelected =
+													selectedToolPromptSuggestionKeys.has(
+														suggestion.prompt_key
+													);
+												return (
+													<div
+														key={`tool-prompt-${suggestion.prompt_key}`}
+														className="rounded border p-3 space-y-2"
+													>
+														<div className="flex items-center justify-between gap-2">
+															<div className="flex items-center gap-2">
+																<input
+																	type="checkbox"
+																	checked={isSelected}
+																	onChange={() =>
+																		toggleToolPromptSuggestion(
+																			suggestion.prompt_key
+																		)
+																	}
+																/>
+																<Badge variant="secondary">
+																	{suggestion.prompt_key}
+																</Badge>
+																<Badge variant="outline">
+																	{suggestion.failed_test_ids.length} fail-case(s)
+																</Badge>
+															</div>
+														</div>
+														<p className="text-xs text-muted-foreground">
+															{suggestion.rationale}
+														</p>
+														<div className="grid gap-3 md:grid-cols-2">
+															<div className="rounded bg-muted/50 p-2">
+																<p className="text-xs font-medium mb-1">Nuvarande</p>
+																<pre className="text-[11px] whitespace-pre-wrap break-words">
+																	{suggestion.current_prompt}
+																</pre>
+															</div>
+															<div className="rounded bg-muted/50 p-2">
+																<p className="text-xs font-medium mb-1">Föreslagen</p>
+																<pre className="text-[11px] whitespace-pre-wrap break-words">
+																	{suggestion.proposed_prompt}
+																</pre>
+															</div>
+														</div>
+													</div>
+												);
+											})}
+										</div>
+									)}
+								</CardContent>
+							</Card>
 						</>
 					)}
 
@@ -2362,6 +2594,36 @@ export function ToolSettingsPage() {
 										<p className="text-xs text-muted-foreground">Success rate</p>
 										<p className="text-2xl font-semibold">
 											{(apiInputEvaluationResult.metrics.success_rate * 100).toFixed(1)}%
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Route accuracy</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.route_accuracy == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.route_accuracy * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Sub-route accuracy</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.sub_route_accuracy == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.sub_route_accuracy * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Plan accuracy</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.plan_accuracy == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.plan_accuracy * 100
+													).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -2429,6 +2691,16 @@ export function ToolSettingsPage() {
 													</Badge>
 												</div>
 												<div className="text-xs text-muted-foreground">
+													Route: {result.expected_route || "-"}
+													{result.expected_sub_route
+														? ` / ${result.expected_sub_route}`
+														: ""}{" "}
+													→ {result.selected_route || "-"}
+													{result.selected_sub_route
+														? ` / ${result.selected_sub_route}`
+														: ""}
+												</div>
+												<div className="text-xs text-muted-foreground">
 													Expected: {result.expected_category || "-"} /{" "}
 													{result.expected_tool || "-"} · Selected:{" "}
 													{result.selected_category || "-"} /{" "}
@@ -2440,6 +2712,18 @@ export function ToolSettingsPage() {
 												<p className="text-xs text-muted-foreground">
 													Analys: {result.planning_analysis}
 												</p>
+											)}
+											{result.plan_requirement_checks?.length > 0 && (
+												<div className="flex flex-wrap gap-2">
+													{result.plan_requirement_checks.map((check, idx) => (
+														<Badge
+															key={`${result.test_id}-api-plan-${idx}`}
+															variant={check.passed ? "outline" : "destructive"}
+														>
+															{check.requirement}: {check.passed ? "OK" : "MISS"}
+														</Badge>
+													))}
+												</div>
 											)}
 											<div className="grid gap-3 md:grid-cols-2">
 												<div className="rounded bg-muted/40 p-2 space-y-1">
