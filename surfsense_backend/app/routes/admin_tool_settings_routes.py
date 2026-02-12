@@ -67,6 +67,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _EVAL_JOBS: dict[str, dict[str, Any]] = {}
 _EVAL_JOBS_LOCK = asyncio.Lock()
 _MAX_EVAL_JOBS = 100
+_LATEST_EVAL_SUMMARY: dict[int, dict[str, Any]] = {}
 
 
 def _utcnow_iso() -> str:
@@ -135,6 +136,41 @@ def _serialize_eval_job(job: dict[str, Any]) -> dict[str, Any]:
         "result": job.get("result"),
         "error": job.get("error"),
     }
+
+
+def _build_eval_summary_payload(result: dict[str, Any]) -> dict[str, Any]:
+    metrics = result.get("metrics") or {}
+    total_tests = int(metrics.get("total_tests") or 0)
+    passed_tests = int(metrics.get("passed_tests") or 0)
+    success_rate = float(metrics.get("success_rate") or 0.0)
+    return {
+        "run_at": _utcnow_iso(),
+        "eval_name": result.get("eval_name"),
+        "total_tests": total_tests,
+        "passed_tests": passed_tests,
+        "success_rate": success_rate,
+    }
+
+
+async def _record_latest_eval_summary(
+    *,
+    search_space_id: int,
+    result: dict[str, Any],
+) -> None:
+    summary = _build_eval_summary_payload(result)
+    async with _EVAL_JOBS_LOCK:
+        _LATEST_EVAL_SUMMARY[search_space_id] = summary
+
+
+async def _get_latest_eval_summary(
+    *,
+    search_space_id: int,
+) -> dict[str, Any] | None:
+    async with _EVAL_JOBS_LOCK:
+        value = _LATEST_EVAL_SUMMARY.get(search_space_id)
+        if not value:
+            return None
+        return dict(value)
 
 
 def _metadata_payload_from_item(item: ToolMetadataUpdateItem) -> dict[str, Any]:
@@ -283,9 +319,11 @@ async def _build_tool_settings_response(
         persisted_overrides=persisted_overrides,
     )
     retrieval_tuning = await get_global_tool_retrieval_tuning(session)
+    latest_evaluation = await _get_latest_eval_summary(search_space_id=search_space_id)
     return ToolSettingsResponse(
         categories=categories,
         retrieval_tuning=ToolRetrievalTuning(**retrieval_tuning),
+        latest_evaluation=latest_evaluation,
         metadata_version_hash=compute_metadata_version_hash(tool_index),
         search_space_id=search_space_id,
     )
@@ -556,12 +594,17 @@ async def evaluate_tool_settings(
         user,
         requested_search_space_id=payload.search_space_id,
     )
-    return await _execute_tool_evaluation(
+    result = await _execute_tool_evaluation(
         session,
         user,
         payload=payload,
         resolved_search_space_id=resolved_search_space_id,
     )
+    await _record_latest_eval_summary(
+        search_space_id=resolved_search_space_id,
+        result=result,
+    )
+    return result
 
 
 async def _run_eval_job_background(
@@ -625,6 +668,10 @@ async def _run_eval_job_background(
                 payload=payload,
                 resolved_search_space_id=resolved_search_space_id,
                 progress_callback=_progress_callback,
+            )
+            await _record_latest_eval_summary(
+                search_space_id=resolved_search_space_id,
+                result=result,
             )
             await _update_eval_job(
                 job_id,

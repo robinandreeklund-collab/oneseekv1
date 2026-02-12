@@ -2,6 +2,7 @@ import asyncio
 
 from app.agents.new_chat.bigtool_store import ToolIndexEntry
 from app.services.tool_evaluation_service import (
+    _enrich_metadata_suggestion_fields,
     compute_metadata_version_hash,
     generate_tool_metadata_suggestions,
     run_tool_evaluation,
@@ -201,3 +202,47 @@ def test_suggest_retrieval_tuning_when_all_passed_returns_no_change():
 
     assert suggestion is not None
     assert suggestion["proposed_tuning"] == suggestion["current_tuning"]
+
+
+def test_enrich_metadata_suggestion_fields_uses_fallback_for_all_core_fields():
+    current = {
+        "tool_id": "tool_weather",
+        "name": "Weather",
+        "description": "Current weather conditions.",
+        "keywords": ["weather", "forecast"],
+        "example_queries": ["Vad blir vädret i dag?"],
+        "category": "weather",
+        "base_path": None,
+    }
+    llm_proposed = {
+        "tool_id": "tool_weather",
+        "name": "Weather",
+        "description": "Current weather conditions.",
+        "keywords": ["weather", "forecast"],
+        "example_queries": ["Vad blir vädret i dag?"],
+        "category": "weather",
+        "base_path": None,
+    }
+    fallback = {
+        "tool_id": "tool_weather",
+        "name": "Weather",
+        "description": "Current weather conditions. Relevant for terms like: halka, snö, is.",
+        "keywords": ["weather", "forecast", "halka", "snö"],
+        "example_queries": [
+            "Vad blir vädret i dag?",
+            "Finns risk för halka i natt?",
+        ],
+        "category": "weather",
+        "base_path": None,
+    }
+
+    merged, enriched = _enrich_metadata_suggestion_fields(
+        current=current,
+        proposed=llm_proposed,
+        fallback=fallback,
+    )
+
+    assert enriched is True
+    assert merged["description"] == fallback["description"]
+    assert merged["keywords"] == fallback["keywords"]
+    assert merged["example_queries"] == fallback["example_queries"]

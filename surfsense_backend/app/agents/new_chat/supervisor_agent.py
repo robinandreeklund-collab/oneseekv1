@@ -76,6 +76,23 @@ AGENT_EMBEDDING_WEIGHT = 4.0
 MESSAGE_PRUNING_THRESHOLD = 20  # Start pruning when total messages exceed this
 TOOL_MSG_THRESHOLD = 8  # Trigger aggressive pruning when tool messages exceed this
 KEEP_TOOL_MSG_COUNT = 6  # Number of recent tool message exchanges to preserve
+TOOL_CONTEXT_MAX_CHARS = 1200
+TOOL_CONTEXT_MAX_ITEMS = 5
+TOOL_CONTEXT_DROP_KEYS = {
+    "raw",
+    "data",
+    "entries",
+    "matching_entries",
+    "results",
+    "content",
+    "chunks",
+    "documents",
+    "rows",
+    "timeSeries",
+    "origin_lookup",
+    "destination_lookup",
+    "timetable",
+}
 
 _TRAFFIC_INTENT_RE = re.compile(
     r"\b("
@@ -513,6 +530,121 @@ def _strip_critic_json(text: str) -> str:
     return cleaned.rstrip()
 
 
+def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> str:
+    value = str(text or "").strip()
+    if len(value) <= max_chars:
+        return value
+    return value[: max_chars - 3].rstrip() + "..."
+
+
+def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
+    name = (tool_name or "tool").strip() or "tool"
+    status = str(payload.get("status") or "completed").lower()
+    parts: list[str] = [f"{name}: {status}"]
+
+    if status == "error" or "error" in payload:
+        error_text = _truncate_for_prompt(str(payload.get("error") or "Unknown error"), 300)
+        return _truncate_for_prompt(f"{name}: error - {error_text}")
+
+    if name == "write_todos":
+        todos = payload.get("todos") or []
+        if isinstance(todos, list):
+            completed = sum(
+                1
+                for item in todos
+                if isinstance(item, dict) and str(item.get("status") or "").lower() == "completed"
+            )
+            in_progress = sum(
+                1
+                for item in todos
+                if isinstance(item, dict) and str(item.get("status") or "").lower() == "in_progress"
+            )
+            parts.append(f"todos={len(todos)}")
+            parts.append(f"completed={completed}")
+            parts.append(f"in_progress={in_progress}")
+            task_names = [
+                str(item.get("content") or "").strip()
+                for item in todos
+                if isinstance(item, dict) and str(item.get("content") or "").strip()
+            ][:TOOL_CONTEXT_MAX_ITEMS]
+            if task_names:
+                parts.append("tasks=" + " | ".join(task_names))
+            return _truncate_for_prompt("; ".join(parts))
+
+    if name == "trafiklab_route":
+        origin = payload.get("origin") or {}
+        destination = payload.get("destination") or {}
+        origin_name = ""
+        destination_name = ""
+        if isinstance(origin, dict):
+            origin_name = str(
+                ((origin.get("stop_group") or {}) if isinstance(origin.get("stop_group"), dict) else {}).get("name")
+                or origin.get("name")
+                or ""
+            ).strip()
+        if isinstance(destination, dict):
+            destination_name = str(
+                (
+                    ((destination.get("stop_group") or {}) if isinstance(destination.get("stop_group"), dict) else {}).get("name")
+                    or destination.get("name")
+                    or ""
+                )
+            ).strip()
+        route_label = " -> ".join([label for label in (origin_name, destination_name) if label]).strip()
+        if route_label:
+            parts.append(f"route={route_label}")
+        matches = payload.get("matching_entries")
+        entries = payload.get("entries")
+        if isinstance(matches, list):
+            parts.append(f"matching_entries={len(matches)}")
+        if isinstance(entries, list):
+            parts.append(f"entries={len(entries)}")
+        return _truncate_for_prompt("; ".join(parts))
+
+    if name == "smhi_weather":
+        location = payload.get("location") or {}
+        location_name = ""
+        if isinstance(location, dict):
+            location_name = str(location.get("name") or location.get("display_name") or "").strip()
+        if location_name:
+            parts.append(f"location={location_name}")
+        current = payload.get("current") or {}
+        summary = current.get("summary") if isinstance(current, dict) else {}
+        if isinstance(summary, dict):
+            temperature = summary.get("temperature_c")
+            if temperature is not None:
+                parts.append(f"temperature_c={temperature}")
+            wind = summary.get("wind_speed_mps")
+            if wind is not None:
+                parts.append(f"wind_mps={wind}")
+        return _truncate_for_prompt("; ".join(parts))
+
+    for key, value in payload.items():
+        if key in {"status", "error"}:
+            continue
+        if key in TOOL_CONTEXT_DROP_KEYS:
+            if isinstance(value, list):
+                parts.append(f"{key}_count={len(value)}")
+            elif isinstance(value, dict):
+                parts.append(f"{key}_keys={len(value)}")
+            elif value is not None:
+                parts.append(f"{key}=present")
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            parts.append(f"{key}={_truncate_for_prompt(str(value), 180)}")
+            continue
+        if isinstance(value, list):
+            parts.append(f"{key}_count={len(value)}")
+            continue
+        if isinstance(value, dict):
+            parts.append(f"{key}_keys={len(value)}")
+            continue
+        if value is not None:
+            parts.append(f"{key}=present")
+
+    return _truncate_for_prompt("; ".join(parts))
+
+
 def _sanitize_messages(messages: list[Any]) -> list[Any]:
     sanitized: list[Any] = []
     for message in messages:
@@ -523,7 +655,11 @@ def _sanitize_messages(messages: list[Any]) -> list[Any]:
                 if isinstance(response, str):
                     agent = payload.get("agent") or message.name or "agent"
                     response = _strip_critic_json(response)
-                    content = f"{agent}: {response}" if response else f"{agent}: completed"
+                    content = (
+                        _truncate_for_prompt(f"{agent}: {response}")
+                        if response
+                        else f"{agent}: completed"
+                    )
                     sanitized.append(
                         ToolMessage(
                             content=content,
@@ -536,18 +672,27 @@ def _sanitize_messages(messages: list[Any]) -> list[Any]:
                     tool_name = message.name or "tool"
                     sanitized.append(
                         ToolMessage(
-                            content=f"{tool_name}: completed",
+                            content=_truncate_for_prompt(f"{tool_name}: completed"),
                             name=message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
                     continue
+                summarized = _summarize_tool_payload(message.name or "tool", payload)
+                sanitized.append(
+                    ToolMessage(
+                        content=summarized,
+                        name=message.name,
+                        tool_call_id=getattr(message, "tool_call_id", None),
+                    )
+                )
+                continue
             if isinstance(message.content, str) and "{\"status\"" in message.content:
                 trimmed = message.content.split("{\"status\"", 1)[0].rstrip()
                 if trimmed:
                     sanitized.append(
                         ToolMessage(
-                            content=trimmed,
+                            content=_truncate_for_prompt(trimmed),
                             name=message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
@@ -560,6 +705,18 @@ def _sanitize_messages(messages: list[Any]) -> list[Any]:
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
+                continue
+            if isinstance(message.content, str):
+                trimmed = _strip_critic_json(message.content)
+                if not trimmed:
+                    trimmed = f"{message.name or 'tool'}: completed"
+                sanitized.append(
+                    ToolMessage(
+                        content=_truncate_for_prompt(trimmed),
+                        name=message.name,
+                        tool_call_id=getattr(message, "tool_call_id", None),
+                    )
+                )
                 continue
         sanitized.append(message)
     return sanitized

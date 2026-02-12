@@ -40,9 +40,18 @@ class ToolRetrievalTuning(BaseModel):
     rerank_candidates: int = 24
 
 
+class ToolLatestEvaluationSummary(BaseModel):
+    run_at: str
+    eval_name: str | None = None
+    total_tests: int
+    passed_tests: int
+    success_rate: float
+
+
 class ToolSettingsResponse(BaseModel):
     categories: list[ToolCategoryResponse]
     retrieval_tuning: ToolRetrievalTuning
+    latest_evaluation: ToolLatestEvaluationSummary | None = None
     metadata_version_hash: str
     search_space_id: int
 

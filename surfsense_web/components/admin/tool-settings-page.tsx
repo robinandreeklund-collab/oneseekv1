@@ -713,6 +713,45 @@ export function ToolSettingsPage() {
 				</TabsList>
 
 				<TabsContent value="metadata" className="space-y-6 mt-6">
+					{data?.latest_evaluation && (
+						<Card>
+							<CardHeader>
+								<CardTitle>Senaste eval-körning</CardTitle>
+								<CardDescription>
+									Visar senaste genomförda Tool Evaluation för detta search space.
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="grid gap-3 md:grid-cols-4 text-sm">
+								<div className="rounded border p-3">
+									<p className="text-xs text-muted-foreground">Tidpunkt</p>
+									<p className="font-medium">
+										{new Date(data.latest_evaluation.run_at).toLocaleString("sv-SE")}
+									</p>
+								</div>
+								<div className="rounded border p-3">
+									<p className="text-xs text-muted-foreground">Antal frågor</p>
+									<p className="font-medium">{data.latest_evaluation.total_tests}</p>
+								</div>
+								<div className="rounded border p-3">
+									<p className="text-xs text-muted-foreground">Passerade</p>
+									<p className="font-medium">{data.latest_evaluation.passed_tests}</p>
+								</div>
+								<div className="rounded border p-3">
+									<p className="text-xs text-muted-foreground">Success rate</p>
+									<p className="font-medium">
+										{(data.latest_evaluation.success_rate * 100).toFixed(1)}%
+									</p>
+								</div>
+								{data.latest_evaluation.eval_name && (
+									<div className="rounded border p-3 md:col-span-4">
+										<p className="text-xs text-muted-foreground">Eval-namn</p>
+										<p className="font-medium">{data.latest_evaluation.eval_name}</p>
+									</div>
+								)}
+							</CardContent>
+						</Card>
+					)}
+
 					<Card>
 						<CardHeader>
 							<CardTitle>Retrieval Tuning</CardTitle>
@@ -1037,6 +1076,10 @@ export function ToolSettingsPage() {
 											: "Run Tool Evaluation"}
 								</Button>
 							</div>
+							<p className="text-xs text-muted-foreground">
+								Retrieval K = antal top-kandidater som tas vidare från retrieval i
+								eval-runen. 5 är bra standard; höj till 8-10 för breda/svåra frågor.
+							</p>
 							<div className="rounded border p-3 space-y-3">
 								<div className="flex items-center justify-between gap-2">
 									<p className="text-sm font-medium">Eval JSON</p>
@@ -1431,12 +1474,48 @@ export function ToolSettingsPage() {
 																<p className="text-xs">
 																	{suggestion.current_metadata.description}
 																</p>
+																<p className="text-[11px] text-muted-foreground mt-2">
+																	Keywords:{" "}
+																	{suggestion.current_metadata.keywords.join(", ") || "-"}
+																</p>
+																<div className="mt-2">
+																	<p className="text-[11px] text-muted-foreground mb-1">
+																		Exempelfrågor
+																	</p>
+																	<ul className="list-disc pl-4 space-y-1">
+																		{suggestion.current_metadata.example_queries
+																			.slice(0, 3)
+																			.map((example, idx) => (
+																				<li key={`${suggestion.tool_id}-current-${idx}`} className="text-[11px]">
+																					{example}
+																				</li>
+																			))}
+																	</ul>
+																</div>
 															</div>
 															<div className="rounded bg-muted/50 p-2">
 																<p className="text-xs font-medium mb-1">Föreslagen</p>
 																<p className="text-xs">
 																	{suggestion.proposed_metadata.description}
 																</p>
+																<p className="text-[11px] text-muted-foreground mt-2">
+																	Keywords:{" "}
+																	{suggestion.proposed_metadata.keywords.join(", ") || "-"}
+																</p>
+																<div className="mt-2">
+																	<p className="text-[11px] text-muted-foreground mb-1">
+																		Exempelfrågor
+																	</p>
+																	<ul className="list-disc pl-4 space-y-1">
+																		{suggestion.proposed_metadata.example_queries
+																			.slice(0, 3)
+																			.map((example, idx) => (
+																				<li key={`${suggestion.tool_id}-proposed-${idx}`} className="text-[11px]">
+																					{example}
+																				</li>
+																			))}
+																	</ul>
+																</div>
 															</div>
 														</div>
 													</div>

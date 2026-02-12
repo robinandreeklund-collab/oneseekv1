@@ -47,9 +47,18 @@ export const toolRetrievalTuningSuggestion = z.object({
 	rationale: z.string(),
 });
 
+export const toolLatestEvaluationSummary = z.object({
+	run_at: z.string(),
+	eval_name: z.string().nullable().optional(),
+	total_tests: z.number(),
+	passed_tests: z.number(),
+	success_rate: z.number(),
+});
+
 export const toolSettingsResponse = z.object({
 	categories: z.array(toolCategoryResponse),
 	retrieval_tuning: toolRetrievalTuning,
+	latest_evaluation: toolLatestEvaluationSummary.nullable().optional(),
 	metadata_version_hash: z.string(),
 	search_space_id: z.number(),
 });
@@ -187,6 +196,7 @@ export type ToolCategoryResponse = z.infer<typeof toolCategoryResponse>;
 export type ToolRetrievalTuning = z.infer<typeof toolRetrievalTuning>;
 export type ToolRetrievalTuningResponse = z.infer<typeof toolRetrievalTuningResponse>;
 export type ToolRetrievalTuningSuggestion = z.infer<typeof toolRetrievalTuningSuggestion>;
+export type ToolLatestEvaluationSummary = z.infer<typeof toolLatestEvaluationSummary>;
 export type ToolSettingsResponse = z.infer<typeof toolSettingsResponse>;
 export type ToolSettingsUpdateRequest = z.infer<typeof toolSettingsUpdateRequest>;
 export type ToolEvaluationExpected = z.infer<typeof toolEvaluationExpected>;

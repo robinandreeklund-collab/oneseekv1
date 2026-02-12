@@ -367,6 +367,49 @@ def _metadata_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return left_payload == right_payload
 
 
+def _enrich_metadata_suggestion_fields(
+    *,
+    current: dict[str, Any],
+    proposed: dict[str, Any],
+    fallback: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    merged = dict(proposed)
+    enriched = False
+
+    current_description = str(current.get("description") or "").strip()
+    proposed_description = str(merged.get("description") or "").strip()
+    fallback_description = str(fallback.get("description") or "").strip()
+    if (
+        proposed_description == current_description
+        and fallback_description
+        and fallback_description != current_description
+    ):
+        merged["description"] = fallback_description
+        enriched = True
+
+    current_keywords = _safe_string_list(current.get("keywords"))
+    proposed_keywords = _safe_string_list(merged.get("keywords"))
+    fallback_keywords = _safe_string_list(fallback.get("keywords"))
+    if proposed_keywords == current_keywords and fallback_keywords != current_keywords:
+        merged["keywords"] = fallback_keywords
+        enriched = True
+    else:
+        merged["keywords"] = proposed_keywords
+
+    current_examples = _safe_string_list(current.get("example_queries"))
+    proposed_examples = _safe_string_list(merged.get("example_queries"))
+    fallback_examples = _safe_string_list(fallback.get("example_queries"))
+    if proposed_examples == current_examples and fallback_examples != current_examples:
+        merged["example_queries"] = fallback_examples
+        enriched = True
+    else:
+        merged["example_queries"] = proposed_examples
+
+    if "tool_id" not in merged:
+        merged["tool_id"] = str(current.get("tool_id") or "")
+    return merged, enriched
+
+
 async def run_tool_evaluation(
     *,
     tests: list[dict[str, Any]],
@@ -617,15 +660,26 @@ async def generate_tool_metadata_suggestions(
             current=current,
             failures=failures,
         )
+        fallback_proposed, fallback_rationale = _build_fallback_suggestion(
+            tool_id=tool_id,
+            current=current,
+            questions=failure_data["questions"],
+            failed_count=len(failure_data["questions"]),
+        )
         if llm_suggestion is not None:
             proposed, rationale = llm_suggestion
-        else:
-            proposed, rationale = _build_fallback_suggestion(
-                tool_id=tool_id,
+            proposed, enriched = _enrich_metadata_suggestion_fields(
                 current=current,
-                questions=failure_data["questions"],
-                failed_count=len(failure_data["questions"]),
+                proposed=proposed,
+                fallback=fallback_proposed,
             )
+            if enriched:
+                rationale = (
+                    f"{rationale} Added fallback improvements for description, "
+                    "keywords, and example queries from failed cases."
+                )
+        else:
+            proposed, rationale = fallback_proposed, fallback_rationale
         if _metadata_equal(current, proposed):
             continue
         suggestions.append(
