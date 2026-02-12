@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import re
 from hashlib import sha256
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import BaseTool
 
 from app.agents.new_chat.bigtool_store import (
     ToolIndexEntry,
@@ -86,6 +88,22 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
         return parsed if isinstance(parsed, dict) else None
     except Exception:
         return None
+
+
+def _response_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+            else:
+                parts.append(str(item))
+        return "".join(parts)
+    return str(content or "")
 
 
 def _safe_string_list(values: Any) -> list[str]:
@@ -839,3 +857,750 @@ async def suggest_retrieval_tuning(
             "proposed_tuning": fallback_proposed,
             "rationale": fallback_rationale,
         }
+
+
+def _tool_json_schema(tool: BaseTool | Any) -> dict[str, Any]:
+    if tool is None:
+        return {}
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+        try:
+            schema = args_schema.model_json_schema()
+            if isinstance(schema, dict):
+                return schema
+        except Exception:
+            pass
+    get_input_schema = getattr(tool, "get_input_schema", None)
+    if callable(get_input_schema):
+        try:
+            model = get_input_schema()
+            if model is not None and hasattr(model, "model_json_schema"):
+                schema = model.model_json_schema()
+                if isinstance(schema, dict):
+                    return schema
+        except Exception:
+            pass
+    tool_args = getattr(tool, "args", None)
+    if isinstance(tool_args, dict):
+        return {
+            "type": "object",
+            "properties": tool_args,
+            "required": [],
+        }
+    return {}
+
+
+def _tool_required_fields(tool: BaseTool | Any) -> list[str]:
+    schema = _tool_json_schema(tool)
+    return _safe_string_list(schema.get("required"))
+
+
+def _tool_property_fields(tool: BaseTool | Any) -> list[str]:
+    schema = _tool_json_schema(tool)
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return []
+    return _safe_string_list(list(properties.keys()))
+
+
+def _coerce_arguments(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        parsed = _extract_json_object(value)
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _normalize_field_list(values: Any) -> list[str]:
+    items = _safe_string_list(values)
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for item in items:
+        key = item.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(item)
+    return normalized
+
+
+def _value_matches_expected(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, list):
+        return any(_value_matches_expected(actual, item) for item in expected)
+    if expected is None:
+        return actual is None
+    if actual is None:
+        return False
+    if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
+        return float(actual) == float(expected)
+    expected_text = str(expected).strip().casefold()
+    actual_text = str(actual).strip().casefold()
+    if not expected_text:
+        return not actual_text
+    if actual_text == expected_text:
+        return True
+    return expected_text in actual_text or actual_text in expected_text
+
+
+def _prompt_key_for_tool(tool_id: str | None, category: str | None = None) -> str:
+    tool_id = str(tool_id or "").strip().lower()
+    category = str(category or "").strip().lower()
+    if tool_id.startswith("scb_") or category in {"statistics", "scb_statistics"}:
+        return "agent.statistics.system"
+    if tool_id.startswith("riksdag_") or category.startswith("riksdag"):
+        return "agent.riksdagen.system"
+    if tool_id.startswith("trafikverket_"):
+        return "agent.trafik.system"
+    if tool_id.startswith("bolagsverket_"):
+        return "agent.bolag.system"
+    if tool_id.startswith("geoapify_"):
+        return "agent.kartor.system"
+    if tool_id in {"trafiklab_route", "smhi_weather"}:
+        return "agent.action.travel"
+    if tool_id in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
+        return "agent.action.web"
+    if tool_id in {"libris_search", "jobad_links_search"}:
+        return "agent.action.data"
+    if tool_id in {"generate_podcast", "display_image"}:
+        return "agent.action.media"
+    return "agent.action.system"
+
+
+async def _plan_tool_api_input(
+    *,
+    question: str,
+    candidates: list[ToolIndexEntry],
+    tool_registry: dict[str, Any],
+    llm,
+) -> dict[str, Any]:
+    candidate_ids = [entry.tool_id for entry in candidates]
+    if not candidates:
+        return {
+            "selected_tool_id": None,
+            "selected_category": None,
+            "analysis": "No candidates were retrieved for this query.",
+            "plan_steps": [],
+            "proposed_arguments": {},
+            "needs_clarification": True,
+            "clarification_question": "Kan du specificera vad du vill att verktyget ska hamta?",
+        }
+
+    fallback_entry = candidates[0]
+    fallback_payload = {
+        "selected_tool_id": fallback_entry.tool_id,
+        "selected_category": fallback_entry.category,
+        "analysis": (
+            "Planner fallback: selected highest retrieval candidate and kept dry-run arguments empty."
+        ),
+        "plan_steps": [
+            "Inspect retrieved candidates from tool_retrieval.",
+            f"Select {fallback_entry.tool_id} as best metadata match.",
+            "Draft tool arguments in dry-run mode without executing the tool.",
+        ],
+        "proposed_arguments": {},
+        "needs_clarification": False,
+        "clarification_question": None,
+    }
+    if llm is None:
+        return fallback_payload
+
+    candidate_payload: list[dict[str, Any]] = []
+    for entry in candidates[:8]:
+        tool = tool_registry.get(entry.tool_id)
+        required_fields = _tool_required_fields(tool)
+        argument_fields = _tool_property_fields(tool)
+        candidate_payload.append(
+            {
+                **_serialize_tool(entry),
+                "required_fields": required_fields,
+                "argument_fields": argument_fields,
+            }
+        )
+
+    planner_prompt = (
+        "You are evaluating API input quality in dry-run mode.\n"
+        "Pick one best tool among candidates and draft the tool call arguments.\n"
+        "Do not execute tools. Do not invent tool ids.\n"
+        "If required information is missing, set needs_clarification=true.\n"
+        "Return strict JSON only:\n"
+        "{\n"
+        '  "selected_tool_id": "tool_id or null",\n'
+        '  "selected_category": "category or null",\n'
+        '  "analysis": "short explanation",\n'
+        '  "plan_steps": ["step 1", "step 2"],\n'
+        '  "proposed_arguments": {"field": "value"},\n'
+        '  "needs_clarification": false,\n'
+        '  "clarification_question": "question or null"\n'
+        "}\n"
+        "Do not include markdown."
+    )
+    question_payload = {
+        "question": question,
+        "candidates": candidate_payload,
+    }
+    model = llm
+    try:
+        if hasattr(llm, "bind"):
+            model = llm.bind(temperature=0)
+    except Exception:
+        model = llm
+    try:
+        response = await model.ainvoke(
+            [
+                SystemMessage(content=planner_prompt),
+                HumanMessage(content=json.dumps(question_payload, ensure_ascii=True)),
+            ]
+        )
+        text = _response_content_to_text(getattr(response, "content", ""))
+        parsed = _extract_json_object(text) or {}
+        selected_tool_id = parsed.get("selected_tool_id")
+        if selected_tool_id is not None:
+            selected_tool_id = str(selected_tool_id).strip() or None
+        if selected_tool_id not in candidate_ids:
+            selected_tool_id = fallback_entry.tool_id
+        selected_entry = next(
+            (entry for entry in candidates if entry.tool_id == selected_tool_id),
+            fallback_entry,
+        )
+        analysis = str(parsed.get("analysis") or "").strip() or fallback_payload["analysis"]
+        plan_steps = _safe_string_list(parsed.get("plan_steps")) or fallback_payload["plan_steps"]
+        proposed_arguments = _coerce_arguments(parsed.get("proposed_arguments"))
+        needs_clarification = bool(parsed.get("needs_clarification"))
+        clarification_question = str(parsed.get("clarification_question") or "").strip() or None
+        if needs_clarification and not clarification_question:
+            clarification_question = (
+                "Kan du komplettera de fält som saknas för att göra API-anropet korrekt?"
+            )
+        return {
+            "selected_tool_id": selected_tool_id,
+            "selected_category": selected_entry.category,
+            "analysis": analysis,
+            "plan_steps": plan_steps,
+            "proposed_arguments": proposed_arguments,
+            "needs_clarification": needs_clarification,
+            "clarification_question": clarification_question,
+        }
+    except Exception:
+        return fallback_payload
+
+
+async def run_tool_api_input_evaluation(
+    *,
+    tests: list[dict[str, Any]],
+    tool_index: list[ToolIndexEntry],
+    tool_registry: dict[str, Any],
+    llm,
+    retrieval_limit: int = 5,
+    retrieval_tuning: dict[str, Any] | None = None,
+    progress_callback=None,
+) -> dict[str, Any]:
+    retrieval_limit = max(1, min(int(retrieval_limit or 5), 15))
+    normalized_tuning = normalize_retrieval_tuning(retrieval_tuning)
+    index_by_id = {entry.tool_id: entry for entry in tool_index}
+    results: list[dict[str, Any]] = []
+
+    category_checks: list[bool] = []
+    tool_checks: list[bool] = []
+    schema_checks: list[bool] = []
+    required_field_recalls: list[float] = []
+    field_value_checks: list[bool] = []
+    clarification_checks: list[bool] = []
+
+    for idx, test in enumerate(tests):
+        test_id = str(test.get("id") or f"case-{idx + 1}")
+        question = str(test.get("question") or "").strip()
+        if progress_callback is not None:
+            event = {
+                "type": "test_started",
+                "test_id": test_id,
+                "index": idx,
+                "question": question,
+            }
+            maybe_result = progress_callback(event)
+            if hasattr(maybe_result, "__await__"):
+                await maybe_result
+        expected = test.get("expected") or {}
+        if not isinstance(expected, dict):
+            expected = {}
+        expected_tool = expected.get("tool")
+        expected_tool = str(expected_tool).strip() if expected_tool else None
+        expected_category = expected.get("category")
+        expected_category = str(expected_category).strip() if expected_category else None
+        expected_required_fields = _normalize_field_list(expected.get("required_fields"))
+        expected_field_values = (
+            expected.get("field_values") if isinstance(expected.get("field_values"), dict) else {}
+        )
+        allow_clarification_raw = expected.get("allow_clarification")
+        allow_clarification = (
+            bool(allow_clarification_raw)
+            if isinstance(allow_clarification_raw, bool)
+            else None
+        )
+        allowed_tools = _safe_string_list(test.get("allowed_tools"))
+        if expected_tool and not allowed_tools:
+            allowed_tools = [expected_tool]
+
+        try:
+            retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
+                question,
+                tool_index=tool_index,
+                primary_namespaces=[("tools",)],
+                fallback_namespaces=[],
+                limit=max(retrieval_limit, 8),
+                trace_key=None,
+                tuning=normalized_tuning,
+            )
+            retrieved_entries = [
+                index_by_id[tool_id]
+                for tool_id in retrieved_ids
+                if tool_id in index_by_id
+            ]
+            planning = await _plan_tool_api_input(
+                question=question,
+                candidates=retrieved_entries[:8],
+                tool_registry=tool_registry,
+                llm=llm,
+            )
+            selected_tool = planning.get("selected_tool_id")
+            if selected_tool and selected_tool not in index_by_id:
+                selected_tool = retrieved_ids[0] if retrieved_ids else None
+            if not selected_tool:
+                selected_tool = retrieved_ids[0] if retrieved_ids else None
+            selected_entry = index_by_id.get(selected_tool) if selected_tool else None
+            selected_category = (
+                selected_entry.category
+                if selected_entry
+                else planning.get("selected_category")
+            )
+            proposed_arguments = _coerce_arguments(planning.get("proposed_arguments"))
+            needs_clarification = bool(planning.get("needs_clarification"))
+            clarification_question = (
+                str(planning.get("clarification_question") or "").strip() or None
+            )
+
+            target_tool_for_validation = None
+            if expected_tool and expected_tool in tool_registry:
+                target_tool_for_validation = expected_tool
+            elif selected_tool and selected_tool in tool_registry:
+                target_tool_for_validation = selected_tool
+            target_tool = tool_registry.get(target_tool_for_validation)
+            schema_required_fields = _normalize_field_list(_tool_required_fields(target_tool))
+            schema_properties = set(_tool_property_fields(target_tool))
+            required_fields: list[str] = []
+            for field in [*expected_required_fields, *schema_required_fields]:
+                lowered = field.casefold()
+                if lowered not in {item.casefold() for item in required_fields}:
+                    required_fields.append(field)
+            missing_required_fields = [
+                field for field in required_fields if field not in proposed_arguments
+            ]
+            if required_fields:
+                recall = (len(required_fields) - len(missing_required_fields)) / len(required_fields)
+                required_field_recalls.append(recall)
+            unexpected_fields = (
+                [field for field in proposed_arguments if field not in schema_properties]
+                if schema_properties
+                else []
+            )
+
+            schema_valid: bool | None = None
+            schema_errors: list[str] = []
+            args_schema = getattr(target_tool, "args_schema", None) if target_tool else None
+            if args_schema is not None and hasattr(args_schema, "model_validate"):
+                try:
+                    args_schema.model_validate(proposed_arguments)
+                    schema_valid = True
+                except Exception as exc:
+                    schema_valid = False
+                    schema_errors = [str(exc)]
+            elif required_fields:
+                schema_valid = len(missing_required_fields) == 0
+                if schema_valid is False:
+                    schema_errors = [
+                        "Missing required fields for target tool input validation."
+                    ]
+            if schema_valid is not None:
+                schema_checks.append(bool(schema_valid))
+
+            field_checks: list[dict[str, Any]] = []
+            for field_name, expected_value in expected_field_values.items():
+                actual_value = proposed_arguments.get(field_name)
+                passed_value_check = _value_matches_expected(actual_value, expected_value)
+                field_checks.append(
+                    {
+                        "field": str(field_name),
+                        "expected": expected_value,
+                        "actual": actual_value,
+                        "passed": passed_value_check,
+                    }
+                )
+                field_value_checks.append(bool(passed_value_check))
+
+            passed_category = (
+                selected_category == expected_category
+                if expected_category is not None
+                else None
+            )
+            passed_tool = (
+                selected_tool in set(allowed_tools)
+                if expected_tool is not None
+                else None
+            )
+            if passed_category is not None:
+                category_checks.append(bool(passed_category))
+            if passed_tool is not None:
+                tool_checks.append(bool(passed_tool))
+
+            clarification_ok: bool | None = None
+            if allow_clarification is not None:
+                clarification_ok = bool(needs_clarification) == bool(allow_clarification)
+                clarification_checks.append(bool(clarification_ok))
+
+            has_api_expectation = bool(
+                target_tool_for_validation
+                or expected_required_fields
+                or expected_field_values
+                or allow_clarification is not None
+            )
+            passed_api_input: bool | None
+            if not has_api_expectation:
+                passed_api_input = None
+            elif allow_clarification is True and needs_clarification:
+                passed_api_input = True
+            else:
+                api_checks: list[bool] = []
+                if schema_valid is not None:
+                    api_checks.append(bool(schema_valid))
+                if required_fields:
+                    api_checks.append(len(missing_required_fields) == 0)
+                if field_checks:
+                    api_checks.append(all(check["passed"] for check in field_checks))
+                if clarification_ok is not None:
+                    api_checks.append(bool(clarification_ok))
+                passed_api_input = all(api_checks) if api_checks else True
+
+            checks = [
+                check for check in (passed_category, passed_tool, passed_api_input)
+                if check is not None
+            ]
+            passed = all(checks) if checks else True
+            case_result = {
+                "test_id": test_id,
+                "question": question,
+                "expected_category": expected_category,
+                "expected_tool": expected_tool,
+                "allowed_tools": allowed_tools,
+                "selected_category": selected_category,
+                "selected_tool": selected_tool,
+                "planning_analysis": planning.get("analysis") or "",
+                "planning_steps": _safe_string_list(planning.get("plan_steps")),
+                "retrieval_top_tools": retrieved_ids[:retrieval_limit],
+                "retrieval_top_categories": [
+                    index_by_id[tool_id].category
+                    for tool_id in retrieved_ids[:retrieval_limit]
+                    if tool_id in index_by_id
+                ],
+                "retrieval_breakdown": retrieval_breakdown[:retrieval_limit],
+                "proposed_arguments": proposed_arguments,
+                "target_tool_for_validation": target_tool_for_validation,
+                "schema_required_fields": schema_required_fields,
+                "expected_required_fields": expected_required_fields,
+                "missing_required_fields": missing_required_fields,
+                "unexpected_fields": unexpected_fields,
+                "field_checks": field_checks,
+                "schema_valid": schema_valid,
+                "schema_errors": schema_errors,
+                "needs_clarification": needs_clarification,
+                "clarification_question": clarification_question,
+                "passed_category": passed_category,
+                "passed_tool": passed_tool,
+                "passed_api_input": passed_api_input,
+                "passed": passed,
+            }
+            results.append(case_result)
+            if progress_callback is not None:
+                event = {
+                    "type": "test_completed",
+                    "test_id": test_id,
+                    "index": idx,
+                    "selected_tool": selected_tool,
+                    "selected_category": selected_category,
+                    "passed": passed,
+                }
+                maybe_result = progress_callback(event)
+                if hasattr(maybe_result, "__await__"):
+                    await maybe_result
+        except Exception as exc:
+            case_result = {
+                "test_id": test_id,
+                "question": question,
+                "expected_category": expected_category,
+                "expected_tool": expected_tool,
+                "allowed_tools": allowed_tools,
+                "selected_category": None,
+                "selected_tool": None,
+                "planning_analysis": f"API input evaluation failed for this case: {exc}",
+                "planning_steps": [],
+                "retrieval_top_tools": [],
+                "retrieval_top_categories": [],
+                "retrieval_breakdown": [],
+                "proposed_arguments": {},
+                "target_tool_for_validation": expected_tool,
+                "schema_required_fields": [],
+                "expected_required_fields": expected_required_fields,
+                "missing_required_fields": expected_required_fields,
+                "unexpected_fields": [],
+                "field_checks": [],
+                "schema_valid": False,
+                "schema_errors": [str(exc)],
+                "needs_clarification": False,
+                "clarification_question": None,
+                "passed_category": False if expected_category is not None else None,
+                "passed_tool": False if expected_tool is not None else None,
+                "passed_api_input": False,
+                "passed": False,
+            }
+            results.append(case_result)
+            if expected_category is not None:
+                category_checks.append(False)
+            if expected_tool is not None:
+                tool_checks.append(False)
+            schema_checks.append(False)
+            if expected_required_fields:
+                required_field_recalls.append(0.0)
+            if expected_field_values:
+                for _key in expected_field_values.keys():
+                    field_value_checks.append(False)
+            if allow_clarification is not None:
+                clarification_checks.append(False)
+            if progress_callback is not None:
+                event = {
+                    "type": "test_failed",
+                    "test_id": test_id,
+                    "index": idx,
+                    "error": str(exc),
+                }
+                maybe_result = progress_callback(event)
+                if hasattr(maybe_result, "__await__"):
+                    await maybe_result
+
+    total_tests = len(results)
+    passed_count = sum(1 for item in results if item.get("passed"))
+    metrics = {
+        "total_tests": total_tests,
+        "passed_tests": passed_count,
+        "success_rate": (passed_count / total_tests) if total_tests else 0.0,
+        "category_accuracy": (
+            sum(1 for check in category_checks if check) / len(category_checks)
+            if category_checks
+            else None
+        ),
+        "tool_accuracy": (
+            sum(1 for check in tool_checks if check) / len(tool_checks)
+            if tool_checks
+            else None
+        ),
+        "schema_validity_rate": (
+            sum(1 for check in schema_checks if check) / len(schema_checks)
+            if schema_checks
+            else None
+        ),
+        "required_field_recall": (
+            sum(required_field_recalls) / len(required_field_recalls)
+            if required_field_recalls
+            else None
+        ),
+        "field_value_accuracy": (
+            sum(1 for check in field_value_checks if check) / len(field_value_checks)
+            if field_value_checks
+            else None
+        ),
+        "clarification_accuracy": (
+            sum(1 for check in clarification_checks if check) / len(clarification_checks)
+            if clarification_checks
+            else None
+        ),
+    }
+    return {"metrics": metrics, "results": results}
+
+
+def _build_fallback_prompt_suggestion(
+    *,
+    prompt_key: str,
+    current_prompt: str,
+    failures: list[dict[str, Any]],
+) -> tuple[str, str]:
+    missing_counter: Counter[str] = Counter()
+    for failure in failures:
+        for field_name in failure.get("missing_required_fields") or []:
+            cleaned = str(field_name).strip()
+            if cleaned:
+                missing_counter[cleaned] += 1
+    common_missing = [item for item, _count in missing_counter.most_common(8)]
+    lines = [
+        "- Validate argument completeness before emitting a tool call.",
+        "- If required arguments are missing or ambiguous, ask a concise clarification question first.",
+        "- Use exact argument names from the target tool schema and avoid unsupported fields.",
+    ]
+    if common_missing:
+        lines.insert(
+            0,
+            f"- Prioritize extracting these frequently missed fields: {', '.join(common_missing)}.",
+        )
+    appendix = (
+        "\n\n[API INPUT EVAL IMPROVEMENT]\n"
+        f"Prompt key: {prompt_key}\n"
+        + "\n".join(lines)
+    )
+    proposed_prompt = current_prompt
+    if appendix.strip() not in current_prompt:
+        proposed_prompt = f"{current_prompt.rstrip()}{appendix}"
+    rationale = (
+        f"Fallback prompt improvement from {len(failures)} failed API input case(s): "
+        "adds stricter argument extraction and clarification behavior."
+    )
+    return proposed_prompt, rationale
+
+
+async def _build_llm_prompt_suggestion(
+    *,
+    prompt_key: str,
+    current_prompt: str,
+    failures: list[dict[str, Any]],
+    llm,
+) -> tuple[str, str] | None:
+    if llm is None:
+        return None
+    model = llm
+    try:
+        if hasattr(llm, "bind"):
+            model = llm.bind(temperature=0)
+    except Exception:
+        model = llm
+    prompt = (
+        "You optimize one agent prompt to improve API input quality for dry-run evaluation.\n"
+        "Keep the current style and intent, but add precise instructions to improve argument extraction.\n"
+        "Return strict JSON only:\n"
+        "{\n"
+        '  "proposed_prompt": "full revised prompt text",\n'
+        '  "rationale": "short rationale"\n'
+        "}\n"
+        "Do not include markdown."
+    )
+    payload = {
+        "prompt_key": prompt_key,
+        "current_prompt": current_prompt,
+        "failed_cases": failures[:20],
+    }
+    try:
+        response = await model.ainvoke(
+            [
+                SystemMessage(content=prompt),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+            ]
+        )
+        text = _response_content_to_text(getattr(response, "content", ""))
+        parsed = _extract_json_object(text)
+        if not parsed:
+            return None
+        proposed_prompt = str(parsed.get("proposed_prompt") or "").strip()
+        if not proposed_prompt:
+            return None
+        rationale = str(parsed.get("rationale") or "").strip()
+        if not rationale:
+            rationale = "LLM suggested prompt updates from API input failures."
+        return proposed_prompt, rationale
+    except Exception:
+        return None
+
+
+async def suggest_agent_prompt_improvements_for_api_input(
+    *,
+    evaluation_results: list[dict[str, Any]],
+    current_prompts: dict[str, str],
+    llm=None,
+    max_suggestions: int = 8,
+) -> list[dict[str, Any]]:
+    buckets: dict[str, dict[str, Any]] = {}
+    for result in evaluation_results:
+        passed = result.get("passed")
+        passed_api_input = result.get("passed_api_input")
+        if passed is True and (passed_api_input is True or passed_api_input is None):
+            continue
+        expected_tool = str(result.get("expected_tool") or "").strip() or None
+        selected_tool = str(result.get("selected_tool") or "").strip() or None
+        selected_category = str(result.get("selected_category") or "").strip() or None
+        expected_category = str(result.get("expected_category") or "").strip() or None
+        tool_id = expected_tool or selected_tool
+        category = expected_category or selected_category
+        prompt_key = _prompt_key_for_tool(tool_id, category)
+        if prompt_key not in current_prompts:
+            continue
+        bucket = buckets.setdefault(
+            prompt_key,
+            {
+                "failed_test_ids": [],
+                "related_tools": set(),
+                "failures": [],
+            },
+        )
+        test_id = str(result.get("test_id") or "").strip()
+        if test_id:
+            bucket["failed_test_ids"].append(test_id)
+        for related_tool in (expected_tool, selected_tool):
+            if related_tool:
+                bucket["related_tools"].add(related_tool)
+        bucket["failures"].append(
+            {
+                "test_id": test_id,
+                "question": str(result.get("question") or "").strip(),
+                "expected_tool": expected_tool,
+                "selected_tool": selected_tool,
+                "missing_required_fields": list(result.get("missing_required_fields") or []),
+                "unexpected_fields": list(result.get("unexpected_fields") or []),
+                "schema_errors": list(result.get("schema_errors") or []),
+                "needs_clarification": bool(result.get("needs_clarification")),
+                "clarification_question": result.get("clarification_question"),
+            }
+        )
+
+    suggestions: list[dict[str, Any]] = []
+    for prompt_key, bucket in buckets.items():
+        if len(suggestions) >= max_suggestions:
+            break
+        current_prompt = str(current_prompts.get(prompt_key) or "").strip()
+        if not current_prompt:
+            continue
+        fallback_prompt, fallback_rationale = _build_fallback_prompt_suggestion(
+            prompt_key=prompt_key,
+            current_prompt=current_prompt,
+            failures=bucket["failures"],
+        )
+        llm_result = await _build_llm_prompt_suggestion(
+            prompt_key=prompt_key,
+            current_prompt=current_prompt,
+            failures=bucket["failures"],
+            llm=llm,
+        )
+        if llm_result is None:
+            proposed_prompt, rationale = fallback_prompt, fallback_rationale
+        else:
+            proposed_prompt, rationale = llm_result
+            if proposed_prompt.strip() == current_prompt.strip():
+                proposed_prompt = fallback_prompt
+                rationale = (
+                    f"{rationale} Added fallback constraints from API input failures."
+                )
+        suggestions.append(
+            {
+                "prompt_key": prompt_key,
+                "failed_test_ids": list(bucket["failed_test_ids"]),
+                "related_tools": sorted(str(tool) for tool in bucket["related_tools"]),
+                "rationale": rationale,
+                "current_prompt": current_prompt,
+                "proposed_prompt": proposed_prompt,
+            }
+        )
+    return suggestions

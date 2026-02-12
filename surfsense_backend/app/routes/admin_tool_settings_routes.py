@@ -26,6 +26,12 @@ from app.db import (
     get_async_session,
 )
 from app.schemas.admin_tool_settings import (
+    ToolApiInputApplyPromptSuggestionsRequest,
+    ToolApiInputApplyPromptSuggestionsResponse,
+    ToolApiInputEvaluationJobStatusResponse,
+    ToolApiInputEvaluationRequest,
+    ToolApiInputEvaluationResponse,
+    ToolApiInputEvaluationStartResponse,
     ToolApplySuggestionsRequest,
     ToolApplySuggestionsResponse,
     ToolApiCategoriesResponse,
@@ -49,12 +55,22 @@ from app.schemas.admin_tool_settings import (
     ToolSuggestionResponse,
     ToolSettingsResponse,
 )
+from app.agents.new_chat.prompt_registry import (
+    PROMPT_DEFINITION_MAP,
+    resolve_prompt,
+)
+from app.services.agent_prompt_service import (
+    get_global_prompt_overrides,
+    upsert_global_prompt_overrides,
+)
 from app.services.connector_service import ConnectorService
 from app.services.llm_service import get_agent_llm
 from app.services.tool_evaluation_service import (
     compute_metadata_version_hash,
     generate_tool_metadata_suggestions,
+    run_tool_api_input_evaluation,
     run_tool_evaluation,
+    suggest_agent_prompt_improvements_for_api_input,
     suggest_retrieval_tuning,
 )
 from app.services.tool_metadata_service import (
@@ -78,6 +94,9 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _EVAL_JOBS: dict[str, dict[str, Any]] = {}
 _EVAL_JOBS_LOCK = asyncio.Lock()
 _MAX_EVAL_JOBS = 100
+_API_INPUT_EVAL_JOBS: dict[str, dict[str, Any]] = {}
+_API_INPUT_EVAL_JOBS_LOCK = asyncio.Lock()
+_MAX_API_INPUT_EVAL_JOBS = 100
 _EVAL_LIBRARY_ROOT = Path(__file__).resolve().parents[3] / "eval" / "api"
 _EVAL_INTERNAL_TOOL_IDS = {
     "write_todos",
@@ -630,6 +649,44 @@ def _serialize_eval_job(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _prune_api_input_eval_jobs() -> None:
+    if len(_API_INPUT_EVAL_JOBS) <= _MAX_API_INPUT_EVAL_JOBS:
+        return
+    finished = [
+        (job_id, payload)
+        for job_id, payload in _API_INPUT_EVAL_JOBS.items()
+        if payload.get("status") in {"completed", "failed"}
+    ]
+    finished.sort(key=lambda item: str(item[1].get("updated_at") or ""))
+    overflow = len(_API_INPUT_EVAL_JOBS) - _MAX_API_INPUT_EVAL_JOBS
+    for job_id, _payload in finished[: max(0, overflow)]:
+        _API_INPUT_EVAL_JOBS.pop(job_id, None)
+
+
+async def _update_api_input_eval_job(job_id: str, **updates: Any) -> None:
+    async with _API_INPUT_EVAL_JOBS_LOCK:
+        job = _API_INPUT_EVAL_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job["updated_at"] = _utcnow_iso()
+
+
+def _serialize_api_input_eval_job(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "total_tests": int(job.get("total_tests", 0)),
+        "completed_tests": int(job.get("completed_tests", 0)),
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+        "updated_at": job.get("updated_at") or _utcnow_iso(),
+        "case_statuses": job.get("case_statuses") or [],
+        "result": job.get("result"),
+        "error": job.get("error"),
+    }
+
+
 def _build_eval_summary_payload(result: dict[str, Any]) -> dict[str, Any]:
     metrics = result.get("metrics") or {}
     total_tests = int(metrics.get("total_tests") or 0)
@@ -783,13 +840,13 @@ async def _resolve_search_space_id(
     return owned_search_space_ids, owned_search_space_ids[0]
 
 
-async def _build_tool_index_for_search_space(
+async def _build_tool_registry_and_index_for_search_space(
     session: AsyncSession,
     user: User,
     *,
     search_space_id: int,
     metadata_patch: dict[str, dict[str, Any]] | None = None,
-) -> tuple[list[Any], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[Any], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     connector_service = ConnectorService(
         session,
         search_space_id=search_space_id,
@@ -814,6 +871,24 @@ async def _build_tool_index_for_search_space(
     tool_index = build_tool_index(
         tool_registry,
         metadata_overrides=effective_overrides,
+    )
+    return tool_registry, tool_index, persisted_overrides, effective_overrides
+
+
+async def _build_tool_index_for_search_space(
+    session: AsyncSession,
+    user: User,
+    *,
+    search_space_id: int,
+    metadata_patch: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[Any], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    _tool_registry, tool_index, persisted_overrides, effective_overrides = (
+        await _build_tool_registry_and_index_for_search_space(
+            session,
+            user,
+            search_space_id=search_space_id,
+            metadata_patch=metadata_patch,
+        )
     )
     return tool_index, persisted_overrides, effective_overrides
 
@@ -911,6 +986,84 @@ async def _execute_tool_evaluation(
         "suggestions": suggestions,
         "retrieval_tuning": effective_tuning,
         "retrieval_tuning_suggestion": retrieval_tuning_suggestion,
+        "metadata_version_hash": compute_metadata_version_hash(tool_index),
+        "search_space_id": resolved_search_space_id,
+    }
+
+
+async def _execute_api_input_evaluation(
+    session: AsyncSession,
+    user: User,
+    *,
+    payload: ToolApiInputEvaluationRequest,
+    resolved_search_space_id: int,
+    progress_callback=None,
+) -> dict[str, Any]:
+    patch_map = _patch_map_from_updates(payload.metadata_patch)
+    tool_registry, tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_registry_and_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=patch_map,
+        )
+    )
+    persisted_tuning = await get_global_tool_retrieval_tuning(session)
+    effective_tuning = (
+        normalize_tool_retrieval_tuning(payload.retrieval_tuning_override.model_dump())
+        if payload.retrieval_tuning_override
+        else persisted_tuning
+    )
+    llm = await get_agent_llm(session, resolved_search_space_id)
+    evaluation = await run_tool_api_input_evaluation(
+        tests=[
+            {
+                "id": test.id,
+                "question": test.question,
+                "expected": {
+                    "tool": test.expected.tool if test.expected else None,
+                    "category": test.expected.category if test.expected else None,
+                    "required_fields": (
+                        list(test.expected.required_fields) if test.expected else []
+                    ),
+                    "field_values": (
+                        dict(test.expected.field_values) if test.expected else {}
+                    ),
+                    "allow_clarification": (
+                        test.expected.allow_clarification if test.expected else None
+                    ),
+                },
+                "allowed_tools": list(test.allowed_tools),
+            }
+            for test in payload.tests
+        ],
+        tool_index=tool_index,
+        tool_registry=tool_registry,
+        llm=llm,
+        retrieval_limit=payload.retrieval_limit,
+        retrieval_tuning=effective_tuning,
+        progress_callback=progress_callback,
+    )
+    overrides = await get_global_prompt_overrides(session)
+    current_prompts: dict[str, str] = {}
+    for prompt_key, definition in PROMPT_DEFINITION_MAP.items():
+        current_prompts[prompt_key] = resolve_prompt(
+            overrides,
+            prompt_key,
+            definition.default_prompt,
+        )
+    prompt_suggestions = await suggest_agent_prompt_improvements_for_api_input(
+        evaluation_results=evaluation["results"],
+        current_prompts=current_prompts,
+        llm=llm,
+    )
+    return {
+        "eval_name": payload.eval_name,
+        "target_success_rate": payload.target_success_rate,
+        "metrics": evaluation["metrics"],
+        "results": evaluation["results"],
+        "prompt_suggestions": prompt_suggestions,
+        "retrieval_tuning": effective_tuning,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),
         "search_space_id": resolved_search_space_id,
     }
@@ -1427,6 +1580,241 @@ async def get_tool_settings_evaluation_status(
         if job is None:
             raise HTTPException(status_code=404, detail="Evaluation job not found")
         return _serialize_eval_job(job)
+
+
+@router.post(
+    "/tool-settings/evaluate-api-input",
+    response_model=ToolApiInputEvaluationResponse,
+)
+async def evaluate_tool_api_input(
+    payload: ToolApiInputEvaluationRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    if not payload.tests:
+        raise HTTPException(
+            status_code=400,
+            detail="Evaluation payload must include at least one test case",
+        )
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    result = await _execute_api_input_evaluation(
+        session,
+        user,
+        payload=payload,
+        resolved_search_space_id=resolved_search_space_id,
+    )
+    await _record_latest_eval_summary(
+        session,
+        search_space_id=resolved_search_space_id,
+        result=result,
+        updated_by_id=user.id,
+    )
+    return result
+
+
+async def _run_api_input_eval_job_background(
+    *,
+    job_id: str,
+    payload_data: dict[str, Any],
+    user_id: Any,
+) -> None:
+    await _update_api_input_eval_job(
+        job_id,
+        status="running",
+        started_at=_utcnow_iso(),
+        error=None,
+    )
+    try:
+        async with async_session_maker() as job_session:
+            payload = ToolApiInputEvaluationRequest(**payload_data)
+            user_result = await job_session.execute(select(User).filter(User.id == user_id))
+            job_user = user_result.scalars().first()
+            if job_user is None:
+                raise RuntimeError("Evaluation user context could not be loaded")
+            _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+                job_session,
+                job_user,
+                requested_search_space_id=payload.search_space_id,
+            )
+
+            async def _progress_callback(event: dict[str, Any]) -> None:
+                test_id = str(event.get("test_id") or "")
+                event_type = str(event.get("type") or "")
+                async with _API_INPUT_EVAL_JOBS_LOCK:
+                    job = _API_INPUT_EVAL_JOBS.get(job_id)
+                    if not job:
+                        return
+                    case_statuses = job.get("case_statuses") or []
+                    for case in case_statuses:
+                        if case.get("test_id") != test_id:
+                            continue
+                        if event_type == "test_started":
+                            case["status"] = "running"
+                            case["error"] = None
+                        elif event_type == "test_completed":
+                            case["status"] = "completed"
+                            case["selected_tool"] = event.get("selected_tool")
+                            case["selected_category"] = event.get("selected_category")
+                            case["passed"] = event.get("passed")
+                        elif event_type == "test_failed":
+                            case["status"] = "failed"
+                            case["error"] = str(event.get("error") or "Unknown error")
+                        break
+                    job["completed_tests"] = sum(
+                        1
+                        for case in case_statuses
+                        if case.get("status") in {"completed", "failed"}
+                    )
+                    job["updated_at"] = _utcnow_iso()
+
+            result = await _execute_api_input_evaluation(
+                job_session,
+                job_user,
+                payload=payload,
+                resolved_search_space_id=resolved_search_space_id,
+                progress_callback=_progress_callback,
+            )
+            await _record_latest_eval_summary(
+                job_session,
+                search_space_id=resolved_search_space_id,
+                result=result,
+                updated_by_id=job_user.id,
+            )
+            await _update_api_input_eval_job(
+                job_id,
+                status="completed",
+                completed_at=_utcnow_iso(),
+                completed_tests=len(payload.tests),
+                result=result,
+            )
+    except Exception as exc:
+        logger.exception("Tool API input evaluation job failed")
+        await _update_api_input_eval_job(
+            job_id,
+            status="failed",
+            completed_at=_utcnow_iso(),
+            error=str(exc),
+        )
+
+
+@router.post(
+    "/tool-settings/evaluate-api-input/start",
+    response_model=ToolApiInputEvaluationStartResponse,
+)
+async def start_tool_api_input_evaluation(
+    payload: ToolApiInputEvaluationRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    if not payload.tests:
+        raise HTTPException(
+            status_code=400,
+            detail="Evaluation payload must include at least one test case",
+        )
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    normalized_payload = payload.model_copy(
+        update={"search_space_id": resolved_search_space_id}
+    )
+    case_statuses = [
+        ToolEvaluationCaseStatus(
+            test_id=test.id,
+            question=test.question,
+            status="pending",
+        ).model_dump()
+        for test in normalized_payload.tests
+    ]
+    job_id = uuid4().hex
+    job_payload = {
+        "job_id": job_id,
+        "status": "pending",
+        "total_tests": len(normalized_payload.tests),
+        "completed_tests": 0,
+        "started_at": None,
+        "completed_at": None,
+        "updated_at": _utcnow_iso(),
+        "created_at": _utcnow_iso(),
+        "case_statuses": case_statuses,
+        "result": None,
+        "error": None,
+    }
+    async with _API_INPUT_EVAL_JOBS_LOCK:
+        _API_INPUT_EVAL_JOBS[job_id] = job_payload
+        await _prune_api_input_eval_jobs()
+    asyncio.create_task(
+        _run_api_input_eval_job_background(
+            job_id=job_id,
+            payload_data=normalized_payload.model_dump(),
+            user_id=user.id,
+        )
+    )
+    return {
+        "job_id": job_id,
+        "status": "pending",
+        "total_tests": len(normalized_payload.tests),
+    }
+
+
+@router.get(
+    "/tool-settings/evaluate-api-input/{job_id}",
+    response_model=ToolApiInputEvaluationJobStatusResponse,
+)
+async def get_tool_api_input_evaluation_status(
+    job_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    await _require_admin(session, user)
+    async with _API_INPUT_EVAL_JOBS_LOCK:
+        job = _API_INPUT_EVAL_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Evaluation job not found")
+        return _serialize_api_input_eval_job(job)
+
+
+@router.post(
+    "/tool-settings/evaluate-api-input/apply-prompt-suggestions",
+    response_model=ToolApiInputApplyPromptSuggestionsResponse,
+)
+async def apply_api_input_prompt_suggestions(
+    payload: ToolApiInputApplyPromptSuggestionsRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    await _require_admin(session, user)
+    if not payload.suggestions:
+        raise HTTPException(status_code=400, detail="No prompt suggestions to apply")
+    updates: list[tuple[str, str | None]] = []
+    for suggestion in payload.suggestions:
+        prompt_key = str(suggestion.prompt_key or "").strip()
+        if prompt_key not in PROMPT_DEFINITION_MAP:
+            raise HTTPException(status_code=400, detail=f"Unknown prompt key: {prompt_key}")
+        proposed_prompt = str(suggestion.proposed_prompt or "").strip()
+        updates.append((prompt_key, proposed_prompt if proposed_prompt else None))
+    try:
+        await upsert_global_prompt_overrides(
+            session,
+            updates,
+            updated_by_id=user.id,
+        )
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to apply API input prompt suggestions")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to apply API input prompt suggestions: {exc!s}",
+        ) from exc
+    return {
+        "applied_prompt_keys": [item[0] for item in updates],
+    }
 
 
 @router.post(

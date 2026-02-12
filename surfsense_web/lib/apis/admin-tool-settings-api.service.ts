@@ -1,10 +1,18 @@
 import {
 	type ToolApplySuggestionsRequest,
+	type ToolApiInputApplyPromptSuggestionsRequest,
+	type ToolApiInputEvaluationRequest,
 	type ToolEvalLibraryGenerateRequest,
 	type ToolEvaluationRequest,
 	type ToolRetrievalTuning,
 	type ToolSettingsUpdateRequest,
 	type ToolSuggestionRequest,
+	toolApiInputApplyPromptSuggestionsRequest,
+	toolApiInputApplyPromptSuggestionsResponse,
+	toolApiInputEvaluationJobStatusResponse,
+	toolApiInputEvaluationRequest,
+	toolApiInputEvaluationResponse,
+	toolApiInputEvaluationStartResponse,
 	toolApplySuggestionsRequest,
 	toolApplySuggestionsResponse,
 	toolApiCategoriesResponse,
@@ -119,6 +127,60 @@ class AdminToolSettingsApiService {
 		return baseApiService.post("/api/v1/admin/tool-settings/evaluate", toolEvaluationResponse, {
 			body: parsed.data,
 		});
+	}
+
+	async evaluateToolApiInput(request: ToolApiInputEvaluationRequest) {
+		const parsed = toolApiInputEvaluationRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/evaluate-api-input",
+			toolApiInputEvaluationResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async startToolApiInputEvaluation(request: ToolApiInputEvaluationRequest) {
+		const parsed = toolApiInputEvaluationRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/evaluate-api-input/start",
+			toolApiInputEvaluationStartResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async getToolApiInputEvaluationStatus(jobId: string) {
+		return baseApiService.get(
+			`/api/v1/admin/tool-settings/evaluate-api-input/${jobId}`,
+			toolApiInputEvaluationJobStatusResponse
+		);
+	}
+
+	async applyApiInputPromptSuggestions(
+		request: ToolApiInputApplyPromptSuggestionsRequest
+	) {
+		const parsed = toolApiInputApplyPromptSuggestionsRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/evaluate-api-input/apply-prompt-suggestions",
+			toolApiInputApplyPromptSuggestionsResponse,
+			{
+				body: parsed.data,
+			}
+		);
 	}
 
 	async startToolEvaluation(request: ToolEvaluationRequest) {

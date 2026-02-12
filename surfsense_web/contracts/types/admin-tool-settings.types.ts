@@ -131,10 +131,25 @@ export const toolEvaluationExpected = z.object({
 	tool: z.string().nullable().optional(),
 });
 
+export const toolApiInputEvaluationExpected = z.object({
+	category: z.string().nullable().optional(),
+	tool: z.string().nullable().optional(),
+	required_fields: z.array(z.string()).optional().default([]),
+	field_values: z.record(z.string(), z.unknown()).optional().default({}),
+	allow_clarification: z.boolean().nullable().optional(),
+});
+
 export const toolEvaluationTestCase = z.object({
 	id: z.string(),
 	question: z.string(),
 	expected: toolEvaluationExpected.nullable().optional(),
+	allowed_tools: z.array(z.string()).optional().default([]),
+});
+
+export const toolApiInputEvaluationTestCase = z.object({
+	id: z.string(),
+	question: z.string(),
+	expected: toolApiInputEvaluationExpected.nullable().optional(),
 	allowed_tools: z.array(z.string()).optional().default([]),
 });
 
@@ -144,6 +159,16 @@ export const toolEvaluationRequest = z.object({
 	search_space_id: z.number().nullable().optional(),
 	retrieval_limit: z.number().int().optional().default(5),
 	tests: z.array(toolEvaluationTestCase),
+	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
+	retrieval_tuning_override: toolRetrievalTuning.nullable().optional(),
+});
+
+export const toolApiInputEvaluationRequest = z.object({
+	eval_name: z.string().nullable().optional(),
+	target_success_rate: z.number().nullable().optional(),
+	search_space_id: z.number().nullable().optional(),
+	retrieval_limit: z.number().int().optional().default(5),
+	tests: z.array(toolApiInputEvaluationTestCase),
 	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
 	retrieval_tuning_override: toolRetrievalTuning.nullable().optional(),
 });
@@ -176,6 +201,55 @@ export const toolEvaluationCaseResult = z.object({
 	passed: z.boolean(),
 });
 
+export const toolApiInputFieldCheck = z.object({
+	field: z.string(),
+	expected: z.unknown().nullable().optional(),
+	actual: z.unknown().nullable().optional(),
+	passed: z.boolean(),
+});
+
+export const toolApiInputEvaluationCaseResult = z.object({
+	test_id: z.string(),
+	question: z.string(),
+	expected_category: z.string().nullable().optional(),
+	expected_tool: z.string().nullable().optional(),
+	allowed_tools: z.array(z.string()).default([]),
+	selected_category: z.string().nullable().optional(),
+	selected_tool: z.string().nullable().optional(),
+	planning_analysis: z.string().default(""),
+	planning_steps: z.array(z.string()).default([]),
+	retrieval_top_tools: z.array(z.string()).default([]),
+	retrieval_top_categories: z.array(z.string()).default([]),
+	retrieval_breakdown: z.array(z.record(z.string(), z.unknown())).default([]),
+	proposed_arguments: z.record(z.string(), z.unknown()).default({}),
+	target_tool_for_validation: z.string().nullable().optional(),
+	schema_required_fields: z.array(z.string()).default([]),
+	expected_required_fields: z.array(z.string()).default([]),
+	missing_required_fields: z.array(z.string()).default([]),
+	unexpected_fields: z.array(z.string()).default([]),
+	field_checks: z.array(toolApiInputFieldCheck).default([]),
+	schema_valid: z.boolean().nullable().optional(),
+	schema_errors: z.array(z.string()).default([]),
+	needs_clarification: z.boolean().default(false),
+	clarification_question: z.string().nullable().optional(),
+	passed_category: z.boolean().nullable().optional(),
+	passed_tool: z.boolean().nullable().optional(),
+	passed_api_input: z.boolean().nullable().optional(),
+	passed: z.boolean(),
+});
+
+export const toolApiInputEvaluationMetrics = z.object({
+	total_tests: z.number(),
+	passed_tests: z.number(),
+	success_rate: z.number(),
+	category_accuracy: z.number().nullable().optional(),
+	tool_accuracy: z.number().nullable().optional(),
+	schema_validity_rate: z.number().nullable().optional(),
+	required_field_recall: z.number().nullable().optional(),
+	field_value_accuracy: z.number().nullable().optional(),
+	clarification_accuracy: z.number().nullable().optional(),
+});
+
 export const toolMetadataSuggestion = z.object({
 	tool_id: z.string(),
 	failed_test_ids: z.array(z.string()).default([]),
@@ -192,6 +266,26 @@ export const toolEvaluationResponse = z.object({
 	suggestions: z.array(toolMetadataSuggestion),
 	retrieval_tuning: toolRetrievalTuning,
 	retrieval_tuning_suggestion: toolRetrievalTuningSuggestion.nullable().optional(),
+	metadata_version_hash: z.string(),
+	search_space_id: z.number(),
+});
+
+export const toolApiInputPromptSuggestion = z.object({
+	prompt_key: z.string(),
+	failed_test_ids: z.array(z.string()).default([]),
+	related_tools: z.array(z.string()).default([]),
+	rationale: z.string(),
+	current_prompt: z.string(),
+	proposed_prompt: z.string(),
+});
+
+export const toolApiInputEvaluationResponse = z.object({
+	eval_name: z.string().nullable().optional(),
+	target_success_rate: z.number().nullable().optional(),
+	metrics: toolApiInputEvaluationMetrics,
+	results: z.array(toolApiInputEvaluationCaseResult),
+	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
+	retrieval_tuning: toolRetrievalTuning,
 	metadata_version_hash: z.string(),
 	search_space_id: z.number(),
 });
@@ -223,6 +317,38 @@ export const toolEvaluationJobStatusResponse = z.object({
 	case_statuses: z.array(toolEvaluationCaseStatus).default([]),
 	result: toolEvaluationResponse.nullable().optional(),
 	error: z.string().nullable().optional(),
+});
+
+export const toolApiInputEvaluationStartResponse = z.object({
+	job_id: z.string(),
+	status: z.string(),
+	total_tests: z.number(),
+});
+
+export const toolApiInputEvaluationJobStatusResponse = z.object({
+	job_id: z.string(),
+	status: z.string(),
+	total_tests: z.number(),
+	completed_tests: z.number(),
+	started_at: z.string().nullable().optional(),
+	completed_at: z.string().nullable().optional(),
+	updated_at: z.string(),
+	case_statuses: z.array(toolEvaluationCaseStatus).default([]),
+	result: toolApiInputEvaluationResponse.nullable().optional(),
+	error: z.string().nullable().optional(),
+});
+
+export const toolApiInputApplyPromptSuggestionItem = z.object({
+	prompt_key: z.string(),
+	proposed_prompt: z.string(),
+});
+
+export const toolApiInputApplyPromptSuggestionsRequest = z.object({
+	suggestions: z.array(toolApiInputApplyPromptSuggestionItem),
+});
+
+export const toolApiInputApplyPromptSuggestionsResponse = z.object({
+	applied_prompt_keys: z.array(z.string()),
 });
 
 export const toolSuggestionRequest = z.object({
@@ -271,16 +397,51 @@ export type ToolEvalLibraryGenerateResponse = z.infer<
 export type ToolSettingsResponse = z.infer<typeof toolSettingsResponse>;
 export type ToolSettingsUpdateRequest = z.infer<typeof toolSettingsUpdateRequest>;
 export type ToolEvaluationExpected = z.infer<typeof toolEvaluationExpected>;
+export type ToolApiInputEvaluationExpected = z.infer<
+	typeof toolApiInputEvaluationExpected
+>;
 export type ToolEvaluationTestCase = z.infer<typeof toolEvaluationTestCase>;
+export type ToolApiInputEvaluationTestCase = z.infer<
+	typeof toolApiInputEvaluationTestCase
+>;
 export type ToolEvaluationRequest = z.infer<typeof toolEvaluationRequest>;
+export type ToolApiInputEvaluationRequest = z.infer<
+	typeof toolApiInputEvaluationRequest
+>;
 export type ToolEvaluationMetrics = z.infer<typeof toolEvaluationMetrics>;
 export type ToolEvaluationCaseResult = z.infer<typeof toolEvaluationCaseResult>;
+export type ToolApiInputFieldCheck = z.infer<typeof toolApiInputFieldCheck>;
+export type ToolApiInputEvaluationCaseResult = z.infer<
+	typeof toolApiInputEvaluationCaseResult
+>;
+export type ToolApiInputEvaluationMetrics = z.infer<
+	typeof toolApiInputEvaluationMetrics
+>;
 export type ToolMetadataSuggestion = z.infer<typeof toolMetadataSuggestion>;
 export type ToolEvaluationResponse = z.infer<typeof toolEvaluationResponse>;
+export type ToolApiInputPromptSuggestion = z.infer<typeof toolApiInputPromptSuggestion>;
+export type ToolApiInputEvaluationResponse = z.infer<
+	typeof toolApiInputEvaluationResponse
+>;
 export type ToolEvaluationStartResponse = z.infer<typeof toolEvaluationStartResponse>;
 export type ToolEvaluationCaseStatus = z.infer<typeof toolEvaluationCaseStatus>;
 export type ToolEvaluationJobStatusResponse = z.infer<
 	typeof toolEvaluationJobStatusResponse
+>;
+export type ToolApiInputEvaluationStartResponse = z.infer<
+	typeof toolApiInputEvaluationStartResponse
+>;
+export type ToolApiInputEvaluationJobStatusResponse = z.infer<
+	typeof toolApiInputEvaluationJobStatusResponse
+>;
+export type ToolApiInputApplyPromptSuggestionItem = z.infer<
+	typeof toolApiInputApplyPromptSuggestionItem
+>;
+export type ToolApiInputApplyPromptSuggestionsRequest = z.infer<
+	typeof toolApiInputApplyPromptSuggestionsRequest
+>;
+export type ToolApiInputApplyPromptSuggestionsResponse = z.infer<
+	typeof toolApiInputApplyPromptSuggestionsResponse
 >;
 export type ToolSuggestionRequest = z.infer<typeof toolSuggestionRequest>;
 export type ToolSuggestionResponse = z.infer<typeof toolSuggestionResponse>;

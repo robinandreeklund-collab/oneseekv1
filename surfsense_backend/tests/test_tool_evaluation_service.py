@@ -1,11 +1,15 @@
 import asyncio
 
+from pydantic import BaseModel
+
 from app.agents.new_chat.bigtool_store import ToolIndexEntry
 from app.services.tool_evaluation_service import (
     _enrich_metadata_suggestion_fields,
     compute_metadata_version_hash,
     generate_tool_metadata_suggestions,
+    run_tool_api_input_evaluation,
     run_tool_evaluation,
+    suggest_agent_prompt_improvements_for_api_input,
     suggest_retrieval_tuning,
 )
 
@@ -246,3 +250,79 @@ def test_enrich_metadata_suggestion_fields_uses_fallback_for_all_core_fields():
     assert merged["description"] == fallback["description"]
     assert merged["keywords"] == fallback["keywords"]
     assert merged["example_queries"] == fallback["example_queries"]
+
+
+class _FakeApiArgs(BaseModel):
+    city: str
+    date: str
+
+
+class _FakeTool:
+    args_schema = _FakeApiArgs
+
+
+def test_run_tool_api_input_evaluation_detects_missing_required_fields(monkeypatch):
+    tool_index = [
+        _entry(
+            "tool_weather",
+            name="Weather Tool",
+            description="Fetch weather by city/date",
+            category="weather",
+            keywords=["weather"],
+        ),
+    ]
+    tool_registry = {"tool_weather": _FakeTool()}
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service.smart_retrieve_tools_with_breakdown",
+        lambda *_args, **_kwargs: (["tool_weather"], []),
+    )
+    output = asyncio.run(
+        run_tool_api_input_evaluation(
+            tests=[
+                {
+                    "id": "api-1",
+                    "question": "Vad blir vädret i Stockholm i morgon?",
+                    "expected": {
+                        "tool": "tool_weather",
+                        "category": "weather",
+                        "required_fields": ["city", "date"],
+                    },
+                    "allowed_tools": ["tool_weather"],
+                }
+            ],
+            tool_index=tool_index,
+            tool_registry=tool_registry,
+            llm=None,
+            retrieval_limit=5,
+        )
+    )
+    assert output["metrics"]["total_tests"] == 1
+    assert output["results"][0]["missing_required_fields"] == ["city", "date"]
+    assert output["results"][0]["passed_api_input"] is False
+
+
+def test_suggest_agent_prompt_improvements_for_api_input_fallback():
+    suggestions = asyncio.run(
+        suggest_agent_prompt_improvements_for_api_input(
+            evaluation_results=[
+                {
+                    "test_id": "case-1",
+                    "question": "Hur många fordonspassager i Malmö i går?",
+                    "expected_tool": "trafikverket_vag_status",
+                    "selected_tool": "trafikverket_vag_status",
+                    "selected_category": "trafikverket_vag",
+                    "missing_required_fields": ["region", "date"],
+                    "schema_errors": ["Missing required fields"],
+                    "passed_api_input": False,
+                    "passed": False,
+                }
+            ],
+            current_prompts={
+                "agent.trafik.system": "Du är trafikagenten. Håll svaren korta.",
+            },
+            llm=None,
+        )
+    )
+    assert len(suggestions) == 1
+    assert suggestions[0]["prompt_key"] == "agent.trafik.system"
+    assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]

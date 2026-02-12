@@ -75,10 +75,25 @@ class ToolEvaluationExpected(BaseModel):
     tool: str | None = None
 
 
+class ToolApiInputEvaluationExpected(BaseModel):
+    category: str | None = None
+    tool: str | None = None
+    required_fields: list[str] = Field(default_factory=list)
+    field_values: dict[str, Any] = Field(default_factory=dict)
+    allow_clarification: bool | None = None
+
+
 class ToolEvaluationTestCase(BaseModel):
     id: str
     question: str
     expected: ToolEvaluationExpected | None = None
+    allowed_tools: list[str] = Field(default_factory=list)
+
+
+class ToolApiInputEvaluationTestCase(BaseModel):
+    id: str
+    question: str
+    expected: ToolApiInputEvaluationExpected | None = None
     allowed_tools: list[str] = Field(default_factory=list)
 
 
@@ -88,6 +103,16 @@ class ToolEvaluationRequest(BaseModel):
     search_space_id: int | None = None
     retrieval_limit: int = 5
     tests: list[ToolEvaluationTestCase]
+    metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    retrieval_tuning_override: ToolRetrievalTuning | None = None
+
+
+class ToolApiInputEvaluationRequest(BaseModel):
+    eval_name: str | None = None
+    target_success_rate: float | None = None
+    search_space_id: int | None = None
+    retrieval_limit: int = 5
+    tests: list[ToolApiInputEvaluationTestCase]
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
     retrieval_tuning_override: ToolRetrievalTuning | None = None
 
@@ -120,6 +145,55 @@ class ToolEvaluationCaseResult(BaseModel):
     passed: bool
 
 
+class ToolApiInputFieldCheck(BaseModel):
+    field: str
+    expected: Any | None = None
+    actual: Any | None = None
+    passed: bool
+
+
+class ToolApiInputEvaluationCaseResult(BaseModel):
+    test_id: str
+    question: str
+    expected_category: str | None = None
+    expected_tool: str | None = None
+    allowed_tools: list[str] = Field(default_factory=list)
+    selected_category: str | None = None
+    selected_tool: str | None = None
+    planning_analysis: str = ""
+    planning_steps: list[str] = Field(default_factory=list)
+    retrieval_top_tools: list[str] = Field(default_factory=list)
+    retrieval_top_categories: list[str] = Field(default_factory=list)
+    retrieval_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    proposed_arguments: dict[str, Any] = Field(default_factory=dict)
+    target_tool_for_validation: str | None = None
+    schema_required_fields: list[str] = Field(default_factory=list)
+    expected_required_fields: list[str] = Field(default_factory=list)
+    missing_required_fields: list[str] = Field(default_factory=list)
+    unexpected_fields: list[str] = Field(default_factory=list)
+    field_checks: list[ToolApiInputFieldCheck] = Field(default_factory=list)
+    schema_valid: bool | None = None
+    schema_errors: list[str] = Field(default_factory=list)
+    needs_clarification: bool = False
+    clarification_question: str | None = None
+    passed_category: bool | None = None
+    passed_tool: bool | None = None
+    passed_api_input: bool | None = None
+    passed: bool
+
+
+class ToolApiInputEvaluationMetrics(BaseModel):
+    total_tests: int
+    passed_tests: int
+    success_rate: float
+    category_accuracy: float | None = None
+    tool_accuracy: float | None = None
+    schema_validity_rate: float | None = None
+    required_field_recall: float | None = None
+    field_value_accuracy: float | None = None
+    clarification_accuracy: float | None = None
+
+
 class ToolMetadataSuggestion(BaseModel):
     tool_id: str
     failed_test_ids: list[str] = Field(default_factory=list)
@@ -136,6 +210,26 @@ class ToolEvaluationResponse(BaseModel):
     suggestions: list[ToolMetadataSuggestion]
     retrieval_tuning: ToolRetrievalTuning
     retrieval_tuning_suggestion: ToolRetrievalTuningSuggestion | None = None
+    metadata_version_hash: str
+    search_space_id: int
+
+
+class ToolApiInputPromptSuggestion(BaseModel):
+    prompt_key: str
+    failed_test_ids: list[str] = Field(default_factory=list)
+    related_tools: list[str] = Field(default_factory=list)
+    rationale: str
+    current_prompt: str
+    proposed_prompt: str
+
+
+class ToolApiInputEvaluationResponse(BaseModel):
+    eval_name: str | None = None
+    target_success_rate: float | None = None
+    metrics: ToolApiInputEvaluationMetrics
+    results: list[ToolApiInputEvaluationCaseResult]
+    prompt_suggestions: list[ToolApiInputPromptSuggestion] = Field(default_factory=list)
+    retrieval_tuning: ToolRetrievalTuning
     metadata_version_hash: str
     search_space_id: int
 
@@ -167,6 +261,38 @@ class ToolEvaluationJobStatusResponse(BaseModel):
     case_statuses: list[ToolEvaluationCaseStatus] = Field(default_factory=list)
     result: ToolEvaluationResponse | None = None
     error: str | None = None
+
+
+class ToolApiInputEvaluationStartResponse(BaseModel):
+    job_id: str
+    status: str
+    total_tests: int
+
+
+class ToolApiInputEvaluationJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    total_tests: int
+    completed_tests: int
+    started_at: str | None = None
+    completed_at: str | None = None
+    updated_at: str
+    case_statuses: list[ToolEvaluationCaseStatus] = Field(default_factory=list)
+    result: ToolApiInputEvaluationResponse | None = None
+    error: str | None = None
+
+
+class ToolApiInputApplyPromptSuggestionItem(BaseModel):
+    prompt_key: str
+    proposed_prompt: str
+
+
+class ToolApiInputApplyPromptSuggestionsRequest(BaseModel):
+    suggestions: list[ToolApiInputApplyPromptSuggestionItem]
+
+
+class ToolApiInputApplyPromptSuggestionsResponse(BaseModel):
+    applied_prompt_keys: list[str]
 
 
 class ToolSuggestionRequest(BaseModel):

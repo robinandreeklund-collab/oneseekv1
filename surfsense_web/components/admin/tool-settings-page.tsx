@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { useAtomValue } from "jotai";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import type {
+	ToolApiInputEvaluationResponse,
+	ToolApiInputEvaluationTestCase,
 	ToolEvaluationResponse,
 	ToolEvaluationTestCase,
 	ToolMetadataItem,
@@ -255,17 +257,28 @@ export function ToolSettingsPage() {
 	const [selectedLibraryPath, setSelectedLibraryPath] = useState("");
 	const [isLoadingLibraryFile, setIsLoadingLibraryFile] = useState(false);
 	const [isEvaluating, setIsEvaluating] = useState(false);
+	const [isApiInputEvaluating, setIsApiInputEvaluating] = useState(false);
 	const [retrievalLimit, setRetrievalLimit] = useState(5);
 	const [includeDraftMetadata, setIncludeDraftMetadata] = useState(true);
 	const [evaluationResult, setEvaluationResult] =
 		useState<ToolEvaluationResponse | null>(null);
+	const [apiInputEvaluationResult, setApiInputEvaluationResult] =
+		useState<ToolApiInputEvaluationResponse | null>(null);
 	const [evalJobId, setEvalJobId] = useState<string | null>(null);
+	const [apiInputEvalJobId, setApiInputEvalJobId] = useState<string | null>(null);
 	const [lastEvalJobNotice, setLastEvalJobNotice] = useState<string | null>(null);
+	const [lastApiInputEvalJobNotice, setLastApiInputEvalJobNotice] = useState<string | null>(
+		null
+	);
 	const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(
 		new Set()
 	);
+	const [selectedPromptSuggestionKeys, setSelectedPromptSuggestionKeys] = useState<
+		Set<string>
+	>(new Set());
 	const [isApplyingSuggestions, setIsApplyingSuggestions] = useState(false);
 	const [isSavingSuggestions, setIsSavingSuggestions] = useState(false);
+	const [isSavingPromptSuggestions, setIsSavingPromptSuggestions] = useState(false);
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-tool-settings"],
@@ -289,6 +302,20 @@ export function ToolSettingsPage() {
 		queryKey: ["admin-tool-evaluation-job", evalJobId],
 		queryFn: () => adminToolSettingsApiService.getToolEvaluationStatus(evalJobId as string),
 		enabled: !!evalJobId,
+		refetchInterval: (query) => {
+			const status = query.state.data?.status;
+			if (!status) return 1200;
+			return status === "pending" || status === "running" ? 1200 : false;
+		},
+	});
+
+	const { data: apiInputEvalJobStatus } = useQuery({
+		queryKey: ["admin-tool-api-input-evaluation-job", apiInputEvalJobId],
+		queryFn: () =>
+			adminToolSettingsApiService.getToolApiInputEvaluationStatus(
+				apiInputEvalJobId as string
+			),
+		enabled: !!apiInputEvalJobId,
 		refetchInterval: (query) => {
 			const status = query.state.data?.status;
 			if (!status) return 1200;
@@ -389,6 +416,26 @@ export function ToolSettingsPage() {
 		}
 	}, [evalJobStatus, evalJobId, lastEvalJobNotice]);
 
+	useEffect(() => {
+		if (!apiInputEvalJobStatus || !apiInputEvalJobId) return;
+		if (apiInputEvalJobStatus.status === "completed" && apiInputEvalJobStatus.result) {
+			setApiInputEvaluationResult(apiInputEvalJobStatus.result);
+			setSelectedPromptSuggestionKeys(new Set());
+			const noticeKey = `${apiInputEvalJobId}:completed`;
+			if (lastApiInputEvalJobNotice !== noticeKey) {
+				toast.success("API input eval-run klar");
+				setLastApiInputEvalJobNotice(noticeKey);
+			}
+		}
+		if (apiInputEvalJobStatus.status === "failed") {
+			const noticeKey = `${apiInputEvalJobId}:failed`;
+			if (lastApiInputEvalJobNotice !== noticeKey) {
+				toast.error(apiInputEvalJobStatus.error || "API input eval-run misslyckades");
+				setLastApiInputEvalJobNotice(noticeKey);
+			}
+		}
+	}, [apiInputEvalJobStatus, apiInputEvalJobId, lastApiInputEvalJobNotice]);
+
 	const changedToolIds = useMemo(() => {
 		return Object.keys(draftTools).filter((toolId) => {
 			const original = originalTools[toolId];
@@ -413,6 +460,12 @@ export function ToolSettingsPage() {
 		(!evalJobStatus ||
 			evalJobStatus.status === "pending" ||
 			evalJobStatus.status === "running");
+
+	const isApiInputEvalJobRunning =
+		!!apiInputEvalJobId &&
+		(!apiInputEvalJobStatus ||
+			apiInputEvalJobStatus.status === "pending" ||
+			apiInputEvalJobStatus.status === "running");
 
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((prev) => ({
@@ -615,6 +668,85 @@ export function ToolSettingsPage() {
 		}
 	};
 
+	const parseApiInputEvalInput = (): {
+		eval_name?: string;
+		target_success_rate?: number;
+		tests: ToolApiInputEvaluationTestCase[];
+	} | null => {
+		setEvalInputError(null);
+		const trimmed = evalInput.trim();
+		if (!trimmed) {
+			setEvalInputError("Klistra in eval-JSON innan du kör.");
+			return null;
+		}
+		try {
+			const parsed = JSON.parse(trimmed);
+			const envelope = Array.isArray(parsed) ? { tests: parsed } : parsed;
+			if (!envelope || !Array.isArray(envelope.tests)) {
+				setEvalInputError("JSON måste innehålla en tests-array.");
+				return null;
+			}
+			const tests: ToolApiInputEvaluationTestCase[] = envelope.tests.map(
+				(item: any, index: number) => ({
+					id: String(item.id ?? `case-${index + 1}`),
+					question: String(item.question ?? ""),
+					expected:
+						item.expected ||
+						item.expected_tool ||
+						item.expected_category ||
+						item.required_fields ||
+						item.field_values ||
+						typeof item.allow_clarification === "boolean"
+							? {
+									tool: item.expected?.tool ?? item.expected_tool ?? null,
+									category:
+										item.expected?.category ?? item.expected_category ?? null,
+									required_fields: Array.isArray(
+										item.expected?.required_fields ?? item.required_fields
+									)
+										? (
+												item.expected?.required_fields ?? item.required_fields
+											).map((value: unknown) => String(value))
+										: [],
+									field_values:
+										typeof (item.expected?.field_values ?? item.field_values) ===
+											"object" &&
+										(item.expected?.field_values ?? item.field_values) !== null
+											? (item.expected?.field_values ?? item.field_values)
+											: {},
+									allow_clarification:
+										typeof (item.expected?.allow_clarification ??
+											item.allow_clarification) === "boolean"
+											? (item.expected?.allow_clarification ??
+												item.allow_clarification)
+											: undefined,
+								}
+							: undefined,
+					allowed_tools: Array.isArray(item.allowed_tools)
+						? item.allowed_tools.map((value: unknown) => String(value))
+						: [],
+				})
+			);
+			const invalidCase = tests.find((test) => !test.question.trim());
+			if (invalidCase) {
+				setEvalInputError(`Test ${invalidCase.id} saknar question.`);
+				return null;
+			}
+			return {
+				eval_name:
+					typeof envelope.eval_name === "string" ? envelope.eval_name : undefined,
+				target_success_rate:
+					typeof envelope.target_success_rate === "number"
+						? envelope.target_success_rate
+						: undefined,
+				tests,
+			};
+		} catch (_error) {
+			setEvalInputError("Ogiltig JSON. Kontrollera formatet och försök igen.");
+			return null;
+		}
+	};
+
 	const handleRunEvaluation = async () => {
 		const parsedInput = parseEvalInput();
 		if (!parsedInput) return;
@@ -641,6 +773,73 @@ export function ToolSettingsPage() {
 			toast.error("Eval-run misslyckades");
 		} finally {
 			setIsEvaluating(false);
+		}
+	};
+
+	const handleRunApiInputEvaluation = async () => {
+		const parsedInput = parseApiInputEvalInput();
+		if (!parsedInput) return;
+		setIsApiInputEvaluating(true);
+		try {
+			const started = await adminToolSettingsApiService.startToolApiInputEvaluation({
+				eval_name: parsedInput.eval_name,
+				target_success_rate: parsedInput.target_success_rate,
+				search_space_id: data?.search_space_id,
+				retrieval_limit: retrievalLimit,
+				tests: parsedInput.tests,
+				metadata_patch: includeDraftMetadata ? metadataPatch : [],
+				retrieval_tuning_override:
+					includeDraftMetadata && draftRetrievalTuning
+						? draftRetrievalTuning
+						: undefined,
+			});
+			setApiInputEvalJobId(started.job_id);
+			setLastApiInputEvalJobNotice(null);
+			setApiInputEvaluationResult(null);
+			setSelectedPromptSuggestionKeys(new Set());
+			toast.info(`API input eval-run startad (${started.total_tests} frågor)`);
+		} catch (_err) {
+			toast.error("API input eval-run misslyckades");
+		} finally {
+			setIsApiInputEvaluating(false);
+		}
+	};
+
+	const togglePromptSuggestion = (promptKey: string) => {
+		setSelectedPromptSuggestionKeys((prev) => {
+			const next = new Set(prev);
+			if (next.has(promptKey)) {
+				next.delete(promptKey);
+			} else {
+				next.add(promptKey);
+			}
+			return next;
+		});
+	};
+
+	const saveSelectedPromptSuggestions = async () => {
+		if (!apiInputEvaluationResult) return;
+		const selected = apiInputEvaluationResult.prompt_suggestions.filter((suggestion) =>
+			selectedPromptSuggestionKeys.has(suggestion.prompt_key)
+		);
+		if (!selected.length) {
+			toast.info("Välj minst ett promptförslag att spara");
+			return;
+		}
+		setIsSavingPromptSuggestions(true);
+		try {
+			await adminToolSettingsApiService.applyApiInputPromptSuggestions({
+				suggestions: selected.map((suggestion) => ({
+					prompt_key: suggestion.prompt_key,
+					proposed_prompt: suggestion.proposed_prompt,
+				})),
+			});
+			setSelectedPromptSuggestionKeys(new Set());
+			toast.success(`Sparade ${selected.length} promptförslag`);
+		} catch (_error) {
+			toast.error("Kunde inte spara valda promptförslag");
+		} finally {
+			setIsSavingPromptSuggestions(false);
 		}
 	};
 
@@ -766,6 +965,14 @@ export function ToolSettingsPage() {
 				selectedSuggestionIds.has(suggestion.tool_id)
 			) ?? [],
 		[evaluationResult?.suggestions, selectedSuggestionIds]
+	);
+
+	const selectedPromptSuggestions = useMemo(
+		() =>
+			apiInputEvaluationResult?.prompt_suggestions.filter((suggestion) =>
+				selectedPromptSuggestionKeys.has(suggestion.prompt_key)
+			) ?? [],
+		[apiInputEvaluationResult?.prompt_suggestions, selectedPromptSuggestionKeys]
 	);
 
 	const uploadEvalFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1442,6 +1649,17 @@ export function ToolSettingsPage() {
 											? "Eval körs..."
 											: "Run Tool Evaluation"}
 								</Button>
+								<Button
+									variant="outline"
+									onClick={handleRunApiInputEvaluation}
+									disabled={isApiInputEvaluating || isApiInputEvalJobRunning}
+								>
+									{isApiInputEvaluating
+										? "Startar API input eval..."
+										: isApiInputEvalJobRunning
+											? "API input eval körs..."
+											: "Run API Input Eval (dry-run)"}
+								</Button>
 							</div>
 							<p className="text-xs text-muted-foreground">
 								Retrieval K = antal top-kandidater som tas vidare från retrieval i
@@ -1518,6 +1736,82 @@ export function ToolSettingsPage() {
 									{(evalJobStatus?.case_statuses ?? []).map((caseStatus) => (
 										<div
 											key={caseStatus.test_id}
+											className="rounded border p-2 text-xs space-y-1"
+										>
+											<div className="flex items-center justify-between gap-2">
+												<p className="font-medium">{caseStatus.test_id}</p>
+												<Badge
+													variant={
+														caseStatus.status === "failed"
+															? "destructive"
+															: caseStatus.status === "completed"
+																? "default"
+																: caseStatus.status === "running"
+																	? "secondary"
+																	: "outline"
+													}
+												>
+													{caseStatus.status}
+												</Badge>
+											</div>
+											<p className="text-muted-foreground">{caseStatus.question}</p>
+											{caseStatus.selected_tool && (
+												<p className="text-muted-foreground">
+													Valt verktyg: {caseStatus.selected_tool}
+												</p>
+											)}
+											{typeof caseStatus.passed === "boolean" && (
+												<p className="text-muted-foreground">
+													Resultat: {caseStatus.passed ? "Rätt" : "Fel"}
+												</p>
+											)}
+											{caseStatus.error && (
+												<p className="text-red-500">{caseStatus.error}</p>
+											)}
+										</div>
+									))}
+								</div>
+							</CardContent>
+						</Card>
+					)}
+
+					{apiInputEvalJobId && (
+						<Card>
+							<CardHeader>
+								<CardTitle>Körstatus per fråga (API input)</CardTitle>
+								<CardDescription>
+									Jobb {apiInputEvalJobId} · status{" "}
+									{apiInputEvalJobStatus?.status ?? "pending"}
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-3">
+								<div className="flex flex-wrap items-center gap-2 text-sm">
+									<Badge
+										variant={
+											apiInputEvalJobStatus?.status === "failed"
+												? "destructive"
+												: apiInputEvalJobStatus?.status === "completed"
+													? "default"
+													: "secondary"
+										}
+									>
+										{apiInputEvalJobStatus?.status ?? "pending"}
+									</Badge>
+									<span>
+										{apiInputEvalJobStatus?.completed_tests ?? 0}/
+										{apiInputEvalJobStatus?.total_tests ?? 0} frågor färdiga
+									</span>
+								</div>
+								{apiInputEvalJobStatus?.error && (
+									<Alert variant="destructive">
+										<AlertCircle className="h-4 w-4" />
+										<AlertDescription>{apiInputEvalJobStatus.error}</AlertDescription>
+									</Alert>
+								)}
+								<div className="space-y-2">
+									{(apiInputEvalJobStatus?.case_statuses ?? []).map((caseStatus) => (
+										<div
+											key={`api-input-${caseStatus.test_id}`}
 											className="rounded border p-2 text-xs space-y-1"
 										>
 											<div className="flex items-center justify-between gap-2">
@@ -1885,6 +2179,260 @@ export function ToolSettingsPage() {
 																</div>
 															</div>
 														</div>
+													</div>
+												);
+											})}
+										</div>
+									)}
+								</CardContent>
+							</Card>
+						</>
+					)}
+
+					{apiInputEvaluationResult && (
+						<>
+							<Card>
+								<CardHeader>
+									<CardTitle>API Input Eval Resultat</CardTitle>
+									<CardDescription>
+										Metadata version {apiInputEvaluationResult.metadata_version_hash} ·
+										search space {apiInputEvaluationResult.search_space_id}
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="grid gap-4 md:grid-cols-5">
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Success rate</p>
+										<p className="text-2xl font-semibold">
+											{(apiInputEvaluationResult.metrics.success_rate * 100).toFixed(1)}%
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Schema validity</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.schema_validity_rate == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.schema_validity_rate * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Required-field recall</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.required_field_recall == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.required_field_recall * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Field-value accuracy</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.field_value_accuracy == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.field_value_accuracy * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Clarification accuracy</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.clarification_accuracy == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.clarification_accuracy * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+								</CardContent>
+							</Card>
+
+							<Card>
+								<CardHeader>
+									<CardTitle>API Input resultat per test</CardTitle>
+									<CardDescription>
+										Dry-run: vi validerar modellens föreslagna tool-input utan riktiga
+										API-anrop.
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-3">
+									{apiInputEvaluationResult.results.map((result) => (
+										<div
+											key={`api-input-result-${result.test_id}`}
+											className="rounded border p-3 space-y-2"
+										>
+											<div className="flex items-center justify-between gap-2">
+												<div className="flex items-center gap-2">
+													<Badge variant="outline">{result.test_id}</Badge>
+													<Badge variant={result.passed ? "default" : "destructive"}>
+														{result.passed ? "PASS" : "FAIL"}
+													</Badge>
+												</div>
+												<div className="text-xs text-muted-foreground">
+													Expected: {result.expected_category || "-"} /{" "}
+													{result.expected_tool || "-"} · Selected:{" "}
+													{result.selected_category || "-"} /{" "}
+													{result.selected_tool || "-"}
+												</div>
+											</div>
+											<p className="text-sm">{result.question}</p>
+											{result.planning_analysis && (
+												<p className="text-xs text-muted-foreground">
+													Analys: {result.planning_analysis}
+												</p>
+											)}
+											<div className="grid gap-3 md:grid-cols-2">
+												<div className="rounded bg-muted/40 p-2 space-y-1">
+													<p className="text-xs font-medium">Proposed arguments</p>
+													<pre className="text-[11px] whitespace-pre-wrap break-all text-muted-foreground">
+														{JSON.stringify(result.proposed_arguments ?? {}, null, 2)}
+													</pre>
+												</div>
+												<div className="rounded bg-muted/40 p-2 space-y-1">
+													<p className="text-xs font-medium">Validering</p>
+													<p className="text-[11px] text-muted-foreground">
+														Schema-valid:{" "}
+														{result.schema_valid == null
+															? "-"
+															: result.schema_valid
+																? "Ja"
+																: "Nej"}
+													</p>
+													<p className="text-[11px] text-muted-foreground">
+														Missing required:{" "}
+														{result.missing_required_fields.join(", ") || "-"}
+													</p>
+													<p className="text-[11px] text-muted-foreground">
+														Unexpected fields:{" "}
+														{result.unexpected_fields.join(", ") || "-"}
+													</p>
+													<p className="text-[11px] text-muted-foreground">
+														Klargörande:{" "}
+														{result.needs_clarification
+															? result.clarification_question || "Ja"
+															: "Nej"}
+													</p>
+												</div>
+											</div>
+											{result.field_checks?.length > 0 && (
+												<div className="rounded bg-muted/30 p-2 space-y-1">
+													<p className="text-xs font-medium">Field checks</p>
+													{result.field_checks.map((check, idx) => (
+														<p
+															key={`${result.test_id}-field-check-${idx}`}
+															className="text-[11px] text-muted-foreground"
+														>
+															{check.field}: expected{" "}
+															{JSON.stringify(check.expected)} · actual{" "}
+															{JSON.stringify(check.actual)} ·{" "}
+															{check.passed ? "PASS" : "FAIL"}
+														</p>
+													))}
+												</div>
+											)}
+											{result.schema_errors?.length > 0 && (
+												<div className="rounded bg-red-50 p-2 space-y-1">
+													<p className="text-xs font-medium text-red-700">Schema errors</p>
+													{result.schema_errors.map((error, idx) => (
+														<p
+															key={`${result.test_id}-schema-error-${idx}`}
+															className="text-[11px] text-red-700"
+														>
+															{error}
+														</p>
+													))}
+												</div>
+											)}
+										</div>
+									))}
+								</CardContent>
+							</Card>
+
+							<Card>
+								<CardHeader>
+									<CardTitle>Prompt-förslag från API Input Eval</CardTitle>
+									<CardDescription>
+										Välj förslag att spara direkt till Agent Prompts och kör om eval.
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-4">
+									<div className="flex flex-wrap items-center gap-2">
+										<Button
+											onClick={saveSelectedPromptSuggestions}
+											disabled={
+												!selectedPromptSuggestionKeys.size || isSavingPromptSuggestions
+											}
+										>
+											Spara valda promptförslag
+										</Button>
+										<Button
+											variant="outline"
+											onClick={handleRunApiInputEvaluation}
+											disabled={isApiInputEvaluating || isApiInputEvalJobRunning}
+										>
+											Kör om API input eval
+										</Button>
+										<Badge variant="outline">
+											{selectedPromptSuggestions.length} valda
+										</Badge>
+									</div>
+
+									{apiInputEvaluationResult.prompt_suggestions.length === 0 ? (
+										<p className="text-sm text-muted-foreground">
+											Inga promptförslag hittades för denna run.
+										</p>
+									) : (
+										<div className="space-y-3">
+											{apiInputEvaluationResult.prompt_suggestions.map((suggestion) => {
+												const isSelected = selectedPromptSuggestionKeys.has(
+													suggestion.prompt_key
+												);
+												return (
+													<div
+														key={`prompt-suggestion-${suggestion.prompt_key}`}
+														className="rounded border p-3 space-y-2"
+													>
+														<div className="flex items-center justify-between gap-2">
+															<div className="flex items-center gap-2">
+																<input
+																	type="checkbox"
+																	checked={isSelected}
+																	onChange={() =>
+																		togglePromptSuggestion(suggestion.prompt_key)
+																	}
+																/>
+																<Badge variant="secondary">
+																	{suggestion.prompt_key}
+																</Badge>
+																<Badge variant="outline">
+																	{suggestion.failed_test_ids.length} fail-case(s)
+																</Badge>
+															</div>
+														</div>
+														<p className="text-xs text-muted-foreground">
+															{suggestion.rationale}
+														</p>
+														<div className="grid gap-3 md:grid-cols-2">
+															<div className="rounded bg-muted/50 p-2">
+																<p className="text-xs font-medium mb-1">Nuvarande prompt</p>
+																<pre className="text-[11px] whitespace-pre-wrap break-words text-muted-foreground max-h-48 overflow-y-auto">
+																	{suggestion.current_prompt}
+																</pre>
+															</div>
+															<div className="rounded bg-muted/50 p-2">
+																<p className="text-xs font-medium mb-1">Föreslagen prompt</p>
+																<pre className="text-[11px] whitespace-pre-wrap break-words text-muted-foreground max-h-48 overflow-y-auto">
+																	{suggestion.proposed_prompt}
+																</pre>
+															</div>
+														</div>
+														{suggestion.related_tools.length > 0 && (
+															<p className="text-[11px] text-muted-foreground">
+																Relaterade verktyg: {suggestion.related_tools.join(", ")}
+															</p>
+														)}
 													</div>
 												);
 											})}
