@@ -9,11 +9,15 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 
+from app.agents.new_chat.action_router import ActionRoute, dispatch_action_route
 from app.agents.new_chat.bigtool_store import (
     ToolIndexEntry,
     normalize_retrieval_tuning,
     smart_retrieve_tools_with_breakdown,
 )
+from app.agents.new_chat.dispatcher import dispatch_route
+from app.agents.new_chat.knowledge_router import KnowledgeRoute, dispatch_knowledge_route
+from app.agents.new_chat.routing import Route
 
 _SUGGESTION_STOPWORDS = {
     "a",
@@ -123,6 +127,124 @@ def _safe_string_list(values: Any) -> list[str]:
         seen.add(key)
         cleaned.append(item)
     return cleaned
+
+
+def _normalize_route_value(value: Any) -> str | None:
+    route = str(value or "").strip().lower()
+    if route in {Route.KNOWLEDGE.value, Route.ACTION.value, Route.SMALLTALK.value, Route.STATISTICS.value, Route.COMPARE.value}:
+        return route
+    if route in {"statistik", "statistics"}:
+        return Route.STATISTICS.value
+    return None
+
+
+def _normalize_sub_route_value(value: Any) -> str | None:
+    sub_route = str(value or "").strip().lower()
+    if sub_route in {
+        ActionRoute.WEB.value,
+        ActionRoute.MEDIA.value,
+        ActionRoute.TRAVEL.value,
+        ActionRoute.DATA.value,
+        KnowledgeRoute.DOCS.value,
+        KnowledgeRoute.INTERNAL.value,
+        KnowledgeRoute.EXTERNAL.value,
+    }:
+        return sub_route
+    return None
+
+
+async def _dispatch_route_from_start(
+    *,
+    question: str,
+    llm,
+    prompt_overrides: dict[str, str] | None = None,
+) -> tuple[str | None, str | None]:
+    overrides = prompt_overrides or {}
+    selected_route = await dispatch_route(
+        question,
+        llm,
+        has_attachments=False,
+        has_mentions=False,
+        system_prompt_override=overrides.get("router.top_level"),
+    )
+    route_value = (
+        selected_route.value
+        if hasattr(selected_route, "value")
+        else _normalize_route_value(selected_route)
+    )
+    selected_sub_route: str | None = None
+    if route_value == Route.ACTION.value:
+        action_route = await dispatch_action_route(
+            question,
+            llm,
+            system_prompt_override=overrides.get("router.action"),
+        )
+        selected_sub_route = (
+            action_route.value
+            if hasattr(action_route, "value")
+            else _normalize_sub_route_value(action_route)
+        )
+    elif route_value == Route.KNOWLEDGE.value:
+        knowledge_route = await dispatch_knowledge_route(
+            question,
+            llm,
+            has_attachments=False,
+            has_mentions=False,
+            allow_external=True,
+            system_prompt_override=overrides.get("router.knowledge"),
+        )
+        selected_sub_route = (
+            knowledge_route.value
+            if hasattr(knowledge_route, "value")
+            else _normalize_sub_route_value(knowledge_route)
+        )
+    return _normalize_route_value(route_value), _normalize_sub_route_value(selected_sub_route)
+
+
+def _evaluate_plan_requirements(
+    *,
+    requirements: list[str],
+    planning_analysis: str,
+    planning_steps: list[str],
+    context: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], bool | None]:
+    normalized_requirements = _safe_string_list(requirements)
+    if not normalized_requirements:
+        return [], None
+    merged_text = " ".join(
+        [planning_analysis or "", *[step for step in planning_steps if step]]
+    ).casefold()
+    context_payload = context or {}
+    checks: list[dict[str, Any]] = []
+    for requirement in normalized_requirements:
+        lowered = requirement.casefold()
+        passed = False
+        if lowered.startswith("field:"):
+            field_name = requirement.split(":", 1)[1].strip()
+            proposed_arguments = context_payload.get("proposed_arguments")
+            if isinstance(proposed_arguments, dict) and field_name:
+                passed = field_name in proposed_arguments
+        elif lowered in {"clarification", "ask_clarification"}:
+            passed = bool(context_payload.get("needs_clarification"))
+        elif lowered.startswith("tool:"):
+            expected_tool = requirement.split(":", 1)[1].strip().casefold()
+            selected_tool = str(context_payload.get("selected_tool") or "").casefold()
+            passed = bool(expected_tool and selected_tool and expected_tool == selected_tool)
+        elif lowered.startswith("route:"):
+            expected_route = requirement.split(":", 1)[1].strip().casefold()
+            selected_route = str(context_payload.get("selected_route") or "").casefold()
+            passed = bool(
+                expected_route and selected_route and expected_route == selected_route
+            )
+        else:
+            passed = lowered in merged_text
+        checks.append(
+            {
+                "requirement": requirement,
+                "passed": passed,
+            }
+        )
+    return checks, all(check.get("passed") for check in checks)
 
 
 def _serialize_tool(entry: ToolIndexEntry) -> dict[str, Any]:
@@ -435,6 +557,7 @@ async def run_tool_evaluation(
     llm,
     retrieval_limit: int = 5,
     retrieval_tuning: dict[str, Any] | None = None,
+    prompt_overrides: dict[str, str] | None = None,
     progress_callback=None,
 ) -> dict[str, Any]:
     retrieval_limit = max(1, min(int(retrieval_limit or 5), 15))
@@ -442,6 +565,9 @@ async def run_tool_evaluation(
     index_by_id = {entry.tool_id: entry for entry in tool_index}
     results: list[dict[str, Any]] = []
 
+    route_checks: list[bool] = []
+    sub_route_checks: list[bool] = []
+    plan_checks: list[bool] = []
     category_checks: list[bool] = []
     tool_checks: list[bool] = []
     retrieval_checks: list[bool] = []
@@ -462,6 +588,9 @@ async def run_tool_evaluation(
         expected = test.get("expected") or {}
         if not isinstance(expected, dict):
             expected = {}
+        expected_route = _normalize_route_value(expected.get("route"))
+        expected_sub_route = _normalize_sub_route_value(expected.get("sub_route"))
+        plan_requirements = _safe_string_list(expected.get("plan_requirements"))
         expected_tool = expected.get("tool")
         expected_tool = str(expected_tool).strip() if expected_tool else None
         expected_category = expected.get("category")
@@ -472,7 +601,27 @@ async def run_tool_evaluation(
         if expected_tool and not allowed_tools:
             allowed_tools = [expected_tool]
 
+        selected_route: str | None = None
+        selected_sub_route: str | None = None
+        passed_route: bool | None = None
+        passed_sub_route: bool | None = None
+        passed_plan: bool | None = None
+        plan_requirement_checks: list[dict[str, Any]] = []
+
         try:
+            selected_route, selected_sub_route = await _dispatch_route_from_start(
+                question=question,
+                llm=llm,
+                prompt_overrides=prompt_overrides,
+            )
+            passed_route = (
+                selected_route == expected_route if expected_route is not None else None
+            )
+            passed_sub_route = (
+                selected_sub_route == expected_sub_route
+                if expected_sub_route is not None
+                else None
+            )
             retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
                 question,
                 tool_index=tool_index,
@@ -503,6 +652,17 @@ async def run_tool_evaluation(
                 if selected_entry
                 else planning.get("selected_category")
             )
+            plan_requirement_checks, passed_plan = _evaluate_plan_requirements(
+                requirements=plan_requirements,
+                planning_analysis=str(planning.get("analysis") or ""),
+                planning_steps=_safe_string_list(planning.get("plan_steps")),
+                context={
+                    "selected_tool": selected_tool,
+                    "selected_route": selected_route,
+                    "proposed_arguments": {},
+                    "needs_clarification": False,
+                },
+            )
             passed_category = (
                 selected_category == expected_category
                 if expected_category is not None
@@ -513,7 +673,17 @@ async def run_tool_evaluation(
                 if expected_tool is not None
                 else None
             )
-            checks = [check for check in (passed_category, passed_tool) if check is not None]
+            checks = [
+                check
+                for check in (
+                    passed_route,
+                    passed_sub_route,
+                    passed_plan,
+                    passed_category,
+                    passed_tool,
+                )
+                if check is not None
+            ]
             passed = all(checks) if checks else True
             retrieval_hit_expected_tool = (
                 expected_tool in retrieved_ids[:retrieval_limit]
@@ -521,6 +691,12 @@ async def run_tool_evaluation(
                 else None
             )
 
+            if passed_route is not None:
+                route_checks.append(bool(passed_route))
+            if passed_sub_route is not None:
+                sub_route_checks.append(bool(passed_sub_route))
+            if passed_plan is not None:
+                plan_checks.append(bool(passed_plan))
             if passed_category is not None:
                 category_checks.append(bool(passed_category))
             if passed_tool is not None:
@@ -531,13 +707,18 @@ async def run_tool_evaluation(
             case_result = {
                 "test_id": test_id,
                 "question": question,
+                "expected_route": expected_route,
+                "expected_sub_route": expected_sub_route,
                 "expected_category": expected_category,
                 "expected_tool": expected_tool,
                 "allowed_tools": allowed_tools,
+                "selected_route": selected_route,
+                "selected_sub_route": selected_sub_route,
                 "selected_category": selected_category,
                 "selected_tool": selected_tool,
                 "planning_analysis": planning.get("analysis") or "",
                 "planning_steps": _safe_string_list(planning.get("plan_steps")),
+                "plan_requirement_checks": plan_requirement_checks,
                 "retrieval_top_tools": retrieved_ids[:retrieval_limit],
                 "retrieval_top_categories": [
                     index_by_id[tool_id].category
@@ -546,6 +727,9 @@ async def run_tool_evaluation(
                 ],
                 "retrieval_breakdown": retrieval_breakdown[:retrieval_limit],
                 "retrieval_hit_expected_tool": retrieval_hit_expected_tool,
+                "passed_route": passed_route,
+                "passed_sub_route": passed_sub_route,
+                "passed_plan": passed_plan,
                 "passed_category": passed_category,
                 "passed_tool": passed_tool,
                 "passed": passed,
@@ -556,6 +740,8 @@ async def run_tool_evaluation(
                     "type": "test_completed",
                     "test_id": test_id,
                     "index": idx,
+                    "selected_route": selected_route,
+                    "selected_sub_route": selected_sub_route,
                     "selected_tool": selected_tool,
                     "selected_category": selected_category,
                     "passed": passed,
@@ -568,22 +754,36 @@ async def run_tool_evaluation(
                 {
                     "test_id": test_id,
                     "question": question,
+                    "expected_route": expected_route,
+                    "expected_sub_route": expected_sub_route,
                     "expected_category": expected_category,
                     "expected_tool": expected_tool,
                     "allowed_tools": allowed_tools,
+                    "selected_route": selected_route,
+                    "selected_sub_route": selected_sub_route,
                     "selected_category": None,
                     "selected_tool": None,
                     "planning_analysis": f"Evaluation failed for this case: {exc}",
                     "planning_steps": [],
+                    "plan_requirement_checks": [],
                     "retrieval_top_tools": [],
                     "retrieval_top_categories": [],
                     "retrieval_breakdown": [],
                     "retrieval_hit_expected_tool": None,
+                    "passed_route": False if expected_route is not None else None,
+                    "passed_sub_route": False if expected_sub_route is not None else None,
+                    "passed_plan": False if plan_requirements else None,
                     "passed_category": False if expected_category is not None else None,
                     "passed_tool": False if expected_tool is not None else None,
                     "passed": False,
                 }
             )
+            if expected_route is not None:
+                route_checks.append(False)
+            if expected_sub_route is not None:
+                sub_route_checks.append(False)
+            if plan_requirements:
+                plan_checks.append(False)
             if expected_category is not None:
                 category_checks.append(False)
             if expected_tool is not None:
@@ -606,6 +806,21 @@ async def run_tool_evaluation(
         "total_tests": total_tests,
         "passed_tests": passed_count,
         "success_rate": (passed_count / total_tests) if total_tests else 0.0,
+        "route_accuracy": (
+            sum(1 for check in route_checks if check) / len(route_checks)
+            if route_checks
+            else None
+        ),
+        "sub_route_accuracy": (
+            sum(1 for check in sub_route_checks if check) / len(sub_route_checks)
+            if sub_route_checks
+            else None
+        ),
+        "plan_accuracy": (
+            sum(1 for check in plan_checks if check) / len(plan_checks)
+            if plan_checks
+            else None
+        ),
         "category_accuracy": (
             sum(1 for check in category_checks if check) / len(category_checks)
             if category_checks
@@ -968,6 +1183,15 @@ def _prompt_key_for_tool(tool_id: str | None, category: str | None = None) -> st
     return "agent.action.system"
 
 
+def _prompt_key_for_sub_route(route_value: str | None) -> str | None:
+    normalized = _normalize_route_value(route_value)
+    if normalized == Route.ACTION.value:
+        return "router.action"
+    if normalized == Route.KNOWLEDGE.value:
+        return "router.knowledge"
+    return None
+
+
 async def _plan_tool_api_input(
     *,
     question: str,
@@ -1094,6 +1318,7 @@ async def run_tool_api_input_evaluation(
     llm,
     retrieval_limit: int = 5,
     retrieval_tuning: dict[str, Any] | None = None,
+    prompt_overrides: dict[str, str] | None = None,
     progress_callback=None,
 ) -> dict[str, Any]:
     retrieval_limit = max(1, min(int(retrieval_limit or 5), 15))
@@ -1101,6 +1326,9 @@ async def run_tool_api_input_evaluation(
     index_by_id = {entry.tool_id: entry for entry in tool_index}
     results: list[dict[str, Any]] = []
 
+    route_checks: list[bool] = []
+    sub_route_checks: list[bool] = []
+    plan_checks: list[bool] = []
     category_checks: list[bool] = []
     tool_checks: list[bool] = []
     schema_checks: list[bool] = []
@@ -1124,6 +1352,9 @@ async def run_tool_api_input_evaluation(
         expected = test.get("expected") or {}
         if not isinstance(expected, dict):
             expected = {}
+        expected_route = _normalize_route_value(expected.get("route"))
+        expected_sub_route = _normalize_sub_route_value(expected.get("sub_route"))
+        plan_requirements = _safe_string_list(expected.get("plan_requirements"))
         expected_tool = expected.get("tool")
         expected_tool = str(expected_tool).strip() if expected_tool else None
         expected_category = expected.get("category")
@@ -1142,7 +1373,27 @@ async def run_tool_api_input_evaluation(
         if expected_tool and not allowed_tools:
             allowed_tools = [expected_tool]
 
+        selected_route: str | None = None
+        selected_sub_route: str | None = None
+        passed_route: bool | None = None
+        passed_sub_route: bool | None = None
+        passed_plan: bool | None = None
+        plan_requirement_checks: list[dict[str, Any]] = []
+
         try:
+            selected_route, selected_sub_route = await _dispatch_route_from_start(
+                question=question,
+                llm=llm,
+                prompt_overrides=prompt_overrides,
+            )
+            passed_route = (
+                selected_route == expected_route if expected_route is not None else None
+            )
+            passed_sub_route = (
+                selected_sub_route == expected_sub_route
+                if expected_sub_route is not None
+                else None
+            )
             retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
                 question,
                 tool_index=tool_index,
@@ -1178,6 +1429,17 @@ async def run_tool_api_input_evaluation(
             needs_clarification = bool(planning.get("needs_clarification"))
             clarification_question = (
                 str(planning.get("clarification_question") or "").strip() or None
+            )
+            plan_requirement_checks, passed_plan = _evaluate_plan_requirements(
+                requirements=plan_requirements,
+                planning_analysis=str(planning.get("analysis") or ""),
+                planning_steps=_safe_string_list(planning.get("plan_steps")),
+                context={
+                    "selected_tool": selected_tool,
+                    "selected_route": selected_route,
+                    "proposed_arguments": proposed_arguments,
+                    "needs_clarification": needs_clarification,
+                },
             )
 
             target_tool_for_validation = None
@@ -1252,6 +1514,12 @@ async def run_tool_api_input_evaluation(
                 category_checks.append(bool(passed_category))
             if passed_tool is not None:
                 tool_checks.append(bool(passed_tool))
+            if passed_route is not None:
+                route_checks.append(bool(passed_route))
+            if passed_sub_route is not None:
+                sub_route_checks.append(bool(passed_sub_route))
+            if passed_plan is not None:
+                plan_checks.append(bool(passed_plan))
 
             clarification_ok: bool | None = None
             if allow_clarification is not None:
@@ -1282,20 +1550,33 @@ async def run_tool_api_input_evaluation(
                 passed_api_input = all(api_checks) if api_checks else True
 
             checks = [
-                check for check in (passed_category, passed_tool, passed_api_input)
+                check
+                for check in (
+                    passed_route,
+                    passed_sub_route,
+                    passed_plan,
+                    passed_category,
+                    passed_tool,
+                    passed_api_input,
+                )
                 if check is not None
             ]
             passed = all(checks) if checks else True
             case_result = {
                 "test_id": test_id,
                 "question": question,
+                "expected_route": expected_route,
+                "expected_sub_route": expected_sub_route,
                 "expected_category": expected_category,
                 "expected_tool": expected_tool,
                 "allowed_tools": allowed_tools,
+                "selected_route": selected_route,
+                "selected_sub_route": selected_sub_route,
                 "selected_category": selected_category,
                 "selected_tool": selected_tool,
                 "planning_analysis": planning.get("analysis") or "",
                 "planning_steps": _safe_string_list(planning.get("plan_steps")),
+                "plan_requirement_checks": plan_requirement_checks,
                 "retrieval_top_tools": retrieved_ids[:retrieval_limit],
                 "retrieval_top_categories": [
                     index_by_id[tool_id].category
@@ -1314,6 +1595,9 @@ async def run_tool_api_input_evaluation(
                 "schema_errors": schema_errors,
                 "needs_clarification": needs_clarification,
                 "clarification_question": clarification_question,
+                "passed_route": passed_route,
+                "passed_sub_route": passed_sub_route,
+                "passed_plan": passed_plan,
                 "passed_category": passed_category,
                 "passed_tool": passed_tool,
                 "passed_api_input": passed_api_input,
@@ -1325,6 +1609,8 @@ async def run_tool_api_input_evaluation(
                     "type": "test_completed",
                     "test_id": test_id,
                     "index": idx,
+                    "selected_route": selected_route,
+                    "selected_sub_route": selected_sub_route,
                     "selected_tool": selected_tool,
                     "selected_category": selected_category,
                     "passed": passed,
@@ -1336,13 +1622,18 @@ async def run_tool_api_input_evaluation(
             case_result = {
                 "test_id": test_id,
                 "question": question,
+                "expected_route": expected_route,
+                "expected_sub_route": expected_sub_route,
                 "expected_category": expected_category,
                 "expected_tool": expected_tool,
                 "allowed_tools": allowed_tools,
+                "selected_route": selected_route,
+                "selected_sub_route": selected_sub_route,
                 "selected_category": None,
                 "selected_tool": None,
                 "planning_analysis": f"API input evaluation failed for this case: {exc}",
                 "planning_steps": [],
+                "plan_requirement_checks": [],
                 "retrieval_top_tools": [],
                 "retrieval_top_categories": [],
                 "retrieval_breakdown": [],
@@ -1357,12 +1648,21 @@ async def run_tool_api_input_evaluation(
                 "schema_errors": [str(exc)],
                 "needs_clarification": False,
                 "clarification_question": None,
+                "passed_route": False if expected_route is not None else None,
+                "passed_sub_route": False if expected_sub_route is not None else None,
+                "passed_plan": False if plan_requirements else None,
                 "passed_category": False if expected_category is not None else None,
                 "passed_tool": False if expected_tool is not None else None,
                 "passed_api_input": False,
                 "passed": False,
             }
             results.append(case_result)
+            if expected_route is not None:
+                route_checks.append(False)
+            if expected_sub_route is not None:
+                sub_route_checks.append(False)
+            if plan_requirements:
+                plan_checks.append(False)
             if expected_category is not None:
                 category_checks.append(False)
             if expected_tool is not None:
@@ -1392,6 +1692,21 @@ async def run_tool_api_input_evaluation(
         "total_tests": total_tests,
         "passed_tests": passed_count,
         "success_rate": (passed_count / total_tests) if total_tests else 0.0,
+        "route_accuracy": (
+            sum(1 for check in route_checks if check) / len(route_checks)
+            if route_checks
+            else None
+        ),
+        "sub_route_accuracy": (
+            sum(1 for check in sub_route_checks if check) / len(sub_route_checks)
+            if sub_route_checks
+            else None
+        ),
+        "plan_accuracy": (
+            sum(1 for check in plan_checks if check) / len(plan_checks)
+            if plan_checks
+            else None
+        ),
         "category_accuracy": (
             sum(1 for check in category_checks if check) / len(category_checks)
             if category_checks
@@ -1439,11 +1754,33 @@ def _build_fallback_prompt_suggestion(
             if cleaned:
                 missing_counter[cleaned] += 1
     common_missing = [item for item, _count in missing_counter.most_common(8)]
-    lines = [
-        "- Validate argument completeness before emitting a tool call.",
-        "- If required arguments are missing or ambiguous, ask a concise clarification question first.",
-        "- Use exact argument names from the target tool schema and avoid unsupported fields.",
-    ]
+    if prompt_key.startswith("router."):
+        lines = [
+            "- Return exactly one valid route label and avoid extra text.",
+            "- Prioritize semantic intent over keyword overlap for borderline queries.",
+            "- If the query clearly asks for official statistics, prefer statistics route.",
+            "- If a query asks for execution/tool actions, prefer action route over knowledge.",
+        ]
+        if prompt_key == "router.action":
+            lines = [
+                "- Return exactly one of: web, media, travel, data.",
+                "- Use travel for weather, departures, routes, and commute queries.",
+                "- Use web for URL/link/scrape and page-content requests.",
+                "- Use data for jobs/Libris/dataset lookups.",
+            ]
+        elif prompt_key == "router.knowledge":
+            lines = [
+                "- Return exactly one of: docs, internal, external.",
+                "- Use docs for SurfSense product/how-to questions.",
+                "- Use internal for user data/notes/calendar/search space content.",
+                "- Use external only for explicit realtime/public-web requests.",
+            ]
+    else:
+        lines = [
+            "- Validate argument completeness before emitting a tool call.",
+            "- If required arguments are missing or ambiguous, ask a concise clarification question first.",
+            "- Use exact argument names from the target tool schema and avoid unsupported fields.",
+        ]
     if common_missing:
         lines.insert(
             0,
@@ -1458,8 +1795,8 @@ def _build_fallback_prompt_suggestion(
     if appendix.strip() not in current_prompt:
         proposed_prompt = f"{current_prompt.rstrip()}{appendix}"
     rationale = (
-        f"Fallback prompt improvement from {len(failures)} failed API input case(s): "
-        "adds stricter argument extraction and clarification behavior."
+        f"Fallback prompt improvement from {len(failures)} failed eval case(s): "
+        "adds stricter routing/argument selection behavior."
     )
     return proposed_prompt, rationale
 
@@ -1480,8 +1817,8 @@ async def _build_llm_prompt_suggestion(
     except Exception:
         model = llm
     prompt = (
-        "You optimize one agent prompt to improve API input quality for dry-run evaluation.\n"
-        "Keep the current style and intent, but add precise instructions to improve argument extraction.\n"
+        "You optimize one routing/agent prompt to improve dry-run evaluation quality.\n"
+        "Keep the current style and intent, but add precise instructions to improve route decisions, planning, and argument extraction.\n"
         "Return strict JSON only:\n"
         "{\n"
         '  "proposed_prompt": "full revised prompt text",\n'
@@ -1523,23 +1860,17 @@ async def suggest_agent_prompt_improvements_for_api_input(
     llm=None,
     max_suggestions: int = 8,
 ) -> list[dict[str, Any]]:
-    buckets: dict[str, dict[str, Any]] = {}
-    for result in evaluation_results:
-        passed = result.get("passed")
-        passed_api_input = result.get("passed_api_input")
-        if passed is True and (passed_api_input is True or passed_api_input is None):
-            continue
-        expected_tool = str(result.get("expected_tool") or "").strip() or None
-        selected_tool = str(result.get("selected_tool") or "").strip() or None
-        selected_category = str(result.get("selected_category") or "").strip() or None
-        expected_category = str(result.get("expected_category") or "").strip() or None
-        tool_id = expected_tool or selected_tool
-        category = expected_category or selected_category
-        prompt_key = _prompt_key_for_tool(tool_id, category)
-        if prompt_key not in current_prompts:
-            continue
+    def _append_failure(
+        bucket_key: str,
+        *,
+        result: dict[str, Any],
+        expected_tool: str | None,
+        selected_tool: str | None,
+    ) -> None:
+        if bucket_key not in current_prompts:
+            return
         bucket = buckets.setdefault(
-            prompt_key,
+            bucket_key,
             {
                 "failed_test_ids": [],
                 "related_tools": set(),
@@ -1556,15 +1887,76 @@ async def suggest_agent_prompt_improvements_for_api_input(
             {
                 "test_id": test_id,
                 "question": str(result.get("question") or "").strip(),
+                "expected_route": result.get("expected_route"),
+                "selected_route": result.get("selected_route"),
+                "expected_sub_route": result.get("expected_sub_route"),
+                "selected_sub_route": result.get("selected_sub_route"),
                 "expected_tool": expected_tool,
                 "selected_tool": selected_tool,
                 "missing_required_fields": list(result.get("missing_required_fields") or []),
                 "unexpected_fields": list(result.get("unexpected_fields") or []),
                 "schema_errors": list(result.get("schema_errors") or []),
+                "plan_requirement_checks": list(result.get("plan_requirement_checks") or []),
                 "needs_clarification": bool(result.get("needs_clarification")),
                 "clarification_question": result.get("clarification_question"),
             }
         )
+
+    buckets: dict[str, dict[str, Any]] = {}
+    for result in evaluation_results:
+        passed = bool(result.get("passed"))
+        passed_api_input = result.get("passed_api_input")
+        passed_route = result.get("passed_route")
+        passed_sub_route = result.get("passed_sub_route")
+        passed_plan = result.get("passed_plan")
+        has_api_input = "passed_api_input" in result
+        failed_route = passed_route is False
+        failed_sub_route = passed_sub_route is False
+        failed_plan = passed_plan is False
+        failed_api_input = passed_api_input is False if has_api_input else False
+        if not (failed_route or failed_sub_route or failed_plan or failed_api_input or not passed):
+            continue
+        expected_tool = str(result.get("expected_tool") or "").strip() or None
+        selected_tool = str(result.get("selected_tool") or "").strip() or None
+        selected_category = str(result.get("selected_category") or "").strip() or None
+        expected_category = str(result.get("expected_category") or "").strip() or None
+        expected_route = _normalize_route_value(result.get("expected_route"))
+        selected_route = _normalize_route_value(result.get("selected_route"))
+
+        if failed_route:
+            _append_failure(
+                "router.top_level",
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
+        if failed_sub_route:
+            sub_route_prompt_key = _prompt_key_for_sub_route(expected_route or selected_route)
+            if sub_route_prompt_key:
+                _append_failure(
+                    sub_route_prompt_key,
+                    result=result,
+                    expected_tool=expected_tool,
+                    selected_tool=selected_tool,
+                )
+
+        tool_id = expected_tool or selected_tool
+        category = expected_category or selected_category
+        if (
+            failed_plan
+            or failed_api_input
+            or expected_tool
+            or selected_tool
+            or expected_category
+            or selected_category
+        ):
+            prompt_key = _prompt_key_for_tool(tool_id, category)
+            _append_failure(
+                prompt_key,
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
 
     suggestions: list[dict[str, Any]] = []
     for prompt_key, bucket in buckets.items():

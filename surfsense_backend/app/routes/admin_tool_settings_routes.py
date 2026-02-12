@@ -228,6 +228,28 @@ def _provider_for_tool_id(tool_id: str) -> str:
     return "other"
 
 
+def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[str, str | None]:
+    normalized_tool = str(tool_id or "").strip().lower()
+    normalized_category = str(category or "").strip().lower()
+    if normalized_tool.startswith("scb_") or normalized_category in {"statistics", "scb_statistics"}:
+        return "statistics", None
+    if normalized_tool in {"trafiklab_route", "smhi_weather"}:
+        return "action", "travel"
+    if normalized_tool.startswith("trafikverket_"):
+        return "action", "travel"
+    if normalized_tool in {"scrape_webpage", "link_preview", "search_web", "search_tavily"}:
+        return "action", "web"
+    if normalized_tool in {"generate_podcast", "display_image"}:
+        return "action", "media"
+    if normalized_tool in {"libris_search", "jobad_links_search"}:
+        return "action", "data"
+    if normalized_tool.startswith("bolagsverket_") or normalized_tool.startswith("riksdag_"):
+        return "action", "data"
+    if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
+        return "knowledge", "internal"
+    return "action", "data"
+
+
 def _is_eval_candidate_entry(entry: Any) -> bool:
     tool_id = str(getattr(entry, "tool_id", "") or "")
     if not tool_id or tool_id in _EVAL_INTERNAL_TOOL_IDS:
@@ -288,6 +310,26 @@ def _normalize_generated_tests(
             or source.get("expected_category")
             or getattr(entry, "category", "")
         ).strip()
+        inferred_route, inferred_sub_route = _infer_route_for_tool(
+            expected_tool,
+            expected_category or str(getattr(entry, "category", "")).strip(),
+        )
+        expected_route = str(
+            expected.get("route") or source.get("expected_route") or inferred_route
+        ).strip()
+        expected_sub_route = (
+            str(expected.get("sub_route") or source.get("expected_sub_route") or inferred_sub_route or "").strip()
+            or None
+        )
+        source_plan_requirements = expected.get("plan_requirements") or source.get(
+            "plan_requirements"
+        )
+        if isinstance(source_plan_requirements, list):
+            plan_requirements = [
+                str(item).strip() for item in source_plan_requirements if str(item).strip()
+            ]
+        else:
+            plan_requirements = [f"route:{expected_route}", f"tool:{expected_tool}"]
         question = str(source.get("question") or "").strip()
         if not question:
             examples = list(getattr(entry, "example_queries", []) or [])
@@ -304,6 +346,9 @@ def _normalize_generated_tests(
                 "expected": {
                     "tool": expected_tool,
                     "category": expected_category or getattr(entry, "category", None),
+                    "route": expected_route,
+                    "sub_route": expected_sub_route,
+                    "plan_requirements": plan_requirements,
                 },
                 "allowed_tools": [expected_tool] if include_allowed_tools else [],
             }
@@ -331,6 +376,10 @@ def _build_fallback_generated_tests(
             else:
                 question = f"När ska verktyget {tool_name} användas?"
         tool_id = str(getattr(entry, "tool_id", "")).strip()
+        route, sub_route = _infer_route_for_tool(
+            tool_id,
+            str(getattr(entry, "category", "")).strip(),
+        )
         tests.append(
             {
                 "id": f"case-{idx + 1}",
@@ -338,6 +387,9 @@ def _build_fallback_generated_tests(
                 "expected": {
                     "tool": tool_id,
                     "category": str(getattr(entry, "category", "")).strip(),
+                    "route": route,
+                    "sub_route": sub_route,
+                    "plan_requirements": [f"route:{route}", f"tool:{tool_id}"],
                 },
                 "allowed_tools": [tool_id] if include_allowed_tools else [],
             }
@@ -479,10 +531,20 @@ def _enrich_api_input_generated_tests(
             )
             if has_value:
                 field_values[field_name] = value
+        route, sub_route = _infer_route_for_tool(
+            expected_tool,
+            str(getattr(entry, "category", "") if entry else ""),
+        )
+        plan_requirements: list[str] = [f"route:{route}", f"tool:{expected_tool}"]
+        for field_name in required_fields[:2]:
+            plan_requirements.append(f"field:{field_name}")
         expected_payload = {
             "tool": expected_tool or expected.get("tool"),
             "category": expected.get("category")
             or (str(getattr(entry, "category", "")).strip() if entry else None),
+            "route": route,
+            "sub_route": sub_route,
+            "plan_requirements": plan_requirements,
             "required_fields": required_fields,
             "field_values": field_values,
             "allow_clarification": False,
@@ -584,7 +646,13 @@ async def _generate_eval_tests(
         "    {\n"
         '      "id": "case-1",\n'
         '      "question": "string",\n'
-        '      "expected": {"tool": "tool_id", "category": "category"},\n'
+        '      "expected": {\n'
+        '        "tool": "tool_id",\n'
+        '        "category": "category",\n'
+        '        "route": "action|knowledge|statistics|smalltalk|compare",\n'
+        '        "sub_route": "web|media|travel|data|docs|internal|external|null",\n'
+        '        "plan_requirements": ["route:action", "tool:tool_id"]\n'
+        "      },\n"
         '      "allowed_tools": ["tool_id"]\n'
         "    }\n"
         "  ]\n"
@@ -1108,6 +1176,14 @@ async def _execute_tool_evaluation(
         else persisted_tuning
     )
     llm = await get_agent_llm(session, resolved_search_space_id)
+    prompt_overrides = await get_global_prompt_overrides(session)
+    current_prompts: dict[str, str] = {}
+    for prompt_key, definition in PROMPT_DEFINITION_MAP.items():
+        current_prompts[prompt_key] = resolve_prompt(
+            prompt_overrides,
+            prompt_key,
+            definition.default_prompt,
+        )
     evaluation = await run_tool_evaluation(
         tests=[
             {
@@ -1116,6 +1192,11 @@ async def _execute_tool_evaluation(
                 "expected": {
                     "tool": test.expected.tool if test.expected else None,
                     "category": test.expected.category if test.expected else None,
+                    "route": test.expected.route if test.expected else None,
+                    "sub_route": test.expected.sub_route if test.expected else None,
+                    "plan_requirements": (
+                        list(test.expected.plan_requirements) if test.expected else []
+                    ),
                 },
                 "allowed_tools": list(test.allowed_tools),
             }
@@ -1125,6 +1206,7 @@ async def _execute_tool_evaluation(
         llm=llm,
         retrieval_limit=payload.retrieval_limit,
         retrieval_tuning=effective_tuning,
+        prompt_overrides=current_prompts,
         progress_callback=progress_callback,
     )
     suggestions = await generate_tool_metadata_suggestions(
@@ -1137,12 +1219,18 @@ async def _execute_tool_evaluation(
         current_tuning=effective_tuning,
         llm=llm,
     )
+    prompt_suggestions = await suggest_agent_prompt_improvements_for_api_input(
+        evaluation_results=evaluation["results"],
+        current_prompts=current_prompts,
+        llm=llm,
+    )
     return {
         "eval_name": payload.eval_name,
         "target_success_rate": payload.target_success_rate,
         "metrics": evaluation["metrics"],
         "results": evaluation["results"],
         "suggestions": suggestions,
+        "prompt_suggestions": prompt_suggestions,
         "retrieval_tuning": effective_tuning,
         "retrieval_tuning_suggestion": retrieval_tuning_suggestion,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),
@@ -1166,6 +1254,11 @@ async def _execute_api_input_evaluation(
                 "expected": {
                     "tool": test.expected.tool if test.expected else None,
                     "category": test.expected.category if test.expected else None,
+                    "route": test.expected.route if test.expected else None,
+                    "sub_route": test.expected.sub_route if test.expected else None,
+                    "plan_requirements": (
+                        list(test.expected.plan_requirements) if test.expected else []
+                    ),
                     "required_fields": (
                         list(test.expected.required_fields) if test.expected else []
                     ),
@@ -1197,6 +1290,14 @@ async def _execute_api_input_evaluation(
         else persisted_tuning
     )
     llm = await get_agent_llm(session, resolved_search_space_id)
+    overrides = await get_global_prompt_overrides(session)
+    current_prompts: dict[str, str] = {}
+    for prompt_key, definition in PROMPT_DEFINITION_MAP.items():
+        current_prompts[prompt_key] = resolve_prompt(
+            overrides,
+            prompt_key,
+            definition.default_prompt,
+        )
     evaluation = await run_tool_api_input_evaluation(
         tests=_serialize_api_input_tests(payload.tests),
         tool_index=tool_index,
@@ -1204,6 +1305,7 @@ async def _execute_api_input_evaluation(
         llm=llm,
         retrieval_limit=payload.retrieval_limit,
         retrieval_tuning=effective_tuning,
+        prompt_overrides=current_prompts,
         progress_callback=progress_callback,
     )
     holdout_evaluation: dict[str, Any] | None = None
@@ -1215,15 +1317,8 @@ async def _execute_api_input_evaluation(
             llm=llm,
             retrieval_limit=payload.retrieval_limit,
             retrieval_tuning=effective_tuning,
+            prompt_overrides=current_prompts,
             progress_callback=None,
-        )
-    overrides = await get_global_prompt_overrides(session)
-    current_prompts: dict[str, str] = {}
-    for prompt_key, definition in PROMPT_DEFINITION_MAP.items():
-        current_prompts[prompt_key] = resolve_prompt(
-            overrides,
-            prompt_key,
-            definition.default_prompt,
         )
     prompt_suggestions = await suggest_agent_prompt_improvements_for_api_input(
         evaluation_results=evaluation["results"],
@@ -1654,6 +1749,8 @@ async def _run_eval_job_background(
                             case["error"] = None
                         elif event_type == "test_completed":
                             case["status"] = "completed"
+                            case["selected_route"] = event.get("selected_route")
+                            case["selected_sub_route"] = event.get("selected_sub_route")
                             case["selected_tool"] = event.get("selected_tool")
                             case["selected_category"] = event.get("selected_category")
                             case["passed"] = event.get("passed")
@@ -1851,6 +1948,8 @@ async def _run_api_input_eval_job_background(
                             case["error"] = None
                         elif event_type == "test_completed":
                             case["status"] = "completed"
+                            case["selected_route"] = event.get("selected_route")
+                            case["selected_sub_route"] = event.get("selected_sub_route")
                             case["selected_tool"] = event.get("selected_tool")
                             case["selected_category"] = event.get("selected_category")
                             case["passed"] = event.get("passed")

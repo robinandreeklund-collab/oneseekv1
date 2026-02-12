@@ -326,3 +326,92 @@ def test_suggest_agent_prompt_improvements_for_api_input_fallback():
     assert len(suggestions) == 1
     assert suggestions[0]["prompt_key"] == "agent.trafik.system"
     assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]
+
+
+def test_run_tool_evaluation_includes_route_and_plan_metrics(monkeypatch):
+    tool_index = [
+        _entry(
+            "tool_weather",
+            name="Weather Tool",
+            description="Fetch weather by city/date",
+            category="weather",
+            keywords=["weather"],
+        ),
+    ]
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service.smart_retrieve_tools_with_breakdown",
+        lambda *_args, **_kwargs: (["tool_weather"], []),
+    )
+
+    async def _fake_dispatch_route(*_args, **_kwargs):
+        return "action", "travel"
+
+    async def _fake_plan_tool_choice(*_args, **_kwargs):
+        return {
+            "selected_tool_id": "tool_weather",
+            "selected_category": "weather",
+            "analysis": "Plan starts with route:action and selects tool_weather.",
+            "plan_steps": ["Use tool_weather for weather lookup."],
+        }
+
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._dispatch_route_from_start",
+        _fake_dispatch_route,
+    )
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._plan_tool_choice",
+        _fake_plan_tool_choice,
+    )
+
+    output = asyncio.run(
+        run_tool_evaluation(
+            tests=[
+                {
+                    "id": "r1",
+                    "question": "Vad blir vädret i Malmö i morgon?",
+                    "expected": {
+                        "tool": "tool_weather",
+                        "category": "weather",
+                        "route": "action",
+                        "sub_route": "travel",
+                        "plan_requirements": ["route:action", "tool:tool_weather"],
+                    },
+                    "allowed_tools": ["tool_weather"],
+                }
+            ],
+            tool_index=tool_index,
+            llm=None,
+            retrieval_limit=5,
+        )
+    )
+
+    assert output["metrics"]["route_accuracy"] == 1.0
+    assert output["metrics"]["sub_route_accuracy"] == 1.0
+    assert output["metrics"]["plan_accuracy"] == 1.0
+    assert output["results"][0]["passed_route"] is True
+    assert output["results"][0]["passed_sub_route"] is True
+    assert output["results"][0]["passed_plan"] is True
+
+
+def test_suggest_agent_prompt_improvements_includes_router_prompt():
+    suggestions = asyncio.run(
+        suggest_agent_prompt_improvements_for_api_input(
+            evaluation_results=[
+                {
+                    "test_id": "case-route-1",
+                    "question": "Hur många invånare har Malmö?",
+                    "expected_route": "statistics",
+                    "selected_route": "knowledge",
+                    "passed_route": False,
+                    "passed": False,
+                }
+            ],
+            current_prompts={
+                "router.top_level": "Route incoming user messages.",
+            },
+            llm=None,
+        )
+    )
+    assert len(suggestions) == 1
+    assert suggestions[0]["prompt_key"] == "router.top_level"
+    assert "API INPUT EVAL IMPROVEMENT" in suggestions[0]["proposed_prompt"]
