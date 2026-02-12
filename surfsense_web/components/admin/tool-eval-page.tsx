@@ -10,6 +10,9 @@ import type {
 	EvalRunResponse,
 	CategoryResult,
 	ScoringDetail,
+	LiveQueryRequest,
+	LiveQueryResponse,
+	LiveTraceStep,
 } from "@/contracts/types/admin-tool-eval.types";
 
 import { Button } from "@/components/ui/button";
@@ -55,11 +58,14 @@ import {
 } from "lucide-react";
 
 export function ToolEvalPage() {
+	// Single query state
 	const [singleQuery, setSingleQuery] = useState("");
 	const [expectedTools, setExpectedTools] = useState("");
+	const [evalMode, setEvalMode] = useState<"isolated" | "live">("isolated");
 	const [singleResult, setSingleResult] = useState<SingleQueryResponse | null>(
 		null
 	);
+	const [liveResult, setLiveResult] = useState<LiveQueryResponse | null>(null);
 
 	const [selectedFile, setSelectedFile] = useState<File | null>(null);
 	const [evalReport, setEvalReport] = useState<EvalRunResponse | null>(null);
@@ -72,6 +78,7 @@ export function ToolEvalPage() {
 			adminToolEvalApiService.testSingleQuery(request),
 		onSuccess: (data) => {
 			setSingleResult(data);
+			setLiveResult(null); // Clear live result
 			toast.success("Query testad framgångsrikt");
 		},
 		onError: (error: any) => {
@@ -79,6 +86,22 @@ export function ToolEvalPage() {
 			const errorMessage = error?.message || error?.detail || String(error);
 			console.error("Test single query error:", error);
 			toast.error(`Fel vid testning: ${errorMessage}`);
+		},
+	});
+
+	// Mutation for testing single query in LIVE mode (full pipeline)
+	const testLiveMutation = useMutation({
+		mutationFn: (request: LiveQueryRequest) =>
+			adminToolEvalApiService.testSingleQueryLive(request),
+		onSuccess: (data) => {
+			setLiveResult(data);
+			setSingleResult(null); // Clear isolated result
+			toast.success("Live pipeline test framgångsrik");
+		},
+		onError: (error: any) => {
+			const errorMessage = error?.message || error?.detail || String(error);
+			console.error("Test live query error:", error);
+			toast.error(`Fel vid live test: ${errorMessage}`);
 		},
 	});
 
@@ -115,15 +138,26 @@ export function ToolEvalPage() {
 			return;
 		}
 
-		const request: SingleQueryRequest = {
-			query: singleQuery,
-			expected_tools: expectedTools
-				? expectedTools.split(",").map((t) => t.trim())
-				: null,
-			limit: 2,
-		};
-
-		testSingleMutation.mutate(request);
+		if (evalMode === "isolated") {
+			// Isolated mode - test components separately
+			const request: SingleQueryRequest = {
+				query: singleQuery,
+				expected_tools: expectedTools
+					? expectedTools.split(",").map((t) => t.trim())
+					: null,
+				limit: 2,
+			};
+			testSingleMutation.mutate(request);
+		} else {
+			// Live mode - full pipeline with trace
+			const request: LiveQueryRequest = {
+				query: singleQuery,
+				expected_tools: expectedTools
+					? expectedTools.split(",").map((t) => t.trim())
+					: null,
+			};
+			testLiveMutation.mutate(request);
+		}
 	};
 
 	const handleRunEval = () => {
@@ -188,6 +222,40 @@ export function ToolEvalPage() {
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4">
+							{/* Mode Toggle */}
+							<div className="space-y-2">
+								<Label>Test Mode</Label>
+								<div className="flex gap-2">
+									<Button
+										variant={evalMode === "isolated" ? "default" : "outline"}
+										onClick={() => {
+											setEvalMode("isolated");
+											setSingleResult(null);
+											setLiveResult(null);
+										}}
+										className="flex-1"
+									>
+										Isolerad (Snabb)
+									</Button>
+									<Button
+										variant={evalMode === "live" ? "default" : "outline"}
+										onClick={() => {
+											setEvalMode("live");
+											setSingleResult(null);
+											setLiveResult(null);
+										}}
+										className="flex-1"
+									>
+										Live Pipeline (Full Flöde)
+									</Button>
+								</div>
+								<p className="text-sm text-muted-foreground">
+									{evalMode === "isolated"
+										? "Testar komponenter isolerat (routing, tool scoring)"
+										: "Kör genom hela supervisor pipeline med full trace (LLM reasoning, agent selection, tool selection)"}
+								</p>
+							</div>
+
 							<div className="space-y-2">
 								<Label htmlFor="single-query">Query</Label>
 								<Input
@@ -217,18 +285,18 @@ export function ToolEvalPage() {
 
 							<Button
 								onClick={handleTestSingle}
-								disabled={testSingleMutation.isPending}
+								disabled={testSingleMutation.isPending || testLiveMutation.isPending}
 								className="w-full"
 							>
-								{testSingleMutation.isPending ? (
+								{(testSingleMutation.isPending || testLiveMutation.isPending) ? (
 									<>
 										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-										Testar...
+										{evalMode === "live" ? "Kör Live Pipeline..." : "Testar..."}
 									</>
 								) : (
 									<>
 										<Play className="mr-2 h-4 w-4" />
-										Testa
+										{evalMode === "live" ? "Kör Live Pipeline" : "Testa"}
 									</>
 								)}
 							</Button>
@@ -328,6 +396,156 @@ export function ToolEvalPage() {
 											</TableBody>
 										</Table>
 									</div>
+								</div>
+							</CardContent>
+						</Card>
+					)}
+
+					{/* Live Pipeline Results */}
+					{liveResult && (
+						<Card>
+							<CardHeader>
+								<CardTitle>Live Pipeline Results</CardTitle>
+								<CardDescription>
+									Query: {liveResult.query} | {liveResult.total_steps} steg |{" "}
+									{formatMs(liveResult.total_time_ms)}
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-4">
+								{/* Match Type Badge */}
+								{liveResult.match_type && (
+									<div className="flex items-center gap-2">
+										<span className="text-sm font-medium">Match:</span>
+										<Badge
+											variant={
+												liveResult.match_type === "exact"
+													? "default"
+													: liveResult.match_type === "acceptable" ||
+													  liveResult.match_type === "partial"
+													? "secondary"
+													: "destructive"
+											}
+										>
+											{liveResult.match_type}
+										</Badge>
+									</div>
+								)}
+
+								{/* Summary */}
+								<div className="grid grid-cols-2 gap-4">
+									<div>
+										<Label>Verktyg Använda</Label>
+										<div className="flex flex-wrap gap-2 mt-1">
+											{liveResult.tools_used.map((tool) => (
+												<Badge key={tool} variant="outline">
+													{tool}
+												</Badge>
+											))}
+											{liveResult.tools_used.length === 0 && (
+												<span className="text-sm text-muted-foreground">
+													Inga verktyg anropades
+												</span>
+											)}
+										</div>
+									</div>
+									<div>
+										<Label>Agenter Använda</Label>
+										<div className="flex flex-wrap gap-2 mt-1">
+											{liveResult.agents_used.map((agent) => (
+												<Badge key={agent} variant="secondary">
+													{agent}
+												</Badge>
+											))}
+											{liveResult.agents_used.length === 0 && (
+												<span className="text-sm text-muted-foreground">
+													Ingen agent data
+												</span>
+											)}
+										</div>
+									</div>
+								</div>
+
+								{/* Final Response */}
+								<div className="space-y-2">
+									<Label>Slutligt Svar</Label>
+									<div className="rounded-lg border p-3 bg-muted/50 text-sm whitespace-pre-wrap">
+										{liveResult.final_response}
+									</div>
+								</div>
+
+								{/* Execution Trace */}
+								<div className="space-y-2">
+									<Label>Execution Trace ({liveResult.trace.length} steg)</Label>
+									<Accordion type="single" collapsible className="w-full">
+										{liveResult.trace.map((step, idx) => (
+											<AccordionItem key={idx} value={`step-${idx}`}>
+												<AccordionTrigger className="hover:no-underline">
+													<div className="flex items-center gap-2 text-left">
+														<Badge variant="outline" className="text-xs">
+															{step.step_number}
+														</Badge>
+														<span className="text-sm font-medium">
+															{step.step_type === "model_call"
+																? "🤖 Model"
+																: step.step_type === "tool_call"
+																? "🔧 Tool"
+																: "📋 " + step.step_type}
+														</span>
+														{step.tool_name && (
+															<Badge variant="secondary" className="text-xs">
+																{step.tool_name}
+															</Badge>
+														)}
+														<span className="text-xs text-muted-foreground ml-auto">
+															{(step.timestamp * 1000).toFixed(0)}ms
+														</span>
+													</div>
+												</AccordionTrigger>
+												<AccordionContent>
+													<div className="space-y-2 pt-2">
+														<div>
+															<span className="text-xs font-medium text-muted-foreground">
+																Content:
+															</span>
+															<p className="text-sm mt-1 p-2 bg-muted/30 rounded">
+																{step.content}
+															</p>
+														</div>
+														{step.tool_args && (
+															<div>
+																<span className="text-xs font-medium text-muted-foreground">
+																	Arguments:
+																</span>
+																<pre className="text-xs mt-1 p-2 bg-muted/30 rounded overflow-auto">
+																	{JSON.stringify(step.tool_args, null, 2)}
+																</pre>
+															</div>
+														)}
+														{step.tool_result && (
+															<div>
+																<span className="text-xs font-medium text-muted-foreground">
+																	Result:
+																</span>
+																<p className="text-sm mt-1 p-2 bg-muted/30 rounded">
+																	{step.tool_result}
+																</p>
+															</div>
+														)}
+														{step.model_reasoning && (
+															<div>
+																<span className="text-xs font-medium text-muted-foreground">
+																	Reasoning:
+																</span>
+																<p className="text-sm mt-1 p-2 bg-muted/30 rounded italic">
+																	{step.model_reasoning}
+																</p>
+															</div>
+														)}
+													</div>
+												</AccordionContent>
+											</AccordionItem>
+										))}
+									</Accordion>
 								</div>
 							</CardContent>
 						</Card>
