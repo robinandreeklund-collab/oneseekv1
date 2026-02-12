@@ -38,20 +38,14 @@ class AdminToolEvalApiService {
 		const formData = new FormData();
 		formData.append("file", file);
 
-		// Use fetch directly for FormData (baseApiService doesn't handle FormData well)
-		const response = await fetch("/api/v1/admin/tool-eval/run", {
-			method: "POST",
-			body: formData,
-			credentials: "include",
-		});
-
-		if (!response.ok) {
-			const error = await response.text();
-			throw new Error(error || "Failed to run evaluation suite");
-		}
-
-		const data = await response.json();
-		return evalRunResponseSchema.parse(data);
+		// Use baseApiService.postFormData for proper backend proxying
+		return baseApiService.postFormData(
+			"/api/v1/admin/tool-eval/run",
+			evalRunResponseSchema,
+			{
+				body: formData,
+			}
+		);
 	}
 
 	/**
