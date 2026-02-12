@@ -8,8 +8,16 @@ import { toast } from "sonner";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import type { AgentPromptItem } from "@/contracts/types/agent-prompts.types";
 import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
+import { adminCacheApiService } from "@/lib/apis/admin-cache-api.service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
 	Select,
@@ -18,6 +26,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -127,6 +136,8 @@ export function AdminPromptsPage() {
 	const { data: currentUser } = useAtomValue(currentUserAtom);
 	const [overrides, setOverrides] = useState<Record<string, string>>({});
 	const [isSaving, setIsSaving] = useState(false);
+	const [isUpdatingCache, setIsUpdatingCache] = useState(false);
+	const [isClearingCache, setIsClearingCache] = useState(false);
 	const [viewMode, setViewMode] = useState<PromptViewMode>("all");
 	const [selectedAgent, setSelectedAgent] = useState<string>("action");
 	const [searchTerm, setSearchTerm] = useState("");
@@ -142,6 +153,16 @@ export function AdminPromptsPage() {
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-prompts"],
 		queryFn: () => adminPromptsApiService.getAgentPrompts(),
+		enabled: !!currentUser,
+	});
+
+	const {
+		data: cacheState,
+		isLoading: cacheLoading,
+		refetch: refetchCacheState,
+	} = useQuery({
+		queryKey: ["admin-cache"],
+		queryFn: () => adminCacheApiService.getCacheState(),
 		enabled: !!currentUser,
 	});
 
@@ -495,6 +516,49 @@ export function AdminPromptsPage() {
 		setOverrides(next);
 	};
 
+	const cacheDisabled = cacheState?.disabled ?? false;
+
+	const handleCacheToggle = async (disabled: boolean) => {
+		setIsUpdatingCache(true);
+		try {
+			await adminCacheApiService.updateCacheState({ disabled });
+			toast.success(disabled ? "Cache inaktiverad" : "Cache aktiverad");
+			await refetchCacheState();
+		} catch (err) {
+			toast.error("Kunde inte uppdatera cache‑status");
+		} finally {
+			setIsUpdatingCache(false);
+		}
+	};
+
+	const handleClearCache = async () => {
+		setIsClearingCache(true);
+		try {
+			await adminCacheApiService.clearCaches();
+			toast.success("Cache tömd");
+		} catch (err) {
+			toast.error("Kunde inte tömma cache");
+		} finally {
+			setIsClearingCache(false);
+		}
+	};
+
+	const handleDevMode = async () => {
+		setIsUpdatingCache(true);
+		setIsClearingCache(true);
+		try {
+			await adminCacheApiService.updateCacheState({ disabled: true });
+			await adminCacheApiService.clearCaches();
+			toast.success("Dev‑läge aktivt: cache avstängd och tömd");
+			await refetchCacheState();
+		} catch (err) {
+			toast.error("Kunde inte aktivera dev‑läge");
+		} finally {
+			setIsUpdatingCache(false);
+			setIsClearingCache(false);
+		}
+	};
+
 	if (!currentUser && !isLoading) {
 		return (
 			<div className="mx-auto w-full max-w-3xl px-4 py-10">
@@ -514,6 +578,44 @@ export function AdminPromptsPage() {
 					Redigera globala agent‑promtar. Tomt fält betyder att standardprompten används.
 				</p>
 			</div>
+
+			<Card className="mt-6">
+				<CardHeader>
+					<CardTitle>Cache</CardTitle>
+					<CardDescription>
+						Slå av cache för testning eller töm cached data vid behov.
+					</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<div className="flex flex-wrap items-center gap-3">
+						<div className="flex items-center gap-2">
+							<Switch
+								checked={cacheDisabled}
+								onCheckedChange={(checked) => handleCacheToggle(checked)}
+								disabled={isUpdatingCache || cacheLoading}
+							/>
+							<span className="text-sm">Inaktivera cache (dev)</span>
+						</div>
+						<Button
+							variant="outline"
+							onClick={handleClearCache}
+							disabled={isClearingCache}
+						>
+							{isClearingCache ? "Tömmer cache..." : "Töm cache"}
+						</Button>
+						<Button
+							variant="secondary"
+							onClick={handleDevMode}
+							disabled={isUpdatingCache || isClearingCache}
+						>
+							Aktivera dev‑läge
+						</Button>
+					</div>
+					<p className="mt-2 text-xs text-muted-foreground">
+						Cache‑läge: {cacheDisabled ? "Avstängd" : "Aktiv"}
+					</p>
+				</CardContent>
+			</Card>
 
 			<div className="mt-8 flex items-center justify-between gap-4">
 				<h2 className="text-lg font-semibold">Agent Promtar</h2>

@@ -20,6 +20,7 @@ from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
 from app.agents.new_chat.system_prompt import append_datetime_context
+from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
     EXTERNAL_MODEL_SPECS,
@@ -28,6 +29,7 @@ from app.agents.new_chat.tools.external_models import (
 from app.agents.new_chat.tools.reflect_on_progress import create_reflect_on_progress_tool
 from app.agents.new_chat.tools.write_todos import create_write_todos_tool
 from app.db import AgentComboCache
+from app.services.cache_control import is_cache_disabled
 from app.services.reranker_service import RerankerService
 
 
@@ -65,6 +67,32 @@ _EXTERNAL_MODEL_TOOL_NAMES = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
 _AGENT_EMBED_CACHE: dict[str, list[float]] = {}
 AGENT_RERANK_CANDIDATES = 6
 AGENT_EMBEDDING_WEIGHT = 4.0
+_TRAFFIC_INTENT_RE = re.compile(
+    r"\b("
+    r"trafikverket|trafikinfo|trafik|"
+    r"olycka|storing|storning|störning|"
+    r"koer|köer|ko|kö|"
+    r"vagarbete|vägarbete|avstangning|avstängning|omledning|framkomlighet|"
+    r"tag|tåg|jarnvag|järnväg|"
+    r"kamera|kameror|"
+    r"vaglag|väglag|hastighet|"
+    r"e\d+|rv\s?\d+|riksvag|riksväg|vag\s?\d+|väg\s?\d+"
+    r")\b",
+    re.IGNORECASE,
+)
+_MAP_INTENT_RE = re.compile(
+    r"\b(karta|kartbild|kartor|map|marker|markor|pin|"
+    r"rutt|route|vagbeskrivning|vägbeskrivning)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_trafik_intent(text: str) -> bool:
+    return bool(text and _TRAFFIC_INTENT_RE.search(text))
+
+
+def _has_map_intent(text: str) -> bool:
+    return bool(text and _MAP_INTENT_RE.search(text))
 
 
 @dataclass(frozen=True)
@@ -129,9 +157,10 @@ def _build_agent_rerank_text(definition: AgentDefinition) -> str:
 
 
 def _get_agent_embedding(definition: AgentDefinition) -> list[float] | None:
-    cached = _AGENT_EMBED_CACHE.get(definition.name)
-    if cached is not None:
-        return cached
+    if not is_cache_disabled():
+        cached = _AGENT_EMBED_CACHE.get(definition.name)
+        if cached is not None:
+            return cached
     text = _build_agent_rerank_text(definition)
     if not text:
         return None
@@ -144,7 +173,8 @@ def _get_agent_embedding(definition: AgentDefinition) -> list[float] | None:
     normalized = _normalize_vector(embedding)
     if normalized is None:
         return None
-    _AGENT_EMBED_CACHE[definition.name] = normalized
+    if not is_cache_disabled():
+        _AGENT_EMBED_CACHE[definition.name] = normalized
     return normalized
 
 
@@ -259,6 +289,8 @@ def _build_cache_key(
 
 
 def _get_cached_combo(cache_key: str) -> list[str] | None:
+    if is_cache_disabled():
+        return None
     entry = _AGENT_COMBO_CACHE.get(cache_key)
     if not entry:
         return None
@@ -270,12 +302,21 @@ def _get_cached_combo(cache_key: str) -> list[str] | None:
 
 
 def _set_cached_combo(cache_key: str, agents: list[str]) -> None:
+    if is_cache_disabled():
+        return
     _AGENT_COMBO_CACHE[cache_key] = (datetime.now(UTC) + _AGENT_CACHE_TTL, agents)
+
+
+def clear_agent_combo_cache() -> None:
+    _AGENT_COMBO_CACHE.clear()
+    _AGENT_EMBED_CACHE.clear()
 
 
 async def _fetch_cached_combo_db(
     session: AsyncSession | None, cache_key: str
 ) -> list[str] | None:
+    if is_cache_disabled():
+        return None
     if session is None:
         return None
     result = await session.execute(
@@ -301,6 +342,8 @@ async def _store_cached_combo_db(
     recent_agents: list[str],
     agents: list[str],
 ) -> None:
+    if is_cache_disabled():
+        return
     if session is None:
         return
     result = await session.execute(
@@ -787,6 +830,7 @@ async def create_supervisor_agent(
     search_space_id = dependencies.get("search_space_id")
     user_id = dependencies.get("user_id")
     thread_id = dependencies.get("thread_id")
+    trafik_tool_ids = [definition.tool_id for definition in TRAFIKVERKET_TOOL_DEFINITIONS]
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
     def _build_compare_external_tool(spec):
@@ -858,6 +902,9 @@ async def create_supervisor_agent(
             if context_parts:
                 context_query = f"{query} {' '.join(context_parts)}"
 
+        has_trafik_intent = _has_trafik_intent(context_query)
+        has_map_intent = _has_map_intent(context_query)
+
         cache_key, cache_pattern = _build_cache_key(
             query, route_hint, recent_agents
         )
@@ -866,6 +913,8 @@ async def create_supervisor_agent(
             cached_agents = await _fetch_cached_combo_db(db_session, cache_key)
             if cached_agents:
                 _set_cached_combo(cache_key, cached_agents)
+        if cached_agents and has_trafik_intent and "trafik" not in cached_agents:
+            cached_agents = None
 
         if cached_agents:
             selected = [
@@ -882,12 +931,17 @@ async def create_supervisor_agent(
             )
             if route_hint:
                 preferred = {
-                    "action": ["kartor", "action", "media"],
+                    "action": ["action", "media"],
                     "knowledge": ["knowledge", "browser"],
                     "statistics": ["statistics"],
                     "compare": ["synthesis", "knowledge", "statistics"],
                     "trafik": ["trafik", "action"],
                 }.get(str(route_hint), [])
+                if str(route_hint) == "action":
+                    if has_map_intent and "kartor" not in preferred:
+                        preferred.insert(0, "kartor")
+                    if has_trafik_intent and "trafik" not in preferred:
+                        preferred.insert(0, "trafik")
                 if preferred:
                     preferred_defs = [
                         agent
@@ -897,6 +951,12 @@ async def create_supervisor_agent(
                     for agent in reversed(preferred_defs):
                         if agent not in selected:
                             selected.insert(0, agent)
+                    selected = selected[:limit]
+
+            if has_trafik_intent:
+                trafik_agent = agent_by_name.get("trafik")
+                if trafik_agent and trafik_agent not in selected:
+                    selected.insert(0, trafik_agent)
                     selected = selected[:limit]
 
             selected_names = [agent.name for agent in selected]
@@ -942,7 +1002,10 @@ async def create_supervisor_agent(
         if prompt:
             messages.append(SystemMessage(content=prompt))
         messages.append(HumanMessage(content=task))
-        state = {"messages": messages, "selected_tool_ids": []}
+        selected_tool_ids: list[str] = []
+        if name == "trafik":
+            selected_tool_ids = list(trafik_tool_ids)
+        state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
         config = {
             "configurable": {"thread_id": f"{dependencies['thread_id']}:{name}"},
             "recursion_limit": 60,
@@ -953,6 +1016,30 @@ async def create_supervisor_agent(
             messages_out = result.get("messages") or []
             if messages_out:
                 response_text = str(getattr(messages_out[-1], "content", "") or "")
+            if name == "trafik":
+                used_trafik_tool = any(
+                    isinstance(message, ToolMessage)
+                    and getattr(message, "name", "").startswith("trafikverket_")
+                    for message in messages_out
+                )
+                if not used_trafik_tool:
+                    enforced_prompt = (
+                        f"{prompt}\n\n"
+                        "Du måste använda retrieve_tools och sedan minst ett "
+                        "trafikverket_* verktyg innan du svarar."
+                    )
+                    enforced_messages = [SystemMessage(content=enforced_prompt), HumanMessage(content=task)]
+                    retry_state = {
+                        "messages": enforced_messages,
+                        "selected_tool_ids": selected_tool_ids,
+                    }
+                    result = await worker.ainvoke(retry_state, config=config)
+                    if isinstance(result, dict):
+                        messages_out = result.get("messages") or []
+                        if messages_out:
+                            response_text = str(
+                                getattr(messages_out[-1], "content", "") or ""
+                            )
         if not response_text:
             response_text = str(result)
 
@@ -1003,7 +1090,9 @@ async def create_supervisor_agent(
         **kwargs,
     ) -> SupervisorState:
         final_response = state.get("final_agent_response")
-        if final_response:
+        messages_state = state.get("messages") or []
+        last_message = messages_state[-1] if messages_state else None
+        if final_response and isinstance(last_message, ToolMessage):
             return {"messages": [AIMessage(content=final_response)]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
@@ -1015,7 +1104,11 @@ async def create_supervisor_agent(
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
         response = llm_with_tools.invoke(messages)
-        return {"messages": [response]}
+        updates: SupervisorState = {"messages": [response]}
+        if final_response and isinstance(last_message, HumanMessage):
+            updates["final_agent_response"] = None
+            updates["final_agent_name"] = None
+        return updates
 
     async def acall_model(
         state: SupervisorState,
@@ -1025,7 +1118,9 @@ async def create_supervisor_agent(
         **kwargs,
     ) -> SupervisorState:
         final_response = state.get("final_agent_response")
-        if final_response:
+        messages_state = state.get("messages") or []
+        last_message = messages_state[-1] if messages_state else None
+        if final_response and isinstance(last_message, ToolMessage):
             return {"messages": [AIMessage(content=final_response)]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = _format_plan_context(state)
@@ -1037,7 +1132,11 @@ async def create_supervisor_agent(
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
         response = await llm_with_tools.ainvoke(messages)
-        return {"messages": [response]}
+        updates: SupervisorState = {"messages": [response]}
+        if final_response and isinstance(last_message, HumanMessage):
+            updates["final_agent_response"] = None
+            updates["final_agent_name"] = None
+        return updates
 
     async def post_tools(
         state: SupervisorState,
