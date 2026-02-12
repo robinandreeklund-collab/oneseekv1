@@ -11,6 +11,8 @@ from xml.sax.saxutils import escape
 import httpx
 from dotenv import load_dotenv
 
+from app.services.cache_control import is_cache_disabled
+
 TRAFIKVERKET_BASE_URL = "https://api.trafikinfo.trafikverket.se/v2/data.json"
 TRAFIKVERKET_SOURCE = "Trafikverket Open API"
 TRAFIKVERKET_DEFAULT_TIMEOUT = 15.0
@@ -89,8 +91,9 @@ class TrafikverketService:
         payload = {"xml": xml_body}
         cache_key = None
         cache_hit = False
+        use_cache = cache_ttl and not is_cache_disabled()
 
-        if cache_ttl:
+        if use_cache:
             cache_key = _build_cache_key("POST", url, payload)
             client = self._get_redis()
             if client:
@@ -117,7 +120,7 @@ class TrafikverketService:
                     continue
                 response.raise_for_status()
                 data = response.json()
-                if cache_key:
+                if cache_key and use_cache:
                     client = self._get_redis()
                     if client:
                         client.setex(cache_key, cache_ttl, json.dumps(data))
@@ -183,7 +186,7 @@ class TrafikverketService:
         try:
             return await self._request_xml(
                 xml_body=build_query(resolved_schema),
-                cache_ttl=TRAFIKVERKET_CACHE_TTL,
+                cache_ttl=None if is_cache_disabled() else TRAFIKVERKET_CACHE_TTL,
             )
         except RuntimeError as exc:
             error_text = str(exc)
@@ -192,7 +195,9 @@ class TrafikverketService:
                     try:
                         return await self._request_xml(
                             xml_body=build_query(resolved_schema, fallback_field),
-                            cache_ttl=TRAFIKVERKET_CACHE_TTL,
+                            cache_ttl=None
+                            if is_cache_disabled()
+                            else TRAFIKVERKET_CACHE_TTL,
                         )
                     except RuntimeError as fallback_exc:
                         error_text = str(fallback_exc)
@@ -207,7 +212,7 @@ class TrafikverketService:
                 try:
                     return await self._request_xml(
                         xml_body=build_query(fallback),
-                        cache_ttl=TRAFIKVERKET_CACHE_TTL,
+                        cache_ttl=None if is_cache_disabled() else TRAFIKVERKET_CACHE_TTL,
                     )
                 except RuntimeError as fallback_exc:
                     if "ResourceNotFound" not in str(fallback_exc):

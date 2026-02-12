@@ -14,6 +14,7 @@ from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.services.reranker_service import RerankerService
+from app.services.cache_control import is_cache_disabled
 from app.agents.new_chat.tools.registry import (
     build_tools_async,
     get_default_enabled_tools,
@@ -225,7 +226,7 @@ def _normalize_vector(vector: Any) -> list[float] | None:
 
 
 def _get_embedding_for_tool(tool_id: str, text: str) -> list[float] | None:
-    if tool_id in _TOOL_EMBED_CACHE:
+    if not is_cache_disabled() and tool_id in _TOOL_EMBED_CACHE:
         return _TOOL_EMBED_CACHE[tool_id]
     if not text:
         return None
@@ -240,7 +241,8 @@ def _get_embedding_for_tool(tool_id: str, text: str) -> list[float] | None:
     normalized = _normalize_vector(embedding)
     if normalized is None:
         return None
-    _TOOL_EMBED_CACHE[tool_id] = normalized
+    if not is_cache_disabled():
+        _TOOL_EMBED_CACHE[tool_id] = normalized
     return normalized
 
 
@@ -319,9 +321,16 @@ def record_tool_rerank(
     query_norm: str,
     ranked_tools: list[dict[str, Any]],
 ) -> None:
+    if is_cache_disabled():
+        return
     if not trace_key or not query_norm:
         return
     _TOOL_RERANK_TRACE[(str(trace_key), query_norm)] = ranked_tools
+
+
+def clear_tool_caches() -> None:
+    _TOOL_EMBED_CACHE.clear()
+    _TOOL_RERANK_TRACE.clear()
 
 
 def get_tool_rerank_trace(

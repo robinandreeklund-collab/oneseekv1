@@ -553,6 +553,54 @@ def _build_payload(
     }
 
 
+def _coerce_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    if isinstance(value, (int, float)):
+        return str(value)
+    return None
+
+
+def _extract_filter_value(query: dict[str, Any]) -> str | None:
+    filter_data = query.get("filter")
+    if isinstance(query.get("region"), dict) and not isinstance(filter_data, dict):
+        filter_data = query.get("region")
+    if not isinstance(filter_data, dict):
+        filter_data = {}
+
+    from_location = _coerce_str(
+        filter_data.get("from")
+        or filter_data.get("from_location")
+        or query.get("from")
+        or query.get("from_location")
+    )
+    to_location = _coerce_str(
+        filter_data.get("to")
+        or filter_data.get("to_location")
+        or query.get("to")
+        or query.get("to_location")
+    )
+    road = _coerce_str(filter_data.get("road") or query.get("road"))
+    region = _coerce_str(filter_data.get("region") or query.get("region"))
+    station = _coerce_str(filter_data.get("station") or query.get("station"))
+    kamera_id = _coerce_str(
+        filter_data.get("kamera_id")
+        or filter_data.get("camera_id")
+        or query.get("kamera_id")
+    )
+    query_text = _coerce_str(filter_data.get("query") or query.get("query"))
+
+    for candidate in (road, region, station, kamera_id, query_text):
+        if candidate:
+            return candidate
+    if from_location or to_location:
+        return " ".join(part for part in (from_location, to_location) if part)
+    return None
+
+
 async def _ingest_output(
     *,
     connector_service: ConnectorService | None,
@@ -603,6 +651,8 @@ def build_trafikverket_tool_registry(
         filter_value: str | None,
         limit: int,
     ) -> dict[str, Any]:
+        if filter_value is None:
+            filter_value = _extract_filter_value(query)
         data, cached = await service.query(
             objecttype=objecttype,
             schema_version=schema_version,
@@ -631,13 +681,25 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_trafikinfo_storningar", description=TRAFIKVERKET_TOOL_DEFINITIONS[0].description)
     async def trafikverket_trafikinfo_storningar(
-        region: str | None = None, limit: int = 10
+        region: str | None = None,
+        road: str | None = None,
+        from_location: str | None = None,
+        to_location: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_trafikinfo_storningar",
                 TRAFIKVERKET_TOOL_DEFINITIONS[0].base_path,
-                {"region": region, "limit": limit},
+                {
+                    "region": region,
+                    "road": road,
+                    "from_location": from_location,
+                    "to_location": to_location,
+                    "limit": limit,
+                    "filter": filter,
+                },
                 f"Trafikverket störningar {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[0].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[0].schema_version,
@@ -657,13 +719,25 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_trafikinfo_olyckor", description=TRAFIKVERKET_TOOL_DEFINITIONS[1].description)
     async def trafikverket_trafikinfo_olyckor(
-        region: str | None = None, limit: int = 10
+        region: str | None = None,
+        road: str | None = None,
+        from_location: str | None = None,
+        to_location: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_trafikinfo_olyckor",
                 TRAFIKVERKET_TOOL_DEFINITIONS[1].base_path,
-                {"region": region, "limit": limit},
+                {
+                    "region": region,
+                    "road": road,
+                    "from_location": from_location,
+                    "to_location": to_location,
+                    "limit": limit,
+                    "filter": filter,
+                },
                 f"Trafikverket olyckor {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[1].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[1].schema_version,
@@ -683,13 +757,25 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_trafikinfo_koer", description=TRAFIKVERKET_TOOL_DEFINITIONS[2].description)
     async def trafikverket_trafikinfo_koer(
-        region: str | None = None, limit: int = 10
+        region: str | None = None,
+        road: str | None = None,
+        from_location: str | None = None,
+        to_location: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_trafikinfo_koer",
                 TRAFIKVERKET_TOOL_DEFINITIONS[2].base_path,
-                {"region": region, "limit": limit},
+                {
+                    "region": region,
+                    "road": road,
+                    "from_location": from_location,
+                    "to_location": to_location,
+                    "limit": limit,
+                    "filter": filter,
+                },
                 f"Trafikverket köer {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[2].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[2].schema_version,
@@ -709,13 +795,25 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_trafikinfo_vagarbeten", description=TRAFIKVERKET_TOOL_DEFINITIONS[3].description)
     async def trafikverket_trafikinfo_vagarbeten(
-        region: str | None = None, limit: int = 10
+        region: str | None = None,
+        road: str | None = None,
+        from_location: str | None = None,
+        to_location: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_trafikinfo_vagarbeten",
                 TRAFIKVERKET_TOOL_DEFINITIONS[3].base_path,
-                {"region": region, "limit": limit},
+                {
+                    "region": region,
+                    "road": road,
+                    "from_location": from_location,
+                    "to_location": to_location,
+                    "limit": limit,
+                    "filter": filter,
+                },
                 f"Trafikverket vägarbeten {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[3].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[3].schema_version,
@@ -735,13 +833,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_tag_forseningar", description=TRAFIKVERKET_TOOL_DEFINITIONS[4].description)
     async def trafikverket_tag_forseningar(
-        station: str | None = None, limit: int = 10
+        station: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_tag_forseningar",
                 TRAFIKVERKET_TOOL_DEFINITIONS[4].base_path,
-                {"station": station, "limit": limit},
+                {"station": station, "limit": limit, "filter": filter},
                 f"Trafikverket tågförseningar {station or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[4].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[4].schema_version,
@@ -761,13 +861,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_tag_tidtabell", description=TRAFIKVERKET_TOOL_DEFINITIONS[5].description)
     async def trafikverket_tag_tidtabell(
-        station: str, date: str | None = None
+        station: str,
+        date: str | None = None,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_tag_tidtabell",
                 TRAFIKVERKET_TOOL_DEFINITIONS[5].base_path,
-                {"station": station, "date": date},
+                {"station": station, "date": date, "filter": filter},
                 f"Trafikverket tidtabell {station}",
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[5].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[5].schema_version,
@@ -787,13 +889,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_tag_stationer", description=TRAFIKVERKET_TOOL_DEFINITIONS[6].description)
     async def trafikverket_tag_stationer(
-        query: str | None = None, limit: int = 10
+        query: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_tag_stationer",
                 TRAFIKVERKET_TOOL_DEFINITIONS[6].base_path,
-                {"query": query, "limit": limit},
+                {"query": query, "limit": limit, "filter": filter},
                 f"Trafikverket stationer {query or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[6].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[6].schema_version,
@@ -813,13 +917,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_tag_installda", description=TRAFIKVERKET_TOOL_DEFINITIONS[7].description)
     async def trafikverket_tag_installda(
-        station: str | None = None, limit: int = 10
+        station: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_tag_installda",
                 TRAFIKVERKET_TOOL_DEFINITIONS[7].base_path,
-                {"station": station, "limit": limit},
+                {"station": station, "limit": limit, "filter": filter},
                 f"Trafikverket inställda {station or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[7].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[7].schema_version,
@@ -839,13 +945,16 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_vag_status", description=TRAFIKVERKET_TOOL_DEFINITIONS[8].description)
     async def trafikverket_vag_status(
-        road: str | None = None, region: str | None = None, limit: int = 10
+        road: str | None = None,
+        region: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_vag_status",
                 TRAFIKVERKET_TOOL_DEFINITIONS[8].base_path,
-                {"road": road, "region": region, "limit": limit},
+                {"road": road, "region": region, "limit": limit, "filter": filter},
                 f"Trafikverket vägstatus {road or region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[8].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[8].schema_version,
@@ -865,13 +974,16 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_vag_underhall", description=TRAFIKVERKET_TOOL_DEFINITIONS[9].description)
     async def trafikverket_vag_underhall(
-        road: str | None = None, region: str | None = None, limit: int = 10
+        road: str | None = None,
+        region: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_vag_underhall",
                 TRAFIKVERKET_TOOL_DEFINITIONS[9].base_path,
-                {"road": road, "region": region, "limit": limit},
+                {"road": road, "region": region, "limit": limit, "filter": filter},
                 f"Trafikverket underhåll {road or region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[9].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[9].schema_version,
@@ -891,13 +1003,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_vag_hastighet", description=TRAFIKVERKET_TOOL_DEFINITIONS[10].description)
     async def trafikverket_vag_hastighet(
-        road: str | None = None, limit: int = 10
+        road: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_vag_hastighet",
                 TRAFIKVERKET_TOOL_DEFINITIONS[10].base_path,
-                {"road": road, "limit": limit},
+                {"road": road, "limit": limit, "filter": filter},
                 f"Trafikverket hastighet {road or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[10].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[10].schema_version,
@@ -917,13 +1031,16 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_vag_avstangningar", description=TRAFIKVERKET_TOOL_DEFINITIONS[11].description)
     async def trafikverket_vag_avstangningar(
-        road: str | None = None, region: str | None = None, limit: int = 10
+        road: str | None = None,
+        region: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_vag_avstangningar",
                 TRAFIKVERKET_TOOL_DEFINITIONS[11].base_path,
-                {"road": road, "region": region, "limit": limit},
+                {"road": road, "region": region, "limit": limit, "filter": filter},
                 f"Trafikverket avstängningar {road or region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[11].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[11].schema_version,
@@ -943,13 +1060,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_vader_stationer", description=TRAFIKVERKET_TOOL_DEFINITIONS[12].description)
     async def trafikverket_vader_stationer(
-        region: str | None = None, limit: int = 10
+        region: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_vader_stationer",
                 TRAFIKVERKET_TOOL_DEFINITIONS[12].base_path,
-                {"region": region, "limit": limit},
+                {"region": region, "limit": limit, "filter": filter},
                 f"Trafikverket väderstationer {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[12].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[12].schema_version,
@@ -969,13 +1088,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_vader_halka", description=TRAFIKVERKET_TOOL_DEFINITIONS[13].description)
     async def trafikverket_vader_halka(
-        region: str | None = None, limit: int = 10
+        region: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_vader_halka",
                 TRAFIKVERKET_TOOL_DEFINITIONS[13].base_path,
-                {"region": region, "limit": limit},
+                {"region": region, "limit": limit, "filter": filter},
                 f"Trafikverket halka {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[13].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[13].schema_version,
@@ -995,13 +1116,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_vader_vind", description=TRAFIKVERKET_TOOL_DEFINITIONS[14].description)
     async def trafikverket_vader_vind(
-        region: str | None = None, limit: int = 10
+        region: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_vader_vind",
                 TRAFIKVERKET_TOOL_DEFINITIONS[14].base_path,
-                {"region": region, "limit": limit},
+                {"region": region, "limit": limit, "filter": filter},
                 f"Trafikverket vind {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[14].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[14].schema_version,
@@ -1021,13 +1144,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_vader_temperatur", description=TRAFIKVERKET_TOOL_DEFINITIONS[15].description)
     async def trafikverket_vader_temperatur(
-        region: str | None = None, limit: int = 10
+        region: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_vader_temperatur",
                 TRAFIKVERKET_TOOL_DEFINITIONS[15].base_path,
-                {"region": region, "limit": limit},
+                {"region": region, "limit": limit, "filter": filter},
                 f"Trafikverket temperatur {region or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[15].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[15].schema_version,
@@ -1047,13 +1172,16 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_kameror_lista", description=TRAFIKVERKET_TOOL_DEFINITIONS[16].description)
     async def trafikverket_kameror_lista(
-        region: str | None = None, road: str | None = None, limit: int = 10
+        region: str | None = None,
+        road: str | None = None,
+        limit: int = 10,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_kameror_lista",
                 TRAFIKVERKET_TOOL_DEFINITIONS[16].base_path,
-                {"region": region, "road": road, "limit": limit},
+                {"region": region, "road": road, "limit": limit, "filter": filter},
                 f"Trafikverket kameror {region or road or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[16].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[16].schema_version,
@@ -1072,12 +1200,14 @@ def build_trafikverket_tool_registry(
             }
 
     @tool("trafikverket_kameror_snapshot", description=TRAFIKVERKET_TOOL_DEFINITIONS[17].description)
-    async def trafikverket_kameror_snapshot(kamera_id: str) -> dict[str, Any]:
+    async def trafikverket_kameror_snapshot(
+        kamera_id: str, filter: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_kameror_snapshot",
                 TRAFIKVERKET_TOOL_DEFINITIONS[17].base_path.format(kamera_id=kamera_id),
-                {"kamera_id": kamera_id},
+                {"kamera_id": kamera_id, "filter": filter},
                 f"Trafikverket snapshot {kamera_id}",
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[17].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[17].schema_version,
@@ -1096,12 +1226,14 @@ def build_trafikverket_tool_registry(
             }
 
     @tool("trafikverket_kameror_status", description=TRAFIKVERKET_TOOL_DEFINITIONS[18].description)
-    async def trafikverket_kameror_status(kamera_id: str) -> dict[str, Any]:
+    async def trafikverket_kameror_status(
+        kamera_id: str, filter: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_kameror_status",
                 TRAFIKVERKET_TOOL_DEFINITIONS[18].base_path.format(kamera_id=kamera_id),
-                {"kamera_id": kamera_id},
+                {"kamera_id": kamera_id, "filter": filter},
                 f"Trafikverket kamera status {kamera_id}",
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[18].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[18].schema_version,
@@ -1121,13 +1253,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_prognos_trafik", description=TRAFIKVERKET_TOOL_DEFINITIONS[19].description)
     async def trafikverket_prognos_trafik(
-        region: str | None = None, road: str | None = None
+        region: str | None = None,
+        road: str | None = None,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_prognos_trafik",
                 TRAFIKVERKET_TOOL_DEFINITIONS[19].base_path,
-                {"region": region, "road": road},
+                {"region": region, "road": road, "filter": filter},
                 f"Trafikverket trafikprognos {region or road or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[19].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[19].schema_version,
@@ -1147,13 +1281,15 @@ def build_trafikverket_tool_registry(
 
     @tool("trafikverket_prognos_vag", description=TRAFIKVERKET_TOOL_DEFINITIONS[20].description)
     async def trafikverket_prognos_vag(
-        region: str | None = None, road: str | None = None
+        region: str | None = None,
+        road: str | None = None,
+        filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_prognos_vag",
                 TRAFIKVERKET_TOOL_DEFINITIONS[20].base_path,
-                {"region": region, "road": road},
+                {"region": region, "road": road, "filter": filter},
                 f"Trafikverket vägprognos {region or road or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[20].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[20].schema_version,
@@ -1172,12 +1308,14 @@ def build_trafikverket_tool_registry(
             }
 
     @tool("trafikverket_prognos_tag", description=TRAFIKVERKET_TOOL_DEFINITIONS[21].description)
-    async def trafikverket_prognos_tag(station: str | None = None) -> dict[str, Any]:
+    async def trafikverket_prognos_tag(
+        station: str | None = None, filter: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         try:
             return await _wrap(
                 "trafikverket_prognos_tag",
                 TRAFIKVERKET_TOOL_DEFINITIONS[21].base_path,
-                {"station": station},
+                {"station": station, "filter": filter},
                 f"Trafikverket tågprognos {station or ''}".strip(),
                 objecttype=TRAFIKVERKET_TOOL_DEFINITIONS[21].objecttype,
                 schema_version=TRAFIKVERKET_TOOL_DEFINITIONS[21].schema_version,
