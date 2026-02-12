@@ -583,6 +583,7 @@ async def create_supervisor_agent(
     code_prompt: str | None = None,
     kartor_prompt: str | None = None,
     riksdagen_prompt: str | None = None,
+    stub_tool_registry: dict[str, Any] | None = None,
 ):
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
@@ -711,6 +712,7 @@ async def create_supervisor_agent(
         llm=llm,
         dependencies=dependencies,
         checkpointer=checkpointer,
+        stub_tool_registry=stub_tool_registry,
     )
 
     agent_definitions = [

@@ -28,6 +28,7 @@ class LazyWorkerPool:
         llm: Any,
         dependencies: dict[str, Any],
         checkpointer: Checkpointer | None,
+        stub_tool_registry: dict[str, Any] | None = None,
     ):
         """Initialize the lazy worker pool.
         
@@ -36,11 +37,13 @@ class LazyWorkerPool:
             llm: Language model instance to use for workers
             dependencies: Shared dependencies for worker initialization
             checkpointer: Optional checkpointer for state persistence
+            stub_tool_registry: Optional stub tools for evaluation mode (no real API calls)
         """
         self._configs = configs
         self._llm = llm
         self._dependencies = dependencies
         self._checkpointer = checkpointer
+        self._stub_tool_registry = stub_tool_registry
         self._workers: dict[str, Any] = {}
         self._locks: dict[str, asyncio.Lock] = {
             name: asyncio.Lock() for name in configs
@@ -74,6 +77,7 @@ class LazyWorkerPool:
                 dependencies=self._dependencies,
                 checkpointer=self._checkpointer,
                 config=self._configs[name],
+                stub_tool_registry=self._stub_tool_registry,
             )
             self._workers[name] = worker
             return worker
