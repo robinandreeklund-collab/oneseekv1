@@ -446,7 +446,20 @@ async def _generate_eval_tests(
                 HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
             ]
         )
-        parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
+        raw_content = getattr(response, "content", "")
+        if isinstance(raw_content, list):
+            parts: list[str] = []
+            for item in raw_content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(str(item.get("text") or item.get("content") or ""))
+                else:
+                    parts.append(str(item))
+            raw_text = "".join(parts)
+        else:
+            raw_text = str(raw_content or "")
+        parsed = _extract_json_object(raw_text)
         generated_tests = parsed.get("tests") if isinstance(parsed, dict) else None
         if not isinstance(generated_tests, list):
             return fallback_tests
