@@ -14,6 +14,7 @@ from app.agents.new_chat.bigtool_store import (
     build_tool_index,
     make_smart_retriever,
 )
+from app.services.tool_metadata_service import get_global_tool_metadata_overrides
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,13 @@ async def create_bigtool_worker(
         dependencies=dependencies,
         include_mcp_tools=True,
     )
-    tool_index = build_tool_index(tool_registry)
+    metadata_overrides = await get_global_tool_metadata_overrides(
+        dependencies["db_session"]
+    )
+    tool_index = build_tool_index(
+        tool_registry,
+        metadata_overrides=metadata_overrides,
+    )
     store = build_bigtool_store(tool_index)
     trace_key = str(dependencies.get("thread_id") or "")
     retrieve_tools, aretrieve_tools = make_smart_retriever(

@@ -1251,6 +1251,43 @@ class GlobalAgentPromptOverrideHistory(BaseModel, TimestampMixin):
     updated_by = relationship("User")
 
 
+class GlobalToolMetadataOverride(BaseModel, TimestampMixin):
+    __tablename__ = "tool_metadata_overrides_global"
+    __table_args__ = (
+        UniqueConstraint(
+            "tool_id", name="uq_tool_metadata_override_global_tool_id"
+        ),
+    )
+
+    tool_id = Column(String(160), nullable=False, index=True)
+    override_payload = Column(JSONB, nullable=False, default={})
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class GlobalToolMetadataOverrideHistory(BaseModel, TimestampMixin):
+    __tablename__ = "tool_metadata_override_history_global"
+
+    tool_id = Column(String(160), nullable=False, index=True)
+    previous_payload = Column(JSONB, nullable=True)
+    new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
 class AgentComboCache(BaseModel, TimestampMixin):
     __tablename__ = "agent_combo_cache"
     __table_args__ = (

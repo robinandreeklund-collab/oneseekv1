@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -167,7 +168,7 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
 
 TOOL_RERANK_CANDIDATES = 24
 TOOL_EMBEDDING_WEIGHT = 4.0
-_TOOL_EMBED_CACHE: dict[str, list[float]] = {}
+_TOOL_EMBED_CACHE: dict[str, tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
 
@@ -277,10 +278,13 @@ def _normalize_vector(vector: Any) -> list[float] | None:
 
 
 def _get_embedding_for_tool(tool_id: str, text: str) -> list[float] | None:
-    if not is_cache_disabled() and tool_id in _TOOL_EMBED_CACHE:
-        return _TOOL_EMBED_CACHE[tool_id]
     if not text:
         return None
+    text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if not is_cache_disabled() and tool_id in _TOOL_EMBED_CACHE:
+        cached_text_hash, cached_embedding = _TOOL_EMBED_CACHE[tool_id]
+        if cached_text_hash == text_hash:
+            return cached_embedding
     try:
         from app.config import config
     except Exception:
@@ -293,7 +297,7 @@ def _get_embedding_for_tool(tool_id: str, text: str) -> list[float] | None:
     if normalized is None:
         return None
     if not is_cache_disabled():
-        _TOOL_EMBED_CACHE[tool_id] = normalized
+        _TOOL_EMBED_CACHE[tool_id] = (text_hash, normalized)
     return normalized
 
 
@@ -534,6 +538,8 @@ async def build_global_tool_registry(
 
 def build_tool_index(
     tool_registry: dict[str, BaseTool],
+    *,
+    metadata_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> list[ToolIndexEntry]:
     scb_by_id = {definition.tool_id: definition for definition in SCB_TOOL_DEFINITIONS}
     bolagsverket_by_id = {
@@ -556,6 +562,7 @@ def build_tool_index(
         example_queries: list[str] = []
         category = "general"
         base_path: str | None = None
+        name = getattr(tool, "name", tool_id)
         if tool_id in scb_by_id:
             definition = scb_by_id[tool_id]
             description = definition.description
@@ -591,10 +598,41 @@ def build_tool_index(
             example_queries = list(definition.example_queries)
             category = definition.category
             base_path = None  # Riksdagen tools don't use base_path
+        if metadata_overrides and tool_id in metadata_overrides:
+            override = metadata_overrides[tool_id]
+            override_name = str(override.get("name") or "").strip()
+            override_description = str(override.get("description") or "").strip()
+            override_category = str(override.get("category") or "").strip()
+            override_base_path = override.get("base_path")
+            if override_name:
+                name = override_name
+            if override_description:
+                description = override_description
+            if override_category:
+                category = override_category
+            if isinstance(override_base_path, str):
+                base_path = override_base_path.strip() or None
+            elif override_base_path is None and "base_path" in override:
+                base_path = None
+
+            override_keywords = override.get("keywords")
+            if isinstance(override_keywords, list):
+                keywords = [
+                    keyword.strip()
+                    for keyword in override_keywords
+                    if isinstance(keyword, str) and keyword.strip()
+                ]
+            override_examples = override.get("example_queries")
+            if isinstance(override_examples, list):
+                example_queries = [
+                    example.strip()
+                    for example in override_examples
+                    if isinstance(example, str) and example.strip()
+                ]
         entry = ToolIndexEntry(
             tool_id=tool_id,
             namespace=namespace_for_tool(tool_id),
-            name=getattr(tool, "name", tool_id),
+            name=name,
             description=description,
             keywords=keywords,
             example_queries=example_queries,
