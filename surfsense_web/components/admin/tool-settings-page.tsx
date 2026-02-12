@@ -5,6 +5,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useAtomValue } from "jotai";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
+import type { ToolMetadataItem } from "@/contracts/types/admin-tool-settings.types";
+import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -24,83 +26,19 @@ import {
 	AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Separator } from "@/components/ui/separator";
-import { AlertCircle, Save, RotateCcw, Plus, X } from "lucide-react";
+import { AlertCircle, Save, RotateCcw, Plus, X, Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-
-interface ToolMetadata {
-	tool_id: string;
-	name: string;
-	description: string;
-	keywords: string[];
-	example_queries: string[];
-	category: string;
-}
-
-interface ToolCategory {
-	category_id: string;
-	category_name: string;
-	tools: ToolMetadata[];
-}
-
-// Mock data for now - will be replaced with API call
-const MOCK_TOOL_CATEGORIES: ToolCategory[] = [
-	{
-		category_id: "riksdagen",
-		category_name: "Riksdagen",
-		tools: [
-			{
-				tool_id: "riksdag_dokument",
-				name: "Riksdag Dokument - Alla typer",
-				description: "Sök bland alla 70+ dokumenttyper från Riksdagen.",
-				keywords: ["dokument", "riksdag", "riksdagen", "söka", "sök"],
-				example_queries: [
-					"Dokument om försvar 2024",
-					"Riksdagsdokument från Finansutskottet",
-				],
-				category: "riksdagen_dokument",
-			},
-			{
-				tool_id: "riksdag_dokument_proposition",
-				name: "Riksdag Dokument - Proposition",
-				description: "Sök propositioner (regeringens förslag till riksdagen).",
-				keywords: ["proposition", "prop", "regeringen", "förslag"],
-				example_queries: [
-					"Propositioner om NATO 2024",
-					"Senaste budgetpropositionen",
-				],
-				category: "riksdagen_dokument",
-			},
-		],
-	},
-	{
-		category_id: "scb",
-		category_name: "SCB Statistik",
-		tools: [
-			{
-				tool_id: "scb_befolkning",
-				name: "SCB Befolkning",
-				description: "Befolkningsstatistik från SCB.",
-				keywords: ["befolkning", "invånare", "demografisk"],
-				example_queries: [
-					"Befolkning per län 2024",
-					"Befolkningsökning Sverige",
-				],
-				category: "statistics",
-			},
-		],
-	},
-];
 
 function ToolEditor({
 	tool,
 	onSave,
 	onReset,
 }: {
-	tool: ToolMetadata;
-	onSave: (tool: ToolMetadata) => void;
+	tool: ToolMetadataItem;
+	onSave: (tool: ToolMetadataItem) => void;
 	onReset: () => void;
 }) {
-	const [editedTool, setEditedTool] = useState<ToolMetadata>(tool);
+	const [editedTool, setEditedTool] = useState<ToolMetadataItem>(tool);
 	const [newKeyword, setNewKeyword] = useState("");
 	const [newExample, setNewExample] = useState("");
 
@@ -244,10 +182,13 @@ export function ToolSettingsPage() {
 	const { data: currentUser } = useAtomValue(currentUserAtom);
 	const [searchTerm, setSearchTerm] = useState("");
 
-	// TODO: Replace with actual API call
-	const categories = MOCK_TOOL_CATEGORIES;
+	const { data, isLoading, error } = useQuery({
+		queryKey: ["admin-tool-settings"],
+		queryFn: () => adminToolSettingsApiService.getToolSettings(),
+		enabled: !!currentUser,
+	});
 
-	const handleSave = (tool: ToolMetadata) => {
+	const handleSave = (tool: ToolMetadataItem) => {
 		// TODO: Implement save to backend
 		toast.success(`Sparade ändringar för ${tool.name}`);
 		console.log("Saving tool:", tool);
@@ -256,6 +197,28 @@ export function ToolSettingsPage() {
 	const handleReset = () => {
 		toast.info("Återställde till ursprungsvärden");
 	};
+
+	if (isLoading) {
+		return (
+			<div className="flex items-center justify-center py-12">
+				<Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+			</div>
+		);
+	}
+
+	if (error) {
+		return (
+			<Alert variant="destructive">
+				<AlertCircle className="h-4 w-4" />
+				<AlertDescription>
+					Fel vid hämtning av verktygsdata. Kontrollera att du har
+					administratörsbehörighet.
+				</AlertDescription>
+			</Alert>
+		);
+	}
+
+	const categories = data?.categories || [];
 
 	const filteredCategories = categories
 		.map((category) => ({
@@ -268,6 +231,11 @@ export function ToolSettingsPage() {
 			),
 		}))
 		.filter((category) => category.tools.length > 0);
+
+	const totalTools = filteredCategories.reduce(
+		(acc, cat) => acc + cat.tools.length,
+		0
+	);
 
 	return (
 		<div className="space-y-6">
@@ -295,8 +263,7 @@ export function ToolSettingsPage() {
 					className="max-w-md"
 				/>
 				<div className="text-sm text-muted-foreground">
-					{filteredCategories.reduce((acc, cat) => acc + cat.tools.length, 0)}{" "}
-					verktyg
+					{totalTools} verktyg i {filteredCategories.length} kategorier
 				</div>
 			</div>
 
