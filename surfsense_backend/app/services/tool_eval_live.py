@@ -131,11 +131,26 @@ async def evaluate_single_live(
         "search_space_id": 1,
     }
     
-    # Get default prompts from registry
-    from app.agents.new_chat.prompt_registry import get_prompt
-    knowledge_prompt = get_prompt("agent.knowledge.system")
-    action_prompt = get_prompt("agent.action.system")
-    statistics_prompt = get_prompt("agent.statistics.system")
+    # Build prompts using the correct builder functions
+    from app.agents.new_chat.bigtool_prompts import (
+        DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+        DEFAULT_WORKER_ACTION_PROMPT,
+        build_worker_prompt,
+    )
+    from app.agents.new_chat.statistics_prompts import (
+        DEFAULT_STATISTICS_SYSTEM_PROMPT,
+        build_statistics_system_prompt,
+    )
+    
+    knowledge_prompt = build_worker_prompt(
+        DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+        citations_enabled=True
+    )
+    action_prompt = build_worker_prompt(
+        DEFAULT_WORKER_ACTION_PROMPT,
+        citations_enabled=True
+    )
+    statistics_prompt = build_statistics_system_prompt()
     
     try:
         # Create supervisor agent with stub tools
