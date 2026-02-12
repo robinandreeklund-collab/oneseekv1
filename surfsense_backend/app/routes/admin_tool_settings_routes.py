@@ -1655,6 +1655,69 @@ def _metadata_payload_from_entry(entry) -> dict[str, Any]:
     )
 
 
+def _default_tool_system_prompt(entry: Any) -> str:
+    tool_id = str(getattr(entry, "tool_id", "")).strip()
+    name = str(getattr(entry, "name", "")).strip()
+    category = str(getattr(entry, "category", "")).strip()
+    description = str(getattr(entry, "description", "")).strip()
+    keywords = [
+        str(item).strip()
+        for item in list(getattr(entry, "keywords", []) or [])
+        if str(item).strip()
+    ][:10]
+    examples = [
+        str(item).strip()
+        for item in list(getattr(entry, "example_queries", []) or [])
+        if str(item).strip()
+    ][:6]
+    return "\n".join(
+        [
+            f"Du är specialist för verktyget {tool_id}.",
+            "Fokusera endast på detta verktyg och blanda inte in andra endpoint-kategorier.",
+            f"Tool: {name or tool_id}",
+            f"Kategori: {category or 'okänd'}",
+            f"Beskrivning: {description or '-'}",
+            f"Nyckelord: {', '.join(keywords) if keywords else '-'}",
+            f"Exempelfrågor: {' | '.join(examples) if examples else '-'}",
+            "Regler:",
+            "- Använd exakt argumentnamn från valt verktygs schema.",
+            "- Om viktiga fält saknas: ställ en kort förtydligande fråga.",
+            "- Undvik antaganden om fält som inte explicit nämns i fråga eller schema.",
+        ]
+    )
+
+
+def _build_current_eval_prompts(
+    *,
+    prompt_overrides: dict[str, str],
+    tool_index: list[Any],
+) -> dict[str, str]:
+    current_prompts: dict[str, str] = {}
+    for prompt_key, definition in PROMPT_DEFINITION_MAP.items():
+        current_prompts[prompt_key] = resolve_prompt(
+            prompt_overrides,
+            prompt_key,
+            definition.default_prompt,
+        )
+    for entry in tool_index:
+        tool_id = str(getattr(entry, "tool_id", "")).strip()
+        if not tool_id:
+            continue
+        tool_prompt_key = f"tool.{tool_id}.system"
+        current_prompts[tool_prompt_key] = resolve_prompt(
+            prompt_overrides,
+            tool_prompt_key,
+            _default_tool_system_prompt(entry),
+        )
+    return current_prompts
+
+
+def _is_valid_prompt_key(prompt_key: str) -> bool:
+    if prompt_key in PROMPT_DEFINITION_MAP:
+        return True
+    return bool(re.match(r"^tool\.[a-z0-9_-]+\.(system|input)$", prompt_key))
+
+
 def _tool_item_from_entry(entry, *, has_override: bool) -> ToolMetadataItem:
     return ToolMetadataItem(
         tool_id=entry.tool_id,
@@ -1831,13 +1894,10 @@ async def _execute_tool_evaluation(
     )
     llm = await get_agent_llm(session, resolved_search_space_id)
     prompt_overrides = await get_global_prompt_overrides(session)
-    current_prompts: dict[str, str] = {}
-    for prompt_key, definition in PROMPT_DEFINITION_MAP.items():
-        current_prompts[prompt_key] = resolve_prompt(
-            prompt_overrides,
-            prompt_key,
-            definition.default_prompt,
-        )
+    current_prompts = _build_current_eval_prompts(
+        prompt_overrides=prompt_overrides,
+        tool_index=tool_index,
+    )
     evaluation = await run_tool_evaluation(
         tests=[
             {
@@ -1947,13 +2007,10 @@ async def _execute_api_input_evaluation(
     )
     llm = await get_agent_llm(session, resolved_search_space_id)
     overrides = await get_global_prompt_overrides(session)
-    current_prompts: dict[str, str] = {}
-    for prompt_key, definition in PROMPT_DEFINITION_MAP.items():
-        current_prompts[prompt_key] = resolve_prompt(
-            overrides,
-            prompt_key,
-            definition.default_prompt,
-        )
+    current_prompts = _build_current_eval_prompts(
+        prompt_overrides=overrides,
+        tool_index=tool_index,
+    )
     evaluation = await run_tool_api_input_evaluation(
         tests=_serialize_api_input_tests(payload.tests),
         tool_index=tool_index,
@@ -2812,7 +2869,7 @@ async def apply_api_input_prompt_suggestions(
     updates: list[tuple[str, str | None]] = []
     for suggestion in payload.suggestions:
         prompt_key = str(suggestion.prompt_key or "").strip()
-        if prompt_key not in PROMPT_DEFINITION_MAP:
+        if not _is_valid_prompt_key(prompt_key):
             raise HTTPException(status_code=400, detail=f"Unknown prompt key: {prompt_key}")
         proposed_prompt = str(suggestion.proposed_prompt or "").strip()
         updates.append((prompt_key, proposed_prompt if proposed_prompt else None))

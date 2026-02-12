@@ -1495,6 +1495,8 @@ def _value_matches_expected(actual: Any, expected: Any) -> bool:
 def _prompt_key_for_tool(tool_id: str | None, category: str | None = None) -> str:
     tool_id = str(tool_id or "").strip().lower()
     category = str(category or "").strip().lower()
+    if tool_id:
+        return f"tool.{tool_id}.system"
     if tool_id.startswith("scb_") or category in {"statistics", "scb_statistics"}:
         return "agent.statistics.system"
     if tool_id.startswith("riksdag_") or category.startswith("riksdag"):
@@ -2195,6 +2197,20 @@ def _build_fallback_prompt_suggestion(
                 "- Use internal for user data/notes/calendar/search space content.",
                 "- Use external only for explicit realtime/public-web requests.",
             ]
+    elif prompt_key == "agent.supervisor.system":
+        lines = [
+            "- Keep this prompt minimal: only coordinate route, agent calls, and final synthesis.",
+            "- Delegate domain reasoning and argument details to specialized agent/tool prompts.",
+            "- Never include long tool catalogs or endpoint specifics in supervisor prompt.",
+            "- Use retrieval results to pick candidate agents/tools dynamically before execution.",
+        ]
+    elif prompt_key.startswith("tool."):
+        lines = [
+            "- Focus only on this single tool endpoint and ignore unrelated tools.",
+            "- Map user intent to this tool's schema using exact argument field names.",
+            "- If required fields are missing, ask one concise clarification question.",
+            "- Do not add arguments that are outside the selected tool schema.",
+        ]
     elif prompt_key.startswith("agent."):
         lines = [
             "- Choose tools that match the selected agent domain before generating arguments.",
@@ -2390,6 +2406,14 @@ async def suggest_agent_prompt_improvements_for_api_input(
                     selected_tool=selected_tool,
                 )
 
+        if "agent.supervisor.system" in current_prompts:
+            _append_failure(
+                "agent.supervisor.system",
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
+
         tool_id = expected_tool or selected_tool
         category = expected_category or selected_category
         if (
@@ -2401,6 +2425,20 @@ async def suggest_agent_prompt_improvements_for_api_input(
             or selected_category
         ):
             prompt_key = _prompt_key_for_tool(tool_id, category)
+            if prompt_key not in current_prompts:
+                fallback_agent_key = _prompt_key_for_agent(
+                    _agent_for_tool(
+                        tool_id,
+                        category,
+                        expected_route or selected_route,
+                        _normalize_sub_route_value(
+                            result.get("expected_sub_route")
+                            or result.get("selected_sub_route")
+                        ),
+                    )
+                )
+                if fallback_agent_key and fallback_agent_key in current_prompts:
+                    prompt_key = fallback_agent_key
             _append_failure(
                 prompt_key,
                 result=result,

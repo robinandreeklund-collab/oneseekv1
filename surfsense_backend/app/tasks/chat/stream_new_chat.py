@@ -769,6 +769,7 @@ async def stream_new_chat(
                 browser_prompt=build_worker_prompt(browser_prompt, citations_enabled=True),
                 code_prompt=build_worker_prompt(code_prompt, citations_enabled=True),
                 kartor_prompt=build_worker_prompt(kartor_prompt, citations_enabled=False),
+                tool_prompt_overrides=prompt_overrides,
             )
         else:
             # Fallback to deep agent for smalltalk

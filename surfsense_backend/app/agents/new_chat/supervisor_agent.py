@@ -131,6 +131,12 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
 
 
 _AGENT_TOOL_PROFILES = _build_agent_tool_profiles()
+_AGENT_TOOL_PROFILE_BY_ID: dict[str, AgentToolProfile] = {
+    profile.tool_id: profile
+    for profiles in _AGENT_TOOL_PROFILES.values()
+    for profile in profiles
+    if profile.tool_id
+}
 
 # Message pruning constants for progressive context management
 MESSAGE_PRUNING_THRESHOLD = 20  # Start pruning when total messages exceed this
@@ -261,6 +267,59 @@ def _build_scoped_prompt_for_agent(agent_name: str, task: str) -> str | None:
         "Anvand i forsta hand ett av ovanstaende verktyg och hall argumenten strikt till valt verktygs schema."
     )
     return "\n".join(lines)
+
+
+def _default_prompt_for_tool_id(tool_id: str) -> str | None:
+    profile = _AGENT_TOOL_PROFILE_BY_ID.get(str(tool_id or "").strip())
+    if not profile:
+        return None
+    keywords = ", ".join(profile.keywords[:8]) if profile.keywords else "-"
+    description = profile.description.strip() or "-"
+    return "\n".join(
+        [
+            f"[TOOL-SPECIFIC PROMPT: {profile.tool_id}]",
+            f"Kategori: {profile.category}",
+            f"Beskrivning: {description}",
+            f"Nyckelord: {keywords}",
+            "Anvand endast detta verktyg om uppgiften matchar dess doman.",
+            "Matcha argument strikt mot verktygets schema och undvik overflodiga falt.",
+            "Vid saknade kravfalt: stall en kort, exakt forfragan om komplettering.",
+        ]
+    )
+
+
+def _tool_prompt_for_id(tool_id: str, tool_prompt_overrides: dict[str, str]) -> str | None:
+    normalized_tool_id = str(tool_id or "").strip()
+    if not normalized_tool_id:
+        return None
+    override_key = f"tool.{normalized_tool_id}.system"
+    override = str(tool_prompt_overrides.get(override_key) or "").strip()
+    if override:
+        return override
+    return _default_prompt_for_tool_id(normalized_tool_id)
+
+
+def _build_tool_prompt_block(
+    selected_tool_ids: list[str],
+    tool_prompt_overrides: dict[str, str],
+    *,
+    max_tools: int = 2,
+) -> str | None:
+    blocks: list[str] = []
+    seen: set[str] = set()
+    for tool_id in selected_tool_ids:
+        normalized_tool_id = str(tool_id or "").strip()
+        if not normalized_tool_id or normalized_tool_id in seen:
+            continue
+        seen.add(normalized_tool_id)
+        prompt_text = _tool_prompt_for_id(normalized_tool_id, tool_prompt_overrides)
+        if prompt_text:
+            blocks.append(prompt_text)
+        if len(blocks) >= max(1, int(max_tools)):
+            break
+    if not blocks:
+        return None
+    return "\n\n".join(blocks)
 
 
 @dataclass(frozen=True)
@@ -881,7 +940,9 @@ async def create_supervisor_agent(
     code_prompt: str | None = None,
     kartor_prompt: str | None = None,
     riksdagen_prompt: str | None = None,
+    tool_prompt_overrides: dict[str, str] | None = None,
 ):
+    tool_prompt_overrides = dict(tool_prompt_overrides or {})
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
             name="knowledge-worker",
@@ -1351,14 +1412,6 @@ async def create_supervisor_agent(
             )
         if name == "synthesis" and state:
             task = _prepare_task_for_synthesis(task, state)
-        prompt = worker_prompts.get(name, "")
-        scoped_prompt = _build_scoped_prompt_for_agent(name, task)
-        if scoped_prompt:
-            prompt = f"{prompt.rstrip()}\n\n{scoped_prompt}".strip() if prompt else scoped_prompt
-        messages = []
-        if prompt:
-            messages.append(SystemMessage(content=prompt))
-        messages.append(HumanMessage(content=task))
         selected_tool_ids: list[str] = _focused_tool_ids_for_agent(name, task, limit=6)
         if name == "trafik":
             selected_tool_ids = [
@@ -1366,6 +1419,25 @@ async def create_supervisor_agent(
             ]
             if not selected_tool_ids:
                 selected_tool_ids = list(trafik_tool_ids)
+        prompt = worker_prompts.get(name, "")
+        scoped_prompt = _build_scoped_prompt_for_agent(name, task)
+        if scoped_prompt:
+            prompt = f"{prompt.rstrip()}\n\n{scoped_prompt}".strip() if prompt else scoped_prompt
+        tool_prompt_block = _build_tool_prompt_block(
+            selected_tool_ids,
+            tool_prompt_overrides,
+            max_tools=2,
+        )
+        if tool_prompt_block:
+            prompt = (
+                f"{prompt.rstrip()}\n\n{tool_prompt_block}".strip()
+                if prompt
+                else tool_prompt_block
+            )
+        messages = []
+        if prompt:
+            messages.append(SystemMessage(content=prompt))
+        messages.append(HumanMessage(content=task))
         state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
         config = {
             "configurable": {"thread_id": f"{dependencies['thread_id']}:{name}"},
@@ -1452,6 +1524,13 @@ async def create_supervisor_agent(
                 # Reuse same worker invocation logic as call_agent
                 if agent_name == "synthesis" and state:
                     task = _prepare_task_for_synthesis(task, state)
+                selected_tool_ids = _focused_tool_ids_for_agent(agent_name, task, limit=6)
+                if agent_name == "trafik":
+                    selected_tool_ids = [
+                        tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
+                    ]
+                    if not selected_tool_ids:
+                        selected_tool_ids = list(trafik_tool_ids)
                 prompt = worker_prompts.get(agent_name, "")
                 scoped_prompt = _build_scoped_prompt_for_agent(agent_name, task)
                 if scoped_prompt:
@@ -1460,17 +1539,21 @@ async def create_supervisor_agent(
                         if prompt
                         else scoped_prompt
                     )
+                tool_prompt_block = _build_tool_prompt_block(
+                    selected_tool_ids,
+                    tool_prompt_overrides,
+                    max_tools=2,
+                )
+                if tool_prompt_block:
+                    prompt = (
+                        f"{prompt.rstrip()}\n\n{tool_prompt_block}".strip()
+                        if prompt
+                        else tool_prompt_block
+                    )
                 messages = []
                 if prompt:
                     messages.append(SystemMessage(content=prompt))
                 messages.append(HumanMessage(content=task))
-                selected_tool_ids = _focused_tool_ids_for_agent(agent_name, task, limit=6)
-                if agent_name == "trafik":
-                    selected_tool_ids = [
-                        tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
-                    ]
-                    if not selected_tool_ids:
-                        selected_tool_ids = list(trafik_tool_ids)
                 worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
                 config = {
                     "configurable": {"thread_id": f"{dependencies['thread_id']}:{agent_name}"},
