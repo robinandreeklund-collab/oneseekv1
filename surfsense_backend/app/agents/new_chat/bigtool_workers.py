@@ -30,6 +30,7 @@ async def create_bigtool_worker(
     dependencies: dict[str, Any],
     checkpointer: Checkpointer | None,
     config: WorkerConfig,
+    stub_tool_registry: dict[str, Any] | None = None,
 ):
     if not hasattr(BigtoolToolNode, "inject_tool_args") and hasattr(
         BigtoolToolNode, "_inject_tool_args"
@@ -49,10 +50,16 @@ async def create_bigtool_worker(
             return self._inject_tool_args(tool_call, runtime)
 
         BigtoolToolNode.inject_tool_args = _inject_tool_args_compat  # type: ignore[attr-defined]
-    tool_registry = await build_global_tool_registry(
-        dependencies=dependencies,
-        include_mcp_tools=True,
-    )
+    
+    # Use stub registry if provided (evaluation mode), otherwise build real tools
+    if stub_tool_registry:
+        tool_registry = stub_tool_registry
+    else:
+        tool_registry = await build_global_tool_registry(
+            dependencies=dependencies,
+            include_mcp_tools=True,
+        )
+    
     tool_index = build_tool_index(tool_registry)
     store = build_bigtool_store(tool_index)
     trace_key = str(dependencies.get("thread_id") or "")
