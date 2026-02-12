@@ -30,6 +30,12 @@ from app.services.tool_eval_service import (
     _extract_scoring_details,
 )
 
+from app.services.tool_eval_live import (
+    evaluate_single_live,
+    live_eval_result_to_dict,
+    LiveEvalResult,
+)
+
 from app.agents.new_chat.bigtool_store import (
     build_tool_index,
     smart_retrieve_tools,
@@ -314,4 +320,74 @@ async def invalidate_cache(
         )
     except Exception as e:
         logger.error(f"Error invalidating cache: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Live evaluation models
+class LiveQueryRequest(BaseModel):
+    """Request for live pipeline evaluation of a single query."""
+    query: str = Field(..., description="User query to evaluate")
+    expected_tools: list[str] | None = Field(None, description="Expected tool IDs for comparison")
+    expected_agents: list[str] | None = Field(None, description="Expected agent names for comparison")
+
+
+class LiveQueryResponse(BaseModel):
+    """Response from live pipeline evaluation."""
+    query: str
+    trace: list[dict[str, Any]]
+    final_response: str
+    total_steps: int
+    total_time_ms: float
+    agents_used: list[str]
+    tools_used: list[str]
+    expected_tools: list[str] | None = None
+    matched_tools: list[str]
+    match_type: str | None = None
+    agent_selection_correct: bool | None = None
+    tool_selection_correct: bool | None = None
+    reasoning_quality: str | None = None
+
+
+@router.post(
+    "/tool-eval/single-live",
+    response_model=LiveQueryResponse,
+)
+async def test_single_query_live(
+    request: LiveQueryRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> LiveQueryResponse:
+    """
+    Run a single query through the FULL supervisor pipeline with stub tools.
+    
+    This provides complete trace of:
+    - Model reasoning and planning at each step
+    - Agent selection with actual scoring  
+    - Tool retrieval with actual scoring
+    - Execution flow with all intermediate steps
+    
+    Unlike /tool-eval/single (isolated testing), this runs through the real
+    production pipeline to see how everything works together.
+    
+    NO REAL API CALLS ARE MADE - all external tools use stub implementations.
+    """
+    await _require_admin(session, user)
+    
+    try:
+        # Run live evaluation
+        result = await evaluate_single_live(
+            query=request.query,
+            db=session,
+            user_id=str(user.id),
+            expected_tools=request.expected_tools,
+            expected_agents=request.expected_agents,
+        )
+        
+        # Convert to dict and return
+        result_dict = live_eval_result_to_dict(result)
+        
+        return LiveQueryResponse(**result_dict)
+    
+    except Exception as e:
+        logger.error(f"Error in live query evaluation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

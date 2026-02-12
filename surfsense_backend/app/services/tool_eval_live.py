@@ -122,104 +122,112 @@ async def evaluate_single_live(
     trace: list[LiveEvalTrace] = []
     step_number = 0
     
-    # Build dependencies (similar to production but with stub mode indicator)
+    # Build stub tool registry
+    stub_tool_registry = _build_stub_tool_registry()
+    
+    # Build dependencies (same as production)
     dependencies = {
         "db": db,
         "user_id": user_id,
-        "thread_id": None,  # Evaluation mode
+        "thread_id": None,  # Evaluation mode - no persistence
         "search_space_id": 1,
-        "use_stub_tools": True,  # NEW FLAG for evaluation mode
     }
     
     # Get LLM
     llm = get_default_llm()
     
-    # TODO: Create evaluation-specific supervisor that uses stub tools
-    # This requires modifying create_supervisor_agent to accept stub_tool_registry parameter
-    # OR creating a parallel function create_supervisor_agent_for_eval()
-    # OR monkey-patching build_global_tool_registry temporarily
+    # Get default prompts from registry
+    from app.agents.new_chat.prompt_registry import get_prompt
+    knowledge_prompt = get_prompt("agent.knowledge.system")
+    action_prompt = get_prompt("agent.action.system")
+    statistics_prompt = get_prompt("agent.statistics.system")
     
-    # For now, let's document what needs to happen:
-    # 1. create_supervisor_agent() needs to support use_stub_tools parameter
-    # 2. This parameter needs to flow down to LazyWorkerPool
-    # 3. LazyWorkerPool needs to pass it to create_bigtool_worker
-    # 4. create_bigtool_worker needs to call stub registry instead of build_global_tool_registry
-    
-    # Placeholder implementation showing the intended flow:
     try:
-        # This will fail until we modify the supervisor creation chain
-        # graph = await create_supervisor_agent(
-        #     llm=llm,
-        #     dependencies=dependencies,
-        #     checkpointer=None,  # No state persistence in eval mode
-        #     knowledge_prompt="...",  # Use default prompts
-        #     action_prompt="...",
-        #     statistics_prompt="...",
-        #     use_stub_tools=True,  # NEW PARAMETER
-        # )
+        # Create supervisor agent with stub tools
+        graph = await create_supervisor_agent(
+            llm=llm,
+            dependencies=dependencies,
+            checkpointer=None,  # No state persistence in eval mode
+            knowledge_prompt=knowledge_prompt,
+            action_prompt=action_prompt,
+            statistics_prompt=statistics_prompt,
+            stub_tool_registry=stub_tool_registry,  # Use stubs instead of real tools
+        )
         
-        # Run the query
-        # state = {"messages": [HumanMessage(content=query)]}
-        # 
-        # async for event in graph.astream_events(state, version="v1"):
-        #     step_number += 1
-        #     event_type = event.get("event")
-        #     
-        #     if event_type == "on_chat_model_start":
-        #         # Capture model input (reasoning opportunity)
-        #         messages = event.get("data", {}).get("input", {}).get("messages", [])
-        #         if messages:
-        #             last_msg = messages[-1]
-        #             trace.append(LiveEvalTrace(
-        #                 step_number=step_number,
-        #                 step_type="model_call",
-        #                 timestamp=time.time() - start_time,
-        #                 content=str(last_msg.content) if hasattr(last_msg, "content") else str(last_msg),
-        #                 model_reasoning="Processing query...",
-        #             ))
-        #     
-        #     elif event_type == "on_tool_start":
-        #         # Capture tool invocation
-        #         tool_name = event.get("name")
-        #         tool_input = event.get("data", {}).get("input")
-        #         trace.append(LiveEvalTrace(
-        #             step_number=step_number,
-        #             step_type="tool_call",
-        #             timestamp=time.time() - start_time,
-        #             content=f"Calling tool: {tool_name}",
-        #             tool_name=tool_name,
-        #             tool_args=tool_input if isinstance(tool_input, dict) else {"input": tool_input},
-        #         ))
-        #     
-        #     elif event_type == "on_tool_end":
-        #         # Capture tool result
-        #         tool_name = event.get("name")
-        #         tool_output = event.get("data", {}).get("output")
-        #         if trace and trace[-1].tool_name == tool_name:
-        #             trace[-1].tool_result = str(tool_output)
-        #     
-        #     elif event_type == "on_chat_model_end":
-        #         # Capture model response
-        #         output = event.get("data", {}).get("output")
-        #         if hasattr(output, "content"):
-        #             trace.append(LiveEvalTrace(
-        #                 step_number=step_number,
-        #                 step_type="model_call",
-        #                 timestamp=time.time() - start_time,
-        #                 content=str(output.content),
-        #                 model_reasoning="Generated response",
-        #             ))
+        # Run the query with event streaming
+        state = {"messages": [HumanMessage(content=query)]}
         
-        # Extract final response
-        # final_messages = state.get("messages", [])
-        # final_response = str(final_messages[-1].content) if final_messages else "No response"
+        async for event in graph.astream_events(state, version="v1"):
+            step_number += 1
+            event_type = event.get("event")
+            
+            if event_type == "on_chat_model_start":
+                # Capture model input (reasoning opportunity)
+                messages = event.get("data", {}).get("input", {}).get("messages", [])
+                if messages:
+                    last_msg = messages[-1]
+                    content = str(last_msg.content) if hasattr(last_msg, "content") else str(last_msg)
+                    trace.append(LiveEvalTrace(
+                        step_number=step_number,
+                        step_type="model_call",
+                        timestamp=time.time() - start_time,
+                        content=content[:500],  # Truncate long messages
+                        model_reasoning="Processing query...",
+                    ))
+            
+            elif event_type == "on_tool_start":
+                # Capture tool invocation
+                tool_name = event.get("name")
+                tool_input = event.get("data", {}).get("input")
+                trace.append(LiveEvalTrace(
+                    step_number=step_number,
+                    step_type="tool_call",
+                    timestamp=time.time() - start_time,
+                    content=f"Calling tool: {tool_name}",
+                    tool_name=tool_name,
+                    tool_args=tool_input if isinstance(tool_input, dict) else {"input": str(tool_input)},
+                ))
+            
+            elif event_type == "on_tool_end":
+                # Capture tool result
+                tool_name = event.get("name")
+                tool_output = event.get("data", {}).get("output")
+                # Update the last tool call trace with result
+                for t in reversed(trace):
+                    if t.tool_name == tool_name and t.tool_result is None:
+                        t.tool_result = str(tool_output)[:500] if tool_output else None
+                        break
+            
+            elif event_type == "on_chat_model_end":
+                # Capture model response
+                output = event.get("data", {}).get("output")
+                if hasattr(output, "content"):
+                    content = str(output.content)
+                    trace.append(LiveEvalTrace(
+                        step_number=step_number,
+                        step_type="model_call",
+                        timestamp=time.time() - start_time,
+                        content=content[:500],  # Truncate long responses
+                        model_reasoning="Generated response",
+                    ))
         
-        # For now, return a placeholder result
-        final_response = "[NOT IMPLEMENTED YET] Full pipeline evaluation requires modifying supervisor_agent.py"
+        # Extract final response from state
+        final_messages = state.get("messages", [])
+        if final_messages:
+            last_message = final_messages[-1]
+            final_response = str(last_message.content) if hasattr(last_message, "content") else str(last_message)
+        else:
+            final_response = "No response generated"
         
         # Analyze results
         agents_used = [t.agent_selected for t in trace if t.agent_selected]
-        tools_used = [t.tool_name for t in trace if t.tool_name and not t.tool_name.startswith("retrieve_") and not t.tool_name.startswith("call_")]
+        tools_used = [
+            t.tool_name for t in trace 
+            if t.tool_name 
+            and not t.tool_name.startswith("retrieve_") 
+            and not t.tool_name.startswith("call_")
+            and not t.tool_name.startswith("_")
+        ]
         
         # Match analysis
         matched_tools = []
@@ -246,18 +254,20 @@ async def evaluate_single_live(
             expected_tools=expected_tools,
             matched_tools=matched_tools,
             match_type=match_type,
-            agent_selection_correct=None,  # TODO: Analyze
+            agent_selection_correct=None,  # Could analyze if expected_agents provided
             tool_selection_correct=match_type == "exact" if match_type else None,
-            reasoning_quality=None,  # TODO: Analyze model reasoning
+            reasoning_quality=None,  # Could analyze model reasoning quality
         )
     
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         # Return error result
         return LiveEvalResult(
             query=query,
-            trace=[],
-            final_response=f"Error: {str(e)}",
-            total_steps=0,
+            trace=trace,  # Return partial trace
+            final_response=f"Error: {str(e)}\n\n{error_details}",
+            total_steps=len(trace),
             total_time_ms=(time.time() - start_time) * 1000,
             agents_used=[],
             tools_used=[],
