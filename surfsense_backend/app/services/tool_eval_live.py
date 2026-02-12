@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Import supervisor agent creation
 from app.agents.new_chat.supervisor_agent import create_supervisor_agent
-from app.agents.new_chat.llm_config import get_default_llm
 
 # Import stub tool builder from eval service
 from app.services.tool_eval_service import _build_stub_tool_registry
@@ -91,6 +90,7 @@ async def _create_stub_tool_registry_for_supervisor(
 async def evaluate_single_live(
     query: str,
     *,
+    llm,
     db: AsyncSession,
     user_id: str,
     expected_tools: list[str] | None = None,
@@ -107,6 +107,7 @@ async def evaluate_single_live(
     
     Args:
         query: User query to evaluate
+        llm: Language model instance to use
         db: Database session
         user_id: User ID for evaluation
         expected_tools: Optional list of expected tool IDs
@@ -129,9 +130,6 @@ async def evaluate_single_live(
         "thread_id": None,  # Evaluation mode - no persistence
         "search_space_id": 1,
     }
-    
-    # Get LLM
-    llm = get_default_llm()
     
     # Get default prompts from registry
     from app.agents.new_chat.prompt_registry import get_prompt

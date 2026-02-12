@@ -47,6 +47,11 @@ from app.agents.new_chat.supervisor_agent import (
     AgentDefinition,
 )
 
+from app.agents.new_chat.llm_config import (
+    load_llm_config_from_yaml,
+    create_chat_litellm_from_config,
+)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -374,9 +379,26 @@ async def test_single_query_live(
     await _require_admin(session, user)
     
     try:
+        # Get LLM configuration (use default config ID = 1)
+        llm_config = load_llm_config_from_yaml(llm_config_id=1)
+        if not llm_config:
+            raise HTTPException(
+                status_code=503,
+                detail="LLM configuration not available for evaluation"
+            )
+        
+        # Create LLM instance
+        llm = create_chat_litellm_from_config(llm_config)
+        if not llm:
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to create LLM instance for evaluation"
+            )
+        
         # Run live evaluation
         result = await evaluate_single_live(
             query=request.query,
+            llm=llm,
             db=session,
             user_id=str(user.id),
             expected_tools=request.expected_tools,
