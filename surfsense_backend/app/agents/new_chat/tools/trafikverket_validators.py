@@ -80,6 +80,17 @@ def normalize_limit(value: int | None, *, default: int = 10) -> int:
         return default
 
 
+def _coerce_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    if isinstance(value, (int, float)):
+        return str(value)
+    return None
+
+
 def normalize_road_number(value: str | None) -> str | None:
     if not value:
         return None
@@ -142,14 +153,32 @@ def intent_to_tool_id(intent: TrafikverketIntent) -> str | None:
 def normalize_tool_input(
     definition: TrafikverketToolDefinition, raw: TrafikverketToolInput
 ) -> TrafikverketToolInput:
-    query = (raw.get("query") or "").strip()
-    region = raw.get("region") or None
-    road = raw.get("road") or None
-    station = raw.get("station") or None
-    kamera_id = raw.get("kamera_id") or None
+    filter_data = raw.get("filter")
+    if not isinstance(filter_data, dict):
+        filter_data = {}
+    query = _coerce_str(raw.get("query")) or ""
+    region = _coerce_str(raw.get("region")) or _coerce_str(filter_data.get("region"))
+    road = _coerce_str(raw.get("road")) or _coerce_str(filter_data.get("road"))
+    station = _coerce_str(raw.get("station")) or _coerce_str(filter_data.get("station"))
+    kamera_id = _coerce_str(raw.get("kamera_id")) or _coerce_str(
+        filter_data.get("kamera_id") or filter_data.get("camera_id")
+    )
+    from_location = _coerce_str(raw.get("from_location")) or _coerce_str(
+        filter_data.get("from") or filter_data.get("from_location")
+    )
+    to_location = _coerce_str(raw.get("to_location")) or _coerce_str(
+        filter_data.get("to") or filter_data.get("to_location")
+    )
+
+    if not query and (from_location or to_location):
+        query = " ".join(part for part in (from_location, to_location) if part)
+    if not query and road:
+        query = road
 
     if not road:
         road = normalize_road_number(query) or normalize_road_number(region)
+    else:
+        road = normalize_road_number(road) or road
     if not station and definition.filter_kind == TrafikverketFilterKind.STATION:
         station = normalize_station_name(raw.get("station") or query or region)
     if not region and query:
@@ -171,6 +200,9 @@ def normalize_tool_input(
         "raw_filter": raw.get("raw_filter"),
         "time_window_hours": time_window,
         "intent": raw.get("intent"),
+        "filter": filter_data if filter_data else None,
+        "from_location": from_location,
+        "to_location": to_location,
     }
 
 
@@ -180,16 +212,28 @@ def infer_filter_value(
 ) -> str | None:
     if raw.get("raw_filter"):
         return str(raw.get("raw_filter"))
+    from_location = _coerce_str(raw.get("from_location"))
+    to_location = _coerce_str(raw.get("to_location"))
+    combined_location = " ".join(
+        part for part in (from_location, to_location) if part
+    )
+    road_value = normalize_road_number(raw.get("road") or None)
+    query_text = _coerce_str(raw.get("query"))
     if definition.filter_kind == TrafikverketFilterKind.ROAD:
-        return normalize_road_number(raw.get("road") or raw.get("query"))
+        return road_value or normalize_road_number(query_text)
     if definition.filter_kind == TrafikverketFilterKind.STATION:
-        return normalize_station_name(raw.get("station") or raw.get("query"))
+        return normalize_station_name(raw.get("station") or query_text or combined_location)
     if definition.filter_kind == TrafikverketFilterKind.CAMERA:
         return extract_camera_id(raw.get("kamera_id") or raw.get("query"))
     if definition.filter_kind == TrafikverketFilterKind.LOCATION:
-        return raw.get("region") or raw.get("road") or raw.get("query")
+        return (
+            road_value
+            or raw.get("region")
+            or combined_location
+            or query_text
+        )
     if definition.filter_kind == TrafikverketFilterKind.FREE:
-        return raw.get("query") or raw.get("region")
+        return query_text or raw.get("region") or road_value or combined_location
     return None
 
 

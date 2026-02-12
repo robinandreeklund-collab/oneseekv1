@@ -85,6 +85,9 @@ class TrafikverketToolInput(TypedDict, total=False):
     raw_filter: str | None
     time_window_hours: int | None
     intent: str | None
+    filter: dict[str, Any] | None
+    from_location: str | None
+    to_location: str | None
 
 
 class TrafikverketToolResult(TypedDict, total=False):

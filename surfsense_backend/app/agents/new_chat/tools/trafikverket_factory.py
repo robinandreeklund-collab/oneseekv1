@@ -231,6 +231,9 @@ class TrafikverketToolFactory:
                 kamera_id: str | None = None,
                 time_window_hours: int | None = None,
                 intent: str | None = None,
+                filter: dict[str, Any] | None = None,
+                from_location: str | None = None,
+                to_location: str | None = None,
             ) -> TrafikverketToolResult:
                 if time_window_hours is None:
                     time_window_hours = infer_time_window(query)
@@ -243,6 +246,9 @@ class TrafikverketToolFactory:
                     "kamera_id": kamera_id,
                     "time_window_hours": time_window_hours,
                     "intent": intent,
+                    "filter": filter,
+                    "from_location": from_location,
+                    "to_location": to_location,
                 }
                 resolved_intent = infer_intent(query)
                 if intent:
@@ -299,6 +305,9 @@ class TrafikverketToolFactory:
             limit: int | None = None,
             raw_filter: str | None = None,
             time_window_hours: int | None = None,
+            filter: dict[str, Any] | None = None,
+            from_location: str | None = None,
+            to_location: str | None = None,
         ) -> TrafikverketToolResult:
             raw_input: TrafikverketToolInput = {
                 "region": region,
@@ -309,6 +318,9 @@ class TrafikverketToolFactory:
                 "limit": limit,
                 "raw_filter": raw_filter,
                 "time_window_hours": time_window_hours,
+                "filter": filter,
+                "from_location": from_location,
+                "to_location": to_location,
             }
             return await self._run_with_fallbacks(definition, raw_input)
 
