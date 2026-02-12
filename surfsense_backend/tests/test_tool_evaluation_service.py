@@ -555,3 +555,14 @@ def test_repair_expected_routing_fixes_mislabeled_sub_route_for_tool():
     )
     assert route == "action"
     assert sub_route == "travel"
+
+
+def test_repair_expected_routing_fixes_wrong_action_sub_route_for_tool():
+    route, sub_route = _repair_expected_routing(
+        expected_route="action",
+        expected_sub_route="web",
+        expected_tool="trafikverket_trafikinfo_vagarbeten",
+        expected_category="trafikverket_trafikinfo",
+    )
+    assert route == "action"
+    assert sub_route == "travel"

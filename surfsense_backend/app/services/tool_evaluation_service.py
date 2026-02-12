@@ -442,27 +442,13 @@ def _repair_expected_routing(
     if route is None and inferred_route is not None:
         route = inferred_route
 
-    action_sub_routes = {
-        ActionRoute.WEB.value,
-        ActionRoute.MEDIA.value,
-        ActionRoute.TRAVEL.value,
-        ActionRoute.DATA.value,
-    }
-    knowledge_sub_routes = {
-        KnowledgeRoute.DOCS.value,
-        KnowledgeRoute.INTERNAL.value,
-        KnowledgeRoute.EXTERNAL.value,
-    }
-
     if route == Route.ACTION.value:
-        if sub_route in knowledge_sub_routes and inferred_route == Route.ACTION.value:
-            sub_route = inferred_sub_route
-        if sub_route is None and inferred_route == Route.ACTION.value:
+        if inferred_route == Route.ACTION.value and inferred_sub_route:
+            # If expected tool implies an action sub-route, trust that mapping
+            # over mislabeled sub-routes in eval payloads (e.g. web vs travel).
             sub_route = inferred_sub_route
     elif route == Route.KNOWLEDGE.value:
-        if sub_route in action_sub_routes and inferred_route == Route.KNOWLEDGE.value:
-            sub_route = inferred_sub_route
-        if sub_route is None and inferred_route == Route.KNOWLEDGE.value:
+        if inferred_route == Route.KNOWLEDGE.value and inferred_sub_route:
             sub_route = inferred_sub_route
     elif route == Route.STATISTICS.value:
         sub_route = None
