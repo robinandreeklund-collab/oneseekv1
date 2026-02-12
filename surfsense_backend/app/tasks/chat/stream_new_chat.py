@@ -348,6 +348,88 @@ def _collect_trafikverket_photos(payload: Any) -> list[dict[str, str]]:
     return photos
 
 
+def _content_to_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                chunks.append(item)
+                continue
+            if isinstance(item, dict):
+                text_value = item.get("text") or item.get("content")
+                if isinstance(text_value, str):
+                    chunks.append(text_value)
+                continue
+            text_attr = getattr(item, "text", None) or getattr(item, "content", None)
+            if isinstance(text_attr, str):
+                chunks.append(text_attr)
+        return "".join(chunks)
+    return str(content)
+
+
+def _extract_assistant_text_from_message(message: Any) -> str:
+    if message is None:
+        return ""
+    if isinstance(message, dict):
+        role = str(message.get("role") or message.get("type") or "").lower()
+        if role in {"human", "user", "system", "tool"}:
+            return ""
+        tool_calls = message.get("tool_calls") or message.get("toolCalls")
+        if tool_calls:
+            return ""
+        return _content_to_text(message.get("content")).strip()
+    class_name = message.__class__.__name__.lower()
+    if any(token in class_name for token in ("human", "system", "tool")):
+        return ""
+    tool_calls = getattr(message, "tool_calls", None) or getattr(message, "toolCalls", None)
+    if tool_calls:
+        return ""
+    return _content_to_text(getattr(message, "content", "")).strip()
+
+
+def _extract_assistant_text_from_event_output(output: Any) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, dict):
+        messages = output.get("messages")
+        if isinstance(messages, list):
+            for message in reversed(messages):
+                text = _extract_assistant_text_from_message(message)
+                if text:
+                    return text
+        generations = output.get("generations")
+        if isinstance(generations, list):
+            for generation in reversed(generations):
+                text = _extract_assistant_text_from_event_output(generation)
+                if text:
+                    return text
+        message = output.get("message")
+        if message is not None:
+            text = _extract_assistant_text_from_event_output(message)
+            if text:
+                return text
+        if "content" in output:
+            return _extract_assistant_text_from_message(output)
+        return ""
+    if isinstance(output, list):
+        for item in reversed(output):
+            text = _extract_assistant_text_from_event_output(item)
+            if text:
+                return text
+        return ""
+    if hasattr(output, "generations"):
+        return _extract_assistant_text_from_event_output(getattr(output, "generations"))
+    if hasattr(output, "message"):
+        return _extract_assistant_text_from_event_output(getattr(output, "message"))
+    if hasattr(output, "content"):
+        return _extract_assistant_text_from_message(output)
+    return ""
+
+
 async def stream_new_chat(
     user_query: str,
     search_space_id: int,
@@ -880,6 +962,8 @@ async def stream_new_chat(
         just_finished_tool: bool = False
         # Track write_todos calls to show "Creating plan" vs "Updating plan"
         write_todos_call_count: int = 0
+        # Fallback text captured from non-streaming model/chain events
+        fallback_assistant_text: str = ""
 
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
@@ -1092,6 +1176,11 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
+                    candidate_text = _extract_assistant_text_from_event_output(
+                        chain_output
+                    )
+                    if candidate_text:
+                        fallback_assistant_text = candidate_text
                 elif event_type == "on_chain_error":
                     trace_event = await trace_recorder.end_span(
                         span_id=run_id,
@@ -1133,6 +1222,11 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
+                    candidate_text = _extract_assistant_text_from_event_output(
+                        model_output
+                    )
+                    if candidate_text:
+                        fallback_assistant_text = candidate_text
 
             # Handle chat model stream events (text streaming)
             if event_type == "on_chat_model_stream":
@@ -2491,6 +2585,11 @@ async def stream_new_chat(
 
             # Handle chain/agent end to close any open text blocks
             elif event_type in ("on_chain_end", "on_agent_end"):
+                candidate_text = _extract_assistant_text_from_event_output(
+                    event.get("data", {}).get("output")
+                )
+                if candidate_text:
+                    fallback_assistant_text = candidate_text
                 if current_text_id is not None:
                     yield streaming_service.format_text_end(current_text_id)
                     current_text_id = None
@@ -2503,6 +2602,17 @@ async def stream_new_chat(
             yield streaming_service.format_text_delta(current_text_id, repeat_buffer)
             accumulated_text += repeat_buffer
             repeat_buffer = ""
+        if not accumulated_text.strip() and fallback_assistant_text.strip():
+            if current_text_id is None:
+                completion_event = complete_current_step()
+                if completion_event:
+                    yield completion_event
+                current_text_id = streaming_service.generate_text_id()
+                yield streaming_service.format_text_start(current_text_id)
+            yield streaming_service.format_text_delta(
+                current_text_id, fallback_assistant_text
+            )
+            accumulated_text += fallback_assistant_text
         if current_text_id is not None:
             yield streaming_service.format_text_end(current_text_id)
 

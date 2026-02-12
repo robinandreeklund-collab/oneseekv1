@@ -130,9 +130,9 @@ def create_trafiklab_route_tool():
         destination_id: str | None = None,
         time: str | None = None,
         mode: str = "departures",
-        max_results: int | None = None,
+        max_results: int | None = 8,
         match_strategy: str = "contains",
-        include_raw: bool = True,
+        include_raw: bool = False,
     ) -> dict[str, Any]:
         """
         Find upcoming departures/arrivals using Trafiklab realtime APIs.
@@ -148,9 +148,9 @@ def create_trafiklab_route_tool():
             destination_id: Optional destination stop area id (skip lookup).
             time: Optional query time in YYYY-MM-DDTHH:MM format.
             mode: "departures" or "arrivals" (default: departures).
-            max_results: Optional max number of entries to return.
+            max_results: Optional max number of entries to return (default: 8, capped).
             match_strategy: "contains", "starts_with", or "exact" matching.
-            include_raw: Include raw API payloads (default: True).
+            include_raw: Include raw API payloads (default: False).
 
         Returns:
             A dictionary with origin/destination info, matching departures,
@@ -269,9 +269,11 @@ def create_trafiklab_route_tool():
                 ):
                     matching_entries.append(entry)
 
-        if max_results is not None and max_results > 0:
-            entries = entries[:max_results]
-            matching_entries = matching_entries[:max_results]
+        if max_results is None:
+            max_results = 8
+        max_results = max(1, min(int(max_results), 20))
+        entries = entries[:max_results]
+        matching_entries = matching_entries[:max_results]
 
         result: dict[str, Any] = {
             "status": "ok",
