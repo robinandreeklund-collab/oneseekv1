@@ -688,15 +688,6 @@ async def create_supervisor_agent(
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
-    workers = {}
-    for name, config in worker_configs.items():
-        workers[name] = await create_bigtool_worker(
-            llm=llm,
-            dependencies=dependencies,
-            checkpointer=checkpointer,
-            config=config,
-        )
-
     # Create lazy worker pool for on-demand initialization
     worker_pool = LazyWorkerPool(
         configs=worker_configs,
@@ -1316,7 +1307,7 @@ async def create_supervisor_agent(
             # Count ToolMessages
             tool_msgs = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
             if len(tool_msgs) > 8:
-                # Keep only the last 6 tool message exchanges (tool + preceding AI)
+                # Keep only the last 6 tool messages and their context
                 keep_from = tool_msgs[-6]
                 # Find the AI message that triggered the first kept tool message
                 keep_start = max(0, keep_from - 1)

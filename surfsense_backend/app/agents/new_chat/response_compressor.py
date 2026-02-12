@@ -8,7 +8,6 @@ from typing import Any
 from app.utils.context_metrics import estimate_tokens_from_text
 
 MAX_RESPONSE_TOKENS = 800
-SUMMARY_THRESHOLD = 1200
 
 
 def extract_key_data(response_text: str, agent_name: str) -> str | None:

@@ -228,10 +228,8 @@ def create_smhi_weather_tool():
             forecast, smhi_lat, smhi_lon, smhi_decimals = await _fetch_smhi_forecast(
                 lat=lat, lon=lon
             )
-            breaker = get_breaker("smhi")
             breaker.record_success()
         except Exception as exc:
-            breaker = get_breaker("smhi")
             breaker.record_failure()
             logger.error("SMHI forecast fetch failed: %s", exc)
             return {
