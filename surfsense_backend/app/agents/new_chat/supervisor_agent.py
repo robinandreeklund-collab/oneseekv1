@@ -266,6 +266,9 @@ def _build_scoped_prompt_for_agent(agent_name: str, task: str) -> str | None:
     lines.append(
         "Anvand i forsta hand ett av ovanstaende verktyg och hall argumenten strikt till valt verktygs schema."
     )
+    lines.append(
+        "Om inget av dessa verktyg passar uppgiften: kor retrieve_tools igen med forfinad intent innan fortsattning."
+    )
     return "\n".join(lines)
 
 
@@ -284,6 +287,7 @@ def _default_prompt_for_tool_id(tool_id: str) -> str | None:
             "Anvand endast detta verktyg om uppgiften matchar dess doman.",
             "Matcha argument strikt mot verktygets schema och undvik overflodiga falt.",
             "Vid saknade kravfalt: stall en kort, exakt forfragan om komplettering.",
+            "Om uppgiften byter amne eller inte matchar domanen: gor ny retrieve_tools innan nasta verktygsval.",
         ]
     )
 

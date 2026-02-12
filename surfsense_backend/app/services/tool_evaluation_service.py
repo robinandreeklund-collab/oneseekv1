@@ -2377,6 +2377,7 @@ def _build_fallback_prompt_suggestion(
             "- Lägg inte in långa verktygslistor eller endpointdetaljer i supervisorprompten.",
             "- Lista inte alla agenter statiskt; använd retrieve_agents för dynamiskt urval.",
             "- Använd retrieval-resultat för dynamiskt val av kandidater innan körning.",
+            "- Om aktuell agent inte kan lösa uppgiften eller frågan byter riktning: kör retrieve_agents igen innan nästa delegering.",
         ]
     elif prompt_key.startswith("tool."):
         lines = [
@@ -2384,6 +2385,7 @@ def _build_fallback_prompt_suggestion(
             "- Mappa användarintention till detta verktygs schema med exakta fältnamn.",
             "- Om obligatoriska fält saknas: ställ en kort förtydligande fråga.",
             "- Lägg inte till argument som inte finns i verktygets schema.",
+            "- Om uppgiften inte matchar verktygets domän: gör ny retrieve_tools innan nytt verktygsval.",
         ]
     elif prompt_key.startswith("agent."):
         lines = [
@@ -2392,6 +2394,7 @@ def _build_fallback_prompt_suggestion(
             "- Håll planeringen kort: domänträff -> verktygsträff -> kompletta argument.",
             "- Undvik statisk endpoint-listning; använd retrieve_tools för dynamiskt urval.",
             "- Om domänkritiska fält saknas: ställ en fokuserad förtydligande fråga.",
+            "- Om tillgängliga verktyg inte kan lösa uppgiften eller frågan byter ämne: kör retrieve_tools igen med omformulerad intent.",
         ]
     else:
         lines = [
@@ -2439,6 +2442,7 @@ async def _build_llm_prompt_suggestion(
         "Behåll stil och syfte, men lägg till precisa instruktioner för route, planering och argumentextraktion.\n"
         "All text ska vara på svenska.\n"
         "Undvik statiska listor över alla agenter eller endpoints. Förlita dig på retrieve_agents/retrieve_tools.\n"
+        "När valda agenter/verktyg inte räcker eller frågan byter riktning ska prompten instruera ny retrieval (retrieve_agents/retrieve_tools).\n"
         "Returnera strikt JSON:\n"
         "{\n"
         '  "proposed_prompt": "fullständig reviderad prompt på svenska",\n'

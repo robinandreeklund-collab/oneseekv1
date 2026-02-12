@@ -1683,6 +1683,7 @@ def _default_tool_system_prompt(entry: Any) -> str:
             "- Använd exakt argumentnamn från valt verktygs schema.",
             "- Om viktiga fält saknas: ställ en kort förtydligande fråga.",
             "- Undvik antaganden om fält som inte explicit nämns i fråga eller schema.",
+            "- Om frågan inte längre matchar verktygets domän: kör retrieve_tools igen innan du fortsätter.",
         ]
     )
 

@@ -26,6 +26,9 @@ Regler:
 - Nar planen ar klar: kalla write_todos med plan_complete=true.
 - Lista inte alla agenter statiskt i prompten.
 - Hamta alltid kandidat-agenter dynamiskt via retrieve_agents() och valj darifran.
+- Om vald agent inte kan losa uppgiften med tillgangliga verktyg: gor ny retrieve_agents() med en forfinad uppgiftsbeskrivning.
+- Om anvandaren byter riktning/amne i traden: gor ny retrieve_agents() innan nasta delegering.
+- Ateranvand inte tidigare agent slentrianmassigt; verifiera domanmatch via retrieval i varje storre steg.
 
 Today's date (UTC): {resolved_today}
 Current time (UTC): {resolved_time}
