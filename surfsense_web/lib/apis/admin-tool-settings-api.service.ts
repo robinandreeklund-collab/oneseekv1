@@ -1,12 +1,15 @@
 import {
 	type ToolApplySuggestionsRequest,
 	type ToolEvaluationRequest,
+	type ToolRetrievalTuning,
 	type ToolSettingsUpdateRequest,
 	type ToolSuggestionRequest,
 	toolApplySuggestionsRequest,
 	toolApplySuggestionsResponse,
 	toolEvaluationRequest,
 	toolEvaluationResponse,
+	toolRetrievalTuning,
+	toolRetrievalTuningResponse,
 	toolSettingsResponse,
 	toolSettingsUpdateRequest,
 	toolSuggestionRequest,
@@ -34,6 +37,28 @@ class AdminToolSettingsApiService {
 		return baseApiService.put(`/api/v1/admin/tool-settings${query}`, toolSettingsResponse, {
 			body: parsed.data,
 		});
+	}
+
+	async getRetrievalTuning() {
+		return baseApiService.get(
+			"/api/v1/admin/tool-settings/retrieval-tuning",
+			toolRetrievalTuningResponse
+		);
+	}
+
+	async updateRetrievalTuning(tuning: ToolRetrievalTuning) {
+		const parsed = toolRetrievalTuning.safeParse(tuning);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.put(
+			"/api/v1/admin/tool-settings/retrieval-tuning",
+			toolRetrievalTuningResponse,
+			{
+				body: parsed.data,
+			}
+		);
 	}
 
 	async evaluateToolSettings(request: ToolEvaluationRequest) {

@@ -30,14 +30,35 @@ class ToolCategoryResponse(BaseModel):
     tools: list[ToolMetadataItem]
 
 
+class ToolRetrievalTuning(BaseModel):
+    name_match_weight: float = 5.0
+    keyword_weight: float = 3.0
+    description_token_weight: float = 1.0
+    example_query_weight: float = 2.0
+    namespace_boost: float = 3.0
+    embedding_weight: float = 4.0
+    rerank_candidates: int = 24
+
+
 class ToolSettingsResponse(BaseModel):
     categories: list[ToolCategoryResponse]
+    retrieval_tuning: ToolRetrievalTuning
     metadata_version_hash: str
     search_space_id: int
 
 
 class ToolSettingsUpdateRequest(BaseModel):
     tools: list[ToolMetadataUpdateItem]
+
+
+class ToolRetrievalTuningResponse(BaseModel):
+    tuning: ToolRetrievalTuning
+
+
+class ToolRetrievalTuningSuggestion(BaseModel):
+    current_tuning: ToolRetrievalTuning
+    proposed_tuning: ToolRetrievalTuning
+    rationale: str
 
 
 class ToolEvaluationExpected(BaseModel):
@@ -59,6 +80,7 @@ class ToolEvaluationRequest(BaseModel):
     retrieval_limit: int = 5
     tests: list[ToolEvaluationTestCase]
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    retrieval_tuning_override: ToolRetrievalTuning | None = None
 
 
 class ToolEvaluationMetrics(BaseModel):
@@ -82,6 +104,7 @@ class ToolEvaluationCaseResult(BaseModel):
     planning_steps: list[str] = Field(default_factory=list)
     retrieval_top_tools: list[str] = Field(default_factory=list)
     retrieval_top_categories: list[str] = Field(default_factory=list)
+    retrieval_breakdown: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_hit_expected_tool: bool | None = None
     passed_category: bool | None = None
     passed_tool: bool | None = None
@@ -102,6 +125,8 @@ class ToolEvaluationResponse(BaseModel):
     metrics: ToolEvaluationMetrics
     results: list[ToolEvaluationCaseResult]
     suggestions: list[ToolMetadataSuggestion]
+    retrieval_tuning: ToolRetrievalTuning
+    retrieval_tuning_suggestion: ToolRetrievalTuningSuggestion | None = None
     metadata_version_hash: str
     search_space_id: int
 

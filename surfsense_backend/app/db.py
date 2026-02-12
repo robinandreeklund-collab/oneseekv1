@@ -1288,6 +1288,43 @@ class GlobalToolMetadataOverrideHistory(BaseModel, TimestampMixin):
     updated_by = relationship("User")
 
 
+class GlobalToolRetrievalTuning(BaseModel, TimestampMixin):
+    __tablename__ = "tool_retrieval_tuning_global"
+    __table_args__ = (
+        UniqueConstraint(
+            "config_key", name="uq_tool_retrieval_tuning_global_key"
+        ),
+    )
+
+    config_key = Column(String(40), nullable=False, index=True, default="default")
+    tuning_payload = Column(JSONB, nullable=False, default={})
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class GlobalToolRetrievalTuningHistory(BaseModel, TimestampMixin):
+    __tablename__ = "tool_retrieval_tuning_history_global"
+
+    config_key = Column(String(40), nullable=False, index=True)
+    previous_payload = Column(JSONB, nullable=True)
+    new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
 class AgentComboCache(BaseModel, TimestampMixin):
     __tablename__ = "agent_combo_cache"
     __table_args__ = (

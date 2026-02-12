@@ -7,7 +7,11 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agents.new_chat.bigtool_store import ToolIndexEntry, smart_retrieve_tools
+from app.agents.new_chat.bigtool_store import (
+    ToolIndexEntry,
+    normalize_retrieval_tuning,
+    smart_retrieve_tools_with_breakdown,
+)
 
 _SUGGESTION_STOPWORDS = {
     "a",
@@ -365,8 +369,10 @@ async def run_tool_evaluation(
     tool_index: list[ToolIndexEntry],
     llm,
     retrieval_limit: int = 5,
+    retrieval_tuning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     retrieval_limit = max(1, min(int(retrieval_limit or 5), 15))
+    normalized_tuning = normalize_retrieval_tuning(retrieval_tuning)
     index_by_id = {entry.tool_id: entry for entry in tool_index}
     results: list[dict[str, Any]] = []
 
@@ -390,13 +396,14 @@ async def run_tool_evaluation(
         if expected_tool and not allowed_tools:
             allowed_tools = [expected_tool]
 
-        retrieved_ids = smart_retrieve_tools(
+        retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
             question,
             tool_index=tool_index,
             primary_namespaces=[("tools",)],
             fallback_namespaces=[],
             limit=max(retrieval_limit, 8),
             trace_key=None,
+            tuning=normalized_tuning,
         )
         retrieved_entries = [
             index_by_id[tool_id]
@@ -461,6 +468,7 @@ async def run_tool_evaluation(
                     for tool_id in retrieved_ids[:retrieval_limit]
                     if tool_id in index_by_id
                 ],
+                "retrieval_breakdown": retrieval_breakdown[:retrieval_limit],
                 "retrieval_hit_expected_tool": retrieval_hit_expected_tool,
                 "passed_category": passed_category,
                 "passed_tool": passed_tool,
@@ -566,3 +574,142 @@ async def generate_tool_metadata_suggestions(
         )
 
     return suggestions
+
+
+async def suggest_retrieval_tuning(
+    *,
+    evaluation_results: list[dict[str, Any]],
+    current_tuning: dict[str, Any],
+    llm=None,
+) -> dict[str, Any] | None:
+    normalized_current = normalize_retrieval_tuning(current_tuning)
+    total = len(evaluation_results)
+    if total == 0:
+        return None
+    failed = [result for result in evaluation_results if not result.get("passed")]
+    if not failed:
+        return None
+
+    retrieval_checks = [
+        result.get("retrieval_hit_expected_tool")
+        for result in evaluation_results
+        if result.get("retrieval_hit_expected_tool") is not None
+    ]
+    retrieval_recall = (
+        (sum(1 for value in retrieval_checks if value) / len(retrieval_checks))
+        if retrieval_checks
+        else None
+    )
+    tool_checks = [
+        result.get("passed_tool")
+        for result in evaluation_results
+        if result.get("passed_tool") is not None
+    ]
+    tool_accuracy = (
+        (sum(1 for value in tool_checks if value) / len(tool_checks))
+        if tool_checks
+        else None
+    )
+
+    fallback_proposed = dict(normalized_current.__dict__)
+    if retrieval_recall is not None and retrieval_recall < 0.75:
+        fallback_proposed["keyword_weight"] = min(
+            25.0, fallback_proposed["keyword_weight"] + 0.8
+        )
+        fallback_proposed["embedding_weight"] = min(
+            25.0, fallback_proposed["embedding_weight"] + 1.0
+        )
+        fallback_proposed["rerank_candidates"] = min(
+            100, fallback_proposed["rerank_candidates"] + 8
+        )
+    elif tool_accuracy is not None and tool_accuracy < 0.75:
+        fallback_proposed["namespace_boost"] = min(
+            10.0, fallback_proposed["namespace_boost"] + 0.4
+        )
+        fallback_proposed["example_query_weight"] = min(
+            10.0, fallback_proposed["example_query_weight"] + 0.4
+        )
+        fallback_proposed["rerank_candidates"] = min(
+            100, fallback_proposed["rerank_candidates"] + 4
+        )
+    else:
+        fallback_proposed["description_token_weight"] = min(
+            10.0, fallback_proposed["description_token_weight"] + 0.2
+        )
+
+    fallback_proposed = normalize_retrieval_tuning(fallback_proposed).__dict__
+    fallback_rationale = (
+        "Fallback tuning suggestion based on eval metrics: adjusted lexical/semantic "
+        "weights and rerank candidate window to improve retrieval recall and tool hit rate."
+    )
+
+    if llm is None:
+        if fallback_proposed == normalized_current.__dict__:
+            return None
+        return {
+            "current_tuning": normalized_current.__dict__,
+            "proposed_tuning": fallback_proposed,
+            "rationale": fallback_rationale,
+        }
+
+    payload = {
+        "current_tuning": normalized_current.__dict__,
+        "summary": {
+            "total_cases": total,
+            "failed_cases": len(failed),
+            "retrieval_recall_at_k": retrieval_recall,
+            "tool_accuracy": tool_accuracy,
+        },
+        "failed_cases": failed[:15],
+    }
+    prompt = (
+        "You optimize retrieval tuning weights for tool routing evaluation.\n"
+        "Given current weights and failed cases, propose updated weights.\n"
+        "Return strict JSON only:\n"
+        "{\n"
+        '  "name_match_weight": number,\n'
+        '  "keyword_weight": number,\n'
+        '  "description_token_weight": number,\n'
+        '  "example_query_weight": number,\n'
+        '  "namespace_boost": number,\n'
+        '  "embedding_weight": number,\n'
+        '  "rerank_candidates": integer,\n'
+        '  "rationale": "string"\n'
+        "}\n"
+        "Do not include markdown."
+    )
+    model = llm
+    try:
+        if hasattr(llm, "bind"):
+            model = llm.bind(temperature=0)
+    except Exception:
+        model = llm
+    try:
+        response = await model.ainvoke(
+            [
+                SystemMessage(content=prompt),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+            ]
+        )
+        parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
+        if not parsed:
+            raise ValueError("No JSON tuning proposal returned")
+        proposed = normalize_retrieval_tuning(parsed).__dict__
+        if proposed == normalized_current.__dict__:
+            return None
+        rationale = str(parsed.get("rationale") or "").strip() or (
+            "LLM suggested retrieval tuning updates based on failed eval cases."
+        )
+        return {
+            "current_tuning": normalized_current.__dict__,
+            "proposed_tuning": proposed,
+            "rationale": rationale,
+        }
+    except Exception:
+        if fallback_proposed == normalized_current.__dict__:
+            return None
+        return {
+            "current_tuning": normalized_current.__dict__,
+            "proposed_tuning": fallback_proposed,
+            "rationale": fallback_rationale,
+        }

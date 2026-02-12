@@ -5,6 +5,7 @@ from app.services.tool_evaluation_service import (
     compute_metadata_version_hash,
     generate_tool_metadata_suggestions,
     run_tool_evaluation,
+    suggest_retrieval_tuning,
 )
 
 
@@ -74,8 +75,8 @@ def test_run_tool_evaluation_without_llm_uses_retrieval(monkeypatch):
     ]
 
     monkeypatch.setattr(
-        "app.services.tool_evaluation_service.smart_retrieve_tools",
-        lambda *_args, **_kwargs: ["tool_beta", "tool_alpha"],
+        "app.services.tool_evaluation_service.smart_retrieve_tools_with_breakdown",
+        lambda *_args, **_kwargs: (["tool_beta", "tool_alpha"], []),
     )
 
     output = asyncio.run(
@@ -141,3 +142,32 @@ def test_generate_tool_metadata_suggestions_fallback():
     assert suggestion["tool_id"] == "trafikverket_vader_halka"
     assert suggestion["proposed_metadata"]["description"]
     assert len(suggestion["proposed_metadata"]["keywords"]) >= 2
+
+
+def test_suggest_retrieval_tuning_fallback():
+    suggestion = asyncio.run(
+        suggest_retrieval_tuning(
+            evaluation_results=[
+                {
+                    "test_id": "t1",
+                    "question": "fraga",
+                    "passed": False,
+                    "passed_tool": False,
+                    "retrieval_hit_expected_tool": False,
+                }
+            ],
+            current_tuning={
+                "name_match_weight": 5.0,
+                "keyword_weight": 3.0,
+                "description_token_weight": 1.0,
+                "example_query_weight": 2.0,
+                "namespace_boost": 3.0,
+                "embedding_weight": 4.0,
+                "rerank_candidates": 24,
+            },
+            llm=None,
+        )
+    )
+
+    assert suggestion is not None
+    assert suggestion["proposed_tuning"]["embedding_weight"] >= 4.0

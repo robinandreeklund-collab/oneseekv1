@@ -166,8 +166,18 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "riksdag_voteringar_resultat": ["resultat", "röstresultat", "detaljerat", "parti"],
 }
 
-TOOL_RERANK_CANDIDATES = 24
-TOOL_EMBEDDING_WEIGHT = 4.0
+@dataclass(frozen=True)
+class ToolRetrievalTuning:
+    name_match_weight: float = 5.0
+    keyword_weight: float = 3.0
+    description_token_weight: float = 1.0
+    example_query_weight: float = 2.0
+    namespace_boost: float = 3.0
+    embedding_weight: float = 4.0
+    rerank_candidates: int = 24
+
+
+DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
 _TOOL_EMBED_CACHE: dict[str, tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
@@ -235,22 +245,120 @@ def _match_namespace(entry_namespace: tuple[str, ...], prefix: tuple[str, ...]) 
     return entry_namespace[: len(prefix)] == prefix
 
 
-def _score_entry(entry: ToolIndexEntry, query_tokens: set[str], query_norm: str) -> int:
-    score = 0
+def _bounded_float(
+    value: Any,
+    *,
+    default: float,
+    min_value: float,
+    max_value: float,
+) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(min_value, min(max_value, parsed))
+
+
+def _bounded_int(
+    value: Any,
+    *,
+    default: int,
+    min_value: int,
+    max_value: int,
+) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(min_value, min(max_value, parsed))
+
+
+def normalize_retrieval_tuning(
+    tuning: ToolRetrievalTuning | dict[str, Any] | None,
+) -> ToolRetrievalTuning:
+    if isinstance(tuning, ToolRetrievalTuning):
+        return tuning
+    payload = tuning or {}
+    return ToolRetrievalTuning(
+        name_match_weight=_bounded_float(
+            payload.get("name_match_weight"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.name_match_weight,
+            min_value=0.0,
+            max_value=25.0,
+        ),
+        keyword_weight=_bounded_float(
+            payload.get("keyword_weight"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.keyword_weight,
+            min_value=0.0,
+            max_value=25.0,
+        ),
+        description_token_weight=_bounded_float(
+            payload.get("description_token_weight"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.description_token_weight,
+            min_value=0.0,
+            max_value=10.0,
+        ),
+        example_query_weight=_bounded_float(
+            payload.get("example_query_weight"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.example_query_weight,
+            min_value=0.0,
+            max_value=10.0,
+        ),
+        namespace_boost=_bounded_float(
+            payload.get("namespace_boost"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.namespace_boost,
+            min_value=0.0,
+            max_value=10.0,
+        ),
+        embedding_weight=_bounded_float(
+            payload.get("embedding_weight"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.embedding_weight,
+            min_value=0.0,
+            max_value=25.0,
+        ),
+        rerank_candidates=_bounded_int(
+            payload.get("rerank_candidates"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.rerank_candidates,
+            min_value=1,
+            max_value=100,
+        ),
+    )
+
+
+def _score_entry_components(
+    entry: ToolIndexEntry,
+    query_tokens: set[str],
+    query_norm: str,
+    tuning: ToolRetrievalTuning,
+) -> dict[str, Any]:
     name_norm = _normalize_text(entry.name)
     desc_norm = _normalize_text(entry.description)
-    if name_norm and name_norm in query_norm:
-        score += 5
+    name_match_hits = 1 if name_norm and name_norm in query_norm else 0
+    keyword_hits = 0
     for keyword in entry.keywords:
         if _normalize_text(keyword) in query_norm:
-            score += 3
+            keyword_hits += 1
+    description_hits = 0
     for token in query_tokens:
         if token and token in desc_norm:
-            score += 1
+            description_hits += 1
+    example_hits = 0
     for example in entry.example_queries:
         if _normalize_text(example) in query_norm:
-            score += 2
-    return score
+            example_hits += 1
+    lexical_score = (
+        (name_match_hits * tuning.name_match_weight)
+        + (keyword_hits * tuning.keyword_weight)
+        + (description_hits * tuning.description_token_weight)
+        + (example_hits * tuning.example_query_weight)
+    )
+    return {
+        "name_match_hits": int(name_match_hits),
+        "keyword_hits": int(keyword_hits),
+        "description_hits": int(description_hits),
+        "example_hits": int(example_hits),
+        "lexical_score": float(lexical_score),
+    }
 
 
 def _build_rerank_text(entry: ToolIndexEntry) -> str:
@@ -399,7 +507,7 @@ def get_tool_rerank_trace(
     return _TOOL_RERANK_TRACE.get((str(trace_key), query_norm))
 
 
-def smart_retrieve_tools(
+def _run_smart_retrieval(
     query: str,
     *,
     tool_index: list[ToolIndexEntry],
@@ -407,7 +515,9 @@ def smart_retrieve_tools(
     fallback_namespaces: list[tuple[str, ...]] | None = None,
     limit: int = 2,
     trace_key: str | None = None,
-) -> list[str]:
+    tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    normalized_tuning = normalize_retrieval_tuning(tuning)
     query_norm = _normalize_text(query)
     query_tokens = set(_tokenize(query_norm))
     fallback_namespaces = fallback_namespaces or []
@@ -424,19 +534,48 @@ def smart_retrieve_tools(
 
     primary_scored: list[tuple[str, float]] = []
     fallback_scored: list[tuple[str, float]] = []
+    breakdown_by_id: dict[str, dict[str, Any]] = {}
 
     for entry in tool_index:
-        base_score = float(_score_entry(entry, query_tokens, query_norm))
+        breakdown = _score_entry_components(
+            entry,
+            query_tokens,
+            query_norm,
+            normalized_tuning,
+        )
         semantic_score = 0.0
         if query_embedding and entry.embedding:
             semantic_score = _cosine_similarity(query_embedding, entry.embedding)
-        total_score = base_score + (semantic_score * TOOL_EMBEDDING_WEIGHT)
-        namespace_score = 0
-        if any(_match_namespace(entry.namespace, prefix) for prefix in primary_namespaces):
-            namespace_score = 3
-            primary_scored.append((entry.tool_id, total_score + namespace_score))
-        elif any(_match_namespace(entry.namespace, prefix) for prefix in fallback_namespaces):
-            fallback_scored.append((entry.tool_id, total_score))
+        embedding_weighted = semantic_score * normalized_tuning.embedding_weight
+        is_primary = any(
+            _match_namespace(entry.namespace, prefix) for prefix in primary_namespaces
+        )
+        is_fallback = any(
+            _match_namespace(entry.namespace, prefix) for prefix in fallback_namespaces
+        )
+        namespace_bonus = normalized_tuning.namespace_boost if is_primary else 0.0
+        pre_rerank_score = (
+            breakdown["lexical_score"] + embedding_weighted + namespace_bonus
+        )
+        breakdown_by_id[entry.tool_id] = {
+            "tool_id": entry.tool_id,
+            "name": entry.name,
+            "category": entry.category,
+            "name_match_hits": breakdown["name_match_hits"],
+            "keyword_hits": breakdown["keyword_hits"],
+            "description_hits": breakdown["description_hits"],
+            "example_hits": breakdown["example_hits"],
+            "lexical_score": float(breakdown["lexical_score"]),
+            "embedding_score_raw": float(semantic_score),
+            "embedding_score_weighted": float(embedding_weighted),
+            "namespace_bonus": float(namespace_bonus),
+            "pre_rerank_score": float(pre_rerank_score),
+            "namespace_scope": "primary" if is_primary else ("fallback" if is_fallback else "none"),
+        }
+        if is_primary:
+            primary_scored.append((entry.tool_id, pre_rerank_score))
+        elif is_fallback:
+            fallback_scored.append((entry.tool_id, pre_rerank_score))
 
     primary_scored.sort(key=lambda item: item[1], reverse=True)
     fallback_scored.sort(key=lambda item: item[1], reverse=True)
@@ -448,19 +587,23 @@ def smart_retrieve_tools(
     candidate_ids: list[str] = []
     if primary_scored and primary_scored[0][1] > 0:
         candidate_ids = [
-            tool_id for tool_id, _ in primary_scored[:TOOL_RERANK_CANDIDATES]
+            tool_id
+            for tool_id, _ in primary_scored[: normalized_tuning.rerank_candidates]
         ]
     elif fallback_scored and fallback_scored[0][1] > 0:
         candidate_ids = [
-            tool_id for tool_id, _ in fallback_scored[:TOOL_RERANK_CANDIDATES]
+            tool_id
+            for tool_id, _ in fallback_scored[: normalized_tuning.rerank_candidates]
         ]
     elif primary_scored:
         candidate_ids = [
-            tool_id for tool_id, _ in primary_scored[:TOOL_RERANK_CANDIDATES]
+            tool_id
+            for tool_id, _ in primary_scored[: normalized_tuning.rerank_candidates]
         ]
     else:
         candidate_ids = [
-            tool_id for tool_id, _ in fallback_scored[:TOOL_RERANK_CANDIDATES]
+            tool_id
+            for tool_id, _ in fallback_scored[: normalized_tuning.rerank_candidates]
         ]
 
     reranked_ids, rerank_scores = _rerank_tool_candidates(
@@ -469,20 +612,86 @@ def smart_retrieve_tools(
         tool_index_by_id=tool_index_by_id,
         scores_by_id=scores_by_id,
     )
+
+    ranked_tools: list[dict[str, Any]] = []
+    for rank_index, tool_id in enumerate(reranked_ids):
+        entry = tool_index_by_id.get(tool_id)
+        breakdown = breakdown_by_id.get(tool_id, {})
+        pre_score = float(
+            breakdown.get("pre_rerank_score", scores_by_id.get(tool_id, 0.0))
+        )
+        rerank_score = rerank_scores.get(tool_id)
+        ranked_tools.append(
+            {
+                "tool_id": tool_id,
+                "name": entry.name if entry else tool_id,
+                "category": entry.category if entry else None,
+                "rank": rank_index + 1,
+                "rerank_score": float(rerank_score)
+                if rerank_score is not None
+                else None,
+                "score": pre_score,
+                "pre_rerank_score": pre_score,
+                "name_match_hits": int(breakdown.get("name_match_hits", 0)),
+                "keyword_hits": int(breakdown.get("keyword_hits", 0)),
+                "description_hits": int(breakdown.get("description_hits", 0)),
+                "example_hits": int(breakdown.get("example_hits", 0)),
+                "lexical_score": float(breakdown.get("lexical_score", 0.0)),
+                "embedding_score_raw": float(breakdown.get("embedding_score_raw", 0.0)),
+                "embedding_score_weighted": float(
+                    breakdown.get("embedding_score_weighted", 0.0)
+                ),
+                "namespace_bonus": float(breakdown.get("namespace_bonus", 0.0)),
+                "namespace_scope": breakdown.get("namespace_scope"),
+            }
+        )
+
     if trace_key and candidate_ids:
-        ranked_tools: list[dict[str, Any]] = []
-        for tool_id in reranked_ids:
-            entry = tool_index_by_id.get(tool_id)
-            ranked_tools.append(
-                {
-                    "tool_id": tool_id,
-                    "name": entry.name if entry else tool_id,
-                    "rerank_score": rerank_scores.get(tool_id),
-                    "score": float(scores_by_id.get(tool_id, 0.0)),
-                }
-            )
         record_tool_rerank(trace_key, query_norm=query_norm, ranked_tools=ranked_tools)
-    return reranked_ids[:limit]
+    return reranked_ids[:limit], ranked_tools
+
+
+def smart_retrieve_tools(
+    query: str,
+    *,
+    tool_index: list[ToolIndexEntry],
+    primary_namespaces: list[tuple[str, ...]],
+    fallback_namespaces: list[tuple[str, ...]] | None = None,
+    limit: int = 2,
+    trace_key: str | None = None,
+    tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
+) -> list[str]:
+    tool_ids, _ranked = _run_smart_retrieval(
+        query,
+        tool_index=tool_index,
+        primary_namespaces=primary_namespaces,
+        fallback_namespaces=fallback_namespaces,
+        limit=limit,
+        trace_key=trace_key,
+        tuning=tuning,
+    )
+    return tool_ids
+
+
+def smart_retrieve_tools_with_breakdown(
+    query: str,
+    *,
+    tool_index: list[ToolIndexEntry],
+    primary_namespaces: list[tuple[str, ...]],
+    fallback_namespaces: list[tuple[str, ...]] | None = None,
+    limit: int = 2,
+    trace_key: str | None = None,
+    tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    return _run_smart_retrieval(
+        query,
+        tool_index=tool_index,
+        primary_namespaces=primary_namespaces,
+        fallback_namespaces=fallback_namespaces,
+        limit=limit,
+        trace_key=trace_key,
+        tuning=tuning,
+    )
 
 
 def make_smart_retriever(
@@ -492,6 +701,7 @@ def make_smart_retriever(
     fallback_namespaces: list[tuple[str, ...]],
     limit: int = 2,
     trace_key: str | None = None,
+    retrieval_tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
 ):
     def retrieve_tools(query: str) -> list[str]:
         """Select relevant tool IDs using namespace-aware scoring."""
@@ -502,6 +712,7 @@ def make_smart_retriever(
             fallback_namespaces=fallback_namespaces,
             limit=limit,
             trace_key=trace_key,
+            tuning=retrieval_tuning,
         )
 
     async def aretrieve_tools(query: str) -> list[str]:

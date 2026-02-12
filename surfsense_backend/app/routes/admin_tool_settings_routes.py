@@ -24,6 +24,8 @@ from app.schemas.admin_tool_settings import (
     ToolMetadataHistoryResponse,
     ToolMetadataItem,
     ToolMetadataUpdateItem,
+    ToolRetrievalTuning,
+    ToolRetrievalTuningResponse,
     ToolSettingsUpdateRequest,
     ToolSuggestionRequest,
     ToolSuggestionResponse,
@@ -35,6 +37,7 @@ from app.services.tool_evaluation_service import (
     compute_metadata_version_hash,
     generate_tool_metadata_suggestions,
     run_tool_evaluation,
+    suggest_retrieval_tuning,
 )
 from app.services.tool_metadata_service import (
     get_global_tool_metadata_overrides,
@@ -42,6 +45,11 @@ from app.services.tool_metadata_service import (
     normalize_tool_metadata_payload,
     tool_metadata_payload_equal,
     upsert_global_tool_metadata_overrides,
+)
+from app.services.tool_retrieval_tuning_service import (
+    get_global_tool_retrieval_tuning,
+    normalize_tool_retrieval_tuning,
+    upsert_global_tool_retrieval_tuning,
 )
 from app.users import current_active_user
 from sqlalchemy.future import select
@@ -222,8 +230,10 @@ async def _build_tool_settings_response(
         tool_index,
         persisted_overrides=persisted_overrides,
     )
+    retrieval_tuning = await get_global_tool_retrieval_tuning(session)
     return ToolSettingsResponse(
         categories=categories,
+        retrieval_tuning=ToolRetrievalTuning(**retrieval_tuning),
         metadata_version_hash=compute_metadata_version_hash(tool_index),
         search_space_id=search_space_id,
     )
@@ -338,6 +348,48 @@ async def update_tool_settings(
 
 
 @router.get(
+    "/tool-settings/retrieval-tuning",
+    response_model=ToolRetrievalTuningResponse,
+)
+async def get_tool_retrieval_tuning(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    await _require_admin(session, user)
+    tuning = await get_global_tool_retrieval_tuning(session)
+    return {"tuning": tuning}
+
+
+@router.put(
+    "/tool-settings/retrieval-tuning",
+    response_model=ToolRetrievalTuningResponse,
+)
+async def update_tool_retrieval_tuning(
+    payload: ToolRetrievalTuning,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    await _require_admin(session, user)
+    normalized = normalize_tool_retrieval_tuning(payload.model_dump())
+    try:
+        await upsert_global_tool_retrieval_tuning(
+            session,
+            normalized,
+            updated_by_id=user.id,
+        )
+        await session.commit()
+        clear_tool_caches()
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to update retrieval tuning")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update retrieval tuning: {exc!s}",
+        ) from exc
+    return {"tuning": normalized}
+
+
+@router.get(
     "/tool-settings/history/{tool_id}",
     response_model=ToolMetadataHistoryResponse,
 )
@@ -395,6 +447,12 @@ async def evaluate_tool_settings(
             metadata_patch=patch_map,
         )
     )
+    persisted_tuning = await get_global_tool_retrieval_tuning(session)
+    effective_tuning = (
+        normalize_tool_retrieval_tuning(payload.retrieval_tuning_override.model_dump())
+        if payload.retrieval_tuning_override
+        else persisted_tuning
+    )
     llm = await get_agent_llm(session, resolved_search_space_id)
     evaluation = await run_tool_evaluation(
         tests=[
@@ -412,10 +470,16 @@ async def evaluate_tool_settings(
         tool_index=tool_index,
         llm=llm,
         retrieval_limit=payload.retrieval_limit,
+        retrieval_tuning=effective_tuning,
     )
     suggestions = await generate_tool_metadata_suggestions(
         evaluation_results=evaluation["results"],
         tool_index=tool_index,
+        llm=llm,
+    )
+    retrieval_tuning_suggestion = await suggest_retrieval_tuning(
+        evaluation_results=evaluation["results"],
+        current_tuning=effective_tuning,
         llm=llm,
     )
     return {
@@ -424,6 +488,8 @@ async def evaluate_tool_settings(
         "metrics": evaluation["metrics"],
         "results": evaluation["results"],
         "suggestions": suggestions,
+        "retrieval_tuning": effective_tuning,
+        "retrieval_tuning_suggestion": retrieval_tuning_suggestion,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),
         "search_space_id": resolved_search_space_id,
     }

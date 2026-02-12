@@ -14,6 +14,9 @@ from app.agents.new_chat.bigtool_store import (
     build_tool_index,
     make_smart_retriever,
 )
+from app.services.tool_retrieval_tuning_service import (
+    get_global_tool_retrieval_tuning,
+)
 from app.services.tool_metadata_service import get_global_tool_metadata_overrides
 
 
@@ -57,6 +60,9 @@ async def create_bigtool_worker(
     metadata_overrides = await get_global_tool_metadata_overrides(
         dependencies["db_session"]
     )
+    retrieval_tuning = await get_global_tool_retrieval_tuning(
+        dependencies["db_session"]
+    )
     tool_index = build_tool_index(
         tool_registry,
         metadata_overrides=metadata_overrides,
@@ -69,6 +75,7 @@ async def create_bigtool_worker(
         fallback_namespaces=config.fallback_namespaces,
         limit=config.tool_limit,
         trace_key=trace_key,
+        retrieval_tuning=retrieval_tuning,
     )
     graph = create_bigtool_agent(
         llm,

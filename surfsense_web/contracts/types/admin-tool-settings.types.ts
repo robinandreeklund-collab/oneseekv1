@@ -27,8 +27,29 @@ export const toolCategoryResponse = z.object({
 	tools: z.array(toolMetadataItem),
 });
 
+export const toolRetrievalTuning = z.object({
+	name_match_weight: z.number(),
+	keyword_weight: z.number(),
+	description_token_weight: z.number(),
+	example_query_weight: z.number(),
+	namespace_boost: z.number(),
+	embedding_weight: z.number(),
+	rerank_candidates: z.number().int(),
+});
+
+export const toolRetrievalTuningResponse = z.object({
+	tuning: toolRetrievalTuning,
+});
+
+export const toolRetrievalTuningSuggestion = z.object({
+	current_tuning: toolRetrievalTuning,
+	proposed_tuning: toolRetrievalTuning,
+	rationale: z.string(),
+});
+
 export const toolSettingsResponse = z.object({
 	categories: z.array(toolCategoryResponse),
+	retrieval_tuning: toolRetrievalTuning,
 	metadata_version_hash: z.string(),
 	search_space_id: z.number(),
 });
@@ -56,6 +77,7 @@ export const toolEvaluationRequest = z.object({
 	retrieval_limit: z.number().int().optional().default(5),
 	tests: z.array(toolEvaluationTestCase),
 	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
+	retrieval_tuning_override: toolRetrievalTuning.nullable().optional(),
 });
 
 export const toolEvaluationMetrics = z.object({
@@ -79,6 +101,7 @@ export const toolEvaluationCaseResult = z.object({
 	planning_steps: z.array(z.string()).default([]),
 	retrieval_top_tools: z.array(z.string()).default([]),
 	retrieval_top_categories: z.array(z.string()).default([]),
+	retrieval_breakdown: z.array(z.record(z.string(), z.unknown())).default([]),
 	retrieval_hit_expected_tool: z.boolean().nullable().optional(),
 	passed_category: z.boolean().nullable().optional(),
 	passed_tool: z.boolean().nullable().optional(),
@@ -99,6 +122,8 @@ export const toolEvaluationResponse = z.object({
 	metrics: toolEvaluationMetrics,
 	results: z.array(toolEvaluationCaseResult),
 	suggestions: z.array(toolMetadataSuggestion),
+	retrieval_tuning: toolRetrievalTuning,
+	retrieval_tuning_suggestion: toolRetrievalTuningSuggestion.nullable().optional(),
 	metadata_version_hash: z.string(),
 	search_space_id: z.number(),
 });
@@ -130,6 +155,9 @@ export const toolApplySuggestionsResponse = z.object({
 export type ToolMetadataItem = z.infer<typeof toolMetadataItem>;
 export type ToolMetadataUpdateItem = z.infer<typeof toolMetadataUpdateItem>;
 export type ToolCategoryResponse = z.infer<typeof toolCategoryResponse>;
+export type ToolRetrievalTuning = z.infer<typeof toolRetrievalTuning>;
+export type ToolRetrievalTuningResponse = z.infer<typeof toolRetrievalTuningResponse>;
+export type ToolRetrievalTuningSuggestion = z.infer<typeof toolRetrievalTuningSuggestion>;
 export type ToolSettingsResponse = z.infer<typeof toolSettingsResponse>;
 export type ToolSettingsUpdateRequest = z.infer<typeof toolSettingsUpdateRequest>;
 export type ToolEvaluationExpected = z.infer<typeof toolEvaluationExpected>;

@@ -10,6 +10,7 @@ import type {
 	ToolEvaluationTestCase,
 	ToolMetadataItem,
 	ToolMetadataUpdateItem,
+	ToolRetrievalTuning,
 } from "@/contracts/types/admin-tool-settings.types";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,10 @@ function toUpdateItem(tool: ToolMetadataItem | ToolMetadataUpdateItem): ToolMeta
 }
 
 function isEqualTool(left: ToolMetadataUpdateItem, right: ToolMetadataUpdateItem) {
+	return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isEqualTuning(left: ToolRetrievalTuning, right: ToolRetrievalTuning) {
 	return JSON.stringify(left) === JSON.stringify(right);
 }
 
@@ -233,6 +238,9 @@ export function ToolSettingsPage() {
 	const [activeTab, setActiveTab] = useState("metadata");
 	const [savingToolId, setSavingToolId] = useState<string | null>(null);
 	const [isSavingAll, setIsSavingAll] = useState(false);
+	const [draftRetrievalTuning, setDraftRetrievalTuning] =
+		useState<ToolRetrievalTuning | null>(null);
+	const [isSavingRetrievalTuning, setIsSavingRetrievalTuning] = useState(false);
 	const [evalInput, setEvalInput] = useState("");
 	const [evalInputError, setEvalInputError] = useState<string | null>(null);
 	const [isEvaluating, setIsEvaluating] = useState(false);
@@ -260,7 +268,7 @@ export function ToolSettingsPage() {
 			}
 		}
 		return byId;
-	}, [data?.categories]);
+	}, [data?.categories, data?.retrieval_tuning]);
 
 	useEffect(() => {
 		if (!data?.categories) return;
@@ -271,6 +279,9 @@ export function ToolSettingsPage() {
 			}
 		}
 		setDraftTools(nextDrafts);
+		if (data.retrieval_tuning) {
+			setDraftRetrievalTuning(data.retrieval_tuning);
+		}
 	}, [data?.categories]);
 
 	const changedToolIds = useMemo(() => {
@@ -287,6 +298,11 @@ export function ToolSettingsPage() {
 		return changedToolIds.map((toolId) => draftTools[toolId]);
 	}, [changedToolIds, draftTools]);
 
+	const retrievalTuningChanged = useMemo(() => {
+		if (!draftRetrievalTuning || !data?.retrieval_tuning) return false;
+		return !isEqualTuning(draftRetrievalTuning, data.retrieval_tuning);
+	}, [draftRetrievalTuning, data?.retrieval_tuning]);
+
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((prev) => ({
 			...prev,
@@ -295,6 +311,23 @@ export function ToolSettingsPage() {
 				...updates,
 			},
 		}));
+	};
+
+	const updateRetrievalTuningField = (
+		key: keyof ToolRetrievalTuning,
+		value: number
+	) => {
+		setDraftRetrievalTuning((prev) => {
+			const current = prev ?? data?.retrieval_tuning;
+			if (!current) return prev;
+			return {
+				...current,
+				[key]:
+					key === "rerank_candidates"
+						? Math.max(1, Math.round(value))
+						: Number(value),
+			};
+		});
 	};
 
 	const resetTool = (toolId: string) => {
@@ -340,6 +373,21 @@ export function ToolSettingsPage() {
 			toast.error("Kunde inte spara alla metadataändringar");
 		} finally {
 			setIsSavingAll(false);
+		}
+	};
+
+	const saveRetrievalTuning = async () => {
+		if (!draftRetrievalTuning) return;
+		setIsSavingRetrievalTuning(true);
+		try {
+			await adminToolSettingsApiService.updateRetrievalTuning(draftRetrievalTuning);
+			await queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
+			await refetch();
+			toast.success("Sparade retrieval-vikter");
+		} catch (error) {
+			toast.error("Kunde inte spara retrieval-vikter");
+		} finally {
+			setIsSavingRetrievalTuning(false);
 		}
 	};
 
@@ -410,6 +458,10 @@ export function ToolSettingsPage() {
 				retrieval_limit: retrievalLimit,
 				tests: parsedInput.tests,
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
+				retrieval_tuning_override:
+					includeDraftMetadata && draftRetrievalTuning
+						? draftRetrievalTuning
+						: undefined,
 			});
 			setEvaluationResult(response);
 			setSelectedSuggestionIds(new Set());
@@ -505,6 +557,38 @@ export function ToolSettingsPage() {
 		}
 	};
 
+	const applyWeightSuggestionToDraft = () => {
+		const suggestion = evaluationResult?.retrieval_tuning_suggestion;
+		if (!suggestion) {
+			toast.info("Inget viktförslag att applicera.");
+			return;
+		}
+		setDraftRetrievalTuning(suggestion.proposed_tuning);
+		toast.success("Applicerade viktförslag i draft");
+	};
+
+	const saveWeightSuggestion = async () => {
+		const suggestion = evaluationResult?.retrieval_tuning_suggestion;
+		if (!suggestion) {
+			toast.info("Inget viktförslag att spara.");
+			return;
+		}
+		setIsSavingRetrievalTuning(true);
+		try {
+			await adminToolSettingsApiService.updateRetrievalTuning(
+				suggestion.proposed_tuning
+			);
+			await queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
+			await refetch();
+			setDraftRetrievalTuning(suggestion.proposed_tuning);
+			toast.success("Sparade föreslagna retrieval-vikter");
+		} catch (error) {
+			toast.error("Kunde inte spara viktförslaget");
+		} finally {
+			setIsSavingRetrievalTuning(false);
+		}
+	};
+
 	const selectedSuggestions = useMemo(
 		() =>
 			evaluationResult?.suggestions.filter((suggestion) =>
@@ -587,6 +671,142 @@ export function ToolSettingsPage() {
 				</TabsList>
 
 				<TabsContent value="metadata" className="space-y-6 mt-6">
+					<Card>
+						<CardHeader>
+							<CardTitle>Retrieval Tuning</CardTitle>
+							<CardDescription>
+								Styr hur tool_retrieval viktar namn, keywords, embeddings och rerank.
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="space-y-4">
+							{draftRetrievalTuning ? (
+								<>
+									<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+										<div className="space-y-1">
+											<Label>Name match</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.name_match_weight}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"name_match_weight",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Keyword</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.keyword_weight}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"keyword_weight",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Description token</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.description_token_weight}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"description_token_weight",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Example query</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.example_query_weight}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"example_query_weight",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Namespace boost</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.namespace_boost}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"namespace_boost",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Embedding weight</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.embedding_weight}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"embedding_weight",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Rerank candidates</Label>
+											<Input
+												type="number"
+												step="1"
+												min={1}
+												max={100}
+												value={draftRetrievalTuning.rerank_candidates}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"rerank_candidates",
+														Number.parseInt(e.target.value || "1", 10)
+													)
+												}
+											/>
+										</div>
+									</div>
+									<div className="flex items-center gap-2">
+										<Badge variant="outline">
+											{retrievalTuningChanged
+												? "Osparade viktändringar"
+												: "Vikter i synk"}
+										</Badge>
+										<Button
+											onClick={saveRetrievalTuning}
+											disabled={!retrievalTuningChanged || isSavingRetrievalTuning}
+										>
+											{isSavingRetrievalTuning
+												? "Sparar vikter..."
+												: "Spara retrieval-vikter"}
+										</Button>
+									</div>
+								</>
+							) : (
+								<p className="text-sm text-muted-foreground">
+									Kunde inte läsa retrieval-vikter.
+								</p>
+							)}
+						</CardContent>
+					</Card>
+
 					<div className="flex flex-wrap items-center gap-4">
 						<Input
 							placeholder="Sök verktyg..."
@@ -724,7 +944,9 @@ export function ToolSettingsPage() {
 										checked={includeDraftMetadata}
 										onCheckedChange={setIncludeDraftMetadata}
 									/>
-									<span className="text-sm">Inkludera osparad draft metadata</span>
+									<span className="text-sm">
+										Inkludera osparad draft (metadata + retrieval-vikter)
+									</span>
 								</div>
 								<Button onClick={handleRunEvaluation} disabled={isEvaluating}>
 									{isEvaluating ? "Kör eval..." : "Run Tool Evaluation"}
@@ -798,6 +1020,113 @@ export function ToolSettingsPage() {
 
 							<Card>
 								<CardHeader>
+									<CardTitle>Retrieval-vikter i denna eval</CardTitle>
+								</CardHeader>
+								<CardContent className="space-y-3">
+									<div className="grid gap-2 md:grid-cols-3">
+										<Badge variant="outline">
+											name: {evaluationResult.retrieval_tuning.name_match_weight}
+										</Badge>
+										<Badge variant="outline">
+											keyword: {evaluationResult.retrieval_tuning.keyword_weight}
+										</Badge>
+										<Badge variant="outline">
+											desc: {evaluationResult.retrieval_tuning.description_token_weight}
+										</Badge>
+										<Badge variant="outline">
+											example: {evaluationResult.retrieval_tuning.example_query_weight}
+										</Badge>
+										<Badge variant="outline">
+											namespace: {evaluationResult.retrieval_tuning.namespace_boost}
+										</Badge>
+										<Badge variant="outline">
+											embedding: {evaluationResult.retrieval_tuning.embedding_weight}
+										</Badge>
+										<Badge variant="outline">
+											rerank_candidates:{" "}
+											{evaluationResult.retrieval_tuning.rerank_candidates}
+										</Badge>
+									</div>
+
+									{evaluationResult.retrieval_tuning_suggestion && (
+										<div className="rounded border p-3 space-y-2">
+											<p className="text-sm font-medium">Föreslagen tuning</p>
+											<p className="text-xs text-muted-foreground">
+												{evaluationResult.retrieval_tuning_suggestion.rationale}
+											</p>
+											<div className="grid gap-2 md:grid-cols-3">
+												<Badge variant="secondary">
+													name:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.name_match_weight
+													}
+												</Badge>
+												<Badge variant="secondary">
+													keyword:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.keyword_weight
+													}
+												</Badge>
+												<Badge variant="secondary">
+													desc:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.description_token_weight
+													}
+												</Badge>
+												<Badge variant="secondary">
+													example:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.example_query_weight
+													}
+												</Badge>
+												<Badge variant="secondary">
+													namespace:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.namespace_boost
+													}
+												</Badge>
+												<Badge variant="secondary">
+													embedding:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.embedding_weight
+													}
+												</Badge>
+												<Badge variant="secondary">
+													rerank_candidates:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.rerank_candidates
+													}
+												</Badge>
+											</div>
+											<div className="flex gap-2">
+												<Button
+													variant="outline"
+													onClick={applyWeightSuggestionToDraft}
+													disabled={isSavingRetrievalTuning}
+												>
+													Applicera viktförslag i draft
+												</Button>
+												<Button
+													onClick={saveWeightSuggestion}
+													disabled={isSavingRetrievalTuning}
+												>
+													Spara viktförslag
+												</Button>
+											</div>
+										</div>
+									)}
+								</CardContent>
+							</Card>
+
+							<Card>
+								<CardHeader>
 									<CardTitle>Resultat per test</CardTitle>
 								</CardHeader>
 								<CardContent className="space-y-3">
@@ -826,6 +1155,26 @@ export function ToolSettingsPage() {
 											<p className="text-xs text-muted-foreground">
 												Retrieval: {result.retrieval_top_tools.join(", ") || "-"}
 											</p>
+											{result.retrieval_breakdown?.length > 0 && (
+												<div className="rounded bg-muted/40 p-2 space-y-1">
+													<p className="text-xs font-medium">Score breakdown</p>
+													{result.retrieval_breakdown.slice(0, 5).map((entry) => (
+														<div
+															key={`${result.test_id}-${String(entry.tool_id)}`}
+															className="text-[11px] text-muted-foreground"
+														>
+															{String(entry.rank)}. {String(entry.tool_id)} · lexical{" "}
+															{Number(entry.lexical_score ?? 0).toFixed(2)} · embed{" "}
+															{Number(entry.embedding_score_weighted ?? 0).toFixed(2)} ·
+															ns {Number(entry.namespace_bonus ?? 0).toFixed(2)} · pre{" "}
+															{Number(entry.pre_rerank_score ?? 0).toFixed(2)} · rerank{" "}
+															{entry.rerank_score == null
+																? "-"
+																: Number(entry.rerank_score).toFixed(2)}
+														</div>
+													))}
+												</div>
+											)}
 										</div>
 									))}
 								</CardContent>
