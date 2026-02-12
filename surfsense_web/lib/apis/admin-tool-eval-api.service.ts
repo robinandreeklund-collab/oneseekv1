@@ -24,8 +24,10 @@ class AdminToolEvalApiService {
 	): Promise<SingleQueryResponse> {
 		return baseApiService.post(
 			"/api/v1/admin/tool-eval/single",
-			request,
-			singleQueryResponseSchema
+			singleQueryResponseSchema,
+			{
+				body: request,
+			}
 		);
 	}
 
@@ -58,8 +60,8 @@ class AdminToolEvalApiService {
 	async invalidateCache(): Promise<InvalidateCacheResponse> {
 		return baseApiService.post(
 			"/api/v1/admin/tool-eval/invalidate-cache",
-			{},
-			invalidateCacheResponseSchema
+			invalidateCacheResponseSchema,
+			{}
 		);
 	}
 }
