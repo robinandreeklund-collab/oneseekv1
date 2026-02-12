@@ -10,6 +10,7 @@ from app.agents.new_chat.statistics_agent import (
     SCB_TOOL_DEFINITIONS,
     build_scb_tool_registry,
 )
+from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
@@ -57,6 +58,33 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "call_deepseek": ("tools", "compare", "external"),
     "call_perplexity": ("tools", "compare", "external"),
     "call_qwen": ("tools", "compare", "external"),
+    # Riksdagen tools - all under tools/politik
+    "riksdag_dokument": ("tools", "politik", "dokument"),
+    "riksdag_ledamoter": ("tools", "politik", "ledamoter"),
+    "riksdag_voteringar": ("tools", "politik", "voteringar"),
+    "riksdag_anforanden": ("tools", "politik", "anforanden"),
+    "riksdag_dokumentstatus": ("tools", "politik", "status"),
+    # Riksdagen document sub-tools
+    "riksdag_dokument_proposition": ("tools", "politik", "dokument", "proposition"),
+    "riksdag_dokument_motion": ("tools", "politik", "dokument", "motion"),
+    "riksdag_dokument_betankande": ("tools", "politik", "dokument", "betankande"),
+    "riksdag_dokument_interpellation": ("tools", "politik", "dokument", "interpellation"),
+    "riksdag_dokument_fraga": ("tools", "politik", "dokument", "fraga"),
+    "riksdag_dokument_protokoll": ("tools", "politik", "dokument", "protokoll"),
+    "riksdag_dokument_sou": ("tools", "politik", "dokument", "sou"),
+    "riksdag_dokument_ds": ("tools", "politik", "dokument", "ds"),
+    "riksdag_dokument_dir": ("tools", "politik", "dokument", "dir"),
+    "riksdag_dokument_rskr": ("tools", "politik", "dokument", "rskr"),
+    "riksdag_dokument_eu": ("tools", "politik", "dokument", "eu"),
+    "riksdag_dokument_rir": ("tools", "politik", "dokument", "rir"),
+    # Riksdagen anförande sub-tools
+    "riksdag_anforanden_debatt": ("tools", "politik", "anforanden", "debatt"),
+    "riksdag_anforanden_fragestund": ("tools", "politik", "anforanden", "fragestund"),
+    # Riksdagen ledamot sub-tools
+    "riksdag_ledamoter_parti": ("tools", "politik", "ledamoter", "parti"),
+    "riksdag_ledamoter_valkrets": ("tools", "politik", "ledamoter", "valkrets"),
+    # Riksdagen votering sub-tools
+    "riksdag_voteringar_resultat": ("tools", "politik", "voteringar", "resultat"),
 }
 
 TOOL_KEYWORDS: dict[str, list[str]] = {
@@ -112,6 +140,29 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "call_deepseek": ["deepseek", "modell"],
     "call_perplexity": ["perplexity", "modell"],
     "call_qwen": ["qwen", "alibaba", "modell"],
+    # Riksdagen tools keywords
+    "riksdag_dokument": ["riksdag", "dokument", "riksdagen", "söka", "sök"],
+    "riksdag_ledamoter": ["ledamot", "ledamöter", "riksdagsledamot", "politiker"],
+    "riksdag_voteringar": ["votering", "voteringar", "omröstning", "röstning"],
+    "riksdag_anforanden": ["anförande", "anföranden", "tal", "debatt", "kammare"],
+    "riksdag_dokumentstatus": ["status", "ärendehistorik", "handläggning", "dokumentstatus"],
+    "riksdag_dokument_proposition": ["proposition", "prop", "regeringen", "förslag"],
+    "riksdag_dokument_motion": ["motion", "mot", "förslag", "ledamot"],
+    "riksdag_dokument_betankande": ["betänkande", "bet", "utskott", "beslutsförslag"],
+    "riksdag_dokument_interpellation": ["interpellation", "ip", "fråga", "minister"],
+    "riksdag_dokument_fraga": ["fråga", "fr", "frs", "skriftlig"],
+    "riksdag_dokument_protokoll": ["protokoll", "prot", "kammarprotokoll", "debatt"],
+    "riksdag_dokument_sou": ["sou", "utredning", "offentlig"],
+    "riksdag_dokument_ds": ["ds", "departement", "skrivelse"],
+    "riksdag_dokument_dir": ["direktiv", "dir", "kommitté"],
+    "riksdag_dokument_rskr": ["riksdagsskrivelse", "rskr", "beslut"],
+    "riksdag_dokument_eu": ["eu", "kom", "europa", "europeiska"],
+    "riksdag_dokument_rir": ["rir", "riksrevisionen", "granskning", "rapport"],
+    "riksdag_anforanden_debatt": ["debatt", "allmän", "budget", "utrikes", "anförande"],
+    "riksdag_anforanden_fragestund": ["frågestund", "statsråd", "fråga"],
+    "riksdag_ledamoter_parti": ["parti", "socialdemokraterna", "moderaterna", "sverigedemokraterna"],
+    "riksdag_ledamoter_valkrets": ["valkrets", "län", "stockholms", "skåne", "västra"],
+    "riksdag_voteringar_resultat": ["resultat", "röstresultat", "detaljerat", "parti"],
 }
 
 TOOL_RERANK_CANDIDATES = 24

@@ -53,6 +53,10 @@ from .trafikverket import (
     TRAFIKVERKET_TOOL_DEFINITIONS,
     create_trafikverket_tool,
 )
+from ..riksdagen_agent import (
+    RIKSDAGEN_TOOL_DEFINITIONS,
+    build_riksdagen_tool_registry,
+)
 from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
@@ -336,7 +340,10 @@ def get_all_tool_names() -> list[str]:
 
 def get_default_enabled_tools() -> list[str]:
     """Get names of tools that are enabled by default."""
-    return [tool_def.name for tool_def in BUILTIN_TOOLS if tool_def.enabled_by_default]
+    default_tools = [tool_def.name for tool_def in BUILTIN_TOOLS if tool_def.enabled_by_default]
+    # Add all Riksdagen tools to default enabled tools
+    riksdagen_tool_ids = [definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS]
+    return default_tools + riksdagen_tool_ids
 
 
 def build_tools(
@@ -440,6 +447,43 @@ async def build_tools_async(
     """
     # Build standard tools
     tools = build_tools(dependencies, enabled_tools, disabled_tools, additional_tools)
+
+    # Build Riksdagen tools if any are enabled
+    if enabled_tools:
+        riksdag_tools_to_build = [
+            tool_id for tool_id in enabled_tools 
+            if tool_id.startswith("riksdag_")
+        ]
+    else:
+        # Check if any riksdag tools would be enabled by default
+        riksdag_tools_to_build = [
+            definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS
+        ]
+    
+    # Filter out disabled riksdag tools
+    if disabled_tools:
+        riksdag_tools_to_build = [
+            tool_id for tool_id in riksdag_tools_to_build
+            if tool_id not in disabled_tools
+        ]
+    
+    # Build Riksdagen tools if any should be enabled
+    if riksdag_tools_to_build and "connector_service" in dependencies and "search_space_id" in dependencies:
+        try:
+            riksdag_registry = build_riksdagen_tool_registry(
+                connector_service=dependencies["connector_service"],
+                search_space_id=dependencies["search_space_id"],
+                user_id=dependencies.get("user_id"),
+                thread_id=dependencies.get("thread_id"),
+            )
+            for tool_id in riksdag_tools_to_build:
+                if tool_id in riksdag_registry:
+                    tools.append(riksdag_registry[tool_id])
+            logging.info(
+                f"Registered {len(riksdag_tools_to_build)} Riksdagen tools: {riksdag_tools_to_build}",
+            )
+        except Exception as e:
+            logging.exception(f"Failed to build Riksdagen tools: {e!s}")
 
     # Load MCP tools if requested and dependencies are available
     if (
