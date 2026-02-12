@@ -180,6 +180,99 @@ their tools and categories. More APIs will be added over time.
 
 ---
 
+## Riksdagen (Öppna data API)
+
+**Purpose:** Swedish Parliament's open data (propositions, motions, votes, members).  
+**Namespace:** `tools/politik/*`  
+**Citations:** TOOL_OUTPUT ingestion enabled.  
+
+### Top-level Tools (5)
+- **riksdag_dokument** - All 70+ document types
+- **riksdag_ledamoter** - All members of parliament
+- **riksdag_voteringar** - All voting records
+- **riksdag_anforanden** - All speeches in chamber
+- **riksdag_dokumentstatus** - Document status/history
+
+### Document Sub-tools (12)
+- **riksdag_dokument_proposition** (prop) - Government proposals
+- **riksdag_dokument_motion** (mot) - Member proposals
+- **riksdag_dokument_betankande** (bet) - Committee reports
+- **riksdag_dokument_interpellation** (ip) - Questions to ministers (answered in chamber)
+- **riksdag_dokument_fraga** (fr, frs) - Written questions
+- **riksdag_dokument_protokoll** (prot) - Chamber protocols
+- **riksdag_dokument_sou** (sou) - Government inquiries
+- **riksdag_dokument_ds** (ds) - Ministry documents
+- **riksdag_dokument_dir** (dir) - Committee directives
+- **riksdag_dokument_rskr** (rskr) - Parliament resolutions
+- **riksdag_dokument_eu** (KOM) - EU documents
+- **riksdag_dokument_rir** (rir) - National Audit Office reports
+
+### Anförande Sub-tools (2)
+- **riksdag_anforanden_debatt** - Debate speeches (general, budget, foreign affairs)
+- **riksdag_anforanden_fragestund** - Question time speeches
+
+### Ledamot Sub-tools (2)
+- **riksdag_ledamoter_parti** - Members filtered by party
+- **riksdag_ledamoter_valkrets** - Members filtered by electoral district
+
+### Votering Sub-tools (1)
+- **riksdag_voteringar_resultat** - Detailed vote results
+
+### API Parameters
+- **sokord** - Search term
+- **doktyp** - Document type (prop, mot, bet, etc.)
+- **rm** - Parliamentary year (e.g., "2023/24", "2024/25")
+- **from_datum**, **tom_datum** - Date range (YYYY-MM-DD)
+- **organ** - Committee (FiU, FöU, SoU, etc.)
+- **parti** - Party code (s, m, sd, c, v, kd, mp, l, -)
+- **antal** - Max results (default 20, max 100)
+- **anftyp** - Speech type (kam-ad, kam-bu, kam-fs, etc.)
+- **valkrets** - Electoral district
+- **fnamn**, **enamn** - First/last name
+- **iid** - Member ID
+
+### Usage Examples
+**User:** "Propositioner om NATO 2024"  
+→ `riksdag_dokument_proposition` (sokord="NATO", rm="2023/24")
+
+**User:** "Hur röstade SD om budgeten?"  
+→ `riksdag_voteringar` (sokord="budget", parti="sd")
+
+**User:** "Ledamöter från Stockholms län"  
+→ `riksdag_ledamoter_valkrets` (valkrets="Stockholms län")
+
+**User:** "SOU om migration senaste året"  
+→ `riksdag_dokument_sou` (sokord="migration", from_datum="2024-01-01")
+
+### Namespace Structure
+```
+tools/politik/
+├── dokument/                    ← top-level + sub-tools
+│   ├── proposition
+│   ├── motion
+│   ├── betankande
+│   ├── interpellation
+│   ├── fraga
+│   ├── protokoll
+│   ├── sou
+│   ├── ds
+│   ├── dir
+│   ├── rskr
+│   ├── eu
+│   └── rir
+├── voteringar/                  ← top-level + resultat
+│   └── resultat
+├── ledamoter/                   ← top-level + parti/valkrets
+│   ├── parti
+│   └── valkrets
+├── anforanden/                  ← top-level + debatt/fragestund
+│   ├── debatt
+│   └── fragestund
+└── status/                      ← dokumentstatus
+```
+
+---
+
 ## Notes
 
 - All tools are registered via `langgraph-bigtool` with namespace-aware selection.
