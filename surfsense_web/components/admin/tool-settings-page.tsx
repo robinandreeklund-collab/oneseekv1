@@ -1176,6 +1176,46 @@ export function ToolSettingsPage() {
 				</TabsList>
 
 				<TabsContent value="metadata" className="space-y-6 mt-6">
+					<Card>
+						<CardHeader>
+							<CardTitle>Guide: Så använder du Metadata-fliken</CardTitle>
+							<CardDescription>
+								Denna flik styr produktionsbeteendet för tool retrieval. Spara här när
+								du är nöjd med resultat från eval-fliken.
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="space-y-3 text-sm">
+							<div className="rounded border p-3">
+								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+									<li>
+										Justera <span className="font-medium">Description</span>,{" "}
+										<span className="font-medium">Keywords</span> och{" "}
+										<span className="font-medium">Exempelfrågor</span> per verktyg.
+									</li>
+									<li>
+										Ställ in <span className="font-medium">Retrieval Tuning</span> om
+										tool-valen missar rätt kandidat.
+									</li>
+									<li>
+										Spara ändringar i metadata-fliken (enskilt eller “Spara alla ändringar”).
+									</li>
+									<li>
+										Gå till <span className="font-medium">Tool Evaluation</span> och kör
+										nya tester.
+									</li>
+									<li>
+										Kom tillbaka hit och spara bara de ändringar som förbättrar både
+										huvudsuite och holdout.
+									</li>
+								</ol>
+							</div>
+							<p className="text-xs text-muted-foreground">
+								Tips: “Senaste eval-körning” visar snabb status på hur senaste
+								justeringar presterade.
+							</p>
+						</CardContent>
+					</Card>
+
 					{apiCategories?.providers?.length ? (
 						<Card>
 							<CardHeader>
