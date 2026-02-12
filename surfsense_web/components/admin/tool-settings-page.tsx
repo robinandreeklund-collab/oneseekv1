@@ -1527,36 +1527,160 @@ export function ToolSettingsPage() {
 				<TabsContent value="evaluation" className="space-y-6 mt-6">
 					<Card>
 						<CardHeader>
-							<CardTitle>Guide: Tool Evaluation best use case</CardTitle>
+							<CardTitle>Guide: Exakt arbetsflöde i Admin Tool Settings</CardTitle>
 							<CardDescription>
-								Använd eval-loopen för att trimma metadata och retrieval-vikter innan
-								skarp produktionstrafik.
+								Följ stegen nedan i ordning för att trimma route, tool-val,
+								API-input och prompts på ett säkert sätt (dry-run).
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4 text-sm">
 							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Rekommenderat antal frågor</p>
+								<p className="font-medium">Steg 1: Förbered test-upplägg</p>
 								<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-									<li>Per kategori/API: 10-15 frågor (inklusive 2-3 edge cases)</li>
 									<li>
-										För större kategori: lägg till 5-10 svåra frågor med liknande ord
+										Börja med <span className="font-medium">Per kategori/API</span> för
+										precision.
 									</li>
 									<li>
-										Global regression: 25-40 blandade frågor över flera kategorier
+										Använd sedan <span className="font-medium">Global random mix</span>{" "}
+										för regression över flera kategorier.
+									</li>
+									<li>
+										Rekommendation: 10-15 frågor per kategori och 25-40 frågor globalt.
 									</li>
 								</ul>
 							</div>
+
 							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Steg-för-steg arbetssätt</p>
+								<p className="font-medium">Steg 2: Generera eller ladda eval-JSON</p>
 								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
-									<li>Välj en kategori och kör en första bas-eval.</li>
-									<li>Justera metadata + retrieval-vikter baserat på resultat/förslag.</li>
-									<li>Kör om samma kategori tills träffsäkerheten stabiliserats.</li>
+									<li>Välj Läge, Eval-typ, Provider, Kategori och antal frågor.</li>
+									<li>Klicka “Generera + spara eval JSON”.</li>
 									<li>
-										Kör därefter globala tester för att hitta kors-kategori-kollisioner.
+										Klicka “Ladda i eval-input” på filen i listan
+										(<span className="font-medium">/eval/api</span>).
 									</li>
-									<li>Lås in en global regression-suite och kör den vid varje ändring.</li>
+									<li>
+										Alternativt: ladda upp egen fil via “Ladda JSON-fil” eller klistra in i
+										JSON-fältet.
+									</li>
 								</ol>
+							</div>
+
+							<div className="rounded border p-3 space-y-2">
+								<p className="font-medium">Steg 3: Kör Tool Evaluation (route + tool)</p>
+								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+									<li>
+										Sätt <span className="font-medium">Retrieval K</span> (5 är standard,
+										8-10 för svårare frågor).
+									</li>
+									<li>
+										Behåll “Inkludera draft metadata” aktiv om du vill testa osparade
+										ändringar.
+									</li>
+									<li>Klicka “Run Tool Evaluation”.</li>
+									<li>
+										Följ “Körstatus per fråga” och kontrollera:
+										<span className="font-medium">
+											{" "}
+											Route accuracy, Sub-route accuracy, Plan accuracy, Tool accuracy
+										</span>
+										.
+									</li>
+								</ol>
+							</div>
+
+							<div className="rounded border p-3 space-y-2">
+								<p className="font-medium">Steg 4: Förbättra och kör om</p>
+								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+									<li>
+										Använd “Metadata-förslag” för description, keywords och
+										exempelfrågor.
+									</li>
+									<li>
+										Använd “Föreslagen tuning” för retrieval-vikter och spara vid behov.
+									</li>
+									<li>
+										Använd “Prompt-förslag från Tool Eval” för router/agent-prompts.
+									</li>
+									<li>Kör om samma suite och jämför del-metrics tills resultatet stabiliseras.</li>
+								</ol>
+							</div>
+
+							<div className="rounded border p-3 space-y-2">
+								<p className="font-medium">Steg 5: Kör API Input Eval (utan API-anrop)</p>
+								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+									<li>
+										Välj suite med <span className="font-medium">required_fields</span>{" "}
+										(och gärna <span className="font-medium">field_values</span>).
+									</li>
+									<li>Klicka “Run API Input Eval (dry-run)”.</li>
+									<li>
+										Kontrollera: Schema validity, Required-field recall, Field-value
+										accuracy, Clarification accuracy.
+									</li>
+									<li>
+										Spara “Prompt-förslag från API Input Eval” och kör om tills stabilt.
+									</li>
+								</ol>
+							</div>
+
+							<div className="rounded border p-3 space-y-2">
+								<p className="font-medium">Steg 6: Använd holdout (anti-overfitting)</p>
+								<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+									<li>Aktivera “Använd holdout-suite”.</li>
+									<li>Klistra in separat holdout-JSON eller lägg holdout_tests i huvud-JSON.</li>
+									<li>
+										Optimera på huvudsuite, men godkänn endast ändringar som även förbättrar
+										holdout.
+									</li>
+								</ul>
+							</div>
+
+							<div className="rounded border p-3 space-y-2">
+								<p className="font-medium">Minsta JSON-format (Tool Eval)</p>
+								<pre className="text-[11px] whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-muted-foreground">
+{`{
+  "tests": [
+    {
+      "id": "t1",
+      "question": "Fråga...",
+      "expected": {
+        "route": "action",
+        "sub_route": "travel",
+        "tool": "smhi_weather",
+        "category": "weather",
+        "plan_requirements": ["route:action", "tool:smhi_weather"]
+      },
+      "allowed_tools": ["smhi_weather"]
+    }
+  ]
+}`}
+								</pre>
+							</div>
+
+							<div className="rounded border p-3 space-y-2">
+								<p className="font-medium">Minsta JSON-format (API Input Eval)</p>
+								<pre className="text-[11px] whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-muted-foreground">
+{`{
+  "tests": [
+    {
+      "id": "a1",
+      "question": "Fråga...",
+      "expected": {
+        "route": "action",
+        "sub_route": "travel",
+        "tool": "smhi_weather",
+        "category": "weather",
+        "plan_requirements": ["route:action", "field:city"],
+        "required_fields": ["city", "date"],
+        "field_values": {"city": "Malmö"},
+        "allow_clarification": false
+      }
+    }
+  ]
+}`}
+								</pre>
 							</div>
 						</CardContent>
 					</Card>
