@@ -48,6 +48,7 @@ from app.agents.new_chat.supervisor_agent import (
 )
 
 from app.agents.new_chat.llm_config import create_chat_litellm_from_config
+from app.config import config
 
 logger = logging.getLogger(__name__)
 
