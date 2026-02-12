@@ -16,6 +16,7 @@ from urllib.parse import quote
 import httpx
 from langchain_core.tools import tool
 
+from app.agents.new_chat.circuit_breaker import get_breaker
 from app.config import config
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,13 @@ def create_trafiklab_route_tool():
             A dictionary with origin/destination info, matching departures,
             and optional raw payloads.
         """
+        breaker = get_breaker("trafiklab")
+        if not breaker.can_execute():
+            return {
+                "status": "error",
+                "error": f"Service {breaker.name} temporarily unavailable (circuit open)",
+            }
+        
         api_key = config.TRAFIKLAB_API_KEY
         if not api_key:
             return {
@@ -223,7 +231,9 @@ def create_trafiklab_route_tool():
                     client,
                     requested_time,
                 )
+                breaker.record_success()
             except Exception as exc:
+                breaker.record_failure()
                 logger.error("Trafiklab timetable fetch failed: %s", exc)
                 return {
                     "status": "error",

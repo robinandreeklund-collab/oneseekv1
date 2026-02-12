@@ -5,6 +5,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
+from app.agents.new_chat.circuit_breaker import get_breaker
 from app.services.connector_service import ConnectorService
 from app.services.trafikverket_service import (
     TRAFIKVERKET_SOURCE,
@@ -651,33 +652,47 @@ def build_trafikverket_tool_registry(
         filter_value: str | None,
         limit: int,
     ) -> dict[str, Any]:
-        if filter_value is None:
-            filter_value = _extract_filter_value(query)
-        data, cached = await service.query(
-            objecttype=objecttype,
-            schema_version=schema_version,
-            namespace=namespace,
-            filter_field=filter_field,
-            filter_value=filter_value,
-            limit=limit,
-        )
-        payload = _build_payload(
-            tool_name=tool_id,
-            base_path=base_path,
-            query=query,
-            data=data,
-            cached=cached,
-        )
-        await _ingest_output(
-            connector_service=connector_service,
-            tool_name=tool_id,
-            title=title,
-            payload=payload,
-            search_space_id=search_space_id,
-            user_id=user_id,
-            thread_id=thread_id,
-        )
-        return payload
+        breaker = get_breaker("trafikverket")
+        if not breaker.can_execute():
+            return {
+                "status": "error",
+                "error": f"Service {breaker.name} temporarily unavailable (circuit open)",
+                "tool_name": tool_id,
+                "query": query,
+            }
+        
+        try:
+            if filter_value is None:
+                filter_value = _extract_filter_value(query)
+            data, cached = await service.query(
+                objecttype=objecttype,
+                schema_version=schema_version,
+                namespace=namespace,
+                filter_field=filter_field,
+                filter_value=filter_value,
+                limit=limit,
+            )
+            payload = _build_payload(
+                tool_name=tool_id,
+                base_path=base_path,
+                query=query,
+                data=data,
+                cached=cached,
+            )
+            await _ingest_output(
+                connector_service=connector_service,
+                tool_name=tool_id,
+                title=title,
+                payload=payload,
+                search_space_id=search_space_id,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
+            breaker.record_success()
+            return payload
+        except Exception as exc:
+            breaker.record_failure()
+            raise
 
     @tool("trafikverket_trafikinfo_storningar", description=TRAFIKVERKET_TOOL_DEFINITIONS[0].description)
     async def trafikverket_trafikinfo_storningar(
