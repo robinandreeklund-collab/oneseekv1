@@ -159,6 +159,8 @@ TOOL_CONTEXT_DROP_KEYS = {
     "destination_lookup",
     "timetable",
 }
+_LOOP_GUARD_TOOL_NAMES = {"retrieve_agents", "call_agents_parallel", "reflect_on_progress"}
+_LOOP_GUARD_MAX_CONSECUTIVE = 10
 
 _TRAFFIC_INTENT_RE = re.compile(
     r"\b("
@@ -741,6 +743,54 @@ def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> 
     return value[: max_chars - 3].rstrip() + "..."
 
 
+def _summarize_parallel_results(results: Any) -> str:
+    if not isinstance(results, list) or not results:
+        return "results=0"
+    success_count = 0
+    error_count = 0
+    snippets: list[str] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        response = str(item.get("response") or "").strip()
+        error = str(item.get("error") or "").strip()
+        if error:
+            error_count += 1
+        elif response:
+            success_count += 1
+    for item in results[:TOOL_CONTEXT_MAX_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        agent = str(item.get("agent") or "agent").strip() or "agent"
+        response = _strip_critic_json(str(item.get("response") or "").strip())
+        error = str(item.get("error") or "").strip()
+        if response:
+            snippets.append(f"{agent}: {_truncate_for_prompt(response, 140)}")
+        elif error:
+            snippets.append(f"{agent}: error {_truncate_for_prompt(error, 100)}")
+        else:
+            snippets.append(f"{agent}: completed")
+    summary = f"results={len(results)}; success={success_count}; errors={error_count}"
+    if snippets:
+        summary += "; outputs=" + " | ".join(snippets)
+    return _truncate_for_prompt(summary)
+
+
+def _count_consecutive_loop_tools(messages: list[Any]) -> int:
+    count = 0
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        if not isinstance(message, ToolMessage):
+            continue
+        name = str(getattr(message, "name", "") or "").strip()
+        if name in _LOOP_GUARD_TOOL_NAMES:
+            count += 1
+            continue
+        break
+    return count
+
+
 def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
     name = (tool_name or "tool").strip() or "tool"
     status = str(payload.get("status") or "completed").lower()
@@ -822,6 +872,11 @@ def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
             if wind is not None:
                 parts.append(f"wind_mps={wind}")
         return _truncate_for_prompt("; ".join(parts))
+
+    if name == "call_agents_parallel":
+        return _truncate_for_prompt(
+            f"{name}: {status}; {_summarize_parallel_results(payload.get('results'))}"
+        )
 
     for key, value in payload.items():
         if key in {"status", "error"}:
@@ -1687,6 +1742,7 @@ async def create_supervisor_agent(
         updates: dict[str, Any] = {}
         recent_updates: list[dict[str, Any]] = []
         compare_updates: list[dict[str, Any]] = []
+        parallel_preview: list[str] = []
         plan_update: list[dict[str, Any]] | None = None
         plan_complete: bool | None = None
         last_call_payload: dict[str, Any] | None = None
@@ -1729,6 +1785,32 @@ async def create_supervisor_agent(
                         ):
                             updates["final_agent_response"] = payload.get("response")
                             updates["final_agent_name"] = payload.get("agent")
+            elif tool_name == "call_agents_parallel":
+                parallel_results = payload.get("results")
+                if isinstance(parallel_results, list):
+                    for item in parallel_results:
+                        if not isinstance(item, dict):
+                            continue
+                        agent_name = str(item.get("agent") or "").strip()
+                        task_text = str(item.get("task") or "").strip()
+                        response_text = _strip_critic_json(
+                            str(item.get("response") or "").strip()
+                        )
+                        error_text = str(item.get("error") or "").strip()
+                        compact_response = response_text or error_text
+                        if compact_response:
+                            recent_updates.append(
+                                {
+                                    "agent": agent_name or "agent",
+                                    "task": task_text,
+                                    "response": compact_response,
+                                }
+                            )
+                        if response_text and len(parallel_preview) < 3:
+                            label = agent_name or "agent"
+                            parallel_preview.append(
+                                f"- {label}: {_truncate_for_prompt(response_text, 220)}"
+                            )
             elif tool_name in _EXTERNAL_MODEL_TOOL_NAMES:
                 if payload and payload.get("status") == "success":
                     compare_updates.append(
@@ -1759,6 +1841,23 @@ async def create_supervisor_agent(
             if isinstance(critic_payload, dict):
                 if critic_payload.get("status") == "needs_more":
                     updates["plan_complete"] = False
+
+        # Fallback safety: avoid endless supervisor loops on repeated retrieval/delegation tools.
+        if "final_agent_response" not in updates:
+            loop_count = _count_consecutive_loop_tools(state.get("messages") or [])
+            if loop_count >= _LOOP_GUARD_MAX_CONSECUTIVE:
+                fallback_lines = [
+                    "Jag fastnade i en planeringsloop och avbryter for att ge ett stabilt svar.",
+                ]
+                if parallel_preview:
+                    fallback_lines.append("Detta ar de senaste delresultaten:")
+                    fallback_lines.extend(parallel_preview)
+                fallback_lines.append(
+                    "Skicka garna fragan igen sa kor jag en strikt enkel exekvering med fa agentsteg."
+                )
+                updates["final_agent_response"] = "\n".join(fallback_lines)
+                updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
 
         # Progressive message pruning when messages get long
         messages = state.get("messages") or []
