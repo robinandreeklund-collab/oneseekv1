@@ -161,6 +161,25 @@ TOOL_CONTEXT_DROP_KEYS = {
 }
 _LOOP_GUARD_TOOL_NAMES = {"retrieve_agents", "call_agents_parallel", "reflect_on_progress"}
 _LOOP_GUARD_MAX_CONSECUTIVE = 10
+_AGENT_NAME_ALIAS_MAP = {
+    "traffic_information": "trafik",
+    "traffic_info": "trafik",
+    "traffic_agent": "trafik",
+    "road_works_planner": "trafik",
+    "roadworks_planner": "trafik",
+    "road_work_planner": "trafik",
+    "roadworks": "trafik",
+    "local_authorities": "knowledge",
+    "local_authority": "knowledge",
+    "municipality_agent": "statistics",
+    "map_agent": "kartor",
+    "maps_agent": "kartor",
+    "statistic_agent": "statistics",
+    "statistics_agent": "statistics",
+    "parliament_agent": "riksdagen",
+    "company_agent": "bolag",
+    "code_agent": "code",
+}
 
 _TRAFFIC_INTENT_RE = re.compile(
     r"\b("
@@ -743,6 +762,38 @@ def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> 
     return value[: max_chars - 3].rstrip() + "..."
 
 
+def _normalize_agent_identifier(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9åäö]+", "_", str(value or "").strip().lower())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    return normalized
+
+
+def _guess_agent_from_alias(alias: str) -> str | None:
+    normalized = _normalize_agent_identifier(alias)
+    if not normalized:
+        return None
+    direct = _AGENT_NAME_ALIAS_MAP.get(normalized)
+    if direct:
+        return direct
+    token_rules: list[tuple[tuple[str, ...], str]] = [
+        (("trafik", "traffic", "road", "vag", "väg", "rail", "train"), "trafik"),
+        (("map", "kart", "geo"), "kartor"),
+        (("stat", "scb", "data"), "statistics"),
+        (("riks", "parliament", "politik"), "riksdagen"),
+        (("bolag", "company", "business", "org"), "bolag"),
+        (("browser", "web", "scrape", "search"), "browser"),
+        (("media", "podcast", "image", "video"), "media"),
+        (("code", "python", "calc"), "code"),
+        (("synth", "compare", "samman"), "synthesis"),
+        (("knowledge", "docs", "internal", "external", "local"), "knowledge"),
+        (("action", "travel"), "action"),
+    ]
+    for tokens, resolved in token_rules:
+        if any(token in normalized for token in tokens):
+            return resolved
+    return None
+
+
 def _summarize_parallel_results(results: Any) -> str:
     if not isinstance(results, list) or not results:
         return "results=0"
@@ -1300,6 +1351,57 @@ async def create_supervisor_agent(
     trafik_tool_ids = [definition.tool_id for definition in TRAFIKVERKET_TOOL_DEFINITIONS]
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
+    def _resolve_agent_name(
+        requested_name: str,
+        *,
+        task: str,
+        state: dict[str, Any] | None = None,
+    ) -> tuple[str | None, str | None]:
+        requested_raw = str(requested_name or "").strip().lower()
+        if not requested_raw:
+            return None, "empty_name"
+        if requested_raw in agent_by_name:
+            return requested_raw, None
+
+        alias_guess = _guess_agent_from_alias(requested_raw)
+        if alias_guess and alias_guess in agent_by_name:
+            return alias_guess, f"alias:{requested_raw}->{alias_guess}"
+
+        recent_agents: list[str] = []
+        route_hint = None
+        if state:
+            route_hint = state.get("route_hint")
+            recent_calls = state.get("recent_agent_calls") or []
+            recent_agents = [
+                str(call.get("agent") or "").strip()
+                for call in recent_calls
+                if isinstance(call, dict) and str(call.get("agent") or "").strip()
+            ]
+        retrieval_query = (
+            f"{task}\n"
+            f"Agent hint from planner: {requested_raw}\n"
+            "Resolve to one existing internal agent id."
+        )
+        retrieved = _smart_retrieve_agents(
+            retrieval_query,
+            agent_definitions=agent_definitions,
+            recent_agents=recent_agents,
+            limit=3,
+        )
+        if route_hint:
+            preferred = {
+                "action": ["trafik", "kartor", "action", "media"],
+                "knowledge": ["knowledge", "browser"],
+                "statistics": ["statistics"],
+                "compare": ["synthesis", "knowledge", "statistics"],
+            }.get(str(route_hint), [])
+            for preferred_name in preferred:
+                if any(agent.name == preferred_name for agent in retrieved):
+                    return preferred_name, f"route_pref:{requested_raw}->{preferred_name}"
+        if retrieved:
+            return retrieved[0].name, f"retrieval:{requested_raw}->{retrieved[0].name}"
+        return None, f"unresolved:{requested_raw}"
+
     def _build_compare_external_tool(spec):
         async def _compare_tool(query: str) -> dict[str, Any]:
             result = await call_external_model(
@@ -1344,7 +1446,12 @@ async def create_supervisor_agent(
         limit: int = 3,
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
-        """Retrieve relevant agents for the task."""
+        """Retrieve relevant agents for the task.
+
+        IMPORTANT: Reuse agent names exactly as returned in `agents[].name`.
+        Allowed internal ids include: action, kartor, statistics, media, knowledge,
+        browser, code, bolag, trafik, riksdagen, synthesis.
+        """
         recent_agents = []
         context_query = query
         route_hint = None
@@ -1442,7 +1549,13 @@ async def create_supervisor_agent(
             {"name": agent.name, "description": agent.description}
             for agent in selected
         ]
-        return json.dumps({"agents": payload}, ensure_ascii=True)
+        return json.dumps(
+            {
+                "agents": payload,
+                "valid_agent_ids": [agent.name for agent in agent_definitions],
+            },
+            ensure_ascii=True,
+        )
 
     def _prepare_task_for_synthesis(task: str, state: dict[str, Any] | None) -> str:
         """Add compare_outputs context for synthesis agent if applicable."""
@@ -1463,11 +1576,23 @@ async def create_supervisor_agent(
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
         """Call a specialized agent with a task."""
-        name = (agent_name or "").strip().lower()
+        requested_name = (agent_name or "").strip().lower()
+        resolved_name, resolution_reason = _resolve_agent_name(
+            requested_name,
+            task=task,
+            state=state,
+        )
+        name = resolved_name or requested_name
         worker = await worker_pool.get(name)
         if not worker:
             return json.dumps(
-                {"error": f"Agent '{agent_name}' not available."}, ensure_ascii=True
+                {
+                    "agent": name,
+                    "requested_agent": requested_name,
+                    "agent_resolution": resolution_reason,
+                    "error": f"Agent '{agent_name}' not available.",
+                },
+                ensure_ascii=True,
             )
         if name == "synthesis" and state:
             task = _prepare_task_for_synthesis(task, state)
@@ -1557,6 +1682,8 @@ async def create_supervisor_agent(
         return json.dumps(
             {
                 "agent": name,
+                "requested_agent": requested_name,
+                "agent_resolution": resolution_reason,
                 "task": task,
                 "response": response_text,
                 "critic": critic_payload,
@@ -1571,14 +1698,27 @@ async def create_supervisor_agent(
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
         """Call multiple agents in parallel. Each call dict has 'agent' and 'task' keys.
-        Use when tasks are independent and don't depend on each other's results."""
+        Use when tasks are independent and don't depend on each other's results.
+
+        IMPORTANT: Use exact internal agent ids from retrieve_agents()."""
         
         async def _run_one(call_spec: dict) -> dict:
-            agent_name = (call_spec.get("agent") or "").strip().lower()
+            requested_agent_name = (call_spec.get("agent") or "").strip().lower()
             task = call_spec.get("task") or ""
+            resolved_agent_name, resolution_reason = _resolve_agent_name(
+                requested_agent_name,
+                task=task,
+                state=state,
+            )
+            agent_name = resolved_agent_name or requested_agent_name
             worker = await worker_pool.get(agent_name)
             if not worker:
-                return {"agent": agent_name, "error": f"Agent '{agent_name}' not available."}
+                return {
+                    "agent": agent_name,
+                    "requested_agent": requested_agent_name,
+                    "agent_resolution": resolution_reason,
+                    "error": f"Agent '{agent_name}' not available.",
+                }
             try:
                 # Reuse same worker invocation logic as call_agent
                 if agent_name == "synthesis" and state:
@@ -1625,10 +1765,18 @@ async def create_supervisor_agent(
                     if messages_out:
                         last_msg = messages_out[-1]
                         response_text = str(getattr(last_msg, "content", "") or "")
-                return {"agent": agent_name, "task": task, "response": response_text}
+                return {
+                    "agent": agent_name,
+                    "requested_agent": requested_agent_name,
+                    "agent_resolution": resolution_reason,
+                    "task": task,
+                    "response": response_text,
+                }
             except Exception as exc:
                 return {
                     "agent": agent_name,
+                    "requested_agent": requested_agent_name,
+                    "agent_resolution": resolution_reason,
                     "task": task,
                     "error": str(exc),
                     "error_type": type(exc).__name__,
