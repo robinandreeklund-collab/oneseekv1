@@ -113,6 +113,7 @@ _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
     "action": "General action/data tasks not covered by a specialist agent.",
     "synthesis": "Cross-source compare/synthesis tasks.",
 }
+_DIFFICULTY_ORDER = ("lätt", "medel", "svår")
 
 
 def compute_metadata_version_hash(tool_index: list[ToolIndexEntry]) -> str:
@@ -186,6 +187,76 @@ def _safe_string_list(values: Any) -> list[str]:
         seen.add(key)
         cleaned.append(item)
     return cleaned
+
+
+def _normalize_difficulty_value(value: Any) -> str | None:
+    lowered = str(value or "").strip().casefold()
+    if not lowered:
+        return None
+    mapping = {
+        "lätt": "lätt",
+        "latt": "lätt",
+        "easy": "lätt",
+        "medel": "medel",
+        "medium": "medel",
+        "normal": "medel",
+        "svår": "svår",
+        "svar": "svår",
+        "hard": "svår",
+    }
+    return mapping.get(lowered)
+
+
+def _update_difficulty_bucket(
+    *,
+    difficulty_buckets: dict[str, dict[str, Any]],
+    difficulty: str | None,
+    passed: bool,
+    gated_score: float | None,
+) -> None:
+    if not difficulty:
+        return
+    bucket = difficulty_buckets.setdefault(
+        difficulty,
+        {"total_tests": 0, "passed_tests": 0, "gated_scores": []},
+    )
+    bucket["total_tests"] = int(bucket.get("total_tests") or 0) + 1
+    if passed:
+        bucket["passed_tests"] = int(bucket.get("passed_tests") or 0) + 1
+    if gated_score is not None:
+        bucket_scores = bucket.get("gated_scores")
+        if not isinstance(bucket_scores, list):
+            bucket_scores = []
+            bucket["gated_scores"] = bucket_scores
+        bucket_scores.append(float(gated_score))
+
+
+def _build_difficulty_breakdown(
+    difficulty_buckets: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    order_map = {name: idx for idx, name in enumerate(_DIFFICULTY_ORDER)}
+    rows: list[dict[str, Any]] = []
+    for difficulty, bucket in sorted(
+        difficulty_buckets.items(),
+        key=lambda pair: (order_map.get(pair[0], 999), pair[0]),
+    ):
+        total_tests = int(bucket.get("total_tests") or 0)
+        passed_tests = int(bucket.get("passed_tests") or 0)
+        gated_scores = bucket.get("gated_scores") if isinstance(bucket.get("gated_scores"), list) else []
+        rows.append(
+            {
+                "difficulty": difficulty,
+                "total_tests": total_tests,
+                "passed_tests": passed_tests,
+                "success_rate": (passed_tests / total_tests) if total_tests else 0.0,
+                "gated_success_rate": (
+                    sum(float(score) for score in gated_scores) / len(gated_scores)
+                    if gated_scores
+                    else None
+                ),
+            }
+        )
+    return rows
 
 
 def _looks_english_text(text: str) -> bool:
@@ -1375,10 +1446,12 @@ async def run_tool_evaluation(
     category_checks: list[bool] = []
     tool_checks: list[bool] = []
     retrieval_checks: list[bool] = []
+    difficulty_buckets: dict[str, dict[str, Any]] = {}
 
     for idx, test in enumerate(tests):
         test_id = str(test.get("id") or f"case-{idx + 1}")
         question = str(test.get("question") or "").strip()
+        difficulty = _normalize_difficulty_value(test.get("difficulty"))
         if progress_callback is not None:
             event = {
                 "type": "test_started",
@@ -1613,6 +1686,7 @@ async def run_tool_evaluation(
             case_result = {
                 "test_id": test_id,
                 "question": question,
+                "difficulty": difficulty,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
                 "expected_agent": expected_agent,
@@ -1652,6 +1726,12 @@ async def run_tool_evaluation(
                 "agent_gate_score": agent_gate_score,
                 "passed": passed,
             }
+            _update_difficulty_bucket(
+                difficulty_buckets=difficulty_buckets,
+                difficulty=difficulty,
+                passed=bool(passed),
+                gated_score=agent_gate_score,
+            )
             results.append(case_result)
             if progress_callback is not None:
                 event = {
@@ -1692,6 +1772,7 @@ async def run_tool_evaluation(
                 {
                     "test_id": test_id,
                     "question": question,
+                    "difficulty": difficulty,
                     "expected_route": expected_route,
                     "expected_sub_route": expected_sub_route,
                     "expected_agent": expected_agent,
@@ -1729,6 +1810,12 @@ async def run_tool_evaluation(
                     "agent_gate_score": 0.0,
                     "passed": False,
                 }
+            )
+            _update_difficulty_bucket(
+                difficulty_buckets=difficulty_buckets,
+                difficulty=difficulty,
+                passed=False,
+                gated_score=0.0,
             )
             gated_scores.append(0.0)
             supervisor_review_scores.append(0.0)
@@ -1814,6 +1901,7 @@ async def run_tool_evaluation(
             if retrieval_checks
             else None
         ),
+        "difficulty_breakdown": _build_difficulty_breakdown(difficulty_buckets),
     }
     return {"metrics": metrics, "results": results}
 
@@ -2340,10 +2428,12 @@ async def run_tool_api_input_evaluation(
     required_field_recalls: list[float] = []
     field_value_checks: list[bool] = []
     clarification_checks: list[bool] = []
+    difficulty_buckets: dict[str, dict[str, Any]] = {}
 
     for idx, test in enumerate(tests):
         test_id = str(test.get("id") or f"case-{idx + 1}")
         question = str(test.get("question") or "").strip()
+        difficulty = _normalize_difficulty_value(test.get("difficulty"))
         if progress_callback is not None:
             event = {
                 "type": "test_started",
@@ -2672,6 +2762,7 @@ async def run_tool_api_input_evaluation(
             case_result = {
                 "test_id": test_id,
                 "question": question,
+                "difficulty": difficulty,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
                 "expected_agent": expected_agent,
@@ -2722,6 +2813,12 @@ async def run_tool_api_input_evaluation(
                 "agent_gate_score": agent_gate_score,
                 "passed": passed,
             }
+            _update_difficulty_bucket(
+                difficulty_buckets=difficulty_buckets,
+                difficulty=difficulty,
+                passed=bool(passed),
+                gated_score=agent_gate_score,
+            )
             results.append(case_result)
             if progress_callback is not None:
                 event = {
@@ -2761,6 +2858,7 @@ async def run_tool_api_input_evaluation(
             case_result = {
                 "test_id": test_id,
                 "question": question,
+                "difficulty": difficulty,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
                 "expected_agent": expected_agent,
@@ -2810,6 +2908,12 @@ async def run_tool_api_input_evaluation(
                 "passed": False,
             }
             results.append(case_result)
+            _update_difficulty_bucket(
+                difficulty_buckets=difficulty_buckets,
+                difficulty=difficulty,
+                passed=False,
+                gated_score=0.0,
+            )
             gated_scores.append(0.0)
             supervisor_review_scores.append(0.0)
             supervisor_review_pass_checks.append(False)
@@ -2916,6 +3020,7 @@ async def run_tool_api_input_evaluation(
             if clarification_checks
             else None
         ),
+        "difficulty_breakdown": _build_difficulty_breakdown(difficulty_buckets),
     }
     return {"metrics": metrics, "results": results}
 

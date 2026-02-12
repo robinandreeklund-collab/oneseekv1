@@ -82,6 +82,7 @@ export const toolEvalLibraryGenerateRequest = z.object({
 	provider_key: z.string().nullable().optional(),
 	category_id: z.string().nullable().optional(),
 	question_count: z.number().int().optional().default(12),
+	difficulty_profile: z.string().optional().default("mixed"),
 	eval_name: z.string().nullable().optional(),
 	target_success_rate: z.number().nullable().optional(),
 	include_allowed_tools: z.boolean().optional().default(true),
@@ -190,6 +191,7 @@ export const toolApiInputEvaluationExpected = z.object({
 export const toolEvaluationTestCase = z.object({
 	id: z.string(),
 	question: z.string(),
+	difficulty: z.string().nullable().optional(),
 	expected: toolEvaluationExpected.nullable().optional(),
 	allowed_tools: z.array(z.string()).optional().default([]),
 });
@@ -197,8 +199,17 @@ export const toolEvaluationTestCase = z.object({
 export const toolApiInputEvaluationTestCase = z.object({
 	id: z.string(),
 	question: z.string(),
+	difficulty: z.string().nullable().optional(),
 	expected: toolApiInputEvaluationExpected.nullable().optional(),
 	allowed_tools: z.array(z.string()).optional().default([]),
+});
+
+export const toolDifficultyBreakdownItem = z.object({
+	difficulty: z.string(),
+	total_tests: z.number(),
+	passed_tests: z.number(),
+	success_rate: z.number(),
+	gated_success_rate: z.number().nullable().optional(),
 });
 
 export const toolEvaluationRequest = z.object({
@@ -238,6 +249,7 @@ export const toolEvaluationMetrics = z.object({
 	category_accuracy: z.number().nullable().optional(),
 	tool_accuracy: z.number().nullable().optional(),
 	retrieval_recall_at_k: z.number().nullable().optional(),
+	difficulty_breakdown: z.array(toolDifficultyBreakdownItem).optional().default([]),
 });
 
 export const toolPlanRequirementCheck = z.object({
@@ -256,6 +268,7 @@ export const toolSupervisorReviewRubricItem = z.object({
 export const toolEvaluationCaseResult = z.object({
 	test_id: z.string(),
 	question: z.string(),
+	difficulty: z.string().nullable().optional(),
 	expected_route: z.string().nullable().optional(),
 	expected_sub_route: z.string().nullable().optional(),
 	expected_agent: z.string().nullable().optional(),
@@ -302,6 +315,7 @@ export const toolApiInputFieldCheck = z.object({
 export const toolApiInputEvaluationCaseResult = z.object({
 	test_id: z.string(),
 	question: z.string(),
+	difficulty: z.string().nullable().optional(),
 	expected_route: z.string().nullable().optional(),
 	expected_sub_route: z.string().nullable().optional(),
 	expected_agent: z.string().nullable().optional(),
@@ -366,6 +380,7 @@ export const toolApiInputEvaluationMetrics = z.object({
 	required_field_recall: z.number().nullable().optional(),
 	field_value_accuracy: z.number().nullable().optional(),
 	clarification_accuracy: z.number().nullable().optional(),
+	difficulty_breakdown: z.array(toolDifficultyBreakdownItem).optional().default([]),
 });
 
 export const toolMetadataSuggestion = z.object({
@@ -509,6 +524,7 @@ export type ToolLatestEvaluationSummary = z.infer<typeof toolLatestEvaluationSum
 export type ToolApiCategoryItem = z.infer<typeof toolApiCategoryItem>;
 export type ToolApiCategoryProvider = z.infer<typeof toolApiCategoryProvider>;
 export type ToolApiCategoriesResponse = z.infer<typeof toolApiCategoriesResponse>;
+export type ToolDifficultyBreakdownItem = z.infer<typeof toolDifficultyBreakdownItem>;
 export type ToolEvalLibraryGenerateRequest = z.infer<
 	typeof toolEvalLibraryGenerateRequest
 >;

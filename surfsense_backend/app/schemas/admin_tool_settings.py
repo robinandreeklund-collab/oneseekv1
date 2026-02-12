@@ -94,6 +94,7 @@ class ToolApiInputEvaluationExpected(BaseModel):
 class ToolEvaluationTestCase(BaseModel):
     id: str
     question: str
+    difficulty: str | None = None
     expected: ToolEvaluationExpected | None = None
     allowed_tools: list[str] = Field(default_factory=list)
 
@@ -101,6 +102,7 @@ class ToolEvaluationTestCase(BaseModel):
 class ToolApiInputEvaluationTestCase(BaseModel):
     id: str
     question: str
+    difficulty: str | None = None
     expected: ToolApiInputEvaluationExpected | None = None
     allowed_tools: list[str] = Field(default_factory=list)
 
@@ -128,6 +130,14 @@ class ToolApiInputEvaluationRequest(BaseModel):
     retrieval_tuning_override: ToolRetrievalTuning | None = None
 
 
+class ToolDifficultyBreakdownItem(BaseModel):
+    difficulty: str
+    total_tests: int
+    passed_tests: int
+    success_rate: float
+    gated_success_rate: float | None = None
+
+
 class ToolEvaluationMetrics(BaseModel):
     total_tests: int
     passed_tests: int
@@ -142,6 +152,7 @@ class ToolEvaluationMetrics(BaseModel):
     category_accuracy: float | None = None
     tool_accuracy: float | None = None
     retrieval_recall_at_k: float | None = None
+    difficulty_breakdown: list[ToolDifficultyBreakdownItem] = Field(default_factory=list)
 
 
 class ToolSupervisorReviewRubricItem(BaseModel):
@@ -155,6 +166,7 @@ class ToolSupervisorReviewRubricItem(BaseModel):
 class ToolEvaluationCaseResult(BaseModel):
     test_id: str
     question: str
+    difficulty: str | None = None
     expected_route: str | None = None
     expected_sub_route: str | None = None
     expected_agent: str | None = None
@@ -203,6 +215,7 @@ class ToolApiInputFieldCheck(BaseModel):
 class ToolApiInputEvaluationCaseResult(BaseModel):
     test_id: str
     question: str
+    difficulty: str | None = None
     expected_route: str | None = None
     expected_sub_route: str | None = None
     expected_agent: str | None = None
@@ -269,6 +282,7 @@ class ToolApiInputEvaluationMetrics(BaseModel):
     required_field_recall: float | None = None
     field_value_accuracy: float | None = None
     clarification_accuracy: float | None = None
+    difficulty_breakdown: list[ToolDifficultyBreakdownItem] = Field(default_factory=list)
 
 
 class ToolMetadataSuggestion(BaseModel):
@@ -441,6 +455,7 @@ class ToolEvalLibraryGenerateRequest(BaseModel):
     provider_key: str | None = None
     category_id: str | None = None
     question_count: int = 12
+    difficulty_profile: str = "mixed"
     eval_name: str | None = None
     target_success_rate: float | None = None
     include_allowed_tools: bool = True

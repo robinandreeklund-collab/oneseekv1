@@ -285,6 +285,7 @@ def test_run_tool_api_input_evaluation_detects_missing_required_fields(monkeypat
                 {
                     "id": "api-1",
                     "question": "Vad blir vädret i Stockholm i morgon?",
+                    "difficulty": "svår",
                     "expected": {
                         "tool": "tool_weather",
                         "category": "weather",
@@ -301,7 +302,17 @@ def test_run_tool_api_input_evaluation_detects_missing_required_fields(monkeypat
     )
     assert output["metrics"]["total_tests"] == 1
     assert output["results"][0]["missing_required_fields"] == ["city", "date"]
+    assert output["results"][0]["difficulty"] == "svår"
     assert output["results"][0]["passed_api_input"] is False
+    assert output["metrics"]["difficulty_breakdown"] == [
+        {
+            "difficulty": "svår",
+            "total_tests": 1,
+            "passed_tests": 0,
+            "success_rate": 0.0,
+            "gated_success_rate": 0.0,
+        }
+    ]
 
 
 def test_suggest_agent_prompt_improvements_for_api_input_fallback():
@@ -382,6 +393,7 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
                 {
                     "id": "r1",
                     "question": "Vad blir vädret i Malmö i morgon?",
+                    "difficulty": "medel",
                     "expected": {
                         "tool": "tool_weather",
                         "category": "weather",
@@ -423,6 +435,16 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
     assert output["metrics"]["supervisor_review_pass_rate"] == 1.0
     assert output["results"][0]["supervisor_review_passed"] is True
     assert output["results"][0]["supervisor_trace"]["selected"]["agent"] == "trafik"
+    assert output["results"][0]["difficulty"] == "medel"
+    assert output["metrics"]["difficulty_breakdown"] == [
+        {
+            "difficulty": "medel",
+            "total_tests": 1,
+            "passed_tests": 1,
+            "success_rate": 1.0,
+            "gated_success_rate": 1.0,
+        }
+    ]
 
 
 def test_suggest_agent_prompt_improvements_includes_router_prompt():

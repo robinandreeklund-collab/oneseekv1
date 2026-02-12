@@ -200,6 +200,7 @@ _SWEDISH_DIACRITIC_REPLACEMENTS: list[tuple[str, str]] = [
     (r"\blan(et|s)?\b", r"län\1"),
     (r"\bfraga(n|r|s)?\b", r"fråga\1"),
 ]
+_DIFFICULTY_LABELS = ("lätt", "medel", "svår")
 
 
 def _utcnow_iso() -> str:
@@ -211,6 +212,64 @@ def _restore_swedish_diacritics(text: str) -> str:
     for pattern, replacement in _SWEDISH_DIACRITIC_REPLACEMENTS:
         restored = re.sub(pattern, replacement, restored, flags=re.IGNORECASE)
     return restored
+
+
+def _normalize_difficulty_label(value: Any) -> str | None:
+    lowered = str(value or "").strip().casefold()
+    if not lowered:
+        return None
+    mapping = {
+        "lätt": "lätt",
+        "latt": "lätt",
+        "easy": "lätt",
+        "medel": "medel",
+        "medium": "medel",
+        "normal": "medel",
+        "svår": "svår",
+        "svar": "svår",
+        "hard": "svår",
+    }
+    return mapping.get(lowered)
+
+
+def _normalize_difficulty_profile(value: Any) -> str:
+    lowered = str(value or "").strip().casefold()
+    if lowered in {"blandad", "mix", "mixed", ""}:
+        return "blandad"
+    normalized = _normalize_difficulty_label(lowered)
+    if normalized:
+        return normalized
+    return "blandad"
+
+
+def _difficulty_for_index(index: int, profile: str) -> str:
+    normalized = _normalize_difficulty_profile(profile)
+    if normalized in _DIFFICULTY_LABELS:
+        return normalized
+    return _DIFFICULTY_LABELS[index % len(_DIFFICULTY_LABELS)]
+
+
+def _difficulty_instructions_for_profile(profile: str) -> str:
+    normalized = _normalize_difficulty_profile(profile)
+    if normalized == "lätt":
+        return (
+            "- Alla frågor ska ha difficulty='lätt'.\n"
+            "- Lätt: tydlig intent, ett verktyg är uppenbart, få villkor."
+        )
+    if normalized == "medel":
+        return (
+            "- Alla frågor ska ha difficulty='medel'.\n"
+            "- Medel: 2-3 villkor (t.ex. plats + tid), men fortfarande tydlig intent."
+        )
+    if normalized == "svår":
+        return (
+            "- Alla frågor ska ha difficulty='svår'.\n"
+            "- Svår: fler begränsningar, potentiellt förväxlingsbar fråga eller indirekt formulering."
+        )
+    return (
+        "- Använd blandad svårighetsgrad och sätt difficulty per test till 'lätt', 'medel' eller 'svår'.\n"
+        "- Försök få jämn fördelning mellan nivåerna."
+    )
 
 
 async def _require_admin(
@@ -632,9 +691,11 @@ def _normalize_generated_tests(
     selected_entries: list[Any],
     question_count: int,
     include_allowed_tools: bool,
+    difficulty_profile: str,
 ) -> list[dict[str, Any]]:
     if not selected_entries:
         return []
+    normalized_profile = _normalize_difficulty_profile(difficulty_profile)
     by_tool_id = {str(entry.tool_id): entry for entry in selected_entries}
     normalized: list[dict[str, Any]] = []
     for idx in range(question_count):
@@ -702,10 +763,17 @@ def _normalize_generated_tests(
                     f"Vilket verktyg ska användas för: {getattr(entry, 'name', expected_tool)}?"
                 )
         question = _ensure_swedish_question_context(question, entry, idx)
+        source_difficulty = _normalize_difficulty_label(source.get("difficulty"))
+        difficulty = (
+            normalized_profile
+            if normalized_profile in _DIFFICULTY_LABELS
+            else source_difficulty or _difficulty_for_index(idx, normalized_profile)
+        )
         normalized.append(
             {
                 "id": str(source.get("id") or f"case-{idx + 1}"),
                 "question": question,
+                "difficulty": difficulty,
                 "expected": {
                     "tool": expected_tool,
                     "category": expected_category or getattr(entry, "category", None),
@@ -725,7 +793,9 @@ def _build_fallback_generated_tests(
     selected_entries: list[Any],
     question_count: int,
     include_allowed_tools: bool,
+    difficulty_profile: str,
 ) -> list[dict[str, Any]]:
+    normalized_profile = _normalize_difficulty_profile(difficulty_profile)
     tests: list[dict[str, Any]] = []
     for idx in range(question_count):
         entry = selected_entries[idx % len(selected_entries)]
@@ -755,6 +825,7 @@ def _build_fallback_generated_tests(
             {
                 "id": f"case-{idx + 1}",
                 "question": question,
+                "difficulty": _difficulty_for_index(idx, normalized_profile),
                 "expected": {
                     "tool": tool_id,
                     "category": str(getattr(entry, "category", "")).strip(),
@@ -955,6 +1026,7 @@ def _enrich_api_input_generated_tests(
             {
                 "id": str(test.get("id") or f"case-{index + 1}"),
                 "question": str(test.get("question") or ""),
+                "difficulty": _normalize_difficulty_label(test.get("difficulty")),
                 "expected": expected_payload,
                 "allowed_tools": (
                     list(test.get("allowed_tools"))
@@ -971,14 +1043,20 @@ def _build_eval_library_payload(
     eval_type: str | None = None,
     eval_name: str | None,
     target_success_rate: float | None,
+    difficulty_profile: str | None,
     tests: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "eval_type": eval_type or "tool_selection",
         "eval_name": eval_name,
-        "target_success_rate": target_success_rate,
         "tests": tests,
     }
+    if target_success_rate is not None:
+        payload["target_success_rate"] = target_success_rate
+    normalized_profile = _normalize_difficulty_profile(difficulty_profile)
+    if normalized_profile:
+        payload["difficulty_profile"] = normalized_profile
+    return payload
 
 
 def _resolve_eval_library_file(relative_path: str) -> Path:
@@ -1038,11 +1116,14 @@ async def _generate_eval_tests(
     selected_entries: list[Any],
     question_count: int,
     include_allowed_tools: bool,
+    difficulty_profile: str,
 ) -> list[dict[str, Any]]:
+    normalized_difficulty_profile = _normalize_difficulty_profile(difficulty_profile)
     fallback_tests = _build_fallback_generated_tests(
         selected_entries=selected_entries,
         question_count=question_count,
         include_allowed_tools=include_allowed_tools,
+        difficulty_profile=normalized_difficulty_profile,
     )
     if llm is None:
         return fallback_tests
@@ -1055,6 +1136,7 @@ async def _generate_eval_tests(
         "    {\n"
         '      "id": "case-1",\n'
         '      "question": "string",\n'
+        '      "difficulty": "lätt|medel|svår",\n'
         '      "expected": {\n'
         '        "tool": "tool_id",\n'
         '        "category": "category",\n'
@@ -1078,6 +1160,7 @@ async def _generate_eval_tests(
         "- For traffic/travel/weather tools, use valid Swedish roads (e.g. E4, E6, E18, E20) and vary roads.\n"
         "- For politics/government tools, focus on Swedish politics and riksdag contexts.\n"
         "- For statistics tools, focus on Swedish municipalities/regions and official Swedish statistics context.\n"
+        f"{_difficulty_instructions_for_profile(normalized_difficulty_profile)}\n"
         "- Never generate generic/global/non-Swedish examples.\n"
         "- Do not include markdown."
     )
@@ -1095,6 +1178,7 @@ async def _generate_eval_tests(
     ]
     payload = {
         "question_count": question_count,
+        "difficulty_profile": normalized_difficulty_profile,
         "swedish_reference": {
             "cities": _SWEDISH_CITIES,
             "roads": _SWEDISH_ROADS,
@@ -1138,6 +1222,7 @@ async def _generate_eval_tests(
             selected_entries=selected_entries,
             question_count=question_count,
             include_allowed_tools=include_allowed_tools,
+            difficulty_profile=normalized_difficulty_profile,
         )
         return normalized or fallback_tests
     except Exception:
@@ -1904,6 +1989,7 @@ async def _execute_tool_evaluation(
             {
                 "id": test.id,
                 "question": test.question,
+                "difficulty": test.difficulty,
                 "expected": {
                     "tool": test.expected.tool if test.expected else None,
                     "category": test.expected.category if test.expected else None,
@@ -1968,6 +2054,7 @@ async def _execute_api_input_evaluation(
             {
                 "id": test.id,
                 "question": test.question,
+                "difficulty": test.difficulty,
                 "expected": {
                     "tool": test.expected.tool if test.expected else None,
                     "category": test.expected.category if test.expected else None,
@@ -2274,6 +2361,9 @@ async def generate_eval_library_file(
             detail="mode must be one of: 'category', 'provider', 'global_random'",
         )
     question_count = max(1, min(int(payload.question_count or 12), 100))
+    normalized_difficulty_profile = _normalize_difficulty_profile(
+        payload.difficulty_profile
+    )
     tool_registry, tool_index, _persisted_overrides, _effective_overrides = (
         await _build_tool_registry_and_index_for_search_space(
             session,
@@ -2299,6 +2389,7 @@ async def generate_eval_library_file(
         selected_entries=selected_entries,
         question_count=question_count,
         include_allowed_tools=bool(payload.include_allowed_tools),
+        difficulty_profile=normalized_difficulty_profile,
     )
     if normalized_eval_type == "api_input":
         tests = _enrich_api_input_generated_tests(
@@ -2316,6 +2407,7 @@ async def generate_eval_library_file(
         eval_type=normalized_eval_type,
         eval_name=eval_name,
         target_success_rate=payload.target_success_rate,
+        difficulty_profile=normalized_difficulty_profile,
         tests=tests,
     )
     relative_path, file_name, version, created_at = _save_eval_library_payload(

@@ -65,6 +65,21 @@ function formatPercent(value: number | null | undefined) {
 	return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatDifficultyLabel(value: string | null | undefined) {
+	const normalized = String(value ?? "").trim().toLowerCase();
+	if (!normalized) return "Okänd";
+	if (normalized === "lätt" || normalized === "latt" || normalized === "easy") {
+		return "Lätt";
+	}
+	if (normalized === "medel" || normalized === "medium") {
+		return "Medel";
+	}
+	if (normalized === "svår" || normalized === "svar" || normalized === "hard") {
+		return "Svår";
+	}
+	return value ?? "Okänd";
+}
+
 function buildFailureReasons(result: Record<string, unknown>): string[] {
 	const reasons: string[] = [];
 	if (result.passed_route === false) reasons.push("Route mismatch");
@@ -76,6 +91,38 @@ function buildFailureReasons(result: Record<string, unknown>): string[] {
 	if (result.supervisor_review_passed === false)
 		reasons.push("Supervisor-spår behöver förbättras");
 	return reasons;
+}
+
+function DifficultyBreakdown({
+	title,
+	items,
+}: {
+	title: string;
+	items: Array<{
+		difficulty: string;
+		total_tests: number;
+		passed_tests: number;
+		success_rate: number;
+		gated_success_rate?: number | null;
+	}>;
+}) {
+	if (!items.length) return null;
+	return (
+		<div className="rounded border p-3 space-y-2">
+			<p className="text-sm font-medium">{title}</p>
+			<div className="flex flex-wrap gap-2">
+				{items.map((item) => (
+					<Badge key={`${title}-${item.difficulty}`} variant="outline">
+						{formatDifficultyLabel(item.difficulty)}: {item.passed_tests}/{item.total_tests} (
+						{(item.success_rate * 100).toFixed(1)}%)
+						{item.gated_success_rate == null
+							? ""
+							: ` · gated ${(item.gated_success_rate * 100).toFixed(1)}%`}
+					</Badge>
+				))}
+			</div>
+		</div>
+	);
 }
 
 function HistoryTrendBars({
@@ -469,9 +516,13 @@ export function ToolSettingsPage() {
 	const [generationProvider, setGenerationProvider] = useState("scb");
 	const [generationCategory, setGenerationCategory] = useState("");
 	const [generationQuestionCount, setGenerationQuestionCount] = useState(12);
+	const [generationDifficultyProfile, setGenerationDifficultyProfile] = useState<
+		"mixed" | "lätt" | "medel" | "svår"
+	>("mixed");
 	const [generationEvalName, setGenerationEvalName] = useState("");
 	const [isGeneratingEvalFile, setIsGeneratingEvalFile] = useState(false);
 	const [selectedLibraryPath, setSelectedLibraryPath] = useState("");
+	const [selectedHoldoutLibraryPath, setSelectedHoldoutLibraryPath] = useState("");
 	const [isLoadingLibraryFile, setIsLoadingLibraryFile] = useState(false);
 	const [isEvaluating, setIsEvaluating] = useState(false);
 	const [isApiInputEvaluating, setIsApiInputEvaluating] = useState(false);
@@ -838,6 +889,7 @@ export function ToolSettingsPage() {
 					: generationProvider,
 				category_id: generationMode === "category" ? generationCategory : null,
 				question_count: Math.max(1, Math.min(100, Math.round(normalizedQuestionCount))),
+				difficulty_profile: generationDifficultyProfile,
 				eval_name: generationEvalName.trim() || null,
 				include_allowed_tools: true,
 			});
@@ -877,6 +929,23 @@ export function ToolSettingsPage() {
 		}
 	};
 
+	const loadEvalLibraryFileToHoldout = async (relativePath: string) => {
+		setIsLoadingLibraryFile(true);
+		try {
+			const response = await adminToolSettingsApiService.readEvalLibraryFile(relativePath);
+			setHoldoutInput(response.content);
+			setEvalInputError(null);
+			setUseHoldoutSuite(true);
+			setShowHoldoutJsonInput(true);
+			setSelectedHoldoutLibraryPath(relativePath);
+			toast.success(`Laddade ${response.relative_path} i holdout`);
+		} catch (_error) {
+			toast.error("Kunde inte ladda holdout-fil");
+		} finally {
+			setIsLoadingLibraryFile(false);
+		}
+	};
+
 	const parseEvalInput = (): {
 		eval_name?: string;
 		target_success_rate?: number;
@@ -899,6 +968,8 @@ export function ToolSettingsPage() {
 				(item: any, index: number) => ({
 					id: String(item.id ?? `case-${index + 1}`),
 					question: String(item.question ?? ""),
+					difficulty:
+						typeof item.difficulty === "string" ? item.difficulty : undefined,
 					expected:
 						item.expected ||
 						item.expected_tool ||
@@ -953,6 +1024,7 @@ export function ToolSettingsPage() {
 		return items.map((item: any, index: number) => ({
 			id: String(item.id ?? `case-${index + 1}`),
 			question: String(item.question ?? ""),
+			difficulty: typeof item.difficulty === "string" ? item.difficulty : undefined,
 			expected:
 				item.expected ||
 				item.expected_tool ||
@@ -1029,10 +1101,25 @@ export function ToolSettingsPage() {
 				return null;
 			}
 
-			let holdoutTestsRaw: any[] = Array.isArray(envelope.holdout_tests)
-				? envelope.holdout_tests
-				: [];
+			const extractTestsArrayFromEnvelope = (value: any): any[] | null => {
+				const extracted = Array.isArray(value) ? { tests: value } : value;
+				if (!extracted || typeof extracted !== "object") {
+					return null;
+				}
+				if (Array.isArray(extracted.tests)) {
+					return extracted.tests;
+				}
+				if (Array.isArray(extracted.holdout_tests)) {
+					return extracted.holdout_tests;
+				}
+				return null;
+			};
+
+			let holdoutTestsRaw: any[] = [];
 			if (useHoldoutSuite) {
+				holdoutTestsRaw = Array.isArray(envelope.holdout_tests)
+					? envelope.holdout_tests
+					: [];
 				const holdoutTrimmed = holdoutInput.trim();
 				if (holdoutTrimmed) {
 					let parsedHoldout: any;
@@ -1042,14 +1129,14 @@ export function ToolSettingsPage() {
 						setEvalInputError("Ogiltig holdout-JSON. Kontrollera formatet.");
 						return null;
 					}
-					const holdoutEnvelope = Array.isArray(parsedHoldout)
-						? { tests: parsedHoldout }
-						: parsedHoldout;
-					if (!holdoutEnvelope || !Array.isArray(holdoutEnvelope.tests)) {
-						setEvalInputError("Holdout-JSON måste innehålla en tests-array.");
+					const extractedHoldoutTests = extractTestsArrayFromEnvelope(parsedHoldout);
+					if (!extractedHoldoutTests) {
+						setEvalInputError(
+							"Holdout-JSON måste innehålla en tests-array (eller holdout_tests)."
+						);
 						return null;
 					}
-					holdoutTestsRaw = holdoutEnvelope.tests;
+					holdoutTestsRaw = extractedHoldoutTests;
 				}
 			}
 			const holdoutTests = parseApiInputCaseList(holdoutTestsRaw);
@@ -1134,7 +1221,13 @@ export function ToolSettingsPage() {
 			setLastApiInputEvalJobNotice(null);
 			setApiInputEvaluationResult(null);
 			setSelectedPromptSuggestionKeys(new Set());
-			toast.info(`API input eval-run startad (${started.total_tests} frågor)`);
+			toast.info(
+				`API input eval-run startad (${started.total_tests} frågor${
+					parsedInput.holdout_tests.length > 0
+						? ` + holdout ${parsedInput.holdout_tests.length}`
+						: ""
+				})`
+			);
 		} catch (_err) {
 			toast.error("API input eval-run misslyckades");
 		} finally {
@@ -1365,6 +1458,17 @@ export function ToolSettingsPage() {
 		setEvalInput(content);
 		setEvalInputError(null);
 		setSelectedLibraryPath("");
+	};
+
+	const uploadHoldoutFile = async (event: ChangeEvent<HTMLInputElement>) => {
+		const file = event.target.files?.[0];
+		if (!file) return;
+		const content = await file.text();
+		setHoldoutInput(content);
+		setEvalInputError(null);
+		setUseHoldoutSuite(true);
+		setShowHoldoutJsonInput(true);
+		setSelectedHoldoutLibraryPath("");
 	};
 
 	if (isLoading) {
@@ -2003,10 +2107,12 @@ export function ToolSettingsPage() {
 								<p className="font-medium">Minsta JSON-format (Tool Eval)</p>
 								<pre className="text-[11px] whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-muted-foreground">
 {`{
+  "target_success_rate": 0.85,
   "tests": [
     {
       "id": "t1",
       "question": "Fråga...",
+      "difficulty": "medel",
       "expected": {
         "route": "action",
         "sub_route": "travel",
@@ -2026,10 +2132,12 @@ export function ToolSettingsPage() {
 								<p className="font-medium">Minsta JSON-format (API Input Eval)</p>
 								<pre className="text-[11px] whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-muted-foreground">
 {`{
+  "target_success_rate": 0.85,
   "tests": [
     {
       "id": "a1",
       "question": "Fråga...",
+      "difficulty": "svår",
       "expected": {
         "route": "action",
         "sub_route": "travel",
@@ -2080,7 +2188,7 @@ export function ToolSettingsPage() {
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4">
-							<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+							<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
 								<div className="space-y-2">
 									<Label htmlFor="generation-mode">Läge</Label>
 									<select
@@ -2161,6 +2269,30 @@ export function ToolSettingsPage() {
 									/>
 								</div>
 								<div className="space-y-2">
+									<Label htmlFor="generation-difficulty">Svårighetsgrad</Label>
+									<select
+										id="generation-difficulty"
+										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+										value={generationDifficultyProfile}
+										onChange={(event) =>
+											setGenerationDifficultyProfile(
+												event.target.value === "lätt"
+													? "lätt"
+													: event.target.value === "medel"
+														? "medel"
+														: event.target.value === "svår"
+															? "svår"
+															: "mixed"
+											)
+										}
+									>
+										<option value="mixed">Blandad (lätt + medel + svår)</option>
+										<option value="lätt">Lätt</option>
+										<option value="medel">Medel</option>
+										<option value="svår">Svår</option>
+									</select>
+								</div>
+								<div className="space-y-2">
 									<Label htmlFor="generation-eval-name">Eval-namn (valfritt)</Label>
 									<Input
 										id="generation-eval-name"
@@ -2197,6 +2329,10 @@ export function ToolSettingsPage() {
 									(underkategorier blandas automatiskt).
 								</p>
 							)}
+							<p className="text-xs text-muted-foreground">
+								Svårighetsgrad sparas i varje test som <span className="font-medium">difficulty</span>{" "}
+								och visas i eval-resultaten för separat uppföljning.
+							</p>
 
 							<div className="flex flex-wrap items-center gap-2">
 								<Button
@@ -2246,18 +2382,34 @@ export function ToolSettingsPage() {
 															: ""}
 													</p>
 												</div>
-												<Button
-													variant={
-														selectedLibraryPath === item.relative_path
-															? "default"
-															: "outline"
-													}
-													size="sm"
-													onClick={() => loadEvalLibraryFile(item.relative_path)}
-													disabled={isLoadingLibraryFile}
-												>
-													Ladda i eval-input
-												</Button>
+												<div className="flex items-center gap-2">
+													<Button
+														variant={
+															selectedLibraryPath === item.relative_path
+																? "default"
+																: "outline"
+														}
+														size="sm"
+														onClick={() => loadEvalLibraryFile(item.relative_path)}
+														disabled={isLoadingLibraryFile}
+													>
+														Ladda i eval-input
+													</Button>
+													<Button
+														variant={
+															selectedHoldoutLibraryPath === item.relative_path
+																? "default"
+																: "outline"
+														}
+														size="sm"
+														onClick={() =>
+															loadEvalLibraryFileToHoldout(item.relative_path)
+														}
+														disabled={isLoadingLibraryFile}
+													>
+														Ladda i holdout
+													</Button>
+												</div>
 											</div>
 										))
 									)}
@@ -2365,7 +2517,7 @@ export function ToolSettingsPage() {
 								</div>
 								{showEvalJsonInput ? (
 									<Textarea
-										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","expected":{"route":"action","sub_route":"travel","agent":"trafik","tool":"...","category":"...","plan_requirements":["route:action","agent:trafik","tool:..."]}}]}'
+										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","difficulty":"lätt","expected":{"route":"action","sub_route":"travel","agent":"trafik","tool":"...","category":"...","plan_requirements":["route:action","agent:trafik","tool:..."]}}]}'
 										value={evalInput}
 										onChange={(e) => setEvalInput(e.target.value)}
 										rows={12}
@@ -2401,9 +2553,27 @@ export function ToolSettingsPage() {
 									Holdout-suite används för anti-overfitting: promptförslag optimeras på
 									huvudtesterna men kvaliteten mäts separat på holdout.
 								</p>
+								<p className="text-xs text-muted-foreground">
+									Holdout körs endast när du klickar{" "}
+									<span className="font-medium">Run API Input Eval (dry-run)</span> och
+									visas under <span className="font-medium">Steg 4: Holdout-suite</span>.
+								</p>
+								<div className="flex flex-wrap items-center gap-2">
+									<Input
+										type="file"
+										accept="application/json"
+										onChange={uploadHoldoutFile}
+										className="max-w-sm"
+									/>
+									{selectedHoldoutLibraryPath && (
+										<Badge variant="outline">
+											Holdout-fil: {selectedHoldoutLibraryPath}
+										</Badge>
+									)}
+								</div>
 								{showHoldoutJsonInput ? (
 									<Textarea
-										placeholder='{"tests":[{"id":"h1","question":"...","expected":{"route":"action","sub_route":"travel","agent":"trafik","tool":"...","category":"...","plan_requirements":["route:action","agent:trafik","field:city"],"required_fields":["city","date"]}}]}'
+										placeholder='{"tests":[{"id":"h1","question":"...","difficulty":"medel","expected":{"route":"action","sub_route":"travel","agent":"trafik","tool":"...","category":"...","plan_requirements":["route:action","agent:trafik","field:city"],"required_fields":["city","date"]}}]}'
 										value={holdoutInput}
 										onChange={(e) => setHoldoutInput(e.target.value)}
 										rows={8}
@@ -2731,61 +2901,10 @@ export function ToolSettingsPage() {
 								</CardContent>
 							</Card>
 
-							{showApiSections && apiInputEvaluationResult?.holdout_metrics && (
-								<Card>
-									<CardHeader>
-										<CardTitle>Steg 4: Holdout-suite (anti-overfitting)</CardTitle>
-										<CardDescription>
-											Separat mätning på holdout för att verifiera att förbättringar
-											generaliserar.
-										</CardDescription>
-									</CardHeader>
-									<CardContent className="grid gap-4 md:grid-cols-4">
-										<div className="rounded border p-3">
-											<p className="text-xs text-muted-foreground">Holdout success</p>
-											<p className="text-2xl font-semibold">
-												{(
-													apiInputEvaluationResult.holdout_metrics.success_rate * 100
-												).toFixed(1)}
-												%
-											</p>
-										</div>
-										<div className="rounded border p-3">
-											<p className="text-xs text-muted-foreground">Holdout schema</p>
-											<p className="text-2xl font-semibold">
-												{apiInputEvaluationResult.holdout_metrics.schema_validity_rate ==
-												null
-													? "-"
-													: `${(
-															apiInputEvaluationResult.holdout_metrics
-																.schema_validity_rate * 100
-														).toFixed(1)}%`}
-											</p>
-										</div>
-										<div className="rounded border p-3">
-											<p className="text-xs text-muted-foreground">
-												Holdout required recall
-											</p>
-											<p className="text-2xl font-semibold">
-												{apiInputEvaluationResult.holdout_metrics.required_field_recall ==
-												null
-													? "-"
-													: `${(
-															apiInputEvaluationResult.holdout_metrics
-																.required_field_recall * 100
-														).toFixed(1)}%`}
-											</p>
-										</div>
-										<div className="rounded border p-3">
-											<p className="text-xs text-muted-foreground">Holdout cases</p>
-											<p className="text-2xl font-semibold">
-												{apiInputEvaluationResult.holdout_metrics.passed_tests}/
-												{apiInputEvaluationResult.holdout_metrics.total_tests}
-											</p>
-										</div>
-									</CardContent>
-								</Card>
-							)}
+							<DifficultyBreakdown
+								title="Svårighetsgrad · Agentval Eval"
+								items={evaluationResult.metrics.difficulty_breakdown ?? []}
+							/>
 
 							<Card>
 								<CardHeader>
@@ -2908,6 +3027,11 @@ export function ToolSettingsPage() {
 											<div className="flex items-center justify-between gap-2">
 												<div className="flex items-center gap-2">
 													<Badge variant="outline">{result.test_id}</Badge>
+													{result.difficulty && (
+														<Badge variant="secondary">
+															{formatDifficultyLabel(result.difficulty)}
+														</Badge>
+													)}
 													<Badge variant={result.passed ? "default" : "destructive"}>
 														{result.passed ? "PASS" : "FAIL"}
 													</Badge>
@@ -3436,6 +3560,125 @@ export function ToolSettingsPage() {
 								</CardContent>
 							</Card>
 
+							<DifficultyBreakdown
+								title="Svårighetsgrad · API Input Eval"
+								items={apiInputEvaluationResult.metrics.difficulty_breakdown ?? []}
+							/>
+
+							{apiInputEvaluationResult.holdout_metrics && (
+								<Card>
+									<CardHeader>
+										<CardTitle>Steg 4: Holdout-suite (anti-overfitting)</CardTitle>
+										<CardDescription>
+											Separat mätning på holdout för att verifiera att förbättringar
+											generaliserar.
+										</CardDescription>
+									</CardHeader>
+									<CardContent className="grid gap-4 md:grid-cols-4">
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">Holdout success</p>
+											<p className="text-2xl font-semibold">
+												{(
+													apiInputEvaluationResult.holdout_metrics.success_rate * 100
+												).toFixed(1)}
+												%
+											</p>
+										</div>
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">Holdout schema</p>
+											<p className="text-2xl font-semibold">
+												{apiInputEvaluationResult.holdout_metrics.schema_validity_rate ==
+												null
+													? "-"
+													: `${(
+															apiInputEvaluationResult.holdout_metrics
+																.schema_validity_rate * 100
+														).toFixed(1)}%`}
+											</p>
+										</div>
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">
+												Holdout required recall
+											</p>
+											<p className="text-2xl font-semibold">
+												{apiInputEvaluationResult.holdout_metrics.required_field_recall ==
+												null
+													? "-"
+													: `${(
+															apiInputEvaluationResult.holdout_metrics
+																.required_field_recall * 100
+														).toFixed(1)}%`}
+											</p>
+										</div>
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">Holdout cases</p>
+											<p className="text-2xl font-semibold">
+												{apiInputEvaluationResult.holdout_metrics.passed_tests}/
+												{apiInputEvaluationResult.holdout_metrics.total_tests}
+											</p>
+										</div>
+									</CardContent>
+									<CardContent className="pt-0">
+										<DifficultyBreakdown
+											title="Svårighetsgrad · Holdout"
+											items={
+												apiInputEvaluationResult.holdout_metrics?.difficulty_breakdown ??
+												[]
+											}
+										/>
+									</CardContent>
+								</Card>
+							)}
+
+							{apiInputEvaluationResult.holdout_results.length > 0 && (
+								<Card>
+									<CardHeader>
+										<CardTitle>Steg 3B.1: Holdout-resultat per test</CardTitle>
+										<CardDescription>
+											Detaljvy för holdout-suite (körs i samband med API Input Eval när
+											holdout är aktiverad).
+										</CardDescription>
+									</CardHeader>
+									<CardContent className="space-y-3">
+										{apiInputEvaluationResult.holdout_results.map((result) => {
+											const failureReasons = buildFailureReasons(
+												result as unknown as Record<string, unknown>
+											);
+											return (
+												<div
+													key={`holdout-result-${result.test_id}`}
+													className="rounded border p-3 space-y-2"
+												>
+													<div className="flex flex-wrap items-center gap-2">
+														<Badge variant="outline">{result.test_id}</Badge>
+														{result.difficulty && (
+															<Badge variant="secondary">
+																{formatDifficultyLabel(result.difficulty)}
+															</Badge>
+														)}
+														<Badge
+															variant={result.passed ? "default" : "destructive"}
+														>
+															{result.passed ? "PASS" : "FAIL"}
+														</Badge>
+													</div>
+													<p className="text-sm">{result.question}</p>
+													<p className="text-xs text-muted-foreground">
+														Expected tool: {result.expected_tool || "-"} · Selected:{" "}
+														{result.selected_tool || "-"}
+													</p>
+													{!result.passed && failureReasons.length > 0 && (
+														<p className="text-xs text-red-400">
+															Fail-orsak: {failureReasons.join(" · ")}
+														</p>
+													)}
+												</div>
+											);
+										})}
+									</CardContent>
+								</Card>
+							)}
+
 							<Card>
 								<CardHeader>
 									<CardTitle>Steg 3C: API Input resultat per test</CardTitle>
@@ -3457,6 +3700,11 @@ export function ToolSettingsPage() {
 											<div className="flex items-center justify-between gap-2">
 												<div className="flex items-center gap-2">
 													<Badge variant="outline">{result.test_id}</Badge>
+													{result.difficulty && (
+														<Badge variant="secondary">
+															{formatDifficultyLabel(result.difficulty)}
+														</Badge>
+													)}
 													<Badge variant={result.passed ? "default" : "destructive"}>
 														{result.passed ? "PASS" : "FAIL"}
 													</Badge>
