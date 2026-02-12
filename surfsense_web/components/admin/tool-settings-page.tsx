@@ -65,6 +65,17 @@ function formatPercent(value: number | null | undefined) {
 	return `${(value * 100).toFixed(1)}%`;
 }
 
+function buildFailureReasons(result: Record<string, unknown>): string[] {
+	const reasons: string[] = [];
+	if (result.passed_route === false) reasons.push("Route mismatch");
+	if (result.passed_sub_route === false) reasons.push("Sub-route mismatch");
+	if (result.passed_agent === false) reasons.push("Agent mismatch");
+	if (result.passed_plan === false) reasons.push("Plankrav ej uppfyllda");
+	if (result.passed_tool === false) reasons.push("Tool mismatch");
+	if (result.passed_api_input === false) reasons.push("API-input mismatch");
+	return reasons;
+}
+
 function HistoryTrendBars({
 	points,
 	valueKey,
@@ -2821,7 +2832,11 @@ export function ToolSettingsPage() {
 									<CardTitle>Steg 2D: Agentval-resultat per test</CardTitle>
 								</CardHeader>
 								<CardContent className="space-y-3">
-									{evaluationResult.results.map((result) => (
+									{evaluationResult.results.map((result) => {
+										const failureReasons = buildFailureReasons(
+											result as unknown as Record<string, unknown>
+										);
+										return (
 										<div key={result.test_id} className="rounded border p-3 space-y-2">
 											<div className="flex items-center justify-between gap-2">
 												<div className="flex items-center gap-2">
@@ -2855,6 +2870,51 @@ export function ToolSettingsPage() {
 											{result.planning_analysis && (
 												<p className="text-xs text-muted-foreground">
 													Analys: {result.planning_analysis}
+												</p>
+											)}
+											<div className="flex flex-wrap gap-2">
+												{result.passed_route != null && (
+													<Badge
+														variant={
+															result.passed_route ? "outline" : "destructive"
+														}
+													>
+														route:{result.expected_route || "-"}{" "}
+														{result.passed_route ? "OK" : "MISS"}
+													</Badge>
+												)}
+												{result.passed_sub_route != null && (
+													<Badge
+														variant={
+															result.passed_sub_route ? "outline" : "destructive"
+														}
+													>
+														sub-route:{result.expected_sub_route || "-"}{" "}
+														{result.passed_sub_route ? "OK" : "MISS"}
+													</Badge>
+												)}
+												{result.passed_agent != null && (
+													<Badge
+														variant={
+															result.passed_agent ? "outline" : "destructive"
+														}
+													>
+														agent:{result.expected_agent || "-"}{" "}
+														{result.passed_agent ? "OK" : "MISS"}
+													</Badge>
+												)}
+												{result.passed_tool != null && (
+													<Badge
+														variant={result.passed_tool ? "outline" : "destructive"}
+													>
+														tool:{result.expected_tool || "-"}{" "}
+														{result.passed_tool ? "OK" : "MISS"}
+													</Badge>
+												)}
+											</div>
+											{!result.passed && failureReasons.length > 0 && (
+												<p className="text-xs text-red-400">
+													Fail-orsak: {failureReasons.join(" · ")}
 												</p>
 											)}
 											{typeof result.passed_with_agent_gate === "boolean" && (
@@ -2902,7 +2962,8 @@ export function ToolSettingsPage() {
 												</div>
 											)}
 										</div>
-									))}
+										);
+									})}
 								</CardContent>
 							</Card>
 
@@ -3237,7 +3298,11 @@ export function ToolSettingsPage() {
 									</CardDescription>
 								</CardHeader>
 								<CardContent className="space-y-3">
-									{apiInputEvaluationResult.results.map((result) => (
+									{apiInputEvaluationResult.results.map((result) => {
+										const failureReasons = buildFailureReasons(
+											result as unknown as Record<string, unknown>
+										);
+										return (
 										<div
 											key={`api-input-result-${result.test_id}`}
 											className="rounded border p-3 space-y-2"
@@ -3274,6 +3339,60 @@ export function ToolSettingsPage() {
 											{result.planning_analysis && (
 												<p className="text-xs text-muted-foreground">
 													Analys: {result.planning_analysis}
+												</p>
+											)}
+											<div className="flex flex-wrap gap-2">
+												{result.passed_route != null && (
+													<Badge
+														variant={
+															result.passed_route ? "outline" : "destructive"
+														}
+													>
+														route:{result.expected_route || "-"}{" "}
+														{result.passed_route ? "OK" : "MISS"}
+													</Badge>
+												)}
+												{result.passed_sub_route != null && (
+													<Badge
+														variant={
+															result.passed_sub_route ? "outline" : "destructive"
+														}
+													>
+														sub-route:{result.expected_sub_route || "-"}{" "}
+														{result.passed_sub_route ? "OK" : "MISS"}
+													</Badge>
+												)}
+												{result.passed_agent != null && (
+													<Badge
+														variant={
+															result.passed_agent ? "outline" : "destructive"
+														}
+													>
+														agent:{result.expected_agent || "-"}{" "}
+														{result.passed_agent ? "OK" : "MISS"}
+													</Badge>
+												)}
+												{result.passed_tool != null && (
+													<Badge
+														variant={result.passed_tool ? "outline" : "destructive"}
+													>
+														tool:{result.expected_tool || "-"}{" "}
+														{result.passed_tool ? "OK" : "MISS"}
+													</Badge>
+												)}
+												{result.passed_api_input != null && (
+													<Badge
+														variant={
+															result.passed_api_input ? "outline" : "destructive"
+														}
+													>
+														api-input {result.passed_api_input ? "OK" : "MISS"}
+													</Badge>
+												)}
+											</div>
+											{!result.passed && failureReasons.length > 0 && (
+												<p className="text-xs text-red-400">
+													Fail-orsak: {failureReasons.join(" · ")}
 												</p>
 											)}
 											{typeof result.passed_with_agent_gate === "boolean" && (
@@ -3360,7 +3479,8 @@ export function ToolSettingsPage() {
 												</div>
 											)}
 										</div>
-									))}
+										);
+									})}
 								</CardContent>
 							</Card>
 

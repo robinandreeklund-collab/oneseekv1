@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from app.agents.new_chat.bigtool_store import ToolIndexEntry
 from app.services.tool_evaluation_service import (
     _compute_agent_gate_score,
+    _repair_expected_routing,
     _enrich_metadata_suggestion_fields,
     compute_metadata_version_hash,
     generate_tool_metadata_suggestions,
@@ -477,3 +478,14 @@ def test_compute_agent_gate_score_skips_downstream_when_upstream_fails():
     )
     assert score_ok == 1.0
     assert passed_ok is True
+
+
+def test_repair_expected_routing_fixes_mislabeled_sub_route_for_tool():
+    route, sub_route = _repair_expected_routing(
+        expected_route="action",
+        expected_sub_route="external",
+        expected_tool="trafikverket_vag_status",
+        expected_category="trafikverket_vag",
+    )
+    assert route == "action"
+    assert sub_route == "travel"

@@ -54,6 +54,40 @@ _SUGGESTION_STOPWORDS = {
     "vad",
     "vilka",
 }
+_ENGLISH_SIGNAL_WORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "this",
+    "that",
+    "should",
+    "return",
+    "tool",
+    "route",
+    "prompt",
+    "improvement",
+    "based",
+    "failed",
+    "cases",
+    "weights",
+}
+_SWEDISH_SIGNAL_WORDS = {
+    "och",
+    "för",
+    "från",
+    "ska",
+    "verktyg",
+    "fråga",
+    "frågor",
+    "rutt",
+    "väg",
+    "svenska",
+    "förslag",
+    "prompt",
+    "utvärdering",
+}
 _EVAL_AGENT_CHOICES = (
     "statistics",
     "riksdagen",
@@ -152,6 +186,27 @@ def _safe_string_list(values: Any) -> list[str]:
         seen.add(key)
         cleaned.append(item)
     return cleaned
+
+
+def _looks_english_text(text: str) -> bool:
+    tokens = re.findall(r"[a-zA-ZåäöÅÄÖ]{3,}", str(text or "").lower())
+    if not tokens:
+        return False
+    english_hits = sum(1 for token in tokens if token in _ENGLISH_SIGNAL_WORDS)
+    swedish_hits = sum(
+        1 for token in tokens if token in _SWEDISH_SIGNAL_WORDS or any(ch in token for ch in "åäö")
+    )
+    return english_hits >= 2 and english_hits > swedish_hits
+
+
+def _prefer_swedish_text(text: str, fallback: str) -> str:
+    candidate = str(text or "").strip()
+    fallback_text = str(fallback or "").strip()
+    if not candidate:
+        return fallback_text
+    if _looks_english_text(candidate) and fallback_text:
+        return fallback_text
+    return candidate
 
 
 def _normalize_route_value(value: Any) -> str | None:
@@ -256,6 +311,82 @@ def _agent_for_tool(
     return _agent_for_route_hint(route_value, sub_route_value)
 
 
+def _route_sub_route_for_tool(
+    tool_id: str | None,
+    category: str | None = None,
+) -> tuple[str | None, str | None]:
+    tool = str(tool_id or "").strip().lower()
+    cat = str(category or "").strip().lower()
+    if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
+        return Route.STATISTICS.value, None
+    if tool in {"trafiklab_route", "smhi_weather"}:
+        return Route.ACTION.value, ActionRoute.TRAVEL.value
+    if tool.startswith("trafikverket_"):
+        return Route.ACTION.value, ActionRoute.TRAVEL.value
+    if tool in {"scrape_webpage", "link_preview", "search_web", "search_tavily"}:
+        return Route.ACTION.value, ActionRoute.WEB.value
+    if tool in {"generate_podcast", "display_image"}:
+        return Route.ACTION.value, ActionRoute.MEDIA.value
+    if tool in {"libris_search", "jobad_links_search"}:
+        return Route.ACTION.value, ActionRoute.DATA.value
+    if tool.startswith("bolagsverket_") or tool.startswith("riksdag_"):
+        return Route.ACTION.value, ActionRoute.DATA.value
+    if tool in {"search_surfsense_docs", "search_knowledge_base"}:
+        return Route.KNOWLEDGE.value, KnowledgeRoute.INTERNAL.value
+    return Route.ACTION.value, ActionRoute.DATA.value
+
+
+def _repair_expected_routing(
+    *,
+    expected_route: str | None,
+    expected_sub_route: str | None,
+    expected_tool: str | None,
+    expected_category: str | None,
+) -> tuple[str | None, str | None]:
+    route = _normalize_route_value(expected_route)
+    sub_route = _normalize_sub_route_value(expected_sub_route)
+    if not expected_tool:
+        return route, sub_route
+
+    inferred_route, inferred_sub_route = _route_sub_route_for_tool(
+        expected_tool,
+        expected_category,
+    )
+    if route is None and inferred_route is not None:
+        route = inferred_route
+
+    action_sub_routes = {
+        ActionRoute.WEB.value,
+        ActionRoute.MEDIA.value,
+        ActionRoute.TRAVEL.value,
+        ActionRoute.DATA.value,
+    }
+    knowledge_sub_routes = {
+        KnowledgeRoute.DOCS.value,
+        KnowledgeRoute.INTERNAL.value,
+        KnowledgeRoute.EXTERNAL.value,
+    }
+
+    if route == Route.ACTION.value:
+        if sub_route in knowledge_sub_routes and inferred_route == Route.ACTION.value:
+            sub_route = inferred_sub_route
+        if sub_route is None and inferred_route == Route.ACTION.value:
+            sub_route = inferred_sub_route
+    elif route == Route.KNOWLEDGE.value:
+        if sub_route in action_sub_routes and inferred_route == Route.KNOWLEDGE.value:
+            sub_route = inferred_sub_route
+        if sub_route is None and inferred_route == Route.KNOWLEDGE.value:
+            sub_route = inferred_sub_route
+    elif route == Route.STATISTICS.value:
+        sub_route = None
+
+    if inferred_route and route and route != inferred_route:
+        route = inferred_route
+        sub_route = inferred_sub_route
+
+    return route, sub_route
+
+
 def _candidate_agents_for_route(
     route_value: str | None,
     sub_route_value: str | None,
@@ -324,19 +455,20 @@ async def _plan_agent_choice(
     )
     fallback_payload = {
         "selected_agent": fallback_agent,
-        "analysis": "Agent planner fallback selected the closest route-compatible agent.",
+        "analysis": "Fallback-planeraren valde närmaste route-kompatibla agent.",
     }
     if llm is None:
         return fallback_payload
     planner_prompt = (
-        "You evaluate next-stage agent routing in dry-run mode.\n"
-        "Given route context and allowed agent candidates, pick exactly one agent.\n"
-        "Return strict JSON only:\n"
+        "Du utvärderar nästa agentval i dry-run-läge.\n"
+        "Givet route-kontekst och tillåtna kandidater ska du välja exakt en agent.\n"
+        "All text ska vara på svenska.\n"
+        "Returnera strikt JSON:\n"
         "{\n"
         '  "selected_agent": "one of candidate names",\n'
-        '  "analysis": "short explanation"\n'
+        '  "analysis": "kort förklaring på svenska"\n'
         "}\n"
-        "Do not include markdown."
+        "Ingen markdown."
     )
     payload = {
         "question": question,
@@ -541,29 +673,30 @@ async def _plan_tool_choice(
         "selected_tool_id": fallback_entry.tool_id,
         "selected_category": fallback_entry.category,
         "analysis": (
-            "Planner fallback: no model available, selected highest retrieval candidate."
+            "Fallback-planerare: ingen modell tillgänglig, valde högst rankad retrieval-kandidat."
         ),
         "plan_steps": [
-            "Inspect retrieved candidates from tool_retrieval.",
-            f"Select {fallback_entry.tool_id} as best metadata match.",
-            "Stop before tool execution (eval dry-run).",
+            "Inspektera kandidater från tool_retrieval.",
+            f"Välj {fallback_entry.tool_id} som bästa metadata-match.",
+            "Stoppa innan faktisk tool-körning (eval dry-run).",
         ],
     }
     if llm is None:
         return fallback_payload
 
     planner_prompt = (
-        "You are evaluating tool routing in dry-run mode.\n"
-        "Given a user question and retrieved tool candidates, choose the single best tool.\n"
-        "Never invent tool ids. You must only pick from candidate tool_ids.\n"
-        "Return strict JSON only with this schema:\n"
+        "Du utvärderar tool-routing i dry-run-läge.\n"
+        "Givet en användarfråga och retrieval-kandidater: välj exakt ett bästa verktyg.\n"
+        "Uppfinn aldrig tool_id. Du får endast välja bland kandidaternas tool_id.\n"
+        "All text ska vara på svenska.\n"
+        "Returnera strikt JSON med detta schema:\n"
         "{\n"
         '  "selected_tool_id": "tool_id or null",\n'
         '  "selected_category": "category or null",\n'
-        '  "analysis": "short explanation",\n'
+        '  "analysis": "kort förklaring på svenska",\n'
         '  "plan_steps": ["step 1", "step 2"]\n'
         "}\n"
-        "Do not include markdown."
+        "Ingen markdown."
     )
     question_payload = {
         "question": question,
@@ -659,7 +792,7 @@ def _build_fallback_suggestion(
     hint_terms = [token for token, _count in sorted_tokens[:3]]
     if hint_terms:
         hint_suffix = ", ".join(hint_terms)
-        marker = f"Relevant for terms like: {hint_suffix}."
+        marker = f"Relevant för termer som: {hint_suffix}."
         if marker not in description:
             description = f"{description} {marker}".strip()
 
@@ -673,8 +806,8 @@ def _build_fallback_suggestion(
         "base_path": current.get("base_path"),
     }
     rationale = (
-        f"Fallback suggestion based on {failed_count} failed test case(s): "
-        "expanded keywords and example queries with recurring terms."
+        f"Fallback-förslag baserat på {failed_count} misslyckade testfall: "
+        "utökade nyckelord och exempelfrågor med återkommande termer."
     )
     return proposed, rationale
 
@@ -696,25 +829,37 @@ async def _build_llm_suggestion(
         model = llm
 
     prompt = (
-        "You optimize tool metadata for retrieval.\n"
-        "Given current metadata and failed eval cases, propose improved metadata.\n"
-        "Keep category unless strongly justified.\n"
-        "Return strict JSON only:\n"
+        "Du optimerar verktygsmetadata för retrieval.\n"
+        "Givet nuvarande metadata och misslyckade eval-fall ska du föreslå förbättrad metadata.\n"
+        "Behåll kategori om det inte finns starka skäl att ändra.\n"
+        "ALL text måste vara på svenska.\n"
+        "Returnera strikt JSON:\n"
         "{\n"
         '  "name": "string",\n'
-        '  "description": "string",\n'
-        '  "keywords": ["..."],\n'
-        '  "example_queries": ["..."],\n'
+        '  "description": "string på svenska",\n'
+        '  "keywords": ["svenska termer"],\n'
+        '  "example_queries": ["svenska frågor"],\n'
         '  "category": "string",\n'
-        '  "rationale": "string"\n'
+        '  "rationale": "kort motivering på svenska"\n'
         "}\n"
-        "Do not include markdown."
+        "Ingen markdown."
     )
     payload = {
         "current_metadata": current,
         "failed_cases": failures,
     }
     try:
+        failure_questions = [
+            str(item.get("question") or "").strip()
+            for item in failures
+            if isinstance(item, dict) and str(item.get("question") or "").strip()
+        ]
+        fallback_proposed, fallback_rationale = _build_fallback_suggestion(
+            tool_id=tool_id,
+            current=current,
+            questions=failure_questions,
+            failed_count=len(failure_questions),
+        )
         response = await model.ainvoke(
             [
                 SystemMessage(content=prompt),
@@ -728,21 +873,34 @@ async def _build_llm_suggestion(
         suggested = {
             "tool_id": tool_id,
             "name": str(parsed.get("name") or current.get("name") or "").strip(),
-            "description": str(
-                parsed.get("description") or current.get("description") or ""
-            ).strip(),
+            "description": _prefer_swedish_text(
+                str(parsed.get("description") or current.get("description") or "").strip(),
+                str(fallback_proposed.get("description") or current.get("description") or ""),
+            ),
             "keywords": _safe_string_list(parsed.get("keywords"))
             or list(current.get("keywords") or []),
-            "example_queries": _safe_string_list(parsed.get("example_queries"))
+            "example_queries": [
+                value
+                for value in (
+                    _safe_string_list(parsed.get("example_queries"))
+                    or list(current.get("example_queries") or [])
+                )
+                if not _looks_english_text(value)
+            ]
+            or list(fallback_proposed.get("example_queries") or [])
             or list(current.get("example_queries") or []),
             "category": str(
                 parsed.get("category") or current.get("category") or ""
             ).strip(),
             "base_path": current.get("base_path"),
         }
-        rationale = str(parsed.get("rationale") or "").strip()
+        rationale = _prefer_swedish_text(
+            str(parsed.get("rationale") or "").strip(),
+            fallback_rationale
+            or "LLM-förslag för metadata baserat på misslyckade eval-fall.",
+        )
         if not rationale:
-            rationale = "LLM suggested updates based on failed routing cases."
+            rationale = "LLM-förslag för metadata baserat på misslyckade eval-fall."
         return suggested, rationale
     except Exception:
         return None
@@ -861,6 +1019,12 @@ async def run_tool_evaluation(
         expected_category = expected.get("category")
         expected_category = (
             str(expected_category).strip() if expected_category else None
+        )
+        expected_route, expected_sub_route = _repair_expected_routing(
+            expected_route=expected_route,
+            expected_sub_route=expected_sub_route,
+            expected_tool=expected_tool,
+            expected_category=expected_category,
         )
         expected_agent = _normalize_agent_name(expected.get("agent"))
         if expected_agent is None:
@@ -1241,8 +1405,8 @@ async def generate_tool_metadata_suggestions(
             )
             if enriched:
                 rationale = (
-                    f"{rationale} Added fallback improvements for description, "
-                    "keywords, and example queries from failed cases."
+                    f"{rationale} Lade till fallback-förbättringar för beskrivning, "
+                    "nyckelord och exempelfrågor från misslyckade fall."
                 )
         else:
             proposed, rationale = fallback_proposed, fallback_rationale
@@ -1277,8 +1441,8 @@ async def suggest_retrieval_tuning(
             "current_tuning": normalized_current.__dict__,
             "proposed_tuning": normalized_current.__dict__,
             "rationale": (
-                "No tuning changes recommended from this run. Current retrieval "
-                "weights already produced successful results."
+                "Inga ändringar i retrieval-tuning rekommenderas från denna körning. "
+                "Nuvarande vikter gav redan bra resultat."
             ),
         }
 
@@ -1331,8 +1495,8 @@ async def suggest_retrieval_tuning(
 
     fallback_proposed = normalize_retrieval_tuning(fallback_proposed).__dict__
     fallback_rationale = (
-        "Fallback tuning suggestion based on eval metrics: adjusted lexical/semantic "
-        "weights and rerank candidate window to improve retrieval recall and tool hit rate."
+        "Fallback-förslag för retrieval-tuning baserat på eval-metrics: justerade "
+        "lexikala/semantiska vikter och rerank-fönster för bättre recall och tool-träff."
     )
 
     if llm is None:
@@ -1355,9 +1519,10 @@ async def suggest_retrieval_tuning(
         "failed_cases": failed[:15],
     }
     prompt = (
-        "You optimize retrieval tuning weights for tool routing evaluation.\n"
-        "Given current weights and failed cases, propose updated weights.\n"
-        "Return strict JSON only:\n"
+        "Du optimerar retrieval-tuningvikter för tool-routingutvärdering.\n"
+        "Givet nuvarande vikter och misslyckade fall ska du föreslå uppdaterade vikter.\n"
+        "Skriv motiveringen på svenska.\n"
+        "Returnera strikt JSON:\n"
         "{\n"
         '  "name_match_weight": number,\n'
         '  "keyword_weight": number,\n'
@@ -1366,9 +1531,9 @@ async def suggest_retrieval_tuning(
         '  "namespace_boost": number,\n'
         '  "embedding_weight": number,\n'
         '  "rerank_candidates": integer,\n'
-        '  "rationale": "string"\n'
+        '  "rationale": "kort motivering på svenska"\n'
         "}\n"
-        "Do not include markdown."
+        "Ingen markdown."
     )
     model = llm
     try:
@@ -1389,8 +1554,9 @@ async def suggest_retrieval_tuning(
         proposed = normalize_retrieval_tuning(parsed).__dict__
         if proposed == normalized_current.__dict__:
             return None
-        rationale = str(parsed.get("rationale") or "").strip() or (
-            "LLM suggested retrieval tuning updates based on failed eval cases."
+        rationale = _prefer_swedish_text(
+            str(parsed.get("rationale") or "").strip(),
+            "LLM-förslag för retrieval-tuning baserat på misslyckade eval-fall.",
         )
         return {
             "current_tuning": normalized_current.__dict__,
@@ -1568,12 +1734,12 @@ async def _plan_tool_api_input(
         "selected_tool_id": fallback_entry.tool_id,
         "selected_category": fallback_entry.category,
         "analysis": (
-            "Planner fallback: selected highest retrieval candidate and kept dry-run arguments empty."
+            "Fallback-planerare: valde högst rankad retrieval-kandidat och lämnade dry-run-argument tomma."
         ),
         "plan_steps": [
-            "Inspect retrieved candidates from tool_retrieval.",
-            f"Select {fallback_entry.tool_id} as best metadata match.",
-            "Draft tool arguments in dry-run mode without executing the tool.",
+            "Inspektera kandidater från tool_retrieval.",
+            f"Välj {fallback_entry.tool_id} som bästa metadata-match.",
+            "Skissa tool-argument i dry-run utan att exekvera verktyget.",
         ],
         "proposed_arguments": {},
         "needs_clarification": False,
@@ -1596,21 +1762,22 @@ async def _plan_tool_api_input(
         )
 
     planner_prompt = (
-        "You are evaluating API input quality in dry-run mode.\n"
-        "Pick one best tool among candidates and draft the tool call arguments.\n"
-        "Do not execute tools. Do not invent tool ids.\n"
-        "If required information is missing, set needs_clarification=true.\n"
-        "Return strict JSON only:\n"
+        "Du utvärderar API-inputkvalitet i dry-run-läge.\n"
+        "Välj bästa verktyget bland kandidater och skapa argument för tool-anropet.\n"
+        "Exekvera inte verktyg. Uppfinn inte tool_id.\n"
+        "Om obligatorisk information saknas, sätt needs_clarification=true.\n"
+        "All text ska vara på svenska.\n"
+        "Returnera strikt JSON:\n"
         "{\n"
         '  "selected_tool_id": "tool_id or null",\n'
         '  "selected_category": "category or null",\n'
-        '  "analysis": "short explanation",\n'
+        '  "analysis": "kort förklaring på svenska",\n'
         '  "plan_steps": ["step 1", "step 2"],\n'
         '  "proposed_arguments": {"field": "value"},\n'
         '  "needs_clarification": false,\n'
         '  "clarification_question": "question or null"\n'
         "}\n"
-        "Do not include markdown."
+        "Ingen markdown."
     )
     question_payload = {
         "question": question,
@@ -1713,6 +1880,12 @@ async def run_tool_api_input_evaluation(
         expected_tool = str(expected_tool).strip() if expected_tool else None
         expected_category = expected.get("category")
         expected_category = str(expected_category).strip() if expected_category else None
+        expected_route, expected_sub_route = _repair_expected_routing(
+            expected_route=expected_route,
+            expected_sub_route=expected_sub_route,
+            expected_tool=expected_tool,
+            expected_category=expected_category,
+        )
         expected_agent = _normalize_agent_name(expected.get("agent"))
         if expected_agent is None:
             expected_agent = _agent_for_tool(
@@ -2178,68 +2351,68 @@ def _build_fallback_prompt_suggestion(
     common_missing = [item for item, _count in missing_counter.most_common(8)]
     if prompt_key.startswith("router."):
         lines = [
-            "- Return exactly one valid route label and avoid extra text.",
-            "- Prioritize semantic intent over keyword overlap for borderline queries.",
-            "- If the query clearly asks for official statistics, prefer statistics route.",
-            "- If a query asks for execution/tool actions, prefer action route over knowledge.",
+            "- Returnera exakt en giltig route-etikett och undvik extra text.",
+            "- Prioritera semantisk intention över nyckelordsöverlapp i gränsfall.",
+            "- Om frågan tydligt gäller officiell statistik, prioritera statistics-route.",
+            "- Om frågan gäller verktygsåtgärd, prioritera action-route över knowledge.",
         ]
         if prompt_key == "router.action":
             lines = [
-                "- Return exactly one of: web, media, travel, data.",
-                "- Use travel for weather, departures, routes, and commute queries.",
-                "- Use web for URL/link/scrape and page-content requests.",
-                "- Use data for jobs/Libris/dataset lookups.",
+                "- Returnera exakt en av: web, media, travel, data.",
+                "- Använd travel för väder, avgångar, rutter och pendlingsfrågor.",
+                "- Använd web för URL/länk/skrapning och sidinnehåll.",
+                "- Använd data för jobb/Libris/dataset-frågor.",
             ]
         elif prompt_key == "router.knowledge":
             lines = [
-                "- Return exactly one of: docs, internal, external.",
-                "- Use docs for SurfSense product/how-to questions.",
-                "- Use internal for user data/notes/calendar/search space content.",
-                "- Use external only for explicit realtime/public-web requests.",
+                "- Returnera exakt en av: docs, internal, external.",
+                "- Använd docs för SurfSense produkt-/how-to-frågor.",
+                "- Använd internal för användardata/anteckningar/kalender/search space-innehåll.",
+                "- Använd external endast för explicita realtids-/webbfrågor.",
             ]
     elif prompt_key == "agent.supervisor.system":
         lines = [
-            "- Keep this prompt minimal: only coordinate route, agent calls, and final synthesis.",
-            "- Delegate domain reasoning and argument details to specialized agent/tool prompts.",
-            "- Never include long tool catalogs or endpoint specifics in supervisor prompt.",
-            "- Use retrieval results to pick candidate agents/tools dynamically before execution.",
+            "- Håll denna prompt minimal: koordinera endast route, agentanrop och slutsammanfattning.",
+            "- Delegera domänresonemang och argumentdetaljer till specialiserade agent-/tool-prompts.",
+            "- Lägg inte in långa verktygslistor eller endpointdetaljer i supervisorprompten.",
+            "- Använd retrieval-resultat för dynamiskt val av kandidater innan körning.",
         ]
     elif prompt_key.startswith("tool."):
         lines = [
-            "- Focus only on this single tool endpoint and ignore unrelated tools.",
-            "- Map user intent to this tool's schema using exact argument field names.",
-            "- If required fields are missing, ask one concise clarification question.",
-            "- Do not add arguments that are outside the selected tool schema.",
+            "- Fokusera endast på detta endpoint-verktyg och ignorera irrelevanta verktyg.",
+            "- Mappa användarintention till detta verktygs schema med exakta fältnamn.",
+            "- Om obligatoriska fält saknas: ställ en kort förtydligande fråga.",
+            "- Lägg inte till argument som inte finns i verktygets schema.",
         ]
     elif prompt_key.startswith("agent."):
         lines = [
-            "- Choose tools that match the selected agent domain before generating arguments.",
-            "- Reject tools outside your domain unless user intent explicitly shifts domain.",
-            "- Keep planning concise: domain fit -> tool fit -> argument completeness.",
-            "- If domain-critical fields are missing, ask a focused clarification question.",
+            "- Välj verktyg som matchar agentens domän innan argument genereras.",
+            "- Avvisa verktyg utanför domänen om inte användarintentionen tydligt byter domän.",
+            "- Håll planeringen kort: domänträff -> verktygsträff -> kompletta argument.",
+            "- Om domänkritiska fält saknas: ställ en fokuserad förtydligande fråga.",
         ]
     else:
         lines = [
-            "- Validate argument completeness before emitting a tool call.",
-            "- If required arguments are missing or ambiguous, ask a concise clarification question first.",
-            "- Use exact argument names from the target tool schema and avoid unsupported fields.",
+            "- Validera argumentens fullständighet innan verktygsanrop föreslås.",
+            "- Om obligatoriska argument saknas eller är tvetydiga: ställ en kort fråga först.",
+            "- Använd exakta argumentnamn från målschemat och undvik okända fält.",
         ]
     if common_missing:
         lines.insert(
             0,
-            f"- Prioritize extracting these frequently missed fields: {', '.join(common_missing)}.",
+            f"- Prioritera att extrahera dessa ofta missade fält: {', '.join(common_missing)}.",
         )
     appendix = (
-        "\n\n[API INPUT EVAL IMPROVEMENT]\n"
-        f"Prompt key: {prompt_key}\n"
+        "\n\n[API INPUT EVAL-FÖRBÄTTRING]\n"
+        f"Prompt-nyckel: {prompt_key}\n"
         + "\n".join(lines)
     )
     proposed_prompt = current_prompt
     if appendix.strip() not in current_prompt:
         proposed_prompt = f"{current_prompt.rstrip()}{appendix}"
     rationale = (
-        f"Fallback prompt improvement from {len(failures)} failed eval case(s): "
-        "adds stricter routing/argument selection behavior."
+        f"Fallback-förslag från {len(failures)} misslyckade eval-fall: "
+        "skärper routing- och argumentval."
     )
     return proposed_prompt, rationale
 
@@ -2260,14 +2433,15 @@ async def _build_llm_prompt_suggestion(
     except Exception:
         model = llm
     prompt = (
-        "You optimize one routing/agent prompt to improve dry-run evaluation quality.\n"
-        "Keep the current style and intent, but add precise instructions to improve route decisions, planning, and argument extraction.\n"
-        "Return strict JSON only:\n"
+        "Du optimerar en routing-/agentprompt för bättre kvalitet i dry-run-evaluering.\n"
+        "Behåll stil och syfte, men lägg till precisa instruktioner för route, planering och argumentextraktion.\n"
+        "All text ska vara på svenska.\n"
+        "Returnera strikt JSON:\n"
         "{\n"
-        '  "proposed_prompt": "full revised prompt text",\n'
-        '  "rationale": "short rationale"\n'
+        '  "proposed_prompt": "fullständig reviderad prompt på svenska",\n'
+        '  "rationale": "kort motivering på svenska"\n'
         "}\n"
-        "Do not include markdown."
+        "Ingen markdown."
     )
     payload = {
         "prompt_key": prompt_key,
@@ -2288,9 +2462,15 @@ async def _build_llm_prompt_suggestion(
         proposed_prompt = str(parsed.get("proposed_prompt") or "").strip()
         if not proposed_prompt:
             return None
+        if _looks_english_text(proposed_prompt):
+            return None
         rationale = str(parsed.get("rationale") or "").strip()
         if not rationale:
-            rationale = "LLM suggested prompt updates from API input failures."
+            rationale = "LLM-förslag för promptförbättring från API-input-fel."
+        rationale = _prefer_swedish_text(
+            rationale,
+            "LLM-förslag för promptförbättring från API-input-fel.",
+        )
         return proposed_prompt, rationale
     except Exception:
         return None
@@ -2471,7 +2651,7 @@ async def suggest_agent_prompt_improvements_for_api_input(
             if proposed_prompt.strip() == current_prompt.strip():
                 proposed_prompt = fallback_prompt
                 rationale = (
-                    f"{rationale} Added fallback constraints from API input failures."
+                    f"{rationale} Lade till fallback-regler från API-input-fel."
                 )
         suggestions.append(
             {
