@@ -29,6 +29,7 @@ from app.agents.new_chat.tools.external_models import (
 from app.agents.new_chat.tools.reflect_on_progress import create_reflect_on_progress_tool
 from app.agents.new_chat.tools.write_todos import create_write_todos_tool
 from app.db import AgentComboCache
+from app.services.cache_control import is_cache_disabled
 from app.services.reranker_service import RerankerService
 
 
@@ -158,9 +159,10 @@ def _build_agent_rerank_text(definition: AgentDefinition) -> str:
 
 
 def _get_agent_embedding(definition: AgentDefinition) -> list[float] | None:
-    cached = _AGENT_EMBED_CACHE.get(definition.name)
-    if cached is not None:
-        return cached
+    if not is_cache_disabled():
+        cached = _AGENT_EMBED_CACHE.get(definition.name)
+        if cached is not None:
+            return cached
     text = _build_agent_rerank_text(definition)
     if not text:
         return None
@@ -173,7 +175,8 @@ def _get_agent_embedding(definition: AgentDefinition) -> list[float] | None:
     normalized = _normalize_vector(embedding)
     if normalized is None:
         return None
-    _AGENT_EMBED_CACHE[definition.name] = normalized
+    if not is_cache_disabled():
+        _AGENT_EMBED_CACHE[definition.name] = normalized
     return normalized
 
 
@@ -288,6 +291,8 @@ def _build_cache_key(
 
 
 def _get_cached_combo(cache_key: str) -> list[str] | None:
+    if is_cache_disabled():
+        return None
     entry = _AGENT_COMBO_CACHE.get(cache_key)
     if not entry:
         return None
@@ -299,12 +304,21 @@ def _get_cached_combo(cache_key: str) -> list[str] | None:
 
 
 def _set_cached_combo(cache_key: str, agents: list[str]) -> None:
+    if is_cache_disabled():
+        return
     _AGENT_COMBO_CACHE[cache_key] = (datetime.now(UTC) + _AGENT_CACHE_TTL, agents)
+
+
+def clear_agent_combo_cache() -> None:
+    _AGENT_COMBO_CACHE.clear()
+    _AGENT_EMBED_CACHE.clear()
 
 
 async def _fetch_cached_combo_db(
     session: AsyncSession | None, cache_key: str
 ) -> list[str] | None:
+    if is_cache_disabled():
+        return None
     if session is None:
         return None
     result = await session.execute(
@@ -330,6 +344,8 @@ async def _store_cached_combo_db(
     recent_agents: list[str],
     agents: list[str],
 ) -> None:
+    if is_cache_disabled():
+        return
     if session is None:
         return
     result = await session.execute(
