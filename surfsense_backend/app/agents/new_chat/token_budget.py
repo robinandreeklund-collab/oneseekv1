@@ -10,6 +10,9 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from app.utils.context_metrics import estimate_tokens_from_text
 from app.utils.document_converters import get_model_context_window
 
+# Constants for message management
+TAIL_MESSAGE_COUNT = 4  # Number of recent messages to always keep
+
 
 @dataclass
 class TokenBudget:
@@ -68,8 +71,8 @@ class TokenBudget:
             head.append(messages[idx])
             idx += 1
         
-        # Tail: last 4 messages (ensures recent context)
-        tail_start = max(idx, len(messages) - 4)
+        # Tail: last TAIL_MESSAGE_COUNT messages (ensures recent context)
+        tail_start = max(idx, len(messages) - TAIL_MESSAGE_COUNT)
         tail = messages[tail_start:]
         middle = messages[idx:tail_start]
         

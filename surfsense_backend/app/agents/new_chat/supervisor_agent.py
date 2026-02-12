@@ -71,6 +71,12 @@ _EXTERNAL_MODEL_TOOL_NAMES = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
 _AGENT_EMBED_CACHE: dict[str, list[float]] = {}
 AGENT_RERANK_CANDIDATES = 6
 AGENT_EMBEDDING_WEIGHT = 4.0
+
+# Message pruning constants
+MESSAGE_PRUNING_THRESHOLD = 20  # Trigger pruning when message count exceeds this
+TOOL_MSG_THRESHOLD = 8  # Start pruning when tool messages exceed this
+KEEP_TOOL_MSG_COUNT = 6  # Number of recent tool messages to keep
+
 _TRAFFIC_INTENT_RE = re.compile(
     r"\b("
     r"trafikverket|trafikinfo|trafik|"
@@ -980,6 +986,17 @@ async def create_supervisor_agent(
         ]
         return json.dumps({"agents": payload}, ensure_ascii=True)
 
+    def _prepare_task_for_synthesis(task: str, state: dict[str, Any] | None) -> str:
+        """Add compare_outputs context for synthesis agent if applicable."""
+        if not state:
+            return task
+        compare_context = _format_compare_outputs_for_prompt(
+            state.get("compare_outputs") or []
+        )
+        if compare_context and "<compare_outputs>" not in task:
+            return f"{task}\n\n{compare_context}"
+        return task
+
     @tool
     async def call_agent(
         agent_name: str,
@@ -995,11 +1012,7 @@ async def create_supervisor_agent(
                 {"error": f"Agent '{agent_name}' not available."}, ensure_ascii=True
             )
         if name == "synthesis" and state:
-            compare_context = _format_compare_outputs_for_prompt(
-                state.get("compare_outputs") or []
-            )
-            if compare_context and "<compare_outputs>" not in task:
-                task = f"{task}\n\n{compare_context}"
+            task = _prepare_task_for_synthesis(task, state)
         prompt = worker_prompts.get(name, "")
         messages = []
         if prompt:
@@ -1093,11 +1106,7 @@ async def create_supervisor_agent(
             try:
                 # Reuse same worker invocation logic as call_agent
                 if agent_name == "synthesis" and state:
-                    compare_context = _format_compare_outputs_for_prompt(
-                        state.get("compare_outputs") or []
-                    )
-                    if compare_context and "<compare_outputs>" not in task:
-                        task = f"{task}\n\n{compare_context}"
+                    task = _prepare_task_for_synthesis(task, state)
                 prompt = worker_prompts.get(agent_name, "")
                 messages = []
                 if prompt:
@@ -1118,7 +1127,12 @@ async def create_supervisor_agent(
                         response_text = str(getattr(last_msg, "content", "") or "")
                 return {"agent": agent_name, "task": task, "response": response_text}
             except Exception as exc:
-                return {"agent": agent_name, "task": task, "error": str(exc)}
+                return {
+                    "agent": agent_name,
+                    "task": task,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
         
         results = await asyncio.gather(
             *[_run_one(c) for c in calls],
@@ -1303,12 +1317,12 @@ async def create_supervisor_agent(
 
         # Progressive message pruning when messages get long
         messages = state.get("messages") or []
-        if len(messages) > 20:
+        if len(messages) > MESSAGE_PRUNING_THRESHOLD:
             # Count ToolMessages
             tool_msgs = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
-            if len(tool_msgs) > 8:
-                # Keep only the last 6 tool messages and their context
-                keep_from = tool_msgs[-6]
+            if len(tool_msgs) > TOOL_MSG_THRESHOLD:
+                # Keep only the last KEEP_TOOL_MSG_COUNT tool messages and their context
+                keep_from = tool_msgs[-KEEP_TOOL_MSG_COUNT]
                 # Find the AI message that triggered the first kept tool message
                 keep_start = max(0, keep_from - 1)
                 

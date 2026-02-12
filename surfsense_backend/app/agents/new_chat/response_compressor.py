@@ -8,6 +8,8 @@ from typing import Any
 from app.utils.context_metrics import estimate_tokens_from_text
 
 MAX_RESPONSE_TOKENS = 800
+MAX_BOLAG_KEYS = 10
+SENTENCE_BOUNDARY_THRESHOLD = 0.7
 
 
 def extract_key_data(response_text: str, agent_name: str) -> str | None:
@@ -41,9 +43,9 @@ def extract_key_data(response_text: str, agent_name: str) -> str | None:
                 "orgnr": data.get("query", {}).get("orgnr"),
                 "form": inner.get("form") or inner.get("foretagsform"),
             }
-            # Keep up to 10 top-level keys from inner data
+            # Keep up to MAX_BOLAG_KEYS top-level keys from inner data
             for i, (k, v) in enumerate(inner.items()):
-                if i >= 10:
+                if i >= MAX_BOLAG_KEYS:
                     break
                 if k not in compact:
                     compact[k] = v if not isinstance(v, (list, dict)) else str(v)[:200]
@@ -86,7 +88,7 @@ def truncate_response(text: str, max_chars: int = 3000) -> str:
     truncated = text[:max_chars]
     # Try to cut at sentence boundary
     last_period = truncated.rfind(".")
-    if last_period > max_chars * 0.7:
+    if last_period > max_chars * SENTENCE_BOUNDARY_THRESHOLD:
         truncated = truncated[:last_period + 1]
     return truncated + "\n[response truncated]"
 
