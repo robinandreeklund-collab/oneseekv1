@@ -369,17 +369,22 @@ def _jaccard_similarity(set1: list[str], set2: list[str]) -> float:
 def _build_stub_tool_registry() -> dict[str, BaseTool]:
     """
     Build a stub tool registry with correct names/descriptions but NO real implementations.
-    Uses the @tool decorator to create stub tools.
+    Uses the tool() function to create stub tools with custom names.
     """
     registry: dict[str, BaseTool] = {}
     
     # Helper to create a stub tool
     def make_stub(tool_id: str, description: str) -> BaseTool:
-        @tool(name=tool_id, description=description)
         def stub_tool(query: str = "") -> str:
             """Stub tool that does nothing."""
             return f"[Stub] {tool_id}"
-        return stub_tool
+        
+        # Use tool() as a function, not decorator, with custom name
+        return tool(
+            tool_id,
+            description=description,
+            parse_docstring=False,
+        )(stub_tool)
     
     # Add SCB tools
     for definition in SCB_TOOL_DEFINITIONS:
