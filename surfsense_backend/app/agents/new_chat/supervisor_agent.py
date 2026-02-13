@@ -159,8 +159,13 @@ TOOL_CONTEXT_DROP_KEYS = {
     "destination_lookup",
     "timetable",
 }
-_LOOP_GUARD_TOOL_NAMES = {"retrieve_agents", "call_agents_parallel", "reflect_on_progress"}
-_LOOP_GUARD_MAX_CONSECUTIVE = 10
+_LOOP_GUARD_TOOL_NAMES = {
+    "retrieve_agents",
+    "call_agents_parallel",
+    "reflect_on_progress",
+    "write_todos",
+}
+_LOOP_GUARD_MAX_CONSECUTIVE = 12
 _AGENT_NAME_ALIAS_MAP = {
     "traffic_information": "trafik",
     "traffic_info": "trafik",
@@ -833,6 +838,23 @@ def _count_consecutive_loop_tools(messages: list[Any]) -> int:
         if not isinstance(message, ToolMessage):
             continue
         name = str(getattr(message, "name", "") or "").strip()
+        if name == "call_agent":
+            payload = _safe_json(getattr(message, "content", ""))
+            if isinstance(payload, dict) and str(payload.get("error") or "").strip():
+                count += 1
+                continue
+            critic_payload = payload.get("critic") if isinstance(payload, dict) else {}
+            critic_status = (
+                str(critic_payload.get("status") or "").strip().lower()
+                if isinstance(critic_payload, dict)
+                else ""
+            )
+            # Count call_agent as loop-like while planner still requests more work.
+            if critic_status == "needs_more":
+                count += 1
+                continue
+            # If call_agent produced a stable completion, stop loop counting.
+            break
         if name in _LOOP_GUARD_TOOL_NAMES:
             count += 1
             continue

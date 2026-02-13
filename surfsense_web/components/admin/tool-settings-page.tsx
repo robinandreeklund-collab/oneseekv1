@@ -4336,7 +4336,8 @@ export function ToolSettingsPage() {
 								<CardHeader>
 									<CardTitle>Steg 3D: Prompt-förslag från API Input Eval</CardTitle>
 									<CardDescription>
-										Välj förslag att spara direkt till Agent Prompts och kör om eval.
+										Dessa förslag är nu begränsade till verktygsspecifika API-input-prompter
+										(tool.*) för bättre argumentextraktion.
 									</CardDescription>
 								</CardHeader>
 								<CardContent className="space-y-4">

@@ -2322,6 +2322,7 @@ async def _execute_tool_evaluation(
         evaluation_results=evaluation["results"],
         current_prompts=current_prompts,
         llm=llm,
+        suggestion_scope="full",
     )
     return {
         "eval_name": payload.eval_name,
@@ -2424,6 +2425,7 @@ async def _execute_api_input_evaluation(
         evaluation_results=evaluation["results"],
         current_prompts=current_prompts,
         llm=llm,
+        suggestion_scope="api_tool_only",
     )
     return {
         "eval_name": payload.eval_name,

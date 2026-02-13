@@ -3030,6 +3030,7 @@ def _build_fallback_prompt_suggestion(
     prompt_key: str,
     current_prompt: str,
     failures: list[dict[str, Any]],
+    api_tool_only: bool = False,
 ) -> tuple[str, str]:
     missing_counter: Counter[str] = Counter()
     for failure in failures:
@@ -3038,7 +3039,15 @@ def _build_fallback_prompt_suggestion(
             if cleaned:
                 missing_counter[cleaned] += 1
     common_missing = [item for item, _count in missing_counter.most_common(8)]
-    if prompt_key.startswith("router."):
+    if api_tool_only:
+        lines = [
+            "- Fokusera strikt på API-input för detta verktyg: required_fields, format och datatyper.",
+            "- Extrahera endast fält som finns i verktygets schema och använd exakta fältnamn.",
+            "- Om obligatoriska fält saknas: ställ en kort förtydligande fråga innan anrop föreslås.",
+            "- Undvik antaganden om datum/plats/id om de inte finns explicit i frågan.",
+            "- Validera föreslagen payload mot schema innan verktygsanrop returneras.",
+        ]
+    elif prompt_key.startswith("router."):
         lines = [
             "- Returnera exakt en giltig route-etikett och undvik extra text.",
             "- Prioritera semantisk intention över nyckelordsöverlapp i gränsfall.",
@@ -3106,7 +3115,11 @@ def _build_fallback_prompt_suggestion(
         proposed_prompt = f"{current_prompt.rstrip()}{appendix}"
     rationale = (
         f"Fallback-förslag från {len(failures)} misslyckade eval-fall: "
-        "skärper routing- och argumentval."
+        + (
+            "skärper API-input-extraktion och validering."
+            if api_tool_only
+            else "skärper routing- och argumentval."
+        )
     )
     return proposed_prompt, rationale
 
@@ -3117,6 +3130,7 @@ async def _build_llm_prompt_suggestion(
     current_prompt: str,
     failures: list[dict[str, Any]],
     llm,
+    api_tool_only: bool = False,
 ) -> tuple[str, str] | None:
     if llm is None:
         return None
@@ -3126,21 +3140,36 @@ async def _build_llm_prompt_suggestion(
             model = llm.bind(temperature=0)
     except Exception:
         model = llm
-    prompt = (
-        "Du optimerar en routing-/agentprompt för bättre kvalitet i dry-run-evaluering.\n"
-        "Behåll stil och syfte, men lägg till precisa instruktioner för route, planering och argumentextraktion.\n"
-        "All text ska vara på svenska.\n"
-        "Undvik statiska listor över alla agenter eller endpoints. Förlita dig på retrieve_agents/retrieve_tools.\n"
-        "När valda agenter/verktyg inte räcker eller frågan byter riktning ska prompten instruera ny retrieval (retrieve_agents/retrieve_tools).\n"
-        "Förslag får inte bryta arkitekturen: ingen statisk agentlista i supervisor, inga tunga endpoint-listor, och tydlig regel för ny retrieval vid mismatch/ämnesbyte.\n"
-        "Om supervisor_trace finns i failed_cases ska du använda den för att förbättra kvaliteten i route -> agent -> tool -> plan.\n"
-        "Returnera strikt JSON:\n"
-        "{\n"
-        '  "proposed_prompt": "fullständig reviderad prompt på svenska",\n'
-        '  "rationale": "kort motivering på svenska"\n'
-        "}\n"
-        "Ingen markdown."
-    )
+    if api_tool_only:
+        prompt = (
+            "Du är en specialiserad evaluator för API-input.\n"
+            "Du får endast förbättra verktygsspecifik prompt för bättre argumentextraktion.\n"
+            "Fokusera på required_fields, fältformat, validering och korta förtydligande frågor.\n"
+            "Föreslå INTE ändringar för router, supervisor eller generella agentprompter.\n"
+            "All text ska vara på svenska.\n"
+            "Returnera strikt JSON:\n"
+            "{\n"
+            '  "proposed_prompt": "fullständig reviderad prompt på svenska",\n'
+            '  "rationale": "kort motivering på svenska"\n'
+            "}\n"
+            "Ingen markdown."
+        )
+    else:
+        prompt = (
+            "Du optimerar en routing-/agentprompt för bättre kvalitet i dry-run-evaluering.\n"
+            "Behåll stil och syfte, men lägg till precisa instruktioner för route, planering och argumentextraktion.\n"
+            "All text ska vara på svenska.\n"
+            "Undvik statiska listor över alla agenter eller endpoints. Förlita dig på retrieve_agents/retrieve_tools.\n"
+            "När valda agenter/verktyg inte räcker eller frågan byter riktning ska prompten instruera ny retrieval (retrieve_agents/retrieve_tools).\n"
+            "Förslag får inte bryta arkitekturen: ingen statisk agentlista i supervisor, inga tunga endpoint-listor, och tydlig regel för ny retrieval vid mismatch/ämnesbyte.\n"
+            "Om supervisor_trace finns i failed_cases ska du använda den för att förbättra kvaliteten i route -> agent -> tool -> plan.\n"
+            "Returnera strikt JSON:\n"
+            "{\n"
+            '  "proposed_prompt": "fullständig reviderad prompt på svenska",\n'
+            '  "rationale": "kort motivering på svenska"\n'
+            "}\n"
+            "Ingen markdown."
+        )
     payload = {
         "prompt_key": prompt_key,
         "current_prompt": current_prompt,
@@ -3194,7 +3223,11 @@ async def suggest_agent_prompt_improvements_for_api_input(
     current_prompts: dict[str, str],
     llm=None,
     max_suggestions: int = 8,
+    suggestion_scope: str = "full",
 ) -> list[dict[str, Any]]:
+    normalized_scope = str(suggestion_scope or "full").strip().lower()
+    api_tool_only = normalized_scope in {"api_tool_only", "api-tool-only", "tool_only"}
+
     def _append_failure(
         bucket_key: str,
         *,
@@ -3276,6 +3309,24 @@ async def suggest_agent_prompt_improvements_for_api_input(
         failed_plan = passed_plan is False
         failed_supervisor_review = passed_supervisor_review is False
         failed_api_input = passed_api_input is False if has_api_input else False
+
+        schema_valid = result.get("schema_valid")
+        schema_failed = schema_valid is False
+        missing_required_fields = list(result.get("missing_required_fields") or [])
+        unexpected_fields = list(result.get("unexpected_fields") or [])
+        schema_errors = list(result.get("schema_errors") or [])
+        field_checks = list(result.get("field_checks") or [])
+        field_check_failed = any(
+            isinstance(check, dict) and check.get("passed") is False for check in field_checks
+        )
+        api_input_failure_signal = (
+            failed_api_input
+            or schema_failed
+            or bool(missing_required_fields)
+            or bool(unexpected_fields)
+            or bool(schema_errors)
+            or field_check_failed
+        )
         if not (
             failed_route
             or failed_sub_route
@@ -3283,6 +3334,7 @@ async def suggest_agent_prompt_improvements_for_api_input(
             or failed_plan
             or failed_supervisor_review
             or failed_api_input
+            or (api_tool_only and api_input_failure_signal)
             or not passed
         ):
             continue
@@ -3294,6 +3346,22 @@ async def suggest_agent_prompt_improvements_for_api_input(
         expected_category = str(result.get("expected_category") or "").strip() or None
         expected_route = _normalize_route_value(result.get("expected_route"))
         selected_route = _normalize_route_value(result.get("selected_route"))
+
+        if api_tool_only:
+            if not api_input_failure_signal:
+                continue
+            tool_id = expected_tool or selected_tool
+            category = expected_category or selected_category
+            prompt_key = _prompt_key_for_tool(tool_id, category)
+            if not prompt_key.startswith("tool.") or prompt_key not in current_prompts:
+                continue
+            _append_failure(
+                prompt_key,
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
+            continue
 
         if failed_route:
             _append_failure(
@@ -3373,6 +3441,7 @@ async def suggest_agent_prompt_improvements_for_api_input(
             prompt_key=prompt_key,
             current_prompt=current_prompt,
             failures=bucket["failures"],
+            api_tool_only=api_tool_only,
         )
         (
             fallback_prompt,
@@ -3399,6 +3468,7 @@ async def suggest_agent_prompt_improvements_for_api_input(
             current_prompt=current_prompt,
             failures=bucket["failures"],
             llm=llm,
+            api_tool_only=api_tool_only,
         )
         if llm_result is None:
             proposed_prompt, rationale = fallback_prompt, fallback_rationale
