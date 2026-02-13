@@ -631,6 +631,8 @@ def _replace(left: Any, right: Any) -> Any:
 
 
 def _append_recent(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    if right == []:
+        return []
     merged = list(left or [])
     merged.extend(right or [])
     return merged[-3:]
@@ -639,6 +641,8 @@ def _append_recent(left: list[dict[str, Any]] | None, right: list[dict[str, Any]
 def _append_compare_outputs(
     left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None
 ) -> list[dict[str, Any]]:
+    if right == []:
+        return []
     merged: dict[str, dict[str, Any]] = {}
     for item in left or []:
         tool_call_id = str(item.get("tool_call_id") or "")
@@ -690,6 +694,19 @@ class SupervisorState(TypedDict, total=False):
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
     final_agent_response: Annotated[str | None, _replace]
     final_agent_name: Annotated[str | None, _replace]
+
+
+_MAX_TOOL_CALLS_PER_TURN = 24
+
+
+def _count_tools_since_last_user(messages: list[Any]) -> int:
+    count = 0
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        if isinstance(message, ToolMessage):
+            count += 1
+    return count
 
 
 def _format_plan_context(state: dict[str, Any]) -> str | None:
@@ -1541,6 +1558,12 @@ async def create_supervisor_agent(
         Allowed internal ids include: action, kartor, statistics, media, knowledge,
         browser, code, bolag, trafik, riksdagen, synthesis.
         """
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 3
+        limit = max(1, min(limit, 3))
+
         recent_agents = []
         context_query = query
         route_hint = None
@@ -1911,9 +1934,10 @@ async def create_supervisor_agent(
         last_message = messages_state[-1] if messages_state else None
         if final_response and isinstance(last_message, ToolMessage):
             return {"messages": [AIMessage(content=final_response)]}
+        new_user_turn = isinstance(last_message, HumanMessage)
         messages = _sanitize_messages(list(state.get("messages") or []))
-        plan_context = _format_plan_context(state)
-        recent_context = _format_recent_calls(state)
+        plan_context = None if new_user_turn else _format_plan_context(state)
+        recent_context = None if new_user_turn else _format_recent_calls(state)
         route_context = _format_route_hint(state)
         system_bits = [
             item for item in (plan_context, recent_context, route_context) if item
@@ -1929,6 +1953,14 @@ async def create_supervisor_agent(
         
         response = llm_with_tools.invoke(messages)
         updates: SupervisorState = {"messages": [response]}
+        if new_user_turn:
+            # Start each user turn with fresh planner memory to avoid stale plan leakage.
+            updates["active_plan"] = []
+            updates["plan_complete"] = False
+            updates["recent_agent_calls"] = []
+            updates["compare_outputs"] = []
+            updates["final_agent_response"] = None
+            updates["final_agent_name"] = None
         if final_response and isinstance(last_message, HumanMessage):
             updates["final_agent_response"] = None
             updates["final_agent_name"] = None
@@ -1946,9 +1978,10 @@ async def create_supervisor_agent(
         last_message = messages_state[-1] if messages_state else None
         if final_response and isinstance(last_message, ToolMessage):
             return {"messages": [AIMessage(content=final_response)]}
+        new_user_turn = isinstance(last_message, HumanMessage)
         messages = _sanitize_messages(list(state.get("messages") or []))
-        plan_context = _format_plan_context(state)
-        recent_context = _format_recent_calls(state)
+        plan_context = None if new_user_turn else _format_plan_context(state)
+        recent_context = None if new_user_turn else _format_recent_calls(state)
         route_context = _format_route_hint(state)
         system_bits = [
             item for item in (plan_context, recent_context, route_context) if item
@@ -1964,6 +1997,14 @@ async def create_supervisor_agent(
         
         response = await llm_with_tools.ainvoke(messages)
         updates: SupervisorState = {"messages": [response]}
+        if new_user_turn:
+            # Start each user turn with fresh planner memory to avoid stale plan leakage.
+            updates["active_plan"] = []
+            updates["plan_complete"] = False
+            updates["recent_agent_calls"] = []
+            updates["compare_outputs"] = []
+            updates["final_agent_response"] = None
+            updates["final_agent_name"] = None
         if final_response and isinstance(last_message, HumanMessage):
             updates["final_agent_response"] = None
             updates["final_agent_name"] = None
@@ -2092,6 +2133,23 @@ async def create_supervisor_agent(
                 fallback_lines.append(
                     "Skicka garna fragan igen sa kor jag en strikt enkel exekvering med fa agentsteg."
                 )
+                updates["final_agent_response"] = "\n".join(fallback_lines)
+                updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
+
+        # Hard guardrail: stop runaway tool loops within a single user turn.
+        if "final_agent_response" not in updates:
+            tool_calls_this_turn = _count_tools_since_last_user(
+                state.get("messages") or []
+            )
+            if tool_calls_this_turn >= _MAX_TOOL_CALLS_PER_TURN:
+                fallback_lines = [
+                    "Jag avbryter denna körning för att undvika för många verktygssteg i rad.",
+                    "Skicka gärna frågan igen med en kortare avgränsning så svarar jag direkt.",
+                ]
+                if parallel_preview:
+                    fallback_lines.append("Senaste delresultat:")
+                    fallback_lines.extend(parallel_preview[:3])
                 updates["final_agent_response"] = "\n".join(fallback_lines)
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
