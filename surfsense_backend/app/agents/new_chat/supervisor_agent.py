@@ -833,6 +833,7 @@ class SupervisorState(TypedDict, total=False):
 
 
 _MAX_TOOL_CALLS_PER_TURN = 12
+_MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
 
 
 def _count_tools_since_last_user(messages: list[Any]) -> int:
@@ -897,6 +898,122 @@ def _safe_json(payload: Any) -> dict[str, Any]:
         return json.loads(payload)
     except (TypeError, ValueError):
         return {}
+
+
+def _tool_call_name_index(messages: list[Any] | None) -> dict[str, str]:
+    index: dict[str, str] = {}
+    for message in messages or []:
+        if not isinstance(message, AIMessage):
+            continue
+        tool_calls = getattr(message, "tool_calls", None) or []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            tool_call_id = str(tool_call.get("id") or "").strip()
+            tool_name = str(tool_call.get("name") or "").strip()
+            if tool_call_id and tool_name and tool_call_id not in index:
+                index[tool_call_id] = tool_name
+    return index
+
+
+def _infer_tool_name_from_payload(payload: dict[str, Any]) -> str:
+    if not isinstance(payload, dict) or not payload:
+        return ""
+    if "agent" in payload and "task" in payload and "result_contract" in payload:
+        return "call_agent"
+    if isinstance(payload.get("results"), list):
+        return "call_agents_parallel"
+    if "todos" in payload:
+        return "write_todos"
+    if "reflection" in payload:
+        return "reflect_on_progress"
+    return ""
+
+
+def _resolve_tool_message_name(
+    message: ToolMessage,
+    *,
+    tool_call_index: dict[str, str] | None = None,
+) -> str:
+    explicit_name = str(getattr(message, "name", "") or "").strip()
+    if explicit_name:
+        return explicit_name
+    tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+    if tool_call_id and tool_call_index:
+        indexed_name = str(tool_call_index.get(tool_call_id) or "").strip()
+        if indexed_name:
+            return indexed_name
+    payload_name = _infer_tool_name_from_payload(_safe_json(getattr(message, "content", "")))
+    return payload_name
+
+
+def _tool_call_priority(
+    tool_name: str,
+    *,
+    orchestration_phase: str,
+    agent_hops: int,
+) -> int:
+    normalized_tool = str(tool_name or "").strip()
+    phase = str(orchestration_phase or "").strip().lower()
+    if phase == "select_agent" or agent_hops <= 0:
+        ordering = {
+            "retrieve_agents": 0,
+            "call_agent": 1,
+            "call_agents_parallel": 2,
+            "write_todos": 3,
+            "reflect_on_progress": 4,
+        }
+    else:
+        ordering = {
+            "call_agent": 0,
+            "call_agents_parallel": 1,
+            "retrieve_agents": 2,
+            "write_todos": 3,
+            "reflect_on_progress": 4,
+        }
+    if normalized_tool in _EXTERNAL_MODEL_TOOL_NAMES:
+        return 5
+    return ordering.get(normalized_tool, 99)
+
+
+def _coerce_supervisor_tool_calls(
+    message: Any,
+    *,
+    orchestration_phase: str,
+    agent_hops: int,
+    allow_multiple: bool,
+) -> Any:
+    if allow_multiple or not isinstance(message, AIMessage):
+        return message
+    tool_calls = [
+        tool_call
+        for tool_call in (getattr(message, "tool_calls", None) or [])
+        if isinstance(tool_call, dict)
+    ]
+    if len(tool_calls) <= _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP:
+        return message
+    ranked = sorted(
+        enumerate(tool_calls),
+        key=lambda item: (
+            _tool_call_priority(
+                str(item[1].get("name") or ""),
+                orchestration_phase=orchestration_phase,
+                agent_hops=agent_hops,
+            ),
+            item[0],
+        ),
+    )
+    chosen_call = ranked[0][1]
+    try:
+        return message.model_copy(update={"tool_calls": [chosen_call]})
+    except Exception:
+        return AIMessage(
+            content=str(getattr(message, "content", "") or ""),
+            tool_calls=[chosen_call],
+            additional_kwargs=dict(getattr(message, "additional_kwargs", {}) or {}),
+            response_metadata=dict(getattr(message, "response_metadata", {}) or {}),
+            id=getattr(message, "id", None),
+        )
 
 
 _CRITIC_SNIPPET_RE = re.compile(
@@ -1056,10 +1173,14 @@ def _latest_user_query(messages: list[Any] | None) -> str:
 
 def _tool_names_from_messages(messages: list[Any] | None) -> list[str]:
     names: list[str] = []
+    tool_call_index = _tool_call_name_index(messages)
     for message in messages or []:
         if not isinstance(message, ToolMessage):
             continue
-        name = str(getattr(message, "name", "") or "").strip()
+        name = _resolve_tool_message_name(
+            message,
+            tool_call_index=tool_call_index,
+        )
         if name and name not in names:
             names.append(name)
     return names
@@ -1342,13 +1463,18 @@ def _agent_call_entries_since_last_user(
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     expected_turn_id = str(turn_id or "").strip()
+    tool_call_index = _tool_call_name_index(messages)
     for message in messages or []:
         if isinstance(message, HumanMessage):
             entries = []
             continue
         if not isinstance(message, ToolMessage):
             continue
-        if str(getattr(message, "name", "") or "").strip() != "call_agent":
+        resolved_name = _resolve_tool_message_name(
+            message,
+            tool_call_index=tool_call_index,
+        )
+        if resolved_name != "call_agent":
             continue
         payload = _safe_json(getattr(message, "content", ""))
         if not isinstance(payload, dict):
@@ -1496,12 +1622,16 @@ def _summarize_parallel_results(results: Any) -> str:
 def _count_consecutive_loop_tools(messages: list[Any], *, turn_id: str | None = None) -> int:
     count = 0
     expected_turn_id = str(turn_id or "").strip()
+    tool_call_index = _tool_call_name_index(messages)
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
             break
         if not isinstance(message, ToolMessage):
             continue
-        name = str(getattr(message, "name", "") or "").strip()
+        name = _resolve_tool_message_name(
+            message,
+            tool_call_index=tool_call_index,
+        )
         if name == "call_agent":
             payload = _safe_json(getattr(message, "content", ""))
             payload_turn_id = (
@@ -1653,13 +1783,18 @@ def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
 
 def _sanitize_messages(messages: list[Any]) -> list[Any]:
     sanitized: list[Any] = []
+    tool_call_index = _tool_call_name_index(messages)
     for message in messages:
         if isinstance(message, ToolMessage):
+            resolved_tool_name = _resolve_tool_message_name(
+                message,
+                tool_call_index=tool_call_index,
+            )
             payload = _safe_json(message.content)
             if payload:
                 response = payload.get("response")
                 if isinstance(response, str):
-                    agent = payload.get("agent") or message.name or "agent"
+                    agent = payload.get("agent") or resolved_tool_name or "agent"
                     response = _strip_critic_json(response)
                     contract = _contract_from_payload(payload)
                     status = _normalize_result_status(contract.get("status"))
@@ -1678,26 +1813,29 @@ def _sanitize_messages(messages: list[Any]) -> list[Any]:
                     sanitized.append(
                         ToolMessage(
                             content=content,
-                            name=message.name,
+                            name=resolved_tool_name or message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
                     continue
                 if payload.get("status") and payload.get("reason"):
-                    tool_name = message.name or "tool"
+                    tool_name = resolved_tool_name or "tool"
                     sanitized.append(
                         ToolMessage(
                             content=_truncate_for_prompt(f"{tool_name}: completed"),
-                            name=message.name,
+                            name=resolved_tool_name or message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
                     continue
-                summarized = _summarize_tool_payload(message.name or "tool", payload)
+                summarized = _summarize_tool_payload(
+                    resolved_tool_name or "tool",
+                    payload,
+                )
                 sanitized.append(
                     ToolMessage(
                         content=summarized,
-                        name=message.name,
+                        name=resolved_tool_name or message.name,
                         tool_call_id=getattr(message, "tool_call_id", None),
                     )
                 )
@@ -1708,15 +1846,15 @@ def _sanitize_messages(messages: list[Any]) -> list[Any]:
                     sanitized.append(
                         ToolMessage(
                             content=_truncate_for_prompt(trimmed),
-                            name=message.name,
+                            name=resolved_tool_name or message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
                 else:
                     sanitized.append(
                         ToolMessage(
-                            content=f"{message.name or 'tool'}: completed",
-                            name=message.name,
+                            content=f"{resolved_tool_name or 'tool'}: completed",
+                            name=resolved_tool_name or message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
@@ -1724,11 +1862,11 @@ def _sanitize_messages(messages: list[Any]) -> list[Any]:
             if isinstance(message.content, str):
                 trimmed = _strip_critic_json(message.content)
                 if not trimmed:
-                    trimmed = f"{message.name or 'tool'}: completed"
+                    trimmed = f"{resolved_tool_name or 'tool'}: completed"
                 sanitized.append(
                     ToolMessage(
                         content=_truncate_for_prompt(trimmed),
-                        name=message.name,
+                        name=resolved_tool_name or message.name,
                         tool_call_id=getattr(message, "tool_call_id", None),
                     )
                 )
@@ -2517,10 +2655,10 @@ async def create_supervisor_agent(
             if messages_out:
                 response_text = str(getattr(messages_out[-1], "content", "") or "")
             if name == "trafik":
+                initial_tool_names = _tool_names_from_messages(messages_out)
                 used_trafik_tool = any(
-                    isinstance(message, ToolMessage)
-                    and str(getattr(message, "name", "") or "").startswith("trafikverket_")
-                    for message in messages_out
+                    tool_name.startswith("trafikverket_")
+                    for tool_name in initial_tool_names
                 )
                 if not used_trafik_tool:
                     enforced_prompt = (
@@ -2803,6 +2941,12 @@ async def create_supervisor_agent(
             messages = budget.fit_messages(messages)
         
         response = llm_with_tools.invoke(messages)
+        response = _coerce_supervisor_tool_calls(
+            response,
+            orchestration_phase=str(state.get("orchestration_phase") or ""),
+            agent_hops=int(state.get("agent_hops") or 0),
+            allow_multiple=bool(compare_mode),
+        )
         updates: SupervisorState = {"messages": [response]}
         if new_user_turn:
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
@@ -2860,6 +3004,12 @@ async def create_supervisor_agent(
             messages = budget.fit_messages(messages)
         
         response = await llm_with_tools.ainvoke(messages)
+        response = _coerce_supervisor_tool_calls(
+            response,
+            orchestration_phase=str(state.get("orchestration_phase") or ""),
+            agent_hops=int(state.get("agent_hops") or 0),
+            allow_multiple=bool(compare_mode),
+        )
         updates: SupervisorState = {"messages": [response]}
         if new_user_turn:
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
@@ -2894,14 +3044,21 @@ async def create_supervisor_agent(
         plan_complete: bool | None = None
         last_call_payload: dict[str, Any] | None = None
         route_hint = str(state.get("route_hint") or "").strip().lower()
-        latest_user_query = _latest_user_query(state.get("messages") or [])
+        messages = list(state.get("messages") or [])
+        tool_call_index = _tool_call_name_index(messages)
+        latest_user_query = _latest_user_query(messages)
 
-        for message in reversed(state.get("messages") or []):
+        for message in reversed(messages):
             if isinstance(message, HumanMessage):
                 break
             if not isinstance(message, ToolMessage):
                 continue
-            tool_name = message.name or ""
+            tool_name = _resolve_tool_message_name(
+                message,
+                tool_call_index=tool_call_index,
+            )
+            if not tool_name:
+                continue
             payload = _safe_json(message.content)
             if tool_name == "write_todos":
                 todos = payload.get("todos") or []
