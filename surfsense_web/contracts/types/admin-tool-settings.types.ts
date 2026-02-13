@@ -519,6 +519,9 @@ export const toolAutoLoopGenerationConfig = z.object({
 export const toolAutoLoopRequest = z.object({
 	search_space_id: z.number().nullable().optional(),
 	generation: toolAutoLoopGenerationConfig,
+	use_holdout_suite: z.boolean().optional().default(false),
+	holdout_question_count: z.number().int().optional().default(8),
+	holdout_difficulty_profile: z.string().nullable().optional(),
 	target_success_rate: z.number().optional().default(0.85),
 	max_iterations: z.number().int().optional().default(6),
 	patience: z.number().int().optional().default(2),
@@ -557,6 +560,12 @@ export const toolAutoLoopIterationSummary = z.object({
 	passed_tests: z.number(),
 	total_tests: z.number(),
 	success_delta_vs_previous: z.number().nullable().optional(),
+	holdout_success_rate: z.number().nullable().optional(),
+	holdout_passed_tests: z.number().nullable().optional(),
+	holdout_total_tests: z.number().nullable().optional(),
+	holdout_delta_vs_previous: z.number().nullable().optional(),
+	combined_score: z.number().nullable().optional(),
+	combined_delta_vs_previous: z.number().nullable().optional(),
 	metadata_changes_applied: z.number().optional().default(0),
 	prompt_changes_applied: z.number().optional().default(0),
 	retrieval_tuning_changed: z.boolean().optional().default(false),
@@ -571,8 +580,10 @@ export const toolAutoLoopResult = z.object({
 	best_iteration: z.number(),
 	no_improvement_runs: z.number(),
 	generated_suite: z.record(z.string(), z.unknown()),
+	generated_holdout_suite: z.record(z.string(), z.unknown()).nullable().optional(),
 	iterations: z.array(toolAutoLoopIterationSummary).default([]),
 	final_evaluation: toolEvaluationResponse,
+	final_holdout_evaluation: toolEvaluationResponse.nullable().optional(),
 	draft_changes: toolAutoLoopDraftBundle,
 });
 

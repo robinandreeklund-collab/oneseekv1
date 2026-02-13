@@ -605,6 +605,11 @@ export function ToolSettingsPage() {
 	const [autoMaxIterations, setAutoMaxIterations] = useState(6);
 	const [autoPatience, setAutoPatience] = useState(2);
 	const [autoMinImprovementDelta, setAutoMinImprovementDelta] = useState(0.005);
+	const [autoUseHoldoutSuite, setAutoUseHoldoutSuite] = useState(false);
+	const [autoHoldoutQuestionCount, setAutoHoldoutQuestionCount] = useState(8);
+	const [autoHoldoutDifficultyProfile, setAutoHoldoutDifficultyProfile] = useState<
+		"mixed" | "lätt" | "medel" | "svår"
+	>("mixed");
 	const [isStartingAutoLoop, setIsStartingAutoLoop] = useState(false);
 	const [autoLoopJobId, setAutoLoopJobId] = useState<string | null>(null);
 	const [lastAutoLoopNotice, setLastAutoLoopNotice] = useState<string | null>(null);
@@ -1083,6 +1088,9 @@ export function ToolSettingsPage() {
 		const normalizedDelta = Number.isFinite(autoMinImprovementDelta)
 			? Math.max(0, Math.min(0.25, autoMinImprovementDelta))
 			: 0.005;
+		const normalizedHoldoutCount = Number.isFinite(autoHoldoutQuestionCount)
+			? Math.max(1, Math.min(100, Math.round(autoHoldoutQuestionCount)))
+			: 8;
 		setIsStartingAutoLoop(true);
 		try {
 			const started = await adminToolSettingsApiService.startToolAutoLoop({
@@ -1100,6 +1108,11 @@ export function ToolSettingsPage() {
 					eval_name: generationEvalName.trim() || null,
 					include_allowed_tools: true,
 				},
+				use_holdout_suite: autoUseHoldoutSuite,
+				holdout_question_count: normalizedHoldoutCount,
+				holdout_difficulty_profile: autoUseHoldoutSuite
+					? autoHoldoutDifficultyProfile
+					: null,
 				target_success_rate: normalizedTarget,
 				max_iterations: normalizedIterations,
 				patience: normalizedPatience,
@@ -1114,7 +1127,9 @@ export function ToolSettingsPage() {
 			setLastAutoLoopNotice(null);
 			setAutoLoopPromptDrafts([]);
 			toast.info(
-				`Auto-läge startat (${started.total_iterations} iterationer, target ${(started.target_success_rate * 100).toFixed(1)}%)`
+				`Auto-läge startat (${started.total_iterations} iterationer, target ${(started.target_success_rate * 100).toFixed(1)}%${
+					autoUseHoldoutSuite ? `, holdout ${normalizedHoldoutCount}` : ""
+				})`
 			);
 		} catch (_error) {
 			toast.error("Kunde inte starta auto-läge");
@@ -2654,6 +2669,68 @@ export function ToolSettingsPage() {
 										/>
 									</div>
 								</div>
+								<div className="rounded border p-3 space-y-3">
+									<div className="flex items-center gap-2">
+										<Switch
+											checked={autoUseHoldoutSuite}
+											onCheckedChange={setAutoUseHoldoutSuite}
+										/>
+										<span className="text-sm font-medium">
+											Inkludera auto-genererad holdout-suite
+										</span>
+									</div>
+									<p className="text-xs text-muted-foreground">
+										När holdout är på genereras en separat suite. Auto-läget jämför train
+										och holdout per iteration för att upptäcka överanpassning.
+									</p>
+									{autoUseHoldoutSuite && (
+										<div className="grid gap-3 md:grid-cols-2">
+											<div className="space-y-2">
+												<Label htmlFor="auto-holdout-question-count">
+													Holdout antal frågor
+												</Label>
+												<Input
+													id="auto-holdout-question-count"
+													type="number"
+													min={1}
+													max={100}
+													value={autoHoldoutQuestionCount}
+													onChange={(event) =>
+														setAutoHoldoutQuestionCount(
+															Number.parseInt(event.target.value || "8", 10)
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-2">
+												<Label htmlFor="auto-holdout-difficulty">
+													Holdout svårighetsprofil
+												</Label>
+												<select
+													id="auto-holdout-difficulty"
+													className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+													value={autoHoldoutDifficultyProfile}
+													onChange={(event) =>
+														setAutoHoldoutDifficultyProfile(
+															event.target.value === "lätt"
+																? "lätt"
+																: event.target.value === "medel"
+																	? "medel"
+																	: event.target.value === "svår"
+																		? "svår"
+																		: "mixed"
+														)
+													}
+												>
+													<option value="mixed">Blandad</option>
+													<option value="lätt">Lätt</option>
+													<option value="medel">Medel</option>
+													<option value="svår">Svår</option>
+												</select>
+											</div>
+										</div>
+									)}
+								</div>
 								<div className="flex flex-wrap items-center gap-2">
 									<Button
 										onClick={handleStartAutoLoop}
@@ -2700,9 +2777,22 @@ export function ToolSettingsPage() {
 														key={`auto-iter-${item.iteration}`}
 														className="text-xs text-muted-foreground"
 													>
-														Iter {item.iteration}: {formatPercent(item.success_rate)}
+														Iter {item.iteration}: train{" "}
+														{formatPercent(item.success_rate)}
 														{typeof item.success_delta_vs_previous === "number"
 															? ` (${formatSignedPercent(item.success_delta_vs_previous)})`
+															: ""}
+														{typeof item.holdout_success_rate === "number"
+															? ` · holdout ${formatPercent(item.holdout_success_rate)}`
+															: ""}
+														{typeof item.holdout_delta_vs_previous === "number"
+															? ` (${formatSignedPercent(item.holdout_delta_vs_previous)})`
+															: ""}
+														{typeof item.combined_score === "number"
+															? ` · kombinerad ${formatPercent(item.combined_score)}`
+															: ""}
+														{typeof item.combined_delta_vs_previous === "number"
+															? ` (${formatSignedPercent(item.combined_delta_vs_previous)})`
 															: ""}
 														{item.note ? ` · ${item.note}` : ""}
 													</p>
@@ -2711,10 +2801,21 @@ export function ToolSettingsPage() {
 										)}
 										{autoLoopJobStatus.status === "completed" &&
 											autoLoopJobStatus.result && (
-												<p className="text-xs text-muted-foreground">
-													Stop-orsak:{" "}
-													{formatAutoLoopStopReason(autoLoopJobStatus.result.stop_reason)}
-												</p>
+												<div className="space-y-1">
+													<p className="text-xs text-muted-foreground">
+														Stop-orsak:{" "}
+														{formatAutoLoopStopReason(autoLoopJobStatus.result.stop_reason)}
+													</p>
+													{autoLoopJobStatus.result.final_holdout_evaluation && (
+														<p className="text-xs text-muted-foreground">
+															Slutlig holdout success:{" "}
+															{formatPercent(
+																autoLoopJobStatus.result.final_holdout_evaluation.metrics
+																	.success_rate
+															)}
+														</p>
+													)}
+												</div>
 											)}
 										{autoLoopPromptDrafts.length > 0 && (
 											<div className="flex flex-wrap items-center gap-2">

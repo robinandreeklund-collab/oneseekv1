@@ -3123,13 +3123,78 @@ def _build_metadata_update_item(
     )
 
 
+def _merge_auto_loop_metadata_suggestions(
+    primary: list[dict[str, Any]],
+    secondary: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen_tool_ids: set[str] = set()
+    for source in (primary, secondary):
+        for suggestion in source:
+            if not isinstance(suggestion, dict):
+                continue
+            tool_id = str(suggestion.get("tool_id") or "").strip()
+            if not tool_id or tool_id in seen_tool_ids:
+                continue
+            seen_tool_ids.add(tool_id)
+            merged.append(suggestion)
+    return merged
+
+
+def _merge_auto_loop_prompt_suggestions(
+    primary: list[dict[str, Any]],
+    secondary: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen_prompt_keys: set[str] = set()
+    for source in (primary, secondary):
+        for suggestion in source:
+            if not isinstance(suggestion, dict):
+                continue
+            prompt_key = str(suggestion.get("prompt_key") or "").strip()
+            if not prompt_key or prompt_key in seen_prompt_keys:
+                continue
+            seen_prompt_keys.add(prompt_key)
+            merged.append(suggestion)
+    return merged
+
+
 async def _generate_auto_loop_suite(
     session: AsyncSession,
     user: User,
     *,
     search_space_id: int,
     generation,
-) -> tuple[dict[str, Any], list[ToolEvaluationTestCase], list[Any]]:
+    use_holdout_suite: bool = False,
+    holdout_question_count: int = 8,
+    holdout_difficulty_profile: str | None = None,
+) -> tuple[
+    dict[str, Any],
+    list[ToolEvaluationTestCase],
+    dict[str, Any] | None,
+    list[ToolEvaluationTestCase],
+    list[Any],
+]:
+    def _normalize_auto_loop_tests(
+        tests_raw: list[dict[str, Any]],
+        *,
+        id_prefix: str,
+    ) -> list[ToolEvaluationTestCase]:
+        normalized: list[ToolEvaluationTestCase] = []
+        for index, item in enumerate(tests_raw):
+            if not isinstance(item, dict):
+                continue
+            candidate = dict(item)
+            candidate["id"] = str(candidate.get("id") or f"{id_prefix}-{index + 1}")
+            try:
+                parsed_case = ToolEvaluationTestCase(**candidate)
+            except Exception:
+                continue
+            if not str(parsed_case.question).strip():
+                continue
+            normalized.append(parsed_case)
+        return normalized
+
     normalized_eval_type = _normalize_generation_eval_type(generation.eval_type)
     if normalized_eval_type != "tool_selection":
         raise HTTPException(
@@ -3181,22 +3246,49 @@ async def _generate_auto_loop_suite(
         difficulty_profile=normalized_difficulty_profile,
         tests=tests,
     )
-    normalized_tests: list[ToolEvaluationTestCase] = []
-    for index, item in enumerate(tests):
-        if not isinstance(item, dict):
-            continue
-        candidate = dict(item)
-        candidate["id"] = str(candidate.get("id") or f"case-{index + 1}")
-        try:
-            parsed_case = ToolEvaluationTestCase(**candidate)
-        except Exception:
-            continue
-        if not str(parsed_case.question).strip():
-            continue
-        normalized_tests.append(parsed_case)
+    normalized_tests = _normalize_auto_loop_tests(tests, id_prefix="case")
     if not normalized_tests:
         raise HTTPException(status_code=500, detail="Generated tests could not be normalized")
-    return suite_payload, normalized_tests, tool_index
+
+    holdout_suite_payload: dict[str, Any] | None = None
+    normalized_holdout_tests: list[ToolEvaluationTestCase] = []
+    if use_holdout_suite:
+        normalized_holdout_count = max(1, min(int(holdout_question_count or 8), 100))
+        normalized_holdout_profile = _normalize_difficulty_profile(
+            holdout_difficulty_profile or normalized_difficulty_profile
+        )
+        holdout_tests = await _generate_eval_tests(
+            llm=llm,
+            selected_entries=selected_entries,
+            question_count=normalized_holdout_count,
+            include_allowed_tools=bool(generation.include_allowed_tools),
+            difficulty_profile=normalized_holdout_profile,
+        )
+        if not holdout_tests:
+            raise HTTPException(status_code=500, detail="Could not generate holdout tests")
+        holdout_suite_payload = _build_eval_library_payload(
+            eval_type=normalized_eval_type,
+            eval_name=f"{eval_name}-holdout",
+            target_success_rate=None,
+            difficulty_profile=normalized_holdout_profile,
+            tests=holdout_tests,
+        )
+        normalized_holdout_tests = _normalize_auto_loop_tests(
+            holdout_tests,
+            id_prefix="holdout",
+        )
+        if not normalized_holdout_tests:
+            raise HTTPException(
+                status_code=500,
+                detail="Generated holdout tests could not be normalized",
+            )
+    return (
+        suite_payload,
+        normalized_tests,
+        holdout_suite_payload,
+        normalized_holdout_tests,
+        tool_index,
+    )
 
 
 async def _run_tool_auto_loop_job_background(
@@ -3225,17 +3317,34 @@ async def _run_tool_auto_loop_job_background(
                 requested_search_space_id=payload.search_space_id,
             )
 
-            suite_payload, generated_tests, generation_tool_index = (
+            (
+                suite_payload,
+                generated_tests,
+                holdout_suite_payload,
+                generated_holdout_tests,
+                generation_tool_index,
+            ) = (
                 await _generate_auto_loop_suite(
                     job_session,
                     job_user,
                     search_space_id=resolved_search_space_id,
                     generation=payload.generation,
+                    use_holdout_suite=bool(payload.use_holdout_suite),
+                    holdout_question_count=payload.holdout_question_count,
+                    holdout_difficulty_profile=payload.holdout_difficulty_profile,
                 )
             )
+            holdout_enabled = bool(generated_holdout_tests)
             await _update_auto_loop_job(
                 job_id,
-                message=f"Generated suite with {len(generated_tests)} frågor",
+                message=(
+                    f"Generated suite with {len(generated_tests)} frågor"
+                    + (
+                        f" + holdout {len(generated_holdout_tests)}"
+                        if holdout_enabled
+                        else ""
+                    )
+                ),
             )
 
             defaults_by_tool = {
@@ -3254,11 +3363,16 @@ async def _run_tool_auto_loop_job_background(
             best_prompt_state = _snapshot_prompt_state(prompt_state)
             best_retrieval_state = _snapshot_tuning_state(retrieval_state)
             best_success_rate = -1.0
+            best_combined_score = -1.0
             best_iteration = 0
             best_result: dict[str, Any] | None = None
+            best_holdout_result: dict[str, Any] | None = None
             previous_success_rate: float | None = None
+            previous_holdout_success_rate: float | None = None
+            previous_combined_score: float | None = None
             no_improvement_runs = 0
             stop_reason = "max_iterations_reached"
+            holdout_weight = 0.35
 
             target_success_rate = max(
                 0.0,
@@ -3336,14 +3450,75 @@ async def _run_tool_auto_loop_job_background(
                     else success_rate - previous_success_rate
                 )
                 previous_success_rate = success_rate
+                holdout_result: dict[str, Any] | None = None
+                holdout_success_rate: float | None = None
+                holdout_passed_tests: int | None = None
+                holdout_total_tests: int | None = None
+                holdout_delta_vs_previous: float | None = None
+                if holdout_enabled and generated_holdout_tests:
+                    holdout_payload = ToolEvaluationRequest(
+                        eval_name=(
+                            f"{holdout_suite_payload.get('eval_name') or 'auto-loop-holdout'} "
+                            f"· iter {iteration}"
+                        ),
+                        target_success_rate=target_success_rate,
+                        search_space_id=resolved_search_space_id,
+                        retrieval_limit=max(1, min(int(payload.retrieval_limit or 5), 15)),
+                        use_llm_supervisor_review=bool(payload.use_llm_supervisor_review),
+                        tests=generated_holdout_tests,
+                        metadata_patch=list(iteration_metadata_state.values()),
+                        retrieval_tuning_override=(
+                            ToolRetrievalTuning(**iteration_retrieval_state)
+                            if isinstance(iteration_retrieval_state, dict)
+                            else None
+                        ),
+                    )
+                    holdout_result = await _execute_tool_evaluation(
+                        job_session,
+                        job_user,
+                        payload=holdout_payload,
+                        resolved_search_space_id=resolved_search_space_id,
+                        prompt_patch=iteration_prompt_state,
+                        progress_callback=None,
+                    )
+                    holdout_metrics = (
+                        holdout_result.get("metrics")
+                        if isinstance(holdout_result.get("metrics"), dict)
+                        else {}
+                    )
+                    holdout_success_rate = _to_float(holdout_metrics.get("success_rate")) or 0.0
+                    holdout_total_tests = int(
+                        holdout_metrics.get("total_tests") or len(generated_holdout_tests)
+                    )
+                    holdout_passed_tests = int(holdout_metrics.get("passed_tests") or 0)
+                    holdout_delta_vs_previous = (
+                        None
+                        if previous_holdout_success_rate is None
+                        else holdout_success_rate - previous_holdout_success_rate
+                    )
+                    previous_holdout_success_rate = holdout_success_rate
+
+                combined_score = (
+                    success_rate
+                    if holdout_success_rate is None
+                    else ((1 - holdout_weight) * success_rate) + (holdout_weight * holdout_success_rate)
+                )
+                combined_delta_vs_previous = (
+                    None
+                    if previous_combined_score is None
+                    else combined_score - previous_combined_score
+                )
+                previous_combined_score = combined_score
 
                 improved = best_result is None or (
-                    success_rate >= best_success_rate + min_improvement_delta
+                    combined_score >= best_combined_score + min_improvement_delta
                 )
                 if improved:
                     best_success_rate = success_rate
+                    best_combined_score = combined_score
                     best_iteration = iteration
                     best_result = result
+                    best_holdout_result = holdout_result
                     best_metadata_state = _snapshot_metadata_state(iteration_metadata_state)
                     best_prompt_state = _snapshot_prompt_state(iteration_prompt_state)
                     best_retrieval_state = _snapshot_tuning_state(iteration_retrieval_state)
@@ -3356,19 +3531,67 @@ async def _run_tool_auto_loop_job_background(
                 retrieval_tuning_changed = False
                 note: str | None = None
 
-                if success_rate >= target_success_rate:
+                holdout_target_reached = (
+                    holdout_success_rate is None
+                    or holdout_success_rate >= target_success_rate
+                )
+                if success_rate >= target_success_rate and holdout_target_reached:
                     stop_reason = "target_reached"
-                    note = (
-                        f"Målnivå uppnådd: {(success_rate * 100):.1f}% "
-                        f"(target {(target_success_rate * 100):.1f}%)."
-                    )
+                    if holdout_success_rate is None:
+                        note = (
+                            f"Målnivå uppnådd: {(success_rate * 100):.1f}% "
+                            f"(target {(target_success_rate * 100):.1f}%)."
+                        )
+                    else:
+                        note = (
+                            f"Målnivå uppnådd: train {(success_rate * 100):.1f}% "
+                            f"och holdout {(holdout_success_rate * 100):.1f}% "
+                            f"(target {(target_success_rate * 100):.1f}%)."
+                        )
                 else:
                     metadata_state = _snapshot_metadata_state(iteration_metadata_state)
                     prompt_state = _snapshot_prompt_state(iteration_prompt_state)
                     retrieval_state = _snapshot_tuning_state(iteration_retrieval_state)
+                    metadata_suggestions = list(result.get("suggestions") or [])
+                    prompt_suggestions = list(result.get("prompt_suggestions") or [])
+                    retrieval_tuning_suggestion = result.get("retrieval_tuning_suggestion")
+
+                    if holdout_result is not None:
+                        metadata_suggestions = _merge_auto_loop_metadata_suggestions(
+                            list(holdout_result.get("suggestions") or []),
+                            metadata_suggestions,
+                        )
+                        prompt_suggestions = _merge_auto_loop_prompt_suggestions(
+                            list(holdout_result.get("prompt_suggestions") or []),
+                            prompt_suggestions,
+                        )
+                        holdout_tuning_suggestion = holdout_result.get(
+                            "retrieval_tuning_suggestion"
+                        )
+                        if isinstance(holdout_tuning_suggestion, dict):
+                            retrieval_tuning_suggestion = holdout_tuning_suggestion
+                        if (
+                            success_rate >= target_success_rate
+                            and holdout_success_rate is not None
+                            and holdout_success_rate < target_success_rate
+                        ):
+                            note = (
+                                "Train-suite nådde mål men holdout är lägre. "
+                                "Auto-läget prioriterar nu holdout-baserade förslag för bättre generalisering."
+                            )
+                        elif (
+                            success_delta_vs_previous is not None
+                            and success_delta_vs_previous > 0
+                            and holdout_delta_vs_previous is not None
+                            and holdout_delta_vs_previous < -min_improvement_delta
+                        ):
+                            note = (
+                                "Möjlig överanpassning: train förbättrades men holdout försämrades. "
+                                "Prioriterar holdout-fel i nästa förslagsrunda."
+                            )
 
                     if payload.include_metadata_suggestions:
-                        for suggestion in result.get("suggestions") or []:
+                        for suggestion in metadata_suggestions:
                             if not isinstance(suggestion, dict):
                                 continue
                             tool_id = str(suggestion.get("tool_id") or "").strip()
@@ -3389,7 +3612,7 @@ async def _run_tool_auto_loop_job_background(
                                 metadata_changes_applied += 1
 
                     if payload.include_prompt_suggestions:
-                        for suggestion in result.get("prompt_suggestions") or []:
+                        for suggestion in prompt_suggestions:
                             if not isinstance(suggestion, dict):
                                 continue
                             prompt_key = str(suggestion.get("prompt_key") or "").strip()
@@ -3418,13 +3641,12 @@ async def _run_tool_auto_loop_job_background(
                             }
 
                     if payload.include_retrieval_tuning_suggestions:
-                        suggestion = result.get("retrieval_tuning_suggestion")
-                        if isinstance(suggestion, dict) and isinstance(
-                            suggestion.get("proposed_tuning"),
+                        if isinstance(retrieval_tuning_suggestion, dict) and isinstance(
+                            retrieval_tuning_suggestion.get("proposed_tuning"),
                             dict,
                         ):
                             proposed_tuning = normalize_tool_retrieval_tuning(
-                                suggestion["proposed_tuning"]
+                                retrieval_tuning_suggestion["proposed_tuning"]
                             )
                             current_tuning = normalize_tool_retrieval_tuning(
                                 retrieval_state
@@ -3438,8 +3660,8 @@ async def _run_tool_auto_loop_job_background(
                     if (
                         not improved
                         and best_result is not None
-                        and best_success_rate >= 0
-                        and success_rate <= (best_success_rate - min_improvement_delta)
+                        and best_combined_score >= 0
+                        and combined_score <= (best_combined_score - min_improvement_delta)
                     ):
                         metadata_state = _snapshot_metadata_state(best_metadata_state)
                         prompt_state = _snapshot_prompt_state(best_prompt_state)
@@ -3468,6 +3690,12 @@ async def _run_tool_auto_loop_job_background(
                     passed_tests=passed_tests,
                     total_tests=total_tests,
                     success_delta_vs_previous=success_delta_vs_previous,
+                    holdout_success_rate=holdout_success_rate,
+                    holdout_passed_tests=holdout_passed_tests,
+                    holdout_total_tests=holdout_total_tests,
+                    holdout_delta_vs_previous=holdout_delta_vs_previous,
+                    combined_score=combined_score,
+                    combined_delta_vs_previous=combined_delta_vs_previous,
                     metadata_changes_applied=metadata_changes_applied,
                     prompt_changes_applied=prompt_changes_applied,
                     retrieval_tuning_changed=retrieval_tuning_changed,
@@ -3519,8 +3747,14 @@ async def _run_tool_auto_loop_job_background(
                 best_iteration=best_iteration,
                 no_improvement_runs=no_improvement_runs,
                 generated_suite=suite_payload,
+                generated_holdout_suite=holdout_suite_payload,
                 iterations=iteration_summaries,
                 final_evaluation=ToolEvaluationResponse(**best_result),
+                final_holdout_evaluation=(
+                    ToolEvaluationResponse(**best_holdout_result)
+                    if isinstance(best_holdout_result, dict)
+                    else None
+                ),
                 draft_changes={
                     "metadata_patch": ordered_metadata_patch,
                     "prompt_patch": ordered_prompt_patch,
@@ -3576,9 +3810,19 @@ async def start_tool_auto_loop(
     normalized_iterations = max(1, min(int(payload.max_iterations or 6), 30))
     normalized_patience = max(1, min(int(payload.patience or 2), 12))
     normalized_delta = max(0.0, min(float(payload.min_improvement_delta or 0.005), 0.25))
+    normalized_use_holdout = bool(payload.use_holdout_suite)
+    normalized_holdout_count = max(1, min(int(payload.holdout_question_count or 8), 100))
+    normalized_holdout_profile = (
+        _normalize_difficulty_profile(payload.holdout_difficulty_profile)
+        if payload.holdout_difficulty_profile
+        else None
+    )
     normalized_payload = payload.model_copy(
         update={
             "search_space_id": resolved_search_space_id,
+            "use_holdout_suite": normalized_use_holdout,
+            "holdout_question_count": normalized_holdout_count,
+            "holdout_difficulty_profile": normalized_holdout_profile,
             "target_success_rate": normalized_target,
             "max_iterations": normalized_iterations,
             "patience": normalized_patience,

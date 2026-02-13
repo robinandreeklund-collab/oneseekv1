@@ -421,6 +421,9 @@ class ToolAutoLoopGenerationConfig(BaseModel):
 class ToolAutoLoopRequest(BaseModel):
     search_space_id: int | None = None
     generation: ToolAutoLoopGenerationConfig
+    use_holdout_suite: bool = False
+    holdout_question_count: int = 8
+    holdout_difficulty_profile: str | None = None
     target_success_rate: float = 0.85
     max_iterations: int = 6
     patience: int = 2
@@ -452,6 +455,12 @@ class ToolAutoLoopIterationSummary(BaseModel):
     passed_tests: int
     total_tests: int
     success_delta_vs_previous: float | None = None
+    holdout_success_rate: float | None = None
+    holdout_passed_tests: int | None = None
+    holdout_total_tests: int | None = None
+    holdout_delta_vs_previous: float | None = None
+    combined_score: float | None = None
+    combined_delta_vs_previous: float | None = None
     metadata_changes_applied: int = 0
     prompt_changes_applied: int = 0
     retrieval_tuning_changed: bool = False
@@ -466,8 +475,10 @@ class ToolAutoLoopResult(BaseModel):
     best_iteration: int
     no_improvement_runs: int
     generated_suite: dict[str, Any]
+    generated_holdout_suite: dict[str, Any] | None = None
     iterations: list[ToolAutoLoopIterationSummary] = Field(default_factory=list)
     final_evaluation: ToolEvaluationResponse
+    final_holdout_evaluation: ToolEvaluationResponse | None = None
     draft_changes: ToolAutoLoopDraftBundle
 
 
