@@ -28,6 +28,7 @@ export const agentPromptKeyEnum = z.enum([
 	"agent.riksdagen.system",
 	"compare.analysis.system",
 	"compare.external.system",
+	"system.default.instructions",
 	"citation.instructions",
 ]);
 

@@ -55,6 +55,7 @@ const AGENT_PROMPT_ORDER: Record<string, string[]> = {
 };
 
 const SYSTEM_SECTION_ORDER = [
+	"core",
 	"router",
 	"supervisor",
 	"worker",
@@ -63,6 +64,7 @@ const SYSTEM_SECTION_ORDER = [
 	"other",
 ];
 const SYSTEM_SECTION_LABELS: Record<string, string> = {
+	core: "Core",
 	router: "Router",
 	supervisor: "Supervisor",
 	worker: "Workers",
@@ -78,6 +80,7 @@ const ROUTER_NODES = [
 ];
 
 const SYSTEM_NODES = [
+	{ label: "Core system prompt", key: "system.default.instructions" },
 	{ label: "Supervisor", key: "agent.supervisor.system" },
 	{ label: "Worker · Knowledge", key: "agent.worker.knowledge" },
 	{ label: "Worker · Action", key: "agent.worker.action" },
@@ -209,6 +212,13 @@ export function AdminPromptsPage() {
 					item,
 					group: "system" as const,
 					section: "router",
+				};
+			}
+			if (key.startsWith("system.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "core",
 				};
 			}
 			if (key.startsWith("compare.")) {

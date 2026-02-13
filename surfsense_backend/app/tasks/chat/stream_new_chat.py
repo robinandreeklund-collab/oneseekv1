@@ -13,6 +13,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -50,7 +51,10 @@ from app.agents.new_chat.dispatcher import (
 )
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.routing import Route, ROUTE_TOOL_SETS
-from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
+from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CITATION_INSTRUCTIONS,
+    SURFSENSE_SYSTEM_INSTRUCTIONS,
+)
 from app.agents.new_chat.supervisor_agent import create_supervisor_agent
 from app.agents.new_chat.supervisor_prompts import (
     DEFAULT_SUPERVISOR_PROMPT,
@@ -584,6 +588,25 @@ async def stream_new_chat(
             trace_recorder.set_tokenizer_model(tokenizer_model)
 
         prompt_overrides = await get_global_prompt_overrides(session)
+        default_system_prompt = resolve_prompt(
+            prompt_overrides,
+            "system.default.instructions",
+            SURFSENSE_SYSTEM_INSTRUCTIONS,
+        )
+        if agent_config is not None:
+            has_custom_system_prompt = bool(
+                str(agent_config.system_instructions or "").strip()
+            )
+            if (
+                agent_config.use_default_system_instructions
+                and not has_custom_system_prompt
+            ):
+                # Keep default system prompt centrally editable from /admin/prompts.
+                agent_config = replace(
+                    agent_config,
+                    system_instructions=default_system_prompt,
+                    use_default_system_instructions=False,
+                )
         router_prompt = resolve_prompt(
             prompt_overrides, "router.top_level", DEFAULT_ROUTE_SYSTEM_PROMPT
         )

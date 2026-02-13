@@ -23,6 +23,7 @@ from app.agents.new_chat.subagent_utils import (
 from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PROMPT
 from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
 from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
+from app.agents.new_chat.system_prompt import SURFSENSE_SYSTEM_INSTRUCTIONS
 from app.agents.new_chat.trafik_prompts import DEFAULT_TRAFFIC_SYSTEM_PROMPT
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
@@ -197,6 +198,12 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Compare external model prompt",
         description="System prompt sent to external models in compare.",
         default_prompt=DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+    ),
+    PromptDefinition(
+        key="system.default.instructions",
+        label="Core system prompt",
+        description="Default system instructions from system_prompt.py.",
+        default_prompt=SURFSENSE_SYSTEM_INSTRUCTIONS,
     ),
     PromptDefinition(
         key="citation.instructions",
