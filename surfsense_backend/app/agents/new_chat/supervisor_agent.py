@@ -205,6 +205,18 @@ _TRAFFIC_INTENT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_TRAFFIC_STRICT_INTENT_RE = re.compile(
+    r"\b("
+    r"trafikverket|"
+    r"olycka|storing|storning|störning|"
+    r"koer|köer|ko|kö|"
+    r"vagarbete|vägarbete|avstangning|avstängning|omledning|framkomlighet|"
+    r"kamera|kameror|"
+    r"vaglag|väglag|hastighet|"
+    r"e\d+|rv\s?\d+|riksvag|riksväg|vag\s?\d+|väg\s?\d+"
+    r")\b",
+    re.IGNORECASE,
+)
 _MAP_INTENT_RE = re.compile(
     r"\b(karta|kartbild|kartor|map|marker|markor|pin|"
     r"rutt|route|vagbeskrivning|vägbeskrivning)\b",
@@ -218,6 +230,10 @@ def _has_trafik_intent(text: str) -> bool:
 
 def _has_map_intent(text: str) -> bool:
     return bool(text and _MAP_INTENT_RE.search(text))
+
+
+def _has_strict_trafik_intent(text: str) -> bool:
+    return bool(text and _TRAFFIC_STRICT_INTENT_RE.search(text))
 
 
 def _tokenize_focus_terms(text: str) -> set[str]:
@@ -910,6 +926,33 @@ def _current_turn_key(state: dict[str, Any] | None) -> str:
     return "turn"
 
 
+def _latest_user_query(messages: list[Any] | None) -> str:
+    for message in reversed(messages or []):
+        if isinstance(message, HumanMessage):
+            return str(getattr(message, "content", "") or "").strip()
+    return ""
+
+
+def _looks_actionable_agent_answer(text: str) -> bool:
+    value = str(text or "").strip()
+    if len(value) < 48:
+        return False
+    lowered = value.lower()
+    rejection_markers = (
+        "kan inte",
+        "kunde inte",
+        "saknas",
+        "behover",
+        "behöver",
+        "inte möjligt",
+        "not available",
+        "cannot",
+        "ingen data",
+        "hittades inte",
+    )
+    return not any(marker in lowered for marker in rejection_markers)
+
+
 def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> str:
     value = str(text or "").strip()
     if len(value) <= max_chars:
@@ -1491,8 +1534,6 @@ async def create_supervisor_agent(
                 "kö",
                 "ko",
                 "kamera",
-                "väder",
-                "vader",
             ],
             namespace=("agents", "trafik"),
             prompt_key="trafik",
@@ -1553,6 +1594,12 @@ async def create_supervisor_agent(
         requested_raw = str(requested_name or "").strip().lower()
         if not requested_raw:
             return None, "empty_name"
+        route_hint = str((state or {}).get("route_hint") or "").strip().lower()
+        strict_trafik_task = _has_strict_trafik_intent(task)
+        if route_hint == "action" and strict_trafik_task:
+            allowed_for_strict = {"trafik", "kartor", "action"}
+            if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
+                return "trafik", f"strict_trafik_lock:{requested_raw}->trafik"
         if requested_raw in agent_by_name:
             return requested_raw, None
 
@@ -1583,11 +1630,16 @@ async def create_supervisor_agent(
         )
         if route_hint:
             preferred = {
-                "action": ["trafik", "kartor", "action", "media"],
+                "action": ["action", "media"],
                 "knowledge": ["knowledge", "browser"],
                 "statistics": ["statistics"],
                 "compare": ["synthesis", "knowledge", "statistics"],
             }.get(str(route_hint), [])
+            if str(route_hint) == "action":
+                if _has_map_intent(task) and "kartor" not in preferred:
+                    preferred.insert(0, "kartor")
+                if _has_trafik_intent(task) and "trafik" not in preferred:
+                    preferred.insert(0, "trafik")
             for preferred_name in preferred:
                 if any(agent.name == preferred_name for agent in retrieved):
                     return preferred_name, f"route_pref:{requested_raw}->{preferred_name}"
@@ -1676,6 +1728,7 @@ async def create_supervisor_agent(
                 context_query = f"{query} {' '.join(context_parts)}"
 
         has_trafik_intent = _has_trafik_intent(context_query)
+        has_strict_trafik_intent = _has_strict_trafik_intent(context_query)
         has_map_intent = _has_map_intent(context_query)
 
         cache_key, cache_pattern = _build_cache_key(
@@ -1686,6 +1739,13 @@ async def create_supervisor_agent(
             cached_agents = await _fetch_cached_combo_db(db_session, cache_key)
             if cached_agents:
                 _set_cached_combo(cache_key, cached_agents)
+        if (
+            cached_agents
+            and route_hint == "action"
+            and has_strict_trafik_intent
+        ):
+            # Avoid stale non-traffic combos on hard traffic queries.
+            cached_agents = None
         if cached_agents and has_trafik_intent and "trafik" not in cached_agents:
             cached_agents = None
 
@@ -1744,6 +1804,15 @@ async def create_supervisor_agent(
                 )
 
         selected = selected[:limit]
+        if route_hint == "action" and has_strict_trafik_intent:
+            strict_order = ["trafik"]
+            if has_map_intent:
+                strict_order.append("kartor")
+            strict_order.append("action")
+            strict_selected = [
+                agent_by_name[name] for name in strict_order if name in agent_by_name
+            ]
+            selected = strict_selected[:limit] if strict_selected else selected
         payload = [
             {"name": agent.name, "description": agent.description}
             for agent in selected
@@ -2114,6 +2183,8 @@ async def create_supervisor_agent(
         plan_update: list[dict[str, Any]] | None = None
         plan_complete: bool | None = None
         last_call_payload: dict[str, Any] | None = None
+        route_hint = str(state.get("route_hint") or "").strip().lower()
+        latest_user_query = _latest_user_query(state.get("messages") or [])
 
         for message in reversed(state.get("messages") or []):
             if not isinstance(message, ToolMessage):
@@ -2157,6 +2228,21 @@ async def create_supervisor_agent(
                         )
                         if cleaned_response and (not critic_needs_more or len(cleaned_response) >= 80):
                             # Treat critic as advisory to avoid needless loops on complete answers.
+                            updates["final_agent_response"] = cleaned_response
+                            updates["final_agent_name"] = payload.get("agent")
+                    elif payload.get("response"):
+                        cleaned_response = _strip_critic_json(
+                            str(payload.get("response") or "").strip()
+                        )
+                        selected_agent = str(payload.get("agent") or "").strip().lower()
+                        if (
+                            route_hint == "action"
+                            and selected_agent == "trafik"
+                            and not str(payload.get("error") or "").strip()
+                            and _has_strict_trafik_intent(latest_user_query)
+                            and _looks_actionable_agent_answer(cleaned_response)
+                        ):
+                            # Break traffic loops by accepting first actionable trafik answer.
                             updates["final_agent_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
             elif tool_name == "call_agents_parallel":
