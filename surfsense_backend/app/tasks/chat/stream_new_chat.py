@@ -595,6 +595,7 @@ async def stream_new_chat(
     checkpoint_id: str | None = None,
     needs_history_bootstrap: bool = False,
     citation_instructions: str | bool | None = None,
+    runtime_hitl: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat responses from the new SurfSense deep agent.
@@ -618,6 +619,8 @@ async def stream_new_chat(
             - True: enable admin/default citation instructions.
             - False/None: disable citation instruction injection.
             - str: inject custom citation instructions.
+        runtime_hitl:
+            Optional runtime HITL flags for planner/execution/synthesis checkpoints.
 
     Yields:
         str: SSE formatted response strings
@@ -938,6 +941,7 @@ async def stream_new_chat(
                 "route_candidates": route_decision.get("candidates") or [],
                 "citations_enabled": citations_enabled,
                 "citation_instructions_enabled": citations_enabled,
+                "runtime_hitl": runtime_hitl or {},
             }
             route_start = await trace_recorder.start_span(
                 span_id=route_span_id,
@@ -985,6 +989,7 @@ async def stream_new_chat(
                     "firecrawl_api_key": firecrawl_api_key,
                     "user_id": user_id,
                     "thread_id": chat_id,
+                    "runtime_hitl": dict(runtime_hitl or {}),
                 },
                 checkpointer=checkpointer,
                 knowledge_prompt=knowledge_worker_prompt,

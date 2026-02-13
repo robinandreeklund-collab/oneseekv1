@@ -31,9 +31,13 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
 from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
     DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
 )
 from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
 from app.agents.new_chat.system_prompt import SURFSENSE_SYSTEM_INSTRUCTIONS
@@ -173,6 +177,12 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         default_prompt=DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     ),
     PromptDefinition(
+        key="supervisor.tool_resolver.system",
+        label="Supervisor tool resolver prompt",
+        description="Prompt for tool_resolver node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+    ),
+    PromptDefinition(
         key="supervisor.critic_gate.system",
         label="Supervisor critic gate prompt",
         description="Prompt for critic node in supervisor pipeline.",
@@ -183,6 +193,24 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Supervisor synthesizer prompt",
         description="Prompt for synthesizer node in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.hitl.planner.message",
+        label="Supervisor HITL planner confirmation message",
+        description="User-facing confirmation message before executing planner output.",
+        default_prompt=DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.hitl.execution.message",
+        label="Supervisor HITL execution confirmation message",
+        description="User-facing confirmation message before running the next execution step.",
+        default_prompt=DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.hitl.synthesis.message",
+        label="Supervisor HITL synthesis confirmation message",
+        description="User-facing confirmation message before delivering synthesized response.",
+        default_prompt=DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
     ),
     PromptDefinition(
         key="agent.worker.knowledge",

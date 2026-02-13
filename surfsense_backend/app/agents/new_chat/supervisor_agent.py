@@ -33,9 +33,13 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
 from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
     DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
 )
 from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.token_budget import TokenBudget
@@ -861,6 +865,7 @@ class SupervisorState(TypedDict, total=False):
     active_turn_id: Annotated[str | None, _replace]
     resolved_intent: Annotated[dict[str, Any] | None, _replace]
     selected_agents: Annotated[list[dict[str, Any]], _replace]
+    resolved_tools_by_agent: Annotated[dict[str, list[str]], _replace]
     query_embedding: Annotated[list[float] | None, _replace]
     active_plan: Annotated[list[dict[str, Any]], _replace]
     plan_step_index: Annotated[int | None, _replace]
@@ -873,6 +878,8 @@ class SupervisorState(TypedDict, total=False):
     final_response: Annotated[str | None, _replace]
     critic_decision: Annotated[str | None, _replace]
     awaiting_confirmation: Annotated[bool | None, _replace]
+    pending_hitl_stage: Annotated[str | None, _replace]
+    pending_hitl_payload: Annotated[dict[str, Any] | None, _replace]
     user_feedback: Annotated[dict[str, Any] | None, _replace]
     replan_count: Annotated[int | None, _replace]
     final_agent_name: Annotated[str | None, _replace]
@@ -972,6 +979,52 @@ def _format_selected_agents_context(state: dict[str, Any]) -> str | None:
     if not lines:
         return None
     return "<selected_agents>\n" + "\n".join(lines) + "\n</selected_agents>"
+
+
+def _format_resolved_tools_context(state: dict[str, Any]) -> str | None:
+    resolved = state.get("resolved_tools_by_agent")
+    if not isinstance(resolved, dict) or not resolved:
+        return None
+    lines: list[str] = []
+    for agent_name, tool_ids in list(resolved.items())[:3]:
+        normalized_agent = str(agent_name or "").strip()
+        if not normalized_agent:
+            continue
+        safe_tools = [
+            str(tool_id).strip()
+            for tool_id in (tool_ids if isinstance(tool_ids, list) else [])
+            if str(tool_id).strip()
+        ][:6]
+        if not safe_tools:
+            continue
+        lines.append(f"- {normalized_agent}: {', '.join(safe_tools)}")
+    if not lines:
+        return None
+    return "<resolved_tools>\n" + "\n".join(lines) + "\n</resolved_tools>"
+
+
+_HITL_APPROVE_RE = re.compile(r"\b(ja|yes|ok|okej|kor|kör|go|fortsatt|fortsätt)\b", re.IGNORECASE)
+_HITL_REJECT_RE = re.compile(r"\b(nej|no|stopp|avbryt|stop|inte)\b", re.IGNORECASE)
+
+
+def _parse_hitl_confirmation(value: str) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if _HITL_REJECT_RE.search(text):
+        return "reject"
+    if _HITL_APPROVE_RE.search(text):
+        return "approve"
+    return None
+
+
+def _render_hitl_message(template: str, **kwargs: Any) -> str:
+    safe_kwargs = {key: str(value or "").strip() for key, value in kwargs.items()}
+    try:
+        rendered = str(template or "").format(**safe_kwargs)
+    except Exception:
+        rendered = str(template or "")
+    return rendered.strip()
 
 
 
@@ -2060,6 +2113,11 @@ async def create_supervisor_agent(
         "supervisor.planner.system",
         DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     )
+    tool_resolver_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.tool_resolver.system",
+        DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+    )
     critic_gate_prompt_template = resolve_prompt(
         prompt_overrides,
         "supervisor.critic_gate.system",
@@ -2069,6 +2127,21 @@ async def create_supervisor_agent(
         prompt_overrides,
         "supervisor.synthesizer.system",
         DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    )
+    hitl_planner_message_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.hitl.planner.message",
+        DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
+    )
+    hitl_execution_message_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.hitl.execution.message",
+        DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
+    )
+    hitl_synthesis_message_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.hitl.synthesis.message",
+        DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
     )
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
@@ -2409,6 +2482,28 @@ async def create_supervisor_agent(
         if definition.tool_id not in weather_tool_id_set
     ]
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
+    runtime_hitl_raw = dependencies.get("runtime_hitl")
+    runtime_hitl_cfg = (
+        dict(runtime_hitl_raw)
+        if isinstance(runtime_hitl_raw, dict)
+        else {"enabled": bool(runtime_hitl_raw)}
+    )
+
+    def _hitl_enabled(stage: str) -> bool:
+        if not bool(runtime_hitl_cfg.get("enabled", True)):
+            return False
+        normalized_stage = str(stage or "").strip().lower()
+        if not normalized_stage:
+            return False
+        if isinstance(runtime_hitl_raw, bool):
+            return bool(runtime_hitl_raw)
+        aliases = {
+            normalized_stage,
+            f"confirm_{normalized_stage}",
+            f"hitl_{normalized_stage}",
+        }
+        return any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
+
     route_to_intent_id = {
         "knowledge": "knowledge",
         "action": "action",
@@ -2433,6 +2528,40 @@ async def create_supervisor_agent(
             "description": definition.description,
             "keywords": list(definition.keywords or []),
         }
+
+    def _next_plan_step(state: dict[str, Any]) -> dict[str, Any] | None:
+        plan_items = state.get("active_plan") or []
+        if not isinstance(plan_items, list) or not plan_items:
+            return None
+        try:
+            step_index = int(state.get("plan_step_index") or 0)
+        except (TypeError, ValueError):
+            step_index = 0
+        step_index = max(0, step_index)
+        if step_index < len(plan_items) and isinstance(plan_items[step_index], dict):
+            return plan_items[step_index]
+        for item in plan_items:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "").strip().lower()
+            if status in {"pending", "in_progress"}:
+                return item
+        return plan_items[0] if isinstance(plan_items[0], dict) else None
+
+    def _plan_preview_text(state: dict[str, Any], *, max_steps: int = 4) -> str:
+        plan_items = state.get("active_plan") or []
+        if not isinstance(plan_items, list) or not plan_items:
+            return "- Ingen plan tillganglig."
+        lines: list[str] = []
+        for item in plan_items[: max(1, int(max_steps))]:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            status = str(item.get("status") or "pending").strip().lower()
+            lines.append(f"- [{status}] {content}")
+        return "\n".join(lines) if lines else "- Ingen plan tillganglig."
 
     def _resolve_agent_name(
         requested_name: str,
@@ -2808,7 +2937,20 @@ async def create_supervisor_agent(
             task = _prepare_task_for_synthesis(task, injected_state)
         turn_key = _current_turn_key(injected_state)
         base_thread_id = str(dependencies.get("thread_id") or "thread")
-        selected_tool_ids: list[str] = _focused_tool_ids_for_agent(name, task, limit=6)
+        resolved_tools_map = injected_state.get("resolved_tools_by_agent")
+        selected_tool_ids: list[str] = []
+        if isinstance(resolved_tools_map, dict):
+            candidate_tools = resolved_tools_map.get(name) or resolved_tools_map.get(
+                requested_name
+            )
+            if isinstance(candidate_tools, list):
+                selected_tool_ids = [
+                    str(tool_id).strip()
+                    for tool_id in candidate_tools
+                    if str(tool_id).strip()
+                ][:8]
+        if not selected_tool_ids:
+            selected_tool_ids = _focused_tool_ids_for_agent(name, task, limit=6)
         if name == "weather":
             selected_tool_ids = list(weather_tool_ids)
         if name == "trafik":
@@ -2973,7 +3115,22 @@ async def create_supervisor_agent(
                     task = _prepare_task_for_synthesis(task, injected_state)
                 turn_key = _current_turn_key(injected_state)
                 base_thread_id = str(dependencies.get("thread_id") or "thread")
-                selected_tool_ids = _focused_tool_ids_for_agent(agent_name, task, limit=6)
+                resolved_tools_map = injected_state.get("resolved_tools_by_agent")
+                selected_tool_ids: list[str] = []
+                if isinstance(resolved_tools_map, dict):
+                    candidate_tools = resolved_tools_map.get(agent_name) or resolved_tools_map.get(
+                        requested_agent_name
+                    )
+                    if isinstance(candidate_tools, list):
+                        selected_tool_ids = [
+                            str(tool_id).strip()
+                            for tool_id in candidate_tools
+                            if str(tool_id).strip()
+                        ][:8]
+                if not selected_tool_ids:
+                    selected_tool_ids = _focused_tool_ids_for_agent(
+                        agent_name, task, limit=6
+                    )
                 if agent_name == "weather":
                     selected_tool_ids = list(weather_tool_ids)
                 if agent_name == "trafik":
@@ -3106,10 +3263,55 @@ async def create_supervisor_agent(
         incoming_turn_id = str(state.get("turn_id") or "").strip()
         active_turn_id = str(state.get("active_turn_id") or "").strip()
         new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+
+        if new_user_turn and bool(state.get("awaiting_confirmation")):
+            pending_stage = str(state.get("pending_hitl_stage") or "").strip().lower()
+            decision = _parse_hitl_confirmation(latest_user_query)
+            if decision is None:
+                return {
+                    "messages": [
+                        AIMessage(
+                            content="Svara med ja eller nej sa jag vet hur jag ska fortsatta."
+                        )
+                    ],
+                    "awaiting_confirmation": True,
+                    "pending_hitl_stage": pending_stage or None,
+                    "active_turn_id": incoming_turn_id or active_turn_id or None,
+                    "orchestration_phase": "awaiting_confirmation",
+                }
+            updates: SupervisorState = {
+                "awaiting_confirmation": False,
+                "pending_hitl_stage": None,
+                "pending_hitl_payload": None,
+                "user_feedback": {
+                    "stage": pending_stage or None,
+                    "decision": decision,
+                    "message": latest_user_query,
+                },
+            }
+            if incoming_turn_id:
+                updates["active_turn_id"] = incoming_turn_id
+            if decision == "approve":
+                if pending_stage == "planner":
+                    updates["orchestration_phase"] = "resolve_tools"
+                elif pending_stage == "execution":
+                    updates["orchestration_phase"] = "execute"
+                elif pending_stage == "synthesis":
+                    updates["orchestration_phase"] = "finalize"
+                return updates
+            # reject
+            updates["replan_count"] = int(state.get("replan_count") or 0) + 1
+            if pending_stage == "synthesis":
+                updates["final_response"] = None
+                updates["final_agent_response"] = None
+            updates["critic_decision"] = "replan"
+            updates["orchestration_phase"] = "plan"
+            return updates
+
         if not new_user_turn and state.get("resolved_intent"):
             return {}
 
-        latest_user_query = _latest_user_query(state.get("messages") or [])
         route_hint = _normalize_route_hint_value(state.get("route_hint"))
         candidates: list[dict[str, Any]] = []
         for route_name, intent_id in route_to_intent_id.items():
@@ -3177,10 +3379,13 @@ async def create_supervisor_agent(
             updates["recent_agent_calls"] = []
             updates["compare_outputs"] = []
             updates["selected_agents"] = []
+            updates["resolved_tools_by_agent"] = {}
             updates["final_agent_response"] = None
             updates["final_response"] = None
             updates["critic_decision"] = None
             updates["awaiting_confirmation"] = False
+            updates["pending_hitl_stage"] = None
+            updates["pending_hitl_payload"] = None
             updates["user_feedback"] = None
             updates["replan_count"] = 0
             updates["agent_hops"] = 0
@@ -3199,6 +3404,16 @@ async def create_supervisor_agent(
         store=None,
         **kwargs,
     ) -> SupervisorState:
+        feedback = state.get("user_feedback")
+        if isinstance(feedback, dict):
+            feedback_decision = str(feedback.get("decision") or "").strip().lower()
+            feedback_stage = str(feedback.get("stage") or "").strip().lower()
+            if (
+                feedback_decision == "approve"
+                and feedback_stage in {"planner", "execution", "synthesis"}
+                and state.get("selected_agents")
+            ):
+                return {"orchestration_phase": "plan"}
         latest_user_query = _latest_user_query(state.get("messages") or [])
         if not latest_user_query:
             return {}
@@ -3349,6 +3564,153 @@ async def create_supervisor_agent(
             "critic_decision": None,
         }
 
+    async def planner_hitl_gate_node(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        if not _hitl_enabled("planner"):
+            return {"orchestration_phase": "resolve_tools"}
+        if bool(state.get("awaiting_confirmation")) and str(
+            state.get("pending_hitl_stage") or ""
+        ).strip().lower() == "planner":
+            return {"orchestration_phase": "awaiting_confirmation"}
+        feedback = state.get("user_feedback")
+        if isinstance(feedback, dict):
+            if (
+                str(feedback.get("decision") or "").strip().lower() == "approve"
+                and str(feedback.get("stage") or "").strip().lower() == "planner"
+            ):
+                return {"orchestration_phase": "resolve_tools", "user_feedback": None}
+        plan_preview = _plan_preview_text(state)
+        message = _render_hitl_message(
+            hitl_planner_message_template,
+            plan_preview=plan_preview,
+        )
+        return {
+            "messages": [AIMessage(content=message)],
+            "awaiting_confirmation": True,
+            "pending_hitl_stage": "planner",
+            "pending_hitl_payload": {"plan_preview": plan_preview},
+            "orchestration_phase": "awaiting_confirmation",
+        }
+
+    async def tool_resolver_node(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        selected_agents_raw = state.get("selected_agents") or []
+        selected_agent_names = [
+            str(item.get("name") or "").strip().lower()
+            for item in selected_agents_raw
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        if not selected_agent_names:
+            fallback_agent = str(state.get("final_agent_name") or "").strip().lower()
+            if fallback_agent:
+                selected_agent_names = [fallback_agent]
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        step = _next_plan_step(state)
+        step_text = str(step.get("content") or "").strip() if isinstance(step, dict) else ""
+        resolver_query = " ".join(
+            value for value in [latest_user_query, step_text] if str(value).strip()
+        ).strip()
+        if not resolver_query:
+            resolver_query = latest_user_query or step_text
+
+        resolved: dict[str, list[str]] = {}
+        for agent_name in selected_agent_names[:3]:
+            focused_ids = _focused_tool_ids_for_agent(agent_name, resolver_query, limit=6)
+            if agent_name == "weather":
+                focused_ids = list(weather_tool_ids)
+            elif agent_name == "trafik":
+                focused_ids = [tool_id for tool_id in focused_ids if tool_id in trafik_tool_ids]
+                if not focused_ids:
+                    focused_ids = list(trafik_tool_ids)
+            deduped_ids: list[str] = []
+            seen_ids: set[str] = set()
+            for tool_id in focused_ids:
+                normalized = str(tool_id or "").strip()
+                if not normalized or normalized in seen_ids:
+                    continue
+                seen_ids.add(normalized)
+                deduped_ids.append(normalized)
+                if len(deduped_ids) >= 8:
+                    break
+            if deduped_ids:
+                resolved[agent_name] = deduped_ids
+
+        if not resolved:
+            resolved = dict(state.get("resolved_tools_by_agent") or {})
+        return {
+            "resolved_tools_by_agent": resolved,
+            "orchestration_phase": "execute",
+            "pending_hitl_payload": {
+                "tool_resolver_prompt": tool_resolver_prompt_template.strip()[:240],
+                "resolved_agent_count": len(resolved),
+            },
+        }
+
+    async def execution_hitl_gate_node(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        if not _hitl_enabled("execution"):
+            return {"orchestration_phase": "execute"}
+        if bool(state.get("awaiting_confirmation")) and str(
+            state.get("pending_hitl_stage") or ""
+        ).strip().lower() == "execution":
+            return {"orchestration_phase": "awaiting_confirmation"}
+        feedback = state.get("user_feedback")
+        if isinstance(feedback, dict):
+            if (
+                str(feedback.get("decision") or "").strip().lower() == "approve"
+                and str(feedback.get("stage") or "").strip().lower() == "execution"
+            ):
+                return {"orchestration_phase": "execute", "user_feedback": None}
+
+        step = _next_plan_step(state)
+        step_preview = (
+            str(step.get("content") or "").strip()
+            if isinstance(step, dict)
+            else "Kora nasta steg i planen."
+        )
+        resolved_map = state.get("resolved_tools_by_agent") or {}
+        tool_preview_parts: list[str] = []
+        if isinstance(resolved_map, dict):
+            for agent_name, tool_ids in list(resolved_map.items())[:2]:
+                if not isinstance(tool_ids, list):
+                    continue
+                names = [str(item).strip() for item in tool_ids if str(item).strip()][:3]
+                if names:
+                    tool_preview_parts.append(f"{agent_name}: {', '.join(names)}")
+        tool_preview = (
+            " | ".join(tool_preview_parts) if tool_preview_parts else "Inga tydliga verktyg valda"
+        )
+        message = _render_hitl_message(
+            hitl_execution_message_template,
+            step_preview=step_preview,
+            tool_preview=tool_preview,
+        )
+        return {
+            "messages": [AIMessage(content=message)],
+            "awaiting_confirmation": True,
+            "pending_hitl_stage": "execution",
+            "pending_hitl_payload": {
+                "step_preview": step_preview,
+                "tool_preview": tool_preview,
+            },
+            "orchestration_phase": "awaiting_confirmation",
+        }
+
     async def critic_node(
         state: SupervisorState,
         config: dict | None = None,
@@ -3403,12 +3765,20 @@ async def create_supervisor_agent(
             )
             parsed = _extract_first_json_object(str(getattr(message, "content", "") or ""))
             parsed_decision = str(parsed.get("decision") or "").strip().lower()
-            if parsed_decision in {"ok", "needs_more"}:
+            if parsed_decision in {"ok", "needs_more", "replan"}:
                 decision = parsed_decision
         except Exception:
             decision = "ok"
 
         replan_count = int(state.get("replan_count") or 0)
+        if decision == "replan" and replan_count < _MAX_REPLAN_ATTEMPTS:
+            return {
+                "critic_decision": "replan",
+                "final_agent_response": None,
+                "final_response": None,
+                "replan_count": replan_count + 1,
+                "orchestration_phase": "plan",
+            }
         if decision == "needs_more" and replan_count < _MAX_REPLAN_ATTEMPTS:
             return {
                 "critic_decision": "needs_more",
@@ -3421,6 +3791,52 @@ async def create_supervisor_agent(
             "critic_decision": "ok",
             "final_response": final_response,
             "orchestration_phase": "finalize",
+        }
+
+    async def synthesis_hitl_gate_node(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        if not _hitl_enabled("synthesis"):
+            return {}
+        if bool(state.get("awaiting_confirmation")) and str(
+            state.get("pending_hitl_stage") or ""
+        ).strip().lower() == "synthesis":
+            return {"orchestration_phase": "awaiting_confirmation"}
+        feedback = state.get("user_feedback")
+        if isinstance(feedback, dict):
+            feedback_decision = str(feedback.get("decision") or "").strip().lower()
+            feedback_stage = str(feedback.get("stage") or "").strip().lower()
+            if feedback_stage == "synthesis":
+                if feedback_decision == "approve":
+                    return {"user_feedback": None}
+                if feedback_decision == "reject":
+                    return {
+                        "final_response": None,
+                        "final_agent_response": None,
+                        "critic_decision": "replan",
+                        "orchestration_phase": "plan",
+                        "user_feedback": None,
+                    }
+        response_preview = _truncate_for_prompt(
+            str(state.get("final_response") or state.get("final_agent_response") or ""),
+            280,
+        )
+        if not response_preview:
+            return {}
+        message = _render_hitl_message(
+            hitl_synthesis_message_template,
+            response_preview=response_preview,
+        )
+        return {
+            "messages": [AIMessage(content=message)],
+            "awaiting_confirmation": True,
+            "pending_hitl_stage": "synthesis",
+            "pending_hitl_payload": {"response_preview": response_preview},
+            "orchestration_phase": "awaiting_confirmation",
         }
 
     async def synthesizer_node(
@@ -3465,12 +3881,18 @@ async def create_supervisor_agent(
                     "final_response": refined_response,
                     "final_agent_response": refined_response,
                     "plan_complete": True,
+                    "awaiting_confirmation": False,
+                    "pending_hitl_stage": None,
+                    "pending_hitl_payload": None,
                 }
         return {
             "messages": [AIMessage(content=refined_response)],
             "final_response": refined_response,
             "final_agent_response": refined_response,
             "plan_complete": True,
+            "awaiting_confirmation": False,
+            "pending_hitl_stage": None,
+            "pending_hitl_payload": None,
         }
 
     def call_model(
@@ -3503,6 +3925,9 @@ async def create_supervisor_agent(
         selected_agents_context = (
             None if new_user_turn else _format_selected_agents_context(state)
         )
+        resolved_tools_context = (
+            None if new_user_turn else _format_resolved_tools_context(state)
+        )
         system_bits = [
             item
             for item in (
@@ -3511,6 +3936,7 @@ async def create_supervisor_agent(
                 route_context,
                 intent_context,
                 selected_agents_context,
+                resolved_tools_context,
             )
             if item
         ]
@@ -3535,6 +3961,7 @@ async def create_supervisor_agent(
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
             updates["resolved_intent"] = None
             updates["selected_agents"] = []
+            updates["resolved_tools_by_agent"] = {}
             updates["query_embedding"] = None
             updates["active_plan"] = []
             updates["plan_step_index"] = 0
@@ -3546,6 +3973,8 @@ async def create_supervisor_agent(
             updates["final_response"] = None
             updates["critic_decision"] = None
             updates["awaiting_confirmation"] = False
+            updates["pending_hitl_stage"] = None
+            updates["pending_hitl_payload"] = None
             updates["user_feedback"] = None
             updates["replan_count"] = 0
             updates["orchestration_phase"] = "select_agent"
@@ -3590,6 +4019,9 @@ async def create_supervisor_agent(
         selected_agents_context = (
             None if new_user_turn else _format_selected_agents_context(state)
         )
+        resolved_tools_context = (
+            None if new_user_turn else _format_resolved_tools_context(state)
+        )
         system_bits = [
             item
             for item in (
@@ -3598,6 +4030,7 @@ async def create_supervisor_agent(
                 route_context,
                 intent_context,
                 selected_agents_context,
+                resolved_tools_context,
             )
             if item
         ]
@@ -3622,6 +4055,7 @@ async def create_supervisor_agent(
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
             updates["resolved_intent"] = None
             updates["selected_agents"] = []
+            updates["resolved_tools_by_agent"] = {}
             updates["query_embedding"] = None
             updates["active_plan"] = []
             updates["plan_step_index"] = 0
@@ -3633,6 +4067,8 @@ async def create_supervisor_agent(
             updates["final_response"] = None
             updates["critic_decision"] = None
             updates["awaiting_confirmation"] = False
+            updates["pending_hitl_stage"] = None
+            updates["pending_hitl_payload"] = None
             updates["user_feedback"] = None
             updates["replan_count"] = 0
             updates["orchestration_phase"] = "select_agent"
@@ -4014,7 +4450,42 @@ async def create_supervisor_agent(
         updates["guard_parallel_preview"] = []
         return updates
 
-    def should_continue(state: SupervisorState, *, store=None):
+    def route_after_intent(state: SupervisorState, *, store=None):
+        if bool(state.get("awaiting_confirmation")):
+            stage = str(state.get("pending_hitl_stage") or "").strip().lower()
+            if stage == "planner":
+                return "planner_hitl_gate"
+            if stage == "execution":
+                return "execution_hitl_gate"
+            if stage == "synthesis":
+                return "synthesis_hitl"
+        phase = str(state.get("orchestration_phase") or "").strip().lower()
+        has_final = bool(
+            str(state.get("final_response") or state.get("final_agent_response") or "").strip()
+        )
+        if phase == "finalize" and has_final:
+            return "synthesis_hitl"
+        if phase in {"resolve_tools", "execute"}:
+            return "tool_resolver"
+        if phase in {"plan"}:
+            return "planner"
+        return "agent_resolver"
+
+    def planner_hitl_should_continue(state: SupervisorState, *, store=None):
+        awaiting = bool(state.get("awaiting_confirmation"))
+        stage = str(state.get("pending_hitl_stage") or "").strip().lower()
+        if awaiting and stage == "planner":
+            return END
+        return "tool_resolver"
+
+    def execution_hitl_should_continue(state: SupervisorState, *, store=None):
+        awaiting = bool(state.get("awaiting_confirmation"))
+        stage = str(state.get("pending_hitl_stage") or "").strip().lower()
+        if awaiting and stage == "execution":
+            return END
+        return "executor"
+
+    def executor_should_continue(state: SupervisorState, *, store=None):
         messages = state.get("messages") or []
         if not messages:
             return "critic"
@@ -4030,18 +4501,36 @@ async def create_supervisor_agent(
         ).strip()
         replan_count = int(state.get("replan_count") or 0)
         if final_response and decision in {"ok", "pass", "finalize"}:
-            return "synthesizer"
+            return "synthesis_hitl"
+        if decision == "replan" and replan_count < _MAX_REPLAN_ATTEMPTS:
+            return "planner"
         if decision == "needs_more" and replan_count < _MAX_REPLAN_ATTEMPTS:
-            return "agent_resolver"
+            return "tool_resolver"
         if final_response:
-            return "synthesizer"
-        return "agent_resolver"
+            return "synthesis_hitl"
+        return "planner"
+
+    def synthesis_hitl_should_continue(state: SupervisorState, *, store=None):
+        awaiting = bool(state.get("awaiting_confirmation"))
+        stage = str(state.get("pending_hitl_stage") or "").strip().lower()
+        if awaiting and stage == "synthesis":
+            return END
+        return "synthesizer"
 
     graph_builder = StateGraph(SupervisorState)
     graph_builder.add_node("resolve_intent", RunnableCallable(None, resolve_intent_node))
     graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
     graph_builder.add_node("planner", RunnableCallable(None, planner_node))
-    graph_builder.add_node("agent", RunnableCallable(call_model, acall_model))
+    graph_builder.add_node(
+        "planner_hitl_gate",
+        RunnableCallable(None, planner_hitl_gate_node),
+    )
+    graph_builder.add_node("tool_resolver", RunnableCallable(None, tool_resolver_node))
+    graph_builder.add_node(
+        "execution_hitl_gate",
+        RunnableCallable(None, execution_hitl_gate_node),
+    )
+    graph_builder.add_node("executor", RunnableCallable(call_model, acall_model))
     graph_builder.add_node("tools", tool_node)
     graph_builder.add_node("post_tools", RunnableCallable(None, post_tools))
     graph_builder.add_node(
@@ -4049,19 +4538,54 @@ async def create_supervisor_agent(
         RunnableCallable(None, orchestration_guard),
     )
     graph_builder.add_node("critic", RunnableCallable(None, critic_node))
+    graph_builder.add_node(
+        "synthesis_hitl",
+        RunnableCallable(None, synthesis_hitl_gate_node),
+    )
     graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
     graph_builder.set_entry_point("resolve_intent")
-    graph_builder.add_edge("resolve_intent", "agent_resolver")
+    graph_builder.add_conditional_edges(
+        "resolve_intent",
+        route_after_intent,
+        path_map=[
+            "agent_resolver",
+            "planner",
+            "planner_hitl_gate",
+            "tool_resolver",
+            "execution_hitl_gate",
+            "synthesis_hitl",
+        ],
+    )
     graph_builder.add_edge("agent_resolver", "planner")
-    graph_builder.add_edge("planner", "agent")
-    graph_builder.add_conditional_edges("agent", should_continue, path_map=["tools", "critic"])
+    graph_builder.add_edge("planner", "planner_hitl_gate")
+    graph_builder.add_conditional_edges(
+        "planner_hitl_gate",
+        planner_hitl_should_continue,
+        path_map=["tool_resolver", END],
+    )
+    graph_builder.add_edge("tool_resolver", "execution_hitl_gate")
+    graph_builder.add_conditional_edges(
+        "execution_hitl_gate",
+        execution_hitl_should_continue,
+        path_map=["executor", END],
+    )
+    graph_builder.add_conditional_edges(
+        "executor",
+        executor_should_continue,
+        path_map=["tools", "critic"],
+    )
     graph_builder.add_edge("tools", "post_tools")
     graph_builder.add_edge("post_tools", "orchestration_guard")
     graph_builder.add_edge("orchestration_guard", "critic")
     graph_builder.add_conditional_edges(
         "critic",
         critic_should_continue,
-        path_map=["synthesizer", "agent_resolver"],
+        path_map=["synthesis_hitl", "tool_resolver", "planner"],
+    )
+    graph_builder.add_conditional_edges(
+        "synthesis_hitl",
+        synthesis_hitl_should_continue,
+        path_map=["synthesizer", END],
     )
     graph_builder.add_edge("synthesizer", END)
 

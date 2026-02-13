@@ -52,13 +52,22 @@ Returnera strikt JSON:
 """
 
 
+DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT = """
+Du ar noden tool_resolver i supervisor-grafen.
+Uppgift:
+- Matcha plansteg och valda agenter till relevanta verktyg.
+- Prioritera fa men hogrelevanta verktyg per agent.
+- Hall dig till retrieval-resultat och hitta inte pa verktygs-id.
+"""
+
+
 DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT = """
 Du ar noden critic i supervisor-grafen.
 Bedom om aktuellt agentsvar ar tillrackligt for slutleverans.
 
 Returnera strikt JSON:
 {
-  "decision": "ok|needs_more",
+  "decision": "ok|needs_more|replan",
   "reason": "kort svensk motivering",
   "confidence": 0.0
 }
@@ -80,3 +89,22 @@ Returnera strikt JSON:
   "reason": "kort svensk motivering"
 }
 """
+
+
+DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE = (
+    "Jag har tagit fram en plan:\n{plan_preview}\n\nVill du att jag kor denna plan? "
+    "Svara ja eller nej."
+)
+
+
+DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE = (
+    "Jag ar redo att kora nasta steg:\n{step_preview}\n"
+    "Foreslagna verktyg: {tool_preview}\n\nVill du att jag kor detta steg? "
+    "Svara ja eller nej."
+)
+
+
+DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE = (
+    "Jag har ett utkast till svar:\n{response_preview}\n\nVill du att jag levererar detta nu? "
+    "Svara ja eller nej."
+)

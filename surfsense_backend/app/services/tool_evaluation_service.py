@@ -3672,6 +3672,14 @@ def _build_fallback_prompt_suggestion(
             "- Använd retrieval-resultat för dynamiskt val av kandidater innan körning.",
             "- Om aktuell agent inte kan lösa uppgiften eller frågan byter riktning: kör retrieve_agents igen innan nästa delegering.",
         ]
+    elif prompt_key == "supervisor.tool_resolver.system":
+        lines = [
+            "- Prioritera retrieval-förankrad tool-matchning per plansteg.",
+            "- Begränsa antalet föreslagna verktyg per agent till de mest relevanta.",
+            "- Undvik statiska endpoint-listor; använd retrieve_tools dynamiskt.",
+            "- Om verktygskandidater inte matchar uppgiften: kör retrieve_tools igen med förfinad intent.",
+            "- Håll output deterministisk och fokuserad på nästa exekverbara steg.",
+        ]
     elif prompt_key.startswith("tool."):
         lines = [
             "- Fokusera endast på detta endpoint-verktyg och ignorera irrelevanta verktyg.",
@@ -4004,6 +4012,16 @@ async def suggest_agent_prompt_improvements_for_api_input(
         if "agent.supervisor.system" in current_prompts:
             _append_failure(
                 "agent.supervisor.system",
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
+        if (
+            "supervisor.tool_resolver.system" in current_prompts
+            and (failed_plan or failed_api_input or result.get("passed_tool") is False)
+        ):
+            _append_failure(
+                "supervisor.tool_resolver.system",
                 result=result,
                 expected_tool=expected_tool,
                 selected_tool=selected_tool,
