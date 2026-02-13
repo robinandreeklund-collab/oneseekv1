@@ -749,12 +749,81 @@ def _safe_json(payload: Any) -> dict[str, Any]:
 _CRITIC_SNIPPET_RE = re.compile(
     r"\{\s*\"status\"\s*:\s*\"(?:ok|needs_more)\"[^}]*\}", re.DOTALL
 )
+_CRITIC_JSON_DECODER = json.JSONDecoder()
+_LINE_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
+_CITATION_TOKEN_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
+
+
+def _remove_inline_critic_payloads(text: str) -> tuple[str, bool]:
+    if not text:
+        return text, False
+    parts: list[str] = []
+    idx = 0
+    removed = False
+    while idx < len(text):
+        start = text.find("{", idx)
+        if start == -1:
+            parts.append(text[idx:])
+            break
+        parts.append(text[idx:start])
+        segment = text[start:]
+        try:
+            decoded, consumed = _CRITIC_JSON_DECODER.raw_decode(segment)
+        except ValueError:
+            parts.append(text[start : start + 1])
+            idx = start + 1
+            continue
+        status = (
+            str(decoded.get("status") or "").strip().lower()
+            if isinstance(decoded, dict)
+            else ""
+        )
+        if isinstance(decoded, dict) and status in {"ok", "needs_more"} and "reason" in decoded:
+            removed = True
+            idx = start + consumed
+            continue
+        parts.append(text[start : start + consumed])
+        idx = start + consumed
+    return "".join(parts), removed
+
+
+def _normalize_line_for_dedupe(line: str) -> str:
+    value = str(line or "").strip()
+    value = _LINE_BULLET_PREFIX_RE.sub("", value)
+    value = _CITATION_TOKEN_RE.sub("", value)
+    value = re.sub(r"\s+", " ", value).strip(" ,.;:-").lower()
+    return value
+
+
+def _dedupe_repeated_lines(text: str) -> str:
+    lines = text.splitlines()
+    if len(lines) < 4:
+        return text.strip()
+    seen: set[str] = set()
+    deduped: list[str] = []
+    duplicates = 0
+    for line in lines:
+        normalized = _normalize_line_for_dedupe(line)
+        if normalized and len(normalized) >= 24:
+            if normalized in seen:
+                duplicates += 1
+                continue
+            seen.add(normalized)
+        deduped.append(line)
+    result = "\n".join(deduped).strip()
+    if duplicates > 0:
+        result = re.sub(r"\n{3,}", "\n\n", result)
+    return result.strip()
 
 
 def _strip_critic_json(text: str) -> str:
     if not text:
         return text
     cleaned = _CRITIC_SNIPPET_RE.sub("", text)
+    cleaned, removed_inline = _remove_inline_critic_payloads(cleaned)
+    if cleaned != text or removed_inline:
+        cleaned = _dedupe_repeated_lines(cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.rstrip()
 
 

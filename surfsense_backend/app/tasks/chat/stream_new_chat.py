@@ -435,6 +435,80 @@ def _extract_assistant_text_from_event_output(output: Any) -> str:
     return ""
 
 
+_CRITIC_JSON_SNIPPET_RE = re.compile(
+    r"\{\s*\"status\"\s*:\s*\"(?:ok|needs_more)\"[^}]*\}",
+    re.DOTALL,
+)
+_CITATION_MARKER_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
+_REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
+_STREAM_JSON_DECODER = json.JSONDecoder()
+
+
+def _strip_inline_critic_payloads(text: str) -> tuple[str, bool]:
+    if not text:
+        return text, False
+    parts: list[str] = []
+    idx = 0
+    removed = False
+    while idx < len(text):
+        start = text.find("{", idx)
+        if start == -1:
+            parts.append(text[idx:])
+            break
+        parts.append(text[idx:start])
+        segment = text[start:]
+        try:
+            decoded, consumed = _STREAM_JSON_DECODER.raw_decode(segment)
+        except ValueError:
+            parts.append(text[start : start + 1])
+            idx = start + 1
+            continue
+        status = (
+            str(decoded.get("status") or "").strip().lower()
+            if isinstance(decoded, dict)
+            else ""
+        )
+        if isinstance(decoded, dict) and status in {"ok", "needs_more"} and "reason" in decoded:
+            removed = True
+            idx = start + consumed
+            continue
+        parts.append(text[start : start + consumed])
+        idx = start + consumed
+    return "".join(parts), removed
+
+
+def _normalize_line_for_dedupe(line: str) -> str:
+    value = str(line or "").strip()
+    value = _REPEAT_BULLET_PREFIX_RE.sub("", value)
+    value = _CITATION_MARKER_RE.sub("", value)
+    value = re.sub(r"\s+", " ", value).strip(" ,.;:-").lower()
+    return value
+
+
+def _clean_assistant_output_text(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = _CRITIC_JSON_SNIPPET_RE.sub("", text)
+    cleaned, removed_inline = _strip_inline_critic_payloads(cleaned)
+    lines = cleaned.splitlines()
+    if removed_inline or len(lines) > 3:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        duplicate_count = 0
+        for line in lines:
+            normalized = _normalize_line_for_dedupe(line)
+            if normalized and len(normalized) >= 24:
+                if normalized in seen:
+                    duplicate_count += 1
+                    continue
+                seen.add(normalized)
+            deduped.append(line)
+        if duplicate_count:
+            cleaned = "\n".join(deduped)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 async def stream_new_chat(
     user_query: str,
     search_space_id: int,
@@ -1206,15 +1280,31 @@ async def stream_new_chat(
             stripped_existing = accumulated_text.lstrip()
             if not stripped_existing:
                 return text
+            normalized_existing = _REPEAT_BULLET_PREFIX_RE.sub(
+                "", stripped_existing
+            ).lstrip()
             if not repeat_candidate:
-                if text.lstrip().startswith(stripped_existing[:10]):
+                normalized_incoming = _REPEAT_BULLET_PREFIX_RE.sub("", text).lstrip()
+                existing_probe = normalized_existing[:10]
+                incoming_probe = normalized_incoming[:10]
+                if (
+                    existing_probe
+                    and incoming_probe
+                    and (
+                        normalized_incoming.startswith(existing_probe)
+                        or normalized_existing.startswith(incoming_probe)
+                    )
+                ):
                     repeat_candidate = True
                 else:
                     return text
             repeat_buffer += text
             if len(repeat_buffer) < 60:
                 return ""
-            if stripped_existing.startswith(repeat_buffer[:60].lstrip()):
+            normalized_repeat = _REPEAT_BULLET_PREFIX_RE.sub(
+                "", repeat_buffer[:60]
+            ).lstrip()
+            if normalized_repeat and normalized_existing.startswith(normalized_repeat):
                 suppress_repeat = True
                 repeat_buffer = ""
                 return ""
@@ -1262,7 +1352,9 @@ async def stream_new_chat(
                         chain_output
                     )
                     if candidate_text:
-                        fallback_assistant_text = candidate_text
+                        fallback_assistant_text = _clean_assistant_output_text(
+                            candidate_text
+                        )
                 elif event_type == "on_chain_error":
                     trace_event = await trace_recorder.end_span(
                         span_id=run_id,
@@ -1308,7 +1400,9 @@ async def stream_new_chat(
                         model_output
                     )
                     if candidate_text:
-                        fallback_assistant_text = candidate_text
+                        fallback_assistant_text = _clean_assistant_output_text(
+                            candidate_text
+                        )
 
             # Handle chat model stream events (text streaming)
             if event_type == "on_chat_model_stream":
@@ -2671,7 +2765,9 @@ async def stream_new_chat(
                     event.get("data", {}).get("output")
                 )
                 if candidate_text:
-                    fallback_assistant_text = candidate_text
+                    fallback_assistant_text = _clean_assistant_output_text(
+                        candidate_text
+                    )
                 if current_text_id is not None:
                     yield streaming_service.format_text_end(current_text_id)
                     current_text_id = None
@@ -2684,6 +2780,7 @@ async def stream_new_chat(
             yield streaming_service.format_text_delta(current_text_id, repeat_buffer)
             accumulated_text += repeat_buffer
             repeat_buffer = ""
+        fallback_assistant_text = _clean_assistant_output_text(fallback_assistant_text)
         if not accumulated_text.strip() and fallback_assistant_text.strip():
             if current_text_id is None:
                 completion_event = complete_current_step()
