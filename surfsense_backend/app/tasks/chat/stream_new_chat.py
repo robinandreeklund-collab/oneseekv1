@@ -50,6 +50,7 @@ from app.agents.new_chat.dispatcher import (
 )
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.routing import Route, ROUTE_TOOL_SETS
+from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
 from app.agents.new_chat.supervisor_agent import create_supervisor_agent
 from app.agents.new_chat.supervisor_prompts import (
     DEFAULT_SUPERVISOR_PROMPT,
@@ -442,7 +443,7 @@ async def stream_new_chat(
     mentioned_surfsense_doc_ids: list[int] | None = None,
     checkpoint_id: str | None = None,
     needs_history_bootstrap: bool = False,
-    citation_instructions: str | None = None,
+    citation_instructions: str | bool | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat responses from the new SurfSense deep agent.
@@ -462,7 +463,10 @@ async def stream_new_chat(
         mentioned_document_ids: Optional list of document IDs mentioned with @ in the chat
         mentioned_surfsense_doc_ids: Optional list of SurfSense doc IDs mentioned with @ in the chat
         checkpoint_id: Optional checkpoint ID to rewind/fork from (for edit/reload operations)
-        citation_instructions: Optional explicit citation instructions injected into prompts.
+        citation_instructions:
+            - True: enable admin/default citation instructions.
+            - False/None: disable citation instruction injection.
+            - str: inject custom citation instructions.
 
     Yields:
         str: SSE formatted response strings
@@ -597,10 +601,22 @@ async def stream_new_chat(
         supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
 
-        explicit_citation_instructions = str(citation_instructions or "").strip()
-        citation_instructions_block = (
-            explicit_citation_instructions if explicit_citation_instructions else None
+        citation_prompt_default = resolve_prompt(
+            prompt_overrides,
+            "citation.instructions",
+            SURFSENSE_CITATION_INSTRUCTIONS,
         )
+        if isinstance(citation_instructions, bool):
+            citation_instructions_block = (
+                citation_prompt_default.strip() if citation_instructions else None
+            )
+        else:
+            explicit_citation_instructions = str(citation_instructions or "").strip()
+            citation_instructions_block = (
+                explicit_citation_instructions
+                if explicit_citation_instructions
+                else None
+            )
         citations_enabled = bool(citation_instructions_block)
         supervisor_prompt = resolve_prompt(
             prompt_overrides,

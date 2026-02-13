@@ -54,12 +54,20 @@ const AGENT_PROMPT_ORDER: Record<string, string[]> = {
 	action: ["system", "web", "media", "travel", "data"],
 };
 
-const SYSTEM_SECTION_ORDER = ["router", "supervisor", "worker", "compare", "other"];
+const SYSTEM_SECTION_ORDER = [
+	"router",
+	"supervisor",
+	"worker",
+	"compare",
+	"citations",
+	"other",
+];
 const SYSTEM_SECTION_LABELS: Record<string, string> = {
 	router: "Router",
 	supervisor: "Supervisor",
 	worker: "Workers",
 	compare: "Compare",
+	citations: "Citations",
 	other: "Övrigt",
 };
 
@@ -75,6 +83,7 @@ const SYSTEM_NODES = [
 	{ label: "Worker · Action", key: "agent.worker.action" },
 	{ label: "Compare · Analysis", key: "compare.analysis.system" },
 	{ label: "Compare · External", key: "compare.external.system" },
+	{ label: "Citation instructions", key: "citation.instructions" },
 ];
 
 const AGENT_NODES = [
@@ -207,6 +216,13 @@ export function AdminPromptsPage() {
 					item,
 					group: "system" as const,
 					section: "compare",
+				};
+			}
+			if (key.startsWith("citation.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "citations",
 				};
 			}
 			if (key.startsWith("agent.")) {

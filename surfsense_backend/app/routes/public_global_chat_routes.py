@@ -18,6 +18,7 @@ from app.agents.new_chat.llm_config import (
     load_llm_config_from_yaml,
 )
 from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CITATION_INSTRUCTIONS,
     SURFSENSE_SYSTEM_INSTRUCTIONS,
 )
 from app.agents.new_chat.tools.registry import get_tool_by_name, build_tools_async
@@ -111,7 +112,7 @@ def _build_tool_instructions(enabled_tools: list[str]) -> str:
 def _build_system_prompt(
     llm_config: dict | None,
     enabled_tools: list[str],
-    citation_instructions: str | None = None,
+    citation_instructions: str | bool | None = None,
 ) -> str:
     now = datetime.now(UTC).astimezone(UTC)
     resolved_today = now.date().isoformat()
@@ -139,7 +140,14 @@ def _build_system_prompt(
         ).strip()
 
     tool_instructions = _build_tool_instructions(enabled_tools)
-    explicit_citation_instructions = str(citation_instructions or "").strip()
+    if isinstance(citation_instructions, bool):
+        explicit_citation_instructions = (
+            SURFSENSE_CITATION_INSTRUCTIONS.strip()
+            if citation_instructions
+            else ""
+        )
+    else:
+        explicit_citation_instructions = str(citation_instructions or "").strip()
 
     parts = [
         part
