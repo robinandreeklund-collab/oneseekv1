@@ -74,6 +74,10 @@ _STATISTICS_PATTERNS = [
     r"\bmiljo\b",
     r"\bmiljö\b",
 ]
+_FOLLOWUP_CONTEXT_RE = re.compile(
+    r"\b(också|ocksa|även|aven|samma|där|dar|dit|den|det|dom|dem|denna|denne|kolla|fortsätt|fortsatt)\b",
+    re.IGNORECASE,
+)
 
 DEFAULT_ROUTE_SYSTEM_PROMPT = (
     "You are a routing classifier for SurfSense.\n"
@@ -114,6 +118,34 @@ def _normalize_route(value: str) -> Route | None:
     return None
 
 
+def _infer_rule_based_route(text: str) -> Route | None:
+    value = (text or "").strip()
+    if not value:
+        return None
+    if value.lower().startswith("/compare"):
+        return Route.COMPARE
+    if _GREETING_REGEX.match(value) and len(value) <= 20:
+        return Route.SMALLTALK
+    if _URL_REGEX.search(value) or _matches_any(_ACTION_PATTERNS, value):
+        return Route.ACTION
+    if _matches_any(_STATISTICS_PATTERNS, value):
+        return Route.STATISTICS
+    if _matches_any(_KNOWLEDGE_PATTERNS, value):
+        return Route.KNOWLEDGE
+    return None
+
+
+def _looks_context_dependent_followup(text: str) -> bool:
+    value = re.sub(r"\s+", " ", (text or "").strip().lower())
+    if not value:
+        return False
+    if len(value) <= 90 and _FOLLOWUP_CONTEXT_RE.search(value):
+        return True
+    if len(value) <= 70 and value.startswith(("kan du ", "kan ni ", "och ", "hur ", "vad ")):
+        return True
+    return False
+
+
 async def dispatch_route(
     user_query: str,
     llm,
@@ -121,36 +153,78 @@ async def dispatch_route(
     has_attachments: bool = False,
     has_mentions: bool = False,
     system_prompt_override: str | None = None,
+    conversation_history: list[dict[str, str]] | None = None,
 ) -> Route:
     text = (user_query or "").strip()
     if not text:
         return Route.SMALLTALK
 
-    if text.lower().startswith("/compare"):
-        return Route.COMPARE
+    explicit_route = _infer_rule_based_route(text)
+    if explicit_route:
+        return explicit_route
 
     if has_attachments or has_mentions:
         return Route.KNOWLEDGE
 
-    if _GREETING_REGEX.match(text) and len(text) <= 20:
-        return Route.SMALLTALK
-
-    if _URL_REGEX.search(text) or _matches_any(_ACTION_PATTERNS, text):
-        return Route.ACTION
-
-    if _matches_any(_STATISTICS_PATTERNS, text):
-        return Route.STATISTICS
-
-    if _matches_any(_KNOWLEDGE_PATTERNS, text):
-        return Route.KNOWLEDGE
+    safe_history = [
+        {
+            "role": str(item.get("role") or "").strip().lower(),
+            "content": str(item.get("content") or "").strip(),
+        }
+        for item in (conversation_history or [])
+        if isinstance(item, dict) and str(item.get("content") or "").strip()
+    ]
+    safe_history = safe_history[-8:]
+    previous_user_text = ""
+    for item in reversed(safe_history):
+        if item.get("role") == "user":
+            previous_user_text = item.get("content") or ""
+            if previous_user_text:
+                break
+    previous_route = _infer_rule_based_route(previous_user_text)
+    is_followup = _looks_context_dependent_followup(text)
+    if (
+        is_followup
+        and previous_route
+        and previous_route not in {Route.SMALLTALK, Route.COMPARE}
+    ):
+        # Global continuity rule: preserve prior route for context-dependent follow-ups.
+        return previous_route
 
     try:
         system_prompt = append_datetime_context(
             system_prompt_override or DEFAULT_ROUTE_SYSTEM_PROMPT
         )
+        routing_input = text
+        if safe_history:
+            history_lines = []
+            for item in safe_history:
+                role = item.get("role") or "unknown"
+                content = re.sub(r"\s+", " ", item.get("content") or "").strip()
+                if not content:
+                    continue
+                history_lines.append(f"{role}: {content[:220]}")
+            if history_lines:
+                routing_input = (
+                    f"<current_message>\n{text}\n</current_message>\n"
+                    "<recent_conversation>\n"
+                    + "\n".join(history_lines[-6:])
+                    + "\n</recent_conversation>\n"
+                    "Use recent conversation to interpret follow-up references."
+                )
         response = await llm.ainvoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=text)]
+            [SystemMessage(content=system_prompt), HumanMessage(content=routing_input)]
         )
-        return _normalize_route(str(getattr(response, "content", "") or "")) or Route.KNOWLEDGE
+        llm_route = _normalize_route(str(getattr(response, "content", "") or ""))
+        if llm_route:
+            if (
+                is_followup
+                and previous_route
+                and previous_route not in {Route.SMALLTALK, Route.COMPARE}
+                and llm_route in {Route.KNOWLEDGE, Route.ACTION}
+            ):
+                return previous_route
+            return llm_route
+        return previous_route or Route.KNOWLEDGE
     except Exception:
-        return Route.KNOWLEDGE
+        return previous_route or Route.KNOWLEDGE

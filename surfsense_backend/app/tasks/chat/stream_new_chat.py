@@ -77,7 +77,14 @@ from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PR
 from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
 from app.agents.new_chat.tools.display_image import extract_domain, generate_image_id
 from app.services.agent_prompt_service import get_global_prompt_overrides
-from app.db import ChatTraceSession, Document, SurfsenseDocsDocument, async_session_maker
+from app.db import (
+    ChatTraceSession,
+    Document,
+    NewChatMessage,
+    NewChatMessageRole,
+    SurfsenseDocsDocument,
+    async_session_maker,
+)
 from app.schemas.new_chat import ChatAttachment
 from app.services.chat_session_state_service import (
     clear_ai_responding,
@@ -100,6 +107,7 @@ from app.utils.context_metrics import (
     estimate_tokens_from_text,
     serialize_context_payload,
 )
+from app.utils.content_utils import bootstrap_history_from_db, extract_text_content
 
 AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (
@@ -206,7 +214,46 @@ def extract_auto_memories(text: str) -> list[tuple[str, str]]:
         unique.append((content, category))
 
     return unique[:3]
-from app.utils.content_utils import bootstrap_history_from_db
+
+
+def _normalize_router_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+async def _load_conversation_history_for_routing(
+    session: AsyncSession,
+    chat_id: int,
+    current_user_query: str,
+    *,
+    limit: int = 8,
+) -> list[dict[str, str]]:
+    result = await session.execute(
+        select(NewChatMessage)
+        .filter(NewChatMessage.thread_id == chat_id)
+        .order_by(NewChatMessage.created_at.desc())
+        .limit(limit + 3)
+    )
+    rows = list(result.scalars().all())
+    rows.reverse()
+    history: list[dict[str, str]] = []
+    for row in rows:
+        role = str(getattr(row.role, "value", row.role) or "").strip().lower()
+        if role not in {NewChatMessageRole.USER.value, NewChatMessageRole.ASSISTANT.value}:
+            continue
+        text = _normalize_router_text(extract_text_content(row.content))
+        if not text:
+            continue
+        if role == NewChatMessageRole.ASSISTANT.value:
+            text = _normalize_router_text(_clean_assistant_output_text(text))
+        if not text:
+            continue
+        history.append({"role": role, "content": text[:420]})
+    current_norm = _normalize_router_text(current_user_query).lower()
+    if history and history[-1].get("role") == NewChatMessageRole.USER.value:
+        trailing = _normalize_router_text(history[-1].get("content") or "").lower()
+        if trailing == current_norm:
+            history.pop()
+    return history[-limit:]
 
 
 
@@ -706,6 +753,14 @@ async def stream_new_chat(
         router_prompt = resolve_prompt(
             prompt_overrides, "router.top_level", DEFAULT_ROUTE_SYSTEM_PROMPT
         )
+        try:
+            routing_history = await _load_conversation_history_for_routing(
+                session,
+                chat_id,
+                raw_user_query,
+            )
+        except Exception:
+            routing_history = []
 
         route = await dispatch_route(
             raw_user_query,
@@ -713,6 +768,7 @@ async def stream_new_chat(
             has_attachments=bool(attachments),
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
             system_prompt_override=router_prompt,
+            conversation_history=routing_history,
         )
         if route == Route.COMPARE and compare_query:
             user_query = compare_query

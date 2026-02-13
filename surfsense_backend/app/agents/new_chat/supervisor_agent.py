@@ -2616,6 +2616,7 @@ async def create_supervisor_agent(
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
             updates["active_plan"] = []
             updates["plan_complete"] = False
+            updates["recent_agent_calls"] = []
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
             updates["orchestration_phase"] = "select_agent"
@@ -2672,6 +2673,7 @@ async def create_supervisor_agent(
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
             updates["active_plan"] = []
             updates["plan_complete"] = False
+            updates["recent_agent_calls"] = []
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
             updates["orchestration_phase"] = "select_agent"
@@ -2703,6 +2705,8 @@ async def create_supervisor_agent(
         latest_user_query = _latest_user_query(state.get("messages") or [])
 
         for message in reversed(state.get("messages") or []):
+            if isinstance(message, HumanMessage):
+                break
             if not isinstance(message, ToolMessage):
                 continue
             tool_name = message.name or ""
