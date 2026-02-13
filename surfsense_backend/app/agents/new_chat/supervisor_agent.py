@@ -30,6 +30,13 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
     DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
     DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
 )
+from app.agents.new_chat.supervisor_pipeline_prompts import (
+    DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+)
 from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
@@ -852,12 +859,22 @@ class SupervisorState(TypedDict, total=False):
     messages: Annotated[list[Any], add_messages]
     turn_id: Annotated[str | None, _replace]
     active_turn_id: Annotated[str | None, _replace]
+    resolved_intent: Annotated[dict[str, Any] | None, _replace]
+    selected_agents: Annotated[list[dict[str, Any]], _replace]
+    query_embedding: Annotated[list[float] | None, _replace]
     active_plan: Annotated[list[dict[str, Any]], _replace]
+    plan_step_index: Annotated[int | None, _replace]
     plan_complete: Annotated[bool, _replace]
+    step_results: Annotated[list[dict[str, Any]], _replace]
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
     route_hint: Annotated[str | None, _replace]
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
     final_agent_response: Annotated[str | None, _replace]
+    final_response: Annotated[str | None, _replace]
+    critic_decision: Annotated[str | None, _replace]
+    awaiting_confirmation: Annotated[bool | None, _replace]
+    user_feedback: Annotated[dict[str, Any] | None, _replace]
+    replan_count: Annotated[int | None, _replace]
     final_agent_name: Annotated[str | None, _replace]
     orchestration_phase: Annotated[str | None, _replace]
     agent_hops: Annotated[int | None, _replace]
@@ -867,6 +884,7 @@ class SupervisorState(TypedDict, total=False):
 
 _MAX_TOOL_CALLS_PER_TURN = 12
 _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
+_MAX_REPLAN_ATTEMPTS = 2
 
 
 def _count_tools_since_last_user(messages: list[Any]) -> int:
@@ -920,6 +938,42 @@ def _format_route_hint(state: dict[str, Any]) -> str | None:
     return f"<route_hint>{hint}</route_hint>"
 
 
+def _format_intent_context(state: dict[str, Any]) -> str | None:
+    intent = state.get("resolved_intent")
+    if not isinstance(intent, dict):
+        return None
+    intent_id = str(intent.get("intent_id") or "").strip()
+    route = str(intent.get("route") or "").strip()
+    reason = str(intent.get("reason") or "").strip()
+    if not (intent_id or route):
+        return None
+    lines = [f"intent_id={intent_id or 'unknown'}", f"route={route or 'unknown'}"]
+    if reason:
+        lines.append(f"reason={_truncate_for_prompt(reason, 180)}")
+    return "<resolved_intent>\n" + "\n".join(lines) + "\n</resolved_intent>"
+
+
+def _format_selected_agents_context(state: dict[str, Any]) -> str | None:
+    selected = state.get("selected_agents")
+    if not isinstance(selected, list) or not selected:
+        return None
+    lines: list[str] = []
+    for item in selected[:3]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        description = str(item.get("description") or "").strip()
+        if description:
+            lines.append(f"- {name}: {_truncate_for_prompt(description, 140)}")
+        else:
+            lines.append(f"- {name}")
+    if not lines:
+        return None
+    return "<selected_agents>\n" + "\n".join(lines) + "\n</selected_agents>"
+
+
 
 
 def _safe_json(payload: Any) -> dict[str, Any]:
@@ -931,6 +985,47 @@ def _safe_json(payload: Any) -> dict[str, Any]:
         return json.loads(payload)
     except (TypeError, ValueError):
         return {}
+
+
+def _extract_first_json_object(text: str) -> dict[str, Any]:
+    value = str(text or "").strip()
+    if not value:
+        return {}
+    direct = _safe_json(value)
+    if direct:
+        return direct
+    start = value.find("{")
+    if start < 0:
+        return {}
+    segment = value[start:]
+    try:
+        decoded, _ = _CRITIC_JSON_DECODER.raw_decode(segment)
+        if isinstance(decoded, dict):
+            return decoded
+    except Exception:
+        pass
+    for end in range(start + 1, min(len(value), start + 4000)):
+        if value[end : end + 1] != "}":
+            continue
+        candidate = value[start : end + 1]
+        parsed = _safe_json(candidate)
+        if parsed:
+            return parsed
+        try:
+            literal = ast.literal_eval(candidate)
+            if isinstance(literal, dict):
+                return literal
+        except Exception:
+            continue
+    return {}
+
+
+def _coerce_confidence(value: Any, default: float = 0.5) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return round(max(0.0, min(1.0, parsed)), 2)
 
 
 def _tool_call_name_index(messages: list[Any] | None) -> dict[str, str]:
@@ -1950,6 +2045,31 @@ async def create_supervisor_agent(
         "supervisor.trafik.enforcement.message",
         DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
     )
+    intent_resolver_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.intent_resolver.system",
+        DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    )
+    agent_resolver_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.agent_resolver.system",
+        DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    )
+    planner_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.planner.system",
+        DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    )
+    critic_gate_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.critic_gate.system",
+        DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    )
+    synthesizer_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.synthesizer.system",
+        DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    )
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
             name="knowledge-worker",
@@ -2289,6 +2409,30 @@ async def create_supervisor_agent(
         if definition.tool_id not in weather_tool_id_set
     ]
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
+    route_to_intent_id = {
+        "knowledge": "knowledge",
+        "action": "action",
+        "statistics": "statistics",
+        "compare": "compare",
+        "smalltalk": "smalltalk",
+    }
+
+    def _intent_from_route(route_value: str | None) -> dict[str, Any]:
+        normalized = _normalize_route_hint_value(route_value)
+        intent_id = route_to_intent_id.get(normalized, "knowledge")
+        return {
+            "intent_id": intent_id,
+            "route": normalized or "knowledge",
+            "reason": "Fallback baserad pa route_hint.",
+            "confidence": 0.5,
+        }
+
+    def _agent_payload(definition: AgentDefinition) -> dict[str, Any]:
+        return {
+            "name": definition.name,
+            "description": definition.description,
+            "keywords": list(definition.keywords or []),
+        }
 
     def _resolve_agent_name(
         requested_name: str,
@@ -2952,6 +3096,383 @@ async def create_supervisor_agent(
     llm_with_tools = llm.bind_tools(list(tool_registry.values()))
     tool_node = ToolNode(tool_registry.values())
 
+    async def resolve_intent_node(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        incoming_turn_id = str(state.get("turn_id") or "").strip()
+        active_turn_id = str(state.get("active_turn_id") or "").strip()
+        new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
+        if not new_user_turn and state.get("resolved_intent"):
+            return {}
+
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        route_hint = _normalize_route_hint_value(state.get("route_hint"))
+        candidates: list[dict[str, Any]] = []
+        for route_name, intent_id in route_to_intent_id.items():
+            candidates.append({"intent_id": intent_id, "route": route_name})
+        if route_hint:
+            candidates.sort(key=lambda item: 0 if item.get("route") == route_hint else 1)
+        candidate_ids = {
+            str(item.get("intent_id") or "").strip()
+            for item in candidates
+            if str(item.get("intent_id") or "").strip()
+        }
+
+        resolved = _intent_from_route(route_hint)
+        if latest_user_query:
+            prompt = append_datetime_context(intent_resolver_prompt_template)
+            resolver_input = json.dumps(
+                {
+                    "query": latest_user_query,
+                    "route_hint": route_hint,
+                    "intent_candidates": candidates,
+                },
+                ensure_ascii=True,
+            )
+            try:
+                message = await llm.ainvoke(
+                    [
+                        SystemMessage(content=prompt),
+                        HumanMessage(content=resolver_input),
+                    ]
+                )
+                parsed = _extract_first_json_object(
+                    str(getattr(message, "content", "") or "")
+                )
+                selected_intent = str(parsed.get("intent_id") or "").strip()
+                selected_route = _normalize_route_hint_value(parsed.get("route"))
+                if selected_intent and selected_intent in candidate_ids:
+                    resolved = {
+                        "intent_id": selected_intent,
+                        "route": selected_route
+                        or next(
+                            (
+                                str(item.get("route") or "")
+                                for item in candidates
+                                if str(item.get("intent_id") or "").strip()
+                                == selected_intent
+                            ),
+                            route_hint or "knowledge",
+                        ),
+                        "reason": str(parsed.get("reason") or "").strip()
+                        or "LLM intent_resolver valde intent.",
+                        "confidence": _coerce_confidence(parsed.get("confidence"), 0.5),
+                    }
+            except Exception:
+                pass
+
+        updates: SupervisorState = {
+            "resolved_intent": resolved,
+            "orchestration_phase": "select_agent",
+        }
+        if new_user_turn:
+            updates["active_plan"] = []
+            updates["plan_step_index"] = 0
+            updates["plan_complete"] = False
+            updates["step_results"] = []
+            updates["recent_agent_calls"] = []
+            updates["compare_outputs"] = []
+            updates["selected_agents"] = []
+            updates["final_agent_response"] = None
+            updates["final_response"] = None
+            updates["critic_decision"] = None
+            updates["awaiting_confirmation"] = False
+            updates["user_feedback"] = None
+            updates["replan_count"] = 0
+            updates["agent_hops"] = 0
+            updates["no_progress_runs"] = 0
+            updates["guard_parallel_preview"] = []
+            if incoming_turn_id:
+                updates["active_turn_id"] = incoming_turn_id
+        elif incoming_turn_id and not active_turn_id:
+            updates["active_turn_id"] = incoming_turn_id
+        return updates
+
+    async def resolve_agents_node(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        if not latest_user_query:
+            return {}
+        intent_data = state.get("resolved_intent") or {}
+        route_hint = _normalize_route_hint_value(
+            intent_data.get("route") or state.get("route_hint")
+        )
+        route_allowed = _route_allowed_agents(route_hint)
+        default_for_route = _route_default_agent(route_hint, route_allowed)
+        recent_calls = state.get("recent_agent_calls") or []
+        recent_agents = [
+            str(item.get("agent") or "").strip()
+            for item in recent_calls[-3:]
+            if isinstance(item, dict) and str(item.get("agent") or "").strip()
+        ]
+        selected = _smart_retrieve_agents(
+            latest_user_query,
+            agent_definitions=agent_definitions,
+            recent_agents=recent_agents,
+            limit=3,
+        )
+        if route_allowed:
+            filtered = [agent for agent in selected if agent.name in route_allowed]
+            if filtered:
+                selected = filtered
+            elif default_for_route in agent_by_name:
+                selected = [agent_by_name[default_for_route]]
+        selected_payload = [_agent_payload(agent) for agent in selected]
+        if not selected_payload and default_for_route in agent_by_name:
+            selected_payload = [_agent_payload(agent_by_name[default_for_route])]
+
+        prompt = append_datetime_context(agent_resolver_prompt_template)
+        resolver_input = json.dumps(
+            {
+                "query": latest_user_query,
+                "resolved_intent": intent_data if isinstance(intent_data, dict) else {},
+                "agent_candidates": selected_payload,
+            },
+            ensure_ascii=True,
+        )
+        try:
+            message = await llm.ainvoke(
+                [
+                    SystemMessage(content=prompt),
+                    HumanMessage(content=resolver_input),
+                ]
+            )
+            parsed = _extract_first_json_object(str(getattr(message, "content", "") or ""))
+            requested = parsed.get("selected_agents")
+            if isinstance(requested, list) and requested:
+                by_name = {
+                    str(item.get("name") or "").strip(): item
+                    for item in selected_payload
+                    if isinstance(item, dict)
+                }
+                ordered: list[dict[str, Any]] = []
+                for name in requested:
+                    normalized = str(name or "").strip()
+                    if normalized and normalized in by_name:
+                        ordered.append(by_name[normalized])
+                if ordered:
+                    selected_payload = ordered[:3]
+        except Exception:
+            pass
+        return {
+            "selected_agents": selected_payload[:3],
+            "orchestration_phase": "plan",
+        }
+
+    async def planner_node(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        selected_agents = [
+            item
+            for item in (state.get("selected_agents") or [])
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        if not latest_user_query:
+            return {"orchestration_phase": "execute"}
+
+        current_plan = state.get("active_plan") or []
+        if current_plan and not state.get("plan_complete") and not state.get("critic_decision"):
+            return {"orchestration_phase": "execute"}
+
+        prompt = append_datetime_context(planner_prompt_template)
+        planner_input = json.dumps(
+            {
+                "query": latest_user_query,
+                "resolved_intent": state.get("resolved_intent") or {},
+                "selected_agents": selected_agents,
+                "current_plan": current_plan,
+            },
+            ensure_ascii=True,
+        )
+        new_plan: list[dict[str, Any]] = []
+        try:
+            message = await llm.ainvoke(
+                [
+                    SystemMessage(content=prompt),
+                    HumanMessage(content=planner_input),
+                ]
+            )
+            parsed = _extract_first_json_object(str(getattr(message, "content", "") or ""))
+            steps = parsed.get("steps")
+            if isinstance(steps, list):
+                for index, step in enumerate(steps[:4], start=1):
+                    if isinstance(step, dict):
+                        content = str(step.get("content") or "").strip()
+                        if not content:
+                            continue
+                        step_id = str(step.get("id") or f"step-{index}").strip()
+                        status = str(step.get("status") or "pending").strip().lower()
+                        if status not in {"pending", "in_progress", "completed", "cancelled"}:
+                            status = "pending"
+                        new_plan.append(
+                            {
+                                "id": step_id,
+                                "content": content,
+                                "status": status,
+                            }
+                        )
+        except Exception:
+            pass
+
+        if not new_plan:
+            fallback_agent = (
+                str(selected_agents[0].get("name") or "").strip()
+                if selected_agents
+                else "agent"
+            )
+            new_plan = [
+                {
+                    "id": "step-1",
+                    "content": f"Delegara huvuduppgiften till {fallback_agent}",
+                    "status": "pending",
+                }
+            ]
+        return {
+            "active_plan": new_plan,
+            "plan_step_index": 0,
+            "plan_complete": False,
+            "orchestration_phase": "execute",
+            "critic_decision": None,
+        }
+
+    async def critic_node(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        final_response = str(
+            state.get("final_agent_response") or state.get("final_response") or ""
+        ).strip()
+        if not final_response:
+            replan_count = int(state.get("replan_count") or 0)
+            if replan_count >= _MAX_REPLAN_ATTEMPTS:
+                fallback = _render_guard_message(
+                    loop_guard_template,
+                    list(state.get("guard_parallel_preview") or [])[:3],
+                )
+                if not fallback:
+                    fallback = _render_guard_message(
+                        DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+                        list(state.get("guard_parallel_preview") or [])[:3],
+                    )
+                return {
+                    "critic_decision": "ok",
+                    "final_response": fallback,
+                    "final_agent_response": fallback,
+                    "final_agent_name": "supervisor",
+                    "orchestration_phase": "finalize",
+                }
+            return {
+                "critic_decision": "needs_more",
+                "replan_count": replan_count + 1,
+                "orchestration_phase": "select_agent",
+            }
+
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        prompt = append_datetime_context(critic_gate_prompt_template)
+        critic_input = json.dumps(
+            {
+                "query": latest_user_query,
+                "resolved_intent": state.get("resolved_intent") or {},
+                "active_plan": state.get("active_plan") or [],
+                "final_agent_name": state.get("final_agent_name"),
+                "final_response": final_response,
+            },
+            ensure_ascii=True,
+        )
+        decision = "ok"
+        try:
+            message = await llm.ainvoke(
+                [SystemMessage(content=prompt), HumanMessage(content=critic_input)]
+            )
+            parsed = _extract_first_json_object(str(getattr(message, "content", "") or ""))
+            parsed_decision = str(parsed.get("decision") or "").strip().lower()
+            if parsed_decision in {"ok", "needs_more"}:
+                decision = parsed_decision
+        except Exception:
+            decision = "ok"
+
+        replan_count = int(state.get("replan_count") or 0)
+        if decision == "needs_more" and replan_count < _MAX_REPLAN_ATTEMPTS:
+            return {
+                "critic_decision": "needs_more",
+                "final_agent_response": None,
+                "final_response": None,
+                "replan_count": replan_count + 1,
+                "orchestration_phase": "select_agent",
+            }
+        return {
+            "critic_decision": "ok",
+            "final_response": final_response,
+            "orchestration_phase": "finalize",
+        }
+
+    async def synthesizer_node(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        source_response = str(
+            state.get("final_response") or state.get("final_agent_response") or ""
+        ).strip()
+        if not source_response:
+            return {}
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        prompt = append_datetime_context(synthesizer_prompt_template)
+        synth_input = json.dumps(
+            {
+                "query": latest_user_query,
+                "response": source_response,
+                "resolved_intent": state.get("resolved_intent") or {},
+            },
+            ensure_ascii=True,
+        )
+        refined_response = source_response
+        try:
+            message = await llm.ainvoke(
+                [SystemMessage(content=prompt), HumanMessage(content=synth_input)]
+            )
+            parsed = _extract_first_json_object(str(getattr(message, "content", "") or ""))
+            candidate = str(parsed.get("response") or "").strip()
+            if candidate:
+                refined_response = _strip_critic_json(candidate)
+        except Exception:
+            refined_response = source_response
+
+        messages = list(state.get("messages") or [])
+        last_message = messages[-1] if messages else None
+        if isinstance(last_message, AIMessage):
+            if str(getattr(last_message, "content", "") or "").strip() == refined_response:
+                return {
+                    "final_response": refined_response,
+                    "final_agent_response": refined_response,
+                    "plan_complete": True,
+                }
+        return {
+            "messages": [AIMessage(content=refined_response)],
+            "final_response": refined_response,
+            "final_agent_response": refined_response,
+            "plan_complete": True,
+        }
+
     def call_model(
         state: SupervisorState,
         config: dict | None = None,
@@ -2959,7 +3480,7 @@ async def create_supervisor_agent(
         store=None,
         **kwargs,
     ) -> SupervisorState:
-        final_response = state.get("final_agent_response")
+        final_response = state.get("final_agent_response") or state.get("final_response")
         messages_state = state.get("messages") or []
         last_message = messages_state[-1] if messages_state else None
         incoming_turn_id = str(state.get("turn_id") or "").strip()
@@ -2978,8 +3499,20 @@ async def create_supervisor_agent(
         plan_context = None if new_user_turn else _format_plan_context(state)
         recent_context = None if new_user_turn else _format_recent_calls(state)
         route_context = _format_route_hint(state)
+        intent_context = None if new_user_turn else _format_intent_context(state)
+        selected_agents_context = (
+            None if new_user_turn else _format_selected_agents_context(state)
+        )
         system_bits = [
-            item for item in (plan_context, recent_context, route_context) if item
+            item
+            for item in (
+                plan_context,
+                recent_context,
+                route_context,
+                intent_context,
+                selected_agents_context,
+            )
+            if item
         ]
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
@@ -3000,11 +3533,21 @@ async def create_supervisor_agent(
         updates: SupervisorState = {"messages": [response]}
         if new_user_turn:
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
+            updates["resolved_intent"] = None
+            updates["selected_agents"] = []
+            updates["query_embedding"] = None
             updates["active_plan"] = []
+            updates["plan_step_index"] = 0
             updates["plan_complete"] = False
+            updates["step_results"] = []
             updates["recent_agent_calls"] = []
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
+            updates["final_response"] = None
+            updates["critic_decision"] = None
+            updates["awaiting_confirmation"] = False
+            updates["user_feedback"] = None
+            updates["replan_count"] = 0
             updates["orchestration_phase"] = "select_agent"
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
@@ -3015,6 +3558,7 @@ async def create_supervisor_agent(
             updates["active_turn_id"] = incoming_turn_id
         if final_response and new_user_turn:
             updates["final_agent_response"] = None
+            updates["final_response"] = None
         return updates
 
     async def acall_model(
@@ -3024,7 +3568,7 @@ async def create_supervisor_agent(
         store=None,
         **kwargs,
     ) -> SupervisorState:
-        final_response = state.get("final_agent_response")
+        final_response = state.get("final_agent_response") or state.get("final_response")
         messages_state = state.get("messages") or []
         last_message = messages_state[-1] if messages_state else None
         incoming_turn_id = str(state.get("turn_id") or "").strip()
@@ -3042,8 +3586,20 @@ async def create_supervisor_agent(
         plan_context = None if new_user_turn else _format_plan_context(state)
         recent_context = None if new_user_turn else _format_recent_calls(state)
         route_context = _format_route_hint(state)
+        intent_context = None if new_user_turn else _format_intent_context(state)
+        selected_agents_context = (
+            None if new_user_turn else _format_selected_agents_context(state)
+        )
         system_bits = [
-            item for item in (plan_context, recent_context, route_context) if item
+            item
+            for item in (
+                plan_context,
+                recent_context,
+                route_context,
+                intent_context,
+                selected_agents_context,
+            )
+            if item
         ]
         if system_bits:
             messages = [SystemMessage(content="\n".join(system_bits))] + messages
@@ -3064,11 +3620,21 @@ async def create_supervisor_agent(
         updates: SupervisorState = {"messages": [response]}
         if new_user_turn:
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
+            updates["resolved_intent"] = None
+            updates["selected_agents"] = []
+            updates["query_embedding"] = None
             updates["active_plan"] = []
+            updates["plan_step_index"] = 0
             updates["plan_complete"] = False
+            updates["step_results"] = []
             updates["recent_agent_calls"] = []
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
+            updates["final_response"] = None
+            updates["critic_decision"] = None
+            updates["awaiting_confirmation"] = False
+            updates["user_feedback"] = None
+            updates["replan_count"] = 0
             updates["orchestration_phase"] = "select_agent"
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
@@ -3079,6 +3645,7 @@ async def create_supervisor_agent(
             updates["active_turn_id"] = incoming_turn_id
         if final_response and new_user_turn:
             updates["final_agent_response"] = None
+            updates["final_response"] = None
         return updates
 
     async def post_tools(
@@ -3095,6 +3662,8 @@ async def create_supervisor_agent(
         plan_update: list[dict[str, Any]] | None = None
         plan_complete: bool | None = None
         last_call_payload: dict[str, Any] | None = None
+        route_hint = _normalize_route_hint_value(state.get("route_hint"))
+        latest_user_query = _latest_user_query(state.get("messages") or [])
         messages = list(state.get("messages") or [])
         tool_call_index = _tool_call_name_index(messages)
 
@@ -3150,6 +3719,7 @@ async def create_supervisor_agent(
                             agent_hops=int(state.get("agent_hops") or 0),
                         ):
                             updates["final_agent_response"] = cleaned_response
+                            updates["final_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
                             updates["orchestration_phase"] = "finalize"
                     elif payload.get("response"):
@@ -3166,6 +3736,7 @@ async def create_supervisor_agent(
                             agent_hops=int(state.get("agent_hops") or 0),
                         ):
                             updates["final_agent_response"] = cleaned_response
+                            updates["final_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
                             updates["orchestration_phase"] = "finalize"
             elif tool_name == "call_agents_parallel":
@@ -3217,6 +3788,17 @@ async def create_supervisor_agent(
             updates["plan_complete"] = plan_complete
         if recent_updates:
             updates["recent_agent_calls"] = recent_updates
+            existing_steps = [
+                item
+                for item in (state.get("step_results") or [])
+                if isinstance(item, dict)
+            ]
+            merged_steps = (existing_steps + recent_updates)[-12:]
+            updates["step_results"] = merged_steps
+            updates["plan_step_index"] = min(
+                len(merged_steps),
+                len(state.get("active_plan") or []),
+            )
         if compare_updates:
             updates["compare_outputs"] = compare_updates
         updates["guard_parallel_preview"] = parallel_preview[:3]
@@ -3315,6 +3897,7 @@ async def create_supervisor_agent(
                 agent_hops=agent_hops,
             ):
                 updates["final_agent_response"] = last_response
+                updates["final_response"] = last_response
                 updates["final_agent_name"] = (
                     str(last_entry.get("agent") or "").strip() or "agent"
                 )
@@ -3327,6 +3910,7 @@ async def create_supervisor_agent(
             best = _best_actionable_entry(call_entries)
             if best:
                 updates["final_agent_response"] = best[0]
+                updates["final_response"] = best[0]
                 updates["final_agent_name"] = best[1]
                 updates["orchestration_phase"] = "finalize"
             else:
@@ -3337,6 +3921,7 @@ async def create_supervisor_agent(
                         parallel_preview,
                     )
                 updates["final_agent_response"] = rendered
+                updates["final_response"] = rendered
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
                 updates["orchestration_phase"] = "finalize"
@@ -3363,6 +3948,7 @@ async def create_supervisor_agent(
                         parallel_preview,
                     )
                 updates["final_agent_response"] = rendered
+                updates["final_response"] = rendered
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
                 updates["orchestration_phase"] = "finalize"
@@ -3371,6 +3957,7 @@ async def create_supervisor_agent(
             best = _best_actionable_entry(call_entries)
             if best:
                 updates["final_agent_response"] = best[0]
+                updates["final_response"] = best[0]
                 updates["final_agent_name"] = best[1]
             else:
                 rendered = _render_guard_message(
@@ -3383,6 +3970,7 @@ async def create_supervisor_agent(
                         parallel_preview[:3],
                     )
                 updates["final_agent_response"] = rendered
+                updates["final_response"] = rendered
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
             updates["orchestration_phase"] = "finalize"
@@ -3403,6 +3991,7 @@ async def create_supervisor_agent(
                         parallel_preview[:3],
                     )
                 updates["final_agent_response"] = rendered
+                updates["final_response"] = rendered
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
                 updates["orchestration_phase"] = "finalize"
@@ -3428,13 +4017,30 @@ async def create_supervisor_agent(
     def should_continue(state: SupervisorState, *, store=None):
         messages = state.get("messages") or []
         if not messages:
-            return END
+            return "critic"
         last_message = messages[-1]
         if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
             return "tools"
-        return END
+        return "critic"
+
+    def critic_should_continue(state: SupervisorState, *, store=None):
+        decision = str(state.get("critic_decision") or "").strip().lower()
+        final_response = str(
+            state.get("final_response") or state.get("final_agent_response") or ""
+        ).strip()
+        replan_count = int(state.get("replan_count") or 0)
+        if final_response and decision in {"ok", "pass", "finalize"}:
+            return "synthesizer"
+        if decision == "needs_more" and replan_count < _MAX_REPLAN_ATTEMPTS:
+            return "agent_resolver"
+        if final_response:
+            return "synthesizer"
+        return "agent_resolver"
 
     graph_builder = StateGraph(SupervisorState)
+    graph_builder.add_node("resolve_intent", RunnableCallable(None, resolve_intent_node))
+    graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
+    graph_builder.add_node("planner", RunnableCallable(None, planner_node))
     graph_builder.add_node("agent", RunnableCallable(call_model, acall_model))
     graph_builder.add_node("tools", tool_node)
     graph_builder.add_node("post_tools", RunnableCallable(None, post_tools))
@@ -3442,10 +4048,21 @@ async def create_supervisor_agent(
         "orchestration_guard",
         RunnableCallable(None, orchestration_guard),
     )
-    graph_builder.set_entry_point("agent")
-    graph_builder.add_conditional_edges("agent", should_continue, path_map=["tools", END])
+    graph_builder.add_node("critic", RunnableCallable(None, critic_node))
+    graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
+    graph_builder.set_entry_point("resolve_intent")
+    graph_builder.add_edge("resolve_intent", "agent_resolver")
+    graph_builder.add_edge("agent_resolver", "planner")
+    graph_builder.add_edge("planner", "agent")
+    graph_builder.add_conditional_edges("agent", should_continue, path_map=["tools", "critic"])
     graph_builder.add_edge("tools", "post_tools")
     graph_builder.add_edge("post_tools", "orchestration_guard")
-    graph_builder.add_edge("orchestration_guard", "agent")
+    graph_builder.add_edge("orchestration_guard", "critic")
+    graph_builder.add_conditional_edges(
+        "critic",
+        critic_should_continue,
+        path_map=["synthesizer", "agent_resolver"],
+    )
+    graph_builder.add_edge("synthesizer", END)
 
     return graph_builder.compile(checkpointer=checkpointer, name="supervisor-agent")

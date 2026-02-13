@@ -2360,6 +2360,7 @@ export function ToolSettingsPage() {
       "question": "Fråga...",
       "difficulty": "medel",
       "expected": {
+        "intent": "action",
         "route": "action",
         "sub_route": "travel",
         "agent": "weather",
@@ -2385,6 +2386,7 @@ export function ToolSettingsPage() {
       "question": "Fråga...",
       "difficulty": "svår",
       "expected": {
+        "intent": "action",
         "route": "action",
         "sub_route": "travel",
         "agent": "weather",
@@ -3009,7 +3011,7 @@ export function ToolSettingsPage() {
 								</div>
 								{showEvalJsonInput ? (
 									<Textarea
-										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","difficulty":"lätt","expected":{"route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","tool:smhi_weather"]}}]}'
+										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","difficulty":"lätt","expected":{"intent":"action","route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","tool:smhi_weather"]}}]}'
 										value={evalInput}
 										onChange={(e) => setEvalInput(e.target.value)}
 										rows={12}
@@ -3065,7 +3067,7 @@ export function ToolSettingsPage() {
 								</div>
 								{showHoldoutJsonInput ? (
 									<Textarea
-										placeholder='{"tests":[{"id":"h1","question":"...","difficulty":"medel","expected":{"route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","field:city"],"required_fields":["city","date"]}}]}'
+										placeholder='{"tests":[{"id":"h1","question":"...","difficulty":"medel","expected":{"intent":"action","route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","field:city"],"required_fields":["city","date"]}}]}'
 										value={holdoutInput}
 										onChange={(e) => setHoldoutInput(e.target.value)}
 										rows={8}
@@ -3293,6 +3295,16 @@ export function ToolSettingsPage() {
 												? "-"
 												: `${(
 														evaluationResult.metrics.gated_success_rate * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Intent accuracy</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.metrics.intent_accuracy == null
+												? "-"
+												: `${(
+														evaluationResult.metrics.intent_accuracy * 100
 													).toFixed(1)}%`}
 										</p>
 									</div>
@@ -3915,6 +3927,72 @@ export function ToolSettingsPage() {
 									)}
 								</CardContent>
 							</Card>
+
+							<Card>
+								<CardHeader>
+									<CardTitle>Steg 2G: Intent-förslag (metadata + prompt)</CardTitle>
+									<CardDescription>
+										Förslag för intent-definitioner och intent_resolver-prompt baserat
+										på missad intent-match.
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-3">
+									{evaluationResult.intent_suggestions.length === 0 ? (
+										<p className="text-sm text-muted-foreground">
+											Inga intent-förslag för denna run.
+										</p>
+									) : (
+										evaluationResult.intent_suggestions.map((suggestion) => (
+											<div
+												key={`intent-suggestion-${suggestion.intent_id}`}
+												className="rounded border p-3 space-y-2"
+											>
+												<div className="flex items-center gap-2">
+													<Badge variant="secondary">{suggestion.intent_id}</Badge>
+													<Badge variant="outline">
+														{suggestion.failed_test_ids.length} fail-case(s)
+													</Badge>
+												</div>
+												<p className="text-xs text-muted-foreground">
+													{suggestion.rationale}
+												</p>
+												<div className="grid gap-3 md:grid-cols-2">
+													<div className="rounded bg-muted/50 p-2">
+														<p className="text-xs font-medium mb-1">Nuvarande intent</p>
+														<pre className="text-[11px] whitespace-pre-wrap break-words">
+															{JSON.stringify(suggestion.current_definition, null, 2)}
+														</pre>
+													</div>
+													<div className="rounded bg-muted/50 p-2">
+														<p className="text-xs font-medium mb-1">Föreslagen intent</p>
+														<pre className="text-[11px] whitespace-pre-wrap break-words">
+															{JSON.stringify(suggestion.proposed_definition, null, 2)}
+														</pre>
+													</div>
+												</div>
+												{suggestion.prompt_key && (
+													<div className="grid gap-3 md:grid-cols-2">
+														<div className="rounded bg-muted/50 p-2">
+															<p className="text-xs font-medium mb-1">
+																Nuvarande prompt ({suggestion.prompt_key})
+															</p>
+															<pre className="text-[11px] whitespace-pre-wrap break-words">
+																{suggestion.current_prompt ?? "-"}
+															</pre>
+														</div>
+														<div className="rounded bg-muted/50 p-2">
+															<p className="text-xs font-medium mb-1">Föreslagen prompt</p>
+															<pre className="text-[11px] whitespace-pre-wrap break-words">
+																{suggestion.proposed_prompt ?? "-"}
+															</pre>
+														</div>
+													</div>
+												)}
+											</div>
+										))
+									)}
+								</CardContent>
+							</Card>
 						</>
 					)}
 
@@ -3944,6 +4022,16 @@ export function ToolSettingsPage() {
 												? "-"
 												: `${(
 														apiInputEvaluationResult.metrics.gated_success_rate * 100
+													).toFixed(1)}%`}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">Intent accuracy</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.metrics.intent_accuracy == null
+												? "-"
+												: `${(
+														apiInputEvaluationResult.metrics.intent_accuracy * 100
 													).toFixed(1)}%`}
 										</p>
 									</div>
@@ -4521,6 +4609,54 @@ export function ToolSettingsPage() {
 												);
 											})}
 										</div>
+									)}
+								</CardContent>
+							</Card>
+
+							<Card>
+								<CardHeader>
+									<CardTitle>Steg 3E: Intent-förslag (metadata + prompt)</CardTitle>
+									<CardDescription>
+										Intentförslag från API Input-körningen för att minska fel tidigt i
+										pipelinen.
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-3">
+									{apiInputEvaluationResult.intent_suggestions.length === 0 ? (
+										<p className="text-sm text-muted-foreground">
+											Inga intent-förslag för denna run.
+										</p>
+									) : (
+										apiInputEvaluationResult.intent_suggestions.map((suggestion) => (
+											<div
+												key={`api-intent-suggestion-${suggestion.intent_id}`}
+												className="rounded border p-3 space-y-2"
+											>
+												<div className="flex items-center gap-2">
+													<Badge variant="secondary">{suggestion.intent_id}</Badge>
+													<Badge variant="outline">
+														{suggestion.failed_test_ids.length} fail-case(s)
+													</Badge>
+												</div>
+												<p className="text-xs text-muted-foreground">
+													{suggestion.rationale}
+												</p>
+												<div className="grid gap-3 md:grid-cols-2">
+													<div className="rounded bg-muted/50 p-2">
+														<p className="text-xs font-medium mb-1">Nuvarande intent</p>
+														<pre className="text-[11px] whitespace-pre-wrap break-words">
+															{JSON.stringify(suggestion.current_definition, null, 2)}
+														</pre>
+													</div>
+													<div className="rounded bg-muted/50 p-2">
+														<p className="text-xs font-medium mb-1">Föreslagen intent</p>
+														<pre className="text-[11px] whitespace-pre-wrap break-words">
+															{JSON.stringify(suggestion.proposed_definition, null, 2)}
+														</pre>
+													</div>
+												</div>
+											</div>
+										))
 									)}
 								</CardContent>
 							</Card>

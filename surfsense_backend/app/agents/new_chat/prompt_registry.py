@@ -28,6 +28,13 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
     DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
     DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
 )
+from app.agents.new_chat.supervisor_pipeline_prompts import (
+    DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+)
 from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
 from app.agents.new_chat.system_prompt import SURFSENSE_SYSTEM_INSTRUCTIONS
 from app.agents.new_chat.trafik_prompts import DEFAULT_TRAFFIC_SYSTEM_PROMPT
@@ -146,6 +153,36 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
             "Extra instruction injected when trafik agent must retry with proper trafikverket tool usage."
         ),
         default_prompt=DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.intent_resolver.system",
+        label="Supervisor intent resolver prompt",
+        description="Prompt for intent_resolver node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.agent_resolver.system",
+        label="Supervisor agent resolver prompt",
+        description="Prompt for agent_resolver node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.planner.system",
+        label="Supervisor planner prompt",
+        description="Prompt for planner node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.critic_gate.system",
+        label="Supervisor critic gate prompt",
+        description="Prompt for critic node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.synthesizer.system",
+        label="Supervisor synthesizer prompt",
+        description="Prompt for synthesizer node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     ),
     PromptDefinition(
         key="agent.worker.knowledge",

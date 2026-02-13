@@ -697,9 +697,36 @@ async def _dispatch_route_from_start(
     llm,
     prompt_overrides: dict[str, str] | None = None,
     intent_definitions: list[dict[str, Any]] | None = None,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str | None, dict[str, Any]]:
+    def _fallback_intent_id(route_value: str | None) -> str | None:
+        mapping = {
+            Route.KNOWLEDGE.value: "knowledge",
+            Route.ACTION.value: "action",
+            Route.STATISTICS.value: "statistics",
+            Route.COMPARE.value: "compare",
+            Route.SMALLTALK.value: "smalltalk",
+        }
+        return mapping.get(_normalize_route_value(route_value))
+
+    def _extract_intent_id(route_decision: dict[str, Any], route_value: str | None) -> str | None:
+        if isinstance(route_decision, dict):
+            reason = str(route_decision.get("reason") or "").strip()
+            if reason and ":" in reason:
+                prefix, _, value = reason.partition(":")
+                if prefix.strip().lower().startswith("intent") and value.strip():
+                    return value.strip().lower()
+            candidates = route_decision.get("candidates")
+            if isinstance(candidates, list):
+                for candidate in candidates:
+                    if not isinstance(candidate, dict):
+                        continue
+                    intent_id = str(candidate.get("intent_id") or "").strip().lower()
+                    if intent_id:
+                        return intent_id
+        return _fallback_intent_id(route_value)
+
     overrides = prompt_overrides or {}
-    selected_route, _route_decision = await dispatch_route_with_trace(
+    selected_route, route_decision = await dispatch_route_with_trace(
         question,
         llm,
         has_attachments=False,
@@ -738,7 +765,56 @@ async def _dispatch_route_from_start(
             if hasattr(knowledge_route, "value")
             else _normalize_sub_route_value(knowledge_route)
         )
-    return _normalize_route_value(route_value), _normalize_sub_route_value(selected_sub_route)
+    normalized_route = _normalize_route_value(route_value)
+    normalized_sub_route = _normalize_sub_route_value(selected_sub_route)
+    selected_intent = _extract_intent_id(route_decision, normalized_route)
+    return normalized_route, normalized_sub_route, selected_intent, (
+        route_decision if isinstance(route_decision, dict) else {}
+    )
+
+
+def _normalize_intent_id(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    return text or None
+
+
+def _infer_expected_intent_id(
+    *,
+    expected: dict[str, Any],
+    expected_route: str | None,
+    intent_definitions: list[dict[str, Any]] | None = None,
+) -> str | None:
+    explicit = _normalize_intent_id(expected.get("intent") if isinstance(expected, dict) else None)
+    if explicit:
+        return explicit
+    normalized_route = _normalize_route_value(expected_route)
+    if not normalized_route:
+        return None
+    candidates = [
+        item
+        for item in (intent_definitions or [])
+        if isinstance(item, dict)
+        and _normalize_route_value(item.get("route")) == normalized_route
+        and bool(item.get("enabled", True))
+    ]
+    if candidates:
+        candidates.sort(
+            key=lambda item: (
+                int(item.get("priority") or 500),
+                str(item.get("intent_id") or ""),
+            )
+        )
+        resolved = _normalize_intent_id(candidates[0].get("intent_id"))
+        if resolved:
+            return resolved
+    fallback = {
+        Route.KNOWLEDGE.value: "knowledge",
+        Route.ACTION.value: "action",
+        Route.STATISTICS.value: "statistics",
+        Route.COMPARE.value: "compare",
+        Route.SMALLTALK.value: "smalltalk",
+    }
+    return fallback.get(normalized_route)
 
 
 def _parse_plan_requirement(requirement: str) -> tuple[str | None, str | None]:
@@ -915,10 +991,12 @@ def _evaluate_plan_requirements(
 def _build_supervisor_trace(
     *,
     question: str,
+    expected_intent: str | None,
     expected_route: str | None,
     expected_sub_route: str | None,
     expected_agent: str | None,
     expected_tool: str | None,
+    selected_intent: str | None,
     selected_route: str | None,
     selected_sub_route: str | None,
     selected_agent: str | None,
@@ -931,12 +1009,14 @@ def _build_supervisor_trace(
     return {
         "question": str(question or "").strip(),
         "expected": {
+            "intent": expected_intent,
             "route": expected_route,
             "sub_route": expected_sub_route,
             "agent": expected_agent,
             "tool": expected_tool,
         },
         "selected": {
+            "intent": selected_intent,
             "route": selected_route,
             "sub_route": selected_sub_route,
             "agent": selected_agent,
@@ -965,10 +1045,12 @@ def _build_supervisor_review_rubric(
         plan_checks = []
 
     expected_route = str(expected.get("route") or "").strip()
+    expected_intent = str(expected.get("intent") or "").strip()
     expected_sub_route = str(expected.get("sub_route") or "").strip()
     expected_agent = str(expected.get("agent") or "").strip()
     expected_tool = str(expected.get("tool") or "").strip()
     selected_route = str(selected.get("route") or "").strip()
+    selected_intent = str(selected.get("intent") or "").strip()
     selected_sub_route = str(selected.get("sub_route") or "").strip()
     selected_agent = str(selected.get("agent") or "").strip()
     selected_tool = str(selected.get("tool") or "").strip()
@@ -999,6 +1081,23 @@ def _build_supervisor_review_rubric(
                 "evidence": evidence,
             }
         )
+
+    _item(
+        key="intent_presence",
+        label="Intent är satt",
+        passed=bool(selected_intent),
+        weight=0.8,
+        evidence=selected_intent or "Saknas",
+    )
+    _item(
+        key="intent_alignment",
+        label="Intent matchar förväntad",
+        passed=(selected_intent == expected_intent)
+        if expected_intent
+        else bool(selected_intent),
+        weight=0.8,
+        evidence=f"expected={expected_intent or '-'} selected={selected_intent or '-'}",
+    )
 
     _item(
         key="route_presence",
@@ -1595,6 +1694,7 @@ async def run_tool_evaluation(
     index_by_id = {entry.tool_id: entry for entry in tool_index}
     results: list[dict[str, Any]] = []
 
+    intent_checks: list[bool] = []
     route_checks: list[bool] = []
     sub_route_checks: list[bool] = []
     agent_checks: list[bool] = []
@@ -1639,6 +1739,11 @@ async def run_tool_evaluation(
             expected_tool=expected_tool,
             expected_category=expected_category,
         )
+        expected_intent = _infer_expected_intent_id(
+            expected=expected,
+            expected_route=expected_route,
+            intent_definitions=intent_definitions,
+        )
         expected_agent = _normalize_agent_name(expected.get("agent"))
         if expected_agent is None:
             expected_agent = _agent_for_tool(
@@ -1653,7 +1758,9 @@ async def run_tool_evaluation(
 
         selected_route: str | None = None
         selected_sub_route: str | None = None
+        selected_intent: str | None = None
         selected_agent: str | None = None
+        passed_intent: bool | None = None
         passed_route: bool | None = None
         passed_sub_route: bool | None = None
         passed_agent: bool | None = None
@@ -1668,11 +1775,22 @@ async def run_tool_evaluation(
         supervisor_review_rubric: list[dict[str, Any]] = []
 
         try:
-            selected_route, selected_sub_route = await _dispatch_route_from_start(
+            (
+                selected_route,
+                selected_sub_route,
+                selected_intent,
+                _route_decision,
+            ) = await _dispatch_route_from_start(
                 question=question,
                 llm=llm,
                 prompt_overrides=prompt_overrides,
                 intent_definitions=intent_definitions,
+            )
+            passed_intent = (
+                _normalize_intent_id(selected_intent)
+                == _normalize_intent_id(expected_intent)
+                if expected_intent is not None
+                else None
             )
             passed_route = (
                 selected_route == expected_route if expected_route is not None else None
@@ -1748,10 +1866,12 @@ async def run_tool_evaluation(
             )
             supervisor_trace = _build_supervisor_trace(
                 question=question,
+                expected_intent=expected_intent,
                 expected_route=expected_route,
                 expected_sub_route=expected_sub_route,
                 expected_agent=expected_agent,
                 expected_tool=expected_tool,
+                selected_intent=selected_intent,
                 selected_route=selected_route,
                 selected_sub_route=selected_sub_route,
                 selected_agent=selected_agent,
@@ -1801,6 +1921,7 @@ async def run_tool_evaluation(
             checks = [
                 check
                 for check in (
+                    passed_intent,
                     passed_route,
                     passed_sub_route,
                     passed_agent,
@@ -1828,6 +1949,8 @@ async def run_tool_evaluation(
             if agent_gate_score is not None:
                 gated_scores.append(float(agent_gate_score))
 
+            if passed_intent is not None:
+                intent_checks.append(bool(passed_intent))
             if passed_route is not None:
                 route_checks.append(bool(passed_route))
             if passed_sub_route is not None:
@@ -1847,6 +1970,7 @@ async def run_tool_evaluation(
                 "test_id": test_id,
                 "question": question,
                 "difficulty": difficulty,
+                "expected_intent": expected_intent,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
                 "expected_agent": expected_agent,
@@ -1855,6 +1979,7 @@ async def run_tool_evaluation(
                 "allowed_tools": allowed_tools,
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
+                "selected_intent": selected_intent,
                 "selected_agent": selected_agent,
                 "agent_selection_analysis": selected_agent_analysis,
                 "selected_category": selected_category,
@@ -1876,6 +2001,7 @@ async def run_tool_evaluation(
                 ],
                 "retrieval_breakdown": retrieval_breakdown[:retrieval_limit],
                 "retrieval_hit_expected_tool": retrieval_hit_expected_tool,
+                "passed_intent": passed_intent,
                 "passed_route": passed_route,
                 "passed_sub_route": passed_sub_route,
                 "passed_agent": passed_agent,
@@ -1898,6 +2024,7 @@ async def run_tool_evaluation(
                     "type": "test_completed",
                     "test_id": test_id,
                     "index": idx,
+                    "selected_intent": selected_intent,
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
                     "selected_agent": selected_agent,
@@ -1912,10 +2039,12 @@ async def run_tool_evaluation(
         except Exception as exc:
             failed_supervisor_trace = _build_supervisor_trace(
                 question=question,
+                expected_intent=expected_intent,
                 expected_route=expected_route,
                 expected_sub_route=expected_sub_route,
                 expected_agent=expected_agent,
                 expected_tool=expected_tool,
+                selected_intent=selected_intent,
                 selected_route=selected_route,
                 selected_sub_route=selected_sub_route,
                 selected_agent=selected_agent,
@@ -1933,6 +2062,7 @@ async def run_tool_evaluation(
                     "test_id": test_id,
                     "question": question,
                     "difficulty": difficulty,
+                    "expected_intent": expected_intent,
                     "expected_route": expected_route,
                     "expected_sub_route": expected_sub_route,
                     "expected_agent": expected_agent,
@@ -1941,6 +2071,7 @@ async def run_tool_evaluation(
                     "allowed_tools": allowed_tools,
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
+                    "selected_intent": selected_intent,
                     "selected_agent": selected_agent,
                     "agent_selection_analysis": selected_agent_analysis,
                     "selected_category": None,
@@ -1960,6 +2091,7 @@ async def run_tool_evaluation(
                     "retrieval_top_categories": [],
                     "retrieval_breakdown": [],
                     "retrieval_hit_expected_tool": None,
+                    "passed_intent": False if expected_intent is not None else None,
                     "passed_route": False if expected_route is not None else None,
                     "passed_sub_route": False if expected_sub_route is not None else None,
                     "passed_agent": False if expected_agent is not None else None,
@@ -1980,6 +2112,8 @@ async def run_tool_evaluation(
             gated_scores.append(0.0)
             supervisor_review_scores.append(0.0)
             supervisor_review_pass_checks.append(False)
+            if expected_intent is not None:
+                intent_checks.append(False)
             if expected_route is not None:
                 route_checks.append(False)
             if expected_sub_route is not None:
@@ -2013,6 +2147,11 @@ async def run_tool_evaluation(
         "gated_success_rate": (
             sum(gated_scores) / len(gated_scores)
             if gated_scores
+            else None
+        ),
+        "intent_accuracy": (
+            sum(1 for check in intent_checks if check) / len(intent_checks)
+            if intent_checks
             else None
         ),
         "route_accuracy": (
@@ -2148,6 +2287,252 @@ async def generate_tool_metadata_suggestions(
                 "rationale": rationale,
                 "current_metadata": current,
                 "proposed_metadata": proposed,
+            }
+        )
+
+    return suggestions
+
+
+async def suggest_intent_definition_improvements(
+    *,
+    evaluation_results: list[dict[str, Any]],
+    intent_definitions: list[dict[str, Any]] | None,
+    current_prompts: dict[str, str],
+    llm=None,
+    max_suggestions: int = 8,
+) -> list[dict[str, Any]]:
+    definitions_by_id: dict[str, dict[str, Any]] = {}
+    for definition in intent_definitions or []:
+        if not isinstance(definition, dict):
+            continue
+        intent_id = _normalize_intent_id(definition.get("intent_id"))
+        if not intent_id:
+            continue
+        definitions_by_id[intent_id] = {
+            "intent_id": intent_id,
+            "route": _normalize_route_value(definition.get("route")) or Route.KNOWLEDGE.value,
+            "label": str(definition.get("label") or intent_id).strip(),
+            "description": str(definition.get("description") or "").strip(),
+            "keywords": _safe_string_list(definition.get("keywords")),
+            "priority": int(definition.get("priority") or 500),
+            "enabled": bool(definition.get("enabled", True)),
+        }
+
+    grouped: dict[str, dict[str, Any]] = {}
+    for result in evaluation_results:
+        if result.get("passed_intent") is not False:
+            continue
+        expected_intent = _normalize_intent_id(result.get("expected_intent"))
+        if not expected_intent:
+            continue
+        bucket = grouped.setdefault(
+            expected_intent,
+            {
+                "failed_test_ids": [],
+                "questions": [],
+                "selected_intents": [],
+                "expected_route": _normalize_route_value(result.get("expected_route")),
+            },
+        )
+        test_id = str(result.get("test_id") or "").strip()
+        if test_id:
+            bucket["failed_test_ids"].append(test_id)
+        question = str(result.get("question") or "").strip()
+        if question:
+            bucket["questions"].append(question)
+        selected_intent = _normalize_intent_id(result.get("selected_intent"))
+        if selected_intent and selected_intent != expected_intent:
+            bucket["selected_intents"].append(selected_intent)
+
+    if not grouped:
+        return []
+
+    suggestions: list[dict[str, Any]] = []
+    prompt_key = "supervisor.intent_resolver.system"
+    current_prompt = str(current_prompts.get(prompt_key) or "").strip()
+    for intent_id, bucket in grouped.items():
+        if len(suggestions) >= max_suggestions:
+            break
+        current_definition = definitions_by_id.get(intent_id) or {
+            "intent_id": intent_id,
+            "route": str(bucket.get("expected_route") or Route.KNOWLEDGE.value),
+            "label": intent_id.replace("_", " ").title(),
+            "description": "",
+            "keywords": [],
+            "priority": 500,
+            "enabled": True,
+        }
+
+        token_counts: dict[str, int] = {}
+        for question in list(bucket.get("questions") or []):
+            for token in _tokenize_for_suggestions(question):
+                token_counts[token] = token_counts.get(token, 0) + 1
+        sorted_tokens = [
+            token for token, _count in sorted(token_counts.items(), key=lambda item: item[1], reverse=True)
+        ]
+        proposed_keywords = list(_safe_string_list(current_definition.get("keywords")))
+        existing_set = {item.casefold() for item in proposed_keywords}
+        for token in sorted_tokens:
+            if token.casefold() in existing_set:
+                continue
+            proposed_keywords.append(token)
+            existing_set.add(token.casefold())
+            if len(proposed_keywords) >= 20:
+                break
+        proposed_description = str(current_definition.get("description") or "").strip()
+        if sorted_tokens:
+            hint = ", ".join(sorted_tokens[:3])
+            marker = f"Vanliga fragetermer: {hint}."
+            if marker not in proposed_description:
+                proposed_description = f"{proposed_description} {marker}".strip()
+        fallback_definition = {
+            **current_definition,
+            "keywords": proposed_keywords,
+            "description": proposed_description,
+        }
+        fallback_rationale = (
+            "Fallback-forslag for intent-metadata baserat pa misslyckade intent-fall: "
+            "utokade nyckelord och tydligare beskrivning."
+        )
+        fallback_prompt = current_prompt
+        if current_prompt and "intent" not in current_prompt.casefold():
+            fallback_prompt = (
+                f"{current_prompt.rstrip()}\n\n"
+                "Kontrollera intent-match innan route finaliseras och valj alltid intent_id fran kandidaterna."
+            ).strip()
+        (
+            fallback_prompt,
+            fallback_architecture_violations,
+            _fallback_architecture_severe,
+        ) = _apply_prompt_architecture_guard(
+            prompt_key=prompt_key,
+            prompt_text=fallback_prompt or current_prompt,
+        )
+        if fallback_architecture_violations:
+            fallback_rationale = (
+                f"{fallback_rationale} Arkitektur-guard justerade prompt-forslaget: "
+                + "; ".join(fallback_architecture_violations[:3])
+                + "."
+            )
+
+        proposed_definition = dict(fallback_definition)
+        proposed_prompt = fallback_prompt or current_prompt or None
+        rationale = fallback_rationale
+
+        if llm is not None:
+            model = llm
+            try:
+                if hasattr(llm, "bind"):
+                    model = llm.bind(temperature=0)
+            except Exception:
+                model = llm
+            llm_prompt = (
+                "Du optimerar intent-definitioner for route/eval i SurfSense.\n"
+                "ALL text maste vara pa svenska.\n"
+                "Forbattra intentets metadata sa intent-val blir mer korrekt.\n"
+                "Om promptforbattring behovs, foresla en uppdaterad prompt for supervisor.intent_resolver.system.\n"
+                "Returnera strikt JSON:\n"
+                "{\n"
+                '  "proposed_definition": {\n'
+                '    "intent_id": "string",\n'
+                '    "route": "knowledge|action|statistics|compare|smalltalk",\n'
+                '    "label": "string",\n'
+                '    "description": "string pa svenska",\n'
+                '    "keywords": ["svenska nyckelord"],\n'
+                '    "priority": 100,\n'
+                '    "enabled": true\n'
+                "  },\n"
+                '  "proposed_prompt": "string eller tom",\n'
+                '  "rationale": "kort motivering pa svenska"\n'
+                "}\n"
+                "Ingen markdown."
+            )
+            llm_payload = {
+                "current_definition": current_definition,
+                "failed_test_ids": list(bucket.get("failed_test_ids") or []),
+                "failed_questions": list(bucket.get("questions") or [])[:20],
+                "wrong_selected_intents": list(bucket.get("selected_intents") or [])[:10],
+                "current_prompt": current_prompt,
+            }
+            try:
+                response = await model.ainvoke(
+                    [
+                        SystemMessage(content=llm_prompt),
+                        HumanMessage(content=json.dumps(llm_payload, ensure_ascii=True)),
+                    ]
+                )
+                parsed = _extract_json_object(
+                    _response_content_to_text(getattr(response, "content", ""))
+                )
+                if isinstance(parsed, dict):
+                    candidate_definition = parsed.get("proposed_definition")
+                    if isinstance(candidate_definition, dict):
+                        candidate_intent_id = (
+                            _normalize_intent_id(candidate_definition.get("intent_id"))
+                            or intent_id
+                        )
+                        candidate_route = (
+                            _normalize_route_value(candidate_definition.get("route"))
+                            or str(current_definition.get("route") or Route.KNOWLEDGE.value)
+                        )
+                        proposed_definition = {
+                            "intent_id": candidate_intent_id,
+                            "route": candidate_route,
+                            "label": str(
+                                candidate_definition.get("label")
+                                or current_definition.get("label")
+                                or candidate_intent_id
+                            ).strip(),
+                            "description": _prefer_swedish_text(
+                                str(
+                                    candidate_definition.get("description")
+                                    or current_definition.get("description")
+                                    or ""
+                                ).strip(),
+                                str(fallback_definition.get("description") or ""),
+                            ),
+                            "keywords": _safe_string_list(candidate_definition.get("keywords"))
+                            or list(fallback_definition.get("keywords") or []),
+                            "priority": int(
+                                candidate_definition.get("priority")
+                                or current_definition.get("priority")
+                                or 500
+                            ),
+                            "enabled": bool(
+                                candidate_definition.get("enabled")
+                                if "enabled" in candidate_definition
+                                else current_definition.get("enabled", True)
+                            ),
+                        }
+                    candidate_prompt = str(parsed.get("proposed_prompt") or "").strip()
+                    if candidate_prompt:
+                        (
+                            candidate_prompt,
+                            _candidate_violations,
+                            candidate_severe,
+                        ) = _apply_prompt_architecture_guard(
+                            prompt_key=prompt_key,
+                            prompt_text=candidate_prompt,
+                        )
+                        if not candidate_severe:
+                            proposed_prompt = candidate_prompt
+                    rationale = _prefer_swedish_text(
+                        str(parsed.get("rationale") or "").strip(),
+                        fallback_rationale,
+                    )
+            except Exception:
+                pass
+
+        suggestions.append(
+            {
+                "intent_id": intent_id,
+                "failed_test_ids": list(bucket.get("failed_test_ids") or []),
+                "rationale": rationale,
+                "current_definition": current_definition,
+                "proposed_definition": proposed_definition,
+                "prompt_key": prompt_key,
+                "current_prompt": current_prompt or None,
+                "proposed_prompt": proposed_prompt,
             }
         )
 
@@ -2440,6 +2825,13 @@ def _prompt_key_for_sub_route(route_value: str | None) -> str | None:
     return None
 
 
+def _prompt_key_for_intent(intent_id: str | None) -> str | None:
+    normalized = _normalize_intent_id(intent_id)
+    if not normalized:
+        return None
+    return "supervisor.intent_resolver.system"
+
+
 async def _plan_tool_api_input(
     *,
     question: str,
@@ -2577,6 +2969,7 @@ async def run_tool_api_input_evaluation(
     index_by_id = {entry.tool_id: entry for entry in tool_index}
     results: list[dict[str, Any]] = []
 
+    intent_checks: list[bool] = []
     route_checks: list[bool] = []
     sub_route_checks: list[bool] = []
     agent_checks: list[bool] = []
@@ -2622,6 +3015,11 @@ async def run_tool_api_input_evaluation(
             expected_tool=expected_tool,
             expected_category=expected_category,
         )
+        expected_intent = _infer_expected_intent_id(
+            expected=expected,
+            expected_route=expected_route,
+            intent_definitions=intent_definitions,
+        )
         expected_agent = _normalize_agent_name(expected.get("agent"))
         if expected_agent is None:
             expected_agent = _agent_for_tool(
@@ -2646,7 +3044,9 @@ async def run_tool_api_input_evaluation(
 
         selected_route: str | None = None
         selected_sub_route: str | None = None
+        selected_intent: str | None = None
         selected_agent: str | None = None
+        passed_intent: bool | None = None
         passed_route: bool | None = None
         passed_sub_route: bool | None = None
         passed_agent: bool | None = None
@@ -2661,11 +3061,22 @@ async def run_tool_api_input_evaluation(
         supervisor_review_rubric: list[dict[str, Any]] = []
 
         try:
-            selected_route, selected_sub_route = await _dispatch_route_from_start(
+            (
+                selected_route,
+                selected_sub_route,
+                selected_intent,
+                _route_decision,
+            ) = await _dispatch_route_from_start(
                 question=question,
                 llm=llm,
                 prompt_overrides=prompt_overrides,
                 intent_definitions=intent_definitions,
+            )
+            passed_intent = (
+                _normalize_intent_id(selected_intent)
+                == _normalize_intent_id(expected_intent)
+                if expected_intent is not None
+                else None
             )
             passed_route = (
                 selected_route == expected_route if expected_route is not None else None
@@ -2747,10 +3158,12 @@ async def run_tool_api_input_evaluation(
             )
             supervisor_trace = _build_supervisor_trace(
                 question=question,
+                expected_intent=expected_intent,
                 expected_route=expected_route,
                 expected_sub_route=expected_sub_route,
                 expected_agent=expected_agent,
                 expected_tool=expected_tool,
+                selected_intent=selected_intent,
                 selected_route=selected_route,
                 selected_sub_route=selected_sub_route,
                 selected_agent=selected_agent,
@@ -2860,6 +3273,8 @@ async def run_tool_api_input_evaluation(
                 category_checks.append(bool(passed_category))
             if passed_tool is not None:
                 tool_checks.append(bool(passed_tool))
+            if passed_intent is not None:
+                intent_checks.append(bool(passed_intent))
             if passed_route is not None:
                 route_checks.append(bool(passed_route))
             if passed_sub_route is not None:
@@ -2900,6 +3315,7 @@ async def run_tool_api_input_evaluation(
             checks = [
                 check
                 for check in (
+                    passed_intent,
                     passed_route,
                     passed_sub_route,
                     passed_agent,
@@ -2926,6 +3342,7 @@ async def run_tool_api_input_evaluation(
                 "test_id": test_id,
                 "question": question,
                 "difficulty": difficulty,
+                "expected_intent": expected_intent,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
                 "expected_agent": expected_agent,
@@ -2934,6 +3351,7 @@ async def run_tool_api_input_evaluation(
                 "allowed_tools": allowed_tools,
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
+                "selected_intent": selected_intent,
                 "selected_agent": selected_agent,
                 "agent_selection_analysis": selected_agent_analysis,
                 "selected_category": selected_category,
@@ -2965,6 +3383,7 @@ async def run_tool_api_input_evaluation(
                 "schema_errors": schema_errors,
                 "needs_clarification": needs_clarification,
                 "clarification_question": clarification_question,
+                "passed_intent": passed_intent,
                 "passed_route": passed_route,
                 "passed_sub_route": passed_sub_route,
                 "passed_agent": passed_agent,
@@ -2988,6 +3407,7 @@ async def run_tool_api_input_evaluation(
                     "type": "test_completed",
                     "test_id": test_id,
                     "index": idx,
+                    "selected_intent": selected_intent,
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
                     "selected_agent": selected_agent,
@@ -3002,10 +3422,12 @@ async def run_tool_api_input_evaluation(
         except Exception as exc:
             failed_supervisor_trace = _build_supervisor_trace(
                 question=question,
+                expected_intent=expected_intent,
                 expected_route=expected_route,
                 expected_sub_route=expected_sub_route,
                 expected_agent=expected_agent,
                 expected_tool=expected_tool,
+                selected_intent=selected_intent,
                 selected_route=selected_route,
                 selected_sub_route=selected_sub_route,
                 selected_agent=selected_agent,
@@ -3022,6 +3444,7 @@ async def run_tool_api_input_evaluation(
                 "test_id": test_id,
                 "question": question,
                 "difficulty": difficulty,
+                "expected_intent": expected_intent,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
                 "expected_agent": expected_agent,
@@ -3030,6 +3453,7 @@ async def run_tool_api_input_evaluation(
                 "allowed_tools": allowed_tools,
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
+                "selected_intent": selected_intent,
                 "selected_agent": selected_agent,
                 "agent_selection_analysis": selected_agent_analysis,
                 "selected_category": None,
@@ -3059,6 +3483,7 @@ async def run_tool_api_input_evaluation(
                 "schema_errors": [str(exc)],
                 "needs_clarification": False,
                 "clarification_question": None,
+                "passed_intent": False if expected_intent is not None else None,
                 "passed_route": False if expected_route is not None else None,
                 "passed_sub_route": False if expected_sub_route is not None else None,
                 "passed_agent": False if expected_agent is not None else None,
@@ -3080,6 +3505,8 @@ async def run_tool_api_input_evaluation(
             gated_scores.append(0.0)
             supervisor_review_scores.append(0.0)
             supervisor_review_pass_checks.append(False)
+            if expected_intent is not None:
+                intent_checks.append(False)
             if expected_route is not None:
                 route_checks.append(False)
             if expected_sub_route is not None:
@@ -3120,6 +3547,11 @@ async def run_tool_api_input_evaluation(
         "gated_success_rate": (
             sum(gated_scores) / len(gated_scores)
             if gated_scores
+            else None
+        ),
+        "intent_accuracy": (
+            sum(1 for check in intent_checks if check) / len(intent_checks)
+            if intent_checks
             else None
         ),
         "route_accuracy": (
@@ -3420,6 +3852,8 @@ async def suggest_agent_prompt_improvements_for_api_input(
                 "question": str(result.get("question") or "").strip(),
                 "expected_route": result.get("expected_route"),
                 "selected_route": result.get("selected_route"),
+                "expected_intent": result.get("expected_intent"),
+                "selected_intent": result.get("selected_intent"),
                 "expected_sub_route": result.get("expected_sub_route"),
                 "selected_sub_route": result.get("selected_sub_route"),
                 "expected_agent": result.get("expected_agent"),
@@ -3460,12 +3894,14 @@ async def suggest_agent_prompt_improvements_for_api_input(
     for result in evaluation_results:
         passed = bool(result.get("passed"))
         passed_api_input = result.get("passed_api_input")
+        passed_intent = result.get("passed_intent")
         passed_route = result.get("passed_route")
         passed_sub_route = result.get("passed_sub_route")
         passed_agent = result.get("passed_agent")
         passed_plan = result.get("passed_plan")
         passed_supervisor_review = result.get("supervisor_review_passed")
         has_api_input = "passed_api_input" in result
+        failed_intent = passed_intent is False
         failed_route = passed_route is False
         failed_sub_route = passed_sub_route is False
         failed_agent = passed_agent is False
@@ -3491,7 +3927,8 @@ async def suggest_agent_prompt_improvements_for_api_input(
             or field_check_failed
         )
         if not (
-            failed_route
+            failed_intent
+            or failed_route
             or failed_sub_route
             or failed_agent
             or failed_plan
@@ -3509,6 +3946,8 @@ async def suggest_agent_prompt_improvements_for_api_input(
         expected_category = str(result.get("expected_category") or "").strip() or None
         expected_route = _normalize_route_value(result.get("expected_route"))
         selected_route = _normalize_route_value(result.get("selected_route"))
+        expected_intent = _normalize_intent_id(result.get("expected_intent"))
+        selected_intent = _normalize_intent_id(result.get("selected_intent"))
 
         if api_tool_only:
             if not api_input_failure_signal:
@@ -3533,6 +3972,15 @@ async def suggest_agent_prompt_improvements_for_api_input(
                 expected_tool=expected_tool,
                 selected_tool=selected_tool,
             )
+        if failed_intent:
+            intent_prompt_key = _prompt_key_for_intent(expected_intent or selected_intent)
+            if intent_prompt_key:
+                _append_failure(
+                    intent_prompt_key,
+                    result=result,
+                    expected_tool=expected_tool,
+                    selected_tool=selected_tool,
+                )
         if failed_sub_route:
             sub_route_prompt_key = _prompt_key_for_sub_route(expected_route or selected_route)
             if sub_route_prompt_key:

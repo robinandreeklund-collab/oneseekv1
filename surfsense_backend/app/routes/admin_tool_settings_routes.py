@@ -82,6 +82,7 @@ from app.services.tool_evaluation_service import (
     run_tool_api_input_evaluation,
     run_tool_evaluation,
     suggest_agent_prompt_improvements_for_api_input,
+    suggest_intent_definition_improvements,
     suggest_retrieval_tuning,
 )
 from app.services.tool_metadata_service import (
@@ -534,6 +535,18 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
     return "action", "data"
 
 
+def _infer_intent_for_route(route: str | None) -> str | None:
+    normalized_route = str(route or "").strip().lower()
+    mapping = {
+        "knowledge": "knowledge",
+        "action": "action",
+        "statistics": "statistics",
+        "compare": "compare",
+        "smalltalk": "smalltalk",
+    }
+    return mapping.get(normalized_route)
+
+
 def _infer_agent_for_tool(
     tool_id: str,
     category: str | None = None,
@@ -767,6 +780,12 @@ def _normalize_generated_tests(
             str(expected.get("sub_route") or source.get("expected_sub_route") or inferred_sub_route or "").strip()
             or None
         )
+        expected_intent = str(
+            expected.get("intent")
+            or source.get("expected_intent")
+            or _infer_intent_for_route(expected_route)
+            or ""
+        ).strip()
         expected_agent = str(
             expected.get("agent")
             or source.get("expected_agent")
@@ -814,6 +833,7 @@ def _normalize_generated_tests(
                 "expected": {
                     "tool": expected_tool,
                     "category": expected_category or getattr(entry, "category", None),
+                    "intent": expected_intent or _infer_intent_for_route(expected_route),
                     "route": expected_route,
                     "sub_route": expected_sub_route,
                     "agent": expected_agent,
@@ -866,6 +886,7 @@ def _build_fallback_generated_tests(
                 "expected": {
                     "tool": tool_id,
                     "category": str(getattr(entry, "category", "")).strip(),
+                    "intent": _infer_intent_for_route(route),
                     "route": route,
                     "sub_route": sub_route,
                     "agent": agent,
@@ -1177,6 +1198,7 @@ async def _generate_eval_tests(
         '      "expected": {\n'
         '        "tool": "tool_id",\n'
         '        "category": "category",\n'
+        '        "intent": "knowledge|action|statistics|smalltalk|compare",\n'
         '        "route": "action|knowledge|statistics|smalltalk|compare",\n'
         '        "sub_route": "web|media|travel|data|docs|internal|external|null",\n'
         '        "agent": "weather|trafik|statistics|riksdagen|bolag|kartor|media|browser|knowledge|action|synthesis",\n'
@@ -1582,6 +1604,7 @@ def _delta(current: float | None, previous: float | None) -> float | None:
 def _comparison_metric_keys(stage: str) -> list[str]:
     normalized = _normalize_eval_stage(stage)
     shared = [
+        "intent_accuracy",
         "route_accuracy",
         "sub_route_accuracy",
         "agent_accuracy",
@@ -1633,6 +1656,11 @@ def _guidance_from_comparison(
             "Resultatet blev sämre än föregående körning. Testa att backa senaste stora ändring "
             "och applicera mindre, isolerade ändringar per iteration."
         )
+        if "intent_accuracy" in degraded_metrics:
+            guidance.append(
+                "Regression i intent-igenkanning: uppdatera intent-definitioner (keywords/beskrivning) "
+                "och intent_resolver-prompten innan fler downstream-andringar."
+            )
         if any(metric in degraded_metrics for metric in ["route_accuracy", "sub_route_accuracy"]):
             guidance.append(
                 "Regression i route/sub-route: prioritera supervisor/router-prompt och kontrollera "
@@ -2316,6 +2344,7 @@ async def _execute_tool_evaluation(
                     "tool": test.expected.tool if test.expected else None,
                     "category": test.expected.category if test.expected else None,
                     "agent": test.expected.agent if test.expected else None,
+                    "intent": test.expected.intent if test.expected else None,
                     "route": test.expected.route if test.expected else None,
                     "sub_route": test.expected.sub_route if test.expected else None,
                     "plan_requirements": (
@@ -2351,6 +2380,12 @@ async def _execute_tool_evaluation(
         llm=llm,
         suggestion_scope="full",
     )
+    intent_suggestions = await suggest_intent_definition_improvements(
+        evaluation_results=evaluation["results"],
+        intent_definitions=effective_intent_definitions,
+        current_prompts=current_prompts,
+        llm=llm,
+    )
     return {
         "eval_name": payload.eval_name,
         "target_success_rate": payload.target_success_rate,
@@ -2358,6 +2393,7 @@ async def _execute_tool_evaluation(
         "results": evaluation["results"],
         "suggestions": suggestions,
         "prompt_suggestions": prompt_suggestions,
+        "intent_suggestions": intent_suggestions,
         "retrieval_tuning": effective_tuning,
         "retrieval_tuning_suggestion": retrieval_tuning_suggestion,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),
@@ -2383,6 +2419,7 @@ async def _execute_api_input_evaluation(
                     "tool": test.expected.tool if test.expected else None,
                     "category": test.expected.category if test.expected else None,
                     "agent": test.expected.agent if test.expected else None,
+                    "intent": test.expected.intent if test.expected else None,
                     "route": test.expected.route if test.expected else None,
                     "sub_route": test.expected.sub_route if test.expected else None,
                     "plan_requirements": (
@@ -2457,6 +2494,12 @@ async def _execute_api_input_evaluation(
         llm=llm,
         suggestion_scope="api_tool_only",
     )
+    intent_suggestions = await suggest_intent_definition_improvements(
+        evaluation_results=evaluation["results"],
+        intent_definitions=effective_intent_definitions,
+        current_prompts=current_prompts,
+        llm=llm,
+    )
     return {
         "eval_name": payload.eval_name,
         "target_success_rate": payload.target_success_rate,
@@ -2469,6 +2512,7 @@ async def _execute_api_input_evaluation(
             holdout_evaluation["results"] if holdout_evaluation is not None else []
         ),
         "prompt_suggestions": prompt_suggestions,
+        "intent_suggestions": intent_suggestions,
         "retrieval_tuning": effective_tuning,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),
         "search_space_id": resolved_search_space_id,

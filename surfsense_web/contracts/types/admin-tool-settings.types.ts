@@ -171,6 +171,7 @@ export const toolEvaluationExpected = z.object({
 	category: z.string().nullable().optional(),
 	tool: z.string().nullable().optional(),
 	agent: z.string().nullable().optional(),
+	intent: z.string().nullable().optional(),
 	route: z.string().nullable().optional(),
 	sub_route: z.string().nullable().optional(),
 	plan_requirements: z.array(z.string()).optional().default([]),
@@ -180,6 +181,7 @@ export const toolApiInputEvaluationExpected = z.object({
 	category: z.string().nullable().optional(),
 	tool: z.string().nullable().optional(),
 	agent: z.string().nullable().optional(),
+	intent: z.string().nullable().optional(),
 	route: z.string().nullable().optional(),
 	sub_route: z.string().nullable().optional(),
 	plan_requirements: z.array(z.string()).optional().default([]),
@@ -240,6 +242,7 @@ export const toolEvaluationMetrics = z.object({
 	passed_tests: z.number(),
 	success_rate: z.number(),
 	gated_success_rate: z.number().nullable().optional(),
+	intent_accuracy: z.number().nullable().optional(),
 	route_accuracy: z.number().nullable().optional(),
 	sub_route_accuracy: z.number().nullable().optional(),
 	agent_accuracy: z.number().nullable().optional(),
@@ -269,6 +272,7 @@ export const toolEvaluationCaseResult = z.object({
 	test_id: z.string(),
 	question: z.string(),
 	difficulty: z.string().nullable().optional(),
+	expected_intent: z.string().nullable().optional(),
 	expected_route: z.string().nullable().optional(),
 	expected_sub_route: z.string().nullable().optional(),
 	expected_agent: z.string().nullable().optional(),
@@ -277,6 +281,7 @@ export const toolEvaluationCaseResult = z.object({
 	allowed_tools: z.array(z.string()).default([]),
 	selected_route: z.string().nullable().optional(),
 	selected_sub_route: z.string().nullable().optional(),
+	selected_intent: z.string().nullable().optional(),
 	selected_agent: z.string().nullable().optional(),
 	agent_selection_analysis: z.string().default(""),
 	selected_category: z.string().nullable().optional(),
@@ -294,6 +299,7 @@ export const toolEvaluationCaseResult = z.object({
 	retrieval_top_categories: z.array(z.string()).default([]),
 	retrieval_breakdown: z.array(z.record(z.string(), z.unknown())).default([]),
 	retrieval_hit_expected_tool: z.boolean().nullable().optional(),
+	passed_intent: z.boolean().nullable().optional(),
 	passed_route: z.boolean().nullable().optional(),
 	passed_sub_route: z.boolean().nullable().optional(),
 	passed_agent: z.boolean().nullable().optional(),
@@ -316,6 +322,7 @@ export const toolApiInputEvaluationCaseResult = z.object({
 	test_id: z.string(),
 	question: z.string(),
 	difficulty: z.string().nullable().optional(),
+	expected_intent: z.string().nullable().optional(),
 	expected_route: z.string().nullable().optional(),
 	expected_sub_route: z.string().nullable().optional(),
 	expected_agent: z.string().nullable().optional(),
@@ -324,6 +331,7 @@ export const toolApiInputEvaluationCaseResult = z.object({
 	allowed_tools: z.array(z.string()).default([]),
 	selected_route: z.string().nullable().optional(),
 	selected_sub_route: z.string().nullable().optional(),
+	selected_intent: z.string().nullable().optional(),
 	selected_agent: z.string().nullable().optional(),
 	agent_selection_analysis: z.string().default(""),
 	selected_category: z.string().nullable().optional(),
@@ -351,6 +359,7 @@ export const toolApiInputEvaluationCaseResult = z.object({
 	schema_errors: z.array(z.string()).default([]),
 	needs_clarification: z.boolean().default(false),
 	clarification_question: z.string().nullable().optional(),
+	passed_intent: z.boolean().nullable().optional(),
 	passed_route: z.boolean().nullable().optional(),
 	passed_sub_route: z.boolean().nullable().optional(),
 	passed_agent: z.boolean().nullable().optional(),
@@ -368,6 +377,7 @@ export const toolApiInputEvaluationMetrics = z.object({
 	passed_tests: z.number(),
 	success_rate: z.number(),
 	gated_success_rate: z.number().nullable().optional(),
+	intent_accuracy: z.number().nullable().optional(),
 	route_accuracy: z.number().nullable().optional(),
 	sub_route_accuracy: z.number().nullable().optional(),
 	agent_accuracy: z.number().nullable().optional(),
@@ -398,6 +408,17 @@ export const toolApiInputPromptSuggestion = z.object({
 	rationale: z.string(),
 	current_prompt: z.string(),
 	proposed_prompt: z.string(),
+});
+
+export const toolIntentDefinitionSuggestion = z.object({
+	intent_id: z.string(),
+	failed_test_ids: z.array(z.string()).default([]),
+	rationale: z.string(),
+	current_definition: z.record(z.string(), z.unknown()).default({}),
+	proposed_definition: z.record(z.string(), z.unknown()).default({}),
+	prompt_key: z.string().nullable().optional(),
+	current_prompt: z.string().nullable().optional(),
+	proposed_prompt: z.string().nullable().optional(),
 });
 
 export const toolEvaluationMetricDeltaItem = z.object({
@@ -433,6 +454,7 @@ export const toolEvaluationResponse = z.object({
 	results: z.array(toolEvaluationCaseResult),
 	suggestions: z.array(toolMetadataSuggestion),
 	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
+	intent_suggestions: z.array(toolIntentDefinitionSuggestion).default([]),
 	retrieval_tuning: toolRetrievalTuning,
 	retrieval_tuning_suggestion: toolRetrievalTuningSuggestion.nullable().optional(),
 	comparison: toolEvaluationRunComparison.nullable().optional(),
@@ -448,6 +470,7 @@ export const toolApiInputEvaluationResponse = z.object({
 	holdout_metrics: toolApiInputEvaluationMetrics.nullable().optional(),
 	holdout_results: z.array(toolApiInputEvaluationCaseResult).default([]),
 	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
+	intent_suggestions: z.array(toolIntentDefinitionSuggestion).default([]),
 	retrieval_tuning: toolRetrievalTuning,
 	comparison: toolEvaluationRunComparison.nullable().optional(),
 	metadata_version_hash: z.string(),
@@ -702,6 +725,9 @@ export type ToolApiInputEvaluationMetrics = z.infer<
 	typeof toolApiInputEvaluationMetrics
 >;
 export type ToolMetadataSuggestion = z.infer<typeof toolMetadataSuggestion>;
+export type ToolIntentDefinitionSuggestion = z.infer<
+	typeof toolIntentDefinitionSuggestion
+>;
 export type ToolEvaluationMetricDeltaItem = z.infer<typeof toolEvaluationMetricDeltaItem>;
 export type ToolEvaluationRunComparison = z.infer<typeof toolEvaluationRunComparison>;
 export type ToolEvaluationResponse = z.infer<typeof toolEvaluationResponse>;

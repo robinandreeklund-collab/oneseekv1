@@ -74,6 +74,7 @@ class ToolEvaluationExpected(BaseModel):
     category: str | None = None
     tool: str | None = None
     agent: str | None = None
+    intent: str | None = None
     route: str | None = None
     sub_route: str | None = None
     plan_requirements: list[str] = Field(default_factory=list)
@@ -83,6 +84,7 @@ class ToolApiInputEvaluationExpected(BaseModel):
     category: str | None = None
     tool: str | None = None
     agent: str | None = None
+    intent: str | None = None
     route: str | None = None
     sub_route: str | None = None
     plan_requirements: list[str] = Field(default_factory=list)
@@ -143,6 +145,7 @@ class ToolEvaluationMetrics(BaseModel):
     passed_tests: int
     success_rate: float
     gated_success_rate: float | None = None
+    intent_accuracy: float | None = None
     route_accuracy: float | None = None
     sub_route_accuracy: float | None = None
     agent_accuracy: float | None = None
@@ -167,6 +170,7 @@ class ToolEvaluationCaseResult(BaseModel):
     test_id: str
     question: str
     difficulty: str | None = None
+    expected_intent: str | None = None
     expected_route: str | None = None
     expected_sub_route: str | None = None
     expected_agent: str | None = None
@@ -175,6 +179,7 @@ class ToolEvaluationCaseResult(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list)
     selected_route: str | None = None
     selected_sub_route: str | None = None
+    selected_intent: str | None = None
     selected_agent: str | None = None
     agent_selection_analysis: str = ""
     selected_category: str | None = None
@@ -196,6 +201,7 @@ class ToolEvaluationCaseResult(BaseModel):
     retrieval_hit_expected_tool: bool | None = None
     passed_route: bool | None = None
     passed_sub_route: bool | None = None
+    passed_intent: bool | None = None
     passed_agent: bool | None = None
     passed_plan: bool | None = None
     passed_category: bool | None = None
@@ -216,6 +222,7 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     test_id: str
     question: str
     difficulty: str | None = None
+    expected_intent: str | None = None
     expected_route: str | None = None
     expected_sub_route: str | None = None
     expected_agent: str | None = None
@@ -224,6 +231,7 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list)
     selected_route: str | None = None
     selected_sub_route: str | None = None
+    selected_intent: str | None = None
     selected_agent: str | None = None
     agent_selection_analysis: str = ""
     selected_category: str | None = None
@@ -255,6 +263,7 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     clarification_question: str | None = None
     passed_route: bool | None = None
     passed_sub_route: bool | None = None
+    passed_intent: bool | None = None
     passed_agent: bool | None = None
     passed_plan: bool | None = None
     passed_category: bool | None = None
@@ -270,6 +279,7 @@ class ToolApiInputEvaluationMetrics(BaseModel):
     passed_tests: int
     success_rate: float
     gated_success_rate: float | None = None
+    intent_accuracy: float | None = None
     route_accuracy: float | None = None
     sub_route_accuracy: float | None = None
     agent_accuracy: float | None = None
@@ -300,6 +310,17 @@ class ToolPromptSuggestion(BaseModel):
     rationale: str
     current_prompt: str
     proposed_prompt: str
+
+
+class ToolIntentDefinitionSuggestion(BaseModel):
+    intent_id: str
+    failed_test_ids: list[str] = Field(default_factory=list)
+    rationale: str
+    current_definition: dict[str, Any] = Field(default_factory=dict)
+    proposed_definition: dict[str, Any] = Field(default_factory=dict)
+    prompt_key: str | None = None
+    current_prompt: str | None = None
+    proposed_prompt: str | None = None
 
 
 class ToolEvaluationMetricDeltaItem(BaseModel):
@@ -335,6 +356,7 @@ class ToolEvaluationResponse(BaseModel):
     results: list[ToolEvaluationCaseResult]
     suggestions: list[ToolMetadataSuggestion]
     prompt_suggestions: list[ToolPromptSuggestion] = Field(default_factory=list)
+    intent_suggestions: list[ToolIntentDefinitionSuggestion] = Field(default_factory=list)
     retrieval_tuning: ToolRetrievalTuning
     retrieval_tuning_suggestion: ToolRetrievalTuningSuggestion | None = None
     comparison: ToolEvaluationRunComparison | None = None
@@ -350,6 +372,7 @@ class ToolApiInputEvaluationResponse(BaseModel):
     holdout_metrics: ToolApiInputEvaluationMetrics | None = None
     holdout_results: list[ToolApiInputEvaluationCaseResult] = Field(default_factory=list)
     prompt_suggestions: list[ToolPromptSuggestion] = Field(default_factory=list)
+    intent_suggestions: list[ToolIntentDefinitionSuggestion] = Field(default_factory=list)
     retrieval_tuning: ToolRetrievalTuning
     comparison: ToolEvaluationRunComparison | None = None
     metadata_version_hash: str
