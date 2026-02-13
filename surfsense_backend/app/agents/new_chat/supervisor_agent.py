@@ -1634,7 +1634,7 @@ async def create_supervisor_agent(
             if name == "trafik":
                 used_trafik_tool = any(
                     isinstance(message, ToolMessage)
-                    and getattr(message, "name", "").startswith("trafikverket_")
+                    and str(getattr(message, "name", "") or "").startswith("trafikverket_")
                     for message in messages_out
                 )
                 if not used_trafik_tool:
