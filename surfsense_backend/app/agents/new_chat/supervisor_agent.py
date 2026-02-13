@@ -862,6 +862,7 @@ class SupervisorState(TypedDict, total=False):
     orchestration_phase: Annotated[str | None, _replace]
     agent_hops: Annotated[int | None, _replace]
     no_progress_runs: Annotated[int | None, _replace]
+    guard_parallel_preview: Annotated[list[str], _replace]
 
 
 _MAX_TOOL_CALLS_PER_TURN = 12
@@ -3007,6 +3008,7 @@ async def create_supervisor_agent(
             updates["orchestration_phase"] = "select_agent"
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
+            updates["guard_parallel_preview"] = []
             if incoming_turn_id:
                 updates["active_turn_id"] = incoming_turn_id
         elif incoming_turn_id and not active_turn_id:
@@ -3070,6 +3072,7 @@ async def create_supervisor_agent(
             updates["orchestration_phase"] = "select_agent"
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
+            updates["guard_parallel_preview"] = []
             if incoming_turn_id:
                 updates["active_turn_id"] = incoming_turn_id
         elif incoming_turn_id and not active_turn_id:
@@ -3092,10 +3095,8 @@ async def create_supervisor_agent(
         plan_update: list[dict[str, Any]] | None = None
         plan_complete: bool | None = None
         last_call_payload: dict[str, Any] | None = None
-        route_hint = str(state.get("route_hint") or "").strip().lower()
         messages = list(state.get("messages") or [])
         tool_call_index = _tool_call_name_index(messages)
-        latest_user_query = _latest_user_query(messages)
 
         for message in reversed(messages):
             if isinstance(message, HumanMessage):
@@ -3218,7 +3219,20 @@ async def create_supervisor_agent(
             updates["recent_agent_calls"] = recent_updates
         if compare_updates:
             updates["compare_outputs"] = compare_updates
+        updates["guard_parallel_preview"] = parallel_preview[:3]
+        return updates
 
+    async def orchestration_guard(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        updates: dict[str, Any] = {}
+        route_hint = str(state.get("route_hint") or "").strip().lower()
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        parallel_preview = list(state.get("guard_parallel_preview") or [])[:3]
         current_turn_id = str(
             state.get("active_turn_id") or state.get("turn_id") or ""
         ).strip()
@@ -3226,6 +3240,36 @@ async def create_supervisor_agent(
             state.get("messages") or [],
             turn_id=current_turn_id or None,
         )
+        if not parallel_preview and call_entries:
+            for item in reversed(call_entries):
+                response_text = _strip_critic_json(str(item.get("response") or "").strip())
+                if not response_text:
+                    continue
+                agent_name = str(item.get("agent") or "agent").strip() or "agent"
+                parallel_preview.append(
+                    f"- {agent_name}: {_truncate_for_prompt(response_text, 220)}"
+                )
+                if len(parallel_preview) >= 3:
+                    break
+        messages = list(state.get("messages") or [])
+        tool_call_index = _tool_call_name_index(messages)
+        last_call_payload: dict[str, Any] | None = None
+        for message in reversed(messages):
+            if isinstance(message, HumanMessage):
+                break
+            if not isinstance(message, ToolMessage):
+                continue
+            tool_name = _resolve_tool_message_name(
+                message,
+                tool_call_index=tool_call_index,
+            )
+            if tool_name != "call_agent":
+                continue
+            payload = _safe_json(getattr(message, "content", ""))
+            if payload:
+                last_call_payload = payload
+                break
+
         agent_hops = len(call_entries)
         updates["agent_hops"] = agent_hops
         updates["orchestration_phase"] = (
@@ -3364,27 +3408,21 @@ async def create_supervisor_agent(
                 updates["orchestration_phase"] = "finalize"
 
         # Progressive message pruning when messages get long
-        messages = state.get("messages") or []
         if len(messages) > MESSAGE_PRUNING_THRESHOLD:
-            # Count ToolMessages
             tool_msgs = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
             if len(tool_msgs) > TOOL_MSG_THRESHOLD:
-                # Keep only the last KEEP_TOOL_MSG_COUNT tool messages and their context
                 keep_from = tool_msgs[-KEEP_TOOL_MSG_COUNT]
-                # Find the AI message that triggered the first kept tool message
                 keep_start = max(0, keep_from - 1)
-                
-                # Summarize what we're dropping
                 dropped_count = keep_start
                 if dropped_count > 0:
                     pruned = messages[keep_start:]
                     summary_msg = SystemMessage(
                         content=f"[{dropped_count} earlier messages (including tool calls) condensed. Recent context retained.]"
                     )
-                    # Preserve any leading system messages
                     leading_system = [m for m in messages[:keep_start] if isinstance(m, SystemMessage)]
                     updates["messages"] = leading_system + [summary_msg] + pruned
 
+        updates["guard_parallel_preview"] = []
         return updates
 
     def should_continue(state: SupervisorState, *, store=None):
@@ -3400,9 +3438,14 @@ async def create_supervisor_agent(
     graph_builder.add_node("agent", RunnableCallable(call_model, acall_model))
     graph_builder.add_node("tools", tool_node)
     graph_builder.add_node("post_tools", RunnableCallable(None, post_tools))
+    graph_builder.add_node(
+        "orchestration_guard",
+        RunnableCallable(None, orchestration_guard),
+    )
     graph_builder.set_entry_point("agent")
     graph_builder.add_conditional_edges("agent", should_continue, path_map=["tools", END])
     graph_builder.add_edge("tools", "post_tools")
-    graph_builder.add_edge("post_tools", "agent")
+    graph_builder.add_edge("post_tools", "orchestration_guard")
+    graph_builder.add_edge("orchestration_guard", "agent")
 
     return graph_builder.compile(checkpointer=checkpointer, name="supervisor-agent")
