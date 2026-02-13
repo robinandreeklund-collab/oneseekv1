@@ -223,6 +223,10 @@ _MAP_INTENT_RE = re.compile(
     r"rutt|route|vagbeskrivning|vägbeskrivning)\b",
     re.IGNORECASE,
 )
+_FOLLOWUP_QUERY_RE = re.compile(
+    r"\b(aven|även|ocksa|också|samma|da|då|kolla|fortsatt|ocksa)\b",
+    re.IGNORECASE,
+)
 _MISSING_SIGNAL_RE = re.compile(
     r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
     re.IGNORECASE,
@@ -749,6 +753,7 @@ class SupervisorState(TypedDict, total=False):
     orchestration_phase: Annotated[str | None, _replace]
     agent_hops: Annotated[int | None, _replace]
     no_progress_runs: Annotated[int | None, _replace]
+    active_turn_key: Annotated[str | None, _replace]
 
 
 _MAX_TOOL_CALLS_PER_TURN = 12
@@ -947,14 +952,20 @@ def _current_turn_key(state: dict[str, Any] | None) -> str:
     if not state:
         return "turn"
     messages = state.get("messages") or []
-    for message in reversed(messages):
+    latest_human: HumanMessage | None = None
+    human_count = 0
+    for message in messages:
         if isinstance(message, HumanMessage):
-            content = str(getattr(message, "content", "") or "").strip()
-            if content:
-                digest = hashlib.sha1(content.encode("utf-8")).hexdigest()
-                return f"h{digest[:12]}"
-            break
-    return "turn"
+            human_count += 1
+            latest_human = message
+    if latest_human is not None:
+        message_id = str(getattr(latest_human, "id", "") or "").strip()
+        content = str(getattr(latest_human, "content", "") or "").strip()
+        seed = message_id or content or f"human:{human_count}"
+        digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()
+        return f"h{human_count}:{digest[:12]}"
+    current = str(state.get("active_turn_key") or "").strip()
+    return current or "turn"
 
 
 def _latest_user_query(messages: list[Any] | None) -> str:
@@ -962,6 +973,17 @@ def _latest_user_query(messages: list[Any] | None) -> str:
         if isinstance(message, HumanMessage):
             return str(getattr(message, "content", "") or "").strip()
     return ""
+
+
+def _looks_followup_query(text: str) -> bool:
+    value = str(text or "").strip().lower()
+    if not value:
+        return False
+    if _FOLLOWUP_QUERY_RE.search(value):
+        return True
+    if value.startswith(("och ", "kan du ", "kan ni ")):
+        return len(value) <= 80
+    return False
 
 
 def _tool_names_from_messages(messages: list[Any] | None) -> list[str]:
@@ -2087,6 +2109,8 @@ async def create_supervisor_agent(
         route_hint = None
         cache_key = None
         cache_pattern = None
+        prior_agent_hint = ""
+        followup_query = _looks_followup_query(query)
         if state:
             recent_calls = state.get("recent_agent_calls") or []
             recent_agents = [
@@ -2095,6 +2119,9 @@ async def create_supervisor_agent(
                 if call.get("agent")
             ]
             route_hint = state.get("route_hint")
+            prior_agent_hint = str(state.get("final_agent_name") or "").strip().lower()
+            if prior_agent_hint and prior_agent_hint in agent_by_name:
+                recent_agents.append(prior_agent_hint)
             context_parts = []
             for call in recent_calls[-3:]:
                 response = str(call.get("response") or "")
@@ -2105,6 +2132,8 @@ async def create_supervisor_agent(
                 )
             if context_parts:
                 context_query = f"{query} {' '.join(context_parts)}"
+            if followup_query and prior_agent_hint:
+                context_query = f"{context_query} previous_agent:{prior_agent_hint}"
 
         has_trafik_intent = _has_trafik_intent(context_query)
         has_strict_trafik_intent = _has_strict_trafik_intent(context_query)
@@ -2150,19 +2179,26 @@ async def create_supervisor_agent(
                     "trafik": ["trafik", "action"],
                 }.get(str(route_hint), [])
                 if str(route_hint) == "action":
+                    if (
+                        followup_query
+                        and prior_agent_hint
+                        and prior_agent_hint in {"statistics", "riksdagen", "bolag", "knowledge"}
+                        and not has_trafik_intent
+                        and not has_map_intent
+                    ):
+                        preferred = [prior_agent_hint, "action", "media"]
                     if has_map_intent and "kartor" not in preferred:
                         preferred.insert(0, "kartor")
                     if has_trafik_intent and "trafik" not in preferred:
                         preferred.insert(0, "trafik")
                 if preferred:
-                    preferred_defs = [
-                        agent
-                        for agent in agent_definitions
-                        if agent.name in preferred
-                    ]
-                    for agent in reversed(preferred_defs):
-                        if agent not in selected:
-                            selected.insert(0, agent)
+                    for preferred_name in reversed(preferred):
+                        agent = agent_by_name.get(preferred_name)
+                        if not agent:
+                            continue
+                        if agent in selected:
+                            selected = [item for item in selected if item != agent]
+                        selected.insert(0, agent)
                     selected = selected[:limit]
 
             if has_trafik_intent:
@@ -2540,9 +2576,15 @@ async def create_supervisor_agent(
         final_response = state.get("final_agent_response")
         messages_state = state.get("messages") or []
         last_message = messages_state[-1] if messages_state else None
-        if final_response and isinstance(last_message, ToolMessage):
-            return {"messages": [AIMessage(content=final_response)]}
-        new_user_turn = isinstance(last_message, HumanMessage)
+        turn_key = _current_turn_key(state)
+        active_turn_key = str(state.get("active_turn_key") or "").strip()
+        new_user_turn = bool(turn_key and turn_key != active_turn_key)
+        if (
+            final_response
+            and isinstance(last_message, ToolMessage)
+            and not new_user_turn
+        ):
+            return {"messages": [AIMessage(content=_strip_critic_json(str(final_response)))]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = None if new_user_turn else _format_plan_context(state)
         recent_context = None if new_user_turn else _format_recent_calls(state)
@@ -2568,13 +2610,14 @@ async def create_supervisor_agent(
             updates["recent_agent_calls"] = []
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
-            updates["final_agent_name"] = None
             updates["orchestration_phase"] = "select_agent"
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
-        if final_response and isinstance(last_message, HumanMessage):
+            updates["active_turn_key"] = turn_key
+        elif turn_key and not active_turn_key:
+            updates["active_turn_key"] = turn_key
+        if final_response and new_user_turn:
             updates["final_agent_response"] = None
-            updates["final_agent_name"] = None
         return updates
 
     async def acall_model(
@@ -2587,9 +2630,15 @@ async def create_supervisor_agent(
         final_response = state.get("final_agent_response")
         messages_state = state.get("messages") or []
         last_message = messages_state[-1] if messages_state else None
-        if final_response and isinstance(last_message, ToolMessage):
-            return {"messages": [AIMessage(content=final_response)]}
-        new_user_turn = isinstance(last_message, HumanMessage)
+        turn_key = _current_turn_key(state)
+        active_turn_key = str(state.get("active_turn_key") or "").strip()
+        new_user_turn = bool(turn_key and turn_key != active_turn_key)
+        if (
+            final_response
+            and isinstance(last_message, ToolMessage)
+            and not new_user_turn
+        ):
+            return {"messages": [AIMessage(content=_strip_critic_json(str(final_response)))]}
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = None if new_user_turn else _format_plan_context(state)
         recent_context = None if new_user_turn else _format_recent_calls(state)
@@ -2615,13 +2664,14 @@ async def create_supervisor_agent(
             updates["recent_agent_calls"] = []
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
-            updates["final_agent_name"] = None
             updates["orchestration_phase"] = "select_agent"
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
-        if final_response and isinstance(last_message, HumanMessage):
+            updates["active_turn_key"] = turn_key
+        elif turn_key and not active_turn_key:
+            updates["active_turn_key"] = turn_key
+        if final_response and new_user_turn:
             updates["final_agent_response"] = None
-            updates["final_agent_name"] = None
         return updates
 
     async def post_tools(
