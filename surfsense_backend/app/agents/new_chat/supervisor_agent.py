@@ -652,7 +652,7 @@ async def _store_cached_combo_db(
 
 
 def _replace(left: Any, right: Any) -> Any:
-    return right if right is not None else left
+    return right
 
 
 def _append_recent(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
