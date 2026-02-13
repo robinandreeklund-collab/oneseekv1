@@ -30,6 +30,10 @@ export const agentPromptKeyEnum = z.enum([
 	"compare.external.system",
 	"system.default.instructions",
 	"citation.instructions",
+	"supervisor.critic.system",
+	"supervisor.loop_guard.message",
+	"supervisor.tool_limit_guard.message",
+	"supervisor.trafik.enforcement.message",
 ]);
 
 export const agentPromptItem = z.object({

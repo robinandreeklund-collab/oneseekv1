@@ -82,6 +82,13 @@ const ROUTER_NODES = [
 const SYSTEM_NODES = [
 	{ label: "Core system prompt", key: "system.default.instructions" },
 	{ label: "Supervisor", key: "agent.supervisor.system" },
+	{ label: "Supervisor · Critic", key: "supervisor.critic.system" },
+	{ label: "Supervisor · Loop guard", key: "supervisor.loop_guard.message" },
+	{ label: "Supervisor · Tool-limit guard", key: "supervisor.tool_limit_guard.message" },
+	{
+		label: "Supervisor · Trafik enforcement",
+		key: "supervisor.trafik.enforcement.message",
+	},
 	{ label: "Worker · Knowledge", key: "agent.worker.knowledge" },
 	{ label: "Worker · Action", key: "agent.worker.action" },
 	{ label: "Compare · Analysis", key: "compare.analysis.system" },
@@ -219,6 +226,13 @@ export function AdminPromptsPage() {
 					item,
 					group: "system" as const,
 					section: "core",
+				};
+			}
+			if (key.startsWith("supervisor.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "supervisor",
 				};
 			}
 			if (key.startsWith("compare.")) {

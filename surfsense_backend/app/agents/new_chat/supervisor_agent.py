@@ -20,8 +20,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
 from app.agents.new_chat.lazy_worker_pool import LazyWorkerPool
+from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+)
 from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
@@ -855,6 +862,23 @@ def _strip_critic_json(text: str) -> str:
     return cleaned.rstrip()
 
 
+def _render_guard_message(template: str, preview_lines: list[str]) -> str:
+    preview_block = ""
+    if preview_lines:
+        preview_block = "Detta ar de senaste delresultaten:\n" + "\n".join(
+            [str(item) for item in preview_lines[:3] if str(item).strip()]
+        )
+    try:
+        rendered = str(template or "").format(recent_preview=preview_block)
+    except Exception:
+        rendered = str(template or "")
+    rendered = rendered.strip()
+    if preview_block and "{recent_preview}" not in str(template or ""):
+        if preview_block not in rendered:
+            rendered = (rendered + "\n" + preview_block).strip()
+    return rendered
+
+
 def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> str:
     value = str(text or "").strip()
     if len(value) <= max_chars:
@@ -1169,7 +1193,28 @@ async def create_supervisor_agent(
     riksdagen_prompt: str | None = None,
     tool_prompt_overrides: dict[str, str] | None = None,
 ):
-    tool_prompt_overrides = dict(tool_prompt_overrides or {})
+    prompt_overrides = dict(tool_prompt_overrides or {})
+    tool_prompt_overrides = dict(prompt_overrides)
+    critic_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.critic.system",
+        DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    )
+    loop_guard_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.loop_guard.message",
+        DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    )
+    tool_limit_guard_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.tool_limit_guard.message",
+        DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    )
+    trafik_enforcement_message = resolve_prompt(
+        prompt_overrides,
+        "supervisor.trafik.enforcement.message",
+        DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+    )
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
             name="knowledge-worker",
@@ -1764,9 +1809,9 @@ async def create_supervisor_agent(
                 )
                 if not used_trafik_tool:
                     enforced_prompt = (
-                        f"{prompt}\n\n"
-                        "Du måste använda retrieve_tools och sedan minst ett "
-                        "trafikverket_* verktyg innan du svarar."
+                        f"{prompt.rstrip()}\n\n{trafik_enforcement_message}".strip()
+                        if prompt
+                        else trafik_enforcement_message
                     )
                     enforced_messages = [SystemMessage(content=enforced_prompt), HumanMessage(content=task)]
                     retry_state = {
@@ -1783,10 +1828,7 @@ async def create_supervisor_agent(
         if not response_text:
             response_text = str(result)
 
-        critic_prompt = append_datetime_context(
-            "Du ar en kritisk granskare. Bedom om svaret ar komplett och korrekt. "
-            "Svara kort i JSON med {\"status\": \"ok\"|\"needs_more\", \"reason\": \"...\"}."
-        )
+        critic_prompt = append_datetime_context(critic_prompt_template)
         critic_input = f"Uppgift: {task}\nSvar: {response_text}"
         critic_msg = await llm.ainvoke(
             [SystemMessage(content=critic_prompt), HumanMessage(content=critic_input)]
@@ -2144,16 +2186,13 @@ async def create_supervisor_agent(
         if "final_agent_response" not in updates:
             loop_count = _count_consecutive_loop_tools(state.get("messages") or [])
             if loop_count >= _LOOP_GUARD_MAX_CONSECUTIVE:
-                fallback_lines = [
-                    "Jag fastnade i en planeringsloop och avbryter for att ge ett stabilt svar.",
-                ]
-                if parallel_preview:
-                    fallback_lines.append("Detta ar de senaste delresultaten:")
-                    fallback_lines.extend(parallel_preview)
-                fallback_lines.append(
-                    "Skicka garna fragan igen sa kor jag en strikt enkel exekvering med fa agentsteg."
-                )
-                updates["final_agent_response"] = "\n".join(fallback_lines)
+                rendered = _render_guard_message(loop_guard_template, parallel_preview)
+                if not rendered:
+                    rendered = _render_guard_message(
+                        DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+                        parallel_preview,
+                    )
+                updates["final_agent_response"] = rendered
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
 
@@ -2163,14 +2202,16 @@ async def create_supervisor_agent(
                 state.get("messages") or []
             )
             if tool_calls_this_turn >= _MAX_TOOL_CALLS_PER_TURN:
-                fallback_lines = [
-                    "Jag avbryter denna körning för att undvika för många verktygssteg i rad.",
-                    "Skicka gärna frågan igen med en kortare avgränsning så svarar jag direkt.",
-                ]
-                if parallel_preview:
-                    fallback_lines.append("Senaste delresultat:")
-                    fallback_lines.extend(parallel_preview[:3])
-                updates["final_agent_response"] = "\n".join(fallback_lines)
+                rendered = _render_guard_message(
+                    tool_limit_guard_template,
+                    parallel_preview[:3],
+                )
+                if not rendered:
+                    rendered = _render_guard_message(
+                        DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+                        parallel_preview[:3],
+                    )
+                updates["final_agent_response"] = rendered
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
 

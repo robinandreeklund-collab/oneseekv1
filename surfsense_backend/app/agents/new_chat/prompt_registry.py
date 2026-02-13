@@ -22,6 +22,12 @@ from app.agents.new_chat.subagent_utils import (
 )
 from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PROMPT
 from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
+from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+)
 from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
 from app.agents.new_chat.system_prompt import SURFSENSE_SYSTEM_INSTRUCTIONS
 from app.agents.new_chat.trafik_prompts import DEFAULT_TRAFFIC_SYSTEM_PROMPT
@@ -108,6 +114,38 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Supervisor prompt",
         description="System prompt for the supervisor agent.",
         default_prompt=DEFAULT_SUPERVISOR_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.critic.system",
+        label="Supervisor critic prompt",
+        description="Prompt used by supervisor critic to validate delegated agent answers.",
+        default_prompt=DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.loop_guard.message",
+        label="Supervisor loop guard message",
+        description=(
+            "Fallback response when supervisor detects repeated planning loops. "
+            "Use {recent_preview} placeholder to include latest partial results."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.tool_limit_guard.message",
+        label="Supervisor tool-limit guard message",
+        description=(
+            "Fallback response when too many tools are called in one user turn. "
+            "Use {recent_preview} placeholder to include latest partial results."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.trafik.enforcement.message",
+        label="Supervisor Trafik enforcement prompt",
+        description=(
+            "Extra instruction injected when trafik agent must retry with proper trafikverket tool usage."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
     ),
     PromptDefinition(
         key="agent.worker.knowledge",
