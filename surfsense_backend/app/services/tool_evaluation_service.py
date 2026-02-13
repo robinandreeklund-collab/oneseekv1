@@ -709,6 +709,116 @@ async def _dispatch_route_from_start(
     return _normalize_route_value(route_value), _normalize_sub_route_value(selected_sub_route)
 
 
+def _parse_plan_requirement(requirement: str) -> tuple[str | None, str | None]:
+    value = str(requirement or "").strip()
+    if not value:
+        return None, None
+    lowered = value.casefold()
+    if lowered in {"clarification", "ask_clarification"}:
+        return "clarification", ""
+    patterns: list[tuple[str, re.Pattern[str]]] = [
+        ("field", re.compile(r"^field[\s:_-]+(.+)$", re.IGNORECASE)),
+        ("tool", re.compile(r"^tool[\s:_-]+(.+)$", re.IGNORECASE)),
+        ("route", re.compile(r"^route[\s:_-]+(.+)$", re.IGNORECASE)),
+        ("sub_route", re.compile(r"^sub(?:[\s_-]?route)?[\s:_-]+(.+)$", re.IGNORECASE)),
+        ("agent", re.compile(r"^agent[\s:_-]+(.+)$", re.IGNORECASE)),
+    ]
+    for key, pattern in patterns:
+        match = pattern.match(value)
+        if match:
+            extracted = str(match.group(1) or "").strip()
+            return key, extracted
+    return None, value
+
+
+def _route_requirement_matches(
+    expected_value: str,
+    *,
+    context_payload: dict[str, Any],
+) -> bool:
+    expected = str(expected_value or "").strip().casefold()
+    if not expected:
+        return False
+    selected_route = _normalize_route_value(context_payload.get("selected_route"))
+    selected_sub_route = _normalize_sub_route_value(context_payload.get("selected_sub_route"))
+    selected_agent = _normalize_agent_name(context_payload.get("selected_agent"))
+    selected_tool = str(context_payload.get("selected_tool") or "").strip().casefold()
+
+    normalized_route = _normalize_route_value(expected)
+    if normalized_route:
+        return bool(selected_route and selected_route == normalized_route)
+
+    if expected in {"travel", "weather"}:
+        if not (
+            selected_route == Route.ACTION.value
+            and selected_sub_route == ActionRoute.TRAVEL.value
+        ):
+            return False
+        if expected == "weather":
+            return selected_agent == "weather" or selected_tool == "smhi_weather"
+        return True
+
+    if expected in {
+        ActionRoute.WEB.value,
+        ActionRoute.MEDIA.value,
+        ActionRoute.DATA.value,
+    }:
+        return bool(
+            selected_route == Route.ACTION.value and selected_sub_route == expected
+        )
+
+    if expected in {
+        KnowledgeRoute.DOCS.value,
+        KnowledgeRoute.INTERNAL.value,
+        KnowledgeRoute.EXTERNAL.value,
+    }:
+        return bool(
+            selected_route == Route.KNOWLEDGE.value
+            and selected_sub_route == expected
+        )
+
+    if expected.startswith("action/") or expected.startswith("action:"):
+        trailing = (
+            expected.split("/", 1)[1]
+            if "/" in expected
+            else expected.split(":", 1)[1]
+        ).strip().casefold()
+        if trailing == "weather":
+            trailing = ActionRoute.TRAVEL.value
+        return bool(
+            selected_route == Route.ACTION.value and selected_sub_route == trailing
+        )
+
+    if expected.startswith("knowledge/") or expected.startswith("knowledge:"):
+        trailing = (
+            expected.split("/", 1)[1]
+            if "/" in expected
+            else expected.split(":", 1)[1]
+        ).strip().casefold()
+        return bool(
+            selected_route == Route.KNOWLEDGE.value and selected_sub_route == trailing
+        )
+
+    return False
+
+
+def _sub_route_requirement_matches(
+    expected_value: str,
+    *,
+    context_payload: dict[str, Any],
+) -> bool:
+    expected = str(expected_value or "").strip().casefold()
+    if not expected:
+        return False
+    if expected == "weather":
+        expected = ActionRoute.TRAVEL.value
+    normalized_expected = _normalize_sub_route_value(expected)
+    selected_sub_route = _normalize_sub_route_value(context_payload.get("selected_sub_route"))
+    return bool(
+        normalized_expected and selected_sub_route and normalized_expected == selected_sub_route
+    )
+
+
 def _evaluate_plan_requirements(
     *,
     requirements: list[str],
@@ -726,27 +836,32 @@ def _evaluate_plan_requirements(
     checks: list[dict[str, Any]] = []
     for requirement in normalized_requirements:
         lowered = requirement.casefold()
+        req_kind, req_value = _parse_plan_requirement(requirement)
         passed = False
-        if lowered.startswith("field:"):
-            field_name = requirement.split(":", 1)[1].strip()
+        if req_kind == "field":
+            field_name = str(req_value or "").strip()
             proposed_arguments = context_payload.get("proposed_arguments")
             if isinstance(proposed_arguments, dict) and field_name:
                 passed = field_name in proposed_arguments
-        elif lowered in {"clarification", "ask_clarification"}:
+        elif req_kind == "clarification":
             passed = bool(context_payload.get("needs_clarification"))
-        elif lowered.startswith("tool:"):
-            expected_tool = requirement.split(":", 1)[1].strip().casefold()
+        elif req_kind == "tool":
+            expected_tool = str(req_value or "").strip().casefold()
             selected_tool = str(context_payload.get("selected_tool") or "").casefold()
             passed = bool(expected_tool and selected_tool and expected_tool == selected_tool)
-        elif lowered.startswith("route:"):
-            expected_route = requirement.split(":", 1)[1].strip().casefold()
-            selected_route = str(context_payload.get("selected_route") or "").casefold()
-            passed = bool(
-                expected_route and selected_route and expected_route == selected_route
+        elif req_kind == "route":
+            passed = _route_requirement_matches(
+                str(req_value or ""),
+                context_payload=context_payload,
             )
-        elif lowered.startswith("agent:"):
-            expected_agent = requirement.split(":", 1)[1].strip().casefold()
-            selected_agent = str(context_payload.get("selected_agent") or "").casefold()
+        elif req_kind == "sub_route":
+            passed = _sub_route_requirement_matches(
+                str(req_value or ""),
+                context_payload=context_payload,
+            )
+        elif req_kind == "agent":
+            expected_agent = _normalize_agent_name(req_value)
+            selected_agent = _normalize_agent_name(context_payload.get("selected_agent"))
             passed = bool(
                 expected_agent and selected_agent and expected_agent == selected_agent
             )
