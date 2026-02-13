@@ -227,6 +227,29 @@ _MISSING_SIGNAL_RE = re.compile(
     r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
     re.IGNORECASE,
 )
+_UNAVAILABLE_RESPONSE_MARKERS = (
+    "finns inte tillganglig",
+    "finns inte tillgänglig",
+    "publiceras inte",
+    "inte tillganglig",
+    "inte tillgänglig",
+    "framtida ar",
+    "framtida år",
+    "har inte publicerats",
+    "saknas for",
+    "saknas för",
+)
+_ALTERNATIVE_RESPONSE_MARKERS = (
+    "senaste tillgangliga",
+    "senaste tillgängliga",
+    "istallet",
+    "istället",
+    "vill du ha",
+    "kan ge",
+    "kan visa",
+    "2023",
+    "2024",
+)
 _BLOCKED_RESPONSE_MARKERS = (
     "jag kan inte",
     "jag kunde inte",
@@ -250,6 +273,10 @@ _MISSING_FIELD_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("kategori", ("kategori", "typ", "slag")),
 )
 _RESULT_STATUS_VALUES = {"success", "partial", "blocked", "error"}
+_ROUTE_STRICT_AGENT_POLICIES: dict[str, set[str]] = {
+    "statistics": {"statistics"},
+    "compare": {"synthesis", "statistics", "knowledge"},
+}
 
 
 def _has_trafik_intent(text: str) -> bool:
@@ -262,6 +289,43 @@ def _has_map_intent(text: str) -> bool:
 
 def _has_strict_trafik_intent(text: str) -> bool:
     return bool(text and _TRAFFIC_STRICT_INTENT_RE.search(text))
+
+
+def _normalize_route_hint_value(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _route_allowed_agents(route_hint: str | None) -> set[str]:
+    route = _normalize_route_hint_value(route_hint)
+    return set(_ROUTE_STRICT_AGENT_POLICIES.get(route, set()))
+
+
+def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None) -> str:
+    route = _normalize_route_hint_value(route_hint)
+    defaults = {
+        "action": "action",
+        "knowledge": "knowledge",
+        "statistics": "statistics",
+        "compare": "synthesis",
+        "trafik": "trafik",
+    }
+    preferred = defaults.get(route, "knowledge")
+    if allowed:
+        if preferred in allowed:
+            return preferred
+        for name in ("statistics", "synthesis", "knowledge", "action", "trafik"):
+            if name in allowed:
+                return name
+    return preferred
+
+
+def _looks_complete_unavailability_answer(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if len(lowered) < 80:
+        return False
+    has_unavailable = any(marker in lowered for marker in _UNAVAILABLE_RESPONSE_MARKERS)
+    has_alternative = any(marker in lowered for marker in _ALTERNATIVE_RESPONSE_MARKERS)
+    return has_unavailable and has_alternative
 
 
 def _tokenize_focus_terms(text: str) -> set[str]:
@@ -1065,11 +1129,15 @@ def _build_agent_result_contract(
     missing_fields = _infer_missing_fields(cleaned_response)
     actionable = _looks_actionable_agent_answer(cleaned_response)
     blocked = _looks_blocked_agent_response(cleaned_response)
+    complete_unavailable = _looks_complete_unavailability_answer(cleaned_response)
 
     if error_value:
         status = "error"
     elif not cleaned_response:
         status = "partial"
+    elif complete_unavailable:
+        status = "success"
+        actionable = True
     elif blocked and not actionable:
         status = "blocked"
     elif missing_fields and not actionable:
@@ -2000,29 +2068,39 @@ async def create_supervisor_agent(
         requested_raw = str(requested_name or "").strip().lower()
         if not requested_raw:
             return None, "empty_name"
-        route_hint = str((state or {}).get("route_hint") or "").strip().lower()
+        route_hint = _normalize_route_hint_value((state or {}).get("route_hint"))
+        route_allowed = _route_allowed_agents(route_hint)
+        default_for_route = _route_default_agent(route_hint, route_allowed)
         strict_trafik_task = _has_strict_trafik_intent(task)
         if route_hint == "action" and strict_trafik_task:
             allowed_for_strict = {"trafik", "kartor", "action"}
             if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
                 return "trafik", f"strict_trafik_lock:{requested_raw}->trafik"
         if requested_raw in agent_by_name:
+            if route_allowed and requested_raw not in route_allowed:
+                if default_for_route in agent_by_name:
+                    return default_for_route, f"route_policy:{requested_raw}->{default_for_route}"
             return requested_raw, None
 
         alias_guess = _guess_agent_from_alias(requested_raw)
         if alias_guess and alias_guess in agent_by_name:
+            if route_allowed and alias_guess not in route_allowed:
+                if default_for_route in agent_by_name:
+                    return default_for_route, f"route_policy_alias:{requested_raw}->{default_for_route}"
             return alias_guess, f"alias:{requested_raw}->{alias_guess}"
 
         recent_agents: list[str] = []
         route_hint = None
         if state:
-            route_hint = state.get("route_hint")
+            route_hint = _normalize_route_hint_value(state.get("route_hint"))
             recent_calls = state.get("recent_agent_calls") or []
             recent_agents = [
                 str(call.get("agent") or "").strip()
                 for call in recent_calls
                 if isinstance(call, dict) and str(call.get("agent") or "").strip()
             ]
+        route_allowed = _route_allowed_agents(route_hint)
+        default_for_route = _route_default_agent(route_hint, route_allowed)
         retrieval_query = (
             f"{task}\n"
             f"Agent hint from planner: {requested_raw}\n"
@@ -2034,6 +2112,8 @@ async def create_supervisor_agent(
             recent_agents=recent_agents,
             limit=3,
         )
+        if route_allowed:
+            retrieved = [agent for agent in retrieved if agent.name in route_allowed]
         if route_hint:
             preferred = {
                 "action": ["action", "media"],
@@ -2046,11 +2126,15 @@ async def create_supervisor_agent(
                     preferred.insert(0, "kartor")
                 if _has_trafik_intent(task) and "trafik" not in preferred:
                     preferred.insert(0, "trafik")
+            if route_allowed:
+                preferred = [name for name in preferred if name in route_allowed]
             for preferred_name in preferred:
                 if any(agent.name == preferred_name for agent in retrieved):
                     return preferred_name, f"route_pref:{requested_raw}->{preferred_name}"
         if retrieved:
             return retrieved[0].name, f"retrieval:{requested_raw}->{retrieved[0].name}"
+        if route_allowed and default_for_route in agent_by_name:
+            return default_for_route, f"route_default:{requested_raw}->{default_for_route}"
         return None, f"unresolved:{requested_raw}"
 
     def _build_compare_external_tool(spec):
@@ -2114,6 +2198,7 @@ async def create_supervisor_agent(
         route_hint = None
         cache_key = None
         cache_pattern = None
+        policy_query = query
         if state:
             recent_calls = state.get("recent_agent_calls") or []
             recent_agents = [
@@ -2121,7 +2206,10 @@ async def create_supervisor_agent(
                 for call in recent_calls
                 if call.get("agent")
             ]
-            route_hint = state.get("route_hint")
+            route_hint = _normalize_route_hint_value(state.get("route_hint"))
+            latest_user_query = _latest_user_query(state.get("messages") or [])
+            if latest_user_query:
+                policy_query = latest_user_query
             context_parts = []
             for call in recent_calls[-3:]:
                 response = str(call.get("response") or "")
@@ -2133,9 +2221,13 @@ async def create_supervisor_agent(
             if context_parts:
                 context_query = f"{query} {' '.join(context_parts)}"
 
-        has_trafik_intent = _has_trafik_intent(context_query)
-        has_strict_trafik_intent = _has_strict_trafik_intent(context_query)
-        has_map_intent = _has_map_intent(context_query)
+        has_trafik_intent = _has_trafik_intent(policy_query)
+        has_strict_trafik_intent = _has_strict_trafik_intent(policy_query)
+        has_map_intent = _has_map_intent(policy_query)
+        route_allowed = _route_allowed_agents(route_hint)
+        default_for_route = _route_default_agent(route_hint, route_allowed)
+        if route_hint == "statistics":
+            limit = 1
 
         cache_key, cache_pattern = _build_cache_key(
             query, route_hint, recent_agents
@@ -2194,11 +2286,18 @@ async def create_supervisor_agent(
                         selected.insert(0, agent)
                     selected = selected[:limit]
 
-            if has_trafik_intent:
+            if has_trafik_intent and route_hint in {"action", "trafik"}:
                 trafik_agent = agent_by_name.get("trafik")
                 if trafik_agent and trafik_agent not in selected:
                     selected.insert(0, trafik_agent)
                     selected = selected[:limit]
+
+            if route_allowed:
+                filtered = [agent for agent in selected if agent.name in route_allowed]
+                if filtered:
+                    selected = filtered
+                elif default_for_route in agent_by_name:
+                    selected = [agent_by_name[default_for_route]]
 
             selected_names = [agent.name for agent in selected]
             if cache_key and cache_pattern:
@@ -2210,6 +2309,13 @@ async def create_supervisor_agent(
                     recent_agents=recent_agents,
                     agents=selected_names,
                 )
+
+        if route_allowed:
+            filtered = [agent for agent in selected if agent.name in route_allowed]
+            if filtered:
+                selected = filtered
+            elif default_for_route in agent_by_name:
+                selected = [agent_by_name[default_for_route]]
 
         selected = selected[:limit]
         if route_hint == "action" and has_strict_trafik_intent:
