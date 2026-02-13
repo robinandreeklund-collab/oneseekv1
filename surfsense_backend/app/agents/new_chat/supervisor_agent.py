@@ -176,6 +176,10 @@ _LOOP_GUARD_TOOL_NAMES = {
 _LOOP_GUARD_MAX_CONSECUTIVE = 12
 _MAX_AGENT_HOPS_PER_TURN = 3
 _AGENT_NAME_ALIAS_MAP = {
+    "weather": "weather",
+    "weather_agent": "weather",
+    "smhi": "weather",
+    "smhi_agent": "weather",
     "traffic_information": "trafik",
     "traffic_info": "trafik",
     "traffic_agent": "trafik",
@@ -215,6 +219,13 @@ _TRAFFIC_STRICT_INTENT_RE = re.compile(
     r"kamera|kameror|"
     r"vaglag|väglag|hastighet|"
     r"e\d+|rv\s?\d+|riksvag|riksväg|vag\s?\d+|väg\s?\d+"
+    r")\b",
+    re.IGNORECASE,
+)
+_WEATHER_INTENT_RE = re.compile(
+    r"\b("
+    r"smhi|vader|väder|temperatur|regn|sno|snö|vind|vindhastighet|"
+    r"nederbord|nederbörd|prognos|sol|moln|luftfuktighet"
     r")\b",
     re.IGNORECASE,
 )
@@ -289,6 +300,10 @@ def _has_map_intent(text: str) -> bool:
 
 def _has_strict_trafik_intent(text: str) -> bool:
     return bool(text and _TRAFFIC_STRICT_INTENT_RE.search(text))
+
+
+def _has_weather_intent(text: str) -> bool:
+    return bool(text and _WEATHER_INTENT_RE.search(text))
 
 
 def _normalize_route_hint_value(value: Any) -> str:
@@ -1426,6 +1441,7 @@ def _guess_agent_from_alias(alias: str) -> str | None:
     if direct:
         return direct
     token_rules: list[tuple[tuple[str, ...], str]] = [
+        (("smhi", "weather", "vader", "väder", "temperatur", "regn", "sno", "snö", "vind"), "weather"),
         (("trafik", "traffic", "road", "vag", "väg", "rail", "train"), "trafik"),
         (("map", "kart", "geo"), "kartor"),
         (("stat", "scb", "data"), "statistics"),
@@ -1783,6 +1799,14 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
+        "weather": WorkerConfig(
+            name="weather-worker",
+            primary_namespaces=[("tools", "action")],
+            fallback_namespaces=[
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
         "kartor": WorkerConfig(
             name="kartor-worker",
             primary_namespaces=[("tools", "kartor")],
@@ -1872,6 +1896,7 @@ async def create_supervisor_agent(
     worker_prompts: dict[str, str] = {
         "knowledge": knowledge_prompt,
         "action": action_prompt,
+        "weather": action_prompt,
         "kartor": action_prompt,
         "media": media_prompt or action_prompt,
         "statistics": statistics_prompt,
@@ -1913,6 +1938,23 @@ async def create_supervisor_agent(
                 "kartbild",
                 "geoapify",
                 "adress",
+            ],
+            namespace=("agents", "action"),
+            prompt_key="action",
+        ),
+        AgentDefinition(
+            name="weather",
+            description="SMHI-vaderprognoser och aktuellt vader for svenska orter",
+            keywords=[
+                "smhi",
+                "vader",
+                "väder",
+                "temperatur",
+                "regn",
+                "snö",
+                "sno",
+                "vind",
+                "prognos",
             ],
             namespace=("agents", "action"),
             prompt_key="action",
@@ -1995,7 +2037,7 @@ async def create_supervisor_agent(
         ),
         AgentDefinition(
             name="trafik",
-            description="Trafikverket realtidsdata (väg, tåg, kameror, väder)",
+            description="Trafikverket realtidsdata (väg, tåg, kameror)",
             keywords=[
                 "trafikverket",
                 "trafik",
@@ -2057,6 +2099,7 @@ async def create_supervisor_agent(
     user_id = dependencies.get("user_id")
     thread_id = dependencies.get("thread_id")
     trafik_tool_ids = [definition.tool_id for definition in TRAFIKVERKET_TOOL_DEFINITIONS]
+    weather_tool_ids = ["smhi_weather"]
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
     def _resolve_agent_name(
@@ -2072,6 +2115,10 @@ async def create_supervisor_agent(
         route_allowed = _route_allowed_agents(route_hint)
         default_for_route = _route_default_agent(route_hint, route_allowed)
         strict_trafik_task = _has_strict_trafik_intent(task)
+        weather_task = _has_weather_intent(task)
+        if route_hint == "action" and weather_task and not strict_trafik_task:
+            if requested_raw in agent_by_name and requested_raw != "weather":
+                return "weather", f"weather_lock:{requested_raw}->weather"
         if route_hint == "action" and strict_trafik_task:
             allowed_for_strict = {"trafik", "kartor", "action"}
             if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
@@ -2122,9 +2169,11 @@ async def create_supervisor_agent(
                 "compare": ["synthesis", "knowledge", "statistics"],
             }.get(str(route_hint), [])
             if str(route_hint) == "action":
+                if weather_task and not strict_trafik_task:
+                    preferred = ["weather", "action"]
                 if _has_map_intent(task) and "kartor" not in preferred:
                     preferred.insert(0, "kartor")
-                if _has_trafik_intent(task) and "trafik" not in preferred:
+                if _has_trafik_intent(task) and not weather_task and "trafik" not in preferred:
                     preferred.insert(0, "trafik")
             if route_allowed:
                 preferred = [name for name in preferred if name in route_allowed]
@@ -2184,7 +2233,7 @@ async def create_supervisor_agent(
         """Retrieve relevant agents for the task.
 
         IMPORTANT: Reuse agent names exactly as returned in `agents[].name`.
-        Allowed internal ids include: action, kartor, statistics, media, knowledge,
+        Allowed internal ids include: action, weather, kartor, statistics, media, knowledge,
         browser, code, bolag, trafik, riksdagen, synthesis.
         """
         try:
@@ -2224,8 +2273,11 @@ async def create_supervisor_agent(
         has_trafik_intent = _has_trafik_intent(policy_query)
         has_strict_trafik_intent = _has_strict_trafik_intent(policy_query)
         has_map_intent = _has_map_intent(policy_query)
+        has_weather_intent = _has_weather_intent(policy_query)
         route_allowed = _route_allowed_agents(route_hint)
         default_for_route = _route_default_agent(route_hint, route_allowed)
+        if route_hint == "action" and has_weather_intent and not has_strict_trafik_intent:
+            limit = 1
         if route_hint == "statistics":
             limit = 1
 
@@ -2245,6 +2297,14 @@ async def create_supervisor_agent(
             # Avoid stale non-traffic combos on hard traffic queries.
             cached_agents = None
         if cached_agents and has_trafik_intent and "trafik" not in cached_agents:
+            cached_agents = None
+        if (
+            cached_agents
+            and route_hint == "action"
+            and has_weather_intent
+            and not has_strict_trafik_intent
+            and "weather" not in cached_agents
+        ):
             cached_agents = None
 
         if cached_agents:
@@ -2269,12 +2329,20 @@ async def create_supervisor_agent(
                     "trafik": ["trafik", "action"],
                 }.get(str(route_hint), [])
                 if str(route_hint) == "action":
+                    if has_weather_intent and not has_strict_trafik_intent:
+                        preferred = ["weather", "action"]
                     # Keep route_hint as advisory only unless action intent is explicit.
                     if not (has_map_intent or has_trafik_intent):
                         preferred = []
+                    if has_weather_intent and not has_strict_trafik_intent:
+                        preferred = ["weather", "action"]
                     if has_map_intent and "kartor" not in preferred:
                         preferred.insert(0, "kartor")
-                    if has_trafik_intent and "trafik" not in preferred:
+                    if (
+                        has_trafik_intent
+                        and not has_weather_intent
+                        and "trafik" not in preferred
+                    ):
                         preferred.insert(0, "trafik")
                 if preferred:
                     for preferred_name in reversed(preferred):
@@ -2286,7 +2354,11 @@ async def create_supervisor_agent(
                         selected.insert(0, agent)
                     selected = selected[:limit]
 
-            if has_trafik_intent and route_hint in {"action", "trafik"}:
+            if (
+                has_trafik_intent
+                and not has_weather_intent
+                and route_hint in {"action", "trafik"}
+            ):
                 trafik_agent = agent_by_name.get("trafik")
                 if trafik_agent and trafik_agent not in selected:
                     selected.insert(0, trafik_agent)
@@ -2318,6 +2390,16 @@ async def create_supervisor_agent(
                 selected = [agent_by_name[default_for_route]]
 
         selected = selected[:limit]
+        if (
+            route_hint == "action"
+            and has_weather_intent
+            and not has_strict_trafik_intent
+        ):
+            weather_order = ["weather", "action"]
+            weather_selected = [
+                agent_by_name[name] for name in weather_order if name in agent_by_name
+            ]
+            selected = weather_selected[:limit] if weather_selected else selected
         if route_hint == "action" and has_strict_trafik_intent:
             strict_order = ["trafik"]
             if has_map_intent:
@@ -2395,6 +2477,8 @@ async def create_supervisor_agent(
         turn_key = _current_turn_key(injected_state)
         base_thread_id = str(dependencies.get("thread_id") or "thread")
         selected_tool_ids: list[str] = _focused_tool_ids_for_agent(name, task, limit=6)
+        if name == "weather":
+            selected_tool_ids = list(weather_tool_ids)
         if name == "trafik":
             selected_tool_ids = [
                 tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
@@ -2558,6 +2642,8 @@ async def create_supervisor_agent(
                 turn_key = _current_turn_key(injected_state)
                 base_thread_id = str(dependencies.get("thread_id") or "thread")
                 selected_tool_ids = _focused_tool_ids_for_agent(agent_name, task, limit=6)
+                if agent_name == "weather":
+                    selected_tool_ids = list(weather_tool_ids)
                 if agent_name == "trafik":
                     selected_tool_ids = [
                         tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids

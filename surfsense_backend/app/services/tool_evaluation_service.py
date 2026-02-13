@@ -91,6 +91,7 @@ _SWEDISH_SIGNAL_WORDS = {
 _EVAL_AGENT_CHOICES = (
     "statistics",
     "riksdagen",
+    "weather",
     "trafik",
     "bolag",
     "kartor",
@@ -104,6 +105,7 @@ _EVAL_AGENT_CHOICES = (
 _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
     "statistics": "SCB/statistics and official data in Sweden.",
     "riksdagen": "Swedish parliament and political documents.",
+    "weather": "SMHI weather forecasts and weather context for Swedish cities/regions.",
     "trafik": "Traffic, roads, routes, weather-related transport context.",
     "bolag": "Swedish company/organization registry context.",
     "kartor": "Geospatial/maps/geocoding context.",
@@ -402,7 +404,8 @@ def _normalize_agent_name(value: Any) -> str | None:
         "riksdag": "riksdagen",
         "traffic": "trafik",
         "trafikverket": "trafik",
-        "weather": "trafik",
+        "weather": "weather",
+        "smhi": "weather",
         "maps": "kartor",
         "map": "kartor",
         "geo": "kartor",
@@ -454,7 +457,9 @@ def _agent_for_tool(
         return "statistics"
     if tool.startswith("riksdag_") or cat.startswith("riksdag"):
         return "riksdagen"
-    if tool.startswith("trafikverket_") or tool in {"trafiklab_route", "smhi_weather"}:
+    if tool == "smhi_weather":
+        return "weather"
+    if tool.startswith("trafikverket_") or tool == "trafiklab_route":
         return "trafik"
     if tool.startswith("bolagsverket_"):
         return "bolag"
@@ -545,14 +550,14 @@ def _candidate_agents_for_route(
         return ["knowledge", "riksdagen", "statistics", "browser"]
     if route_norm == Route.ACTION.value:
         if sub_norm == ActionRoute.TRAVEL.value:
-            return ["trafik", "action", "kartor"]
+            return ["weather", "trafik", "action", "kartor"]
         if sub_norm == ActionRoute.WEB.value:
             return ["browser", "action", "knowledge"]
         if sub_norm == ActionRoute.MEDIA.value:
             return ["media", "action"]
         if sub_norm == ActionRoute.DATA.value:
             return ["action", "statistics", "riksdagen", "bolag", "kartor"]
-        return ["action", "browser", "trafik", "media", "bolag", "kartor"]
+        return ["action", "browser", "weather", "trafik", "media", "bolag", "kartor"]
     return ["knowledge", "action"]
 
 
@@ -567,7 +572,9 @@ def _heuristic_agent_choice(
         return "riksdagen" if "riksdagen" in candidates else candidates[0]
     if any(token in text for token in ("scb", "statistik", "inflation", "arbetslös", "befolkning")):
         return "statistics" if "statistics" in candidates else candidates[0]
-    if any(token in text for token in ("trafik", "väg", "halka", "smhi", "rutt", "resa", "avgång")):
+    if any(token in text for token in ("smhi", "väder", "vader", "temperatur", "regn", "snö", "sno", "vind")):
+        return "weather" if "weather" in candidates else candidates[0]
+    if any(token in text for token in ("trafik", "väg", "halka", "rutt", "resa", "avgång")):
         return "trafik" if "trafik" in candidates else candidates[0]
     if any(token in text for token in ("bolag", "organisationsnummer", "företag")):
         return "bolag" if "bolag" in candidates else candidates[0]
@@ -2258,6 +2265,7 @@ def _prompt_key_for_agent(agent_name: str | None) -> str | None:
     mapping = {
         "statistics": "agent.statistics.system",
         "riksdagen": "agent.riksdagen.system",
+        "weather": "agent.action.travel",
         "trafik": "agent.trafik.system",
         "bolag": "agent.bolag.system",
         "kartor": "agent.kartor.system",
