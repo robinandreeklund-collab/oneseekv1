@@ -1075,10 +1075,14 @@ export function ToolSettingsPage() {
 		const normalizedQuestionCount = Number.isFinite(generationQuestionCount)
 			? generationQuestionCount
 			: 12;
-		const normalizedTarget = Math.max(0, Math.min(1, autoTargetSuccessRate));
+		const normalizedTarget = Number.isFinite(autoTargetSuccessRate)
+			? Math.max(0, Math.min(1, autoTargetSuccessRate))
+			: 0.85;
 		const normalizedIterations = Math.max(1, Math.min(30, Math.round(autoMaxIterations)));
 		const normalizedPatience = Math.max(1, Math.min(12, Math.round(autoPatience)));
-		const normalizedDelta = Math.max(0, Math.min(0.25, autoMinImprovementDelta));
+		const normalizedDelta = Number.isFinite(autoMinImprovementDelta)
+			? Math.max(0, Math.min(0.25, autoMinImprovementDelta))
+			: 0.005;
 		setIsStartingAutoLoop(true);
 		try {
 			const started = await adminToolSettingsApiService.startToolAutoLoop({
