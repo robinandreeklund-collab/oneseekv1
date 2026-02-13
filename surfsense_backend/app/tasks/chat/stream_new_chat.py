@@ -260,6 +260,68 @@ async def _load_conversation_history_for_routing(
     return history[-limit:]
 
 
+_FOLLOWUP_CONFIRMATION_RE = re.compile(
+    r"^(ja|nej|ok|okej|kör|go|yes|no|stopp?)\.?$",
+    re.IGNORECASE,
+)
+_FOLLOWUP_MARKER_RE = re.compile(
+    r"\b(och|också|även|då|samma|där|dit|här)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_previous_user_query_from_history(history: list[dict[str, str]]) -> str:
+    for item in reversed(history or []):
+        if str(item.get("role") or "").strip().lower() != NewChatMessageRole.USER.value:
+            continue
+        content = _normalize_router_text(item.get("content") or "")
+        if content:
+            return content
+    return ""
+
+
+def _looks_contextual_followup(query: str) -> bool:
+    text = _normalize_router_text(query)
+    if not text:
+        return False
+    lowered = text.lower().strip(" ?!.")
+    if not lowered:
+        return False
+    if _FOLLOWUP_CONFIRMATION_RE.match(lowered):
+        return False
+    words = lowered.split()
+    if len(words) > 9 or len(lowered) > 90:
+        return False
+    if lowered.startswith(("och ", "i ", "på ", "för ", "om ")):
+        return True
+    if lowered.endswith(" då") or lowered.endswith(" också"):
+        return True
+    if _FOLLOWUP_MARKER_RE.search(lowered):
+        return True
+    return False
+
+
+def _build_followup_context_block(
+    raw_query: str,
+    routing_history: list[dict[str, str]],
+) -> str:
+    current = _normalize_router_text(raw_query)
+    if not _looks_contextual_followup(current):
+        return ""
+    previous = _extract_previous_user_query_from_history(routing_history)
+    if not previous:
+        return ""
+    if previous.lower() == current.lower():
+        return ""
+    return (
+        "<followup_context>\n"
+        "Detta är en uppföljningsfråga. Tolka den med samma ämne, metod och verktygsnivå "
+        "som föregående användarfråga om inget annat uttryckligen anges.\n"
+        f"Föregående användarfråga: {previous}\n"
+        "</followup_context>"
+    )
+
+
 
 
 def extract_todos_from_deepagents(command_output) -> dict:
@@ -496,6 +558,10 @@ _CITATION_SPACING_RE = re.compile(r"\[citation:\s*([^\]]+?)\s*\]", re.IGNORECASE
 _REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _STREAM_JSON_DECODER = json.JSONDecoder()
 _CRITIC_JSON_START_RE = re.compile(r"\{\s*[\"']status[\"']\s*:", re.IGNORECASE)
+_PIPELINE_JSON_START_RE = re.compile(
+    r"\{\s*[\"'](?:intent_id|selected_agents|status|decision|steps)\b",
+    re.IGNORECASE,
+)
 _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "resolve_intent",
     "agent_resolver",
@@ -545,7 +611,11 @@ def _strip_inline_critic_payloads(text: str) -> tuple[str, bool]:
             if isinstance(decoded, dict)
             else ""
         )
-        if isinstance(decoded, dict) and status in {"ok", "needs_more"} and "reason" in decoded:
+        if (
+            isinstance(decoded, dict)
+            and status in {"ok", "needs_more", "replan"}
+            and "reason" in decoded
+        ):
             removed = True
             idx = start + consumed
             continue
@@ -567,12 +637,13 @@ def _clean_assistant_output_text(text: str) -> str:
         return ""
     cleaned = _CRITIC_JSON_SNIPPET_RE.sub("", text)
     cleaned, removed_inline = _strip_inline_critic_payloads(cleaned)
+    cleaned, removed_payloads = _strip_inline_pipeline_payloads(cleaned)
     cleaned = _CITATION_SPACING_RE.sub(
         lambda match: f"[citation:{str(match.group(1) or '').strip()}]",
         cleaned,
     )
     lines = cleaned.splitlines()
-    if removed_inline or len(lines) > 3:
+    if removed_inline or removed_payloads or len(lines) > 3:
         seen: set[str] = set()
         deduped: list[str] = []
         duplicate_count = 0
@@ -642,25 +713,108 @@ def _extract_json_objects_from_text(text: str, *, max_objects: int = 6) -> list[
 def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
     if not isinstance(payload, dict):
         return None
-    if "intent_id" in payload:
+    if "intent_id" in payload and (
+        "reason" in payload or "confidence" in payload
+    ):
         return "intent"
-    if "selected_agents" in payload:
+    if isinstance(payload.get("selected_agents"), list):
         return "agent_resolver"
-    if isinstance(payload.get("steps"), list):
+    if (
+        isinstance(payload.get("steps"), list)
+        and (
+            "reason" in payload
+            or any(
+                isinstance(step, dict)
+                and ("content" in step or "status" in step or "id" in step)
+                for step in payload.get("steps")[:4]
+            )
+        )
+    ):
         return "planner"
+    status = str(payload.get("status") or "").strip().lower()
     decision = str(payload.get("decision") or "").strip().lower()
-    if decision in {"ok", "needs_more", "replan"}:
+    if (
+        status in {"ok", "needs_more", "replan"}
+        and isinstance(payload.get("reason"), str)
+    ) or (
+        decision in {"ok", "needs_more", "replan"}
+        and isinstance(payload.get("reason"), str)
+    ):
         return "critic"
-    if "response" in payload and "reason" in payload:
-        return "synthesizer"
     return None
 
 
-def _contains_internal_pipeline_json(text: str) -> bool:
-    for payload in _extract_json_objects_from_text(text, max_objects=5):
-        if _pipeline_payload_kind(payload):
-            return True
-    return False
+def _decode_json_object_from_text(
+    text: str, start: int, *, max_scan: int = 3200
+) -> tuple[dict[str, Any] | None, int]:
+    if start < 0 or start >= len(text):
+        return None, 0
+    segment = text[start:]
+    try:
+        decoded, consumed = _STREAM_JSON_DECODER.raw_decode(segment)
+    except Exception:
+        decoded = None
+        consumed = 0
+    if isinstance(decoded, dict) and consumed > 0:
+        return decoded, int(consumed)
+    for end in range(start + 1, min(len(text), start + max_scan)):
+        if text[end : end + 1] != "}":
+            continue
+        candidate = text[start : end + 1]
+        parsed = None
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            try:
+                parsed = ast.literal_eval(candidate)
+            except Exception:
+                parsed = None
+        if isinstance(parsed, dict):
+            return parsed, len(candidate)
+    return None, 0
+
+
+def _strip_inline_pipeline_payloads(
+    text: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    if not text:
+        return text, []
+    parts: list[str] = []
+    captured: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(text):
+        start = text.find("{", idx)
+        if start == -1:
+            parts.append(text[idx:])
+            break
+        parts.append(text[idx:start])
+        decoded, consumed = _decode_json_object_from_text(text, start)
+        if decoded is None or consumed <= 0:
+            parts.append(text[start : start + 1])
+            idx = start + 1
+            continue
+        kind = _pipeline_payload_kind(decoded)
+        if kind:
+            captured.append(decoded)
+            idx = start + consumed
+            continue
+        parts.append(text[start : start + consumed])
+        idx = start + consumed
+    return "".join(parts), captured
+
+
+def _split_trailing_pipeline_prefix(text: str) -> tuple[str, str]:
+    if not text:
+        return "", ""
+    start = text.rfind("{")
+    if start < 0:
+        return text, ""
+    tail = text[start:]
+    if "}" in tail:
+        return text, ""
+    if _PIPELINE_JSON_START_RE.match(tail):
+        return text[:start], tail
+    return text, ""
 
 
 def _is_internal_pipeline_chain_name(chain_name: str) -> bool:
@@ -856,6 +1010,9 @@ async def stream_new_chat(
             )
         except Exception:
             routing_history = []
+        followup_context_block = _build_followup_context_block(
+            raw_user_query, routing_history
+        )
 
         try:
             intent_definitions = await get_effective_intent_definitions(session)
@@ -873,6 +1030,7 @@ async def stream_new_chat(
         )
         if route == Route.COMPARE and compare_query:
             user_query = compare_query
+            followup_context_block = ""
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
@@ -1181,6 +1339,10 @@ async def stream_new_chat(
         attachments_context = ""
         mentioned_documents_context = ""
         mentioned_surfsense_context = ""
+        followup_context = followup_context_block.strip()
+
+        if followup_context:
+            context_parts.append(followup_context)
 
         if attachments:
             attachments_context = format_attachments_as_context(attachments)
@@ -1217,6 +1379,7 @@ async def stream_new_chat(
             "total_chars": len(final_query),
             "total_tokens": total_tokens,
             "breakdown": {
+                "followup_context_chars": len(followup_context),
                 "attachments_chars": len(attachments_context),
                 "mentioned_docs_chars": len(mentioned_documents_context),
                 "mentioned_surfsense_docs_chars": len(mentioned_surfsense_context),
@@ -1311,6 +1474,7 @@ async def stream_new_chat(
         model_parent_chain_by_run_id: dict[str, str] = {}
         internal_model_buffers: dict[str, str] = {}
         emitted_pipeline_payload_signatures: set[str] = set()
+        stream_pipeline_prefix_buffer: str = ""
 
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
@@ -1340,13 +1504,13 @@ async def stream_new_chat(
                 )
             return None
 
-        def emit_pipeline_steps_from_text(
-            text: str,
+        def emit_pipeline_steps_from_payloads(
+            payloads: list[dict[str, Any]],
             *,
             source_chain: str | None = None,
         ) -> list[str]:
             events: list[str] = []
-            for payload in _extract_json_objects_from_text(text, max_objects=6):
+            for payload in payloads:
                 kind = _pipeline_payload_kind(payload)
                 if not kind:
                     continue
@@ -1401,17 +1565,13 @@ async def stream_new_chat(
                 elif kind == "critic":
                     title = format_step_title("Reviewing findings, gaps, and next steps")
                     decision = str(payload.get("decision") or "").strip()
+                    if not decision:
+                        decision = str(payload.get("status") or "").strip()
                     reason = str(payload.get("reason") or "").strip()
                     if decision:
                         items.append(f"Decision: {decision}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
-                elif kind == "synthesizer":
-                    # Synthesizer JSON should stay internal and not render as chat text.
-                    title = format_step_title("Synthesizing response")
-                    reason = str(payload.get("reason") or "").strip()
-                    if reason:
-                        items.append(f"Notering: {reason[:180]}")
                 if source_chain and _is_internal_pipeline_chain_name(source_chain):
                     items.insert(0, f"Nod: {source_chain}")
                 events.append(
@@ -1432,6 +1592,18 @@ async def stream_new_chat(
                 )
                 completed_step_ids.add(step_id)
             return events
+
+        def emit_pipeline_steps_from_text(
+            text: str,
+            *,
+            source_chain: str | None = None,
+        ) -> list[str]:
+            payloads = [
+                payload
+                for payload in _extract_json_objects_from_text(text, max_objects=6)
+                if _pipeline_payload_kind(payload)
+            ]
+            return emit_pipeline_steps_from_payloads(payloads, source_chain=source_chain)
 
         route_step_id = next_thinking_step_id()
         route_items = [f"Route: {route.value}"]
@@ -1669,13 +1841,20 @@ async def stream_new_chat(
                     chain_name = chain_name_by_run_id.get(run_id) or str(
                         event.get("name") or ""
                     )
-                    if candidate_text and not (
-                        _is_internal_pipeline_chain_name(chain_name)
-                        and _contains_internal_pipeline_json(candidate_text)
-                    ):
-                        fallback_assistant_text = _clean_assistant_output_text(
-                            candidate_text
+                    if candidate_text:
+                        source_chain = (
+                            chain_name
+                            if _is_internal_pipeline_chain_name(chain_name)
+                            else None
                         )
+                        for step_event in emit_pipeline_steps_from_text(
+                            candidate_text,
+                            source_chain=source_chain,
+                        ):
+                            yield step_event
+                        cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                        if cleaned_candidate:
+                            fallback_assistant_text = cleaned_candidate
                 elif event_type == "on_chain_error":
                     trace_event = await trace_recorder.end_span(
                         span_id=run_id,
@@ -1742,9 +1921,11 @@ async def stream_new_chat(
                         ):
                             yield step_event
                     elif candidate_text:
-                        fallback_assistant_text = _clean_assistant_output_text(
-                            candidate_text
-                        )
+                        for step_event in emit_pipeline_steps_from_text(candidate_text):
+                            yield step_event
+                        cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                        if cleaned_candidate:
+                            fallback_assistant_text = cleaned_candidate
 
             # Handle chat model stream events (text streaming)
             if event_type == "on_chat_model_stream":
@@ -1764,6 +1945,20 @@ async def stream_new_chat(
                                     yield trace_update
                             continue
                         content = filter_critic_json(content)
+                        if stream_pipeline_prefix_buffer:
+                            content = stream_pipeline_prefix_buffer + content
+                            stream_pipeline_prefix_buffer = ""
+                        content, inline_pipeline_payloads = _strip_inline_pipeline_payloads(
+                            content
+                        )
+                        if inline_pipeline_payloads:
+                            for step_event in emit_pipeline_steps_from_payloads(
+                                inline_pipeline_payloads
+                            ):
+                                yield step_event
+                        content, stream_pipeline_prefix_buffer = _split_trailing_pipeline_prefix(
+                            content
+                        )
                         content = filter_repeated_output(content)
                         if not content:
                             continue
@@ -3113,19 +3308,15 @@ async def stream_new_chat(
                     event.get("data", {}).get("output")
                 )
                 if candidate_text:
-                    if (
-                        _is_internal_pipeline_chain_name(chain_name)
-                        and _contains_internal_pipeline_json(candidate_text)
+                    source_chain = chain_name if _is_internal_pipeline_chain_name(chain_name) else None
+                    for step_event in emit_pipeline_steps_from_text(
+                        candidate_text,
+                        source_chain=source_chain,
                     ):
-                        for step_event in emit_pipeline_steps_from_text(
-                            candidate_text,
-                            source_chain=chain_name,
-                        ):
-                            yield step_event
-                    else:
-                        fallback_assistant_text = _clean_assistant_output_text(
-                            candidate_text
-                        )
+                        yield step_event
+                    cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                    if cleaned_candidate:
+                        fallback_assistant_text = cleaned_candidate
                 if current_text_id is not None:
                     yield streaming_service.format_text_end(current_text_id)
                     current_text_id = None
