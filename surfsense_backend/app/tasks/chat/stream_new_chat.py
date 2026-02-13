@@ -440,6 +440,7 @@ _CRITIC_JSON_SNIPPET_RE = re.compile(
     re.DOTALL,
 )
 _CITATION_MARKER_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
+_CITATION_SPACING_RE = re.compile(r"\[citation:\s*([^\]]+?)\s*\]", re.IGNORECASE)
 _REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _STREAM_JSON_DECODER = json.JSONDecoder()
 
@@ -490,6 +491,10 @@ def _clean_assistant_output_text(text: str) -> str:
         return ""
     cleaned = _CRITIC_JSON_SNIPPET_RE.sub("", text)
     cleaned, removed_inline = _strip_inline_critic_payloads(cleaned)
+    cleaned = _CITATION_SPACING_RE.sub(
+        lambda match: f"[citation:{str(match.group(1) or '').strip()}]",
+        cleaned,
+    )
     lines = cleaned.splitlines()
     if removed_inline or len(lines) > 3:
         seen: set[str] = set()
@@ -2033,20 +2038,14 @@ async def stream_new_chat(
                 elif tool_name == "call_agent":
                     agent_name = ""
                     response = ""
-                    critic = {}
                     if isinstance(tool_output, dict):
                         agent_name = tool_output.get("agent") or ""
                         response = tool_output.get("response") or ""
-                        critic = tool_output.get("critic") or {}
                     completed_items = []
                     if agent_name:
                         completed_items.append(f"Agent: {agent_name}")
                     if response:
                         completed_items.append(f"Result: {_summarize_text(response)}")
-                    if isinstance(critic, dict) and critic.get("reason"):
-                        completed_items.append(
-                            f"Critic: {_summarize_text(critic.get('reason'))}"
-                        )
                     if not completed_items:
                         completed_items = ["Delegation completed"]
                     title = (

@@ -696,7 +696,7 @@ class SupervisorState(TypedDict, total=False):
     final_agent_name: Annotated[str | None, _replace]
 
 
-_MAX_TOOL_CALLS_PER_TURN = 24
+_MAX_TOOL_CALLS_PER_TURN = 12
 
 
 def _count_tools_since_last_user(messages: list[Any]) -> int:
@@ -769,6 +769,7 @@ _CRITIC_SNIPPET_RE = re.compile(
 _CRITIC_JSON_DECODER = json.JSONDecoder()
 _LINE_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _CITATION_TOKEN_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
+_CITATION_SPACING_RE = re.compile(r"\[citation:\s*([^\]]+?)\s*\]", re.IGNORECASE)
 
 
 def _remove_inline_critic_payloads(text: str) -> tuple[str, bool]:
@@ -833,6 +834,15 @@ def _dedupe_repeated_lines(text: str) -> str:
     return result.strip()
 
 
+def _normalize_citation_spacing(text: str) -> str:
+    if not text:
+        return text
+    return _CITATION_SPACING_RE.sub(
+        lambda match: f"[citation:{str(match.group(1) or '').strip()}]",
+        text,
+    )
+
+
 def _strip_critic_json(text: str) -> str:
     if not text:
         return text
@@ -840,6 +850,7 @@ def _strip_critic_json(text: str) -> str:
     cleaned, removed_inline = _remove_inline_critic_payloads(cleaned)
     if cleaned != text or removed_inline:
         cleaned = _dedupe_repeated_lines(cleaned)
+    cleaned = _normalize_citation_spacing(cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.rstrip()
 
@@ -2057,11 +2068,17 @@ async def create_supervisor_agent(
                     )
                     if payload.get("final") and payload.get("response"):
                         critic_payload = payload.get("critic") or {}
-                        if not (
+                        critic_needs_more = (
                             isinstance(critic_payload, dict)
-                            and critic_payload.get("status") == "needs_more"
-                        ):
-                            updates["final_agent_response"] = payload.get("response")
+                            and str(critic_payload.get("status") or "").strip().lower()
+                            == "needs_more"
+                        )
+                        cleaned_response = _strip_critic_json(
+                            str(payload.get("response") or "").strip()
+                        )
+                        if cleaned_response and (not critic_needs_more or len(cleaned_response) >= 80):
+                            # Treat critic as advisory to avoid needless loops on complete answers.
+                            updates["final_agent_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
             elif tool_name == "call_agents_parallel":
                 parallel_results = payload.get("results")
@@ -2117,7 +2134,10 @@ async def create_supervisor_agent(
         if last_call_payload:
             critic_payload = last_call_payload.get("critic") or {}
             if isinstance(critic_payload, dict):
-                if critic_payload.get("status") == "needs_more":
+                if (
+                    critic_payload.get("status") == "needs_more"
+                    and "final_agent_response" not in updates
+                ):
                     updates["plan_complete"] = False
 
         # Fallback safety: avoid endless supervisor loops on repeated retrieval/delegation tools.
