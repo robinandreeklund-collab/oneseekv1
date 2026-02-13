@@ -2362,10 +2362,10 @@ export function ToolSettingsPage() {
       "expected": {
         "route": "action",
         "sub_route": "travel",
-        "agent": "trafik",
+        "agent": "weather",
         "tool": "smhi_weather",
         "category": "weather",
-        "plan_requirements": ["route:action", "agent:trafik", "tool:smhi_weather"]
+        "plan_requirements": ["route:action", "agent:weather", "tool:smhi_weather"]
       },
       "allowed_tools": ["smhi_weather"]
     }
@@ -2387,10 +2387,10 @@ export function ToolSettingsPage() {
       "expected": {
         "route": "action",
         "sub_route": "travel",
-        "agent": "trafik",
+        "agent": "weather",
         "tool": "smhi_weather",
         "category": "weather",
-        "plan_requirements": ["route:action", "agent:trafik", "field:city"],
+        "plan_requirements": ["route:action", "agent:weather", "field:city"],
         "required_fields": ["city", "date"],
         "field_values": {"city": "Malmö"},
         "allow_clarification": false

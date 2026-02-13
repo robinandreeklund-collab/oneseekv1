@@ -46,7 +46,7 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "display_image": ("tools", "action", "media"),
     "link_preview": ("tools", "action", "web"),
     "scrape_webpage": ("tools", "action", "web"),
-    "smhi_weather": ("tools", "action", "travel"),
+    "smhi_weather": ("tools", "weather", "smhi"),
     "trafiklab_route": ("tools", "action", "travel"),
     "libris_search": ("tools", "action", "data"),
     "jobad_links_search": ("tools", "action", "data"),
@@ -212,6 +212,8 @@ def _namespace_for_bolagsverket_tool(tool_id: str) -> tuple[str, ...]:
 
 
 def _namespace_for_trafikverket_tool(tool_id: str) -> tuple[str, ...]:
+    if _is_weather_tool(tool_id):
+        return ("tools", "weather", "trafikverket_vader")
     parts = tool_id.split("_")
     if len(parts) >= 2:
         return ("tools", "trafik", f"trafikverket_{parts[1]}")
@@ -225,7 +227,29 @@ def _namespace_for_geoapify_tool(tool_id: str) -> tuple[str, ...]:
     return ("tools", "kartor")
 
 
+def _is_weather_tool(tool_id: str) -> bool:
+    normalized = str(tool_id or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized == "smhi_weather":
+        return True
+    if normalized.startswith("trafikverket_vader_"):
+        return True
+    return False
+
+
+def _namespace_for_weather_tool(tool_id: str) -> tuple[str, ...]:
+    normalized = str(tool_id or "").strip().lower()
+    if normalized == "smhi_weather":
+        return ("tools", "weather", "smhi")
+    if normalized.startswith("trafikverket_vader_"):
+        return ("tools", "weather", "trafikverket_vader")
+    return ("tools", "weather")
+
+
 def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
+    if _is_weather_tool(tool_id):
+        return _namespace_for_weather_tool(tool_id)
     if tool_id.startswith("scb_"):
         return _namespace_for_scb_tool(tool_id)
     if tool_id.startswith("bolagsverket_"):
@@ -771,7 +795,7 @@ def build_tool_index(
         description = getattr(tool, "description", "") or ""
         keywords = TOOL_KEYWORDS.get(tool_id, [])
         example_queries: list[str] = []
-        category = "general"
+        category = "weather" if _is_weather_tool(tool_id) else "general"
         base_path: str | None = None
         name = getattr(tool, "name", tool_id)
         if tool_id in scb_by_id:
@@ -809,6 +833,9 @@ def build_tool_index(
             example_queries = list(definition.example_queries)
             category = definition.category
             base_path = None  # Riksdagen tools don't use base_path
+        if _is_weather_tool(tool_id):
+            # Keep weather tools grouped together across providers.
+            category = "weather"
         if metadata_overrides and tool_id in metadata_overrides:
             override = metadata_overrides[tool_id]
             override_name = str(override.get("name") or "").strip()
@@ -840,6 +867,12 @@ def build_tool_index(
                     for example in override_examples
                     if isinstance(example, str) and example.strip()
                 ]
+        if _is_weather_tool(tool_id) and str(category or "").strip().lower() in {
+            "",
+            "weather",
+            "trafikverket_vader",
+        }:
+            category = "weather"
         entry = ToolIndexEntry(
             tool_id=tool_id,
             namespace=namespace_for_tool(tool_id),

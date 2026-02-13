@@ -222,9 +222,22 @@ _TRAFFIC_STRICT_INTENT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_TRAFFIC_INCIDENT_STRICT_RE = re.compile(
+    r"\b("
+    r"trafikverket|"
+    r"olycka|storing|storning|störning|"
+    r"koer|köer|ko|kö|"
+    r"vagarbete|vägarbete|avstangning|avstängning|omledning|framkomlighet|"
+    r"kamera|kameror|"
+    r"tagforsening|tågförsening|forsening|försening|installd|inställd|"
+    r"trafikinfo"
+    r")\b",
+    re.IGNORECASE,
+)
 _WEATHER_INTENT_RE = re.compile(
     r"\b("
     r"smhi|vader|väder|temperatur|regn|sno|snö|vind|vindhastighet|"
+    r"halka|isrisk|vaglag|väglag|vagvader|vägväder|"
     r"nederbord|nederbörd|prognos|sol|moln|luftfuktighet"
     r")\b",
     re.IGNORECASE,
@@ -299,11 +312,30 @@ def _has_map_intent(text: str) -> bool:
 
 
 def _has_strict_trafik_intent(text: str) -> bool:
-    return bool(text and _TRAFFIC_STRICT_INTENT_RE.search(text))
+    if not text:
+        return False
+    if not _TRAFFIC_STRICT_INTENT_RE.search(text):
+        return False
+    if _has_weather_intent(text):
+        # For mixed weather+road queries, only keep strict traffic lock when
+        # clear incident/disruption intent exists.
+        return bool(_TRAFFIC_INCIDENT_STRICT_RE.search(text))
+    return True
 
 
 def _has_weather_intent(text: str) -> bool:
     return bool(text and _WEATHER_INTENT_RE.search(text))
+
+
+def _is_weather_tool_id(tool_id: str) -> bool:
+    normalized = str(tool_id or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized == "smhi_weather":
+        return True
+    if normalized.startswith("trafikverket_vader_"):
+        return True
+    return False
 
 
 def _normalize_route_hint_value(value: Any) -> str:
@@ -1939,8 +1971,9 @@ async def create_supervisor_agent(
         ),
         "weather": WorkerConfig(
             name="weather-worker",
-            primary_namespaces=[("tools", "action")],
+            primary_namespaces=[("tools", "weather")],
             fallback_namespaces=[
+                ("tools", "action"),
                 ("tools", "knowledge"),
                 ("tools", "general"),
             ],
@@ -2082,7 +2115,7 @@ async def create_supervisor_agent(
         ),
         AgentDefinition(
             name="weather",
-            description="SMHI-vaderprognoser och aktuellt vader for svenska orter",
+            description="SMHI-vaderprognoser och Trafikverkets vagvaderdata for svenska orter och vagar",
             keywords=[
                 "smhi",
                 "vader",
@@ -2093,8 +2126,13 @@ async def create_supervisor_agent(
                 "sno",
                 "vind",
                 "prognos",
+                "halka",
+                "isrisk",
+                "vaglag",
+                "väglag",
+                "trafikverket väder",
             ],
-            namespace=("agents", "action"),
+            namespace=("agents", "weather"),
             prompt_key="action",
         ),
         AgentDefinition(
@@ -2236,8 +2274,19 @@ async def create_supervisor_agent(
     search_space_id = dependencies.get("search_space_id")
     user_id = dependencies.get("user_id")
     thread_id = dependencies.get("thread_id")
-    trafik_tool_ids = [definition.tool_id for definition in TRAFIKVERKET_TOOL_DEFINITIONS]
     weather_tool_ids = ["smhi_weather"]
+    weather_tool_ids.extend(
+        definition.tool_id
+        for definition in TRAFIKVERKET_TOOL_DEFINITIONS
+        if _is_weather_tool_id(definition.tool_id)
+    )
+    weather_tool_ids = list(dict.fromkeys(weather_tool_ids))
+    weather_tool_id_set = set(weather_tool_ids)
+    trafik_tool_ids = [
+        definition.tool_id
+        for definition in TRAFIKVERKET_TOOL_DEFINITIONS
+        if definition.tool_id not in weather_tool_id_set
+    ]
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
     def _resolve_agent_name(

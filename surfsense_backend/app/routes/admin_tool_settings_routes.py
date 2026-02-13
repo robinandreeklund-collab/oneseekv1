@@ -305,6 +305,13 @@ async def _require_admin(
 
 
 def _category_name(category_id: str) -> str:
+    normalized = str(category_id or "").strip().lower()
+    aliases = {
+        "weather": "Väder",
+        "trafikverket_vader": "Väder",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
     cleaned = (category_id or "general").replace("_", " ").replace("/", " / ")
     words = [word.capitalize() for word in cleaned.split()]
     return " ".join(words) or "General"
@@ -467,6 +474,18 @@ def _provider_for_tool_id(tool_id: str) -> str:
     return "other"
 
 
+def _is_weather_domain_tool(tool_id: str, category: str | None = None) -> bool:
+    normalized_tool = str(tool_id or "").strip().lower()
+    normalized_category = str(category or "").strip().lower()
+    if normalized_tool == "smhi_weather":
+        return True
+    if normalized_tool.startswith("trafikverket_vader_"):
+        return True
+    if normalized_category in {"weather", "trafikverket_vader"}:
+        return True
+    return False
+
+
 def _provider_display_name(provider_key: str) -> str:
     mapping = {
         "scb": "SCB",
@@ -494,7 +513,10 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
     normalized_category = str(category or "").strip().lower()
     if normalized_tool.startswith("scb_") or normalized_category in {"statistics", "scb_statistics"}:
         return "statistics", None
-    if normalized_tool in {"trafiklab_route", "smhi_weather"}:
+    if normalized_tool in {"trafiklab_route"} or _is_weather_domain_tool(
+        normalized_tool,
+        normalized_category,
+    ):
         return "action", "travel"
     if normalized_tool.startswith("trafikverket_"):
         return "action", "travel"
@@ -525,7 +547,9 @@ def _infer_agent_for_tool(
         return "statistics"
     if normalized_tool.startswith("riksdag_") or normalized_category.startswith("riksdag"):
         return "riksdagen"
-    if normalized_tool.startswith("trafikverket_") or normalized_tool in {"trafiklab_route", "smhi_weather"}:
+    if _is_weather_domain_tool(normalized_tool, normalized_category):
+        return "weather"
+    if normalized_tool.startswith("trafikverket_") or normalized_tool in {"trafiklab_route"}:
         return "trafik"
     if normalized_tool.startswith("bolagsverket_"):
         return "bolag"
@@ -592,13 +616,13 @@ def _sweden_focus_hint_for_entry(entry: Any) -> str:
             "Frågan ska handla om svensk politik/riksdagen, till exempel "
             "motioner, interpellationer eller utskott."
         )
+    if _is_weather_domain_tool(tool_id, category):
+        return "Frågan ska gälla svenskt väder i svenska städer, gärna med vägkoppling."
     if sub_route == "travel" or "trafik" in tool_id or "trafik" in category:
         return (
             "Frågan ska använda giltiga svenska städer och vägar "
             "(t.ex. E4, E6, E18, E20)."
         )
-    if "weather" in tool_id or "smhi" in tool_id:
-        return "Frågan ska gälla svenskt väder i svenska städer, gärna med vägkoppling."
     if tool_id.startswith("bolagsverket_"):
         return "Frågan ska gälla svenska företag och svensk bolagskontext."
     if sub_route == "web":
@@ -626,7 +650,7 @@ def _build_swedish_question_for_entry(entry: Any, index: int) -> str:
             "under det senaste året?"
         )
     if sub_route == "travel" or "trafik" in tool_id or "trafik" in category:
-        if "weather" in tool_id or "vader" in tool_id or "halka" in tool_id:
+        if _is_weather_domain_tool(tool_id, category) or "halka" in tool_id:
             return (
                 f"Hur blir vädret i {city} i morgon och finns risk för halka på {road}?"
             )
@@ -636,7 +660,7 @@ def _build_swedish_question_for_entry(entry: Any, index: int) -> str:
                 f"med fokus på trafikläget på {road}?"
             )
         return f"Hur ser trafikläget ut på {road} mellan {city} och {city_alt} just nu?"
-    if "weather" in tool_id or "smhi" in tool_id:
+    if _is_weather_domain_tool(tool_id, category):
         return f"Hur blir vädret i {city} i morgon enligt svenska prognoser?"
     if tool_id.startswith("bolagsverket_"):
         return (

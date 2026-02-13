@@ -106,7 +106,7 @@ _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
     "statistics": "SCB/statistics and official data in Sweden.",
     "riksdagen": "Swedish parliament and political documents.",
     "weather": "SMHI weather forecasts and weather context for Swedish cities/regions.",
-    "trafik": "Traffic, roads, routes, weather-related transport context.",
+    "trafik": "Traffic, roads, incidents, rail and transport context.",
     "bolag": "Swedish company/organization registry context.",
     "kartor": "Geospatial/maps/geocoding context.",
     "media": "Podcast and media generation context.",
@@ -423,6 +423,18 @@ def _normalize_agent_name(value: Any) -> str | None:
     return normalized if normalized in _EVAL_AGENT_CHOICES else None
 
 
+def _is_weather_domain_tool(tool_id: str | None, category: str | None = None) -> bool:
+    tool = str(tool_id or "").strip().lower()
+    cat = str(category or "").strip().lower()
+    if tool == "smhi_weather":
+        return True
+    if tool.startswith("trafikverket_vader_"):
+        return True
+    if cat in {"weather", "trafikverket_vader"}:
+        return True
+    return False
+
+
 def _agent_for_route_hint(route_value: str | None, sub_route_value: str | None) -> str | None:
     route_norm = _normalize_route_value(route_value)
     sub_norm = _normalize_sub_route_value(sub_route_value)
@@ -457,7 +469,7 @@ def _agent_for_tool(
         return "statistics"
     if tool.startswith("riksdag_") or cat.startswith("riksdag"):
         return "riksdagen"
-    if tool == "smhi_weather":
+    if _is_weather_domain_tool(tool, cat):
         return "weather"
     if tool.startswith("trafikverket_") or tool == "trafiklab_route":
         return "trafik"
@@ -482,7 +494,7 @@ def _route_sub_route_for_tool(
     cat = str(category or "").strip().lower()
     if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
         return Route.STATISTICS.value, None
-    if tool in {"trafiklab_route", "smhi_weather"}:
+    if tool == "trafiklab_route" or _is_weather_domain_tool(tool, cat):
         return Route.ACTION.value, ActionRoute.TRAVEL.value
     if tool.startswith("trafikverket_"):
         return Route.ACTION.value, ActionRoute.TRAVEL.value
@@ -755,7 +767,11 @@ def _route_requirement_matches(
         ):
             return False
         if expected == "weather":
-            return selected_agent == "weather" or selected_tool == "smhi_weather"
+            return (
+                selected_agent == "weather"
+                or selected_tool == "smhi_weather"
+                or selected_tool.startswith("trafikverket_vader_")
+            )
         return True
 
     if expected in {
