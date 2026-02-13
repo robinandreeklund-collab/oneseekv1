@@ -1326,6 +1326,43 @@ class GlobalToolRetrievalTuningHistory(BaseModel, TimestampMixin):
     updated_by = relationship("User")
 
 
+class GlobalIntentDefinition(BaseModel, TimestampMixin):
+    __tablename__ = "intent_definitions_global"
+    __table_args__ = (
+        UniqueConstraint(
+            "intent_id", name="uq_intent_definitions_global_intent_id"
+        ),
+    )
+
+    intent_id = Column(String(80), nullable=False, index=True)
+    definition_payload = Column(JSONB, nullable=False, default={})
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class GlobalIntentDefinitionHistory(BaseModel, TimestampMixin):
+    __tablename__ = "intent_definition_history_global"
+
+    intent_id = Column(String(80), nullable=False, index=True)
+    previous_payload = Column(JSONB, nullable=True)
+    new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
 class GlobalToolEvaluationRun(BaseModel, TimestampMixin):
     __tablename__ = "tool_evaluation_runs_global"
 
