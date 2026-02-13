@@ -2322,13 +2322,19 @@ async def create_supervisor_agent(
 
         critic_prompt = append_datetime_context(critic_prompt_template)
         critic_input = f"Uppgift: {task}\nSvar: {response_text}"
-        critic_msg = await llm.ainvoke(
-            [SystemMessage(content=critic_prompt), HumanMessage(content=critic_input)]
-        )
-        critic_text = str(getattr(critic_msg, "content", "") or "").strip()
-        critic_payload = _safe_json(critic_text)
-        if not critic_payload:
-            critic_payload = {"status": "ok", "reason": critic_text}
+        try:
+            critic_msg = await llm.ainvoke(
+                [SystemMessage(content=critic_prompt), HumanMessage(content=critic_input)]
+            )
+            critic_text = str(getattr(critic_msg, "content", "") or "").strip()
+            critic_payload = _safe_json(critic_text)
+            if not critic_payload:
+                critic_payload = {"status": "ok", "reason": critic_text}
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            critic_payload = {
+                "status": "unavailable",
+                "reason": f"critic_unavailable:{type(exc).__name__}",
+            }
 
         response_text = _strip_critic_json(response_text)
         result_contract = _build_agent_result_contract(
