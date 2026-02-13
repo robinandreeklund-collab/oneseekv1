@@ -6,8 +6,10 @@ import { toast } from "sonner";
 import { useAtomValue } from "jotai";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import type {
+	ToolAutoLoopDraftPromptItem,
 	ToolApiInputEvaluationResponse,
 	ToolApiInputEvaluationTestCase,
+	ToolEvaluationRunComparison,
 	ToolEvaluationResponse,
 	ToolEvaluationStageHistoryResponse,
 	ToolEvaluationTestCase,
@@ -65,6 +67,12 @@ function formatPercent(value: number | null | undefined) {
 	return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatSignedPercent(value: number | null | undefined) {
+	if (value == null || Number.isNaN(value)) return "-";
+	const sign = value > 0 ? "+" : "";
+	return `${sign}${(value * 100).toFixed(1)}%`;
+}
+
 function formatDifficultyLabel(value: string | null | undefined) {
 	const normalized = String(value ?? "").trim().toLowerCase();
 	if (!normalized) return "Okänd";
@@ -78,6 +86,15 @@ function formatDifficultyLabel(value: string | null | undefined) {
 		return "Svår";
 	}
 	return value ?? "Okänd";
+}
+
+function formatAutoLoopStopReason(reason: string | null | undefined) {
+	const normalized = String(reason ?? "").trim().toLowerCase();
+	if (!normalized) return "Okänd stop-orsak";
+	if (normalized === "target_reached") return "Målnivå uppnådd";
+	if (normalized === "no_improvement") return "Avbruten p.g.a. utebliven förbättring";
+	if (normalized === "max_iterations_reached") return "Max antal iterationer uppnåddes";
+	return reason ?? "Okänd stop-orsak";
 }
 
 function buildFailureReasons(result: Record<string, unknown>): string[] {
@@ -121,6 +138,69 @@ function DifficultyBreakdown({
 					</Badge>
 				))}
 			</div>
+		</div>
+	);
+}
+
+function ComparisonInsights({
+	title,
+	comparison,
+}: {
+	title: string;
+	comparison: ToolEvaluationRunComparison | null | undefined;
+}) {
+	if (!comparison) return null;
+	const trend = comparison.trend;
+	const trendVariant =
+		trend === "degraded" ? "destructive" : trend === "improved" ? "default" : "outline";
+	const trendLabel =
+		trend === "degraded"
+			? "Sämre än föregående"
+			: trend === "improved"
+				? "Bättre än föregående"
+				: trend === "unchanged"
+					? "Oförändrat"
+					: "Första jämförelse";
+	const metricDeltas = (comparison.metric_deltas ?? [])
+		.filter((item) => typeof item.delta === "number")
+		.sort((left, right) => (left.delta ?? 0) - (right.delta ?? 0))
+		.slice(0, 4);
+	return (
+		<div className="rounded border p-3 space-y-2">
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<p className="text-sm font-medium">{title}</p>
+				<Badge variant={trendVariant}>{trendLabel}</Badge>
+			</div>
+			<p className="text-xs text-muted-foreground">
+				Nu: {formatPercent(comparison.current_success_rate)} · Föregående:{" "}
+				{formatPercent(comparison.previous_success_rate)} · Delta:{" "}
+				{formatSignedPercent(comparison.success_rate_delta)}
+			</p>
+			{comparison.previous_run_at && (
+				<p className="text-xs text-muted-foreground">
+					Jämfört med: {new Date(comparison.previous_run_at).toLocaleString("sv-SE")}
+					{comparison.previous_eval_name ? ` (${comparison.previous_eval_name})` : ""}
+				</p>
+			)}
+			{metricDeltas.length > 0 && (
+				<div className="flex flex-wrap gap-2">
+					{metricDeltas.map((item) => (
+						<Badge
+							key={`${title}-${item.metric}`}
+							variant={(item.delta ?? 0) < 0 ? "destructive" : "outline"}
+						>
+							{item.metric}: {formatSignedPercent(item.delta)}
+						</Badge>
+					))}
+				</div>
+			)}
+			{(comparison.guidance ?? []).length > 0 && (
+				<ul className="list-disc pl-5 text-xs text-muted-foreground space-y-1">
+					{comparison.guidance.map((line, index) => (
+						<li key={`${title}-guide-${index}`}>{line}</li>
+					))}
+				</ul>
+			)}
 		</div>
 	);
 }
@@ -521,6 +601,17 @@ export function ToolSettingsPage() {
 	>("mixed");
 	const [generationEvalName, setGenerationEvalName] = useState("");
 	const [isGeneratingEvalFile, setIsGeneratingEvalFile] = useState(false);
+	const [autoTargetSuccessRate, setAutoTargetSuccessRate] = useState(0.85);
+	const [autoMaxIterations, setAutoMaxIterations] = useState(6);
+	const [autoPatience, setAutoPatience] = useState(2);
+	const [autoMinImprovementDelta, setAutoMinImprovementDelta] = useState(0.005);
+	const [isStartingAutoLoop, setIsStartingAutoLoop] = useState(false);
+	const [autoLoopJobId, setAutoLoopJobId] = useState<string | null>(null);
+	const [lastAutoLoopNotice, setLastAutoLoopNotice] = useState<string | null>(null);
+	const [autoLoopPromptDrafts, setAutoLoopPromptDrafts] = useState<
+		ToolAutoLoopDraftPromptItem[]
+	>([]);
+	const [isSavingAutoLoopPromptDrafts, setIsSavingAutoLoopPromptDrafts] = useState(false);
 	const [selectedLibraryPath, setSelectedLibraryPath] = useState("");
 	const [selectedHoldoutLibraryPath, setSelectedHoldoutLibraryPath] = useState("");
 	const [isLoadingLibraryFile, setIsLoadingLibraryFile] = useState(false);
@@ -625,6 +716,17 @@ export function ToolSettingsPage() {
 			const status = query.state.data?.status;
 			if (!status) return 1200;
 			return status === "pending" || status === "running" ? 1200 : false;
+		},
+	});
+
+	const { data: autoLoopJobStatus } = useQuery({
+		queryKey: ["admin-tool-auto-loop-job", autoLoopJobId],
+		queryFn: () => adminToolSettingsApiService.getToolAutoLoopStatus(autoLoopJobId as string),
+		enabled: !!autoLoopJobId,
+		refetchInterval: (query) => {
+			const status = query.state.data?.status;
+			if (!status) return 1400;
+			return status === "pending" || status === "running" ? 1400 : false;
 		},
 	});
 
@@ -746,6 +848,43 @@ export function ToolSettingsPage() {
 		}
 	}, [apiInputEvalJobStatus, apiInputEvalJobId, lastApiInputEvalJobNotice, queryClient]);
 
+	useEffect(() => {
+		if (!autoLoopJobStatus || !autoLoopJobId) return;
+		if (autoLoopJobStatus.status === "completed" && autoLoopJobStatus.result) {
+			const result = autoLoopJobStatus.result;
+			setEvaluationResult(result.final_evaluation);
+			setSelectedSuggestionIds(new Set());
+			setSelectedToolPromptSuggestionKeys(new Set());
+			setAutoLoopPromptDrafts(result.draft_changes.prompt_patch ?? []);
+			if (result.draft_changes.metadata_patch.length > 0) {
+				setDraftTools((prev) => {
+					const next = { ...prev };
+					for (const item of result.draft_changes.metadata_patch) {
+						next[item.tool_id] = { ...item };
+					}
+					return next;
+				});
+			}
+			if (result.draft_changes.retrieval_tuning_override) {
+				setDraftRetrievalTuning(result.draft_changes.retrieval_tuning_override);
+			}
+			void queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
+			void queryClient.invalidateQueries({ queryKey: ["admin-tool-eval-history"] });
+			const noticeKey = `${autoLoopJobId}:completed`;
+			if (lastAutoLoopNotice !== noticeKey) {
+				toast.success("Auto-läge klart. Utkast har lagts i draft.");
+				setLastAutoLoopNotice(noticeKey);
+			}
+		}
+		if (autoLoopJobStatus.status === "failed") {
+			const noticeKey = `${autoLoopJobId}:failed`;
+			if (lastAutoLoopNotice !== noticeKey) {
+				toast.error(autoLoopJobStatus.error || "Auto-läge misslyckades");
+				setLastAutoLoopNotice(noticeKey);
+			}
+		}
+	}, [autoLoopJobStatus, autoLoopJobId, lastAutoLoopNotice, queryClient]);
+
 	const changedToolIds = useMemo(() => {
 		return Object.keys(draftTools).filter((toolId) => {
 			const original = originalTools[toolId];
@@ -776,6 +915,12 @@ export function ToolSettingsPage() {
 		(!apiInputEvalJobStatus ||
 			apiInputEvalJobStatus.status === "pending" ||
 			apiInputEvalJobStatus.status === "running");
+
+	const isAutoLoopRunning =
+		!!autoLoopJobId &&
+		(!autoLoopJobStatus ||
+			autoLoopJobStatus.status === "pending" ||
+			autoLoopJobStatus.status === "running");
 
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((prev) => ({
@@ -910,6 +1055,67 @@ export function ToolSettingsPage() {
 			toast.error("Kunde inte generera eval-fil");
 		} finally {
 			setIsGeneratingEvalFile(false);
+		}
+	};
+
+	const handleStartAutoLoop = async () => {
+		if (!data?.search_space_id) return;
+		if (generationEvalType !== "tool_selection") {
+			toast.error("Auto-läge stöder just nu endast Tool selection.");
+			return;
+		}
+		if (generationMode === "category" && !generationCategory) {
+			toast.error("Välj en kategori innan auto-läge startas.");
+			return;
+		}
+		if (generationMode === "provider" && (!generationProvider || generationProvider === "all")) {
+			toast.error("Välj en specifik provider för huvudkategori-läge.");
+			return;
+		}
+		const normalizedQuestionCount = Number.isFinite(generationQuestionCount)
+			? generationQuestionCount
+			: 12;
+		const normalizedTarget = Math.max(0, Math.min(1, autoTargetSuccessRate));
+		const normalizedIterations = Math.max(1, Math.min(30, Math.round(autoMaxIterations)));
+		const normalizedPatience = Math.max(1, Math.min(12, Math.round(autoPatience)));
+		const normalizedDelta = Math.max(0, Math.min(0.25, autoMinImprovementDelta));
+		setIsStartingAutoLoop(true);
+		try {
+			const started = await adminToolSettingsApiService.startToolAutoLoop({
+				search_space_id: data.search_space_id,
+				generation: {
+					eval_type: "tool_selection",
+					mode: generationMode,
+					provider_key:
+						generationMode === "global_random" && generationProvider === "all"
+							? null
+							: generationProvider,
+					category_id: generationMode === "category" ? generationCategory : null,
+					question_count: Math.max(1, Math.min(100, Math.round(normalizedQuestionCount))),
+					difficulty_profile: generationDifficultyProfile,
+					eval_name: generationEvalName.trim() || null,
+					include_allowed_tools: true,
+				},
+				target_success_rate: normalizedTarget,
+				max_iterations: normalizedIterations,
+				patience: normalizedPatience,
+				min_improvement_delta: normalizedDelta,
+				retrieval_limit: retrievalLimit,
+				use_llm_supervisor_review: useLlmSupervisorReview,
+				include_metadata_suggestions: true,
+				include_prompt_suggestions: true,
+				include_retrieval_tuning_suggestions: true,
+			});
+			setAutoLoopJobId(started.job_id);
+			setLastAutoLoopNotice(null);
+			setAutoLoopPromptDrafts([]);
+			toast.info(
+				`Auto-läge startat (${started.total_iterations} iterationer, target ${(started.target_success_rate * 100).toFixed(1)}%)`
+			);
+		} catch (_error) {
+			toast.error("Kunde inte starta auto-läge");
+		} finally {
+			setIsStartingAutoLoop(false);
 		}
 	};
 
@@ -1469,6 +1675,27 @@ export function ToolSettingsPage() {
 		setUseHoldoutSuite(true);
 		setShowHoldoutJsonInput(true);
 		setSelectedHoldoutLibraryPath("");
+	};
+
+	const saveAutoLoopPromptDraftSuggestions = async () => {
+		if (!autoLoopPromptDrafts.length) {
+			toast.info("Inga promptutkast från auto-läge att spara.");
+			return;
+		}
+		setIsSavingAutoLoopPromptDrafts(true);
+		try {
+			await adminToolSettingsApiService.applyApiInputPromptSuggestions({
+				suggestions: autoLoopPromptDrafts.map((item) => ({
+					prompt_key: item.prompt_key,
+					proposed_prompt: item.proposed_prompt,
+				})),
+			});
+			toast.success(`Sparade ${autoLoopPromptDrafts.length} promptutkast`);
+		} catch (_error) {
+			toast.error("Kunde inte spara promptutkast från auto-läge");
+		} finally {
+			setIsSavingAutoLoopPromptDrafts(false);
+		}
 	};
 
 	if (isLoading) {
@@ -2346,6 +2573,166 @@ export function ToolSettingsPage() {
 								)}
 							</div>
 
+							<div className="rounded border p-3 space-y-3">
+								<div className="flex flex-wrap items-center justify-between gap-2">
+									<p className="text-sm font-medium">
+										Auto-läge: loopa till önskad success rate
+									</p>
+									{autoLoopJobId && (
+										<Badge variant="outline">Jobb: {autoLoopJobId.slice(0, 8)}</Badge>
+									)}
+								</div>
+								<p className="text-xs text-muted-foreground">
+									Flöde: generera frågor → kör eval → föreslå metadata/prompt/vikter →
+									uppdatera draft-utkast → kör igen tills target nås eller failsafe bryter.
+								</p>
+								<div className="grid gap-3 md:grid-cols-4">
+									<div className="space-y-2">
+										<Label htmlFor="auto-target-success">Target success</Label>
+										<Input
+											id="auto-target-success"
+											type="number"
+											min={0}
+											max={1}
+											step={0.01}
+											value={autoTargetSuccessRate}
+											onChange={(event) =>
+												setAutoTargetSuccessRate(
+													Number.parseFloat(event.target.value || "0.85")
+												)
+											}
+										/>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="auto-max-iterations">Max iterationer</Label>
+										<Input
+											id="auto-max-iterations"
+											type="number"
+											min={1}
+											max={30}
+											value={autoMaxIterations}
+											onChange={(event) =>
+												setAutoMaxIterations(
+													Number.parseInt(event.target.value || "6", 10)
+												)
+											}
+										/>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="auto-patience">Patience (failsafe)</Label>
+										<Input
+											id="auto-patience"
+											type="number"
+											min={1}
+											max={12}
+											value={autoPatience}
+											onChange={(event) =>
+												setAutoPatience(
+													Number.parseInt(event.target.value || "2", 10)
+												)
+											}
+										/>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="auto-min-delta">Min förbättring / run</Label>
+										<Input
+											id="auto-min-delta"
+											type="number"
+											min={0}
+											max={0.25}
+											step={0.001}
+											value={autoMinImprovementDelta}
+											onChange={(event) =>
+												setAutoMinImprovementDelta(
+													Number.parseFloat(event.target.value || "0.005")
+												)
+											}
+										/>
+									</div>
+								</div>
+								<div className="flex flex-wrap items-center gap-2">
+									<Button
+										onClick={handleStartAutoLoop}
+										disabled={isStartingAutoLoop || isAutoLoopRunning}
+									>
+										{isStartingAutoLoop
+											? "Startar auto-läge..."
+											: isAutoLoopRunning
+												? "Auto-läge körs..."
+												: "Starta auto-läge"}
+									</Button>
+									{autoLoopJobStatus && (
+										<Badge
+											variant={
+												autoLoopJobStatus.status === "failed"
+													? "destructive"
+													: autoLoopJobStatus.status === "completed"
+														? "default"
+														: "secondary"
+											}
+										>
+											{autoLoopJobStatus.status}
+										</Badge>
+									)}
+								</div>
+								{autoLoopJobStatus && (
+									<div className="rounded bg-muted/30 p-3 space-y-2">
+										<div className="grid gap-2 md:grid-cols-4 text-xs">
+											<p>
+												Iteration: {autoLoopJobStatus.completed_iterations}/
+												{autoLoopJobStatus.total_iterations}
+											</p>
+											<p>
+												Bästa success:{" "}
+												{formatPercent(autoLoopJobStatus.best_success_rate)}
+											</p>
+											<p>Utebliven förbättring: {autoLoopJobStatus.no_improvement_runs}</p>
+											<p>{autoLoopJobStatus.message || "-"}</p>
+										</div>
+										{(autoLoopJobStatus.iterations ?? []).length > 0 && (
+											<div className="space-y-1">
+												{autoLoopJobStatus.iterations.slice(-6).map((item) => (
+													<p
+														key={`auto-iter-${item.iteration}`}
+														className="text-xs text-muted-foreground"
+													>
+														Iter {item.iteration}: {formatPercent(item.success_rate)}
+														{typeof item.success_delta_vs_previous === "number"
+															? ` (${formatSignedPercent(item.success_delta_vs_previous)})`
+															: ""}
+														{item.note ? ` · ${item.note}` : ""}
+													</p>
+												))}
+											</div>
+										)}
+										{autoLoopJobStatus.status === "completed" &&
+											autoLoopJobStatus.result && (
+												<p className="text-xs text-muted-foreground">
+													Stop-orsak:{" "}
+													{formatAutoLoopStopReason(autoLoopJobStatus.result.stop_reason)}
+												</p>
+											)}
+										{autoLoopPromptDrafts.length > 0 && (
+											<div className="flex flex-wrap items-center gap-2">
+												<Badge variant="outline">
+													{autoLoopPromptDrafts.length} promptutkast redo
+												</Badge>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={saveAutoLoopPromptDraftSuggestions}
+													disabled={isSavingAutoLoopPromptDrafts}
+												>
+													{isSavingAutoLoopPromptDrafts
+														? "Sparar promptutkast..."
+														: "Spara promptutkast"}
+												</Button>
+											</div>
+										)}
+									</div>
+								)}
+							</div>
+
 							<div className="rounded border p-3 space-y-2">
 								<div className="flex items-center justify-between gap-2">
 									<p className="text-sm font-medium">Sparade eval-filer (/eval/api)</p>
@@ -2904,6 +3291,10 @@ export function ToolSettingsPage() {
 							<DifficultyBreakdown
 								title="Svårighetsgrad · Agentval Eval"
 								items={evaluationResult.metrics.difficulty_breakdown ?? []}
+							/>
+							<ComparisonInsights
+								title="Diff mot föregående Agent/Tool-run"
+								comparison={evaluationResult.comparison}
 							/>
 
 							<Card>
@@ -3563,6 +3954,10 @@ export function ToolSettingsPage() {
 							<DifficultyBreakdown
 								title="Svårighetsgrad · API Input Eval"
 								items={apiInputEvaluationResult.metrics.difficulty_breakdown ?? []}
+							/>
+							<ComparisonInsights
+								title="Diff mot föregående API Input-run"
+								comparison={apiInputEvaluationResult.comparison}
 							/>
 
 							{apiInputEvaluationResult.holdout_metrics && (

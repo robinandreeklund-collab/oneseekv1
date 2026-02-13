@@ -302,6 +302,32 @@ class ToolPromptSuggestion(BaseModel):
     proposed_prompt: str
 
 
+class ToolEvaluationMetricDeltaItem(BaseModel):
+    metric: str
+    previous: float | None = None
+    current: float | None = None
+    delta: float | None = None
+
+
+class ToolEvaluationRunComparison(BaseModel):
+    stage: str
+    stage_metric_name: str | None = None
+    trend: str
+    previous_run_at: str | None = None
+    previous_eval_name: str | None = None
+    previous_success_rate: float | None = None
+    current_success_rate: float
+    success_rate_delta: float | None = None
+    previous_stage_metric: float | None = None
+    current_stage_metric: float | None = None
+    stage_metric_delta: float | None = None
+    previous_gated_success_rate: float | None = None
+    current_gated_success_rate: float | None = None
+    gated_success_rate_delta: float | None = None
+    metric_deltas: list[ToolEvaluationMetricDeltaItem] = Field(default_factory=list)
+    guidance: list[str] = Field(default_factory=list)
+
+
 class ToolEvaluationResponse(BaseModel):
     eval_name: str | None = None
     target_success_rate: float | None = None
@@ -311,6 +337,7 @@ class ToolEvaluationResponse(BaseModel):
     prompt_suggestions: list[ToolPromptSuggestion] = Field(default_factory=list)
     retrieval_tuning: ToolRetrievalTuning
     retrieval_tuning_suggestion: ToolRetrievalTuningSuggestion | None = None
+    comparison: ToolEvaluationRunComparison | None = None
     metadata_version_hash: str
     search_space_id: int
 
@@ -324,6 +351,7 @@ class ToolApiInputEvaluationResponse(BaseModel):
     holdout_results: list[ToolApiInputEvaluationCaseResult] = Field(default_factory=list)
     prompt_suggestions: list[ToolPromptSuggestion] = Field(default_factory=list)
     retrieval_tuning: ToolRetrievalTuning
+    comparison: ToolEvaluationRunComparison | None = None
     metadata_version_hash: str
     search_space_id: int
 
@@ -376,6 +404,94 @@ class ToolApiInputEvaluationJobStatusResponse(BaseModel):
     updated_at: str
     case_statuses: list[ToolEvaluationCaseStatus] = Field(default_factory=list)
     result: ToolApiInputEvaluationResponse | None = None
+    error: str | None = None
+
+
+class ToolAutoLoopGenerationConfig(BaseModel):
+    eval_type: str = "tool_selection"
+    mode: str = "category"
+    provider_key: str | None = None
+    category_id: str | None = None
+    question_count: int = 12
+    difficulty_profile: str = "mixed"
+    eval_name: str | None = None
+    include_allowed_tools: bool = True
+
+
+class ToolAutoLoopRequest(BaseModel):
+    search_space_id: int | None = None
+    generation: ToolAutoLoopGenerationConfig
+    target_success_rate: float = 0.85
+    max_iterations: int = 6
+    patience: int = 2
+    min_improvement_delta: float = 0.005
+    retrieval_limit: int = 5
+    use_llm_supervisor_review: bool = True
+    include_metadata_suggestions: bool = True
+    include_prompt_suggestions: bool = True
+    include_retrieval_tuning_suggestions: bool = True
+
+
+class ToolAutoLoopDraftPromptItem(BaseModel):
+    prompt_key: str
+    proposed_prompt: str
+    rationale: str | None = None
+    related_tools: list[str] = Field(default_factory=list)
+
+
+class ToolAutoLoopDraftBundle(BaseModel):
+    metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    prompt_patch: list[ToolAutoLoopDraftPromptItem] = Field(default_factory=list)
+    retrieval_tuning_override: ToolRetrievalTuning | None = None
+
+
+class ToolAutoLoopIterationSummary(BaseModel):
+    iteration: int
+    success_rate: float
+    gated_success_rate: float | None = None
+    passed_tests: int
+    total_tests: int
+    success_delta_vs_previous: float | None = None
+    metadata_changes_applied: int = 0
+    prompt_changes_applied: int = 0
+    retrieval_tuning_changed: bool = False
+    note: str | None = None
+
+
+class ToolAutoLoopResult(BaseModel):
+    status: str
+    stop_reason: str
+    target_success_rate: float
+    best_success_rate: float
+    best_iteration: int
+    no_improvement_runs: int
+    generated_suite: dict[str, Any]
+    iterations: list[ToolAutoLoopIterationSummary] = Field(default_factory=list)
+    final_evaluation: ToolEvaluationResponse
+    draft_changes: ToolAutoLoopDraftBundle
+
+
+class ToolAutoLoopStartResponse(BaseModel):
+    job_id: str
+    status: str
+    total_iterations: int
+    target_success_rate: float
+
+
+class ToolAutoLoopJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    total_iterations: int
+    completed_iterations: int
+    started_at: str | None = None
+    completed_at: str | None = None
+    updated_at: str
+    current_iteration: int = 0
+    best_success_rate: float | None = None
+    no_improvement_runs: int = 0
+    message: str | None = None
+    iterations: list[ToolAutoLoopIterationSummary] = Field(default_factory=list)
+    result: ToolAutoLoopResult | None = None
     error: str | None = None
 
 

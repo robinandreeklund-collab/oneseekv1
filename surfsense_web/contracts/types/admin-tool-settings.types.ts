@@ -400,6 +400,32 @@ export const toolApiInputPromptSuggestion = z.object({
 	proposed_prompt: z.string(),
 });
 
+export const toolEvaluationMetricDeltaItem = z.object({
+	metric: z.string(),
+	previous: z.number().nullable().optional(),
+	current: z.number().nullable().optional(),
+	delta: z.number().nullable().optional(),
+});
+
+export const toolEvaluationRunComparison = z.object({
+	stage: z.string(),
+	stage_metric_name: z.string().nullable().optional(),
+	trend: z.string(),
+	previous_run_at: z.string().nullable().optional(),
+	previous_eval_name: z.string().nullable().optional(),
+	previous_success_rate: z.number().nullable().optional(),
+	current_success_rate: z.number(),
+	success_rate_delta: z.number().nullable().optional(),
+	previous_stage_metric: z.number().nullable().optional(),
+	current_stage_metric: z.number().nullable().optional(),
+	stage_metric_delta: z.number().nullable().optional(),
+	previous_gated_success_rate: z.number().nullable().optional(),
+	current_gated_success_rate: z.number().nullable().optional(),
+	gated_success_rate_delta: z.number().nullable().optional(),
+	metric_deltas: z.array(toolEvaluationMetricDeltaItem).default([]),
+	guidance: z.array(z.string()).default([]),
+});
+
 export const toolEvaluationResponse = z.object({
 	eval_name: z.string().nullable().optional(),
 	target_success_rate: z.number().nullable().optional(),
@@ -409,6 +435,7 @@ export const toolEvaluationResponse = z.object({
 	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
 	retrieval_tuning: toolRetrievalTuning,
 	retrieval_tuning_suggestion: toolRetrievalTuningSuggestion.nullable().optional(),
+	comparison: toolEvaluationRunComparison.nullable().optional(),
 	metadata_version_hash: z.string(),
 	search_space_id: z.number(),
 });
@@ -422,6 +449,7 @@ export const toolApiInputEvaluationResponse = z.object({
 	holdout_results: z.array(toolApiInputEvaluationCaseResult).default([]),
 	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
 	retrieval_tuning: toolRetrievalTuning,
+	comparison: toolEvaluationRunComparison.nullable().optional(),
 	metadata_version_hash: z.string(),
 	search_space_id: z.number(),
 });
@@ -474,6 +502,94 @@ export const toolApiInputEvaluationJobStatusResponse = z.object({
 	updated_at: z.string(),
 	case_statuses: z.array(toolEvaluationCaseStatus).default([]),
 	result: toolApiInputEvaluationResponse.nullable().optional(),
+	error: z.string().nullable().optional(),
+});
+
+export const toolAutoLoopGenerationConfig = z.object({
+	eval_type: z.string().optional().default("tool_selection"),
+	mode: z.string().optional().default("category"),
+	provider_key: z.string().nullable().optional(),
+	category_id: z.string().nullable().optional(),
+	question_count: z.number().int().optional().default(12),
+	difficulty_profile: z.string().optional().default("mixed"),
+	eval_name: z.string().nullable().optional(),
+	include_allowed_tools: z.boolean().optional().default(true),
+});
+
+export const toolAutoLoopRequest = z.object({
+	search_space_id: z.number().nullable().optional(),
+	generation: toolAutoLoopGenerationConfig,
+	target_success_rate: z.number().optional().default(0.85),
+	max_iterations: z.number().int().optional().default(6),
+	patience: z.number().int().optional().default(2),
+	min_improvement_delta: z.number().optional().default(0.005),
+	retrieval_limit: z.number().int().optional().default(5),
+	use_llm_supervisor_review: z.boolean().optional().default(true),
+	include_metadata_suggestions: z.boolean().optional().default(true),
+	include_prompt_suggestions: z.boolean().optional().default(true),
+	include_retrieval_tuning_suggestions: z.boolean().optional().default(true),
+});
+
+export const toolAutoLoopStartResponse = z.object({
+	job_id: z.string(),
+	status: z.string(),
+	total_iterations: z.number(),
+	target_success_rate: z.number(),
+});
+
+export const toolAutoLoopDraftPromptItem = z.object({
+	prompt_key: z.string(),
+	proposed_prompt: z.string(),
+	rationale: z.string().nullable().optional(),
+	related_tools: z.array(z.string()).default([]),
+});
+
+export const toolAutoLoopDraftBundle = z.object({
+	metadata_patch: z.array(toolMetadataUpdateItem).default([]),
+	prompt_patch: z.array(toolAutoLoopDraftPromptItem).default([]),
+	retrieval_tuning_override: toolRetrievalTuning.nullable().optional(),
+});
+
+export const toolAutoLoopIterationSummary = z.object({
+	iteration: z.number(),
+	success_rate: z.number(),
+	gated_success_rate: z.number().nullable().optional(),
+	passed_tests: z.number(),
+	total_tests: z.number(),
+	success_delta_vs_previous: z.number().nullable().optional(),
+	metadata_changes_applied: z.number().optional().default(0),
+	prompt_changes_applied: z.number().optional().default(0),
+	retrieval_tuning_changed: z.boolean().optional().default(false),
+	note: z.string().nullable().optional(),
+});
+
+export const toolAutoLoopResult = z.object({
+	status: z.string(),
+	stop_reason: z.string(),
+	target_success_rate: z.number(),
+	best_success_rate: z.number(),
+	best_iteration: z.number(),
+	no_improvement_runs: z.number(),
+	generated_suite: z.record(z.string(), z.unknown()),
+	iterations: z.array(toolAutoLoopIterationSummary).default([]),
+	final_evaluation: toolEvaluationResponse,
+	draft_changes: toolAutoLoopDraftBundle,
+});
+
+export const toolAutoLoopJobStatusResponse = z.object({
+	job_id: z.string(),
+	status: z.string(),
+	total_iterations: z.number(),
+	completed_iterations: z.number(),
+	started_at: z.string().nullable().optional(),
+	completed_at: z.string().nullable().optional(),
+	updated_at: z.string(),
+	current_iteration: z.number().optional().default(0),
+	best_success_rate: z.number().nullable().optional(),
+	no_improvement_runs: z.number().optional().default(0),
+	message: z.string().nullable().optional(),
+	iterations: z.array(toolAutoLoopIterationSummary).default([]),
+	result: toolAutoLoopResult.nullable().optional(),
 	error: z.string().nullable().optional(),
 });
 
@@ -575,6 +691,8 @@ export type ToolApiInputEvaluationMetrics = z.infer<
 	typeof toolApiInputEvaluationMetrics
 >;
 export type ToolMetadataSuggestion = z.infer<typeof toolMetadataSuggestion>;
+export type ToolEvaluationMetricDeltaItem = z.infer<typeof toolEvaluationMetricDeltaItem>;
+export type ToolEvaluationRunComparison = z.infer<typeof toolEvaluationRunComparison>;
 export type ToolEvaluationResponse = z.infer<typeof toolEvaluationResponse>;
 export type ToolApiInputPromptSuggestion = z.infer<typeof toolApiInputPromptSuggestion>;
 export type ToolApiInputEvaluationResponse = z.infer<
@@ -590,6 +708,16 @@ export type ToolApiInputEvaluationStartResponse = z.infer<
 >;
 export type ToolApiInputEvaluationJobStatusResponse = z.infer<
 	typeof toolApiInputEvaluationJobStatusResponse
+>;
+export type ToolAutoLoopGenerationConfig = z.infer<typeof toolAutoLoopGenerationConfig>;
+export type ToolAutoLoopRequest = z.infer<typeof toolAutoLoopRequest>;
+export type ToolAutoLoopStartResponse = z.infer<typeof toolAutoLoopStartResponse>;
+export type ToolAutoLoopDraftPromptItem = z.infer<typeof toolAutoLoopDraftPromptItem>;
+export type ToolAutoLoopDraftBundle = z.infer<typeof toolAutoLoopDraftBundle>;
+export type ToolAutoLoopIterationSummary = z.infer<typeof toolAutoLoopIterationSummary>;
+export type ToolAutoLoopResult = z.infer<typeof toolAutoLoopResult>;
+export type ToolAutoLoopJobStatusResponse = z.infer<
+	typeof toolAutoLoopJobStatusResponse
 >;
 export type ToolApiInputApplyPromptSuggestionItem = z.infer<
 	typeof toolApiInputApplyPromptSuggestionItem

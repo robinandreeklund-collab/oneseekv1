@@ -27,6 +27,10 @@ from app.db import (
     get_async_session,
 )
 from app.schemas.admin_tool_settings import (
+    ToolAutoLoopJobStatusResponse,
+    ToolAutoLoopRequest,
+    ToolAutoLoopResult,
+    ToolAutoLoopStartResponse,
     ToolApiInputApplyPromptSuggestionsRequest,
     ToolApiInputApplyPromptSuggestionsResponse,
     ToolApiInputEvaluationJobStatusResponse,
@@ -43,7 +47,10 @@ from app.schemas.admin_tool_settings import (
     ToolEvalLibraryListResponse,
     ToolEvaluationCaseStatus,
     ToolEvaluationJobStatusResponse,
+    ToolEvaluationMetricDeltaItem,
     ToolEvaluationStageHistoryResponse,
+    ToolEvaluationTestCase,
+    ToolEvaluationRunComparison,
     ToolEvaluationRequest,
     ToolEvaluationResponse,
     ToolEvaluationStartResponse,
@@ -52,6 +59,8 @@ from app.schemas.admin_tool_settings import (
     ToolMetadataUpdateItem,
     ToolRetrievalTuning,
     ToolRetrievalTuningResponse,
+    ToolAutoLoopIterationSummary,
+    ToolAutoLoopDraftPromptItem,
     ToolSettingsUpdateRequest,
     ToolSuggestionRequest,
     ToolSuggestionResponse,
@@ -99,6 +108,9 @@ _MAX_EVAL_JOBS = 100
 _API_INPUT_EVAL_JOBS: dict[str, dict[str, Any]] = {}
 _API_INPUT_EVAL_JOBS_LOCK = asyncio.Lock()
 _MAX_API_INPUT_EVAL_JOBS = 100
+_AUTO_LOOP_JOBS: dict[str, dict[str, Any]] = {}
+_AUTO_LOOP_JOBS_LOCK = asyncio.Lock()
+_MAX_AUTO_LOOP_JOBS = 60
 _EVAL_LIBRARY_ROOT = Path(__file__).resolve().parents[3] / "eval" / "api"
 _EVAL_INTERNAL_TOOL_IDS = {
     "write_todos",
@@ -1442,6 +1454,48 @@ def _serialize_api_input_eval_job(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _prune_auto_loop_jobs() -> None:
+    if len(_AUTO_LOOP_JOBS) <= _MAX_AUTO_LOOP_JOBS:
+        return
+    finished = [
+        (job_id, payload)
+        for job_id, payload in _AUTO_LOOP_JOBS.items()
+        if payload.get("status") in {"completed", "failed"}
+    ]
+    finished.sort(key=lambda item: str(item[1].get("updated_at") or ""))
+    overflow = len(_AUTO_LOOP_JOBS) - _MAX_AUTO_LOOP_JOBS
+    for job_id, _payload in finished[: max(0, overflow)]:
+        _AUTO_LOOP_JOBS.pop(job_id, None)
+
+
+async def _update_auto_loop_job(job_id: str, **updates: Any) -> None:
+    async with _AUTO_LOOP_JOBS_LOCK:
+        job = _AUTO_LOOP_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job["updated_at"] = _utcnow_iso()
+
+
+def _serialize_auto_loop_job(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "total_iterations": int(job.get("total_iterations", 0)),
+        "completed_iterations": int(job.get("completed_iterations", 0)),
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+        "updated_at": job.get("updated_at") or _utcnow_iso(),
+        "current_iteration": int(job.get("current_iteration", 0)),
+        "best_success_rate": _to_float(job.get("best_success_rate")),
+        "no_improvement_runs": int(job.get("no_improvement_runs", 0)),
+        "message": job.get("message"),
+        "iterations": job.get("iterations") or [],
+        "result": job.get("result"),
+        "error": job.get("error"),
+    }
+
+
 def _build_eval_summary_payload(result: dict[str, Any]) -> dict[str, Any]:
     metrics = result.get("metrics") or {}
     total_tests = int(metrics.get("total_tests") or 0)
@@ -1492,6 +1546,245 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
+
+
+def _delta(current: float | None, previous: float | None) -> float | None:
+    if current is None or previous is None:
+        return None
+    return current - previous
+
+
+def _comparison_metric_keys(stage: str) -> list[str]:
+    normalized = _normalize_eval_stage(stage)
+    shared = [
+        "route_accuracy",
+        "sub_route_accuracy",
+        "agent_accuracy",
+        "plan_accuracy",
+        "supervisor_review_pass_rate",
+        "supervisor_review_score",
+        "category_accuracy",
+        "tool_accuracy",
+    ]
+    if normalized == "tool":
+        return shared + ["retrieval_recall_at_k"]
+    if normalized == "api_input":
+        return shared + [
+            "schema_validity_rate",
+            "required_field_recall",
+            "field_value_accuracy",
+            "clarification_accuracy",
+        ]
+    return shared
+
+
+def _guidance_from_comparison(
+    *,
+    stage: str,
+    success_delta: float | None,
+    metric_deltas: list[dict[str, Any]],
+    target_success_rate: float | None,
+    current_success_rate: float,
+) -> list[str]:
+    guidance: list[str] = []
+    degraded_metrics = [
+        item["metric"]
+        for item in metric_deltas
+        if _to_float(item.get("delta")) is not None and float(item["delta"]) <= -0.02
+    ]
+    improved_metrics = [
+        item["metric"]
+        for item in metric_deltas
+        if _to_float(item.get("delta")) is not None and float(item["delta"]) >= 0.02
+    ]
+
+    if success_delta is None:
+        guidance.append(
+            "Ingen tidigare jämförbar körning hittades för denna stage ännu. "
+            "Kör samma suite igen efter en begränsad ändring för att få tydlig diff."
+        )
+    elif success_delta <= -0.005:
+        guidance.append(
+            "Resultatet blev sämre än föregående körning. Testa att backa senaste stora ändring "
+            "och applicera mindre, isolerade ändringar per iteration."
+        )
+        if any(metric in degraded_metrics for metric in ["route_accuracy", "sub_route_accuracy"]):
+            guidance.append(
+                "Regression i route/sub-route: prioritera supervisor/router-prompt och kontrollera "
+                "att route/sub-route-exempel matchar testernas formuleringar."
+            )
+        if "agent_accuracy" in degraded_metrics:
+            guidance.append(
+                "Regression i agentval: skärp regler i supervisor för när retrieve_agents ska köras "
+                "om och när agent-id måste vara exakta."
+            )
+        if any(metric in degraded_metrics for metric in ["tool_accuracy", "retrieval_recall_at_k"]):
+            guidance.append(
+                "Regression i tool-träff: fokusera på metadata (description/keywords/example_queries) "
+                "och retrieval-vikter innan fler promptändringar."
+            )
+        if stage == "api_input" and any(
+            metric in degraded_metrics
+            for metric in [
+                "schema_validity_rate",
+                "required_field_recall",
+                "field_value_accuracy",
+            ]
+        ):
+            guidance.append(
+                "Regression i API-input: gör verktygsspecifika promptförtydliganden för required_fields, "
+                "fältformat och validering innan anrop."
+            )
+    elif success_delta >= 0.005:
+        guidance.append(
+            "Resultatet förbättrades jämfört med föregående körning. Fortsätt med små ändringar "
+            "och verifiera på holdout-suite för att undvika överanpassning."
+        )
+    else:
+        guidance.append(
+            "Resultatet är nära oförändrat jämfört med föregående körning. "
+            "Byt strategi och fokusera på en dimension åt gången (route/agent/tool/API-input)."
+        )
+
+    if improved_metrics and success_delta is not None and success_delta > 0:
+        guidance.append(
+            "Förbättrade dimensioner: "
+            + ", ".join(improved_metrics[:4])
+            + ". Behåll dessa ändringar och iterera på kvarvarande svagheter."
+        )
+    if degraded_metrics and success_delta is not None and success_delta > -0.005:
+        guidance.append(
+            "Varning: vissa delmått sjönk trots liknande total success. "
+            "Verifiera att inga regressionsrisker byggs in."
+        )
+
+    if (
+        target_success_rate is not None
+        and 0 <= target_success_rate <= 1
+        and current_success_rate < target_success_rate
+    ):
+        guidance.append(
+            f"Nuvarande success ({current_success_rate * 100:.1f}%) är under target "
+            f"({target_success_rate * 100:.1f}%). Prioritera de mest regressiva metrikerna först."
+        )
+    return guidance
+
+
+async def _build_stage_run_comparison(
+    session: AsyncSession,
+    *,
+    search_space_id: int,
+    stage: str,
+    result: dict[str, Any],
+    target_success_rate: float | None,
+) -> dict[str, Any]:
+    normalized_stage = _normalize_eval_stage(stage)
+    metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+    current_success_rate = _to_float(metrics.get("success_rate")) or 0.0
+    stage_metric_name = _stage_metric_name(normalized_stage)
+    current_stage_metric = _to_float(metrics.get(stage_metric_name))
+    current_gated_success = _to_float(metrics.get("gated_success_rate"))
+    if current_stage_metric is None:
+        (
+            _stage_total,
+            _stage_passed,
+            _stage_success_rate,
+            _category_breakdown,
+            derived_stage_metric,
+        ) = _build_stage_breakdown(stage=normalized_stage, result=result)
+        current_stage_metric = derived_stage_metric
+
+    previous_row_result = await session.execute(
+        select(GlobalToolEvaluationStageRun)
+        .filter(
+            GlobalToolEvaluationStageRun.search_space_id == search_space_id,
+            GlobalToolEvaluationStageRun.stage == normalized_stage,
+        )
+        .order_by(GlobalToolEvaluationStageRun.created_at.desc())
+        .limit(1)
+    )
+    previous_row = previous_row_result.scalars().first()
+    previous_metadata = (
+        previous_row.run_metadata
+        if previous_row is not None and isinstance(previous_row.run_metadata, dict)
+        else {}
+    )
+
+    metric_deltas: list[dict[str, Any]] = []
+    for metric_key in _comparison_metric_keys(normalized_stage):
+        previous_value = _to_float(previous_metadata.get(metric_key))
+        current_value = _to_float(metrics.get(metric_key))
+        metric_deltas.append(
+            ToolEvaluationMetricDeltaItem(
+                metric=metric_key,
+                previous=previous_value,
+                current=current_value,
+                delta=_delta(current_value, previous_value),
+            ).model_dump()
+        )
+
+    if previous_row is None:
+        return ToolEvaluationRunComparison(
+            stage=normalized_stage,
+            stage_metric_name=stage_metric_name,
+            trend="insufficient_data",
+            previous_run_at=None,
+            previous_eval_name=None,
+            previous_success_rate=None,
+            current_success_rate=current_success_rate,
+            success_rate_delta=None,
+            previous_stage_metric=None,
+            current_stage_metric=current_stage_metric,
+            stage_metric_delta=None,
+            previous_gated_success_rate=None,
+            current_gated_success_rate=current_gated_success,
+            gated_success_rate_delta=None,
+            metric_deltas=metric_deltas,
+            guidance=_guidance_from_comparison(
+                stage=normalized_stage,
+                success_delta=None,
+                metric_deltas=metric_deltas,
+                target_success_rate=target_success_rate,
+                current_success_rate=current_success_rate,
+            ),
+        ).model_dump()
+
+    previous_success_rate = _to_float(previous_row.success_rate) or 0.0
+    previous_stage_metric = _to_float(previous_row.metric_value)
+    previous_gated_success = _to_float(previous_metadata.get("gated_success_rate"))
+    success_delta = current_success_rate - previous_success_rate
+    trend = "unchanged"
+    if success_delta >= 0.005:
+        trend = "improved"
+    elif success_delta <= -0.005:
+        trend = "degraded"
+
+    return ToolEvaluationRunComparison(
+        stage=normalized_stage,
+        stage_metric_name=stage_metric_name,
+        trend=trend,
+        previous_run_at=(
+            previous_row.created_at.isoformat() if previous_row.created_at else _utcnow_iso()
+        ),
+        previous_eval_name=previous_row.eval_name,
+        previous_success_rate=previous_success_rate,
+        current_success_rate=current_success_rate,
+        success_rate_delta=success_delta,
+        previous_stage_metric=previous_stage_metric,
+        current_stage_metric=current_stage_metric,
+        stage_metric_delta=_delta(current_stage_metric, previous_stage_metric),
+        previous_gated_success_rate=previous_gated_success,
+        current_gated_success_rate=current_gated_success,
+        gated_success_rate_delta=_delta(current_gated_success, previous_gated_success),
+        metric_deltas=metric_deltas,
+        guidance=_guidance_from_comparison(
+            stage=normalized_stage,
+            success_delta=success_delta,
+            metric_deltas=metric_deltas,
+            target_success_rate=target_success_rate,
+            current_success_rate=current_success_rate,
+        ),
+    ).model_dump()
 
 
 def _build_stage_breakdown(
@@ -1563,6 +1856,12 @@ async def _record_eval_stage_summaries(
     updated_by_id: Any | None = None,
 ) -> None:
     eval_name = str(result.get("eval_name") or "").strip() or None
+    metrics_payload = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+    run_metadata = {
+        "gated_success_rate": _to_float(metrics_payload.get("gated_success_rate")),
+    }
+    for metric_key in _comparison_metric_keys("api_input"):
+        run_metadata[metric_key] = _to_float(metrics_payload.get(metric_key))
     rows: list[GlobalToolEvaluationStageRun] = []
     for raw_stage in stages:
         stage = _normalize_eval_stage(raw_stage)
@@ -1580,13 +1879,7 @@ async def _record_eval_stage_summaries(
                 passed_tests=passed_tests,
                 success_rate=success_rate,
                 category_breakdown=category_breakdown,
-                run_metadata={
-                    "gated_success_rate": _to_float(
-                        (result.get("metrics") or {}).get("gated_success_rate")
-                        if isinstance(result.get("metrics"), dict)
-                        else None
-                    ),
-                },
+                run_metadata=dict(run_metadata),
                 updated_by_id=updated_by_id,
             )
         )
@@ -1961,6 +2254,7 @@ async def _execute_tool_evaluation(
     *,
     payload: ToolEvaluationRequest,
     resolved_search_space_id: int,
+    prompt_patch: dict[str, str] | None = None,
     progress_callback=None,
 ) -> dict[str, Any]:
     patch_map = _patch_map_from_updates(payload.metadata_patch)
@@ -1980,6 +2274,8 @@ async def _execute_tool_evaluation(
     )
     llm = await get_agent_llm(session, resolved_search_space_id)
     prompt_overrides = await get_global_prompt_overrides(session)
+    if prompt_patch:
+        prompt_overrides = {**prompt_overrides, **prompt_patch}
     current_prompts = _build_current_eval_prompts(
         prompt_overrides=prompt_overrides,
         tool_index=tool_index,
@@ -2328,6 +2624,32 @@ async def read_eval_library_file(
     }
 
 
+def _normalize_generation_eval_type(value: str | None) -> str:
+    normalized_eval_type = str(value or "tool_selection").strip().lower()
+    if normalized_eval_type in {"api", "api_input_eval"}:
+        normalized_eval_type = "api_input"
+    if normalized_eval_type not in {"tool_selection", "api_input"}:
+        raise HTTPException(
+            status_code=400,
+            detail="eval_type must be either 'tool_selection' or 'api_input'",
+        )
+    return normalized_eval_type
+
+
+def _normalize_generation_mode(value: str | None) -> str:
+    normalized_mode = str(value or "category").strip().lower()
+    if normalized_mode in {"random", "global", "global_mix"}:
+        normalized_mode = "global_random"
+    if normalized_mode in {"provider_mix", "provider_wide"}:
+        normalized_mode = "provider"
+    if normalized_mode not in {"category", "global_random", "provider"}:
+        raise HTTPException(
+            status_code=400,
+            detail="mode must be one of: 'category', 'provider', 'global_random'",
+        )
+    return normalized_mode
+
+
 @router.post(
     "/tool-settings/eval-library/generate",
     response_model=ToolEvalLibraryGenerateResponse,
@@ -2342,24 +2664,8 @@ async def generate_eval_library_file(
         user,
         requested_search_space_id=payload.search_space_id,
     )
-    normalized_eval_type = str(payload.eval_type or "tool_selection").strip().lower()
-    if normalized_eval_type in {"api", "api_input_eval"}:
-        normalized_eval_type = "api_input"
-    if normalized_eval_type not in {"tool_selection", "api_input"}:
-        raise HTTPException(
-            status_code=400,
-            detail="eval_type must be either 'tool_selection' or 'api_input'",
-        )
-    normalized_mode = str(payload.mode or "category").strip().lower()
-    if normalized_mode in {"random", "global", "global_mix"}:
-        normalized_mode = "global_random"
-    if normalized_mode in {"provider_mix", "provider_wide"}:
-        normalized_mode = "provider"
-    if normalized_mode not in {"category", "global_random", "provider"}:
-        raise HTTPException(
-            status_code=400,
-            detail="mode must be one of: 'category', 'provider', 'global_random'",
-        )
+    normalized_eval_type = _normalize_generation_eval_type(payload.eval_type)
+    normalized_mode = _normalize_generation_mode(payload.mode)
     question_count = max(1, min(int(payload.question_count or 12), 100))
     normalized_difficulty_profile = _normalize_difficulty_profile(
         payload.difficulty_profile
@@ -2547,6 +2853,13 @@ async def evaluate_tool_settings(
         payload=payload,
         resolved_search_space_id=resolved_search_space_id,
     )
+    result["comparison"] = await _build_stage_run_comparison(
+        session,
+        search_space_id=resolved_search_space_id,
+        stage="tool",
+        result=result,
+        target_success_rate=payload.target_success_rate,
+    )
     await _record_latest_eval_summary(
         session,
         search_space_id=resolved_search_space_id,
@@ -2627,6 +2940,13 @@ async def _run_eval_job_background(
                 payload=payload,
                 resolved_search_space_id=resolved_search_space_id,
                 progress_callback=_progress_callback,
+            )
+            result["comparison"] = await _build_stage_run_comparison(
+                job_session,
+                search_space_id=resolved_search_space_id,
+                stage="tool",
+                result=result,
+                target_success_rate=payload.target_success_rate,
             )
             await _record_latest_eval_summary(
                 job_session,
@@ -2736,6 +3056,589 @@ async def get_tool_settings_evaluation_status(
         return _serialize_eval_job(job)
 
 
+def _snapshot_metadata_state(
+    state: dict[str, ToolMetadataUpdateItem],
+) -> dict[str, ToolMetadataUpdateItem]:
+    return {tool_id: item.model_copy(deep=True) for tool_id, item in state.items()}
+
+
+def _snapshot_prompt_state(state: dict[str, str]) -> dict[str, str]:
+    return dict(state)
+
+
+def _snapshot_tuning_state(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    return dict(state) if isinstance(state, dict) else None
+
+
+def _build_metadata_update_item(
+    *,
+    tool_id: str,
+    proposed_payload: dict[str, Any],
+    defaults_by_tool: dict[str, dict[str, Any]],
+) -> ToolMetadataUpdateItem:
+    fallback = defaults_by_tool.get(tool_id) or {}
+
+    def _coerce_string_list(value: Any, fallback_key: str) -> list[str]:
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if cleaned:
+                return cleaned
+        fallback_values = fallback.get(fallback_key)
+        if isinstance(fallback_values, list):
+            return [str(item).strip() for item in fallback_values if str(item).strip()]
+        return []
+
+    return ToolMetadataUpdateItem(
+        tool_id=tool_id,
+        name=(
+            str(proposed_payload.get("name") or fallback.get("name") or tool_id).strip()
+            or tool_id
+        ),
+        description=(
+            str(proposed_payload.get("description") or fallback.get("description") or "").strip()
+        ),
+        keywords=_coerce_string_list(proposed_payload.get("keywords"), "keywords"),
+        example_queries=_coerce_string_list(
+            proposed_payload.get("example_queries"),
+            "example_queries",
+        ),
+        category=(
+            str(
+                proposed_payload.get("category")
+                or fallback.get("category")
+                or "general"
+            ).strip()
+            or "general"
+        ),
+        base_path=(
+            str(
+                proposed_payload.get("base_path")
+                if proposed_payload.get("base_path") is not None
+                else (fallback.get("base_path") or "")
+            ).strip()
+            or None
+        ),
+    )
+
+
+async def _generate_auto_loop_suite(
+    session: AsyncSession,
+    user: User,
+    *,
+    search_space_id: int,
+    generation,
+) -> tuple[dict[str, Any], list[ToolEvaluationTestCase], list[Any]]:
+    normalized_eval_type = _normalize_generation_eval_type(generation.eval_type)
+    if normalized_eval_type != "tool_selection":
+        raise HTTPException(
+            status_code=400,
+            detail="Auto-läge stöder för närvarande endast eval_type='tool_selection'",
+        )
+    normalized_mode = _normalize_generation_mode(generation.mode)
+    normalized_difficulty_profile = _normalize_difficulty_profile(
+        generation.difficulty_profile
+    )
+    question_count = max(1, min(int(generation.question_count or 12), 100))
+    _tool_registry, tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_registry_and_index_for_search_space(
+            session,
+            user,
+            search_space_id=search_space_id,
+            metadata_patch=None,
+        )
+    )
+    pool = _select_generation_entries(
+        tool_index=tool_index,
+        mode=normalized_mode,
+        provider_key=generation.provider_key,
+        category_id=generation.category_id,
+        question_count=question_count,
+    )
+    if not pool:
+        raise HTTPException(status_code=404, detail="No tools available for eval generation")
+    random.shuffle(pool)
+    selected_entries = pool[: max(question_count, min(len(pool), 30))]
+    llm = await get_agent_llm(session, search_space_id)
+    tests = await _generate_eval_tests(
+        llm=llm,
+        selected_entries=selected_entries,
+        question_count=question_count,
+        include_allowed_tools=bool(generation.include_allowed_tools),
+        difficulty_profile=normalized_difficulty_profile,
+    )
+    if not tests:
+        raise HTTPException(status_code=500, detail="Could not generate eval tests")
+    default_eval_name = (
+        f"{generation.provider_key or 'global'}-{generation.category_id or normalized_mode}"
+    )
+    eval_name = str(generation.eval_name or default_eval_name).strip() or default_eval_name
+    suite_payload = _build_eval_library_payload(
+        eval_type=normalized_eval_type,
+        eval_name=eval_name,
+        target_success_rate=None,
+        difficulty_profile=normalized_difficulty_profile,
+        tests=tests,
+    )
+    normalized_tests: list[ToolEvaluationTestCase] = []
+    for index, item in enumerate(tests):
+        if not isinstance(item, dict):
+            continue
+        candidate = dict(item)
+        candidate["id"] = str(candidate.get("id") or f"case-{index + 1}")
+        try:
+            parsed_case = ToolEvaluationTestCase(**candidate)
+        except Exception:
+            continue
+        if not str(parsed_case.question).strip():
+            continue
+        normalized_tests.append(parsed_case)
+    if not normalized_tests:
+        raise HTTPException(status_code=500, detail="Generated tests could not be normalized")
+    return suite_payload, normalized_tests, tool_index
+
+
+async def _run_tool_auto_loop_job_background(
+    *,
+    job_id: str,
+    payload_data: dict[str, Any],
+    user_id: Any,
+) -> None:
+    await _update_auto_loop_job(
+        job_id,
+        status="running",
+        started_at=_utcnow_iso(),
+        error=None,
+        message="Initierar auto-loop",
+    )
+    try:
+        async with async_session_maker() as job_session:
+            payload = ToolAutoLoopRequest(**payload_data)
+            user_result = await job_session.execute(select(User).filter(User.id == user_id))
+            job_user = user_result.scalars().first()
+            if job_user is None:
+                raise RuntimeError("Auto-loop user context could not be loaded")
+            _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+                job_session,
+                job_user,
+                requested_search_space_id=payload.search_space_id,
+            )
+
+            suite_payload, generated_tests, generation_tool_index = (
+                await _generate_auto_loop_suite(
+                    job_session,
+                    job_user,
+                    search_space_id=resolved_search_space_id,
+                    generation=payload.generation,
+                )
+            )
+            await _update_auto_loop_job(
+                job_id,
+                message=f"Generated suite with {len(generated_tests)} frågor",
+            )
+
+            defaults_by_tool = {
+                str(entry.tool_id): _metadata_payload_from_entry(entry)
+                for entry in generation_tool_index
+                if str(getattr(entry, "tool_id", "")).strip()
+            }
+            metadata_state: dict[str, ToolMetadataUpdateItem] = {}
+            prompt_state: dict[str, str] = {}
+            prompt_details: dict[str, dict[str, Any]] = {}
+            retrieval_state = normalize_tool_retrieval_tuning(
+                await get_global_tool_retrieval_tuning(job_session)
+            )
+
+            best_metadata_state = _snapshot_metadata_state(metadata_state)
+            best_prompt_state = _snapshot_prompt_state(prompt_state)
+            best_retrieval_state = _snapshot_tuning_state(retrieval_state)
+            best_success_rate = -1.0
+            best_iteration = 0
+            best_result: dict[str, Any] | None = None
+            previous_success_rate: float | None = None
+            no_improvement_runs = 0
+            stop_reason = "max_iterations_reached"
+
+            target_success_rate = max(
+                0.0,
+                min(1.0, float(payload.target_success_rate or 0.85)),
+            )
+            max_iterations = max(1, min(int(payload.max_iterations or 6), 30))
+            patience = max(1, min(int(payload.patience or 2), 12))
+            min_improvement_delta = max(
+                0.0, min(float(payload.min_improvement_delta or 0.005), 0.25)
+            )
+
+            iteration_summaries: list[dict[str, Any]] = []
+
+            for iteration in range(1, max_iterations + 1):
+                await _update_auto_loop_job(
+                    job_id,
+                    current_iteration=iteration,
+                    message=f"Kör iteration {iteration}/{max_iterations}",
+                )
+                iteration_metadata_state = _snapshot_metadata_state(metadata_state)
+                iteration_prompt_state = _snapshot_prompt_state(prompt_state)
+                iteration_retrieval_state = _snapshot_tuning_state(retrieval_state)
+
+                iteration_payload = ToolEvaluationRequest(
+                    eval_name=f"{suite_payload.get('eval_name') or 'auto-loop'} · iter {iteration}",
+                    target_success_rate=target_success_rate,
+                    search_space_id=resolved_search_space_id,
+                    retrieval_limit=max(1, min(int(payload.retrieval_limit or 5), 15)),
+                    use_llm_supervisor_review=bool(payload.use_llm_supervisor_review),
+                    tests=generated_tests,
+                    metadata_patch=list(iteration_metadata_state.values()),
+                    retrieval_tuning_override=(
+                        ToolRetrievalTuning(**iteration_retrieval_state)
+                        if isinstance(iteration_retrieval_state, dict)
+                        else None
+                    ),
+                )
+                result = await _execute_tool_evaluation(
+                    job_session,
+                    job_user,
+                    payload=iteration_payload,
+                    resolved_search_space_id=resolved_search_space_id,
+                    prompt_patch=iteration_prompt_state,
+                    progress_callback=None,
+                )
+                result["comparison"] = await _build_stage_run_comparison(
+                    job_session,
+                    search_space_id=resolved_search_space_id,
+                    stage="tool",
+                    result=result,
+                    target_success_rate=target_success_rate,
+                )
+                await _record_latest_eval_summary(
+                    job_session,
+                    search_space_id=resolved_search_space_id,
+                    result=result,
+                    updated_by_id=job_user.id,
+                )
+                await _record_eval_stage_summaries(
+                    job_session,
+                    search_space_id=resolved_search_space_id,
+                    result=result,
+                    stages=["agent", "tool"],
+                    updated_by_id=job_user.id,
+                )
+
+                metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+                success_rate = _to_float(metrics.get("success_rate")) or 0.0
+                gated_success_rate = _to_float(metrics.get("gated_success_rate"))
+                total_tests = int(metrics.get("total_tests") or len(generated_tests))
+                passed_tests = int(metrics.get("passed_tests") or 0)
+                success_delta_vs_previous = (
+                    None
+                    if previous_success_rate is None
+                    else success_rate - previous_success_rate
+                )
+                previous_success_rate = success_rate
+
+                improved = best_result is None or (
+                    success_rate >= best_success_rate + min_improvement_delta
+                )
+                if improved:
+                    best_success_rate = success_rate
+                    best_iteration = iteration
+                    best_result = result
+                    best_metadata_state = _snapshot_metadata_state(iteration_metadata_state)
+                    best_prompt_state = _snapshot_prompt_state(iteration_prompt_state)
+                    best_retrieval_state = _snapshot_tuning_state(iteration_retrieval_state)
+                    no_improvement_runs = 0
+                else:
+                    no_improvement_runs += 1
+
+                metadata_changes_applied = 0
+                prompt_changes_applied = 0
+                retrieval_tuning_changed = False
+                note: str | None = None
+
+                if success_rate >= target_success_rate:
+                    stop_reason = "target_reached"
+                    note = (
+                        f"Målnivå uppnådd: {(success_rate * 100):.1f}% "
+                        f"(target {(target_success_rate * 100):.1f}%)."
+                    )
+                else:
+                    metadata_state = _snapshot_metadata_state(iteration_metadata_state)
+                    prompt_state = _snapshot_prompt_state(iteration_prompt_state)
+                    retrieval_state = _snapshot_tuning_state(iteration_retrieval_state)
+
+                    if payload.include_metadata_suggestions:
+                        for suggestion in result.get("suggestions") or []:
+                            if not isinstance(suggestion, dict):
+                                continue
+                            tool_id = str(suggestion.get("tool_id") or "").strip()
+                            proposed_payload = suggestion.get("proposed_metadata")
+                            if not tool_id or not isinstance(proposed_payload, dict):
+                                continue
+                            candidate = _build_metadata_update_item(
+                                tool_id=tool_id,
+                                proposed_payload=proposed_payload,
+                                defaults_by_tool=defaults_by_tool,
+                            )
+                            current_item = metadata_state.get(tool_id)
+                            if (
+                                current_item is None
+                                or current_item.model_dump() != candidate.model_dump()
+                            ):
+                                metadata_state[tool_id] = candidate
+                                metadata_changes_applied += 1
+
+                    if payload.include_prompt_suggestions:
+                        for suggestion in result.get("prompt_suggestions") or []:
+                            if not isinstance(suggestion, dict):
+                                continue
+                            prompt_key = str(suggestion.get("prompt_key") or "").strip()
+                            proposed_prompt = str(
+                                suggestion.get("proposed_prompt") or ""
+                            ).strip()
+                            if not prompt_key or not proposed_prompt:
+                                continue
+                            if not _is_valid_prompt_key(prompt_key):
+                                continue
+                            if prompt_state.get(prompt_key) != proposed_prompt:
+                                prompt_state[prompt_key] = proposed_prompt
+                                prompt_changes_applied += 1
+                            prompt_details[prompt_key] = {
+                                "prompt_key": prompt_key,
+                                "proposed_prompt": proposed_prompt,
+                                "rationale": (
+                                    str(suggestion.get("rationale") or "").strip()
+                                    or "Auto-loop: samlat promptutkast från eval-körningar."
+                                ),
+                                "related_tools": [
+                                    str(item).strip()
+                                    for item in list(suggestion.get("related_tools") or [])
+                                    if str(item).strip()
+                                ],
+                            }
+
+                    if payload.include_retrieval_tuning_suggestions:
+                        suggestion = result.get("retrieval_tuning_suggestion")
+                        if isinstance(suggestion, dict) and isinstance(
+                            suggestion.get("proposed_tuning"),
+                            dict,
+                        ):
+                            proposed_tuning = normalize_tool_retrieval_tuning(
+                                suggestion["proposed_tuning"]
+                            )
+                            current_tuning = normalize_tool_retrieval_tuning(
+                                retrieval_state
+                                if isinstance(retrieval_state, dict)
+                                else {}
+                            )
+                            if proposed_tuning != current_tuning:
+                                retrieval_state = proposed_tuning
+                                retrieval_tuning_changed = True
+
+                    if (
+                        not improved
+                        and best_result is not None
+                        and best_success_rate >= 0
+                        and success_rate <= (best_success_rate - min_improvement_delta)
+                    ):
+                        metadata_state = _snapshot_metadata_state(best_metadata_state)
+                        prompt_state = _snapshot_prompt_state(best_prompt_state)
+                        retrieval_state = _snapshot_tuning_state(best_retrieval_state)
+                        note = (
+                            "Backoff aktiverad: återställde till bästa kända utkast innan nästa iteration."
+                        )
+
+                    if no_improvement_runs >= patience:
+                        stop_reason = "no_improvement"
+                        if note:
+                            note = (
+                                f"{note} Stoppar loopen efter {no_improvement_runs} "
+                                "körningar utan tydlig förbättring."
+                            )
+                        else:
+                            note = (
+                                f"Stoppar loopen efter {no_improvement_runs} körningar "
+                                "utan tydlig förbättring."
+                            )
+
+                iteration_summary = ToolAutoLoopIterationSummary(
+                    iteration=iteration,
+                    success_rate=success_rate,
+                    gated_success_rate=gated_success_rate,
+                    passed_tests=passed_tests,
+                    total_tests=total_tests,
+                    success_delta_vs_previous=success_delta_vs_previous,
+                    metadata_changes_applied=metadata_changes_applied,
+                    prompt_changes_applied=prompt_changes_applied,
+                    retrieval_tuning_changed=retrieval_tuning_changed,
+                    note=note,
+                ).model_dump()
+                iteration_summaries.append(iteration_summary)
+                await _update_auto_loop_job(
+                    job_id,
+                    completed_iterations=iteration,
+                    best_success_rate=best_success_rate if best_success_rate >= 0 else None,
+                    no_improvement_runs=no_improvement_runs,
+                    iterations=iteration_summaries,
+                    message=note or f"Iteration {iteration} klar",
+                )
+
+                if stop_reason in {"target_reached", "no_improvement"}:
+                    break
+
+            if best_result is None:
+                raise RuntimeError("Auto-loop completed without a valid evaluation result")
+
+            ordered_metadata_patch = [
+                best_metadata_state[tool_id].model_dump()
+                for tool_id in sorted(best_metadata_state.keys())
+            ]
+            ordered_prompt_patch: list[dict[str, Any]] = []
+            for prompt_key in sorted(best_prompt_state.keys()):
+                detail = prompt_details.get(prompt_key) or {}
+                ordered_prompt_patch.append(
+                    ToolAutoLoopDraftPromptItem(
+                        prompt_key=prompt_key,
+                        proposed_prompt=best_prompt_state[prompt_key],
+                        rationale=(
+                            str(detail.get("rationale") or "").strip()
+                            or "Auto-loop: samlat promptutkast."
+                        ),
+                        related_tools=[
+                            str(item).strip()
+                            for item in list(detail.get("related_tools") or [])
+                            if str(item).strip()
+                        ],
+                    ).model_dump()
+                )
+            final_result = ToolAutoLoopResult(
+                status="completed",
+                stop_reason=stop_reason,
+                target_success_rate=target_success_rate,
+                best_success_rate=max(0.0, best_success_rate),
+                best_iteration=best_iteration,
+                no_improvement_runs=no_improvement_runs,
+                generated_suite=suite_payload,
+                iterations=iteration_summaries,
+                final_evaluation=ToolEvaluationResponse(**best_result),
+                draft_changes={
+                    "metadata_patch": ordered_metadata_patch,
+                    "prompt_patch": ordered_prompt_patch,
+                    "retrieval_tuning_override": (
+                        ToolRetrievalTuning(**best_retrieval_state)
+                        if isinstance(best_retrieval_state, dict)
+                        else None
+                    ),
+                },
+            ).model_dump()
+            await _update_auto_loop_job(
+                job_id,
+                status="completed",
+                completed_at=_utcnow_iso(),
+                current_iteration=int(final_result.get("best_iteration") or 0),
+                completed_iterations=len(iteration_summaries),
+                message="Auto-loop slutförd",
+                result=final_result,
+            )
+    except Exception as exc:
+        logger.exception("Tool auto-loop job failed")
+        await _update_auto_loop_job(
+            job_id,
+            status="failed",
+            completed_at=_utcnow_iso(),
+            error=str(exc),
+            message="Auto-loop misslyckades",
+        )
+
+
+@router.post(
+    "/tool-settings/evaluate-auto-loop/start",
+    response_model=ToolAutoLoopStartResponse,
+)
+async def start_tool_auto_loop(
+    payload: ToolAutoLoopRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    normalized_eval_type = _normalize_generation_eval_type(payload.generation.eval_type)
+    if normalized_eval_type != "tool_selection":
+        raise HTTPException(
+            status_code=400,
+            detail="Auto-läge stöder för närvarande endast eval_type='tool_selection'",
+        )
+    _normalize_generation_mode(payload.generation.mode)
+    normalized_target = max(0.0, min(1.0, float(payload.target_success_rate or 0.85)))
+    normalized_iterations = max(1, min(int(payload.max_iterations or 6), 30))
+    normalized_patience = max(1, min(int(payload.patience or 2), 12))
+    normalized_delta = max(0.0, min(float(payload.min_improvement_delta or 0.005), 0.25))
+    normalized_payload = payload.model_copy(
+        update={
+            "search_space_id": resolved_search_space_id,
+            "target_success_rate": normalized_target,
+            "max_iterations": normalized_iterations,
+            "patience": normalized_patience,
+            "min_improvement_delta": normalized_delta,
+            "generation": payload.generation.model_copy(
+                update={"eval_type": normalized_eval_type}
+            ),
+        }
+    )
+    job_id = uuid4().hex
+    job_payload = {
+        "job_id": job_id,
+        "status": "pending",
+        "total_iterations": normalized_iterations,
+        "completed_iterations": 0,
+        "started_at": None,
+        "completed_at": None,
+        "updated_at": _utcnow_iso(),
+        "created_at": _utcnow_iso(),
+        "current_iteration": 0,
+        "best_success_rate": None,
+        "no_improvement_runs": 0,
+        "message": "Väntar på start",
+        "iterations": [],
+        "result": None,
+        "error": None,
+    }
+    async with _AUTO_LOOP_JOBS_LOCK:
+        _AUTO_LOOP_JOBS[job_id] = job_payload
+        await _prune_auto_loop_jobs()
+    asyncio.create_task(
+        _run_tool_auto_loop_job_background(
+            job_id=job_id,
+            payload_data=normalized_payload.model_dump(),
+            user_id=user.id,
+        )
+    )
+    return {
+        "job_id": job_id,
+        "status": "pending",
+        "total_iterations": normalized_iterations,
+        "target_success_rate": normalized_target,
+    }
+
+
+@router.get(
+    "/tool-settings/evaluate-auto-loop/{job_id}",
+    response_model=ToolAutoLoopJobStatusResponse,
+)
+async def get_tool_auto_loop_status(
+    job_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    await _require_admin(session, user)
+    async with _AUTO_LOOP_JOBS_LOCK:
+        job = _AUTO_LOOP_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Auto-loop job not found")
+        return _serialize_auto_loop_job(job)
+
+
 @router.post(
     "/tool-settings/evaluate-api-input",
     response_model=ToolApiInputEvaluationResponse,
@@ -2760,6 +3663,13 @@ async def evaluate_tool_api_input(
         user,
         payload=payload,
         resolved_search_space_id=resolved_search_space_id,
+    )
+    result["comparison"] = await _build_stage_run_comparison(
+        session,
+        search_space_id=resolved_search_space_id,
+        stage="api_input",
+        result=result,
+        target_success_rate=payload.target_success_rate,
     )
     await _record_latest_eval_summary(
         session,
@@ -2841,6 +3751,13 @@ async def _run_api_input_eval_job_background(
                 payload=payload,
                 resolved_search_space_id=resolved_search_space_id,
                 progress_callback=_progress_callback,
+            )
+            result["comparison"] = await _build_stage_run_comparison(
+                job_session,
+                search_space_id=resolved_search_space_id,
+                stage="api_input",
+                result=result,
+                target_success_rate=payload.target_success_rate,
             )
             await _record_latest_eval_summary(
                 job_session,

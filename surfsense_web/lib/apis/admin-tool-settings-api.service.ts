@@ -1,5 +1,6 @@
 import {
 	type ToolApplySuggestionsRequest,
+	type ToolAutoLoopRequest,
 	type ToolApiInputApplyPromptSuggestionsRequest,
 	type ToolApiInputEvaluationRequest,
 	type ToolEvalLibraryGenerateRequest,
@@ -7,6 +8,9 @@ import {
 	type ToolRetrievalTuning,
 	type ToolSettingsUpdateRequest,
 	type ToolSuggestionRequest,
+	toolAutoLoopJobStatusResponse,
+	toolAutoLoopRequest,
+	toolAutoLoopStartResponse,
 	toolApiInputApplyPromptSuggestionsRequest,
 	toolApiInputApplyPromptSuggestionsResponse,
 	toolApiInputEvaluationJobStatusResponse,
@@ -183,6 +187,28 @@ class AdminToolSettingsApiService {
 		return baseApiService.get(
 			`/api/v1/admin/tool-settings/evaluate-api-input/${jobId}`,
 			toolApiInputEvaluationJobStatusResponse
+		);
+	}
+
+	async startToolAutoLoop(request: ToolAutoLoopRequest) {
+		const parsed = toolAutoLoopRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/evaluate-auto-loop/start",
+			toolAutoLoopStartResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async getToolAutoLoopStatus(jobId: string) {
+		return baseApiService.get(
+			`/api/v1/admin/tool-settings/evaluate-auto-loop/${jobId}`,
+			toolAutoLoopJobStatusResponse
 		);
 	}
 
