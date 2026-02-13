@@ -3009,7 +3009,7 @@ export function ToolSettingsPage() {
 								</div>
 								{showEvalJsonInput ? (
 									<Textarea
-										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","difficulty":"lätt","expected":{"route":"action","sub_route":"travel","agent":"trafik","tool":"...","category":"...","plan_requirements":["route:action","agent:trafik","tool:..."]}}]}'
+										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","difficulty":"lätt","expected":{"route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","tool:smhi_weather"]}}]}'
 										value={evalInput}
 										onChange={(e) => setEvalInput(e.target.value)}
 										rows={12}
@@ -3065,7 +3065,7 @@ export function ToolSettingsPage() {
 								</div>
 								{showHoldoutJsonInput ? (
 									<Textarea
-										placeholder='{"tests":[{"id":"h1","question":"...","difficulty":"medel","expected":{"route":"action","sub_route":"travel","agent":"trafik","tool":"...","category":"...","plan_requirements":["route:action","agent:trafik","field:city"],"required_fields":["city","date"]}}]}'
+										placeholder='{"tests":[{"id":"h1","question":"...","difficulty":"medel","expected":{"route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","field:city"],"required_fields":["city","date"]}}]}'
 										value={holdoutInput}
 										onChange={(e) => setHoldoutInput(e.target.value)}
 										rows={8}

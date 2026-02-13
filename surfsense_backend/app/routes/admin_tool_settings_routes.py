@@ -1178,8 +1178,8 @@ async def _generate_eval_tests(
         '        "category": "category",\n'
         '        "route": "action|knowledge|statistics|smalltalk|compare",\n'
         '        "sub_route": "web|media|travel|data|docs|internal|external|null",\n'
-        '        "agent": "trafik|statistics|riksdagen|bolag|kartor|media|browser|knowledge|action|synthesis",\n'
-        '        "plan_requirements": ["route:action", "agent:trafik", "tool:tool_id"]\n'
+        '        "agent": "weather|trafik|statistics|riksdagen|bolag|kartor|media|browser|knowledge|action|synthesis",\n'
+        '        "plan_requirements": ["route:action", "agent:agent_id", "tool:tool_id"]\n'
         "      },\n"
         '      "allowed_tools": ["tool_id"]\n'
         "    }\n"

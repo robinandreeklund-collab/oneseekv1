@@ -584,9 +584,27 @@ def _heuristic_agent_choice(
         return "riksdagen" if "riksdagen" in candidates else candidates[0]
     if any(token in text for token in ("scb", "statistik", "inflation", "arbetslös", "befolkning")):
         return "statistics" if "statistics" in candidates else candidates[0]
-    if any(token in text for token in ("smhi", "väder", "vader", "temperatur", "regn", "snö", "sno", "vind")):
+    if any(
+        token in text
+        for token in (
+            "smhi",
+            "väder",
+            "vader",
+            "temperatur",
+            "regn",
+            "snö",
+            "sno",
+            "vind",
+            "halka",
+            "isrisk",
+            "väglag",
+            "vaglag",
+            "vägväder",
+            "vagvader",
+        )
+    ):
         return "weather" if "weather" in candidates else candidates[0]
-    if any(token in text for token in ("trafik", "väg", "halka", "rutt", "resa", "avgång")):
+    if any(token in text for token in ("trafik", "väg", "rutt", "resa", "avgång")):
         return "trafik" if "trafik" in candidates else candidates[0]
     if any(token in text for token in ("bolag", "organisationsnummer", "företag")):
         return "bolag" if "bolag" in candidates else candidates[0]
