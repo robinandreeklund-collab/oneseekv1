@@ -488,7 +488,7 @@ def _extract_assistant_text_from_event_output(output: Any) -> str:
 
 
 _CRITIC_JSON_SNIPPET_RE = re.compile(
-    r"\{\s*[\"']status[\"']\s*:\s*[\"'](?:ok|needs_more)[\"'][\s\S]*?[\"']reason[\"']\s*:\s*[\"'][\s\S]*?[\"']\s*\}",
+    r"\{\s*[\"']status[\"']\s*:\s*[\"'](?:ok|needs_more|replan)[\"'][\s\S]*?[\"']reason[\"']\s*:\s*[\"'][\s\S]*?[\"']\s*\}",
     re.IGNORECASE,
 )
 _CITATION_MARKER_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
@@ -496,6 +496,14 @@ _CITATION_SPACING_RE = re.compile(r"\[citation:\s*([^\]]+?)\s*\]", re.IGNORECASE
 _REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _STREAM_JSON_DECODER = json.JSONDecoder()
 _CRITIC_JSON_START_RE = re.compile(r"\{\s*[\"']status[\"']\s*:", re.IGNORECASE)
+_INTERNAL_PIPELINE_CHAIN_TOKENS = (
+    "resolve_intent",
+    "agent_resolver",
+    "planner",
+    "tool_resolver",
+    "critic",
+    "synthesizer",
+)
 
 
 def _strip_inline_critic_payloads(text: str) -> tuple[str, bool]:
@@ -580,6 +588,86 @@ def _clean_assistant_output_text(text: str) -> str:
             cleaned = "\n".join(deduped)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+
+def _extract_json_objects_from_text(text: str, *, max_objects: int = 6) -> list[dict[str, Any]]:
+    value = str(text or "").strip()
+    if not value:
+        return []
+    objects: list[dict[str, Any]] = []
+    cursor = 0
+    while cursor < len(value) and len(objects) < max(1, int(max_objects)):
+        start = value.find("{", cursor)
+        if start < 0:
+            break
+        segment = value[start:]
+        parsed_obj: dict[str, Any] | None = None
+        consumed = 0
+        try:
+            decoded, consumed = _STREAM_JSON_DECODER.raw_decode(segment)
+            if isinstance(decoded, dict):
+                parsed_obj = decoded
+        except Exception:
+            parsed_obj = None
+            consumed = 0
+        if parsed_obj is None:
+            matched = False
+            for end in range(start + 1, min(len(value), start + 2800)):
+                if value[end : end + 1] != "}":
+                    continue
+                candidate = value[start : end + 1]
+                try:
+                    decoded = json.loads(candidate)
+                except Exception:
+                    try:
+                        decoded = ast.literal_eval(candidate)
+                    except Exception:
+                        continue
+                if isinstance(decoded, dict):
+                    parsed_obj = decoded
+                    consumed = len(candidate)
+                    matched = True
+                    break
+            if not matched:
+                cursor = start + 1
+                continue
+        if parsed_obj is not None and consumed > 0:
+            objects.append(parsed_obj)
+            cursor = start + consumed
+        else:
+            cursor = start + 1
+    return objects
+
+
+def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    if "intent_id" in payload:
+        return "intent"
+    if "selected_agents" in payload:
+        return "agent_resolver"
+    if isinstance(payload.get("steps"), list):
+        return "planner"
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision in {"ok", "needs_more", "replan"}:
+        return "critic"
+    if "response" in payload and "reason" in payload:
+        return "synthesizer"
+    return None
+
+
+def _contains_internal_pipeline_json(text: str) -> bool:
+    for payload in _extract_json_objects_from_text(text, max_objects=5):
+        if _pipeline_payload_kind(payload):
+            return True
+    return False
+
+
+def _is_internal_pipeline_chain_name(chain_name: str) -> bool:
+    normalized = str(chain_name or "").strip().lower()
+    if not normalized:
+        return False
+    return any(token in normalized for token in _INTERNAL_PIPELINE_CHAIN_TOKENS)
 
 
 async def stream_new_chat(
@@ -1219,6 +1307,10 @@ async def stream_new_chat(
         write_todos_call_count: int = 0
         # Fallback text captured from non-streaming model/chain events
         fallback_assistant_text: str = ""
+        chain_name_by_run_id: dict[str, str] = {}
+        model_parent_chain_by_run_id: dict[str, str] = {}
+        internal_model_buffers: dict[str, str] = {}
+        emitted_pipeline_payload_signatures: set[str] = set()
 
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
@@ -1247,6 +1339,99 @@ async def stream_new_chat(
                     items=last_active_step_items if last_active_step_items else None,
                 )
             return None
+
+        def emit_pipeline_steps_from_text(
+            text: str,
+            *,
+            source_chain: str | None = None,
+        ) -> list[str]:
+            events: list[str] = []
+            for payload in _extract_json_objects_from_text(text, max_objects=6):
+                kind = _pipeline_payload_kind(payload)
+                if not kind:
+                    continue
+                signature = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+                if signature in emitted_pipeline_payload_signatures:
+                    continue
+                emitted_pipeline_payload_signatures.add(signature)
+
+                completion_event = complete_current_step()
+                if completion_event:
+                    events.append(completion_event)
+
+                step_id = next_thinking_step_id()
+                title = format_step_title("Updating internal planner state")
+                items: list[str] = []
+                if kind == "intent":
+                    title = format_step_title("Resolving intent")
+                    intent_id = str(payload.get("intent_id") or "").strip()
+                    reason = str(payload.get("reason") or "").strip()
+                    confidence = payload.get("confidence")
+                    if intent_id:
+                        items.append(f"Intent: {intent_id}")
+                    if isinstance(confidence, (int, float)):
+                        items.append(f"Confidence: {float(confidence):.2f}")
+                    if reason:
+                        items.append(f"Orsak: {reason[:180]}")
+                elif kind == "agent_resolver":
+                    title = format_step_title("Selecting agents")
+                    selected_agents = payload.get("selected_agents")
+                    if isinstance(selected_agents, list):
+                        clean_agents = [
+                            str(agent).strip() for agent in selected_agents if str(agent).strip()
+                        ]
+                        if clean_agents:
+                            items.append(f"Agenter: {', '.join(clean_agents[:4])}")
+                    reason = str(payload.get("reason") or "").strip()
+                    if reason:
+                        items.append(f"Orsak: {reason[:180]}")
+                elif kind == "planner":
+                    title = format_step_title("Building plan")
+                    steps = payload.get("steps")
+                    if isinstance(steps, list):
+                        for step in steps[:4]:
+                            if not isinstance(step, dict):
+                                continue
+                            content = str(step.get("content") or "").strip()
+                            if content:
+                                items.append(content[:180])
+                    reason = str(payload.get("reason") or "").strip()
+                    if reason:
+                        items.append(f"Planmotiv: {reason[:180]}")
+                elif kind == "critic":
+                    title = format_step_title("Reviewing findings, gaps, and next steps")
+                    decision = str(payload.get("decision") or "").strip()
+                    reason = str(payload.get("reason") or "").strip()
+                    if decision:
+                        items.append(f"Decision: {decision}")
+                    if reason:
+                        items.append(f"Orsak: {reason[:180]}")
+                elif kind == "synthesizer":
+                    # Synthesizer JSON should stay internal and not render as chat text.
+                    title = format_step_title("Synthesizing response")
+                    reason = str(payload.get("reason") or "").strip()
+                    if reason:
+                        items.append(f"Notering: {reason[:180]}")
+                if source_chain and _is_internal_pipeline_chain_name(source_chain):
+                    items.insert(0, f"Nod: {source_chain}")
+                events.append(
+                    streaming_service.format_thinking_step(
+                        step_id=step_id,
+                        title=title,
+                        status="in_progress",
+                        items=items or None,
+                    )
+                )
+                events.append(
+                    streaming_service.format_thinking_step(
+                        step_id=step_id,
+                        title=title,
+                        status="completed",
+                        items=items or None,
+                    )
+                )
+                completed_step_ids.add(step_id)
+            return events
 
         route_step_id = next_thinking_step_id()
         route_items = [f"Route: {route.value}"]
@@ -1428,10 +1613,32 @@ async def stream_new_chat(
             event_type = event.get("event", "")
             run_id = str(event.get("run_id") or "")
             trace_parent = trace_parent_id(event)
+            if event_type == "on_chain_start" and run_id:
+                chain_name_by_run_id.setdefault(
+                    run_id, str(event.get("name") or "chain")
+                )
+            elif event_type in ("on_chat_model_start", "on_llm_start") and run_id:
+                if run_id not in model_parent_chain_by_run_id:
+                    parent_chain_name = ""
+                    parent_ids = [
+                        str(value)
+                        for value in (event.get("parent_ids") or [])
+                        if str(value)
+                    ]
+                    for parent_id in reversed(parent_ids):
+                        candidate_chain_name = chain_name_by_run_id.get(parent_id)
+                        if candidate_chain_name:
+                            parent_chain_name = str(candidate_chain_name)
+                            break
+                    if _is_internal_pipeline_chain_name(parent_chain_name):
+                        model_parent_chain_by_run_id[run_id] = parent_chain_name
+                        internal_model_buffers.setdefault(run_id, "")
 
             if trace_recorder:
                 if event_type == "on_chain_start":
                     chain_name = event.get("name") or "chain"
+                    if run_id:
+                        chain_name_by_run_id[run_id] = str(chain_name)
                     chain_input = event.get("data", {}).get("input")
                     chain_meta = {
                         "tags": event.get("tags") or [],
@@ -1459,7 +1666,13 @@ async def stream_new_chat(
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
                     )
-                    if candidate_text:
+                    chain_name = chain_name_by_run_id.get(run_id) or str(
+                        event.get("name") or ""
+                    )
+                    if candidate_text and not (
+                        _is_internal_pipeline_chain_name(chain_name)
+                        and _contains_internal_pipeline_json(candidate_text)
+                    ):
                         fallback_assistant_text = _clean_assistant_output_text(
                             candidate_text
                         )
@@ -1471,8 +1684,20 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
+                    if run_id:
+                        chain_name_by_run_id.pop(run_id, None)
                 elif event_type in ("on_chat_model_start", "on_llm_start"):
                     model_data = event.get("data", {})
+                    parent_chain_name = ""
+                    parent_ids = [str(value) for value in (event.get("parent_ids") or []) if str(value)]
+                    for parent_id in reversed(parent_ids):
+                        candidate_chain_name = chain_name_by_run_id.get(parent_id)
+                        if candidate_chain_name:
+                            parent_chain_name = str(candidate_chain_name)
+                            break
+                    if run_id and _is_internal_pipeline_chain_name(parent_chain_name):
+                        model_parent_chain_by_run_id[run_id] = parent_chain_name
+                        internal_model_buffers.setdefault(run_id, "")
                     model_input = (
                         model_data.get("input")
                         or model_data.get("messages")
@@ -1507,7 +1732,16 @@ async def stream_new_chat(
                     candidate_text = _extract_assistant_text_from_event_output(
                         model_output
                     )
-                    if candidate_text:
+                    internal_chain_name = model_parent_chain_by_run_id.pop(run_id, "")
+                    internal_buffer = internal_model_buffers.pop(run_id, "")
+                    if internal_chain_name:
+                        internal_text = internal_buffer or candidate_text
+                        for step_event in emit_pipeline_steps_from_text(
+                            internal_text,
+                            source_chain=internal_chain_name,
+                        ):
+                            yield step_event
+                    elif candidate_text:
                         fallback_assistant_text = _clean_assistant_output_text(
                             candidate_text
                         )
@@ -1518,6 +1752,17 @@ async def stream_new_chat(
                 if chunk and hasattr(chunk, "content"):
                     content = chunk.content
                     if content and isinstance(content, str):
+                        if run_id and run_id in model_parent_chain_by_run_id:
+                            internal_model_buffers[run_id] = (
+                                internal_model_buffers.get(run_id, "") + content
+                            )
+                            if trace_recorder:
+                                trace_update = await trace_recorder.append_span_output(
+                                    span_id=run_id, output_delta=content
+                                )
+                                if trace_update:
+                                    yield trace_update
+                            continue
                         content = filter_critic_json(content)
                         content = filter_repeated_output(content)
                         if not content:
@@ -2863,16 +3108,29 @@ async def stream_new_chat(
 
             # Handle chain/agent end to close any open text blocks
             elif event_type in ("on_chain_end", "on_agent_end"):
+                chain_name = chain_name_by_run_id.get(run_id) or str(event.get("name") or "")
                 candidate_text = _extract_assistant_text_from_event_output(
                     event.get("data", {}).get("output")
                 )
                 if candidate_text:
-                    fallback_assistant_text = _clean_assistant_output_text(
-                        candidate_text
-                    )
+                    if (
+                        _is_internal_pipeline_chain_name(chain_name)
+                        and _contains_internal_pipeline_json(candidate_text)
+                    ):
+                        for step_event in emit_pipeline_steps_from_text(
+                            candidate_text,
+                            source_chain=chain_name,
+                        ):
+                            yield step_event
+                    else:
+                        fallback_assistant_text = _clean_assistant_output_text(
+                            candidate_text
+                        )
                 if current_text_id is not None:
                     yield streaming_service.format_text_end(current_text_id)
                     current_text_id = None
+                if event_type == "on_chain_end" and run_id:
+                    chain_name_by_run_id.pop(run_id, None)
 
         # Ensure text block is closed
         if repeat_buffer and not suppress_repeat:
