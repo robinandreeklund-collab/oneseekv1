@@ -174,6 +174,7 @@ _LOOP_GUARD_TOOL_NAMES = {
     "write_todos",
 }
 _LOOP_GUARD_MAX_CONSECUTIVE = 12
+_MAX_AGENT_HOPS_PER_TURN = 3
 _AGENT_NAME_ALIAS_MAP = {
     "traffic_information": "trafik",
     "traffic_info": "trafik",
@@ -718,6 +719,9 @@ class SupervisorState(TypedDict, total=False):
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
     final_agent_response: Annotated[str | None, _replace]
     final_agent_name: Annotated[str | None, _replace]
+    orchestration_phase: Annotated[str | None, _replace]
+    agent_hops: Annotated[int | None, _replace]
+    no_progress_runs: Annotated[int | None, _replace]
 
 
 _MAX_TOOL_CALLS_PER_TURN = 12
@@ -933,6 +937,30 @@ def _latest_user_query(messages: list[Any] | None) -> str:
     return ""
 
 
+def _normalize_task_for_fingerprint(text: str) -> str:
+    value = re.sub(r"\s+", " ", str(text or "").strip().lower())
+    value = re.sub(r"[^a-z0-9åäö\s]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value[:180]
+
+
+def _agent_call_entries_since_last_user(messages: list[Any] | None) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for message in messages or []:
+        if isinstance(message, HumanMessage):
+            entries = []
+            continue
+        if not isinstance(message, ToolMessage):
+            continue
+        if str(getattr(message, "name", "") or "").strip() != "call_agent":
+            continue
+        payload = _safe_json(getattr(message, "content", ""))
+        if not isinstance(payload, dict):
+            continue
+        entries.append(payload)
+    return entries
+
+
 def _looks_actionable_agent_answer(text: str) -> bool:
     value = str(text or "").strip()
     if len(value) < 48:
@@ -951,6 +979,17 @@ def _looks_actionable_agent_answer(text: str) -> bool:
         "hittades inte",
     )
     return not any(marker in lowered for marker in rejection_markers)
+
+
+def _best_actionable_entry(entries: list[dict[str, Any]]) -> tuple[str, str] | None:
+    for entry in reversed(entries):
+        response = _strip_critic_json(str(entry.get("response") or "").strip())
+        if not response:
+            continue
+        if _looks_actionable_agent_answer(response):
+            agent_name = str(entry.get("agent") or "").strip() or "agent"
+            return response, agent_name
+    return None
 
 
 def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> str:
@@ -1688,7 +1727,7 @@ async def create_supervisor_agent(
     @tool
     async def retrieve_agents(
         query: str,
-        limit: int = 3,
+        limit: int = 1,
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
         """Retrieve relevant agents for the task.
@@ -1700,8 +1739,8 @@ async def create_supervisor_agent(
         try:
             limit = int(limit)
         except (TypeError, ValueError):
-            limit = 3
-        limit = max(1, min(limit, 3))
+            limit = 1
+        limit = max(1, min(limit, 2))
 
         recent_agents = []
         context_query = query
@@ -1968,6 +2007,11 @@ async def create_supervisor_agent(
         Use when tasks are independent and don't depend on each other's results.
 
         IMPORTANT: Use exact internal agent ids from retrieve_agents()."""
+        serialized_mode = not compare_mode
+        dropped_calls = 0
+        if serialized_mode and isinstance(calls, list) and len(calls) > 1:
+            dropped_calls = len(calls) - 1
+            calls = calls[:1]
         
         async def _run_one(call_spec: dict) -> dict:
             requested_agent_name = (call_spec.get("agent") or "").strip().lower()
@@ -2065,7 +2109,14 @@ async def create_supervisor_agent(
             else:
                 processed.append(r)
         
-        return json.dumps({"results": processed}, ensure_ascii=True)
+        return json.dumps(
+            {
+                "results": processed,
+                "serialized_mode": serialized_mode,
+                "dropped_calls": dropped_calls,
+            },
+            ensure_ascii=True,
+        )
 
     tool_registry = {
         "retrieve_agents": retrieve_agents,
@@ -2120,6 +2171,9 @@ async def create_supervisor_agent(
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
             updates["final_agent_name"] = None
+            updates["orchestration_phase"] = "select_agent"
+            updates["agent_hops"] = 0
+            updates["no_progress_runs"] = 0
         if final_response and isinstance(last_message, HumanMessage):
             updates["final_agent_response"] = None
             updates["final_agent_name"] = None
@@ -2164,6 +2218,9 @@ async def create_supervisor_agent(
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
             updates["final_agent_name"] = None
+            updates["orchestration_phase"] = "select_agent"
+            updates["agent_hops"] = 0
+            updates["no_progress_runs"] = 0
         if final_response and isinstance(last_message, HumanMessage):
             updates["final_agent_response"] = None
             updates["final_agent_name"] = None
@@ -2230,6 +2287,7 @@ async def create_supervisor_agent(
                             # Treat critic as advisory to avoid needless loops on complete answers.
                             updates["final_agent_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
+                            updates["orchestration_phase"] = "finalize"
                     elif payload.get("response"):
                         cleaned_response = _strip_critic_json(
                             str(payload.get("response") or "").strip()
@@ -2245,6 +2303,7 @@ async def create_supervisor_agent(
                             # Break traffic loops by accepting first actionable trafik answer.
                             updates["final_agent_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
+                            updates["orchestration_phase"] = "finalize"
             elif tool_name == "call_agents_parallel":
                 parallel_results = payload.get("results")
                 if isinstance(parallel_results, list):
@@ -2296,6 +2355,84 @@ async def create_supervisor_agent(
         if compare_updates:
             updates["compare_outputs"] = compare_updates
 
+        call_entries = _agent_call_entries_since_last_user(
+            state.get("messages") or []
+        )
+        agent_hops = len(call_entries)
+        updates["agent_hops"] = agent_hops
+        updates["orchestration_phase"] = (
+            "validate_agent_output" if agent_hops > 0 else "select_agent"
+        )
+
+        no_progress_runs = int(state.get("no_progress_runs") or 0)
+        if call_entries:
+            last_entry = call_entries[-1]
+            last_agent = str(last_entry.get("agent") or "").strip().lower()
+            last_task = _normalize_task_for_fingerprint(
+                str(last_entry.get("task") or "")
+            )
+            last_fp = f"{last_agent}|{last_task}" if (last_agent or last_task) else ""
+            if last_fp:
+                fp_count = 0
+                for entry in call_entries:
+                    agent = str(entry.get("agent") or "").strip().lower()
+                    task_fp = _normalize_task_for_fingerprint(
+                        str(entry.get("task") or "")
+                    )
+                    if f"{agent}|{task_fp}" == last_fp:
+                        fp_count += 1
+                no_progress_runs = no_progress_runs + 1 if fp_count >= 2 else 0
+            else:
+                no_progress_runs = 0
+        else:
+            no_progress_runs = 0
+        updates["no_progress_runs"] = no_progress_runs
+
+        if "final_agent_response" not in updates and call_entries and route_hint != "compare":
+            last_entry = call_entries[-1]
+            last_response = _strip_critic_json(
+                str(last_entry.get("response") or "").strip()
+            )
+            critic_payload = (
+                last_entry.get("critic")
+                if isinstance(last_entry.get("critic"), dict)
+                else {}
+            )
+            critic_status = (
+                str(critic_payload.get("status") or "").strip().lower()
+                if isinstance(critic_payload, dict)
+                else ""
+            )
+            if _looks_actionable_agent_answer(last_response):
+                # Default behavior: finalize after first actionable delegated answer.
+                if critic_status != "needs_more" or agent_hops >= 1:
+                    updates["final_agent_response"] = last_response
+                    updates["final_agent_name"] = (
+                        str(last_entry.get("agent") or "").strip() or "agent"
+                    )
+                    updates["orchestration_phase"] = "finalize"
+
+        if (
+            "final_agent_response" not in updates
+            and no_progress_runs >= 2
+        ):
+            best = _best_actionable_entry(call_entries)
+            if best:
+                updates["final_agent_response"] = best[0]
+                updates["final_agent_name"] = best[1]
+                updates["orchestration_phase"] = "finalize"
+            else:
+                rendered = _render_guard_message(loop_guard_template, parallel_preview)
+                if not rendered:
+                    rendered = _render_guard_message(
+                        DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+                        parallel_preview,
+                    )
+                updates["final_agent_response"] = rendered
+                updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
+                updates["orchestration_phase"] = "finalize"
+
         if last_call_payload:
             critic_payload = last_call_payload.get("critic") or {}
             if isinstance(critic_payload, dict):
@@ -2318,6 +2455,27 @@ async def create_supervisor_agent(
                 updates["final_agent_response"] = rendered
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
+                updates["orchestration_phase"] = "finalize"
+
+        if "final_agent_response" not in updates and agent_hops >= _MAX_AGENT_HOPS_PER_TURN:
+            best = _best_actionable_entry(call_entries)
+            if best:
+                updates["final_agent_response"] = best[0]
+                updates["final_agent_name"] = best[1]
+            else:
+                rendered = _render_guard_message(
+                    tool_limit_guard_template,
+                    parallel_preview[:3],
+                )
+                if not rendered:
+                    rendered = _render_guard_message(
+                        DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+                        parallel_preview[:3],
+                    )
+                updates["final_agent_response"] = rendered
+                updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
+            updates["orchestration_phase"] = "finalize"
 
         # Hard guardrail: stop runaway tool loops within a single user turn.
         if "final_agent_response" not in updates:
@@ -2337,6 +2495,7 @@ async def create_supervisor_agent(
                 updates["final_agent_response"] = rendered
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
+                updates["orchestration_phase"] = "finalize"
 
         # Progressive message pruning when messages get long
         messages = state.get("messages") or []
