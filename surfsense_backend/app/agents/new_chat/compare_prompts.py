@@ -1,6 +1,4 @@
 from app.agents.new_chat.system_prompt import (
-    SURFSENSE_CITATION_INSTRUCTIONS,
-    SURFSENSE_NO_CITATION_INSTRUCTIONS,
     append_datetime_context,
 )
 
@@ -76,8 +74,11 @@ def build_compare_synthesis_prompt(
     base_prompt: str,
     *,
     citations_enabled: bool,
+    citation_instructions: str | None = None,
 ) -> str:
     prompt = append_datetime_context(base_prompt.strip())
-    if citations_enabled:
-        return prompt + "\n\n" + SURFSENSE_CITATION_INSTRUCTIONS
-    return prompt + "\n\n" + SURFSENSE_NO_CITATION_INSTRUCTIONS
+    _ = citations_enabled
+    explicit = str(citation_instructions or "").strip()
+    if not explicit:
+        return prompt
+    return prompt + "\n\n" + explicit

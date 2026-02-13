@@ -184,6 +184,9 @@ class NewChatRequest(BaseModel):
     mentioned_surfsense_doc_ids: list[int] | None = (
         None  # Optional SurfSense documentation IDs mentioned with @ in the chat
     )
+    citation_instructions: str | None = (
+        None  # Optional explicit citation instructions injected into prompts when provided
+    )
 
 
 class RegenerateRequest(BaseModel):
@@ -204,6 +207,7 @@ class RegenerateRequest(BaseModel):
     attachments: list[ChatAttachment] | None = None
     mentioned_document_ids: list[int] | None = None
     mentioned_surfsense_doc_ids: list[int] | None = None
+    citation_instructions: str | None = None
 
 
 # =============================================================================

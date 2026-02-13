@@ -128,6 +128,7 @@ async def create_surfsense_deep_agent(
     firecrawl_api_key: str | None = None,
     tool_names_for_prompt: list[str] | None = None,
     force_citations_enabled: bool | None = None,
+    citation_instructions: str | None = None,
 ):
     """
     Create a SurfSense deep agent with configurable tools and prompts.
@@ -146,7 +147,7 @@ async def create_surfsense_deep_agent(
 
     The system prompt can be configured via agent_config:
     - Custom system instructions (or use defaults)
-    - Citation toggle (enable/disable citation requirements)
+    - Optional explicit citation instructions (runtime opt-in)
 
     Args:
         llm: ChatLiteLLM instance for the agent's language model
@@ -157,7 +158,7 @@ async def create_surfsense_deep_agent(
                       Use AsyncPostgresSaver for production or MemorySaver for testing.
         user_id: The current user's UUID string (required for memory tools)
         agent_config: Optional AgentConfig from NewLLMConfig for prompt configuration.
-                     If None, uses default system prompt with citations enabled.
+                     If None, uses default system prompt.
         enabled_tools: Explicit list of tool names to enable. If None, all default tools
                       are enabled. Use this to limit which tools are available.
         disabled_tools: List of tool names to disable. Applied after enabled_tools.
@@ -169,6 +170,8 @@ async def create_surfsense_deep_agent(
         tool_names_for_prompt: Optional list of tool names used to filter tool instructions
                                in the system prompt.
         force_citations_enabled: Override for citation instructions, regardless of config.
+        citation_instructions: Optional explicit citation instructions to inject into prompts.
+            If None/empty, no citation block is injected.
 
     Returns:
         CompiledStateGraph: The configured deep agent
@@ -264,11 +267,13 @@ async def create_surfsense_deep_agent(
             use_default_system_instructions=agent_config.use_default_system_instructions,
             citations_enabled=citations_enabled,
             tool_names=tool_names_for_prompt,
+            citation_instructions=citation_instructions,
         )
     else:
         system_prompt = build_surfsense_system_prompt(
             tool_names=tool_names_for_prompt,
             citations_enabled=citations_enabled,
+            citation_instructions=citation_instructions,
         )
 
     # Create the deep agent with system prompt and checkpointer

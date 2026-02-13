@@ -18,8 +18,6 @@ from app.agents.new_chat.llm_config import (
     load_llm_config_from_yaml,
 )
 from app.agents.new_chat.system_prompt import (
-    SURFSENSE_CITATION_INSTRUCTIONS,
-    SURFSENSE_NO_CITATION_INSTRUCTIONS,
     SURFSENSE_SYSTEM_INSTRUCTIONS,
 )
 from app.agents.new_chat.tools.registry import get_tool_by_name, build_tools_async
@@ -113,6 +111,7 @@ def _build_tool_instructions(enabled_tools: list[str]) -> str:
 def _build_system_prompt(
     llm_config: dict | None,
     enabled_tools: list[str],
+    citation_instructions: str | None = None,
 ) -> str:
     now = datetime.now(UTC).astimezone(UTC)
     resolved_today = now.date().isoformat()
@@ -120,11 +119,9 @@ def _build_system_prompt(
     public_guard = PUBLIC_SYSTEM_PROMPT.strip()
 
     system_instructions = ""
-    citations_enabled = True
     if llm_config:
         custom_instructions = llm_config.get("system_instructions") or ""
         use_default = llm_config.get("use_default_system_instructions", True)
-        citations_enabled = llm_config.get("citations_enabled", True)
         if custom_instructions.strip():
             system_instructions = custom_instructions.format(
                 resolved_today=resolved_today,
@@ -142,11 +139,7 @@ def _build_system_prompt(
         ).strip()
 
     tool_instructions = _build_tool_instructions(enabled_tools)
-    citation_instructions = (
-        SURFSENSE_CITATION_INSTRUCTIONS
-        if citations_enabled
-        else SURFSENSE_NO_CITATION_INSTRUCTIONS
-    )
+    explicit_citation_instructions = str(citation_instructions or "").strip()
 
     parts = [
         part
@@ -154,7 +147,7 @@ def _build_system_prompt(
             system_instructions,
             public_guard,
             tool_instructions,
-            citation_instructions,
+            explicit_citation_instructions,
         ]
         if part and part.strip()
     ]
@@ -257,7 +250,11 @@ async def build_public_agent(
         dependencies=dependencies,
         enabled_tools=enabled_tools,
     )
-    system_prompt = _build_system_prompt(llm_config, enabled_tools)
+    system_prompt = _build_system_prompt(
+        llm_config,
+        enabled_tools,
+        citation_instructions=request.citation_instructions,
+    )
     checkpointer = MemorySaver()
     agent = create_deep_agent(
         model=llm,

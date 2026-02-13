@@ -7,7 +7,7 @@ with configurable user instructions and citation support.
 The prompt is composed of three parts:
 1. System Instructions (configurable via NewLLMConfig)
 2. Tools Instructions (always included, not configurable)
-3. Citation Instructions (toggleable via NewLLMConfig.citations_enabled)
+3. Optional Citation Instructions (only when explicitly provided at runtime)
 """
 
 import re
@@ -597,6 +597,7 @@ def build_surfsense_system_prompt(
     today: datetime | None = None,
     tool_names: list[str] | None = None,
     citations_enabled: bool = True,
+    citation_instructions: str | None = None,
 ) -> str:
     """
     Build the SurfSense system prompt with default settings.
@@ -604,26 +605,25 @@ def build_surfsense_system_prompt(
     This is a convenience function that builds the prompt with:
     - Default system instructions
     - Tools instructions (always included)
-    - Citation instructions enabled
+    - Optional citation instructions when explicitly provided
 
     Args:
         today: Optional datetime for today's date (defaults to current UTC date)
         tool_names: Optional list of tool names to filter tool instructions/examples.
-        citations_enabled: Whether to include citation instructions.
+        citations_enabled: Legacy toggle retained for backwards compatibility.
+        citation_instructions: Explicit citation instructions to append. If empty/None,
+            no citation block is appended.
 
     Returns:
         Complete system prompt string
     """
-    now = (today or datetime.now(UTC)).astimezone(UTC)
-    resolved_today = now.date().isoformat()
-    resolved_time = now.strftime("%H:%M:%S")
-
     return build_configurable_system_prompt(
         custom_system_instructions=None,
         use_default_system_instructions=True,
         citations_enabled=citations_enabled,
         today=today,
         tool_names=tool_names,
+        citation_instructions=citation_instructions,
     )
 
 
@@ -633,6 +633,7 @@ def build_configurable_system_prompt(
     citations_enabled: bool = True,
     today: datetime | None = None,
     tool_names: list[str] | None = None,
+    citation_instructions: str | None = None,
 ) -> str:
     """
     Build a configurable SurfSense system prompt based on NewLLMConfig settings.
@@ -640,7 +641,7 @@ def build_configurable_system_prompt(
     The prompt is composed of three parts:
     1. System Instructions - either custom or default SURFSENSE_SYSTEM_INSTRUCTIONS
     2. Tools Instructions - always included (SURFSENSE_TOOLS_INSTRUCTIONS)
-    3. Citation Instructions - either SURFSENSE_CITATION_INSTRUCTIONS or SURFSENSE_NO_CITATION_INSTRUCTIONS
+    3. Optional Citation Instructions - appended only when explicitly provided
 
     Args:
         custom_system_instructions: Custom system instructions to use. If empty/None and
@@ -648,10 +649,11 @@ def build_configurable_system_prompt(
                                    SURFSENSE_SYSTEM_INSTRUCTIONS.
         use_default_system_instructions: Whether to use default instructions when
                                         custom_system_instructions is empty/None.
-        citations_enabled: Whether to include citation instructions (True) or
-                          anti-citation instructions (False).
+        citations_enabled: Legacy toggle retained for backwards compatibility.
         today: Optional datetime for today's date (defaults to current UTC date)
         tool_names: Optional list of tool names to filter tool instructions/examples.
+        citation_instructions: Explicit citation instructions to append. If empty/None,
+            no citation block is appended.
 
     Returns:
         Complete system prompt string
@@ -684,20 +686,15 @@ def build_configurable_system_prompt(
     # Tools instructions can be filtered for routed agents
     tools_instructions = build_tools_instructions(tool_names)
 
-    # Citation instructions based on toggle
-    if not tools_instructions and not citations_enabled:
-        citation_instructions = ""
-    else:
-        citation_instructions = (
-            SURFSENSE_CITATION_INSTRUCTIONS
-            if citations_enabled
-            else SURFSENSE_NO_CITATION_INSTRUCTIONS
-        )
+    # Citation instructions are opt-in only via explicit parameter.
+    _ = citations_enabled
+    explicit_citation_instructions = str(citation_instructions or "").strip()
+    citation_block = explicit_citation_instructions if explicit_citation_instructions else ""
 
     system_instructions = append_datetime_context(
         system_instructions, today=today
     )
-    return system_instructions + tools_instructions + citation_instructions
+    return system_instructions + tools_instructions + citation_block
 
 
 def append_datetime_context(prompt: str, *, today: datetime | None = None) -> str:

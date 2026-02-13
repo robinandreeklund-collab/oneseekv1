@@ -49,7 +49,7 @@ from app.agents.new_chat.dispatcher import (
     dispatch_route,
 )
 from app.agents.new_chat.prompt_registry import resolve_prompt
-from app.agents.new_chat.routing import Route, ROUTE_CITATIONS_ENABLED, ROUTE_TOOL_SETS
+from app.agents.new_chat.routing import Route, ROUTE_TOOL_SETS
 from app.agents.new_chat.supervisor_agent import create_supervisor_agent
 from app.agents.new_chat.supervisor_prompts import (
     DEFAULT_SUPERVISOR_PROMPT,
@@ -442,6 +442,7 @@ async def stream_new_chat(
     mentioned_surfsense_doc_ids: list[int] | None = None,
     checkpoint_id: str | None = None,
     needs_history_bootstrap: bool = False,
+    citation_instructions: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat responses from the new SurfSense deep agent.
@@ -461,6 +462,7 @@ async def stream_new_chat(
         mentioned_document_ids: Optional list of document IDs mentioned with @ in the chat
         mentioned_surfsense_doc_ids: Optional list of SurfSense doc IDs mentioned with @ in the chat
         checkpoint_id: Optional checkpoint ID to rewind/fork from (for edit/reload operations)
+        citation_instructions: Optional explicit citation instructions injected into prompts.
 
     Yields:
         str: SSE formatted response strings
@@ -595,13 +597,20 @@ async def stream_new_chat(
         supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
 
-        citations_enabled = ROUTE_CITATIONS_ENABLED.get(route, True)
+        explicit_citation_instructions = str(citation_instructions or "").strip()
+        citation_instructions_block = (
+            explicit_citation_instructions if explicit_citation_instructions else None
+        )
+        citations_enabled = bool(citation_instructions_block)
         supervisor_prompt = resolve_prompt(
             prompt_overrides,
             "agent.supervisor.system",
             DEFAULT_SUPERVISOR_PROMPT,
         )
-        supervisor_system_prompt = build_supervisor_prompt(supervisor_prompt)
+        supervisor_system_prompt = build_supervisor_prompt(
+            supervisor_prompt,
+            citation_instructions=citation_instructions_block,
+        )
         if route == Route.COMPARE:
             supervisor_system_prompt = (
                 supervisor_system_prompt + "\n\n" + COMPARE_SUPERVISOR_INSTRUCTIONS
@@ -617,7 +626,9 @@ async def stream_new_chat(
             ),
         )
         knowledge_worker_prompt = build_worker_prompt(
-            knowledge_prompt, citations_enabled=True
+            knowledge_prompt,
+            citations_enabled=citations_enabled,
+            citation_instructions=citation_instructions_block,
         )
         action_prompt = resolve_prompt(
             prompt_overrides,
@@ -629,7 +640,9 @@ async def stream_new_chat(
             ),
         )
         action_worker_prompt = build_worker_prompt(
-            action_prompt, citations_enabled=False
+            action_prompt,
+            citations_enabled=citations_enabled,
+            citation_instructions=citation_instructions_block,
         )
         media_prompt = resolve_prompt(
             prompt_overrides,
@@ -656,7 +669,10 @@ async def stream_new_chat(
             "agent.statistics.system",
             DEFAULT_STATISTICS_SYSTEM_PROMPT,
         )
-        statistics_worker_prompt = build_statistics_system_prompt(statistics_prompt)
+        statistics_worker_prompt = build_statistics_system_prompt(
+            statistics_prompt,
+            citation_instructions=citation_instructions_block,
+        )
         synthesis_prompt = resolve_prompt(
             prompt_overrides,
             "agent.synthesis.system",
@@ -667,20 +683,28 @@ async def stream_new_chat(
             "agent.bolag.system",
             DEFAULT_BOLAG_SYSTEM_PROMPT,
         )
-        bolag_worker_prompt = build_bolag_prompt(bolag_prompt)
+        bolag_worker_prompt = build_bolag_prompt(
+            bolag_prompt,
+            citation_instructions=citation_instructions_block,
+        )
         trafik_prompt = resolve_prompt(
             prompt_overrides,
             "agent.trafik.system",
             DEFAULT_TRAFFIC_SYSTEM_PROMPT,
         )
-        trafik_worker_prompt = build_trafik_prompt(trafik_prompt)
+        trafik_worker_prompt = build_trafik_prompt(
+            trafik_prompt,
+            citation_instructions=citation_instructions_block,
+        )
         compare_analysis_prompt = resolve_prompt(
             prompt_overrides,
             "compare.analysis.system",
             DEFAULT_COMPARE_ANALYSIS_PROMPT,
         )
         compare_synthesis_prompt = build_compare_synthesis_prompt(
-            compare_analysis_prompt, citations_enabled=citations_enabled
+            compare_analysis_prompt,
+            citations_enabled=citations_enabled,
+            citation_instructions=citation_instructions_block,
         )
         compare_external_prompt = resolve_prompt(
             prompt_overrides,
@@ -708,6 +732,7 @@ async def stream_new_chat(
             route_meta = {
                 "route": route.value,
                 "citations_enabled": citations_enabled,
+                "citation_instructions_enabled": citations_enabled,
             }
             route_start = await trace_recorder.start_span(
                 span_id=route_span_id,
@@ -765,10 +790,26 @@ async def stream_new_chat(
                 external_model_prompt=compare_external_prompt,
                 bolag_prompt=bolag_worker_prompt,
                 trafik_prompt=trafik_worker_prompt,
-                media_prompt=build_worker_prompt(media_prompt, citations_enabled=False),
-                browser_prompt=build_worker_prompt(browser_prompt, citations_enabled=True),
-                code_prompt=build_worker_prompt(code_prompt, citations_enabled=True),
-                kartor_prompt=build_worker_prompt(kartor_prompt, citations_enabled=False),
+                media_prompt=build_worker_prompt(
+                    media_prompt,
+                    citations_enabled=citations_enabled,
+                    citation_instructions=citation_instructions_block,
+                ),
+                browser_prompt=build_worker_prompt(
+                    browser_prompt,
+                    citations_enabled=citations_enabled,
+                    citation_instructions=citation_instructions_block,
+                ),
+                code_prompt=build_worker_prompt(
+                    code_prompt,
+                    citations_enabled=citations_enabled,
+                    citation_instructions=citation_instructions_block,
+                ),
+                kartor_prompt=build_worker_prompt(
+                    kartor_prompt,
+                    citations_enabled=citations_enabled,
+                    citation_instructions=citation_instructions_block,
+                ),
                 tool_prompt_overrides=prompt_overrides,
             )
         else:
@@ -786,6 +827,7 @@ async def stream_new_chat(
                 enabled_tools=ROUTE_TOOL_SETS.get(route, []),
                 tool_names_for_prompt=[],
                 force_citations_enabled=citations_enabled,
+                citation_instructions=citation_instructions_block,
             )
 
         # Build input with message history

@@ -1,5 +1,4 @@
 from app.agents.new_chat.system_prompt import (
-    SURFSENSE_CITATION_INSTRUCTIONS,
     append_datetime_context,
 )
 
@@ -26,9 +25,15 @@ Current time (UTC): {resolved_time}
 """
 
 
-def build_trafik_prompt(prompt_override: str | None = None) -> str:
+def build_trafik_prompt(
+    prompt_override: str | None = None,
+    citation_instructions: str | None = None,
+) -> str:
     base = (prompt_override or DEFAULT_TRAFFIC_SYSTEM_PROMPT).strip()
     if not base:
         base = DEFAULT_TRAFFIC_SYSTEM_PROMPT.strip()
     base = append_datetime_context(base)
-    return base + "\n\n" + SURFSENSE_CITATION_INSTRUCTIONS
+    explicit = str(citation_instructions or "").strip()
+    if not explicit:
+        return base
+    return base + "\n\n" + explicit
