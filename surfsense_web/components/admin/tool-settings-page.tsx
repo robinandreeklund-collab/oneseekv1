@@ -99,6 +99,7 @@ function formatAutoLoopStopReason(reason: string | null | undefined) {
 
 function buildFailureReasons(result: Record<string, unknown>): string[] {
 	const reasons: string[] = [];
+	if (result.passed_intent === false) reasons.push("Intent mismatch");
 	if (result.passed_route === false) reasons.push("Route mismatch");
 	if (result.passed_sub_route === false) reasons.push("Sub-route mismatch");
 	if (result.passed_agent === false) reasons.push("Agent mismatch");
@@ -3555,6 +3556,10 @@ export function ToolSettingsPage() {
 														: ""}
 												</div>
 												<div className="text-xs text-muted-foreground">
+													Intent: {result.expected_intent || "-"} →{" "}
+													{result.selected_intent || "-"}
+												</div>
+												<div className="text-xs text-muted-foreground">
 													Agent: {result.expected_agent || "-"} →{" "}
 													{result.selected_agent || "-"}
 												</div>
@@ -3582,6 +3587,16 @@ export function ToolSettingsPage() {
 												</p>
 											)}
 											<div className="flex flex-wrap gap-2">
+												{result.passed_intent != null && (
+													<Badge
+														variant={
+															result.passed_intent ? "outline" : "destructive"
+														}
+													>
+														intent:{result.expected_intent || "-"}{" "}
+														{result.passed_intent ? "OK" : "MISS"}
+													</Badge>
+												)}
 												{result.passed_route != null && (
 													<Badge
 														variant={
@@ -4308,6 +4323,10 @@ export function ToolSettingsPage() {
 														: ""}
 												</div>
 												<div className="text-xs text-muted-foreground">
+													Intent: {result.expected_intent || "-"} →{" "}
+													{result.selected_intent || "-"}
+												</div>
+												<div className="text-xs text-muted-foreground">
 													Agent: {result.expected_agent || "-"} →{" "}
 													{result.selected_agent || "-"}
 												</div>
@@ -4335,6 +4354,16 @@ export function ToolSettingsPage() {
 												</p>
 											)}
 											<div className="flex flex-wrap gap-2">
+												{result.passed_intent != null && (
+													<Badge
+														variant={
+															result.passed_intent ? "outline" : "destructive"
+														}
+													>
+														intent:{result.expected_intent || "-"}{" "}
+														{result.passed_intent ? "OK" : "MISS"}
+													</Badge>
+												)}
 												{result.passed_route != null && (
 													<Badge
 														variant={
@@ -4655,6 +4684,26 @@ export function ToolSettingsPage() {
 														</pre>
 													</div>
 												</div>
+												{suggestion.prompt_key && (
+													<div className="grid gap-3 md:grid-cols-2">
+														<div className="rounded bg-muted/50 p-2">
+															<p className="text-xs font-medium mb-1">
+																Nuvarande prompt ({suggestion.prompt_key})
+															</p>
+															<pre className="text-[11px] whitespace-pre-wrap break-words">
+																{suggestion.current_prompt ?? "-"}
+															</pre>
+														</div>
+														<div className="rounded bg-muted/50 p-2">
+															<p className="text-xs font-medium mb-1">
+																Föreslagen prompt
+															</p>
+															<pre className="text-[11px] whitespace-pre-wrap break-words">
+																{suggestion.proposed_prompt ?? "-"}
+															</pre>
+														</div>
+													</div>
+												)}
 											</div>
 										))
 									)}
