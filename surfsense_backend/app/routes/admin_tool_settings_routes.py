@@ -91,6 +91,7 @@ from app.services.tool_metadata_service import (
     tool_metadata_payload_equal,
     upsert_global_tool_metadata_overrides,
 )
+from app.services.intent_definition_service import get_effective_intent_definitions
 from app.services.tool_retrieval_tuning_service import (
     get_global_tool_retrieval_tuning,
     normalize_tool_retrieval_tuning,
@@ -2304,6 +2305,7 @@ async def _execute_tool_evaluation(
         prompt_overrides=prompt_overrides,
         tool_index=tool_index,
     )
+    effective_intent_definitions = await get_effective_intent_definitions(session)
     evaluation = await run_tool_evaluation(
         tests=[
             {
@@ -2330,6 +2332,7 @@ async def _execute_tool_evaluation(
         use_llm_supervisor_review=payload.use_llm_supervisor_review,
         retrieval_tuning=effective_tuning,
         prompt_overrides=current_prompts,
+        intent_definitions=effective_intent_definitions,
         progress_callback=progress_callback,
     )
     suggestions = await generate_tool_metadata_suggestions(
@@ -2421,6 +2424,7 @@ async def _execute_api_input_evaluation(
         prompt_overrides=overrides,
         tool_index=tool_index,
     )
+    effective_intent_definitions = await get_effective_intent_definitions(session)
     evaluation = await run_tool_api_input_evaluation(
         tests=_serialize_api_input_tests(payload.tests),
         tool_index=tool_index,
@@ -2430,6 +2434,7 @@ async def _execute_api_input_evaluation(
         use_llm_supervisor_review=payload.use_llm_supervisor_review,
         retrieval_tuning=effective_tuning,
         prompt_overrides=current_prompts,
+        intent_definitions=effective_intent_definitions,
         progress_callback=progress_callback,
     )
     holdout_evaluation: dict[str, Any] | None = None
@@ -2443,6 +2448,7 @@ async def _execute_api_input_evaluation(
             use_llm_supervisor_review=payload.use_llm_supervisor_review,
             retrieval_tuning=effective_tuning,
             prompt_overrides=current_prompts,
+            intent_definitions=effective_intent_definitions,
             progress_callback=None,
         )
     prompt_suggestions = await suggest_agent_prompt_improvements_for_api_input(

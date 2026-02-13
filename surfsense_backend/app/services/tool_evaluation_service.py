@@ -15,7 +15,7 @@ from app.agents.new_chat.bigtool_store import (
     normalize_retrieval_tuning,
     smart_retrieve_tools_with_breakdown,
 )
-from app.agents.new_chat.dispatcher import dispatch_route
+from app.agents.new_chat.dispatcher import dispatch_route_with_trace
 from app.agents.new_chat.knowledge_router import KnowledgeRoute, dispatch_knowledge_route
 from app.agents.new_chat.routing import Route
 
@@ -696,14 +696,16 @@ async def _dispatch_route_from_start(
     question: str,
     llm,
     prompt_overrides: dict[str, str] | None = None,
+    intent_definitions: list[dict[str, Any]] | None = None,
 ) -> tuple[str | None, str | None]:
     overrides = prompt_overrides or {}
-    selected_route = await dispatch_route(
+    selected_route, _route_decision = await dispatch_route_with_trace(
         question,
         llm,
         has_attachments=False,
         has_mentions=False,
         system_prompt_override=overrides.get("router.top_level"),
+        intent_definitions=intent_definitions,
     )
     route_value = (
         selected_route.value
@@ -1585,6 +1587,7 @@ async def run_tool_evaluation(
     use_llm_supervisor_review: bool = True,
     retrieval_tuning: dict[str, Any] | None = None,
     prompt_overrides: dict[str, str] | None = None,
+    intent_definitions: list[dict[str, Any]] | None = None,
     progress_callback=None,
 ) -> dict[str, Any]:
     retrieval_limit = max(1, min(int(retrieval_limit or 5), 15))
@@ -1669,6 +1672,7 @@ async def run_tool_evaluation(
                 question=question,
                 llm=llm,
                 prompt_overrides=prompt_overrides,
+                intent_definitions=intent_definitions,
             )
             passed_route = (
                 selected_route == expected_route if expected_route is not None else None
@@ -2565,6 +2569,7 @@ async def run_tool_api_input_evaluation(
     use_llm_supervisor_review: bool = True,
     retrieval_tuning: dict[str, Any] | None = None,
     prompt_overrides: dict[str, str] | None = None,
+    intent_definitions: list[dict[str, Any]] | None = None,
     progress_callback=None,
 ) -> dict[str, Any]:
     retrieval_limit = max(1, min(int(retrieval_limit or 5), 15))
@@ -2660,6 +2665,7 @@ async def run_tool_api_input_evaluation(
                 question=question,
                 llm=llm,
                 prompt_overrides=prompt_overrides,
+                intent_definitions=intent_definitions,
             )
             passed_route = (
                 selected_route == expected_route if expected_route is not None else None
