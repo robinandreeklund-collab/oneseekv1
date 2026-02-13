@@ -12,6 +12,7 @@ Supports loading LLM configurations from:
 import json
 import re
 import uuid
+import ast
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 from typing import Any
@@ -436,13 +437,14 @@ def _extract_assistant_text_from_event_output(output: Any) -> str:
 
 
 _CRITIC_JSON_SNIPPET_RE = re.compile(
-    r"\{\s*\"status\"\s*:\s*\"(?:ok|needs_more)\"[^}]*\}",
-    re.DOTALL,
+    r"\{\s*[\"']status[\"']\s*:\s*[\"'](?:ok|needs_more)[\"'][\s\S]*?[\"']reason[\"']\s*:\s*[\"'][\s\S]*?[\"']\s*\}",
+    re.IGNORECASE,
 )
 _CITATION_MARKER_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
 _CITATION_SPACING_RE = re.compile(r"\[citation:\s*([^\]]+?)\s*\]", re.IGNORECASE)
 _REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _STREAM_JSON_DECODER = json.JSONDecoder()
+_CRITIC_JSON_START_RE = re.compile(r"\{\s*[\"']status[\"']\s*:", re.IGNORECASE)
 
 
 def _strip_inline_critic_payloads(text: str) -> tuple[str, bool]:
@@ -461,9 +463,24 @@ def _strip_inline_critic_payloads(text: str) -> tuple[str, bool]:
         try:
             decoded, consumed = _STREAM_JSON_DECODER.raw_decode(segment)
         except ValueError:
-            parts.append(text[start : start + 1])
-            idx = start + 1
-            continue
+            decoded = None
+            consumed = 0
+            for end in range(start + 1, min(len(text), start + 2400)):
+                if text[end : end + 1] != "}":
+                    continue
+                candidate = text[start : end + 1]
+                try:
+                    parsed = ast.literal_eval(candidate)
+                except Exception:
+                    continue
+                if isinstance(parsed, dict):
+                    decoded = parsed
+                    consumed = len(candidate)
+                    break
+            if decoded is None:
+                parts.append(text[start : start + 1])
+                idx = start + 1
+                continue
         status = (
             str(decoded.get("status") or "").strip().lower()
             if isinstance(decoded, dict)
@@ -1257,7 +1274,7 @@ async def stream_new_chat(
             remaining = text
             while remaining:
                 if not suppress_critic:
-                    match = re.search(r"\{\s*\"status\"\s*:", remaining)
+                    match = _CRITIC_JSON_START_RE.search(remaining)
                     if not match:
                         output += remaining
                         break

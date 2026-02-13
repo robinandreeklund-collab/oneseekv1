@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import hashlib
 import re
@@ -771,7 +772,8 @@ def _safe_json(payload: Any) -> dict[str, Any]:
 
 
 _CRITIC_SNIPPET_RE = re.compile(
-    r"\{\s*\"status\"\s*:\s*\"(?:ok|needs_more)\"[^}]*\}", re.DOTALL
+    r"\{\s*[\"']status[\"']\s*:\s*[\"'](?:ok|needs_more)[\"'][\s\S]*?[\"']reason[\"']\s*:\s*[\"'][\s\S]*?[\"']\s*\}",
+    re.IGNORECASE,
 )
 _CRITIC_JSON_DECODER = json.JSONDecoder()
 _LINE_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
@@ -795,9 +797,24 @@ def _remove_inline_critic_payloads(text: str) -> tuple[str, bool]:
         try:
             decoded, consumed = _CRITIC_JSON_DECODER.raw_decode(segment)
         except ValueError:
-            parts.append(text[start : start + 1])
-            idx = start + 1
-            continue
+            decoded = None
+            consumed = 0
+            for end in range(start + 1, min(len(text), start + 2400)):
+                if text[end : end + 1] != "}":
+                    continue
+                candidate = text[start : end + 1]
+                try:
+                    parsed = ast.literal_eval(candidate)
+                except Exception:
+                    continue
+                if isinstance(parsed, dict):
+                    decoded = parsed
+                    consumed = len(candidate)
+                    break
+            if decoded is None:
+                parts.append(text[start : start + 1])
+                idx = start + 1
+                continue
         status = (
             str(decoded.get("status") or "").strip().lower()
             if isinstance(decoded, dict)
@@ -877,6 +894,20 @@ def _render_guard_message(template: str, preview_lines: list[str]) -> str:
         if preview_block not in rendered:
             rendered = (rendered + "\n" + preview_block).strip()
     return rendered
+
+
+def _current_turn_key(state: dict[str, Any] | None) -> str:
+    if not state:
+        return "turn"
+    messages = state.get("messages") or []
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            content = str(getattr(message, "content", "") or "").strip()
+            if content:
+                digest = hashlib.sha1(content.encode("utf-8")).hexdigest()
+                return f"h{digest[:12]}"
+            break
+    return "turn"
 
 
 def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> str:
@@ -1764,6 +1795,8 @@ async def create_supervisor_agent(
             )
         if name == "synthesis" and state:
             task = _prepare_task_for_synthesis(task, state)
+        turn_key = _current_turn_key(state)
+        base_thread_id = str(dependencies.get("thread_id") or "thread")
         selected_tool_ids: list[str] = _focused_tool_ids_for_agent(name, task, limit=6)
         if name == "trafik":
             selected_tool_ids = [
@@ -1792,7 +1825,7 @@ async def create_supervisor_agent(
         messages.append(HumanMessage(content=task))
         state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
         config = {
-            "configurable": {"thread_id": f"{dependencies['thread_id']}:{name}"},
+            "configurable": {"thread_id": f"{base_thread_id}:{name}:{turn_key}"},
             "recursion_limit": 60,
         }
         result = await worker.ainvoke(state, config=config)
@@ -1888,6 +1921,8 @@ async def create_supervisor_agent(
                 # Reuse same worker invocation logic as call_agent
                 if agent_name == "synthesis" and state:
                     task = _prepare_task_for_synthesis(task, state)
+                turn_key = _current_turn_key(state)
+                base_thread_id = str(dependencies.get("thread_id") or "thread")
                 selected_tool_ids = _focused_tool_ids_for_agent(agent_name, task, limit=6)
                 if agent_name == "trafik":
                     selected_tool_ids = [
@@ -1920,7 +1955,9 @@ async def create_supervisor_agent(
                 messages.append(HumanMessage(content=task))
                 worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
                 config = {
-                    "configurable": {"thread_id": f"{dependencies['thread_id']}:{agent_name}"},
+                    "configurable": {
+                        "thread_id": f"{base_thread_id}:{agent_name}:{turn_key}"
+                    },
                     "recursion_limit": 60,
                 }
                 result = await worker.ainvoke(worker_state, config=config)
