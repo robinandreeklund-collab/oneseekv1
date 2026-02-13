@@ -1072,11 +1072,13 @@ async def stream_new_chat(
         if worker_system_prompt:
             langchain_messages.append(SystemMessage(content=worker_system_prompt))
         langchain_messages.append(HumanMessage(content=final_query))
+        request_turn_id = uuid.uuid4().hex
 
         input_state = {
             # Lets not pass this message atm because we are using the checkpointer to manage the conversation history
             # We will use this to simulate group chat functionality in the future
             "messages": langchain_messages,
+            "turn_id": request_turn_id,
         }
         if route == Route.SMALLTALK:
             input_state["search_space_id"] = search_space_id

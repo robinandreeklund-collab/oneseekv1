@@ -223,10 +223,6 @@ _MAP_INTENT_RE = re.compile(
     r"rutt|route|vagbeskrivning|vägbeskrivning)\b",
     re.IGNORECASE,
 )
-_FOLLOWUP_QUERY_RE = re.compile(
-    r"\b(aven|även|ocksa|också|samma|da|då|kolla|fortsatt|ocksa)\b",
-    re.IGNORECASE,
-)
 _MISSING_SIGNAL_RE = re.compile(
     r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
     re.IGNORECASE,
@@ -743,6 +739,8 @@ def _format_compare_outputs_for_prompt(compare_outputs: list[dict[str, Any]] | N
 
 class SupervisorState(TypedDict, total=False):
     messages: Annotated[list[Any], add_messages]
+    turn_id: Annotated[str | None, _replace]
+    active_turn_id: Annotated[str | None, _replace]
     active_plan: Annotated[list[dict[str, Any]], _replace]
     plan_complete: Annotated[bool, _replace]
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
@@ -753,7 +751,6 @@ class SupervisorState(TypedDict, total=False):
     orchestration_phase: Annotated[str | None, _replace]
     agent_hops: Annotated[int | None, _replace]
     no_progress_runs: Annotated[int | None, _replace]
-    active_turn_key: Annotated[str | None, _replace]
 
 
 _MAX_TOOL_CALLS_PER_TURN = 12
@@ -951,6 +948,10 @@ def _render_guard_message(template: str, preview_lines: list[str]) -> str:
 def _current_turn_key(state: dict[str, Any] | None) -> str:
     if not state:
         return "turn"
+    active_turn_id = str(state.get("active_turn_id") or state.get("turn_id") or "").strip()
+    if active_turn_id:
+        digest = hashlib.sha1(active_turn_id.encode("utf-8")).hexdigest()
+        return f"t{digest[:12]}"
     messages = state.get("messages") or []
     latest_human: HumanMessage | None = None
     human_count = 0
@@ -964,8 +965,7 @@ def _current_turn_key(state: dict[str, Any] | None) -> str:
         seed = message_id or content or f"human:{human_count}"
         digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()
         return f"h{human_count}:{digest[:12]}"
-    current = str(state.get("active_turn_key") or "").strip()
-    return current or "turn"
+    return "turn"
 
 
 def _latest_user_query(messages: list[Any] | None) -> str:
@@ -973,17 +973,6 @@ def _latest_user_query(messages: list[Any] | None) -> str:
         if isinstance(message, HumanMessage):
             return str(getattr(message, "content", "") or "").strip()
     return ""
-
-
-def _looks_followup_query(text: str) -> bool:
-    value = str(text or "").strip().lower()
-    if not value:
-        return False
-    if _FOLLOWUP_QUERY_RE.search(value):
-        return True
-    if value.startswith(("och ", "kan du ", "kan ni ")):
-        return len(value) <= 80
-    return False
 
 
 def _tool_names_from_messages(messages: list[Any] | None) -> list[str]:
@@ -1263,8 +1252,13 @@ def _normalize_task_for_fingerprint(text: str) -> str:
     return value[:180]
 
 
-def _agent_call_entries_since_last_user(messages: list[Any] | None) -> list[dict[str, Any]]:
+def _agent_call_entries_since_last_user(
+    messages: list[Any] | None,
+    *,
+    turn_id: str | None = None,
+) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
+    expected_turn_id = str(turn_id or "").strip()
     for message in messages or []:
         if isinstance(message, HumanMessage):
             entries = []
@@ -1275,6 +1269,9 @@ def _agent_call_entries_since_last_user(messages: list[Any] | None) -> list[dict
             continue
         payload = _safe_json(getattr(message, "content", ""))
         if not isinstance(payload, dict):
+            continue
+        payload_turn_id = str(payload.get("turn_id") or "").strip()
+        if expected_turn_id and payload_turn_id != expected_turn_id:
             continue
         entries.append(payload)
     return entries
@@ -1412,8 +1409,9 @@ def _summarize_parallel_results(results: Any) -> str:
     return _truncate_for_prompt(summary)
 
 
-def _count_consecutive_loop_tools(messages: list[Any]) -> int:
+def _count_consecutive_loop_tools(messages: list[Any], *, turn_id: str | None = None) -> int:
     count = 0
+    expected_turn_id = str(turn_id or "").strip()
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
             break
@@ -1422,6 +1420,13 @@ def _count_consecutive_loop_tools(messages: list[Any]) -> int:
         name = str(getattr(message, "name", "") or "").strip()
         if name == "call_agent":
             payload = _safe_json(getattr(message, "content", ""))
+            payload_turn_id = (
+                str(payload.get("turn_id") or "").strip()
+                if isinstance(payload, dict)
+                else ""
+            )
+            if expected_turn_id and payload_turn_id != expected_turn_id:
+                break
             if isinstance(payload, dict) and str(payload.get("error") or "").strip():
                 count += 1
                 continue
@@ -2109,8 +2114,6 @@ async def create_supervisor_agent(
         route_hint = None
         cache_key = None
         cache_pattern = None
-        prior_agent_hint = ""
-        followup_query = _looks_followup_query(query)
         if state:
             recent_calls = state.get("recent_agent_calls") or []
             recent_agents = [
@@ -2119,9 +2122,6 @@ async def create_supervisor_agent(
                 if call.get("agent")
             ]
             route_hint = state.get("route_hint")
-            prior_agent_hint = str(state.get("final_agent_name") or "").strip().lower()
-            if prior_agent_hint and prior_agent_hint in agent_by_name:
-                recent_agents.append(prior_agent_hint)
             context_parts = []
             for call in recent_calls[-3:]:
                 response = str(call.get("response") or "")
@@ -2132,8 +2132,6 @@ async def create_supervisor_agent(
                 )
             if context_parts:
                 context_query = f"{query} {' '.join(context_parts)}"
-            if followup_query and prior_agent_hint:
-                context_query = f"{context_query} previous_agent:{prior_agent_hint}"
 
         has_trafik_intent = _has_trafik_intent(context_query)
         has_strict_trafik_intent = _has_strict_trafik_intent(context_query)
@@ -2179,14 +2177,9 @@ async def create_supervisor_agent(
                     "trafik": ["trafik", "action"],
                 }.get(str(route_hint), [])
                 if str(route_hint) == "action":
-                    if (
-                        followup_query
-                        and prior_agent_hint
-                        and prior_agent_hint in {"statistics", "riksdagen", "bolag", "knowledge"}
-                        and not has_trafik_intent
-                        and not has_map_intent
-                    ):
-                        preferred = [prior_agent_hint, "action", "media"]
+                    # Keep route_hint as advisory only unless action intent is explicit.
+                    if not (has_map_intent or has_trafik_intent):
+                        preferred = []
                     if has_map_intent and "kartor" not in preferred:
                         preferred.insert(0, "kartor")
                     if has_trafik_intent and "trafik" not in preferred:
@@ -2259,13 +2252,17 @@ async def create_supervisor_agent(
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
         """Call a specialized agent with a task."""
+        injected_state = state or {}
         requested_name = (agent_name or "").strip().lower()
         resolved_name, resolution_reason = _resolve_agent_name(
             requested_name,
             task=task,
-            state=state,
+            state=injected_state,
         )
         name = resolved_name or requested_name
+        current_turn_id = str(
+            injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
+        ).strip()
         worker = await worker_pool.get(name)
         if not worker:
             error_message = f"Agent '{agent_name}' not available."
@@ -2283,12 +2280,13 @@ async def create_supervisor_agent(
                         used_tools=[],
                         final_requested=bool(final),
                     ),
+                    "turn_id": current_turn_id,
                 },
                 ensure_ascii=True,
             )
-        if name == "synthesis" and state:
-            task = _prepare_task_for_synthesis(task, state)
-        turn_key = _current_turn_key(state)
+        if name == "synthesis" and injected_state:
+            task = _prepare_task_for_synthesis(task, injected_state)
+        turn_key = _current_turn_key(injected_state)
         base_thread_id = str(dependencies.get("thread_id") or "thread")
         selected_tool_ids: list[str] = _focused_tool_ids_for_agent(name, task, limit=6)
         if name == "trafik":
@@ -2316,12 +2314,12 @@ async def create_supervisor_agent(
         if prompt:
             messages.append(SystemMessage(content=prompt))
         messages.append(HumanMessage(content=task))
-        state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
+        worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
         config = {
             "configurable": {"thread_id": f"{base_thread_id}:{name}:{turn_key}"},
             "recursion_limit": 60,
         }
-        result = await worker.ainvoke(state, config=config)
+        result = await worker.ainvoke(worker_state, config=config)
         response_text = ""
         messages_out: list[Any] = []
         if isinstance(result, dict):
@@ -2396,6 +2394,7 @@ async def create_supervisor_agent(
                 "result_contract": result_contract,
                 "critic": critic_payload,
                 "final": bool(final),
+                "turn_id": current_turn_id,
             },
             ensure_ascii=True,
         )
@@ -2409,6 +2408,10 @@ async def create_supervisor_agent(
         Use when tasks are independent and don't depend on each other's results.
 
         IMPORTANT: Use exact internal agent ids from retrieve_agents()."""
+        injected_state = state or {}
+        current_turn_id = str(
+            injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
+        ).strip()
         serialized_mode = not compare_mode
         dropped_calls = 0
         if serialized_mode and isinstance(calls, list) and len(calls) > 1:
@@ -2421,7 +2424,7 @@ async def create_supervisor_agent(
             resolved_agent_name, resolution_reason = _resolve_agent_name(
                 requested_agent_name,
                 task=task,
-                state=state,
+                state=injected_state,
             )
             agent_name = resolved_agent_name or requested_agent_name
             worker = await worker_pool.get(agent_name)
@@ -2440,12 +2443,13 @@ async def create_supervisor_agent(
                         used_tools=[],
                         final_requested=False,
                     ),
+                    "turn_id": current_turn_id,
                 }
             try:
                 # Reuse same worker invocation logic as call_agent
-                if agent_name == "synthesis" and state:
-                    task = _prepare_task_for_synthesis(task, state)
-                turn_key = _current_turn_key(state)
+                if agent_name == "synthesis" and injected_state:
+                    task = _prepare_task_for_synthesis(task, injected_state)
+                turn_key = _current_turn_key(injected_state)
                 base_thread_id = str(dependencies.get("thread_id") or "thread")
                 selected_tool_ids = _focused_tool_ids_for_agent(agent_name, task, limit=6)
                 if agent_name == "trafik":
@@ -2511,6 +2515,7 @@ async def create_supervisor_agent(
                     "response": response_text,
                     "used_tools": used_tool_names,
                     "result_contract": result_contract,
+                    "turn_id": current_turn_id,
                 }
             except Exception as exc:
                 error_message = str(exc)
@@ -2529,6 +2534,7 @@ async def create_supervisor_agent(
                         used_tools=[],
                         final_requested=False,
                     ),
+                    "turn_id": current_turn_id,
                 }
         
         results = await asyncio.gather(
@@ -2576,15 +2582,18 @@ async def create_supervisor_agent(
         final_response = state.get("final_agent_response")
         messages_state = state.get("messages") or []
         last_message = messages_state[-1] if messages_state else None
-        turn_key = _current_turn_key(state)
-        active_turn_key = str(state.get("active_turn_key") or "").strip()
-        new_user_turn = bool(turn_key and turn_key != active_turn_key)
+        incoming_turn_id = str(state.get("turn_id") or "").strip()
+        active_turn_id = str(state.get("active_turn_id") or "").strip()
+        new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
         if (
             final_response
             and isinstance(last_message, ToolMessage)
             and not new_user_turn
         ):
             return {"messages": [AIMessage(content=_strip_critic_json(str(final_response)))]}
+        if not incoming_turn_id and final_response and isinstance(last_message, HumanMessage):
+            # Legacy fallback when turn_id is missing.
+            new_user_turn = True
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = None if new_user_turn else _format_plan_context(state)
         recent_context = None if new_user_turn else _format_recent_calls(state)
@@ -2607,15 +2616,15 @@ async def create_supervisor_agent(
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
             updates["active_plan"] = []
             updates["plan_complete"] = False
-            updates["recent_agent_calls"] = []
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
             updates["orchestration_phase"] = "select_agent"
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
-            updates["active_turn_key"] = turn_key
-        elif turn_key and not active_turn_key:
-            updates["active_turn_key"] = turn_key
+            if incoming_turn_id:
+                updates["active_turn_id"] = incoming_turn_id
+        elif incoming_turn_id and not active_turn_id:
+            updates["active_turn_id"] = incoming_turn_id
         if final_response and new_user_turn:
             updates["final_agent_response"] = None
         return updates
@@ -2630,15 +2639,17 @@ async def create_supervisor_agent(
         final_response = state.get("final_agent_response")
         messages_state = state.get("messages") or []
         last_message = messages_state[-1] if messages_state else None
-        turn_key = _current_turn_key(state)
-        active_turn_key = str(state.get("active_turn_key") or "").strip()
-        new_user_turn = bool(turn_key and turn_key != active_turn_key)
+        incoming_turn_id = str(state.get("turn_id") or "").strip()
+        active_turn_id = str(state.get("active_turn_id") or "").strip()
+        new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
         if (
             final_response
             and isinstance(last_message, ToolMessage)
             and not new_user_turn
         ):
             return {"messages": [AIMessage(content=_strip_critic_json(str(final_response)))]}
+        if not incoming_turn_id and final_response and isinstance(last_message, HumanMessage):
+            new_user_turn = True
         messages = _sanitize_messages(list(state.get("messages") or []))
         plan_context = None if new_user_turn else _format_plan_context(state)
         recent_context = None if new_user_turn else _format_recent_calls(state)
@@ -2661,15 +2672,15 @@ async def create_supervisor_agent(
             # Start each user turn with fresh planner memory to avoid stale plan leakage.
             updates["active_plan"] = []
             updates["plan_complete"] = False
-            updates["recent_agent_calls"] = []
             updates["compare_outputs"] = []
             updates["final_agent_response"] = None
             updates["orchestration_phase"] = "select_agent"
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
-            updates["active_turn_key"] = turn_key
-        elif turn_key and not active_turn_key:
-            updates["active_turn_key"] = turn_key
+            if incoming_turn_id:
+                updates["active_turn_id"] = incoming_turn_id
+        elif incoming_turn_id and not active_turn_id:
+            updates["active_turn_id"] = incoming_turn_id
         if final_response and new_user_turn:
             updates["final_agent_response"] = None
         return updates
@@ -2806,8 +2817,12 @@ async def create_supervisor_agent(
         if compare_updates:
             updates["compare_outputs"] = compare_updates
 
+        current_turn_id = str(
+            state.get("active_turn_id") or state.get("turn_id") or ""
+        ).strip()
         call_entries = _agent_call_entries_since_last_user(
-            state.get("messages") or []
+            state.get("messages") or [],
+            turn_id=current_turn_id or None,
         )
         agent_hops = len(call_entries)
         updates["agent_hops"] = agent_hops
@@ -2890,7 +2905,10 @@ async def create_supervisor_agent(
 
         # Fallback safety: avoid endless supervisor loops on repeated retrieval/delegation tools.
         if "final_agent_response" not in updates:
-            loop_count = _count_consecutive_loop_tools(state.get("messages") or [])
+            loop_count = _count_consecutive_loop_tools(
+                state.get("messages") or [],
+                turn_id=current_turn_id or None,
+            )
             if loop_count >= _LOOP_GUARD_MAX_CONSECUTIVE:
                 rendered = _render_guard_message(loop_guard_template, parallel_preview)
                 if not rendered:
