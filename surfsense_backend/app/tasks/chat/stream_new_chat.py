@@ -48,7 +48,7 @@ from app.agents.new_chat.compare_prompts import (
 )
 from app.agents.new_chat.dispatcher import (
     DEFAULT_ROUTE_SYSTEM_PROMPT,
-    dispatch_route,
+    dispatch_route_with_trace,
 )
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.routing import Route, ROUTE_TOOL_SETS
@@ -94,6 +94,10 @@ from app.agents.new_chat.tools.user_memory import create_save_memory_tool
 from app.services.connector_service import ConnectorService
 from app.services.new_streaming_service import VercelStreamingService
 from app.services.trace_service import TraceRecorder
+from app.services.intent_definition_service import (
+    get_default_intent_definitions,
+    get_effective_intent_definitions,
+)
 from app.tasks.chat.stream_compare_chat import (
     extract_compare_query,
     is_compare_request,
@@ -762,13 +766,19 @@ async def stream_new_chat(
         except Exception:
             routing_history = []
 
-        route = await dispatch_route(
+        try:
+            intent_definitions = await get_effective_intent_definitions(session)
+        except Exception:
+            intent_definitions = list(get_default_intent_definitions().values())
+
+        route, route_decision = await dispatch_route_with_trace(
             raw_user_query,
             llm,
             has_attachments=bool(attachments),
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
             system_prompt_override=router_prompt,
             conversation_history=routing_history,
+            intent_definitions=intent_definitions,
         )
         if route == Route.COMPARE and compare_query:
             user_query = compare_query
@@ -922,6 +932,10 @@ async def stream_new_chat(
             route_span_id = f"route-{uuid.uuid4().hex[:8]}"
             route_meta = {
                 "route": route.value,
+                "route_source": str(route_decision.get("source") or ""),
+                "route_confidence": route_decision.get("confidence"),
+                "route_reason": str(route_decision.get("reason") or ""),
+                "route_candidates": route_decision.get("candidates") or [],
                 "citations_enabled": citations_enabled,
                 "citation_instructions_enabled": citations_enabled,
             }
@@ -1231,6 +1245,15 @@ async def stream_new_chat(
 
         route_step_id = next_thinking_step_id()
         route_items = [f"Route: {route.value}"]
+        route_source = str(route_decision.get("source") or "").strip()
+        route_confidence = route_decision.get("confidence")
+        route_reason = str(route_decision.get("reason") or "").strip()
+        if route_source:
+            route_items.append(f"Källa: {route_source}")
+        if isinstance(route_confidence, (int, float)):
+            route_items.append(f"Confidence: {float(route_confidence):.2f}")
+        if route_reason:
+            route_items.append(f"Orsak: {route_reason}")
         yield streaming_service.format_thinking_step(
             step_id=route_step_id,
             title=format_step_title("Routing request"),
