@@ -223,6 +223,33 @@ _MAP_INTENT_RE = re.compile(
     r"rutt|route|vagbeskrivning|vägbeskrivning)\b",
     re.IGNORECASE,
 )
+_MISSING_SIGNAL_RE = re.compile(
+    r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
+    re.IGNORECASE,
+)
+_BLOCKED_RESPONSE_MARKERS = (
+    "jag kan inte",
+    "jag kunde inte",
+    "kan tyvarr inte",
+    "kan tyvärr inte",
+    "saknar tillgang",
+    "saknar tillgång",
+    "utan tillgang",
+    "utan tillgång",
+    "annan agent behovs",
+    "annan agent behövs",
+    "behover annan agent",
+    "behöver annan agent",
+)
+_MISSING_FIELD_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("datum", ("datum", "period", "vecka", "manad", "månad", "ar", "år")),
+    ("tid", ("tid", "klockslag", "timme", "avgangstid", "avgångstid")),
+    ("plats", ("plats", "ort", "stad", "kommun", "adress", "koordinat")),
+    ("stracka", ("stracka", "sträcka", "riktning", "vagnummer", "vägnummer")),
+    ("id", ("id", "organisationsnummer", "personnummer", "beteckning")),
+    ("kategori", ("kategori", "typ", "slag")),
+)
+_RESULT_STATUS_VALUES = {"success", "partial", "blocked", "error"}
 
 
 def _has_trafik_intent(text: str) -> bool:
@@ -937,6 +964,276 @@ def _latest_user_query(messages: list[Any] | None) -> str:
     return ""
 
 
+def _tool_names_from_messages(messages: list[Any] | None) -> list[str]:
+    names: list[str] = []
+    for message in messages or []:
+        if not isinstance(message, ToolMessage):
+            continue
+        name = str(getattr(message, "name", "") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _infer_missing_fields(response_text: str) -> list[str]:
+    text = str(response_text or "").strip().lower()
+    if not text or not _MISSING_SIGNAL_RE.search(text):
+        return []
+    missing: list[str] = []
+    for field_name, hints in _MISSING_FIELD_HINTS:
+        if any(hint in text for hint in hints):
+            missing.append(field_name)
+    return missing[:6]
+
+
+def _looks_blocked_agent_response(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return True
+    return any(marker in lowered for marker in _BLOCKED_RESPONSE_MARKERS)
+
+
+def _normalize_result_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    if status in _RESULT_STATUS_VALUES:
+        return status
+    return "partial"
+
+
+def _compute_contract_confidence(
+    *,
+    status: str,
+    response_text: str,
+    actionable: bool,
+    missing_fields: list[str],
+    used_tool_count: int,
+    final_requested: bool,
+) -> float:
+    base = 0.45
+    if status == "success":
+        base = 0.78
+    elif status == "blocked":
+        base = 0.24
+    elif status == "error":
+        base = 0.08
+
+    if actionable:
+        base += 0.08
+    if used_tool_count > 0:
+        base += 0.05
+    if used_tool_count >= 2:
+        base += 0.03
+
+    response_len = len(str(response_text or "").strip())
+    if response_len >= 200:
+        base += 0.05
+    elif response_len < 40:
+        base -= 0.10
+
+    if missing_fields:
+        base -= min(0.24, 0.08 * len(missing_fields))
+    if final_requested and status == "success":
+        base += 0.03
+
+    base = max(0.01, min(0.99, base))
+    return round(float(base), 2)
+
+
+def _build_agent_result_contract(
+    *,
+    agent_name: str,
+    task: str,
+    response_text: str,
+    error_text: str = "",
+    used_tools: list[str] | None = None,
+    final_requested: bool = False,
+) -> dict[str, Any]:
+    cleaned_response = _strip_critic_json(str(response_text or "").strip())
+    error_value = str(error_text or "").strip()
+    used_tool_names = [str(item).strip() for item in (used_tools or []) if str(item).strip()]
+    missing_fields = _infer_missing_fields(cleaned_response)
+    actionable = _looks_actionable_agent_answer(cleaned_response)
+    blocked = _looks_blocked_agent_response(cleaned_response)
+
+    if error_value:
+        status = "error"
+    elif not cleaned_response:
+        status = "partial"
+    elif blocked and not actionable:
+        status = "blocked"
+    elif missing_fields and not actionable:
+        status = "partial"
+    elif actionable:
+        status = "success"
+    else:
+        status = "partial"
+
+    confidence = _compute_contract_confidence(
+        status=status,
+        response_text=cleaned_response,
+        actionable=actionable,
+        missing_fields=missing_fields,
+        used_tool_count=len(used_tool_names),
+        final_requested=bool(final_requested),
+    )
+    retry_recommended = status in {"partial", "blocked", "error"}
+    if status == "success" and confidence < 0.55:
+        retry_recommended = True
+
+    if status == "error":
+        reason = (
+            f"Agentfel: {error_value[:140]}"
+            if error_value
+            else "Agentkorningen misslyckades."
+        )
+    elif status == "blocked":
+        reason = "Svar saknar tillrackligt underlag eller kraver annan agent."
+    elif status == "partial":
+        if missing_fields:
+            reason = "Saknade falt: " + ", ".join(missing_fields[:4])
+        else:
+            reason = "Svar finns men bedoms inte komplett nog for finalisering."
+    else:
+        reason = "Svar bedoms tillrackligt komplett for finalisering."
+
+    return {
+        "status": status,
+        "confidence": confidence,
+        "actionable": bool(actionable),
+        "missing_fields": missing_fields,
+        "retry_recommended": bool(retry_recommended),
+        "used_tools": used_tool_names[:6],
+        "reason": reason,
+        "agent": str(agent_name or "").strip(),
+        "task_hash": hashlib.sha1(str(task or "").encode("utf-8")).hexdigest()[:12],
+    }
+
+
+def _contract_from_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    source = payload if isinstance(payload, dict) else {}
+    raw_contract = source.get("result_contract")
+    if isinstance(raw_contract, dict):
+        normalized_status = _normalize_result_status(raw_contract.get("status"))
+        try:
+            confidence = float(raw_contract.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = round(max(0.0, min(1.0, confidence)), 2)
+        missing_fields_raw = raw_contract.get("missing_fields")
+        missing_fields = (
+            [
+                str(item).strip()
+                for item in missing_fields_raw
+                if str(item).strip()
+            ][:6]
+            if isinstance(missing_fields_raw, list)
+            else []
+        )
+        used_tools_raw = raw_contract.get("used_tools")
+        used_tools = (
+            [str(item).strip() for item in used_tools_raw if str(item).strip()][:6]
+            if isinstance(used_tools_raw, list)
+            else []
+        )
+        reason = str(raw_contract.get("reason") or "").strip()
+        if not reason:
+            reason = "Resultatkontrakt utan forklaring."
+        if confidence <= 0.0 and (
+            str(source.get("response") or "").strip() or str(source.get("error") or "").strip()
+        ):
+            fallback = _build_agent_result_contract(
+                agent_name=str(source.get("agent") or ""),
+                task=str(source.get("task") or ""),
+                response_text=str(source.get("response") or ""),
+                error_text=str(source.get("error") or ""),
+                used_tools=used_tools,
+                final_requested=bool(source.get("final")),
+            )
+            confidence = float(fallback.get("confidence") or confidence)
+            if normalized_status == "partial":
+                normalized_status = _normalize_result_status(fallback.get("status"))
+            if not missing_fields:
+                missing_fields = list(fallback.get("missing_fields") or [])
+            if not reason:
+                reason = str(fallback.get("reason") or "").strip()
+        return {
+            "status": normalized_status,
+            "confidence": confidence,
+            "actionable": bool(raw_contract.get("actionable")),
+            "missing_fields": missing_fields,
+            "retry_recommended": bool(raw_contract.get("retry_recommended")),
+            "used_tools": used_tools,
+            "reason": reason,
+            "agent": str(raw_contract.get("agent") or source.get("agent") or "").strip(),
+            "task_hash": str(raw_contract.get("task_hash") or "").strip(),
+        }
+
+    fallback_tools = source.get("used_tools")
+    fallback_tool_list = (
+        [str(item).strip() for item in fallback_tools if str(item).strip()]
+        if isinstance(fallback_tools, list)
+        else []
+    )
+    return _build_agent_result_contract(
+        agent_name=str(source.get("agent") or ""),
+        task=str(source.get("task") or ""),
+        response_text=str(source.get("response") or ""),
+        error_text=str(source.get("error") or ""),
+        used_tools=fallback_tool_list,
+        final_requested=bool(source.get("final")),
+    )
+
+
+def _should_finalize_from_contract(
+    *,
+    contract: dict[str, Any],
+    response_text: str,
+    route_hint: str,
+    agent_name: str,
+    latest_user_query: str,
+    agent_hops: int,
+) -> bool:
+    response = _strip_critic_json(str(response_text or "").strip())
+    if not response:
+        return False
+    if str(route_hint or "").strip().lower() == "compare":
+        return False
+
+    status = _normalize_result_status(contract.get("status"))
+    actionable = bool(contract.get("actionable"))
+    try:
+        confidence = float(contract.get("confidence"))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    missing_fields = contract.get("missing_fields")
+    missing_count = len(missing_fields) if isinstance(missing_fields, list) else 0
+
+    if status == "success" and actionable and confidence >= 0.55 and missing_count <= 1:
+        return True
+
+    normalized_agent = str(agent_name or "").strip().lower()
+    if (
+        str(route_hint or "").strip().lower() == "action"
+        and normalized_agent == "trafik"
+        and _has_strict_trafik_intent(latest_user_query)
+        and actionable
+        and status in {"success", "partial"}
+        and confidence >= 0.45
+        and missing_count <= 1
+    ):
+        return True
+
+    if (
+        agent_hops >= 2
+        and actionable
+        and status in {"success", "partial"}
+        and confidence >= 0.60
+        and missing_count == 0
+    ):
+        return True
+    return False
+
+
 def _normalize_task_for_fingerprint(text: str) -> str:
     value = re.sub(r"\s+", " ", str(text or "").strip().lower())
     value = re.sub(r"[^a-z0-9åäö\s]+", " ", value)
@@ -963,32 +1260,61 @@ def _agent_call_entries_since_last_user(messages: list[Any] | None) -> list[dict
 
 def _looks_actionable_agent_answer(text: str) -> bool:
     value = str(text or "").strip()
-    if len(value) < 48:
+    if len(value) < 32:
         return False
     lowered = value.lower()
     rejection_markers = (
-        "kan inte",
-        "kunde inte",
-        "saknas",
-        "behover",
-        "behöver",
+        "jag kan inte",
+        "jag kunde inte",
+        "kan tyvarr inte",
+        "kan tyvärr inte",
+        "jag saknar",
+        "jag behover",
+        "jag behöver",
+        "behover mer information",
+        "behöver mer information",
         "inte möjligt",
         "not available",
-        "cannot",
-        "ingen data",
-        "hittades inte",
+        "cannot answer",
+        "specificera",
+        "ange mer",
     )
+    if "inga " in lowered and (
+        "hittades" in lowered
+        or "fanns" in lowered
+        or "rapporterades" in lowered
+    ):
+        return True
     return not any(marker in lowered for marker in rejection_markers)
 
 
 def _best_actionable_entry(entries: list[dict[str, Any]]) -> tuple[str, str] | None:
-    for entry in reversed(entries):
+    best: tuple[tuple[int, int, float, int], tuple[str, str]] | None = None
+    status_rank = {"success": 3, "partial": 2, "blocked": 1, "error": 0}
+    for entry in entries:
         response = _strip_critic_json(str(entry.get("response") or "").strip())
         if not response:
             continue
-        if _looks_actionable_agent_answer(response):
-            agent_name = str(entry.get("agent") or "").strip() or "agent"
-            return response, agent_name
+        contract = _contract_from_payload(entry)
+        status = _normalize_result_status(contract.get("status"))
+        actionable = bool(contract.get("actionable")) or _looks_actionable_agent_answer(
+            response
+        )
+        try:
+            confidence = float(contract.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        score = (
+            1 if actionable else 0,
+            status_rank.get(status, 0),
+            confidence,
+            len(response),
+        )
+        agent_name = str(entry.get("agent") or "").strip() or "agent"
+        if best is None or score > best[0]:
+            best = (score, (response, agent_name))
+    if best:
+        return best[1]
     return None
 
 
@@ -1077,17 +1403,22 @@ def _count_consecutive_loop_tools(messages: list[Any]) -> int:
             if isinstance(payload, dict) and str(payload.get("error") or "").strip():
                 count += 1
                 continue
-            critic_payload = payload.get("critic") if isinstance(payload, dict) else {}
-            critic_status = (
-                str(critic_payload.get("status") or "").strip().lower()
-                if isinstance(critic_payload, dict)
-                else ""
-            )
-            # Count call_agent as loop-like while planner still requests more work.
-            if critic_status == "needs_more":
+            contract = _contract_from_payload(payload if isinstance(payload, dict) else {})
+            status = _normalize_result_status(contract.get("status"))
+            actionable = bool(contract.get("actionable"))
+            try:
+                confidence = float(contract.get("confidence"))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            if status == "success" and actionable and confidence >= 0.55:
+                break
+            if bool(contract.get("retry_recommended")) or status in {
+                "partial",
+                "blocked",
+                "error",
+            }:
                 count += 1
                 continue
-            # If call_agent produced a stable completion, stop loop counting.
             break
         if name in _LOOP_GUARD_TOOL_NAMES:
             count += 1
@@ -1219,8 +1550,17 @@ def _sanitize_messages(messages: list[Any]) -> list[Any]:
                 if isinstance(response, str):
                     agent = payload.get("agent") or message.name or "agent"
                     response = _strip_critic_json(response)
+                    contract = _contract_from_payload(payload)
+                    status = _normalize_result_status(contract.get("status"))
+                    try:
+                        confidence = float(contract.get("confidence"))
+                    except (TypeError, ValueError):
+                        confidence = 0.0
+                    status_prefix = ""
+                    if status != "success" or confidence < 0.7:
+                        status_prefix = f"[{status} {confidence:.2f}] "
                     content = (
-                        _truncate_for_prompt(f"{agent}: {response}")
+                        _truncate_for_prompt(f"{agent}: {status_prefix}{response}")
                         if response
                         else f"{agent}: completed"
                     )
@@ -1892,12 +2232,21 @@ async def create_supervisor_agent(
         name = resolved_name or requested_name
         worker = await worker_pool.get(name)
         if not worker:
+            error_message = f"Agent '{agent_name}' not available."
             return json.dumps(
                 {
                     "agent": name,
                     "requested_agent": requested_name,
                     "agent_resolution": resolution_reason,
-                    "error": f"Agent '{agent_name}' not available.",
+                    "error": error_message,
+                    "result_contract": _build_agent_result_contract(
+                        agent_name=name,
+                        task=task,
+                        response_text="",
+                        error_text=error_message,
+                        used_tools=[],
+                        final_requested=bool(final),
+                    ),
                 },
                 ensure_ascii=True,
             )
@@ -1938,6 +2287,7 @@ async def create_supervisor_agent(
         }
         result = await worker.ainvoke(state, config=config)
         response_text = ""
+        messages_out: list[Any] = []
         if isinstance(result, dict):
             messages_out = result.get("messages") or []
             if messages_out:
@@ -1968,6 +2318,7 @@ async def create_supervisor_agent(
                             )
         if not response_text:
             response_text = str(result)
+        used_tool_names = _tool_names_from_messages(messages_out)
 
         critic_prompt = append_datetime_context(critic_prompt_template)
         critic_input = f"Uppgift: {task}\nSvar: {response_text}"
@@ -1980,6 +2331,13 @@ async def create_supervisor_agent(
             critic_payload = {"status": "ok", "reason": critic_text}
 
         response_text = _strip_critic_json(response_text)
+        result_contract = _build_agent_result_contract(
+            agent_name=name,
+            task=task,
+            response_text=response_text,
+            used_tools=used_tool_names,
+            final_requested=bool(final),
+        )
 
         # Compress response for context efficiency when not final
         if not final:
@@ -1992,6 +2350,8 @@ async def create_supervisor_agent(
                 "agent_resolution": resolution_reason,
                 "task": task,
                 "response": response_text,
+                "used_tools": used_tool_names,
+                "result_contract": result_contract,
                 "critic": critic_payload,
                 "final": bool(final),
             },
@@ -2024,11 +2384,20 @@ async def create_supervisor_agent(
             agent_name = resolved_agent_name or requested_agent_name
             worker = await worker_pool.get(agent_name)
             if not worker:
+                error_message = f"Agent '{agent_name}' not available."
                 return {
                     "agent": agent_name,
                     "requested_agent": requested_agent_name,
                     "agent_resolution": resolution_reason,
-                    "error": f"Agent '{agent_name}' not available.",
+                    "error": error_message,
+                    "result_contract": _build_agent_result_contract(
+                        agent_name=agent_name,
+                        task=task,
+                        response_text="",
+                        error_text=error_message,
+                        used_tools=[],
+                        final_requested=False,
+                    ),
                 }
             try:
                 # Reuse same worker invocation logic as call_agent
@@ -2075,26 +2444,49 @@ async def create_supervisor_agent(
                 }
                 result = await worker.ainvoke(worker_state, config=config)
                 response_text = ""
+                messages_out: list[Any] = []
                 if isinstance(result, dict):
                     messages_out = result.get("messages") or []
                     if messages_out:
                         last_msg = messages_out[-1]
                         response_text = str(getattr(last_msg, "content", "") or "")
+                if not response_text:
+                    response_text = str(result)
+                response_text = _strip_critic_json(response_text)
+                used_tool_names = _tool_names_from_messages(messages_out)
+                result_contract = _build_agent_result_contract(
+                    agent_name=agent_name,
+                    task=task,
+                    response_text=response_text,
+                    used_tools=used_tool_names,
+                    final_requested=False,
+                )
                 return {
                     "agent": agent_name,
                     "requested_agent": requested_agent_name,
                     "agent_resolution": resolution_reason,
                     "task": task,
                     "response": response_text,
+                    "used_tools": used_tool_names,
+                    "result_contract": result_contract,
                 }
             except Exception as exc:
+                error_message = str(exc)
                 return {
                     "agent": agent_name,
                     "requested_agent": requested_agent_name,
                     "agent_resolution": resolution_reason,
                     "task": task,
-                    "error": str(exc),
+                    "error": error_message,
                     "error_type": type(exc).__name__,
+                    "result_contract": _build_agent_result_contract(
+                        agent_name=agent_name,
+                        task=task,
+                        response_text="",
+                        error_text=error_message,
+                        used_tools=[],
+                        final_requested=False,
+                    ),
                 }
         
         results = await asyncio.gather(
@@ -2266,25 +2658,27 @@ async def create_supervisor_agent(
             elif tool_name == "call_agent":
                 last_call_payload = payload
                 if payload:
+                    payload_contract = _contract_from_payload(payload)
                     recent_updates.append(
                         {
                             "agent": payload.get("agent"),
                             "task": payload.get("task"),
                             "response": payload.get("response"),
+                            "result_contract": payload_contract,
                         }
                     )
                     if payload.get("final") and payload.get("response"):
-                        critic_payload = payload.get("critic") or {}
-                        critic_needs_more = (
-                            isinstance(critic_payload, dict)
-                            and str(critic_payload.get("status") or "").strip().lower()
-                            == "needs_more"
-                        )
                         cleaned_response = _strip_critic_json(
                             str(payload.get("response") or "").strip()
                         )
-                        if cleaned_response and (not critic_needs_more or len(cleaned_response) >= 80):
-                            # Treat critic as advisory to avoid needless loops on complete answers.
+                        if _should_finalize_from_contract(
+                            contract=payload_contract,
+                            response_text=cleaned_response,
+                            route_hint=route_hint,
+                            agent_name=str(payload.get("agent") or ""),
+                            latest_user_query=latest_user_query,
+                            agent_hops=int(state.get("agent_hops") or 0),
+                        ):
                             updates["final_agent_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
                             updates["orchestration_phase"] = "finalize"
@@ -2293,14 +2687,14 @@ async def create_supervisor_agent(
                             str(payload.get("response") or "").strip()
                         )
                         selected_agent = str(payload.get("agent") or "").strip().lower()
-                        if (
-                            route_hint == "action"
-                            and selected_agent == "trafik"
-                            and not str(payload.get("error") or "").strip()
-                            and _has_strict_trafik_intent(latest_user_query)
-                            and _looks_actionable_agent_answer(cleaned_response)
+                        if _should_finalize_from_contract(
+                            contract=payload_contract,
+                            response_text=cleaned_response,
+                            route_hint=route_hint,
+                            agent_name=selected_agent,
+                            latest_user_query=latest_user_query,
+                            agent_hops=int(state.get("agent_hops") or 0),
                         ):
-                            # Break traffic loops by accepting first actionable trafik answer.
                             updates["final_agent_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
                             updates["orchestration_phase"] = "finalize"
@@ -2323,6 +2717,7 @@ async def create_supervisor_agent(
                                     "agent": agent_name or "agent",
                                     "task": task_text,
                                     "response": compact_response,
+                                    "result_contract": _contract_from_payload(item),
                                 }
                             )
                         if response_text and len(parallel_preview) < 3:
@@ -2393,24 +2788,20 @@ async def create_supervisor_agent(
             last_response = _strip_critic_json(
                 str(last_entry.get("response") or "").strip()
             )
-            critic_payload = (
-                last_entry.get("critic")
-                if isinstance(last_entry.get("critic"), dict)
-                else {}
-            )
-            critic_status = (
-                str(critic_payload.get("status") or "").strip().lower()
-                if isinstance(critic_payload, dict)
-                else ""
-            )
-            if _looks_actionable_agent_answer(last_response):
-                # Default behavior: finalize after first actionable delegated answer.
-                if critic_status != "needs_more" or agent_hops >= 1:
-                    updates["final_agent_response"] = last_response
-                    updates["final_agent_name"] = (
-                        str(last_entry.get("agent") or "").strip() or "agent"
-                    )
-                    updates["orchestration_phase"] = "finalize"
+            last_contract = _contract_from_payload(last_entry)
+            if _should_finalize_from_contract(
+                contract=last_contract,
+                response_text=last_response,
+                route_hint=route_hint,
+                agent_name=str(last_entry.get("agent") or ""),
+                latest_user_query=latest_user_query,
+                agent_hops=agent_hops,
+            ):
+                updates["final_agent_response"] = last_response
+                updates["final_agent_name"] = (
+                    str(last_entry.get("agent") or "").strip() or "agent"
+                )
+                updates["orchestration_phase"] = "finalize"
 
         if (
             "final_agent_response" not in updates
@@ -2434,13 +2825,12 @@ async def create_supervisor_agent(
                 updates["orchestration_phase"] = "finalize"
 
         if last_call_payload:
-            critic_payload = last_call_payload.get("critic") or {}
-            if isinstance(critic_payload, dict):
-                if (
-                    critic_payload.get("status") == "needs_more"
-                    and "final_agent_response" not in updates
-                ):
-                    updates["plan_complete"] = False
+            last_contract = _contract_from_payload(last_call_payload)
+            if (
+                bool(last_contract.get("retry_recommended"))
+                and "final_agent_response" not in updates
+            ):
+                updates["plan_complete"] = False
 
         # Fallback safety: avoid endless supervisor loops on repeated retrieval/delegation tools.
         if "final_agent_response" not in updates:
