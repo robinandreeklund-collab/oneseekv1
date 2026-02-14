@@ -60,7 +60,7 @@ from app.agents.new_chat.system_prompt import (
     SURFSENSE_CITATION_INSTRUCTIONS,
     SURFSENSE_SYSTEM_INSTRUCTIONS,
 )
-from app.agents.new_chat.supervisor_agent import create_supervisor_agent
+from app.agents.new_chat.complete_graph import build_complete_graph
 from app.agents.new_chat.supervisor_prompts import (
     DEFAULT_SUPERVISOR_PROMPT,
     build_supervisor_prompt,
@@ -1247,7 +1247,7 @@ async def stream_new_chat(
             )
 
         if route != Route.SMALLTALK:
-            agent = await create_supervisor_agent(
+            agent = await build_complete_graph(
                 llm=llm,
                 dependencies={
                     "search_space_id": search_space_id,

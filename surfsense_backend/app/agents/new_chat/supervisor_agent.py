@@ -19,8 +19,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
-from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
-from app.agents.new_chat.lazy_worker_pool import LazyWorkerPool
+from app.agents.new_chat.bigtool_workers import WorkerConfig
+from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
@@ -2274,8 +2274,8 @@ async def create_supervisor_agent(
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
-    # Create lazy worker pool for on-demand initialization
-    worker_pool = LazyWorkerPool(
+    # Create/get process-level shared worker pool for this runtime signature.
+    worker_pool = await get_or_create_shared_worker_pool(
         configs=worker_configs,
         llm=llm,
         dependencies=dependencies,

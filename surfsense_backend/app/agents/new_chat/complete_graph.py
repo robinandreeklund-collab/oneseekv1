@@ -1,0 +1,56 @@
+"""Builder entrypoint for the modular supervisor graph.
+
+This module provides a stable construction API used by chat streaming routes.
+It decouples callers from supervisor internals so the graph can evolve without
+touching endpoint/task wiring.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from langgraph.types import Checkpointer
+
+from app.agents.new_chat.supervisor_agent import create_supervisor_agent
+
+
+async def build_complete_graph(
+    *,
+    llm,
+    dependencies: dict[str, Any],
+    checkpointer: Checkpointer | None,
+    knowledge_prompt: str,
+    action_prompt: str,
+    statistics_prompt: str,
+    synthesis_prompt: str | None = None,
+    compare_mode: bool = False,
+    external_model_prompt: str | None = None,
+    bolag_prompt: str | None = None,
+    trafik_prompt: str | None = None,
+    media_prompt: str | None = None,
+    browser_prompt: str | None = None,
+    code_prompt: str | None = None,
+    kartor_prompt: str | None = None,
+    riksdagen_prompt: str | None = None,
+    tool_prompt_overrides: dict[str, str] | None = None,
+):
+    """Build and compile the complete supervisor graph."""
+    return await create_supervisor_agent(
+        llm=llm,
+        dependencies=dependencies,
+        checkpointer=checkpointer,
+        knowledge_prompt=knowledge_prompt,
+        action_prompt=action_prompt,
+        statistics_prompt=statistics_prompt,
+        synthesis_prompt=synthesis_prompt,
+        compare_mode=compare_mode,
+        external_model_prompt=external_model_prompt,
+        bolag_prompt=bolag_prompt,
+        trafik_prompt=trafik_prompt,
+        media_prompt=media_prompt,
+        browser_prompt=browser_prompt,
+        code_prompt=code_prompt,
+        kartor_prompt=kartor_prompt,
+        riksdagen_prompt=riksdagen_prompt,
+        tool_prompt_overrides=tool_prompt_overrides,
+    )
