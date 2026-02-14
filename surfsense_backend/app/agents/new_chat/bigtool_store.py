@@ -15,6 +15,10 @@ from app.agents.new_chat.kolada_tools import (
     KOLADA_TOOL_DEFINITIONS,
     build_kolada_tool_registry,
 )
+from app.agents.new_chat.skolverket_tools import (
+    SKOLVERKET_TOOL_DEFINITIONS,
+    build_skolverket_tool_registry,
+)
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
@@ -25,6 +29,11 @@ from app.agents.new_chat.tools.registry import (
     build_tools_async,
     get_default_enabled_tools,
 )
+
+_SKOLVERKET_DEFINITION_BY_ID = {
+    definition.tool_id: definition for definition in SKOLVERKET_TOOL_DEFINITIONS
+}
+_SKOLVERKET_TOOL_IDS = set(_SKOLVERKET_DEFINITION_BY_ID.keys())
 
 
 @dataclass(frozen=True)
@@ -253,6 +262,20 @@ def _namespace_for_kolada_tool(tool_id: str) -> tuple[str, ...]:
     return ("tools", "statistics", "kolada")
 
 
+def _namespace_for_skolverket_tool(tool_id: str) -> tuple[str, ...]:
+    definition = _SKOLVERKET_DEFINITION_BY_ID.get(tool_id)
+    if definition:
+        category = str(definition.category or "").strip().lower()
+        if category == "statistics":
+            return ("tools", "statistics", "skolverket")
+        if category == "knowledge":
+            return ("tools", "knowledge", "skolverket")
+        if category == "general":
+            return ("tools", "general", "skolverket")
+        return ("tools", "knowledge", "skolverket")
+    return ("tools", "knowledge", "skolverket")
+
+
 def _namespace_for_bolagsverket_tool(tool_id: str) -> tuple[str, ...]:
     parts = tool_id.split("_")
     if len(parts) >= 2:
@@ -303,6 +326,8 @@ def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
         return _namespace_for_scb_tool(tool_id)
     if tool_id.startswith("kolada_"):
         return _namespace_for_kolada_tool(tool_id)
+    if tool_id in _SKOLVERKET_TOOL_IDS:
+        return _namespace_for_skolverket_tool(tool_id)
     if tool_id.startswith("bolagsverket_"):
         return _namespace_for_bolagsverket_tool(tool_id)
     if tool_id.startswith("trafikverket_"):
@@ -999,6 +1024,13 @@ async def build_global_tool_registry(
         thread_id=dependencies.get("thread_id"),
     )
     registry.update(kolada_registry)
+    skolverket_registry = build_skolverket_tool_registry(
+        connector_service=dependencies["connector_service"],
+        search_space_id=dependencies["search_space_id"],
+        user_id=dependencies.get("user_id"),
+        thread_id=dependencies.get("thread_id"),
+    )
+    registry.update(skolverket_registry)
     return registry
 
 
@@ -1009,6 +1041,9 @@ def build_tool_index(
 ) -> list[ToolIndexEntry]:
     scb_by_id = {definition.tool_id: definition for definition in SCB_TOOL_DEFINITIONS}
     kolada_by_id = {definition.tool_id: definition for definition in KOLADA_TOOL_DEFINITIONS}
+    skolverket_by_id = {
+        definition.tool_id: definition for definition in SKOLVERKET_TOOL_DEFINITIONS
+    }
     bolagsverket_by_id = {
         definition.tool_id: definition for definition in BOLAGSVERKET_TOOL_DEFINITIONS
     }
@@ -1047,6 +1082,13 @@ def build_tool_index(
             category = "statistics"
             # Use operating_area as base_path for Kolada tools, default to empty string if None
             base_path = definition.operating_area if definition.operating_area else ""
+        if tool_id in skolverket_by_id:
+            definition = skolverket_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = str(definition.category or "knowledge")
+            base_path = "https://api.skolverket.se"
         if tool_id in bolagsverket_by_id:
             definition = bolagsverket_by_id[tool_id]
             description = definition.description
