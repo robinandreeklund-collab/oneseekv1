@@ -709,18 +709,47 @@ async def _dispatch_route_from_start(
         return mapping.get(_normalize_route_value(route_value))
 
     def _extract_intent_id(route_decision: dict[str, Any], route_value: str | None) -> str | None:
+        normalized_route = _normalize_route_value(route_value)
         if isinstance(route_decision, dict):
+            explicit_intent = _normalize_intent_id(
+                route_decision.get("selected_intent")
+                or route_decision.get("intent_id")
+                or route_decision.get("intent")
+            )
+            if explicit_intent:
+                return explicit_intent
+
             reason = str(route_decision.get("reason") or "").strip()
             if reason and ":" in reason:
                 prefix, _, value = reason.partition(":")
                 if prefix.strip().lower().startswith("intent") and value.strip():
                     return value.strip().lower()
+
             candidates = route_decision.get("candidates")
             if isinstance(candidates, list):
-                for candidate in candidates:
-                    if not isinstance(candidate, dict):
-                        continue
-                    intent_id = str(candidate.get("intent_id") or "").strip().lower()
+                normalized_candidates = [
+                    candidate
+                    for candidate in candidates
+                    if isinstance(candidate, dict)
+                ]
+                if normalized_candidates and normalized_route:
+                    route_matched = [
+                        candidate
+                        for candidate in normalized_candidates
+                        if _normalize_route_value(candidate.get("route")) == normalized_route
+                    ]
+                    if route_matched:
+                        route_matched.sort(
+                            key=lambda candidate: float(candidate.get("score") or 0.0),
+                            reverse=True,
+                        )
+                        matched_intent = _normalize_intent_id(
+                            route_matched[0].get("intent_id")
+                        )
+                        if matched_intent:
+                            return matched_intent
+                for candidate in normalized_candidates:
+                    intent_id = _normalize_intent_id(candidate.get("intent_id"))
                     if intent_id:
                         return intent_id
         return _fallback_intent_id(route_value)
