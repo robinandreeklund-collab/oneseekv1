@@ -260,9 +260,6 @@ def test_integration_with_scb_keywords():
     
     # Should have no overlapping tool IDs
     assert len(set(scb_keywords.keys()) & set(kolada_keywords.keys())) == 0
-    
-    # But both should have 'statistik' as a potential keyword somewhere
-    # (This is okay since they're different tools)
 
 
 def test_all_categories_covered():

@@ -144,6 +144,7 @@ class KoladaService:
             httpx.HTTPStatusError: On non-retryable errors
         """
         url = f"{self.base_url}{endpoint}"
+        # Track last response for error reporting if all retries are exhausted
         last_response = None
         
         for attempt in range(self.max_retries):
