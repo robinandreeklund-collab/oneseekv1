@@ -104,6 +104,20 @@ _EXTERNAL_MODEL_TOOL_NAMES = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
 _AGENT_EMBED_CACHE: dict[str, list[float]] = {}
 AGENT_RERANK_CANDIDATES = 6
 AGENT_EMBEDDING_WEIGHT = 4.0
+_DYNAMIC_TOOL_QUERY_MARKERS = (
+    "skolverket",
+    "mcp",
+    "laroplan",
+    "läroplan",
+    "kursplan",
+    "amnesplan",
+    "ämnesplan",
+    "skolenhet",
+    "vuxenutbildning",
+    "komvux",
+    "syllabus",
+    "curriculum",
+)
 
 
 @dataclass(frozen=True)
@@ -454,6 +468,14 @@ def _select_focused_tool_profiles(
 
 
 def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -> list[str]:
+    normalized_task = _normalize_text(task)
+    normalized_agent_name = str(agent_name or "").strip().lower()
+    if normalized_agent_name in {"knowledge", "statistics", "action"} and any(
+        marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS
+    ):
+        # Allow retrieve_tools to discover dynamic connector tools (for example MCP)
+        # instead of locking the worker to static profile IDs.
+        return []
     focused = _select_focused_tool_profiles(agent_name, task, limit=limit)
     return [profile.tool_id for profile in focused if profile.tool_id]
 
@@ -2373,6 +2395,8 @@ async def create_supervisor_agent(
                 "statistik",
                 "scb",
                 "kolada",
+                "skolverket statistik",
+                "salsa",
                 "nyckeltal",
                 "kommun",
                 "kommundata",
@@ -2399,7 +2423,22 @@ async def create_supervisor_agent(
         AgentDefinition(
             name="knowledge",
             description="SurfSense, Tavily och generell kunskap",
-            keywords=["kunskap", "surfsense", "tavily", "docs", "note"],
+            keywords=[
+                "kunskap",
+                "surfsense",
+                "tavily",
+                "docs",
+                "note",
+                "skolverket",
+                "laroplan",
+                "läroplan",
+                "kursplan",
+                "ämnesplan",
+                "amnesplan",
+                "skolenhet",
+                "komvux",
+                "vuxenutbildning",
+            ],
             namespace=("agents", "knowledge"),
             prompt_key="knowledge",
         ),

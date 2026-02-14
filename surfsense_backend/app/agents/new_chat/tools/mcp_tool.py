@@ -74,6 +74,9 @@ def _create_dynamic_input_model_from_schema(
 async def _create_mcp_tool_from_definition_stdio(
     tool_def: dict[str, Any],
     mcp_client: MCPClient,
+    *,
+    connector_id: int | None = None,
+    connector_name: str | None = None,
 ) -> StructuredTool:
     """Create a LangChain tool from an MCP tool definition (stdio transport).
 
@@ -116,13 +119,22 @@ async def _create_mcp_tool_from_definition_stdio(
             return f"Error: {error_msg}"
 
     # Create StructuredTool with response_format to preserve exact schema
+    metadata: dict[str, Any] = {
+        "mcp_input_schema": input_schema,
+        "mcp_transport": "stdio",
+    }
+    if connector_id is not None:
+        metadata["mcp_connector_id"] = connector_id
+    if connector_name:
+        metadata["mcp_connector_name"] = connector_name
+
     tool = StructuredTool(
         name=tool_name,
         description=tool_description,
         coroutine=mcp_tool_call,
         args_schema=input_model,
         # Store the original MCP schema as metadata so we can access it later
-        metadata={"mcp_input_schema": input_schema, "mcp_transport": "stdio"},
+        metadata=metadata,
     )
 
     logger.info(f"Created MCP tool (stdio): '{tool_name}'")
@@ -133,6 +145,9 @@ async def _create_mcp_tool_from_definition_http(
     tool_def: dict[str, Any],
     url: str,
     headers: dict[str, str],
+    *,
+    connector_id: int | None = None,
+    connector_name: str | None = None,
 ) -> StructuredTool:
     """Create a LangChain tool from an MCP tool definition (HTTP transport).
 
@@ -191,16 +206,22 @@ async def _create_mcp_tool_from_definition_http(
             return f"Error: {error_msg}"
 
     # Create StructuredTool
+    metadata: dict[str, Any] = {
+        "mcp_input_schema": input_schema,
+        "mcp_transport": "http",
+        "mcp_url": url,
+    }
+    if connector_id is not None:
+        metadata["mcp_connector_id"] = connector_id
+    if connector_name:
+        metadata["mcp_connector_name"] = connector_name
+
     tool = StructuredTool(
         name=tool_name,
         description=tool_description,
         coroutine=mcp_http_tool_call,
         args_schema=input_model,
-        metadata={
-            "mcp_input_schema": input_schema,
-            "mcp_transport": "http",
-            "mcp_url": url,
-        },
+        metadata=metadata,
     )
 
     logger.info(f"Created MCP tool (HTTP): '{tool_name}'")
@@ -263,7 +284,12 @@ async def _load_stdio_mcp_tools(
     # Create LangChain tools from definitions
     for tool_def in tool_definitions:
         try:
-            tool = await _create_mcp_tool_from_definition_stdio(tool_def, mcp_client)
+            tool = await _create_mcp_tool_from_definition_stdio(
+                tool_def,
+                mcp_client,
+                connector_id=connector_id,
+                connector_name=connector_name,
+            )
             tools.append(tool)
         except Exception as e:
             logger.exception(
@@ -346,7 +372,11 @@ async def _load_http_mcp_tools(
         for tool_def in tool_definitions:
             try:
                 tool = await _create_mcp_tool_from_definition_http(
-                    tool_def, url, headers
+                    tool_def,
+                    url,
+                    headers,
+                    connector_id=connector_id,
+                    connector_name=connector_name,
                 )
                 tools.append(tool)
             except Exception as e:

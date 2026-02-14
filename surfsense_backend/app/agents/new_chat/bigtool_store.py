@@ -312,6 +312,179 @@ def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
     return TOOL_NAMESPACE_OVERRIDES.get(tool_id, ("tools", "general"))
 
 
+def _tool_metadata(tool: BaseTool) -> dict[str, Any]:
+    metadata = getattr(tool, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _is_mcp_tool(tool: BaseTool) -> bool:
+    metadata = _tool_metadata(tool)
+    return bool(metadata.get("mcp_transport"))
+
+
+_MCP_KEYWORD_STOPWORDS = {
+    "tool",
+    "tools",
+    "get",
+    "search",
+    "list",
+    "fetch",
+    "call",
+    "data",
+    "api",
+    "mcp",
+    "for",
+    "the",
+    "with",
+    "and",
+}
+_MCP_SKOLVERKET_KNOWLEDGE_HINTS = (
+    "skolverket",
+    "syllabus",
+    "curriculum",
+    "laroplan",
+    "läroplan",
+    "amnesplan",
+    "ämnesplan",
+    "kursplan",
+    "course",
+    "subject",
+    "program",
+    "utbildning",
+    "education",
+    "skolenhet",
+    "school unit",
+    "komvux",
+    "vuxenutbildning",
+)
+_MCP_SKOLVERKET_STATISTICS_HINTS = (
+    "statistik",
+    "statistics",
+    "salsa",
+    "count",
+    "andel",
+    "proportion",
+)
+
+
+def _contains_any_marker(text: str, markers: Iterable[str]) -> bool:
+    lowered = str(text or "").lower()
+    return any(str(marker).lower() in lowered for marker in markers if str(marker).strip())
+
+
+def _namespace_for_mcp_tool(
+    tool_id: str,
+    *,
+    metadata: dict[str, Any],
+    description: str,
+) -> tuple[str, ...]:
+    connector_name = str(metadata.get("mcp_connector_name") or "")
+    connector_url = str(metadata.get("mcp_url") or "")
+    normalized_blob = " ".join(
+        [
+            _normalize_text(tool_id.replace("_", " ")),
+            _normalize_text(description),
+            _normalize_text(connector_name),
+            _normalize_text(connector_url),
+        ]
+    )
+
+    if _contains_any_marker(
+        normalized_blob,
+        ("skolverket", "skolverket mcp", "skolverket api"),
+    ):
+        if _contains_any_marker(normalized_blob, _MCP_SKOLVERKET_STATISTICS_HINTS):
+            return ("tools", "statistics", "skolverket")
+        if _contains_any_marker(normalized_blob, _MCP_SKOLVERKET_KNOWLEDGE_HINTS):
+            return ("tools", "knowledge", "skolverket")
+        return ("tools", "knowledge", "skolverket")
+
+    if _contains_any_marker(normalized_blob, ("statistics", "statistik", "timeseries")):
+        return ("tools", "statistics", "mcp")
+    if _contains_any_marker(normalized_blob, ("weather", "väder", "vader")):
+        return ("tools", "weather", "mcp")
+    if _contains_any_marker(normalized_blob, ("traffic", "trafik", "route", "resa")):
+        return ("tools", "action", "mcp")
+    return ("tools", "knowledge", "mcp")
+
+
+def _keywords_from_text(text: str, *, max_keywords: int = 18) -> list[str]:
+    results: list[str] = []
+    for token in _tokenize(text):
+        if len(token) < 3:
+            continue
+        if token in _MCP_KEYWORD_STOPWORDS:
+            continue
+        results.append(token)
+        if len(results) >= max(1, int(max_keywords)):
+            break
+    return results
+
+
+def _unique_keywords(
+    keywords: Iterable[str],
+    *,
+    max_keywords: int = 20,
+) -> list[str]:
+    results: list[str] = []
+    seen: set[str] = set()
+    for raw in keywords:
+        token = str(raw or "").strip()
+        if not token:
+            continue
+        normalized = _normalize_text(token)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        results.append(token)
+        if len(results) >= max(1, int(max_keywords)):
+            break
+    return results
+
+
+def _keywords_for_mcp_tool(
+    tool_id: str,
+    *,
+    metadata: dict[str, Any],
+    description: str,
+) -> list[str]:
+    connector_name = str(metadata.get("mcp_connector_name") or "")
+    connector_url = str(metadata.get("mcp_url") or "")
+    generated: list[str] = []
+    generated.extend(_keywords_from_text(tool_id.replace("_", " ")))
+    generated.extend(_keywords_from_text(description))
+    generated.extend(_keywords_from_text(connector_name))
+    generated.extend(_keywords_from_text(connector_url))
+
+    if _contains_any_marker(
+        f"{tool_id} {description} {connector_name} {connector_url}",
+        ("skolverket",),
+    ):
+        generated.extend(
+            [
+                "skolverket",
+                "skola",
+                "kurs",
+                "amne",
+                "ämne",
+                "laroplan",
+                "läroplan",
+                "utbildning",
+                "komvux",
+                "gymnasium",
+                "vuxenutbildning",
+            ]
+        )
+
+    return _unique_keywords(generated, max_keywords=24)
+
+
+def _category_for_namespace(namespace: tuple[str, ...]) -> str:
+    if len(namespace) >= 2 and namespace[1]:
+        return str(namespace[1])
+    return "general"
+
+
 def _match_namespace(entry_namespace: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
     if not prefix:
         return False
@@ -851,12 +1024,14 @@ def build_tool_index(
     entries: list[ToolIndexEntry] = []
 
     for tool_id, tool in tool_registry.items():
+        namespace = namespace_for_tool(tool_id)
         description = getattr(tool, "description", "") or ""
         keywords = TOOL_KEYWORDS.get(tool_id, [])
         example_queries: list[str] = []
         category = "weather" if _is_weather_tool(tool_id) else "general"
         base_path: str | None = None
         name = getattr(tool, "name", tool_id)
+        metadata = _tool_metadata(tool)
         if tool_id in scb_by_id:
             definition = scb_by_id[tool_id]
             description = definition.description
@@ -940,9 +1115,23 @@ def build_tool_index(
             "trafikverket_vader",
         }:
             category = "weather"
+        if _is_mcp_tool(tool):
+            namespace = _namespace_for_mcp_tool(
+                tool_id,
+                metadata=metadata,
+                description=description,
+            )
+            inferred_keywords = _keywords_for_mcp_tool(
+                tool_id,
+                metadata=metadata,
+                description=description,
+            )
+            keywords = _unique_keywords([*keywords, *inferred_keywords], max_keywords=24)
+            if str(category or "").strip().lower() in {"", "general"}:
+                category = _category_for_namespace(namespace)
         entry = ToolIndexEntry(
             tool_id=tool_id,
-            namespace=namespace_for_tool(tool_id),
+            namespace=namespace,
             name=name,
             description=description,
             keywords=keywords,
