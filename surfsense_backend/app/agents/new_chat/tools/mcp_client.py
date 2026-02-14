@@ -22,6 +22,60 @@ RETRY_DELAY = 1.0  # seconds
 RETRY_BACKOFF = 2.0  # exponential backoff multiplier
 
 
+def _collect_exception_messages(error: BaseException) -> list[str]:
+    """Flatten nested ExceptionGroup errors into readable leaf messages."""
+    nested = getattr(error, "exceptions", None)
+    if isinstance(nested, (list, tuple)) and nested:
+        messages: list[str] = []
+        for child in nested:
+            if isinstance(child, BaseException):
+                messages.extend(_collect_exception_messages(child))
+            elif child is not None:
+                text = str(child).strip()
+                if text:
+                    messages.append(text)
+        return messages
+
+    text = str(error).strip()
+    if text:
+        return [text]
+    return [error.__class__.__name__]
+
+
+def _format_connection_error(error: BaseException) -> str:
+    """Create a user-friendly connection error message from nested exceptions."""
+    leaf_messages = _collect_exception_messages(error)
+    deduped_messages: list[str] = []
+    seen: set[str] = set()
+    for message in leaf_messages:
+        normalized = message.strip()
+        if not normalized:
+            continue
+        marker = normalized.casefold()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped_messages.append(normalized)
+
+    if not deduped_messages:
+        return str(error).strip() or error.__class__.__name__
+
+    preview = deduped_messages[:4]
+    detail = " | ".join(preview)
+    if len(deduped_messages) > len(preview):
+        detail += f" | ... (+{len(deduped_messages) - len(preview)} more)"
+
+    lowered = detail.casefold()
+    if "503" in lowered and "suspend" in lowered:
+        detail += " (Remote MCP server appears suspended/unavailable.)"
+    elif "404" in lowered:
+        detail += " (Verify MCP URL and endpoint path.)"
+    elif "401" in lowered or "403" in lowered:
+        detail += " (Authentication/authorization failed. Verify headers/tokens.)"
+
+    return detail
+
+
 class MCPClient:
     """Client for communicating with an MCP server."""
 
@@ -245,9 +299,10 @@ async def test_mcp_connection(
                 "tools": tools,
             }
     except (RuntimeError, ConnectionError, TimeoutError, OSError) as e:
+        error_detail = _format_connection_error(e)
         return {
             "status": "error",
-            "message": f"Failed to connect: {e!s}",
+            "message": f"Failed to connect: {error_detail}",
             "tools": [],
         }
 
@@ -300,9 +355,12 @@ async def test_mcp_http_connection(
             }
 
     except Exception as e:
-        logger.error("Failed to connect to HTTP MCP server: %s", e, exc_info=True)
+        error_detail = _format_connection_error(e)
+        logger.error(
+            "Failed to connect to HTTP MCP server: %s", error_detail, exc_info=True
+        )
         return {
             "status": "error",
-            "message": f"Failed to connect: {e!s}",
+            "message": f"Failed to connect: {error_detail}",
             "tools": [],
         }
