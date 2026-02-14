@@ -323,6 +323,10 @@ _ROUTE_STRICT_AGENT_POLICIES: dict[str, set[str]] = {
     "statistics": {"statistics"},
     "compare": {"synthesis", "statistics", "knowledge"},
 }
+_COMPARE_FOLLOWUP_RE = re.compile(
+    r"\b(jamfor|jämför|jamforelse|jämförelse|skillnad|dessa två|de två|båda|bada)\b",
+    re.IGNORECASE,
+)
 
 
 def _has_trafik_intent(text: str) -> bool:
@@ -1212,6 +1216,7 @@ _CRITIC_SNIPPET_RE = re.compile(
     r"\{\s*[\"']status[\"']\s*:\s*[\"'](?:ok|needs_more)[\"'][\s\S]*?[\"']reason[\"']\s*:\s*[\"'][\s\S]*?[\"']\s*\}",
     re.IGNORECASE,
 )
+_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
 _CRITIC_JSON_DECODER = json.JSONDecoder()
 _LINE_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _CITATION_TOKEN_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
@@ -1311,6 +1316,7 @@ def _strip_critic_json(text: str) -> str:
     cleaned, removed_inline = _remove_inline_critic_payloads(cleaned)
     if cleaned != text or removed_inline:
         cleaned = _dedupe_repeated_lines(cleaned)
+    cleaned = _HTML_COMMENT_RE.sub("", cleaned)
     cleaned = _normalize_citation_spacing(cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.rstrip()
@@ -2897,12 +2903,55 @@ async def create_supervisor_agent(
         """Add compare_outputs context for synthesis agent if applicable."""
         if not state:
             return task
+        normalized_task = str(task or "").strip()
+        if not normalized_task:
+            return task
+
+        def _build_recent_compare_context() -> str:
+            if not _COMPARE_FOLLOWUP_RE.search(normalized_task):
+                return ""
+            candidates: list[dict[str, str]] = []
+            for entry in reversed(list(state.get("recent_agent_calls") or [])):
+                if not isinstance(entry, dict):
+                    continue
+                response = _strip_critic_json(str(entry.get("response") or "").strip())
+                if not response:
+                    continue
+                agent_name = str(entry.get("agent") or "").strip() or "agent"
+                task_text = str(entry.get("task") or "").strip()
+                candidates.append(
+                    {
+                        "agent": agent_name,
+                        "task": task_text,
+                        "response": _truncate_for_prompt(response, 420),
+                    }
+                )
+                if len(candidates) >= 2:
+                    break
+            if len(candidates) < 2:
+                return ""
+            candidates.reverse()
+            lines = ["<recent_agent_results>"]
+            for idx, item in enumerate(candidates, start=1):
+                lines.append(f"Resultat {idx} ({item['agent']}): {item['response']}")
+                if item["task"]:
+                    lines.append(f"Uppgift {idx}: {item['task']}")
+            lines.append(
+                "Om användaren skriver 'dessa två' eller liknande: jämför just dessa två resultat först, "
+                "innan du hämtar ny data."
+            )
+            lines.append("</recent_agent_results>")
+            return "\n".join(lines)
+
         compare_context = _format_compare_outputs_for_prompt(
             state.get("compare_outputs") or []
         )
-        if compare_context and "<compare_outputs>" not in task:
-            return f"{task}\n\n{compare_context}"
-        return task
+        if compare_context and "<compare_outputs>" not in normalized_task:
+            normalized_task = f"{normalized_task}\n\n{compare_context}"
+        recent_compare_context = _build_recent_compare_context()
+        if recent_compare_context and "<recent_agent_results>" not in normalized_task:
+            normalized_task = f"{normalized_task}\n\n{recent_compare_context}"
+        return normalized_task
 
     @tool
     async def call_agent(

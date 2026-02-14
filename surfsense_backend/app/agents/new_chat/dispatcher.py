@@ -13,6 +13,10 @@ _GREETING_REGEX = re.compile(
     re.IGNORECASE,
 )
 _COMPARE_COMMAND_RE = re.compile(r"^/compare\b", re.IGNORECASE)
+_COMPARE_INTENT_RE = re.compile(
+    r"\b(compare|jämför|jamfor|jämförelse|jamforelse|skillnad(?:en)?(?:\s+mellan)?)\b",
+    re.IGNORECASE,
+)
 _FOLLOWUP_CONTEXT_RE = re.compile(
     r"\b(också|ocksa|även|aven|samma|där|dar|dit|den|det|dom|dem|denna|denne|kolla|fortsätt|fortsatt)\b",
     re.IGNORECASE,
@@ -59,6 +63,8 @@ def _infer_rule_based_route(text: str) -> Route | None:
     if not value:
         return None
     if _COMPARE_COMMAND_RE.match(value):
+        return Route.COMPARE
+    if _COMPARE_INTENT_RE.search(value):
         return Route.COMPARE
     if _GREETING_REGEX.match(value) and len(value) <= 20:
         return Route.SMALLTALK

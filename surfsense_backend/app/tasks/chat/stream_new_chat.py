@@ -269,7 +269,11 @@ _FOLLOWUP_CONFIRMATION_RE = re.compile(
     re.IGNORECASE,
 )
 _FOLLOWUP_MARKER_RE = re.compile(
-    r"\b(och|också|även|då|samma|där|dit|här)\b",
+    r"\b(och|också|även|då|samma|där|dit|här|dessa|båda|bada|de två)\b",
+    re.IGNORECASE,
+)
+_FOLLOWUP_COMPARE_RE = re.compile(
+    r"\b(jämför|jamfor|jämförelse|jamforelse|skillnad(?:en)?(?:\s+mellan)?)\b",
     re.IGNORECASE,
 )
 
@@ -300,9 +304,31 @@ def _looks_contextual_followup(query: str) -> bool:
         return True
     if lowered.endswith(" då") or lowered.endswith(" också"):
         return True
+    if _FOLLOWUP_COMPARE_RE.search(lowered):
+        return True
     if _FOLLOWUP_MARKER_RE.search(lowered):
         return True
     return False
+
+
+def _extract_previous_assistant_answers_from_history(
+    history: list[dict[str, str]],
+    *,
+    limit: int = 2,
+) -> list[str]:
+    results: list[str] = []
+    for item in reversed(history or []):
+        role = str(item.get("role") or "").strip().lower()
+        if role != NewChatMessageRole.ASSISTANT.value:
+            continue
+        content = _normalize_router_text(item.get("content") or "")
+        if not content:
+            continue
+        results.append(content)
+        if len(results) >= max(1, int(limit)):
+            break
+    results.reverse()
+    return results
 
 
 def _build_followup_context_block(
@@ -317,13 +343,25 @@ def _build_followup_context_block(
         return ""
     if previous.lower() == current.lower():
         return ""
-    return (
+    context = (
         "<followup_context>\n"
         "Detta är en uppföljningsfråga. Tolka den med samma ämne, metod och verktygsnivå "
         "som föregående användarfråga om inget annat uttryckligen anges.\n"
         f"Föregående användarfråga: {previous}\n"
-        "</followup_context>"
     )
+    if _FOLLOWUP_COMPARE_RE.search(current.lower()):
+        previous_answers = _extract_previous_assistant_answers_from_history(
+            routing_history, limit=2
+        )
+        if previous_answers:
+            for index, answer in enumerate(previous_answers, start=1):
+                context += f"Föregående assistentsvar {index}: {answer[:420]}\n"
+            context += (
+                "Om användaren säger 'dessa två' eller liknande: utgå i första hand från de två "
+                "senaste assistentsvaren ovan.\n"
+            )
+    context += "</followup_context>"
+    return context
 
 
 
@@ -566,6 +604,20 @@ _PIPELINE_JSON_START_RE = re.compile(
     r"\{\s*[\"'](?:intent_id|selected_agents|status|decision|steps)\b",
     re.IGNORECASE,
 )
+_PIPELINE_JSON_PARTIAL_KEY_RE = re.compile(
+    r"\{\s*[\"']?([a-zA-Z_]{0,32})\Z",
+    re.IGNORECASE,
+)
+_PIPELINE_JSON_KEYS = (
+    "intent_id",
+    "selected_agents",
+    "status",
+    "decision",
+    "steps",
+    "reason",
+    "confidence",
+)
+_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
 _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "resolve_intent",
     "agent_resolver",
@@ -642,6 +694,7 @@ def _clean_assistant_output_text(text: str) -> str:
     cleaned = _CRITIC_JSON_SNIPPET_RE.sub("", text)
     cleaned, removed_inline = _strip_inline_critic_payloads(cleaned)
     cleaned, removed_payloads = _strip_inline_pipeline_payloads(cleaned)
+    cleaned = _HTML_COMMENT_RE.sub("", cleaned)
     cleaned = _CITATION_SPACING_RE.sub(
         lambda match: f"[citation:{str(match.group(1) or '').strip()}]",
         cleaned,
@@ -818,6 +871,13 @@ def _split_trailing_pipeline_prefix(text: str) -> tuple[str, str]:
         return text, ""
     if _PIPELINE_JSON_START_RE.match(tail):
         return text[:start], tail
+    partial = _PIPELINE_JSON_PARTIAL_KEY_RE.match(tail)
+    if partial and len(tail) <= 80:
+        prefix = str(partial.group(1) or "").strip().lower()
+        if (not prefix and tail.strip() == "{") or any(
+            key.startswith(prefix) for key in _PIPELINE_JSON_KEYS
+        ):
+            return text[:start], tail
     return text, ""
 
 
