@@ -870,7 +870,8 @@ def build_tool_index(
             keywords = list(definition.keywords)
             example_queries = list(definition.example_queries)
             category = "statistics"
-            base_path = definition.operating_area
+            # Use operating_area as base_path for Kolada tools, default to empty string if None
+            base_path = definition.operating_area if definition.operating_area else ""
         if tool_id in bolagsverket_by_id:
             definition = bolagsverket_by_id[tool_id]
             description = definition.description

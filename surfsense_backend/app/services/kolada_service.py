@@ -144,11 +144,13 @@ class KoladaService:
             httpx.HTTPStatusError: On non-retryable errors
         """
         url = f"{self.base_url}{endpoint}"
+        last_response = None
         
         for attempt in range(self.max_retries):
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.get(url, params=params)
+                    last_response = response
                     
                     if response.status_code == 429:
                         # Rate limited - exponential backoff
@@ -160,6 +162,7 @@ class KoladaService:
                     response.raise_for_status()
                     return response.json()
             except httpx.HTTPStatusError as e:
+                last_response = e.response
                 if e.response.status_code == 429 and attempt < self.max_retries - 1:
                     wait_time = 2 ** attempt
                     await asyncio.sleep(wait_time)
@@ -167,11 +170,15 @@ class KoladaService:
                 raise
         
         # If we get here, all retries exhausted
-        raise httpx.HTTPStatusError(
-            "Max retries exceeded",
-            request=response.request,
-            response=response,
-        )
+        if last_response is not None:
+            raise httpx.HTTPStatusError(
+                "Max retries exceeded",
+                request=last_response.request,
+                response=last_response,
+            )
+        else:
+            # Should not happen, but handle gracefully
+            raise RuntimeError("Max retries exceeded with no response")
 
     async def search_kpis(
         self,
