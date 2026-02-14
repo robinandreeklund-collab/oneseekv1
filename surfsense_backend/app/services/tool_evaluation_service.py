@@ -2800,29 +2800,16 @@ def _prompt_key_for_tool(tool_id: str | None, category: str | None = None) -> st
 
 def _prompt_key_for_agent(agent_name: str | None) -> str | None:
     normalized = _normalize_agent_name(agent_name)
-    mapping = {
-        "statistics": "agent.statistics.system",
-        "riksdagen": "agent.riksdagen.system",
-        "weather": "agent.action.travel",
-        "trafik": "agent.trafik.system",
-        "bolag": "agent.bolag.system",
-        "kartor": "agent.kartor.system",
-        "media": "agent.media.system",
-        "browser": "agent.browser.system",
-        "knowledge": "agent.knowledge.system",
-        "action": "agent.action.system",
-        "synthesis": "agent.synthesis.system",
-    }
-    return mapping.get(normalized) if normalized else None
+    if not normalized:
+        return None
+    return "supervisor.agent_resolver.system"
 
 
 def _prompt_key_for_sub_route(route_value: str | None) -> str | None:
     normalized = _normalize_route_value(route_value)
-    if normalized == Route.ACTION.value:
-        return "router.action"
-    if normalized == Route.KNOWLEDGE.value:
-        return "router.knowledge"
-    return None
+    if not normalized:
+        return None
+    return "supervisor.intent_resolver.system"
 
 
 def _prompt_key_for_intent(intent_id: str | None) -> str | None:
@@ -3642,6 +3629,41 @@ def _build_fallback_prompt_suggestion(
             "- Undvik antaganden om datum/plats/id om de inte finns explicit i frågan.",
             "- Validera föreslagen payload mot schema innan verktygsanrop returneras.",
         ]
+    elif prompt_key == "supervisor.intent_resolver.system":
+        lines = [
+            "- Välj intent_id utifrån semantisk intention, inte enbart enstaka nyckelord.",
+            "- Vid kort uppföljning ska intent ärvas från föregående fråga om kontexten är oförändrad.",
+            "- Returnera endast intent som finns i retrieve_intents-kandidaterna.",
+            "- Vid osäkerhet: välj närmaste intent med tydlig motivering och hög precision.",
+            "- Om intent inte matchar tillgängliga kandidater: be om förtydligande istället för gissning.",
+        ]
+    elif prompt_key == "supervisor.agent_resolver.system":
+        lines = [
+            "- Välj agenter strikt från retrieve_agents-kandidaterna för aktuell intent.",
+            "- Prioritera 1 primär agent och undvik onödig multi-agent-planering.",
+            "- Om vald agent saknar rätt verktygsdomän: kör retrieve_agents igen innan exekvering.",
+            "- Följ domängränser strikt (ingen agent-drift till irrelevanta domäner).",
+        ]
+    elif prompt_key == "supervisor.planner.system":
+        lines = [
+            "- Skapa kort plan (max 4 steg) med tydlig koppling till intent och vald agent.",
+            "- Undvik abstrakta steg; varje steg ska vara exekverbart och verifierbart.",
+            "- Planen ska innehålla när retrieve_tools ska köras om kandidatverktyg inte matchar uppgiften.",
+            "- Vid uppföljningsfrågor: återanvänd föregående metod och byt bara relevanta parametrar.",
+        ]
+    elif prompt_key == "supervisor.critic_gate.system":
+        lines = [
+            "- Returnera endast ok/needs_more/replan enligt kontraktet.",
+            "- Välj ok när svaret uppfyller frågan och nödvändiga fält finns.",
+            "- Välj needs_more endast när nästa steg realistiskt kan ge saknad information.",
+            "- Välj replan vid tydlig domän- eller verktygsmismatch.",
+        ]
+    elif prompt_key == "supervisor.synthesizer.system":
+        lines = [
+            "- Sammanfatta enbart verifierade resultat från utförda steg.",
+            "- Lägg inte till interna JSON-objekt eller kedje-resonemang i användarsvaret.",
+            "- Behåll svaret kort, direkt och konsistent med användarens fråga.",
+        ]
     elif prompt_key.startswith("router."):
         lines = [
             "- Returnera exakt en giltig route-etikett och undvik extra text.",
@@ -3975,7 +3997,7 @@ async def suggest_agent_prompt_improvements_for_api_input(
 
         if failed_route:
             _append_failure(
-                "router.top_level",
+                "supervisor.intent_resolver.system",
                 result=result,
                 expected_tool=expected_tool,
                 selected_tool=selected_tool,
@@ -4009,9 +4031,11 @@ async def suggest_agent_prompt_improvements_for_api_input(
                     selected_tool=selected_tool,
                 )
 
-        if "agent.supervisor.system" in current_prompts:
+        if "supervisor.planner.system" in current_prompts and (
+            failed_plan or failed_supervisor_review or not passed
+        ):
             _append_failure(
-                "agent.supervisor.system",
+                "supervisor.planner.system",
                 result=result,
                 expected_tool=expected_tool,
                 selected_tool=selected_tool,

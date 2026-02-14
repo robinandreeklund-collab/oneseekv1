@@ -547,6 +547,53 @@ def _infer_intent_for_route(route: str | None) -> str | None:
     return mapping.get(normalized_route)
 
 
+_EVAL_SUGGESTION_PROMPT_KEYS: set[str] = {
+    "supervisor.intent_resolver.system",
+    "supervisor.agent_resolver.system",
+    "supervisor.planner.system",
+    "supervisor.tool_resolver.system",
+    "supervisor.critic_gate.system",
+    "supervisor.synthesizer.system",
+}
+
+
+def _resolve_expected_route_and_intent(
+    *,
+    tool_id: str | None,
+    category: str | None,
+    route: str | None,
+    intent: str | None,
+) -> tuple[str | None, str | None]:
+    normalized_tool = str(tool_id or "").strip()
+    normalized_category = str(category or "").strip()
+    normalized_route = str(route or "").strip().lower() or None
+    normalized_intent = str(intent or "").strip().lower() or None
+    if not normalized_route and normalized_tool:
+        inferred_route, _inferred_sub_route = _infer_route_for_tool(
+            normalized_tool,
+            normalized_category,
+        )
+        normalized_route = inferred_route
+    if not normalized_intent:
+        normalized_intent = _infer_intent_for_route(normalized_route)
+    return normalized_route, normalized_intent
+
+
+def _filter_eval_suggestion_prompts(
+    prompt_map: dict[str, str],
+    *,
+    include_tool_prompts: bool = True,
+) -> dict[str, str]:
+    filtered: dict[str, str] = {}
+    for prompt_key, prompt_value in prompt_map.items():
+        if prompt_key in _EVAL_SUGGESTION_PROMPT_KEYS:
+            filtered[prompt_key] = prompt_value
+            continue
+        if include_tool_prompts and prompt_key.startswith("tool."):
+            filtered[prompt_key] = prompt_value
+    return filtered
+
+
 def _infer_agent_for_tool(
     tool_id: str,
     category: str | None = None,
@@ -1055,6 +1102,17 @@ def _enrich_api_input_generated_tests(
             expected_tool,
             str(getattr(entry, "category", "") if entry else ""),
         )
+        resolved_route, resolved_intent = _resolve_expected_route_and_intent(
+            tool_id=expected_tool or str(expected.get("tool") or "").strip() or None,
+            category=(
+                str(expected.get("category") or "").strip()
+                or (str(getattr(entry, "category", "")).strip() if entry else "")
+                or None
+            ),
+            route=str(expected.get("route") or route or "").strip() or None,
+            intent=str(expected.get("intent") or "").strip() or None,
+        )
+        route = resolved_route or route
         agent = _infer_agent_for_tool(
             expected_tool,
             str(getattr(entry, "category", "") if entry else ""),
@@ -1072,6 +1130,7 @@ def _enrich_api_input_generated_tests(
             "tool": expected_tool or expected.get("tool"),
             "category": expected.get("category")
             or (str(getattr(entry, "category", "")).strip() if entry else None),
+            "intent": resolved_intent or _infer_intent_for_route(route),
             "route": route,
             "sub_route": sub_route,
             "agent": str(expected.get("agent") or agent).strip(),
@@ -2333,19 +2392,38 @@ async def _execute_tool_evaluation(
         prompt_overrides=prompt_overrides,
         tool_index=tool_index,
     )
+    suggestion_prompts = _filter_eval_suggestion_prompts(
+        current_prompts,
+        include_tool_prompts=True,
+    )
     effective_intent_definitions = await get_effective_intent_definitions(session)
-    evaluation = await run_tool_evaluation(
-        tests=[
+    serialized_tests: list[dict[str, Any]] = []
+    for test in payload.tests:
+        expected_tool = str((test.expected.tool if test.expected else None) or "").strip() or None
+        expected_category = (
+            str((test.expected.category if test.expected else None) or "").strip() or None
+        )
+        expected_route = str((test.expected.route if test.expected else None) or "").strip() or None
+        expected_intent = (
+            str((test.expected.intent if test.expected else None) or "").strip() or None
+        )
+        resolved_route, resolved_intent = _resolve_expected_route_and_intent(
+            tool_id=expected_tool,
+            category=expected_category,
+            route=expected_route,
+            intent=expected_intent,
+        )
+        serialized_tests.append(
             {
                 "id": test.id,
                 "question": test.question,
                 "difficulty": test.difficulty,
                 "expected": {
-                    "tool": test.expected.tool if test.expected else None,
-                    "category": test.expected.category if test.expected else None,
+                    "tool": expected_tool,
+                    "category": expected_category,
                     "agent": test.expected.agent if test.expected else None,
-                    "intent": test.expected.intent if test.expected else None,
-                    "route": test.expected.route if test.expected else None,
+                    "intent": resolved_intent,
+                    "route": resolved_route or expected_route,
                     "sub_route": test.expected.sub_route if test.expected else None,
                     "plan_requirements": (
                         list(test.expected.plan_requirements) if test.expected else []
@@ -2353,8 +2431,9 @@ async def _execute_tool_evaluation(
                 },
                 "allowed_tools": list(test.allowed_tools),
             }
-            for test in payload.tests
-        ],
+        )
+    evaluation = await run_tool_evaluation(
+        tests=serialized_tests,
         tool_index=tool_index,
         llm=llm,
         retrieval_limit=payload.retrieval_limit,
@@ -2376,14 +2455,14 @@ async def _execute_tool_evaluation(
     )
     prompt_suggestions = await suggest_agent_prompt_improvements_for_api_input(
         evaluation_results=evaluation["results"],
-        current_prompts=current_prompts,
+        current_prompts=suggestion_prompts,
         llm=llm,
         suggestion_scope="full",
     )
     intent_suggestions = await suggest_intent_definition_improvements(
         evaluation_results=evaluation["results"],
         intent_definitions=effective_intent_definitions,
-        current_prompts=current_prompts,
+        current_prompts=suggestion_prompts,
         llm=llm,
     )
     return {
@@ -2410,35 +2489,59 @@ async def _execute_api_input_evaluation(
     progress_callback=None,
 ) -> dict[str, Any]:
     def _serialize_api_input_tests(test_cases: list[Any]) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": test.id,
-                "question": test.question,
-                "difficulty": test.difficulty,
-                "expected": {
-                    "tool": test.expected.tool if test.expected else None,
-                    "category": test.expected.category if test.expected else None,
-                    "agent": test.expected.agent if test.expected else None,
-                    "intent": test.expected.intent if test.expected else None,
-                    "route": test.expected.route if test.expected else None,
-                    "sub_route": test.expected.sub_route if test.expected else None,
-                    "plan_requirements": (
-                        list(test.expected.plan_requirements) if test.expected else []
-                    ),
-                    "required_fields": (
-                        list(test.expected.required_fields) if test.expected else []
-                    ),
-                    "field_values": (
-                        dict(test.expected.field_values) if test.expected else {}
-                    ),
-                    "allow_clarification": (
-                        test.expected.allow_clarification if test.expected else None
-                    ),
-                },
-                "allowed_tools": list(test.allowed_tools),
-            }
-            for test in test_cases
-        ]
+        serialized: list[dict[str, Any]] = []
+        for test in test_cases:
+            expected_tool = (
+                str((test.expected.tool if test.expected else None) or "").strip()
+                or None
+            )
+            expected_category = (
+                str((test.expected.category if test.expected else None) or "").strip()
+                or None
+            )
+            expected_route = (
+                str((test.expected.route if test.expected else None) or "").strip()
+                or None
+            )
+            expected_intent = (
+                str((test.expected.intent if test.expected else None) or "").strip()
+                or None
+            )
+            resolved_route, resolved_intent = _resolve_expected_route_and_intent(
+                tool_id=expected_tool,
+                category=expected_category,
+                route=expected_route,
+                intent=expected_intent,
+            )
+            serialized.append(
+                {
+                    "id": test.id,
+                    "question": test.question,
+                    "difficulty": test.difficulty,
+                    "expected": {
+                        "tool": expected_tool,
+                        "category": expected_category,
+                        "agent": test.expected.agent if test.expected else None,
+                        "intent": resolved_intent,
+                        "route": resolved_route or expected_route,
+                        "sub_route": test.expected.sub_route if test.expected else None,
+                        "plan_requirements": (
+                            list(test.expected.plan_requirements) if test.expected else []
+                        ),
+                        "required_fields": (
+                            list(test.expected.required_fields) if test.expected else []
+                        ),
+                        "field_values": (
+                            dict(test.expected.field_values) if test.expected else {}
+                        ),
+                        "allow_clarification": (
+                            test.expected.allow_clarification if test.expected else None
+                        ),
+                    },
+                    "allowed_tools": list(test.allowed_tools),
+                }
+            )
+        return serialized
 
     patch_map = _patch_map_from_updates(payload.metadata_patch)
     tool_registry, tool_index, _persisted_overrides, _effective_overrides = (
@@ -2460,6 +2563,10 @@ async def _execute_api_input_evaluation(
     current_prompts = _build_current_eval_prompts(
         prompt_overrides=overrides,
         tool_index=tool_index,
+    )
+    suggestion_prompts = _filter_eval_suggestion_prompts(
+        current_prompts,
+        include_tool_prompts=True,
     )
     effective_intent_definitions = await get_effective_intent_definitions(session)
     evaluation = await run_tool_api_input_evaluation(
@@ -2490,14 +2597,14 @@ async def _execute_api_input_evaluation(
         )
     prompt_suggestions = await suggest_agent_prompt_improvements_for_api_input(
         evaluation_results=evaluation["results"],
-        current_prompts=current_prompts,
+        current_prompts=suggestion_prompts,
         llm=llm,
         suggestion_scope="api_tool_only",
     )
     intent_suggestions = await suggest_intent_definition_improvements(
         evaluation_results=evaluation["results"],
         intent_definitions=effective_intent_definitions,
-        current_prompts=current_prompts,
+        current_prompts=suggestion_prompts,
         llm=llm,
     )
     return {
