@@ -20,7 +20,7 @@ from pydantic import BaseModel, create_model
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.new_chat.tools.mcp_client import MCPClient
+from app.agents.new_chat.tools.mcp_client import MCPClient, normalize_mcp_http_url
 from app.db import SearchSourceConnector, SearchSourceConnectorType
 
 logger = logging.getLogger(__name__)
@@ -292,12 +292,20 @@ async def _load_http_mcp_tools(
     tools: list[StructuredTool] = []
 
     # Validate required url field
-    url = server_config.get("url")
+    raw_url = server_config.get("url")
+    url = normalize_mcp_http_url(raw_url) if isinstance(raw_url, str) else raw_url
     if not url or not isinstance(url, str):
         logger.warning(
             f"MCP connector {connector_id} (name: '{connector_name}') missing or invalid url field, skipping"
         )
         return tools
+    if isinstance(raw_url, str) and url != raw_url:
+        logger.info(
+            "Normalized MCP connector %s URL: %s -> %s",
+            connector_id,
+            raw_url,
+            url,
+        )
 
     # Validate headers field (must be dict if present)
     headers = server_config.get("headers", {})

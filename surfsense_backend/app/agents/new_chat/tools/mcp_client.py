@@ -9,6 +9,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -20,6 +21,27 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0  # seconds
 RETRY_BACKOFF = 2.0  # exponential backoff multiplier
+
+
+def normalize_mcp_http_url(url: str) -> str:
+    """Normalize HTTP MCP URL to a likely MCP endpoint.
+
+    For convenience, if users provide only a service base URL (no path or "/"),
+    default to "/mcp" which is the common streamable HTTP endpoint.
+    """
+    normalized = str(url or "").strip()
+    if not normalized:
+        return normalized
+
+    try:
+        parsed = urlparse(normalized)
+        path = parsed.path or ""
+        if path in ("", "/"):
+            return urlunparse(parsed._replace(path="/mcp"))
+        return normalized
+    except Exception:
+        # Fall back to original input if URL parsing fails.
+        return normalized
 
 
 def _collect_exception_messages(error: BaseException) -> list[str]:
@@ -322,6 +344,11 @@ async def test_mcp_http_connection(
 
     """
     try:
+        normalized_url = normalize_mcp_http_url(url)
+        if normalized_url != url:
+            logger.info("Normalized MCP URL for test: %s -> %s", url, normalized_url)
+            url = normalized_url
+
         logger.info(
             "Testing HTTP MCP connection to: %s (transport: %s)", url, transport
         )
