@@ -20,6 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig
+from app.agents.new_chat.nodes import (
+    build_critic_node,
+    build_executor_nodes,
+    build_intent_resolver_node,
+    build_planner_node,
+    build_synthesizer_node,
+    build_tool_resolver_node,
+)
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
@@ -42,7 +50,6 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
 )
 from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
-from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
 from app.agents.new_chat.system_prompt import append_datetime_context
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
@@ -3263,149 +3270,18 @@ async def create_supervisor_agent(
     llm_with_tools = llm.bind_tools(list(tool_registry.values()))
     tool_node = ToolNode(tool_registry.values())
 
-    async def resolve_intent_node(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        incoming_turn_id = str(state.get("turn_id") or "").strip()
-        active_turn_id = str(state.get("active_turn_id") or "").strip()
-        new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
-        latest_user_query = _latest_user_query(state.get("messages") or [])
-
-        if new_user_turn and bool(state.get("awaiting_confirmation")):
-            pending_stage = str(state.get("pending_hitl_stage") or "").strip().lower()
-            decision = _parse_hitl_confirmation(latest_user_query)
-            if decision is None:
-                return {
-                    "messages": [
-                        AIMessage(
-                            content="Svara med ja eller nej sa jag vet hur jag ska fortsatta."
-                        )
-                    ],
-                    "awaiting_confirmation": True,
-                    "pending_hitl_stage": pending_stage or None,
-                    "active_turn_id": incoming_turn_id or active_turn_id or None,
-                    "orchestration_phase": "awaiting_confirmation",
-                }
-            updates: SupervisorState = {
-                "awaiting_confirmation": False,
-                "pending_hitl_stage": None,
-                "pending_hitl_payload": None,
-                "user_feedback": {
-                    "stage": pending_stage or None,
-                    "decision": decision,
-                    "message": latest_user_query,
-                },
-            }
-            if incoming_turn_id:
-                updates["active_turn_id"] = incoming_turn_id
-            if decision == "approve":
-                if pending_stage == "planner":
-                    updates["orchestration_phase"] = "resolve_tools"
-                elif pending_stage == "execution":
-                    updates["orchestration_phase"] = "execute"
-                elif pending_stage == "synthesis":
-                    updates["orchestration_phase"] = "finalize"
-                return updates
-            # reject
-            updates["replan_count"] = int(state.get("replan_count") or 0) + 1
-            if pending_stage == "synthesis":
-                updates["final_response"] = None
-                updates["final_agent_response"] = None
-            updates["critic_decision"] = "replan"
-            updates["orchestration_phase"] = "plan"
-            return updates
-
-        if not new_user_turn and state.get("resolved_intent"):
-            return {}
-
-        route_hint = _normalize_route_hint_value(state.get("route_hint"))
-        candidates: list[dict[str, Any]] = []
-        for route_name, intent_id in route_to_intent_id.items():
-            candidates.append({"intent_id": intent_id, "route": route_name})
-        if route_hint:
-            candidates.sort(key=lambda item: 0 if item.get("route") == route_hint else 1)
-        candidate_ids = {
-            str(item.get("intent_id") or "").strip()
-            for item in candidates
-            if str(item.get("intent_id") or "").strip()
-        }
-
-        resolved = _intent_from_route(route_hint)
-        if latest_user_query:
-            prompt = append_datetime_context(intent_resolver_prompt_template)
-            resolver_input = json.dumps(
-                {
-                    "query": latest_user_query,
-                    "route_hint": route_hint,
-                    "intent_candidates": candidates,
-                },
-                ensure_ascii=True,
-            )
-            try:
-                message = await llm.ainvoke(
-                    [
-                        SystemMessage(content=prompt),
-                        HumanMessage(content=resolver_input),
-                    ]
-                )
-                parsed = _extract_first_json_object(
-                    str(getattr(message, "content", "") or "")
-                )
-                selected_intent = str(parsed.get("intent_id") or "").strip()
-                selected_route = _normalize_route_hint_value(parsed.get("route"))
-                if selected_intent and selected_intent in candidate_ids:
-                    resolved = {
-                        "intent_id": selected_intent,
-                        "route": selected_route
-                        or next(
-                            (
-                                str(item.get("route") or "")
-                                for item in candidates
-                                if str(item.get("intent_id") or "").strip()
-                                == selected_intent
-                            ),
-                            route_hint or "knowledge",
-                        ),
-                        "reason": str(parsed.get("reason") or "").strip()
-                        or "LLM intent_resolver valde intent.",
-                        "confidence": _coerce_confidence(parsed.get("confidence"), 0.5),
-                    }
-            except Exception:
-                pass
-
-        updates: SupervisorState = {
-            "resolved_intent": resolved,
-            "orchestration_phase": "select_agent",
-        }
-        if new_user_turn:
-            updates["active_plan"] = []
-            updates["plan_step_index"] = 0
-            updates["plan_complete"] = False
-            updates["step_results"] = []
-            updates["recent_agent_calls"] = []
-            updates["compare_outputs"] = []
-            updates["selected_agents"] = []
-            updates["resolved_tools_by_agent"] = {}
-            updates["final_agent_response"] = None
-            updates["final_response"] = None
-            updates["critic_decision"] = None
-            updates["awaiting_confirmation"] = False
-            updates["pending_hitl_stage"] = None
-            updates["pending_hitl_payload"] = None
-            updates["user_feedback"] = None
-            updates["replan_count"] = 0
-            updates["agent_hops"] = 0
-            updates["no_progress_runs"] = 0
-            updates["guard_parallel_preview"] = []
-            if incoming_turn_id:
-                updates["active_turn_id"] = incoming_turn_id
-        elif incoming_turn_id and not active_turn_id:
-            updates["active_turn_id"] = incoming_turn_id
-        return updates
+    resolve_intent_node = build_intent_resolver_node(
+        llm=llm,
+        route_to_intent_id=route_to_intent_id,
+        intent_resolver_prompt_template=intent_resolver_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        parse_hitl_confirmation_fn=_parse_hitl_confirmation,
+        normalize_route_hint_fn=_normalize_route_hint_value,
+        intent_from_route_fn=_intent_from_route,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+        coerce_confidence_fn=_coerce_confidence,
+    )
 
     async def resolve_agents_node(
         state: SupervisorState,
@@ -3493,86 +3369,13 @@ async def create_supervisor_agent(
             "orchestration_phase": "plan",
         }
 
-    async def planner_node(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        latest_user_query = _latest_user_query(state.get("messages") or [])
-        selected_agents = [
-            item
-            for item in (state.get("selected_agents") or [])
-            if isinstance(item, dict) and str(item.get("name") or "").strip()
-        ]
-        if not latest_user_query:
-            return {"orchestration_phase": "execute"}
-
-        current_plan = state.get("active_plan") or []
-        if current_plan and not state.get("plan_complete") and not state.get("critic_decision"):
-            return {"orchestration_phase": "execute"}
-
-        prompt = append_datetime_context(planner_prompt_template)
-        planner_input = json.dumps(
-            {
-                "query": latest_user_query,
-                "resolved_intent": state.get("resolved_intent") or {},
-                "selected_agents": selected_agents,
-                "current_plan": current_plan,
-            },
-            ensure_ascii=True,
-        )
-        new_plan: list[dict[str, Any]] = []
-        try:
-            message = await llm.ainvoke(
-                [
-                    SystemMessage(content=prompt),
-                    HumanMessage(content=planner_input),
-                ]
-            )
-            parsed = _extract_first_json_object(str(getattr(message, "content", "") or ""))
-            steps = parsed.get("steps")
-            if isinstance(steps, list):
-                for index, step in enumerate(steps[:4], start=1):
-                    if isinstance(step, dict):
-                        content = str(step.get("content") or "").strip()
-                        if not content:
-                            continue
-                        step_id = str(step.get("id") or f"step-{index}").strip()
-                        status = str(step.get("status") or "pending").strip().lower()
-                        if status not in {"pending", "in_progress", "completed", "cancelled"}:
-                            status = "pending"
-                        new_plan.append(
-                            {
-                                "id": step_id,
-                                "content": content,
-                                "status": status,
-                            }
-                        )
-        except Exception:
-            pass
-
-        if not new_plan:
-            fallback_agent = (
-                str(selected_agents[0].get("name") or "").strip()
-                if selected_agents
-                else "agent"
-            )
-            new_plan = [
-                {
-                    "id": "step-1",
-                    "content": f"Delegara huvuduppgiften till {fallback_agent}",
-                    "status": "pending",
-                }
-            ]
-        return {
-            "active_plan": new_plan,
-            "plan_step_index": 0,
-            "plan_complete": False,
-            "orchestration_phase": "execute",
-            "critic_decision": None,
-        }
+    planner_node = build_planner_node(
+        llm=llm,
+        planner_prompt_template=planner_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+    )
 
     async def planner_hitl_gate_node(
         state: SupervisorState,
@@ -3607,64 +3410,18 @@ async def create_supervisor_agent(
             "orchestration_phase": "awaiting_confirmation",
         }
 
-    async def tool_resolver_node(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        selected_agents_raw = state.get("selected_agents") or []
-        selected_agent_names = [
-            str(item.get("name") or "").strip().lower()
-            for item in selected_agents_raw
-            if isinstance(item, dict) and str(item.get("name") or "").strip()
-        ]
-        if not selected_agent_names:
-            fallback_agent = str(state.get("final_agent_name") or "").strip().lower()
-            if fallback_agent:
-                selected_agent_names = [fallback_agent]
-        latest_user_query = _latest_user_query(state.get("messages") or [])
-        step = _next_plan_step(state)
-        step_text = str(step.get("content") or "").strip() if isinstance(step, dict) else ""
-        resolver_query = " ".join(
-            value for value in [latest_user_query, step_text] if str(value).strip()
-        ).strip()
-        if not resolver_query:
-            resolver_query = latest_user_query or step_text
-
-        resolved: dict[str, list[str]] = {}
-        for agent_name in selected_agent_names[:3]:
-            focused_ids = _focused_tool_ids_for_agent(agent_name, resolver_query, limit=6)
-            if agent_name == "weather":
-                focused_ids = list(weather_tool_ids)
-            elif agent_name == "trafik":
-                focused_ids = [tool_id for tool_id in focused_ids if tool_id in trafik_tool_ids]
-                if not focused_ids:
-                    focused_ids = list(trafik_tool_ids)
-            deduped_ids: list[str] = []
-            seen_ids: set[str] = set()
-            for tool_id in focused_ids:
-                normalized = str(tool_id or "").strip()
-                if not normalized or normalized in seen_ids:
-                    continue
-                seen_ids.add(normalized)
-                deduped_ids.append(normalized)
-                if len(deduped_ids) >= 8:
-                    break
-            if deduped_ids:
-                resolved[agent_name] = deduped_ids
-
-        if not resolved:
-            resolved = dict(state.get("resolved_tools_by_agent") or {})
-        return {
-            "resolved_tools_by_agent": resolved,
-            "orchestration_phase": "execute",
-            "pending_hitl_payload": {
-                "tool_resolver_prompt": tool_resolver_prompt_template.strip()[:240],
-                "resolved_agent_count": len(resolved),
-            },
-        }
+    tool_resolver_node = build_tool_resolver_node(
+        tool_resolver_prompt_template=tool_resolver_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        next_plan_step_fn=_next_plan_step,
+        focused_tool_ids_for_agent_fn=(
+            lambda agent_name, task: _focused_tool_ids_for_agent(
+                agent_name, task, limit=6
+            )
+        ),
+        weather_tool_ids=weather_tool_ids,
+        trafik_tool_ids=trafik_tool_ids,
+    )
 
     async def execution_hitl_gate_node(
         state: SupervisorState,
@@ -3721,87 +3478,17 @@ async def create_supervisor_agent(
             "orchestration_phase": "awaiting_confirmation",
         }
 
-    async def critic_node(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        final_response = str(
-            state.get("final_agent_response") or state.get("final_response") or ""
-        ).strip()
-        if not final_response:
-            replan_count = int(state.get("replan_count") or 0)
-            if replan_count >= _MAX_REPLAN_ATTEMPTS:
-                fallback = _render_guard_message(
-                    loop_guard_template,
-                    list(state.get("guard_parallel_preview") or [])[:3],
-                )
-                if not fallback:
-                    fallback = _render_guard_message(
-                        DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
-                        list(state.get("guard_parallel_preview") or [])[:3],
-                    )
-                return {
-                    "critic_decision": "ok",
-                    "final_response": fallback,
-                    "final_agent_response": fallback,
-                    "final_agent_name": "supervisor",
-                    "orchestration_phase": "finalize",
-                }
-            return {
-                "critic_decision": "needs_more",
-                "replan_count": replan_count + 1,
-                "orchestration_phase": "select_agent",
-            }
-
-        latest_user_query = _latest_user_query(state.get("messages") or [])
-        prompt = append_datetime_context(critic_gate_prompt_template)
-        critic_input = json.dumps(
-            {
-                "query": latest_user_query,
-                "resolved_intent": state.get("resolved_intent") or {},
-                "active_plan": state.get("active_plan") or [],
-                "final_agent_name": state.get("final_agent_name"),
-                "final_response": final_response,
-            },
-            ensure_ascii=True,
-        )
-        decision = "ok"
-        try:
-            message = await llm.ainvoke(
-                [SystemMessage(content=prompt), HumanMessage(content=critic_input)]
-            )
-            parsed = _extract_first_json_object(str(getattr(message, "content", "") or ""))
-            parsed_decision = str(parsed.get("decision") or "").strip().lower()
-            if parsed_decision in {"ok", "needs_more", "replan"}:
-                decision = parsed_decision
-        except Exception:
-            decision = "ok"
-
-        replan_count = int(state.get("replan_count") or 0)
-        if decision == "replan" and replan_count < _MAX_REPLAN_ATTEMPTS:
-            return {
-                "critic_decision": "replan",
-                "final_agent_response": None,
-                "final_response": None,
-                "replan_count": replan_count + 1,
-                "orchestration_phase": "plan",
-            }
-        if decision == "needs_more" and replan_count < _MAX_REPLAN_ATTEMPTS:
-            return {
-                "critic_decision": "needs_more",
-                "final_agent_response": None,
-                "final_response": None,
-                "replan_count": replan_count + 1,
-                "orchestration_phase": "select_agent",
-            }
-        return {
-            "critic_decision": "ok",
-            "final_response": final_response,
-            "orchestration_phase": "finalize",
-        }
+    critic_node = build_critic_node(
+        llm=llm,
+        critic_gate_prompt_template=critic_gate_prompt_template,
+        loop_guard_template=loop_guard_template,
+        default_loop_guard_message=DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+        max_replan_attempts=_MAX_REPLAN_ATTEMPTS,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+        render_guard_message_fn=_render_guard_message,
+    )
 
     async def synthesis_hitl_gate_node(
         state: SupervisorState,
@@ -3849,250 +3536,29 @@ async def create_supervisor_agent(
             "orchestration_phase": "awaiting_confirmation",
         }
 
-    async def synthesizer_node(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        source_response = str(
-            state.get("final_response") or state.get("final_agent_response") or ""
-        ).strip()
-        if not source_response:
-            return {}
-        latest_user_query = _latest_user_query(state.get("messages") or [])
-        prompt = append_datetime_context(synthesizer_prompt_template)
-        synth_input = json.dumps(
-            {
-                "query": latest_user_query,
-                "response": source_response,
-                "resolved_intent": state.get("resolved_intent") or {},
-            },
-            ensure_ascii=True,
-        )
-        refined_response = source_response
-        try:
-            message = await llm.ainvoke(
-                [SystemMessage(content=prompt), HumanMessage(content=synth_input)]
-            )
-            parsed = _extract_first_json_object(str(getattr(message, "content", "") or ""))
-            candidate = str(parsed.get("response") or "").strip()
-            if candidate:
-                refined_response = _strip_critic_json(candidate)
-        except Exception:
-            refined_response = source_response
+    synthesizer_node = build_synthesizer_node(
+        llm=llm,
+        synthesizer_prompt_template=synthesizer_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+        strip_critic_json_fn=_strip_critic_json,
+    )
 
-        messages = list(state.get("messages") or [])
-        last_message = messages[-1] if messages else None
-        if isinstance(last_message, AIMessage):
-            if str(getattr(last_message, "content", "") or "").strip() == refined_response:
-                return {
-                    "final_response": refined_response,
-                    "final_agent_response": refined_response,
-                    "plan_complete": True,
-                    "awaiting_confirmation": False,
-                    "pending_hitl_stage": None,
-                    "pending_hitl_payload": None,
-                }
-        return {
-            "messages": [AIMessage(content=refined_response)],
-            "final_response": refined_response,
-            "final_agent_response": refined_response,
-            "plan_complete": True,
-            "awaiting_confirmation": False,
-            "pending_hitl_stage": None,
-            "pending_hitl_payload": None,
-        }
-
-    def call_model(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        final_response = state.get("final_agent_response") or state.get("final_response")
-        messages_state = state.get("messages") or []
-        last_message = messages_state[-1] if messages_state else None
-        incoming_turn_id = str(state.get("turn_id") or "").strip()
-        active_turn_id = str(state.get("active_turn_id") or "").strip()
-        new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
-        if (
-            final_response
-            and isinstance(last_message, ToolMessage)
-            and not new_user_turn
-        ):
-            return {"messages": [AIMessage(content=_strip_critic_json(str(final_response)))]}
-        if not incoming_turn_id and final_response and isinstance(last_message, HumanMessage):
-            # Legacy fallback when turn_id is missing.
-            new_user_turn = True
-        messages = _sanitize_messages(list(state.get("messages") or []))
-        plan_context = None if new_user_turn else _format_plan_context(state)
-        recent_context = None if new_user_turn else _format_recent_calls(state)
-        route_context = _format_route_hint(state)
-        intent_context = None if new_user_turn else _format_intent_context(state)
-        selected_agents_context = (
-            None if new_user_turn else _format_selected_agents_context(state)
-        )
-        resolved_tools_context = (
-            None if new_user_turn else _format_resolved_tools_context(state)
-        )
-        system_bits = [
-            item
-            for item in (
-                plan_context,
-                recent_context,
-                route_context,
-                intent_context,
-                selected_agents_context,
-                resolved_tools_context,
-            )
-            if item
-        ]
-        if system_bits:
-            messages = [SystemMessage(content="\n".join(system_bits))] + messages
-        
-        # Apply token budget
-        model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
-        if model_name:
-            budget = TokenBudget(model_name=str(model_name))
-            messages = budget.fit_messages(messages)
-        
-        response = llm_with_tools.invoke(messages)
-        response = _coerce_supervisor_tool_calls(
-            response,
-            orchestration_phase=str(state.get("orchestration_phase") or ""),
-            agent_hops=int(state.get("agent_hops") or 0),
-            allow_multiple=bool(compare_mode),
-        )
-        updates: SupervisorState = {"messages": [response]}
-        if new_user_turn:
-            # Start each user turn with fresh planner memory to avoid stale plan leakage.
-            updates["resolved_intent"] = None
-            updates["selected_agents"] = []
-            updates["resolved_tools_by_agent"] = {}
-            updates["query_embedding"] = None
-            updates["active_plan"] = []
-            updates["plan_step_index"] = 0
-            updates["plan_complete"] = False
-            updates["step_results"] = []
-            updates["recent_agent_calls"] = []
-            updates["compare_outputs"] = []
-            updates["final_agent_response"] = None
-            updates["final_response"] = None
-            updates["critic_decision"] = None
-            updates["awaiting_confirmation"] = False
-            updates["pending_hitl_stage"] = None
-            updates["pending_hitl_payload"] = None
-            updates["user_feedback"] = None
-            updates["replan_count"] = 0
-            updates["orchestration_phase"] = "select_agent"
-            updates["agent_hops"] = 0
-            updates["no_progress_runs"] = 0
-            updates["guard_parallel_preview"] = []
-            if incoming_turn_id:
-                updates["active_turn_id"] = incoming_turn_id
-        elif incoming_turn_id and not active_turn_id:
-            updates["active_turn_id"] = incoming_turn_id
-        if final_response and new_user_turn:
-            updates["final_agent_response"] = None
-            updates["final_response"] = None
-        return updates
-
-    async def acall_model(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        final_response = state.get("final_agent_response") or state.get("final_response")
-        messages_state = state.get("messages") or []
-        last_message = messages_state[-1] if messages_state else None
-        incoming_turn_id = str(state.get("turn_id") or "").strip()
-        active_turn_id = str(state.get("active_turn_id") or "").strip()
-        new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
-        if (
-            final_response
-            and isinstance(last_message, ToolMessage)
-            and not new_user_turn
-        ):
-            return {"messages": [AIMessage(content=_strip_critic_json(str(final_response)))]}
-        if not incoming_turn_id and final_response and isinstance(last_message, HumanMessage):
-            new_user_turn = True
-        messages = _sanitize_messages(list(state.get("messages") or []))
-        plan_context = None if new_user_turn else _format_plan_context(state)
-        recent_context = None if new_user_turn else _format_recent_calls(state)
-        route_context = _format_route_hint(state)
-        intent_context = None if new_user_turn else _format_intent_context(state)
-        selected_agents_context = (
-            None if new_user_turn else _format_selected_agents_context(state)
-        )
-        resolved_tools_context = (
-            None if new_user_turn else _format_resolved_tools_context(state)
-        )
-        system_bits = [
-            item
-            for item in (
-                plan_context,
-                recent_context,
-                route_context,
-                intent_context,
-                selected_agents_context,
-                resolved_tools_context,
-            )
-            if item
-        ]
-        if system_bits:
-            messages = [SystemMessage(content="\n".join(system_bits))] + messages
-        
-        # Apply token budget
-        model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
-        if model_name:
-            budget = TokenBudget(model_name=str(model_name))
-            messages = budget.fit_messages(messages)
-        
-        response = await llm_with_tools.ainvoke(messages)
-        response = _coerce_supervisor_tool_calls(
-            response,
-            orchestration_phase=str(state.get("orchestration_phase") or ""),
-            agent_hops=int(state.get("agent_hops") or 0),
-            allow_multiple=bool(compare_mode),
-        )
-        updates: SupervisorState = {"messages": [response]}
-        if new_user_turn:
-            # Start each user turn with fresh planner memory to avoid stale plan leakage.
-            updates["resolved_intent"] = None
-            updates["selected_agents"] = []
-            updates["resolved_tools_by_agent"] = {}
-            updates["query_embedding"] = None
-            updates["active_plan"] = []
-            updates["plan_step_index"] = 0
-            updates["plan_complete"] = False
-            updates["step_results"] = []
-            updates["recent_agent_calls"] = []
-            updates["compare_outputs"] = []
-            updates["final_agent_response"] = None
-            updates["final_response"] = None
-            updates["critic_decision"] = None
-            updates["awaiting_confirmation"] = False
-            updates["pending_hitl_stage"] = None
-            updates["pending_hitl_payload"] = None
-            updates["user_feedback"] = None
-            updates["replan_count"] = 0
-            updates["orchestration_phase"] = "select_agent"
-            updates["agent_hops"] = 0
-            updates["no_progress_runs"] = 0
-            updates["guard_parallel_preview"] = []
-            if incoming_turn_id:
-                updates["active_turn_id"] = incoming_turn_id
-        elif incoming_turn_id and not active_turn_id:
-            updates["active_turn_id"] = incoming_turn_id
-        if final_response and new_user_turn:
-            updates["final_agent_response"] = None
-            updates["final_response"] = None
-        return updates
+    call_model, acall_model = build_executor_nodes(
+        llm=llm,
+        llm_with_tools=llm_with_tools,
+        compare_mode=compare_mode,
+        strip_critic_json_fn=_strip_critic_json,
+        sanitize_messages_fn=_sanitize_messages,
+        format_plan_context_fn=_format_plan_context,
+        format_recent_calls_fn=_format_recent_calls,
+        format_route_hint_fn=_format_route_hint,
+        format_intent_context_fn=_format_intent_context,
+        format_selected_agents_context_fn=_format_selected_agents_context,
+        format_resolved_tools_context_fn=_format_resolved_tools_context,
+        coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
+    )
 
     async def post_tools(
         state: SupervisorState,
