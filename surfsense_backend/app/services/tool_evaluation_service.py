@@ -486,6 +486,65 @@ def _agent_for_tool(
     return _agent_for_route_hint(route_value, sub_route_value)
 
 
+def _dedupe_strings(values: list[str] | None) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            continue
+        lowered = cleaned.casefold()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(cleaned)
+    return deduped
+
+
+def _normalize_expected_agent_candidates(
+    *,
+    expected_agent: str | None,
+    expected_payload: dict[str, Any],
+) -> list[str]:
+    configured = _safe_string_list(expected_payload.get("acceptable_agents"))
+    normalized_configured = [
+        _normalize_agent_name(agent_name)
+        for agent_name in configured
+        if _normalize_agent_name(agent_name)
+    ]
+    baseline = [expected_agent] if expected_agent else []
+    return _dedupe_strings(
+        [*(baseline or []), *[agent for agent in normalized_configured if agent]]
+    )
+
+
+def _coerce_weather_agent_choice(
+    *,
+    selected_agent: str | None,
+    selected_tool: str | None,
+    selected_category: str | None,
+    route_value: str | None,
+    sub_route_value: str | None,
+) -> tuple[str | None, bool]:
+    normalized_selected_agent = _normalize_agent_name(selected_agent)
+    tool_id = str(selected_tool or "").strip().lower()
+    category = str(selected_category or "").strip().lower()
+    route_norm = _normalize_route_value(route_value)
+    sub_route_norm = _normalize_sub_route_value(sub_route_value)
+    is_weather_tool = _is_weather_domain_tool(tool_id, category)
+    if not is_weather_tool:
+        return normalized_selected_agent, False
+    if route_norm == Route.ACTION.value and sub_route_norm in {
+        ActionRoute.TRAVEL.value,
+        None,
+    }:
+        if normalized_selected_agent != "weather":
+            return "weather", True
+    if not normalized_selected_agent:
+        return "weather", True
+    return normalized_selected_agent, False
+
+
 def _route_sub_route_for_tool(
     tool_id: str | None,
     category: str | None = None,
@@ -1785,7 +1844,19 @@ async def run_tool_evaluation(
                 expected_route,
                 expected_sub_route,
             )
+        expected_acceptable_agents = _normalize_expected_agent_candidates(
+            expected_agent=expected_agent,
+            expected_payload=expected,
+        )
+        expected_acceptable_tools = _dedupe_strings(
+            [
+                expected_tool or "",
+                *_safe_string_list(expected.get("acceptable_tools")),
+            ]
+        )
         allowed_tools = _safe_string_list(test.get("allowed_tools"))
+        if expected_acceptable_tools:
+            allowed_tools = _dedupe_strings([*expected_acceptable_tools, *allowed_tools])
         if expected_tool and not allowed_tools:
             allowed_tools = [expected_tool]
 
@@ -1844,7 +1915,9 @@ async def run_tool_evaluation(
                 selected_agent_plan.get("analysis") or ""
             ).strip()
             passed_agent = (
-                selected_agent == expected_agent if expected_agent is not None else None
+                selected_agent in expected_acceptable_agents
+                if expected_acceptable_agents
+                else (selected_agent == expected_agent if expected_agent is not None else None)
             )
             retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
                 question,
@@ -1883,8 +1956,27 @@ async def run_tool_evaluation(
                     selected_route,
                     selected_sub_route,
                 )
-                if expected_agent is not None:
-                    passed_agent = selected_agent == expected_agent
+            coerced_agent, coerced = _coerce_weather_agent_choice(
+                selected_agent=selected_agent,
+                selected_tool=selected_tool,
+                selected_category=selected_category,
+                route_value=selected_route,
+                sub_route_value=selected_sub_route,
+            )
+            if coerced:
+                selected_agent = coerced_agent
+                if selected_agent_analysis:
+                    selected_agent_analysis = (
+                        f"{selected_agent_analysis} Agent justerad till weather baserat på väderverktyg."
+                    )
+                else:
+                    selected_agent_analysis = (
+                        "Agent justerad till weather baserat på valt väderverktyg."
+                    )
+            if expected_acceptable_agents:
+                passed_agent = selected_agent in expected_acceptable_agents
+            elif expected_agent is not None:
+                passed_agent = selected_agent == expected_agent
             plan_requirement_checks, passed_plan = _evaluate_plan_requirements(
                 requirements=plan_requirements,
                 planning_analysis=str(planning.get("analysis") or ""),
@@ -2007,8 +2099,10 @@ async def run_tool_evaluation(
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
                 "expected_agent": expected_agent,
+                "expected_acceptable_agents": expected_acceptable_agents,
                 "expected_category": expected_category,
                 "expected_tool": expected_tool,
+                "expected_acceptable_tools": expected_acceptable_tools,
                 "allowed_tools": allowed_tools,
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
@@ -2103,8 +2197,10 @@ async def run_tool_evaluation(
                     "expected_route": expected_route,
                     "expected_sub_route": expected_sub_route,
                     "expected_agent": expected_agent,
+                    "expected_acceptable_agents": expected_acceptable_agents,
                     "expected_category": expected_category,
                     "expected_tool": expected_tool,
+                    "expected_acceptable_tools": expected_acceptable_tools,
                     "allowed_tools": allowed_tools,
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
@@ -3060,6 +3156,16 @@ async def run_tool_api_input_evaluation(
                 expected_route,
                 expected_sub_route,
             )
+        expected_acceptable_agents = _normalize_expected_agent_candidates(
+            expected_agent=expected_agent,
+            expected_payload=expected,
+        )
+        expected_acceptable_tools = _dedupe_strings(
+            [
+                expected_tool or "",
+                *_safe_string_list(expected.get("acceptable_tools")),
+            ]
+        )
         expected_required_fields = _normalize_field_list(expected.get("required_fields"))
         expected_field_values = (
             expected.get("field_values") if isinstance(expected.get("field_values"), dict) else {}
@@ -3071,6 +3177,8 @@ async def run_tool_api_input_evaluation(
             else None
         )
         allowed_tools = _safe_string_list(test.get("allowed_tools"))
+        if expected_acceptable_tools:
+            allowed_tools = _dedupe_strings([*expected_acceptable_tools, *allowed_tools])
         if expected_tool and not allowed_tools:
             allowed_tools = [expected_tool]
 
@@ -3129,7 +3237,9 @@ async def run_tool_api_input_evaluation(
                 selected_agent_plan.get("analysis") or ""
             ).strip()
             passed_agent = (
-                selected_agent == expected_agent if expected_agent is not None else None
+                selected_agent in expected_acceptable_agents
+                if expected_acceptable_agents
+                else (selected_agent == expected_agent if expected_agent is not None else None)
             )
             retrieved_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
                 question,
@@ -3169,8 +3279,27 @@ async def run_tool_api_input_evaluation(
                     selected_route,
                     selected_sub_route,
                 )
-                if expected_agent is not None:
-                    passed_agent = selected_agent == expected_agent
+            coerced_agent, coerced = _coerce_weather_agent_choice(
+                selected_agent=selected_agent,
+                selected_tool=selected_tool,
+                selected_category=selected_category,
+                route_value=selected_route,
+                sub_route_value=selected_sub_route,
+            )
+            if coerced:
+                selected_agent = coerced_agent
+                if selected_agent_analysis:
+                    selected_agent_analysis = (
+                        f"{selected_agent_analysis} Agent justerad till weather baserat på väderverktyg."
+                    )
+                else:
+                    selected_agent_analysis = (
+                        "Agent justerad till weather baserat på valt väderverktyg."
+                    )
+            if expected_acceptable_agents:
+                passed_agent = selected_agent in expected_acceptable_agents
+            elif expected_agent is not None:
+                passed_agent = selected_agent == expected_agent
             proposed_arguments = _coerce_arguments(planning.get("proposed_arguments"))
             needs_clarification = bool(planning.get("needs_clarification"))
             clarification_question = (
@@ -3378,8 +3507,10 @@ async def run_tool_api_input_evaluation(
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
                 "expected_agent": expected_agent,
+                "expected_acceptable_agents": expected_acceptable_agents,
                 "expected_category": expected_category,
                 "expected_tool": expected_tool,
+                "expected_acceptable_tools": expected_acceptable_tools,
                 "allowed_tools": allowed_tools,
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
@@ -3484,8 +3615,10 @@ async def run_tool_api_input_evaluation(
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
                 "expected_agent": expected_agent,
+                "expected_acceptable_agents": expected_acceptable_agents,
                 "expected_category": expected_category,
                 "expected_tool": expected_tool,
+                "expected_acceptable_tools": expected_acceptable_tools,
                 "allowed_tools": allowed_tools,
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,

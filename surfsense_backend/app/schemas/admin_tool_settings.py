@@ -74,6 +74,8 @@ class ToolEvaluationExpected(BaseModel):
     category: str | None = None
     tool: str | None = None
     agent: str | None = None
+    acceptable_agents: list[str] = Field(default_factory=list)
+    acceptable_tools: list[str] = Field(default_factory=list)
     intent: str | None = None
     route: str | None = None
     sub_route: str | None = None
@@ -84,6 +86,8 @@ class ToolApiInputEvaluationExpected(BaseModel):
     category: str | None = None
     tool: str | None = None
     agent: str | None = None
+    acceptable_agents: list[str] = Field(default_factory=list)
+    acceptable_tools: list[str] = Field(default_factory=list)
     intent: str | None = None
     route: str | None = None
     sub_route: str | None = None
@@ -174,8 +178,10 @@ class ToolEvaluationCaseResult(BaseModel):
     expected_route: str | None = None
     expected_sub_route: str | None = None
     expected_agent: str | None = None
+    expected_acceptable_agents: list[str] = Field(default_factory=list)
     expected_category: str | None = None
     expected_tool: str | None = None
+    expected_acceptable_tools: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
     selected_route: str | None = None
     selected_sub_route: str | None = None
@@ -228,8 +234,10 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     expected_route: str | None = None
     expected_sub_route: str | None = None
     expected_agent: str | None = None
+    expected_acceptable_agents: list[str] = Field(default_factory=list)
     expected_category: str | None = None
     expected_tool: str | None = None
+    expected_acceptable_tools: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
     selected_route: str | None = None
     selected_sub_route: str | None = None
@@ -443,6 +451,7 @@ class ToolAutoLoopGenerationConfig(BaseModel):
     mode: str = "category"
     provider_key: str | None = None
     category_id: str | None = None
+    weather_suite_mode: str = "mixed"
     question_count: int = 12
     difficulty_profile: str = "mixed"
     eval_name: str | None = None
@@ -612,6 +621,7 @@ class ToolEvalLibraryGenerateRequest(BaseModel):
     mode: str = "category"
     provider_key: str | None = None
     category_id: str | None = None
+    weather_suite_mode: str = "mixed"
     question_count: int = 12
     difficulty_profile: str = "mixed"
     eval_name: str | None = None

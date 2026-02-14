@@ -489,6 +489,39 @@ def _is_weather_domain_tool(tool_id: str, category: str | None = None) -> bool:
     return False
 
 
+def _is_mixed_weather_question(question: str) -> bool:
+    lowered = str(question or "").strip().lower()
+    if not lowered:
+        return False
+    weather_signals = (
+        "smhi",
+        "väder",
+        "vader",
+        "temperatur",
+        "vind",
+        "nederbörd",
+        "nederbord",
+        "halka",
+    )
+    traffic_signals = (
+        "trafik",
+        "väg",
+        "vag",
+        "e4",
+        "e6",
+        "e18",
+        "e20",
+        "riksväg",
+        "riksvag",
+        "motorväg",
+        "motorvag",
+        "framkomlighet",
+    )
+    has_weather = any(signal in lowered for signal in weather_signals)
+    has_traffic = any(signal in lowered for signal in traffic_signals)
+    return has_weather and has_traffic
+
+
 def _provider_display_name(provider_key: str) -> str:
     mapping = {
         "scb": "SCB",
@@ -699,6 +732,26 @@ def _normalize_single_eval_test_for_consistency(
 
     expected_tool = str(normalized_expected.get("tool") or "").strip()
     expected_category = str(normalized_expected.get("category") or "").strip()
+    acceptable_tools = _dedupe_non_empty(
+        [
+            str(tool_id)
+            for tool_id in (
+                normalized_expected.get("acceptable_tools")
+                if isinstance(normalized_expected.get("acceptable_tools"), list)
+                else []
+            )
+        ]
+    )
+    acceptable_agents = _dedupe_non_empty(
+        [
+            str(agent_name)
+            for agent_name in (
+                normalized_expected.get("acceptable_agents")
+                if isinstance(normalized_expected.get("acceptable_agents"), list)
+                else []
+            )
+        ]
+    )
 
     retrieved_ids: list[str] = []
     try:
@@ -716,6 +769,11 @@ def _normalize_single_eval_test_for_consistency(
     retrieved_ids = [str(tool_id).strip() for tool_id in retrieved_ids if str(tool_id).strip()]
     top_retrieved_tool = retrieved_ids[0] if retrieved_ids else None
 
+    if not expected_tool and len(acceptable_tools) == 1:
+        expected_tool = acceptable_tools[0]
+        normalized_expected["tool"] = expected_tool
+        normalized = True
+        warnings.append("Saknade expected.tool; använde enda acceptable_tools som fallback.")
     if not expected_tool and len(normalized_allowed_tools) == 1:
         expected_tool = normalized_allowed_tools[0]
         normalized_expected["tool"] = expected_tool
@@ -752,6 +810,9 @@ def _normalize_single_eval_test_for_consistency(
             warnings.append(
                 f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool} (rank {expected_rank})."
             )
+
+    if expected_tool:
+        acceptable_tools = _dedupe_non_empty([expected_tool, *acceptable_tools])
 
     entry = tool_by_id.get(expected_tool) if expected_tool else None
     if entry is not None:
@@ -825,6 +886,44 @@ def _normalize_single_eval_test_for_consistency(
         normalized_expected["agent"] = canonical_agent
         normalized = True
 
+    if canonical_agent:
+        acceptable_agents = _dedupe_non_empty([canonical_agent, *acceptable_agents])
+
+    mixed_weather = bool(
+        _is_mixed_weather_question(question)
+        and str(normalized_expected.get("route") or "").strip().lower() == "action"
+        and str(normalized_expected.get("sub_route") or "").strip().lower() in {"travel", ""}
+    )
+    if mixed_weather:
+        expanded_agents = _dedupe_non_empty(["weather", "trafik", *acceptable_agents])
+        if expanded_agents != acceptable_agents:
+            acceptable_agents = expanded_agents
+            normalized = True
+            warnings.append(
+                "Mixed väder/trafik-fråga upptäckt; acceptable_agents utökades till weather+trafik."
+            )
+        weather_retrieval_candidates: list[str] = []
+        for tool_id in retrieved_ids:
+            candidate_entry = tool_by_id.get(tool_id)
+            candidate_category = (
+                str(getattr(candidate_entry, "category", "")).strip()
+                if candidate_entry is not None
+                else ""
+            )
+            if _is_weather_domain_tool(tool_id, candidate_category):
+                weather_retrieval_candidates.append(tool_id)
+            if len(weather_retrieval_candidates) >= 3:
+                break
+        expanded_tools = _dedupe_non_empty(
+            [*acceptable_tools, *weather_retrieval_candidates]
+        )
+        if expanded_tools != acceptable_tools and weather_retrieval_candidates:
+            acceptable_tools = expanded_tools
+            normalized = True
+            warnings.append(
+                "Mixed väder/trafik-fråga upptäckt; acceptable_tools utökades med närliggande väderverktyg."
+            )
+
     existing_requirements = normalized_expected.get("plan_requirements")
     if isinstance(existing_requirements, list):
         normalized_requirements = _normalize_plan_requirements_for_expected(
@@ -833,12 +932,28 @@ def _normalize_single_eval_test_for_consistency(
             agent=str(normalized_expected.get("agent") or "").strip() or None,
             tool=str(normalized_expected.get("tool") or "").strip() or None,
         )
+        if mixed_weather:
+            without_agent = [
+                requirement
+                for requirement in normalized_requirements
+                if not str(requirement).strip().casefold().startswith("agent:")
+            ]
+            if without_agent != normalized_requirements:
+                normalized_requirements = without_agent
+                normalized = True
+                warnings.append(
+                    "Mixed väder/trafik-fråga: agent-krav togs bort från plan_requirements (route/tool kvar)."
+                )
         if normalized_requirements != existing_requirements:
             warnings.append("Plan requirements normaliserades för route/agent/tool-konsistens.")
             normalized = True
         normalized_expected["plan_requirements"] = normalized_requirements
 
     normalized_tool = str(normalized_expected.get("tool") or "").strip()
+    if acceptable_tools:
+        normalized_allowed_tools = _dedupe_non_empty(
+            [*acceptable_tools, *normalized_allowed_tools]
+        )
     if normalized_tool:
         if normalized_allowed_tools and normalized_tool not in normalized_allowed_tools:
             warnings.append(
@@ -851,6 +966,15 @@ def _normalize_single_eval_test_for_consistency(
         elif not normalized_allowed_tools:
             normalized_allowed_tools = [normalized_tool]
             normalized = True
+
+    next_acceptable_tools = _dedupe_non_empty(
+        [*acceptable_tools, *normalized_allowed_tools]
+    )
+    if next_acceptable_tools != acceptable_tools:
+        acceptable_tools = next_acceptable_tools
+        normalized = True
+    normalized_expected["acceptable_tools"] = acceptable_tools
+    normalized_expected["acceptable_agents"] = acceptable_agents
 
     return (
         normalized_expected,
@@ -1171,10 +1295,36 @@ def _normalize_generated_tests(
                 "expected": {
                     "tool": expected_tool,
                     "category": expected_category or getattr(entry, "category", None),
+                    "acceptable_tools": _dedupe_non_empty(
+                        [
+                            *[
+                                str(item)
+                                for item in (
+                                    expected.get("acceptable_tools")
+                                    if isinstance(expected.get("acceptable_tools"), list)
+                                    else []
+                                )
+                            ],
+                            expected_tool,
+                        ]
+                    ),
                     "intent": expected_intent or _infer_intent_for_route(expected_route),
                     "route": expected_route,
                     "sub_route": expected_sub_route,
                     "agent": expected_agent,
+                    "acceptable_agents": _dedupe_non_empty(
+                        [
+                            *[
+                                str(item)
+                                for item in (
+                                    expected.get("acceptable_agents")
+                                    if isinstance(expected.get("acceptable_agents"), list)
+                                    else []
+                                )
+                            ],
+                            expected_agent,
+                        ]
+                    ),
                     "plan_requirements": plan_requirements,
                 },
                 "allowed_tools": [expected_tool] if include_allowed_tools else [],
@@ -1224,10 +1374,12 @@ def _build_fallback_generated_tests(
                 "expected": {
                     "tool": tool_id,
                     "category": str(getattr(entry, "category", "")).strip(),
+                    "acceptable_tools": [tool_id] if tool_id else [],
                     "intent": _infer_intent_for_route(route),
                     "route": route,
                     "sub_route": sub_route,
                     "agent": agent,
+                    "acceptable_agents": [agent] if agent else [],
                     "plan_requirements": [
                         f"route:{route}",
                         f"agent:{agent}",
@@ -1421,10 +1573,36 @@ def _enrich_api_input_generated_tests(
             "tool": expected_tool or expected.get("tool"),
             "category": expected.get("category")
             or (str(getattr(entry, "category", "")).strip() if entry else None),
+            "acceptable_tools": _dedupe_non_empty(
+                [
+                    *[
+                        str(item)
+                        for item in (
+                            expected.get("acceptable_tools")
+                            if isinstance(expected.get("acceptable_tools"), list)
+                            else []
+                        )
+                    ],
+                    str(expected_tool).strip(),
+                ]
+            ),
             "intent": resolved_intent or _infer_intent_for_route(route),
             "route": route,
             "sub_route": sub_route,
             "agent": str(expected.get("agent") or agent).strip(),
+            "acceptable_agents": _dedupe_non_empty(
+                [
+                    str(expected.get("agent") or agent).strip(),
+                    *[
+                        str(item)
+                        for item in (
+                            expected.get("acceptable_agents")
+                            if isinstance(expected.get("acceptable_agents"), list)
+                            else []
+                        )
+                    ],
+                ]
+            ),
             "plan_requirements": plan_requirements,
             "required_fields": required_fields,
             "field_values": field_values,
@@ -1644,8 +1822,51 @@ def _select_generation_entries(
     mode: str,
     provider_key: str | None,
     category_id: str | None,
+    weather_suite_mode: str | None,
     question_count: int,
 ) -> list[Any]:
+    def _normalize_weather_suite_mode(value: str | None) -> str:
+        normalized = str(value or "mixed").strip().lower()
+        aliases = {
+            "smhi": "smhi_only",
+            "smhi_only": "smhi_only",
+            "trafik": "trafik_weather_only",
+            "trafikverket": "trafik_weather_only",
+            "trafik_weather_only": "trafik_weather_only",
+            "mixed": "mixed",
+        }
+        return aliases.get(normalized, "mixed")
+
+    def _apply_weather_suite_filter(entries: list[Any]) -> list[Any]:
+        normalized_weather_mode = _normalize_weather_suite_mode(weather_suite_mode)
+        if normalized_weather_mode == "mixed":
+            return entries
+        if normalized_weather_mode == "smhi_only":
+            filtered = [
+                entry
+                for entry in entries
+                if str(getattr(entry, "tool_id", "")).strip().lower() == "smhi_weather"
+            ]
+            if filtered:
+                return filtered
+            raise HTTPException(
+                status_code=404,
+                detail="No SMHI weather tools found for selected generation scope",
+            )
+        filtered = [
+            entry
+            for entry in entries
+            if str(getattr(entry, "tool_id", "")).strip().lower().startswith(
+                "trafikverket_vader_"
+            )
+        ]
+        if filtered:
+            return filtered
+        raise HTTPException(
+            status_code=404,
+            detail="No Trafikverket weather tools found for selected generation scope",
+        )
+
     normalized_mode = str(mode or "category").strip().lower()
     if normalized_mode not in {"category", "global_random", "provider"}:
         normalized_mode = "category"
@@ -1671,7 +1892,7 @@ def _select_generation_entries(
                 status_code=404,
                 detail="No tools found for selected provider",
             )
-        return candidates
+        return _apply_weather_suite_filter(candidates)
 
     if normalized_mode == "category":
         if not category_filter:
@@ -1705,7 +1926,7 @@ def _select_generation_entries(
                 status_code=404,
                 detail="No tools found for selected API category",
             )
-        return pool
+        return _apply_weather_suite_filter(pool)
 
     by_category: dict[str, list[Any]] = {}
     for entry in candidates:
@@ -1726,7 +1947,7 @@ def _select_generation_entries(
         random.shuffle(remaining)
         needed = question_count - len(selected)
         selected.extend(remaining[:needed])
-    return selected or candidates
+    return _apply_weather_suite_filter(selected or candidates)
 
 
 def _list_eval_library_files(
@@ -2713,6 +2934,16 @@ async def _execute_tool_evaluation(
                     "tool": expected_tool,
                     "category": expected_category,
                     "agent": test.expected.agent if test.expected else None,
+                    "acceptable_agents": (
+                        list(test.expected.acceptable_agents)
+                        if test.expected
+                        else []
+                    ),
+                    "acceptable_tools": (
+                        list(test.expected.acceptable_tools)
+                        if test.expected
+                        else []
+                    ),
                     "intent": resolved_intent,
                     "route": resolved_route or expected_route,
                     "sub_route": test.expected.sub_route if test.expected else None,
@@ -2820,6 +3051,16 @@ async def _execute_api_input_evaluation(
                         "tool": expected_tool,
                         "category": expected_category,
                         "agent": test.expected.agent if test.expected else None,
+                        "acceptable_agents": (
+                            list(test.expected.acceptable_agents)
+                            if test.expected
+                            else []
+                        ),
+                        "acceptable_tools": (
+                            list(test.expected.acceptable_tools)
+                            if test.expected
+                            else []
+                        ),
                         "intent": resolved_intent,
                         "route": resolved_route or expected_route,
                         "sub_route": test.expected.sub_route if test.expected else None,
@@ -3181,6 +3422,7 @@ async def generate_eval_library_file(
         mode=normalized_mode,
         provider_key=payload.provider_key,
         category_id=payload.category_id,
+        weather_suite_mode=payload.weather_suite_mode,
         question_count=question_count,
     )
     if not pool:
@@ -3206,6 +3448,9 @@ async def generate_eval_library_file(
     default_eval_name = (
         f"{payload.provider_key or 'global'}-{payload.category_id or normalized_mode}"
     )
+    weather_suite_mode = str(payload.weather_suite_mode or "mixed").strip().lower()
+    if weather_suite_mode and weather_suite_mode != "mixed":
+        default_eval_name = f"{default_eval_name}-{weather_suite_mode}"
     eval_name = str(payload.eval_name or default_eval_name)
     eval_payload = _build_eval_library_payload(
         eval_type=normalized_eval_type,
@@ -3731,6 +3976,7 @@ async def _generate_auto_loop_suite(
         mode=normalized_mode,
         provider_key=generation.provider_key,
         category_id=generation.category_id,
+        weather_suite_mode=generation.weather_suite_mode,
         question_count=question_count,
     )
     if not pool:
@@ -3750,6 +3996,9 @@ async def _generate_auto_loop_suite(
     default_eval_name = (
         f"{generation.provider_key or 'global'}-{generation.category_id or normalized_mode}"
     )
+    weather_suite_mode = str(generation.weather_suite_mode or "mixed").strip().lower()
+    if weather_suite_mode and weather_suite_mode != "mixed":
+        default_eval_name = f"{default_eval_name}-{weather_suite_mode}"
     eval_name = str(generation.eval_name or default_eval_name).strip() or default_eval_name
     suite_payload = _build_eval_library_payload(
         eval_type=normalized_eval_type,
