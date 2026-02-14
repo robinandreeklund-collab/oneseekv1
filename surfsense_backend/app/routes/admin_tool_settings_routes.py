@@ -785,7 +785,18 @@ def _normalize_single_eval_test_for_consistency(
     except Exception:
         retrieved_ids = []
     retrieved_ids = [str(tool_id).strip() for tool_id in retrieved_ids if str(tool_id).strip()]
-    top_retrieved_tool = retrieved_ids[0] if retrieved_ids else None
+    constraint_candidates = _dedupe_non_empty([*acceptable_tools, *normalized_allowed_tools])
+    constraint_set = set(constraint_candidates)
+    constrained_retrieved_ids = (
+        [tool_id for tool_id in retrieved_ids if tool_id in constraint_set]
+        if constraint_set
+        else []
+    )
+    top_retrieved_tool = (
+        constrained_retrieved_ids[0]
+        if constrained_retrieved_ids
+        else (retrieved_ids[0] if retrieved_ids else None)
+    )
 
     if not expected_tool and len(acceptable_tools) == 1:
         expected_tool = acceptable_tools[0]
@@ -818,12 +829,20 @@ def _normalize_single_eval_test_for_consistency(
             None,
         )
         if expected_rank is None or expected_rank > 5:
-            warnings.append(
-                f"Frågan matchar retrieval-top1 ({top_retrieved_tool}) tydligare än expected.tool ({expected_tool}); normaliserad."
-            )
-            expected_tool = top_retrieved_tool
-            normalized_expected["tool"] = expected_tool
-            normalized = True
+            expected_provider = _provider_for_tool_id(expected_tool)
+            top_provider = _provider_for_tool_id(top_retrieved_tool)
+            if constraint_set and expected_tool in constraint_set:
+                warnings.append(
+                    f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool}; behöll expected.tool p.g.a. allowed/acceptable constraints."
+                )
+            elif expected_provider != top_provider:
+                warnings.append(
+                    f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool}; behöll expected.tool p.g.a. provider-skillnad ({expected_provider} vs {top_provider})."
+                )
+            else:
+                warnings.append(
+                    f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool} (rank {expected_rank}); behöll expected.tool."
+                )
         else:
             warnings.append(
                 f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool} (rank {expected_rank})."
