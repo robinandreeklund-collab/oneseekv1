@@ -12,6 +12,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     Enum as SQLAlchemyEnum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -1244,6 +1245,156 @@ class GlobalAgentPromptOverrideHistory(BaseModel, TimestampMixin):
     key = Column(String(120), nullable=False, index=True)
     previous_prompt_text = Column(Text, nullable=True)
     new_prompt_text = Column(Text, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class GlobalToolMetadataOverride(BaseModel, TimestampMixin):
+    __tablename__ = "tool_metadata_overrides_global"
+    __table_args__ = (
+        UniqueConstraint(
+            "tool_id", name="uq_tool_metadata_override_global_tool_id"
+        ),
+    )
+
+    tool_id = Column(String(160), nullable=False, index=True)
+    override_payload = Column(JSONB, nullable=False, default={})
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class GlobalToolMetadataOverrideHistory(BaseModel, TimestampMixin):
+    __tablename__ = "tool_metadata_override_history_global"
+
+    tool_id = Column(String(160), nullable=False, index=True)
+    previous_payload = Column(JSONB, nullable=True)
+    new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class GlobalToolRetrievalTuning(BaseModel, TimestampMixin):
+    __tablename__ = "tool_retrieval_tuning_global"
+    __table_args__ = (
+        UniqueConstraint(
+            "config_key", name="uq_tool_retrieval_tuning_global_key"
+        ),
+    )
+
+    config_key = Column(String(40), nullable=False, index=True, default="default")
+    tuning_payload = Column(JSONB, nullable=False, default={})
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class GlobalToolRetrievalTuningHistory(BaseModel, TimestampMixin):
+    __tablename__ = "tool_retrieval_tuning_history_global"
+
+    config_key = Column(String(40), nullable=False, index=True)
+    previous_payload = Column(JSONB, nullable=True)
+    new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class GlobalIntentDefinition(BaseModel, TimestampMixin):
+    __tablename__ = "intent_definitions_global"
+    __table_args__ = (
+        UniqueConstraint(
+            "intent_id", name="uq_intent_definitions_global_intent_id"
+        ),
+    )
+
+    intent_id = Column(String(80), nullable=False, index=True)
+    definition_payload = Column(JSONB, nullable=False, default={})
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class GlobalIntentDefinitionHistory(BaseModel, TimestampMixin):
+    __tablename__ = "intent_definition_history_global"
+
+    intent_id = Column(String(80), nullable=False, index=True)
+    previous_payload = Column(JSONB, nullable=True)
+    new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class GlobalToolEvaluationRun(BaseModel, TimestampMixin):
+    __tablename__ = "tool_evaluation_runs_global"
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    eval_name = Column(String(160), nullable=True)
+    total_tests = Column(Integer, nullable=False, default=0)
+    passed_tests = Column(Integer, nullable=False, default=0)
+    success_rate = Column(Float, nullable=False, default=0.0)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User")
+
+
+class GlobalToolEvaluationStageRun(BaseModel, TimestampMixin):
+    __tablename__ = "tool_evaluation_stage_runs_global"
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stage = Column(String(40), nullable=False, index=True)
+    eval_name = Column(String(160), nullable=True)
+    metric_name = Column(String(80), nullable=True)
+    metric_value = Column(Float, nullable=True, default=0.0)
+    total_tests = Column(Integer, nullable=False, default=0)
+    passed_tests = Column(Integer, nullable=False, default=0)
+    success_rate = Column(Float, nullable=False, default=0.0)
+    category_breakdown = Column(JSONB, nullable=False, default=list)
+    run_metadata = Column(JSONB, nullable=False, default=dict)
 
     updated_by_id = Column(
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True

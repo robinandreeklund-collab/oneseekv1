@@ -1,5 +1,4 @@
 from app.agents.new_chat.system_prompt import (
-    SURFSENSE_CITATION_INSTRUCTIONS,
     append_datetime_context,
 )
 
@@ -12,7 +11,9 @@ Riktlinjer:
 - Svara alltid på svenska.
 - Använd retrieve_tools för att hitta rätt trafikverket-verktyg.
 - Du måste alltid anropa minst ett trafikverket_* verktyg innan du svarar.
-- Vid frågor om "störningar": prioritera trafikverket_trafikinfo_storningar.
+- Undvik statisk endpoint-listning i prompten; låt retrieve_tools och tool-specifik prompt styra valet.
+- Om valda verktyg inte matchar uppgiften: kör retrieve_tools igen med förfinad fråga i stället för att gissa.
+- Om användarens fråga byter inriktning: be om kort förtydligande eller signalera behov av omrouting till annan agent.
 - Be om kort förtydligande om region/väg/sträcka/station saknas.
 - Håll anrop små (limit <= 10) och relevanta.
 - Om flera steg behövs: använd write_todos och uppdatera status.
@@ -24,9 +25,15 @@ Current time (UTC): {resolved_time}
 """
 
 
-def build_trafik_prompt(prompt_override: str | None = None) -> str:
+def build_trafik_prompt(
+    prompt_override: str | None = None,
+    citation_instructions: str | None = None,
+) -> str:
     base = (prompt_override or DEFAULT_TRAFFIC_SYSTEM_PROMPT).strip()
     if not base:
         base = DEFAULT_TRAFFIC_SYSTEM_PROMPT.strip()
     base = append_datetime_context(base)
-    return base + "\n\n" + SURFSENSE_CITATION_INSTRUCTIONS
+    explicit = str(citation_instructions or "").strip()
+    if not explicit:
+        return base
+    return base + "\n\n" + explicit

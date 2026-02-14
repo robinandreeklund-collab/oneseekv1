@@ -1,5 +1,4 @@
 from app.agents.new_chat.system_prompt import (
-    SURFSENSE_CITATION_INSTRUCTIONS,
     append_datetime_context,
 )
 
@@ -24,19 +23,12 @@ Regler:
 - Hall svar korta och faktabaserade. Inkludera citations om de kommer fran agenter.
 - Efter varje verktygssteg: kalla reflect_on_progress kort.
 - Nar planen ar klar: kalla write_todos med plan_complete=true.
-
-Tillgangliga agenter (hamtas via retrieve_agents):
-- action: vader, resor och realtidsverktyg
-- statistics: SCB, officiell svensk statistik
-- media: podcast, bild, video-generering
-- knowledge: SurfSense, Tavily, generell kunskap
-- code: kodkalkyler och berakningar (om tillgangligt)
-- browser: webbsokning och scrape
-- synthesis: syntes och jamforelser av flera källor
-- bolag: bolagsverket, orgnr, ägare och företagsdata
-- trafik: trafikverket, väg, tåg och trafikinformation
-- kartor: statiska kartbilder och markörer (geoapify_static_map)
-- riksdagen: propositioner, motioner, voteringar, ledamöter (Riksdagens öppna data)
+- Lista inte alla agenter statiskt i prompten.
+- Hamta alltid kandidat-agenter dynamiskt via retrieve_agents() och valj darifran.
+- Anvand EXAKTA agent-id fran retrieve_agents (agents[].name). Hitta inte pa nya agentnamn.
+- Om vald agent inte kan losa uppgiften med tillgangliga verktyg: gor ny retrieve_agents() med en forfinad uppgiftsbeskrivning.
+- Om anvandaren byter riktning/amne i traden: gor ny retrieve_agents() innan nasta delegering.
+- Ateranvand inte tidigare agent slentrianmassigt; verifiera domanmatch via retrieval i varje storre steg.
 
 Today's date (UTC): {resolved_today}
 Current time (UTC): {resolved_time}
@@ -44,9 +36,15 @@ Current time (UTC): {resolved_time}
 """
 
 
-def build_supervisor_prompt(prompt_override: str | None = None) -> str:
+def build_supervisor_prompt(
+    prompt_override: str | None = None,
+    citation_instructions: str | None = None,
+) -> str:
     base = (prompt_override or DEFAULT_SUPERVISOR_PROMPT).strip()
     if not base:
         base = DEFAULT_SUPERVISOR_PROMPT.strip()
     base = append_datetime_context(base)
-    return base + "\n\n" + SURFSENSE_CITATION_INSTRUCTIONS
+    explicit = str(citation_instructions or "").strip()
+    if not explicit:
+        return base
+    return base + "\n\n" + explicit

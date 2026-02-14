@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import hashlib
 import re
@@ -18,12 +19,44 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
-from app.agents.new_chat.bigtool_workers import WorkerConfig, create_bigtool_worker
-from app.agents.new_chat.lazy_worker_pool import LazyWorkerPool
+from app.agents.new_chat.bigtool_workers import WorkerConfig
+from app.agents.new_chat.nodes import (
+    build_agent_resolver_node,
+    build_critic_node,
+    build_executor_nodes,
+    build_execution_hitl_gate_node,
+    build_intent_resolver_node,
+    build_planner_hitl_gate_node,
+    build_planner_node,
+    build_synthesis_hitl_gate_node,
+    build_synthesizer_node,
+    build_tool_resolver_node,
+)
+from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
+from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
-from app.agents.new_chat.token_budget import TokenBudget
+from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+)
+from app.agents.new_chat.supervisor_pipeline_prompts import (
+    DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
+    DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+)
+from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
 from app.agents.new_chat.system_prompt import append_datetime_context
+from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
@@ -72,10 +105,119 @@ _AGENT_EMBED_CACHE: dict[str, list[float]] = {}
 AGENT_RERANK_CANDIDATES = 6
 AGENT_EMBEDDING_WEIGHT = 4.0
 
+
+@dataclass(frozen=True)
+class AgentToolProfile:
+    tool_id: str
+    category: str
+    description: str
+    keywords: tuple[str, ...]
+
+
+def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
+    profiles: dict[str, list[AgentToolProfile]] = {
+        "trafik": [],
+        "statistics": [],
+        "riksdagen": [],
+        "bolag": [],
+    }
+    for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
+        profiles["trafik"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "category", "trafik")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    for definition in SCB_TOOL_DEFINITIONS:
+        profiles["statistics"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "base_path", "statistics")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    for definition in RIKSDAGEN_TOOL_DEFINITIONS:
+        profiles["riksdagen"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "category", "riksdagen")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    for definition in BOLAGSVERKET_TOOL_DEFINITIONS:
+        profiles["bolag"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "category", "bolag")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    return profiles
+
+
+_AGENT_TOOL_PROFILES = _build_agent_tool_profiles()
+_AGENT_TOOL_PROFILE_BY_ID: dict[str, AgentToolProfile] = {
+    profile.tool_id: profile
+    for profiles in _AGENT_TOOL_PROFILES.values()
+    for profile in profiles
+    if profile.tool_id
+}
+
 # Message pruning constants for progressive context management
 MESSAGE_PRUNING_THRESHOLD = 20  # Start pruning when total messages exceed this
 TOOL_MSG_THRESHOLD = 8  # Trigger aggressive pruning when tool messages exceed this
 KEEP_TOOL_MSG_COUNT = 6  # Number of recent tool message exchanges to preserve
+TOOL_CONTEXT_MAX_CHARS = 1200
+TOOL_CONTEXT_MAX_ITEMS = 5
+TOOL_CONTEXT_DROP_KEYS = {
+    "raw",
+    "data",
+    "entries",
+    "matching_entries",
+    "results",
+    "content",
+    "chunks",
+    "documents",
+    "rows",
+    "timeSeries",
+    "origin_lookup",
+    "destination_lookup",
+    "timetable",
+}
+_LOOP_GUARD_TOOL_NAMES = {
+    "retrieve_agents",
+    "call_agents_parallel",
+    "reflect_on_progress",
+    "write_todos",
+}
+_LOOP_GUARD_MAX_CONSECUTIVE = 12
+_MAX_AGENT_HOPS_PER_TURN = 3
+_AGENT_NAME_ALIAS_MAP = {
+    "weather": "weather",
+    "weather_agent": "weather",
+    "smhi": "weather",
+    "smhi_agent": "weather",
+    "traffic_information": "trafik",
+    "traffic_info": "trafik",
+    "traffic_agent": "trafik",
+    "road_works_planner": "trafik",
+    "roadworks_planner": "trafik",
+    "road_work_planner": "trafik",
+    "roadworks": "trafik",
+    "municipality_agent": "statistics",
+    "map_agent": "kartor",
+    "maps_agent": "kartor",
+    "statistic_agent": "statistics",
+    "statistics_agent": "statistics",
+    "parliament_agent": "riksdagen",
+    "company_agent": "bolag",
+    "code_agent": "code",
+}
 
 _TRAFFIC_INTENT_RE = re.compile(
     r"\b("
@@ -90,9 +232,99 @@ _TRAFFIC_INTENT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_TRAFFIC_STRICT_INTENT_RE = re.compile(
+    r"\b("
+    r"trafikverket|"
+    r"olycka|storing|storning|störning|"
+    r"koer|köer|ko|kö|"
+    r"vagarbete|vägarbete|avstangning|avstängning|omledning|framkomlighet|"
+    r"kamera|kameror|"
+    r"vaglag|väglag|hastighet|"
+    r"e\d+|rv\s?\d+|riksvag|riksväg|vag\s?\d+|väg\s?\d+"
+    r")\b",
+    re.IGNORECASE,
+)
+_TRAFFIC_INCIDENT_STRICT_RE = re.compile(
+    r"\b("
+    r"trafikverket|"
+    r"olycka|storing|storning|störning|"
+    r"koer|köer|ko|kö|"
+    r"vagarbete|vägarbete|avstangning|avstängning|omledning|framkomlighet|"
+    r"kamera|kameror|"
+    r"tagforsening|tågförsening|forsening|försening|installd|inställd|"
+    r"trafikinfo"
+    r")\b",
+    re.IGNORECASE,
+)
+_WEATHER_INTENT_RE = re.compile(
+    r"\b("
+    r"smhi|vader|väder|temperatur|regn|sno|snö|vind|vindhastighet|"
+    r"halka|isrisk|vaglag|väglag|vagvader|vägväder|"
+    r"nederbord|nederbörd|prognos|sol|moln|luftfuktighet"
+    r")\b",
+    re.IGNORECASE,
+)
 _MAP_INTENT_RE = re.compile(
     r"\b(karta|kartbild|kartor|map|marker|markor|pin|"
     r"rutt|route|vagbeskrivning|vägbeskrivning)\b",
+    re.IGNORECASE,
+)
+_MISSING_SIGNAL_RE = re.compile(
+    r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
+    re.IGNORECASE,
+)
+_UNAVAILABLE_RESPONSE_MARKERS = (
+    "finns inte tillganglig",
+    "finns inte tillgänglig",
+    "publiceras inte",
+    "inte tillganglig",
+    "inte tillgänglig",
+    "framtida ar",
+    "framtida år",
+    "har inte publicerats",
+    "saknas for",
+    "saknas för",
+)
+_ALTERNATIVE_RESPONSE_MARKERS = (
+    "senaste tillgangliga",
+    "senaste tillgängliga",
+    "istallet",
+    "istället",
+    "vill du ha",
+    "kan ge",
+    "kan visa",
+    "2023",
+    "2024",
+)
+_BLOCKED_RESPONSE_MARKERS = (
+    "jag kan inte",
+    "jag kunde inte",
+    "kan tyvarr inte",
+    "kan tyvärr inte",
+    "saknar tillgang",
+    "saknar tillgång",
+    "utan tillgang",
+    "utan tillgång",
+    "annan agent behovs",
+    "annan agent behövs",
+    "behover annan agent",
+    "behöver annan agent",
+)
+_MISSING_FIELD_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("datum", ("datum", "period", "vecka", "manad", "månad", "ar", "år")),
+    ("tid", ("tid", "klockslag", "timme", "avgangstid", "avgångstid")),
+    ("plats", ("plats", "ort", "stad", "kommun", "adress", "koordinat")),
+    ("stracka", ("stracka", "sträcka", "riktning", "vagnummer", "vägnummer")),
+    ("id", ("id", "organisationsnummer", "personnummer", "beteckning")),
+    ("kategori", ("kategori", "typ", "slag")),
+)
+_RESULT_STATUS_VALUES = {"success", "partial", "blocked", "error"}
+_ROUTE_STRICT_AGENT_POLICIES: dict[str, set[str]] = {
+    "statistics": {"statistics"},
+    "compare": {"synthesis", "statistics", "knowledge"},
+}
+_COMPARE_FOLLOWUP_RE = re.compile(
+    r"\b(jamfor|jämför|jamforelse|jämförelse|skillnad|dessa två|de två|båda|bada)\b",
     re.IGNORECASE,
 )
 
@@ -103,6 +335,208 @@ def _has_trafik_intent(text: str) -> bool:
 
 def _has_map_intent(text: str) -> bool:
     return bool(text and _MAP_INTENT_RE.search(text))
+
+
+def _has_strict_trafik_intent(text: str) -> bool:
+    if not text:
+        return False
+    if not _TRAFFIC_STRICT_INTENT_RE.search(text):
+        return False
+    if _has_weather_intent(text):
+        # For mixed weather+road queries, only keep strict traffic lock when
+        # clear incident/disruption intent exists.
+        return bool(_TRAFFIC_INCIDENT_STRICT_RE.search(text))
+    return True
+
+
+def _has_weather_intent(text: str) -> bool:
+    return bool(text and _WEATHER_INTENT_RE.search(text))
+
+
+def _is_weather_tool_id(tool_id: str) -> bool:
+    normalized = str(tool_id or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized == "smhi_weather":
+        return True
+    if normalized.startswith("trafikverket_vader_"):
+        return True
+    return False
+
+
+def _normalize_route_hint_value(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _route_allowed_agents(route_hint: str | None) -> set[str]:
+    route = _normalize_route_hint_value(route_hint)
+    return set(_ROUTE_STRICT_AGENT_POLICIES.get(route, set()))
+
+
+def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None) -> str:
+    route = _normalize_route_hint_value(route_hint)
+    defaults = {
+        "action": "action",
+        "knowledge": "knowledge",
+        "statistics": "statistics",
+        "compare": "synthesis",
+        "trafik": "trafik",
+    }
+    preferred = defaults.get(route, "knowledge")
+    if allowed:
+        if preferred in allowed:
+            return preferred
+        for name in ("statistics", "synthesis", "knowledge", "action", "trafik"):
+            if name in allowed:
+                return name
+    return preferred
+
+
+def _looks_complete_unavailability_answer(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if len(lowered) < 80:
+        return False
+    has_unavailable = any(marker in lowered for marker in _UNAVAILABLE_RESPONSE_MARKERS)
+    has_alternative = any(marker in lowered for marker in _ALTERNATIVE_RESPONSE_MARKERS)
+    return has_unavailable and has_alternative
+
+
+def _tokenize_focus_terms(text: str) -> set[str]:
+    tokens = re.findall(r"[a-zA-Z0-9åäöÅÄÖ]{3,}", str(text or "").lower())
+    return {token for token in tokens if token not in _AGENT_STOPWORDS}
+
+
+def _score_tool_profile(profile: AgentToolProfile, query_norm: str, tokens: set[str]) -> int:
+    score = 0
+    if profile.tool_id and profile.tool_id.lower() in query_norm:
+        score += 6
+    category_norm = _normalize_text(profile.category)
+    if category_norm and category_norm in query_norm:
+        score += 4
+    description_norm = _normalize_text(profile.description)
+    for keyword in profile.keywords:
+        keyword_norm = _normalize_text(keyword)
+        if keyword_norm and keyword_norm in query_norm:
+            score += 3
+    for token in tokens:
+        if token and description_norm and token in description_norm:
+            score += 1
+    return score
+
+
+def _select_focused_tool_profiles(
+    agent_name: str,
+    task: str,
+    *,
+    limit: int = 4,
+) -> list[AgentToolProfile]:
+    profiles = list(_AGENT_TOOL_PROFILES.get(str(agent_name or "").strip().lower(), []))
+    if not profiles:
+        return []
+    query_norm = _normalize_text(task)
+    tokens = _tokenize_focus_terms(task)
+    scored = [
+        (profile, _score_tool_profile(profile, query_norm, tokens))
+        for profile in profiles
+    ]
+    scored.sort(
+        key=lambda item: (
+            item[1],
+            len(item[0].keywords),
+            len(item[0].description),
+        ),
+        reverse=True,
+    )
+    selected = [profile for profile, score in scored if score > 0][: max(1, int(limit))]
+    if selected:
+        return selected
+    return profiles[: max(1, int(limit))]
+
+
+def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -> list[str]:
+    focused = _select_focused_tool_profiles(agent_name, task, limit=limit)
+    return [profile.tool_id for profile in focused if profile.tool_id]
+
+
+def _build_scoped_prompt_for_agent(agent_name: str, task: str) -> str | None:
+    focused = _select_focused_tool_profiles(agent_name, task, limit=3)
+    if not focused:
+        return None
+    lines = [
+        "[SCOPED TOOL PROMPT]",
+        "Fokusera pa dessa mest relevanta verktyg/kategorier for uppgiften:",
+    ]
+    for profile in focused:
+        keywords = ", ".join(profile.keywords[:4]) if profile.keywords else ""
+        snippet = profile.description.strip()
+        if len(snippet) > 140:
+            snippet = snippet[:137].rstrip() + "..."
+        lines.append(
+            f"- {profile.tool_id} ({profile.category})"
+            + (f": {snippet}" if snippet else "")
+            + (f" [nyckelord: {keywords}]" if keywords else "")
+        )
+    lines.append(
+        "Anvand i forsta hand ett av ovanstaende verktyg och hall argumenten strikt till valt verktygs schema."
+    )
+    lines.append(
+        "Om inget av dessa verktyg passar uppgiften: kor retrieve_tools igen med forfinad intent innan fortsattning."
+    )
+    return "\n".join(lines)
+
+
+def _default_prompt_for_tool_id(tool_id: str) -> str | None:
+    profile = _AGENT_TOOL_PROFILE_BY_ID.get(str(tool_id or "").strip())
+    if not profile:
+        return None
+    keywords = ", ".join(profile.keywords[:8]) if profile.keywords else "-"
+    description = profile.description.strip() or "-"
+    return "\n".join(
+        [
+            f"[TOOL-SPECIFIC PROMPT: {profile.tool_id}]",
+            f"Kategori: {profile.category}",
+            f"Beskrivning: {description}",
+            f"Nyckelord: {keywords}",
+            "Anvand endast detta verktyg om uppgiften matchar dess doman.",
+            "Matcha argument strikt mot verktygets schema och undvik overflodiga falt.",
+            "Vid saknade kravfalt: stall en kort, exakt forfragan om komplettering.",
+            "Om uppgiften byter amne eller inte matchar domanen: gor ny retrieve_tools innan nasta verktygsval.",
+        ]
+    )
+
+
+def _tool_prompt_for_id(tool_id: str, tool_prompt_overrides: dict[str, str]) -> str | None:
+    normalized_tool_id = str(tool_id or "").strip()
+    if not normalized_tool_id:
+        return None
+    override_key = f"tool.{normalized_tool_id}.system"
+    override = str(tool_prompt_overrides.get(override_key) or "").strip()
+    if override:
+        return override
+    return _default_prompt_for_tool_id(normalized_tool_id)
+
+
+def _build_tool_prompt_block(
+    selected_tool_ids: list[str],
+    tool_prompt_overrides: dict[str, str],
+    *,
+    max_tools: int = 2,
+) -> str | None:
+    blocks: list[str] = []
+    seen: set[str] = set()
+    for tool_id in selected_tool_ids:
+        normalized_tool_id = str(tool_id or "").strip()
+        if not normalized_tool_id or normalized_tool_id in seen:
+            continue
+        seen.add(normalized_tool_id)
+        prompt_text = _tool_prompt_for_id(normalized_tool_id, tool_prompt_overrides)
+        if prompt_text:
+            blocks.append(prompt_text)
+        if len(blocks) >= max(1, int(max_tools)):
+            break
+    if not blocks:
+        return None
+    return "\n\n".join(blocks)
 
 
 @dataclass(frozen=True)
@@ -382,10 +816,12 @@ async def _store_cached_combo_db(
 
 
 def _replace(left: Any, right: Any) -> Any:
-    return right if right is not None else left
+    return right
 
 
 def _append_recent(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    if right == []:
+        return []
     merged = list(left or [])
     merged.extend(right or [])
     return merged[-3:]
@@ -394,6 +830,8 @@ def _append_recent(left: list[dict[str, Any]] | None, right: list[dict[str, Any]
 def _append_compare_outputs(
     left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None
 ) -> list[dict[str, Any]]:
+    if right == []:
+        return []
     merged: dict[str, dict[str, Any]] = {}
     for item in left or []:
         tool_call_id = str(item.get("tool_call_id") or "")
@@ -438,13 +876,47 @@ def _format_compare_outputs_for_prompt(compare_outputs: list[dict[str, Any]] | N
 
 class SupervisorState(TypedDict, total=False):
     messages: Annotated[list[Any], add_messages]
+    turn_id: Annotated[str | None, _replace]
+    active_turn_id: Annotated[str | None, _replace]
+    resolved_intent: Annotated[dict[str, Any] | None, _replace]
+    selected_agents: Annotated[list[dict[str, Any]], _replace]
+    resolved_tools_by_agent: Annotated[dict[str, list[str]], _replace]
+    query_embedding: Annotated[list[float] | None, _replace]
     active_plan: Annotated[list[dict[str, Any]], _replace]
+    plan_step_index: Annotated[int | None, _replace]
     plan_complete: Annotated[bool, _replace]
+    step_results: Annotated[list[dict[str, Any]], _replace]
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
     route_hint: Annotated[str | None, _replace]
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
     final_agent_response: Annotated[str | None, _replace]
+    final_response: Annotated[str | None, _replace]
+    critic_decision: Annotated[str | None, _replace]
+    awaiting_confirmation: Annotated[bool | None, _replace]
+    pending_hitl_stage: Annotated[str | None, _replace]
+    pending_hitl_payload: Annotated[dict[str, Any] | None, _replace]
+    user_feedback: Annotated[dict[str, Any] | None, _replace]
+    replan_count: Annotated[int | None, _replace]
     final_agent_name: Annotated[str | None, _replace]
+    orchestration_phase: Annotated[str | None, _replace]
+    agent_hops: Annotated[int | None, _replace]
+    no_progress_runs: Annotated[int | None, _replace]
+    guard_parallel_preview: Annotated[list[str], _replace]
+
+
+_MAX_TOOL_CALLS_PER_TURN = 12
+_MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
+_MAX_REPLAN_ATTEMPTS = 2
+
+
+def _count_tools_since_last_user(messages: list[Any]) -> int:
+    count = 0
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        if isinstance(message, ToolMessage):
+            count += 1
+    return count
 
 
 def _format_plan_context(state: dict[str, Any]) -> str | None:
@@ -488,6 +960,88 @@ def _format_route_hint(state: dict[str, Any]) -> str | None:
     return f"<route_hint>{hint}</route_hint>"
 
 
+def _format_intent_context(state: dict[str, Any]) -> str | None:
+    intent = state.get("resolved_intent")
+    if not isinstance(intent, dict):
+        return None
+    intent_id = str(intent.get("intent_id") or "").strip()
+    route = str(intent.get("route") or "").strip()
+    reason = str(intent.get("reason") or "").strip()
+    if not (intent_id or route):
+        return None
+    lines = [f"intent_id={intent_id or 'unknown'}", f"route={route or 'unknown'}"]
+    if reason:
+        lines.append(f"reason={_truncate_for_prompt(reason, 180)}")
+    return "<resolved_intent>\n" + "\n".join(lines) + "\n</resolved_intent>"
+
+
+def _format_selected_agents_context(state: dict[str, Any]) -> str | None:
+    selected = state.get("selected_agents")
+    if not isinstance(selected, list) or not selected:
+        return None
+    lines: list[str] = []
+    for item in selected[:3]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        description = str(item.get("description") or "").strip()
+        if description:
+            lines.append(f"- {name}: {_truncate_for_prompt(description, 140)}")
+        else:
+            lines.append(f"- {name}")
+    if not lines:
+        return None
+    return "<selected_agents>\n" + "\n".join(lines) + "\n</selected_agents>"
+
+
+def _format_resolved_tools_context(state: dict[str, Any]) -> str | None:
+    resolved = state.get("resolved_tools_by_agent")
+    if not isinstance(resolved, dict) or not resolved:
+        return None
+    lines: list[str] = []
+    for agent_name, tool_ids in list(resolved.items())[:3]:
+        normalized_agent = str(agent_name or "").strip()
+        if not normalized_agent:
+            continue
+        safe_tools = [
+            str(tool_id).strip()
+            for tool_id in (tool_ids if isinstance(tool_ids, list) else [])
+            if str(tool_id).strip()
+        ][:6]
+        if not safe_tools:
+            continue
+        lines.append(f"- {normalized_agent}: {', '.join(safe_tools)}")
+    if not lines:
+        return None
+    return "<resolved_tools>\n" + "\n".join(lines) + "\n</resolved_tools>"
+
+
+_HITL_APPROVE_RE = re.compile(r"\b(ja|yes|ok|okej|kor|kör|go|fortsatt|fortsätt)\b", re.IGNORECASE)
+_HITL_REJECT_RE = re.compile(r"\b(nej|no|stopp|avbryt|stop|inte)\b", re.IGNORECASE)
+
+
+def _parse_hitl_confirmation(value: str) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if _HITL_REJECT_RE.search(text):
+        return "reject"
+    if _HITL_APPROVE_RE.search(text):
+        return "approve"
+    return None
+
+
+def _render_hitl_message(template: str, **kwargs: Any) -> str:
+    safe_kwargs = {key: str(value or "").strip() for key, value in kwargs.items()}
+    try:
+        rendered = str(template or "").format(**safe_kwargs)
+    except Exception:
+        rendered = str(template or "")
+    return rendered.strip()
+
+
 
 
 def _safe_json(payload: Any) -> dict[str, Any]:
@@ -501,65 +1055,1019 @@ def _safe_json(payload: Any) -> dict[str, Any]:
         return {}
 
 
+def _extract_first_json_object(text: str) -> dict[str, Any]:
+    value = str(text or "").strip()
+    if not value:
+        return {}
+    direct = _safe_json(value)
+    if direct:
+        return direct
+    start = value.find("{")
+    if start < 0:
+        return {}
+    segment = value[start:]
+    try:
+        decoded, _ = _CRITIC_JSON_DECODER.raw_decode(segment)
+        if isinstance(decoded, dict):
+            return decoded
+    except Exception:
+        pass
+    for end in range(start + 1, min(len(value), start + 4000)):
+        if value[end : end + 1] != "}":
+            continue
+        candidate = value[start : end + 1]
+        parsed = _safe_json(candidate)
+        if parsed:
+            return parsed
+        try:
+            literal = ast.literal_eval(candidate)
+            if isinstance(literal, dict):
+                return literal
+        except Exception:
+            continue
+    return {}
+
+
+def _coerce_confidence(value: Any, default: float = 0.5) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return round(max(0.0, min(1.0, parsed)), 2)
+
+
+def _tool_call_name_index(messages: list[Any] | None) -> dict[str, str]:
+    index: dict[str, str] = {}
+    for message in messages or []:
+        if not isinstance(message, AIMessage):
+            continue
+        tool_calls = getattr(message, "tool_calls", None) or []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            tool_call_id = str(tool_call.get("id") or "").strip()
+            tool_name = str(tool_call.get("name") or "").strip()
+            if tool_call_id and tool_name and tool_call_id not in index:
+                index[tool_call_id] = tool_name
+    return index
+
+
+def _infer_tool_name_from_payload(payload: dict[str, Any]) -> str:
+    if not isinstance(payload, dict) or not payload:
+        return ""
+    if "agent" in payload and "task" in payload and "result_contract" in payload:
+        return "call_agent"
+    if isinstance(payload.get("results"), list):
+        return "call_agents_parallel"
+    if "todos" in payload:
+        return "write_todos"
+    if "reflection" in payload:
+        return "reflect_on_progress"
+    return ""
+
+
+def _resolve_tool_message_name(
+    message: ToolMessage,
+    *,
+    tool_call_index: dict[str, str] | None = None,
+) -> str:
+    explicit_name = str(getattr(message, "name", "") or "").strip()
+    if explicit_name:
+        return explicit_name
+    tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+    if tool_call_id and tool_call_index:
+        indexed_name = str(tool_call_index.get(tool_call_id) or "").strip()
+        if indexed_name:
+            return indexed_name
+    payload_name = _infer_tool_name_from_payload(_safe_json(getattr(message, "content", "")))
+    return payload_name
+
+
+def _tool_call_priority(
+    tool_name: str,
+    *,
+    orchestration_phase: str,
+    agent_hops: int,
+) -> int:
+    normalized_tool = str(tool_name or "").strip()
+    phase = str(orchestration_phase or "").strip().lower()
+    if phase == "select_agent" or agent_hops <= 0:
+        ordering = {
+            "retrieve_agents": 0,
+            "call_agent": 1,
+            "call_agents_parallel": 2,
+            "write_todos": 3,
+            "reflect_on_progress": 4,
+        }
+    else:
+        ordering = {
+            "call_agent": 0,
+            "call_agents_parallel": 1,
+            "retrieve_agents": 2,
+            "write_todos": 3,
+            "reflect_on_progress": 4,
+        }
+    if normalized_tool in _EXTERNAL_MODEL_TOOL_NAMES:
+        return 5
+    return ordering.get(normalized_tool, 99)
+
+
+def _coerce_supervisor_tool_calls(
+    message: Any,
+    *,
+    orchestration_phase: str,
+    agent_hops: int,
+    allow_multiple: bool,
+) -> Any:
+    if allow_multiple or not isinstance(message, AIMessage):
+        return message
+    tool_calls = [
+        tool_call
+        for tool_call in (getattr(message, "tool_calls", None) or [])
+        if isinstance(tool_call, dict)
+    ]
+    if len(tool_calls) <= _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP:
+        return message
+    ranked = sorted(
+        enumerate(tool_calls),
+        key=lambda item: (
+            _tool_call_priority(
+                str(item[1].get("name") or ""),
+                orchestration_phase=orchestration_phase,
+                agent_hops=agent_hops,
+            ),
+            item[0],
+        ),
+    )
+    chosen_call = ranked[0][1]
+    try:
+        return message.model_copy(update={"tool_calls": [chosen_call]})
+    except Exception:
+        return AIMessage(
+            content=str(getattr(message, "content", "") or ""),
+            tool_calls=[chosen_call],
+            additional_kwargs=dict(getattr(message, "additional_kwargs", {}) or {}),
+            response_metadata=dict(getattr(message, "response_metadata", {}) or {}),
+            id=getattr(message, "id", None),
+        )
+
+
 _CRITIC_SNIPPET_RE = re.compile(
-    r"\{\s*\"status\"\s*:\s*\"(?:ok|needs_more)\"[^}]*\}", re.DOTALL
+    r"\{\s*[\"']status[\"']\s*:\s*[\"'](?:ok|needs_more)[\"'][\s\S]*?[\"']reason[\"']\s*:\s*[\"'][\s\S]*?[\"']\s*\}",
+    re.IGNORECASE,
 )
+_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
+_CRITIC_JSON_DECODER = json.JSONDecoder()
+_LINE_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
+_CITATION_TOKEN_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
+_CITATION_SPACING_RE = re.compile(r"\[citation:\s*([^\]]+?)\s*\]", re.IGNORECASE)
+
+
+def _remove_inline_critic_payloads(text: str) -> tuple[str, bool]:
+    if not text:
+        return text, False
+    parts: list[str] = []
+    idx = 0
+    removed = False
+    while idx < len(text):
+        start = text.find("{", idx)
+        if start == -1:
+            parts.append(text[idx:])
+            break
+        parts.append(text[idx:start])
+        segment = text[start:]
+        try:
+            decoded, consumed = _CRITIC_JSON_DECODER.raw_decode(segment)
+        except ValueError:
+            decoded = None
+            consumed = 0
+            for end in range(start + 1, min(len(text), start + 2400)):
+                if text[end : end + 1] != "}":
+                    continue
+                candidate = text[start : end + 1]
+                try:
+                    parsed = ast.literal_eval(candidate)
+                except Exception:
+                    continue
+                if isinstance(parsed, dict):
+                    decoded = parsed
+                    consumed = len(candidate)
+                    break
+            if decoded is None:
+                parts.append(text[start : start + 1])
+                idx = start + 1
+                continue
+        status = (
+            str(decoded.get("status") or "").strip().lower()
+            if isinstance(decoded, dict)
+            else ""
+        )
+        if isinstance(decoded, dict) and status in {"ok", "needs_more"} and "reason" in decoded:
+            removed = True
+            idx = start + consumed
+            continue
+        parts.append(text[start : start + consumed])
+        idx = start + consumed
+    return "".join(parts), removed
+
+
+def _normalize_line_for_dedupe(line: str) -> str:
+    value = str(line or "").strip()
+    value = _LINE_BULLET_PREFIX_RE.sub("", value)
+    value = _CITATION_TOKEN_RE.sub("", value)
+    value = re.sub(r"\s+", " ", value).strip(" ,.;:-").lower()
+    return value
+
+
+def _dedupe_repeated_lines(text: str) -> str:
+    lines = text.splitlines()
+    if len(lines) < 4:
+        return text.strip()
+    seen: set[str] = set()
+    deduped: list[str] = []
+    duplicates = 0
+    for line in lines:
+        normalized = _normalize_line_for_dedupe(line)
+        if normalized and len(normalized) >= 24:
+            if normalized in seen:
+                duplicates += 1
+                continue
+            seen.add(normalized)
+        deduped.append(line)
+    result = "\n".join(deduped).strip()
+    if duplicates > 0:
+        result = re.sub(r"\n{3,}", "\n\n", result)
+    return result.strip()
+
+
+def _normalize_citation_spacing(text: str) -> str:
+    if not text:
+        return text
+    return _CITATION_SPACING_RE.sub(
+        lambda match: f"[citation:{str(match.group(1) or '').strip()}]",
+        text,
+    )
 
 
 def _strip_critic_json(text: str) -> str:
     if not text:
         return text
     cleaned = _CRITIC_SNIPPET_RE.sub("", text)
+    cleaned, removed_inline = _remove_inline_critic_payloads(cleaned)
+    if cleaned != text or removed_inline:
+        cleaned = _dedupe_repeated_lines(cleaned)
+    cleaned = _HTML_COMMENT_RE.sub("", cleaned)
+    cleaned = _normalize_citation_spacing(cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.rstrip()
+
+
+def _render_guard_message(template: str, preview_lines: list[str]) -> str:
+    preview_block = ""
+    if preview_lines:
+        preview_block = "Detta ar de senaste delresultaten:\n" + "\n".join(
+            [str(item) for item in preview_lines[:3] if str(item).strip()]
+        )
+    try:
+        rendered = str(template or "").format(recent_preview=preview_block)
+    except Exception:
+        rendered = str(template or "")
+    rendered = rendered.strip()
+    if preview_block and "{recent_preview}" not in str(template or ""):
+        if preview_block not in rendered:
+            rendered = (rendered + "\n" + preview_block).strip()
+    return rendered
+
+
+def _current_turn_key(state: dict[str, Any] | None) -> str:
+    if not state:
+        return "turn"
+    active_turn_id = str(state.get("active_turn_id") or state.get("turn_id") or "").strip()
+    if active_turn_id:
+        digest = hashlib.sha1(active_turn_id.encode("utf-8")).hexdigest()
+        return f"t{digest[:12]}"
+    messages = state.get("messages") or []
+    latest_human: HumanMessage | None = None
+    human_count = 0
+    for message in messages:
+        if isinstance(message, HumanMessage):
+            human_count += 1
+            latest_human = message
+    if latest_human is not None:
+        message_id = str(getattr(latest_human, "id", "") or "").strip()
+        content = str(getattr(latest_human, "content", "") or "").strip()
+        seed = message_id or content or f"human:{human_count}"
+        digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()
+        return f"h{human_count}:{digest[:12]}"
+    return "turn"
+
+
+def _latest_user_query(messages: list[Any] | None) -> str:
+    for message in reversed(messages or []):
+        if isinstance(message, HumanMessage):
+            return str(getattr(message, "content", "") or "").strip()
+    return ""
+
+
+def _tool_names_from_messages(messages: list[Any] | None) -> list[str]:
+    names: list[str] = []
+    tool_call_index = _tool_call_name_index(messages)
+    for message in messages or []:
+        if not isinstance(message, ToolMessage):
+            continue
+        name = _resolve_tool_message_name(
+            message,
+            tool_call_index=tool_call_index,
+        )
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _infer_missing_fields(response_text: str) -> list[str]:
+    text = str(response_text or "").strip().lower()
+    if not text or not _MISSING_SIGNAL_RE.search(text):
+        return []
+    missing: list[str] = []
+    for field_name, hints in _MISSING_FIELD_HINTS:
+        if any(hint in text for hint in hints):
+            missing.append(field_name)
+    return missing[:6]
+
+
+def _looks_blocked_agent_response(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return True
+    return any(marker in lowered for marker in _BLOCKED_RESPONSE_MARKERS)
+
+
+def _normalize_result_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    if status in _RESULT_STATUS_VALUES:
+        return status
+    return "partial"
+
+
+def _compute_contract_confidence(
+    *,
+    status: str,
+    response_text: str,
+    actionable: bool,
+    missing_fields: list[str],
+    used_tool_count: int,
+    final_requested: bool,
+) -> float:
+    base = 0.45
+    if status == "success":
+        base = 0.78
+    elif status == "blocked":
+        base = 0.24
+    elif status == "error":
+        base = 0.08
+
+    if actionable:
+        base += 0.08
+    if used_tool_count > 0:
+        base += 0.05
+    if used_tool_count >= 2:
+        base += 0.03
+
+    response_len = len(str(response_text or "").strip())
+    if response_len >= 200:
+        base += 0.05
+    elif response_len < 40:
+        base -= 0.10
+
+    if missing_fields:
+        base -= min(0.24, 0.08 * len(missing_fields))
+    if final_requested and status == "success":
+        base += 0.03
+
+    base = max(0.01, min(0.99, base))
+    return round(float(base), 2)
+
+
+def _build_agent_result_contract(
+    *,
+    agent_name: str,
+    task: str,
+    response_text: str,
+    error_text: str = "",
+    used_tools: list[str] | None = None,
+    final_requested: bool = False,
+) -> dict[str, Any]:
+    cleaned_response = _strip_critic_json(str(response_text or "").strip())
+    error_value = str(error_text or "").strip()
+    used_tool_names = [str(item).strip() for item in (used_tools or []) if str(item).strip()]
+    missing_fields = _infer_missing_fields(cleaned_response)
+    actionable = _looks_actionable_agent_answer(cleaned_response)
+    blocked = _looks_blocked_agent_response(cleaned_response)
+    complete_unavailable = _looks_complete_unavailability_answer(cleaned_response)
+
+    if error_value:
+        status = "error"
+    elif not cleaned_response:
+        status = "partial"
+    elif complete_unavailable:
+        status = "success"
+        actionable = True
+    elif blocked and not actionable:
+        status = "blocked"
+    elif missing_fields and not actionable:
+        status = "partial"
+    elif actionable:
+        status = "success"
+    else:
+        status = "partial"
+
+    confidence = _compute_contract_confidence(
+        status=status,
+        response_text=cleaned_response,
+        actionable=actionable,
+        missing_fields=missing_fields,
+        used_tool_count=len(used_tool_names),
+        final_requested=bool(final_requested),
+    )
+    retry_recommended = status in {"partial", "blocked", "error"}
+    if status == "success" and confidence < 0.55:
+        retry_recommended = True
+
+    if status == "error":
+        reason = (
+            f"Agentfel: {error_value[:140]}"
+            if error_value
+            else "Agentkorningen misslyckades."
+        )
+    elif status == "blocked":
+        reason = "Svar saknar tillrackligt underlag eller kraver annan agent."
+    elif status == "partial":
+        if missing_fields:
+            reason = "Saknade falt: " + ", ".join(missing_fields[:4])
+        else:
+            reason = "Svar finns men bedoms inte komplett nog for finalisering."
+    else:
+        reason = "Svar bedoms tillrackligt komplett for finalisering."
+
+    return {
+        "status": status,
+        "confidence": confidence,
+        "actionable": bool(actionable),
+        "missing_fields": missing_fields,
+        "retry_recommended": bool(retry_recommended),
+        "used_tools": used_tool_names[:6],
+        "reason": reason,
+        "agent": str(agent_name or "").strip(),
+        "task_hash": hashlib.sha1(str(task or "").encode("utf-8")).hexdigest()[:12],
+    }
+
+
+def _contract_from_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    source = payload if isinstance(payload, dict) else {}
+    raw_contract = source.get("result_contract")
+    if isinstance(raw_contract, dict):
+        normalized_status = _normalize_result_status(raw_contract.get("status"))
+        try:
+            confidence = float(raw_contract.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = round(max(0.0, min(1.0, confidence)), 2)
+        missing_fields_raw = raw_contract.get("missing_fields")
+        missing_fields = (
+            [
+                str(item).strip()
+                for item in missing_fields_raw
+                if str(item).strip()
+            ][:6]
+            if isinstance(missing_fields_raw, list)
+            else []
+        )
+        used_tools_raw = raw_contract.get("used_tools")
+        used_tools = (
+            [str(item).strip() for item in used_tools_raw if str(item).strip()][:6]
+            if isinstance(used_tools_raw, list)
+            else []
+        )
+        reason = str(raw_contract.get("reason") or "").strip()
+        if not reason:
+            reason = "Resultatkontrakt utan forklaring."
+        if confidence <= 0.0 and (
+            str(source.get("response") or "").strip() or str(source.get("error") or "").strip()
+        ):
+            fallback = _build_agent_result_contract(
+                agent_name=str(source.get("agent") or ""),
+                task=str(source.get("task") or ""),
+                response_text=str(source.get("response") or ""),
+                error_text=str(source.get("error") or ""),
+                used_tools=used_tools,
+                final_requested=bool(source.get("final")),
+            )
+            confidence = float(fallback.get("confidence") or confidence)
+            if normalized_status == "partial":
+                normalized_status = _normalize_result_status(fallback.get("status"))
+            if not missing_fields:
+                missing_fields = list(fallback.get("missing_fields") or [])
+            if not reason:
+                reason = str(fallback.get("reason") or "").strip()
+        return {
+            "status": normalized_status,
+            "confidence": confidence,
+            "actionable": bool(raw_contract.get("actionable")),
+            "missing_fields": missing_fields,
+            "retry_recommended": bool(raw_contract.get("retry_recommended")),
+            "used_tools": used_tools,
+            "reason": reason,
+            "agent": str(raw_contract.get("agent") or source.get("agent") or "").strip(),
+            "task_hash": str(raw_contract.get("task_hash") or "").strip(),
+        }
+
+    fallback_tools = source.get("used_tools")
+    fallback_tool_list = (
+        [str(item).strip() for item in fallback_tools if str(item).strip()]
+        if isinstance(fallback_tools, list)
+        else []
+    )
+    return _build_agent_result_contract(
+        agent_name=str(source.get("agent") or ""),
+        task=str(source.get("task") or ""),
+        response_text=str(source.get("response") or ""),
+        error_text=str(source.get("error") or ""),
+        used_tools=fallback_tool_list,
+        final_requested=bool(source.get("final")),
+    )
+
+
+def _should_finalize_from_contract(
+    *,
+    contract: dict[str, Any],
+    response_text: str,
+    route_hint: str,
+    agent_name: str,
+    latest_user_query: str,
+    agent_hops: int,
+) -> bool:
+    response = _strip_critic_json(str(response_text or "").strip())
+    if not response:
+        return False
+    if str(route_hint or "").strip().lower() == "compare":
+        return False
+
+    status = _normalize_result_status(contract.get("status"))
+    actionable = bool(contract.get("actionable"))
+    try:
+        confidence = float(contract.get("confidence"))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    missing_fields = contract.get("missing_fields")
+    missing_count = len(missing_fields) if isinstance(missing_fields, list) else 0
+
+    if status == "success" and actionable and confidence >= 0.55 and missing_count <= 1:
+        return True
+
+    normalized_agent = str(agent_name or "").strip().lower()
+    if (
+        str(route_hint or "").strip().lower() == "action"
+        and normalized_agent == "trafik"
+        and _has_strict_trafik_intent(latest_user_query)
+        and actionable
+        and status in {"success", "partial"}
+        and confidence >= 0.45
+        and missing_count <= 1
+    ):
+        return True
+
+    if (
+        agent_hops >= 2
+        and actionable
+        and status in {"success", "partial"}
+        and confidence >= 0.60
+        and missing_count == 0
+    ):
+        return True
+    return False
+
+
+def _normalize_task_for_fingerprint(text: str) -> str:
+    value = re.sub(r"\s+", " ", str(text or "").strip().lower())
+    value = re.sub(r"[^a-z0-9åäö\s]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value[:180]
+
+
+def _agent_call_entries_since_last_user(
+    messages: list[Any] | None,
+    *,
+    turn_id: str | None = None,
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    expected_turn_id = str(turn_id or "").strip()
+    tool_call_index = _tool_call_name_index(messages)
+    for message in messages or []:
+        if isinstance(message, HumanMessage):
+            entries = []
+            continue
+        if not isinstance(message, ToolMessage):
+            continue
+        resolved_name = _resolve_tool_message_name(
+            message,
+            tool_call_index=tool_call_index,
+        )
+        if resolved_name != "call_agent":
+            continue
+        payload = _safe_json(getattr(message, "content", ""))
+        if not isinstance(payload, dict):
+            continue
+        payload_turn_id = str(payload.get("turn_id") or "").strip()
+        if expected_turn_id and payload_turn_id != expected_turn_id:
+            continue
+        entries.append(payload)
+    return entries
+
+
+def _looks_actionable_agent_answer(text: str) -> bool:
+    value = str(text or "").strip()
+    if len(value) < 32:
+        return False
+    lowered = value.lower()
+    rejection_markers = (
+        "jag kan inte",
+        "jag kunde inte",
+        "kan tyvarr inte",
+        "kan tyvärr inte",
+        "jag saknar",
+        "jag behover",
+        "jag behöver",
+        "behover mer information",
+        "behöver mer information",
+        "inte möjligt",
+        "not available",
+        "cannot answer",
+        "specificera",
+        "ange mer",
+    )
+    if "inga " in lowered and (
+        "hittades" in lowered
+        or "fanns" in lowered
+        or "rapporterades" in lowered
+    ):
+        return True
+    return not any(marker in lowered for marker in rejection_markers)
+
+
+def _best_actionable_entry(entries: list[dict[str, Any]]) -> tuple[str, str] | None:
+    best: tuple[tuple[int, int, float, int], tuple[str, str]] | None = None
+    status_rank = {"success": 3, "partial": 2, "blocked": 1, "error": 0}
+    for entry in entries:
+        response = _strip_critic_json(str(entry.get("response") or "").strip())
+        if not response:
+            continue
+        contract = _contract_from_payload(entry)
+        status = _normalize_result_status(contract.get("status"))
+        actionable = bool(contract.get("actionable")) or _looks_actionable_agent_answer(
+            response
+        )
+        try:
+            confidence = float(contract.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        score = (
+            1 if actionable else 0,
+            status_rank.get(status, 0),
+            confidence,
+            len(response),
+        )
+        agent_name = str(entry.get("agent") or "").strip() or "agent"
+        if best is None or score > best[0]:
+            best = (score, (response, agent_name))
+    if best:
+        return best[1]
+    return None
+
+
+def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> str:
+    value = str(text or "").strip()
+    if len(value) <= max_chars:
+        return value
+    return value[: max_chars - 3].rstrip() + "..."
+
+
+def _normalize_agent_identifier(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9åäö]+", "_", str(value or "").strip().lower())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    return normalized
+
+
+def _guess_agent_from_alias(alias: str) -> str | None:
+    normalized = _normalize_agent_identifier(alias)
+    if not normalized:
+        return None
+    direct = _AGENT_NAME_ALIAS_MAP.get(normalized)
+    if direct:
+        return direct
+    token_rules: list[tuple[tuple[str, ...], str]] = [
+        (("smhi", "weather", "vader", "väder", "temperatur", "regn", "sno", "snö", "vind"), "weather"),
+        (("trafik", "traffic", "road", "vag", "väg", "rail", "train"), "trafik"),
+        (("map", "kart", "geo"), "kartor"),
+        (("stat", "scb", "data"), "statistics"),
+        (("riks", "parliament", "politik"), "riksdagen"),
+        (("bolag", "company", "business", "org"), "bolag"),
+        (("browser", "web", "scrape", "search"), "browser"),
+        (("media", "podcast", "image", "video"), "media"),
+        (("code", "python", "calc"), "code"),
+        (("synth", "compare", "samman"), "synthesis"),
+        (("knowledge", "docs", "internal", "external", "local"), "knowledge"),
+        (("action", "travel"), "action"),
+    ]
+    for tokens, resolved in token_rules:
+        if any(token in normalized for token in tokens):
+            return resolved
+    return None
+
+
+def _summarize_parallel_results(results: Any) -> str:
+    if not isinstance(results, list) or not results:
+        return "results=0"
+    success_count = 0
+    error_count = 0
+    snippets: list[str] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        response = str(item.get("response") or "").strip()
+        error = str(item.get("error") or "").strip()
+        if error:
+            error_count += 1
+        elif response:
+            success_count += 1
+    for item in results[:TOOL_CONTEXT_MAX_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        agent = str(item.get("agent") or "agent").strip() or "agent"
+        response = _strip_critic_json(str(item.get("response") or "").strip())
+        error = str(item.get("error") or "").strip()
+        if response:
+            snippets.append(f"{agent}: {_truncate_for_prompt(response, 140)}")
+        elif error:
+            snippets.append(f"{agent}: error {_truncate_for_prompt(error, 100)}")
+        else:
+            snippets.append(f"{agent}: completed")
+    summary = f"results={len(results)}; success={success_count}; errors={error_count}"
+    if snippets:
+        summary += "; outputs=" + " | ".join(snippets)
+    return _truncate_for_prompt(summary)
+
+
+def _count_consecutive_loop_tools(messages: list[Any], *, turn_id: str | None = None) -> int:
+    count = 0
+    expected_turn_id = str(turn_id or "").strip()
+    tool_call_index = _tool_call_name_index(messages)
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        if not isinstance(message, ToolMessage):
+            continue
+        name = _resolve_tool_message_name(
+            message,
+            tool_call_index=tool_call_index,
+        )
+        if name == "call_agent":
+            payload = _safe_json(getattr(message, "content", ""))
+            payload_turn_id = (
+                str(payload.get("turn_id") or "").strip()
+                if isinstance(payload, dict)
+                else ""
+            )
+            if expected_turn_id and payload_turn_id != expected_turn_id:
+                break
+            if isinstance(payload, dict) and str(payload.get("error") or "").strip():
+                count += 1
+                continue
+            contract = _contract_from_payload(payload if isinstance(payload, dict) else {})
+            status = _normalize_result_status(contract.get("status"))
+            actionable = bool(contract.get("actionable"))
+            try:
+                confidence = float(contract.get("confidence"))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            if status == "success" and actionable and confidence >= 0.55:
+                break
+            if bool(contract.get("retry_recommended")) or status in {
+                "partial",
+                "blocked",
+                "error",
+            }:
+                count += 1
+                continue
+            break
+        if name in _LOOP_GUARD_TOOL_NAMES:
+            count += 1
+            continue
+        break
+    return count
+
+
+def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
+    name = (tool_name or "tool").strip() or "tool"
+    status = str(payload.get("status") or "completed").lower()
+    parts: list[str] = [f"{name}: {status}"]
+
+    if status == "error" or "error" in payload:
+        error_text = _truncate_for_prompt(str(payload.get("error") or "Unknown error"), 300)
+        return _truncate_for_prompt(f"{name}: error - {error_text}")
+
+    if name == "write_todos":
+        todos = payload.get("todos") or []
+        if isinstance(todos, list):
+            completed = sum(
+                1
+                for item in todos
+                if isinstance(item, dict) and str(item.get("status") or "").lower() == "completed"
+            )
+            in_progress = sum(
+                1
+                for item in todos
+                if isinstance(item, dict) and str(item.get("status") or "").lower() == "in_progress"
+            )
+            parts.append(f"todos={len(todos)}")
+            parts.append(f"completed={completed}")
+            parts.append(f"in_progress={in_progress}")
+            task_names = [
+                str(item.get("content") or "").strip()
+                for item in todos
+                if isinstance(item, dict) and str(item.get("content") or "").strip()
+            ][:TOOL_CONTEXT_MAX_ITEMS]
+            if task_names:
+                parts.append("tasks=" + " | ".join(task_names))
+            return _truncate_for_prompt("; ".join(parts))
+
+    if name == "trafiklab_route":
+        origin = payload.get("origin") or {}
+        destination = payload.get("destination") or {}
+        origin_name = ""
+        destination_name = ""
+        if isinstance(origin, dict):
+            origin_name = str(
+                ((origin.get("stop_group") or {}) if isinstance(origin.get("stop_group"), dict) else {}).get("name")
+                or origin.get("name")
+                or ""
+            ).strip()
+        if isinstance(destination, dict):
+            destination_name = str(
+                (
+                    ((destination.get("stop_group") or {}) if isinstance(destination.get("stop_group"), dict) else {}).get("name")
+                    or destination.get("name")
+                    or ""
+                )
+            ).strip()
+        route_label = " -> ".join([label for label in (origin_name, destination_name) if label]).strip()
+        if route_label:
+            parts.append(f"route={route_label}")
+        matches = payload.get("matching_entries")
+        entries = payload.get("entries")
+        if isinstance(matches, list):
+            parts.append(f"matching_entries={len(matches)}")
+        if isinstance(entries, list):
+            parts.append(f"entries={len(entries)}")
+        return _truncate_for_prompt("; ".join(parts))
+
+    if name == "smhi_weather":
+        location = payload.get("location") or {}
+        location_name = ""
+        if isinstance(location, dict):
+            location_name = str(location.get("name") or location.get("display_name") or "").strip()
+        if location_name:
+            parts.append(f"location={location_name}")
+        current = payload.get("current") or {}
+        summary = current.get("summary") if isinstance(current, dict) else {}
+        if isinstance(summary, dict):
+            temperature = summary.get("temperature_c")
+            if temperature is not None:
+                parts.append(f"temperature_c={temperature}")
+            wind = summary.get("wind_speed_mps")
+            if wind is not None:
+                parts.append(f"wind_mps={wind}")
+        return _truncate_for_prompt("; ".join(parts))
+
+    if name == "call_agents_parallel":
+        return _truncate_for_prompt(
+            f"{name}: {status}; {_summarize_parallel_results(payload.get('results'))}"
+        )
+
+    for key, value in payload.items():
+        if key in {"status", "error"}:
+            continue
+        if key in TOOL_CONTEXT_DROP_KEYS:
+            if isinstance(value, list):
+                parts.append(f"{key}_count={len(value)}")
+            elif isinstance(value, dict):
+                parts.append(f"{key}_keys={len(value)}")
+            elif value is not None:
+                parts.append(f"{key}=present")
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            parts.append(f"{key}={_truncate_for_prompt(str(value), 180)}")
+            continue
+        if isinstance(value, list):
+            parts.append(f"{key}_count={len(value)}")
+            continue
+        if isinstance(value, dict):
+            parts.append(f"{key}_keys={len(value)}")
+            continue
+        if value is not None:
+            parts.append(f"{key}=present")
+
+    return _truncate_for_prompt("; ".join(parts))
 
 
 def _sanitize_messages(messages: list[Any]) -> list[Any]:
     sanitized: list[Any] = []
+    tool_call_index = _tool_call_name_index(messages)
     for message in messages:
         if isinstance(message, ToolMessage):
+            resolved_tool_name = _resolve_tool_message_name(
+                message,
+                tool_call_index=tool_call_index,
+            )
             payload = _safe_json(message.content)
             if payload:
                 response = payload.get("response")
                 if isinstance(response, str):
-                    agent = payload.get("agent") or message.name or "agent"
+                    agent = payload.get("agent") or resolved_tool_name or "agent"
                     response = _strip_critic_json(response)
-                    content = f"{agent}: {response}" if response else f"{agent}: completed"
+                    contract = _contract_from_payload(payload)
+                    status = _normalize_result_status(contract.get("status"))
+                    try:
+                        confidence = float(contract.get("confidence"))
+                    except (TypeError, ValueError):
+                        confidence = 0.0
+                    status_prefix = ""
+                    if status != "success" or confidence < 0.7:
+                        status_prefix = f"[{status} {confidence:.2f}] "
+                    content = (
+                        _truncate_for_prompt(f"{agent}: {status_prefix}{response}")
+                        if response
+                        else f"{agent}: completed"
+                    )
                     sanitized.append(
                         ToolMessage(
                             content=content,
-                            name=message.name,
+                            name=resolved_tool_name or message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
                     continue
                 if payload.get("status") and payload.get("reason"):
-                    tool_name = message.name or "tool"
+                    tool_name = resolved_tool_name or "tool"
                     sanitized.append(
                         ToolMessage(
-                            content=f"{tool_name}: completed",
-                            name=message.name,
+                            content=_truncate_for_prompt(f"{tool_name}: completed"),
+                            name=resolved_tool_name or message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
                     continue
+                summarized = _summarize_tool_payload(
+                    resolved_tool_name or "tool",
+                    payload,
+                )
+                sanitized.append(
+                    ToolMessage(
+                        content=summarized,
+                        name=resolved_tool_name or message.name,
+                        tool_call_id=getattr(message, "tool_call_id", None),
+                    )
+                )
+                continue
             if isinstance(message.content, str) and "{\"status\"" in message.content:
                 trimmed = message.content.split("{\"status\"", 1)[0].rstrip()
                 if trimmed:
                     sanitized.append(
                         ToolMessage(
-                            content=trimmed,
-                            name=message.name,
+                            content=_truncate_for_prompt(trimmed),
+                            name=resolved_tool_name or message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
                 else:
                     sanitized.append(
                         ToolMessage(
-                            content=f"{message.name or 'tool'}: completed",
-                            name=message.name,
+                            content=f"{resolved_tool_name or 'tool'}: completed",
+                            name=resolved_tool_name or message.name,
                             tool_call_id=getattr(message, "tool_call_id", None),
                         )
                     )
+                continue
+            if isinstance(message.content, str):
+                trimmed = _strip_critic_json(message.content)
+                if not trimmed:
+                    trimmed = f"{resolved_tool_name or 'tool'}: completed"
+                sanitized.append(
+                    ToolMessage(
+                        content=_truncate_for_prompt(trimmed),
+                        name=resolved_tool_name or message.name,
+                        tool_call_id=getattr(message, "tool_call_id", None),
+                    )
+                )
                 continue
         sanitized.append(message)
     return sanitized
@@ -583,7 +2091,75 @@ async def create_supervisor_agent(
     code_prompt: str | None = None,
     kartor_prompt: str | None = None,
     riksdagen_prompt: str | None = None,
+    tool_prompt_overrides: dict[str, str] | None = None,
 ):
+    prompt_overrides = dict(tool_prompt_overrides or {})
+    tool_prompt_overrides = dict(prompt_overrides)
+    critic_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.critic.system",
+        DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    )
+    loop_guard_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.loop_guard.message",
+        DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    )
+    tool_limit_guard_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.tool_limit_guard.message",
+        DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    )
+    trafik_enforcement_message = resolve_prompt(
+        prompt_overrides,
+        "supervisor.trafik.enforcement.message",
+        DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+    )
+    intent_resolver_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.intent_resolver.system",
+        DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    )
+    agent_resolver_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.agent_resolver.system",
+        DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    )
+    planner_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.planner.system",
+        DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    )
+    tool_resolver_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.tool_resolver.system",
+        DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+    )
+    critic_gate_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.critic_gate.system",
+        DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    )
+    synthesizer_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.synthesizer.system",
+        DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    )
+    hitl_planner_message_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.hitl.planner.message",
+        DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
+    )
+    hitl_execution_message_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.hitl.execution.message",
+        DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
+    )
+    hitl_synthesis_message_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.hitl.synthesis.message",
+        DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
+    )
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
             name="knowledge-worker",
@@ -601,6 +2177,15 @@ async def create_supervisor_agent(
                 ("tools", "knowledge"),
                 ("tools", "statistics"),
                 ("tools", "kartor"),
+                ("tools", "general"),
+            ],
+        ),
+        "weather": WorkerConfig(
+            name="weather-worker",
+            primary_namespaces=[("tools", "weather")],
+            fallback_namespaces=[
+                ("tools", "action"),
+                ("tools", "knowledge"),
                 ("tools", "general"),
             ],
         ),
@@ -693,6 +2278,7 @@ async def create_supervisor_agent(
     worker_prompts: dict[str, str] = {
         "knowledge": knowledge_prompt,
         "action": action_prompt,
+        "weather": action_prompt,
         "kartor": action_prompt,
         "media": media_prompt or action_prompt,
         "statistics": statistics_prompt,
@@ -705,8 +2291,8 @@ async def create_supervisor_agent(
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
-    # Create lazy worker pool for on-demand initialization
-    worker_pool = LazyWorkerPool(
+    # Create/get process-level shared worker pool for this runtime signature.
+    worker_pool = await get_or_create_shared_worker_pool(
         configs=worker_configs,
         llm=llm,
         dependencies=dependencies,
@@ -736,6 +2322,28 @@ async def create_supervisor_agent(
                 "adress",
             ],
             namespace=("agents", "action"),
+            prompt_key="action",
+        ),
+        AgentDefinition(
+            name="weather",
+            description="SMHI-vaderprognoser och Trafikverkets vagvaderdata for svenska orter och vagar",
+            keywords=[
+                "smhi",
+                "vader",
+                "väder",
+                "temperatur",
+                "regn",
+                "snö",
+                "sno",
+                "vind",
+                "prognos",
+                "halka",
+                "isrisk",
+                "vaglag",
+                "väglag",
+                "trafikverket väder",
+            ],
+            namespace=("agents", "weather"),
             prompt_key="action",
         ),
         AgentDefinition(
@@ -816,7 +2424,7 @@ async def create_supervisor_agent(
         ),
         AgentDefinition(
             name="trafik",
-            description="Trafikverket realtidsdata (väg, tåg, kameror, väder)",
+            description="Trafikverket realtidsdata (väg, tåg, kameror)",
             keywords=[
                 "trafikverket",
                 "trafik",
@@ -829,8 +2437,6 @@ async def create_supervisor_agent(
                 "kö",
                 "ko",
                 "kamera",
-                "väder",
-                "vader",
             ],
             namespace=("agents", "trafik"),
             prompt_key="trafik",
@@ -879,8 +2485,184 @@ async def create_supervisor_agent(
     search_space_id = dependencies.get("search_space_id")
     user_id = dependencies.get("user_id")
     thread_id = dependencies.get("thread_id")
-    trafik_tool_ids = [definition.tool_id for definition in TRAFIKVERKET_TOOL_DEFINITIONS]
+    weather_tool_ids = ["smhi_weather"]
+    weather_tool_ids.extend(
+        definition.tool_id
+        for definition in TRAFIKVERKET_TOOL_DEFINITIONS
+        if _is_weather_tool_id(definition.tool_id)
+    )
+    weather_tool_ids = list(dict.fromkeys(weather_tool_ids))
+    weather_tool_id_set = set(weather_tool_ids)
+    trafik_tool_ids = [
+        definition.tool_id
+        for definition in TRAFIKVERKET_TOOL_DEFINITIONS
+        if definition.tool_id not in weather_tool_id_set
+    ]
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
+    runtime_hitl_raw = dependencies.get("runtime_hitl")
+    runtime_hitl_cfg = (
+        dict(runtime_hitl_raw)
+        if isinstance(runtime_hitl_raw, dict)
+        else {"enabled": bool(runtime_hitl_raw)}
+    )
+
+    def _hitl_enabled(stage: str) -> bool:
+        if not bool(runtime_hitl_cfg.get("enabled", True)):
+            return False
+        normalized_stage = str(stage or "").strip().lower()
+        if not normalized_stage:
+            return False
+        if isinstance(runtime_hitl_raw, bool):
+            return bool(runtime_hitl_raw)
+        aliases = {
+            normalized_stage,
+            f"confirm_{normalized_stage}",
+            f"hitl_{normalized_stage}",
+        }
+        return any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
+
+    route_to_intent_id = {
+        "knowledge": "knowledge",
+        "action": "action",
+        "statistics": "statistics",
+        "compare": "compare",
+        "smalltalk": "smalltalk",
+    }
+
+    def _intent_from_route(route_value: str | None) -> dict[str, Any]:
+        normalized = _normalize_route_hint_value(route_value)
+        intent_id = route_to_intent_id.get(normalized, "knowledge")
+        return {
+            "intent_id": intent_id,
+            "route": normalized or "knowledge",
+            "reason": "Fallback baserad pa route_hint.",
+            "confidence": 0.5,
+        }
+
+    def _agent_payload(definition: AgentDefinition) -> dict[str, Any]:
+        return {
+            "name": definition.name,
+            "description": definition.description,
+            "keywords": list(definition.keywords or []),
+        }
+
+    def _next_plan_step(state: dict[str, Any]) -> dict[str, Any] | None:
+        plan_items = state.get("active_plan") or []
+        if not isinstance(plan_items, list) or not plan_items:
+            return None
+        try:
+            step_index = int(state.get("plan_step_index") or 0)
+        except (TypeError, ValueError):
+            step_index = 0
+        step_index = max(0, step_index)
+        if step_index < len(plan_items) and isinstance(plan_items[step_index], dict):
+            return plan_items[step_index]
+        for item in plan_items:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "").strip().lower()
+            if status in {"pending", "in_progress"}:
+                return item
+        return plan_items[0] if isinstance(plan_items[0], dict) else None
+
+    def _plan_preview_text(state: dict[str, Any], *, max_steps: int = 4) -> str:
+        plan_items = state.get("active_plan") or []
+        if not isinstance(plan_items, list) or not plan_items:
+            return "- Ingen plan tillganglig."
+        lines: list[str] = []
+        for item in plan_items[: max(1, int(max_steps))]:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            status = str(item.get("status") or "pending").strip().lower()
+            lines.append(f"- [{status}] {content}")
+        return "\n".join(lines) if lines else "- Ingen plan tillganglig."
+
+    def _resolve_agent_name(
+        requested_name: str,
+        *,
+        task: str,
+        state: dict[str, Any] | None = None,
+    ) -> tuple[str | None, str | None]:
+        requested_raw = str(requested_name or "").strip().lower()
+        if not requested_raw:
+            return None, "empty_name"
+        route_hint = _normalize_route_hint_value((state or {}).get("route_hint"))
+        route_allowed = _route_allowed_agents(route_hint)
+        default_for_route = _route_default_agent(route_hint, route_allowed)
+        strict_trafik_task = _has_strict_trafik_intent(task)
+        weather_task = _has_weather_intent(task)
+        if route_hint == "action" and weather_task and not strict_trafik_task:
+            if requested_raw in agent_by_name and requested_raw != "weather":
+                return "weather", f"weather_lock:{requested_raw}->weather"
+        if route_hint == "action" and strict_trafik_task:
+            allowed_for_strict = {"trafik", "kartor", "action"}
+            if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
+                return "trafik", f"strict_trafik_lock:{requested_raw}->trafik"
+        if requested_raw in agent_by_name:
+            if route_allowed and requested_raw not in route_allowed:
+                if default_for_route in agent_by_name:
+                    return default_for_route, f"route_policy:{requested_raw}->{default_for_route}"
+            return requested_raw, None
+
+        alias_guess = _guess_agent_from_alias(requested_raw)
+        if alias_guess and alias_guess in agent_by_name:
+            if route_allowed and alias_guess not in route_allowed:
+                if default_for_route in agent_by_name:
+                    return default_for_route, f"route_policy_alias:{requested_raw}->{default_for_route}"
+            return alias_guess, f"alias:{requested_raw}->{alias_guess}"
+
+        recent_agents: list[str] = []
+        route_hint = None
+        if state:
+            route_hint = _normalize_route_hint_value(state.get("route_hint"))
+            recent_calls = state.get("recent_agent_calls") or []
+            recent_agents = [
+                str(call.get("agent") or "").strip()
+                for call in recent_calls
+                if isinstance(call, dict) and str(call.get("agent") or "").strip()
+            ]
+        route_allowed = _route_allowed_agents(route_hint)
+        default_for_route = _route_default_agent(route_hint, route_allowed)
+        retrieval_query = (
+            f"{task}\n"
+            f"Agent hint from planner: {requested_raw}\n"
+            "Resolve to one existing internal agent id."
+        )
+        retrieved = _smart_retrieve_agents(
+            retrieval_query,
+            agent_definitions=agent_definitions,
+            recent_agents=recent_agents,
+            limit=3,
+        )
+        if route_allowed:
+            retrieved = [agent for agent in retrieved if agent.name in route_allowed]
+        if route_hint:
+            preferred = {
+                "action": ["action", "media"],
+                "knowledge": ["knowledge", "browser"],
+                "statistics": ["statistics"],
+                "compare": ["synthesis", "knowledge", "statistics"],
+            }.get(str(route_hint), [])
+            if str(route_hint) == "action":
+                if weather_task and not strict_trafik_task:
+                    preferred = ["weather", "action"]
+                if _has_map_intent(task) and "kartor" not in preferred:
+                    preferred.insert(0, "kartor")
+                if _has_trafik_intent(task) and not weather_task and "trafik" not in preferred:
+                    preferred.insert(0, "trafik")
+            if route_allowed:
+                preferred = [name for name in preferred if name in route_allowed]
+            for preferred_name in preferred:
+                if any(agent.name == preferred_name for agent in retrieved):
+                    return preferred_name, f"route_pref:{requested_raw}->{preferred_name}"
+        if retrieved:
+            return retrieved[0].name, f"retrieval:{requested_raw}->{retrieved[0].name}"
+        if route_allowed and default_for_route in agent_by_name:
+            return default_for_route, f"route_default:{requested_raw}->{default_for_route}"
+        return None, f"unresolved:{requested_raw}"
 
     def _build_compare_external_tool(spec):
         async def _compare_tool(query: str) -> dict[str, Any]:
@@ -923,15 +2705,27 @@ async def create_supervisor_agent(
     @tool
     async def retrieve_agents(
         query: str,
-        limit: int = 3,
+        limit: int = 1,
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
-        """Retrieve relevant agents for the task."""
+        """Retrieve relevant agents for the task.
+
+        IMPORTANT: Reuse agent names exactly as returned in `agents[].name`.
+        Allowed internal ids include: action, weather, kartor, statistics, media, knowledge,
+        browser, code, bolag, trafik, riksdagen, synthesis.
+        """
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 1
+        limit = max(1, min(limit, 2))
+
         recent_agents = []
         context_query = query
         route_hint = None
         cache_key = None
         cache_pattern = None
+        policy_query = query
         if state:
             recent_calls = state.get("recent_agent_calls") or []
             recent_agents = [
@@ -939,7 +2733,10 @@ async def create_supervisor_agent(
                 for call in recent_calls
                 if call.get("agent")
             ]
-            route_hint = state.get("route_hint")
+            route_hint = _normalize_route_hint_value(state.get("route_hint"))
+            latest_user_query = _latest_user_query(state.get("messages") or [])
+            if latest_user_query:
+                policy_query = latest_user_query
             context_parts = []
             for call in recent_calls[-3:]:
                 response = str(call.get("response") or "")
@@ -951,8 +2748,16 @@ async def create_supervisor_agent(
             if context_parts:
                 context_query = f"{query} {' '.join(context_parts)}"
 
-        has_trafik_intent = _has_trafik_intent(context_query)
-        has_map_intent = _has_map_intent(context_query)
+        has_trafik_intent = _has_trafik_intent(policy_query)
+        has_strict_trafik_intent = _has_strict_trafik_intent(policy_query)
+        has_map_intent = _has_map_intent(policy_query)
+        has_weather_intent = _has_weather_intent(policy_query)
+        route_allowed = _route_allowed_agents(route_hint)
+        default_for_route = _route_default_agent(route_hint, route_allowed)
+        if route_hint == "action" and has_weather_intent and not has_strict_trafik_intent:
+            limit = 1
+        if route_hint == "statistics":
+            limit = 1
 
         cache_key, cache_pattern = _build_cache_key(
             query, route_hint, recent_agents
@@ -962,7 +2767,22 @@ async def create_supervisor_agent(
             cached_agents = await _fetch_cached_combo_db(db_session, cache_key)
             if cached_agents:
                 _set_cached_combo(cache_key, cached_agents)
+        if (
+            cached_agents
+            and route_hint == "action"
+            and has_strict_trafik_intent
+        ):
+            # Avoid stale non-traffic combos on hard traffic queries.
+            cached_agents = None
         if cached_agents and has_trafik_intent and "trafik" not in cached_agents:
+            cached_agents = None
+        if (
+            cached_agents
+            and route_hint == "action"
+            and has_weather_intent
+            and not has_strict_trafik_intent
+            and "weather" not in cached_agents
+        ):
             cached_agents = None
 
         if cached_agents:
@@ -987,26 +2807,47 @@ async def create_supervisor_agent(
                     "trafik": ["trafik", "action"],
                 }.get(str(route_hint), [])
                 if str(route_hint) == "action":
+                    if has_weather_intent and not has_strict_trafik_intent:
+                        preferred = ["weather", "action"]
+                    # Keep route_hint as advisory only unless action intent is explicit.
+                    if not (has_map_intent or has_trafik_intent):
+                        preferred = []
+                    if has_weather_intent and not has_strict_trafik_intent:
+                        preferred = ["weather", "action"]
                     if has_map_intent and "kartor" not in preferred:
                         preferred.insert(0, "kartor")
-                    if has_trafik_intent and "trafik" not in preferred:
+                    if (
+                        has_trafik_intent
+                        and not has_weather_intent
+                        and "trafik" not in preferred
+                    ):
                         preferred.insert(0, "trafik")
                 if preferred:
-                    preferred_defs = [
-                        agent
-                        for agent in agent_definitions
-                        if agent.name in preferred
-                    ]
-                    for agent in reversed(preferred_defs):
-                        if agent not in selected:
-                            selected.insert(0, agent)
+                    for preferred_name in reversed(preferred):
+                        agent = agent_by_name.get(preferred_name)
+                        if not agent:
+                            continue
+                        if agent in selected:
+                            selected = [item for item in selected if item != agent]
+                        selected.insert(0, agent)
                     selected = selected[:limit]
 
-            if has_trafik_intent:
+            if (
+                has_trafik_intent
+                and not has_weather_intent
+                and route_hint in {"action", "trafik"}
+            ):
                 trafik_agent = agent_by_name.get("trafik")
                 if trafik_agent and trafik_agent not in selected:
                     selected.insert(0, trafik_agent)
                     selected = selected[:limit]
+
+            if route_allowed:
+                filtered = [agent for agent in selected if agent.name in route_allowed]
+                if filtered:
+                    selected = filtered
+                elif default_for_route in agent_by_name:
+                    selected = [agent_by_name[default_for_route]]
 
             selected_names = [agent.name for agent in selected]
             if cache_key and cache_pattern:
@@ -1019,23 +2860,98 @@ async def create_supervisor_agent(
                     agents=selected_names,
                 )
 
+        if route_allowed:
+            filtered = [agent for agent in selected if agent.name in route_allowed]
+            if filtered:
+                selected = filtered
+            elif default_for_route in agent_by_name:
+                selected = [agent_by_name[default_for_route]]
+
         selected = selected[:limit]
+        if (
+            route_hint == "action"
+            and has_weather_intent
+            and not has_strict_trafik_intent
+        ):
+            weather_order = ["weather", "action"]
+            weather_selected = [
+                agent_by_name[name] for name in weather_order if name in agent_by_name
+            ]
+            selected = weather_selected[:limit] if weather_selected else selected
+        if route_hint == "action" and has_strict_trafik_intent:
+            strict_order = ["trafik"]
+            if has_map_intent:
+                strict_order.append("kartor")
+            strict_order.append("action")
+            strict_selected = [
+                agent_by_name[name] for name in strict_order if name in agent_by_name
+            ]
+            selected = strict_selected[:limit] if strict_selected else selected
         payload = [
             {"name": agent.name, "description": agent.description}
             for agent in selected
         ]
-        return json.dumps({"agents": payload}, ensure_ascii=True)
+        return json.dumps(
+            {
+                "agents": payload,
+                "valid_agent_ids": [agent.name for agent in agent_definitions],
+            },
+            ensure_ascii=True,
+        )
 
     def _prepare_task_for_synthesis(task: str, state: dict[str, Any] | None) -> str:
         """Add compare_outputs context for synthesis agent if applicable."""
         if not state:
             return task
+        normalized_task = str(task or "").strip()
+        if not normalized_task:
+            return task
+
+        def _build_recent_compare_context() -> str:
+            if not _COMPARE_FOLLOWUP_RE.search(normalized_task):
+                return ""
+            candidates: list[dict[str, str]] = []
+            for entry in reversed(list(state.get("recent_agent_calls") or [])):
+                if not isinstance(entry, dict):
+                    continue
+                response = _strip_critic_json(str(entry.get("response") or "").strip())
+                if not response:
+                    continue
+                agent_name = str(entry.get("agent") or "").strip() or "agent"
+                task_text = str(entry.get("task") or "").strip()
+                candidates.append(
+                    {
+                        "agent": agent_name,
+                        "task": task_text,
+                        "response": _truncate_for_prompt(response, 420),
+                    }
+                )
+                if len(candidates) >= 2:
+                    break
+            if len(candidates) < 2:
+                return ""
+            candidates.reverse()
+            lines = ["<recent_agent_results>"]
+            for idx, item in enumerate(candidates, start=1):
+                lines.append(f"Resultat {idx} ({item['agent']}): {item['response']}")
+                if item["task"]:
+                    lines.append(f"Uppgift {idx}: {item['task']}")
+            lines.append(
+                "Om användaren skriver 'dessa två' eller liknande: jämför just dessa två resultat först, "
+                "innan du hämtar ny data."
+            )
+            lines.append("</recent_agent_results>")
+            return "\n".join(lines)
+
         compare_context = _format_compare_outputs_for_prompt(
             state.get("compare_outputs") or []
         )
-        if compare_context and "<compare_outputs>" not in task:
-            return f"{task}\n\n{compare_context}"
-        return task
+        if compare_context and "<compare_outputs>" not in normalized_task:
+            normalized_task = f"{normalized_task}\n\n{compare_context}"
+        recent_compare_context = _build_recent_compare_context()
+        if recent_compare_context and "<recent_agent_results>" not in normalized_task:
+            normalized_task = f"{normalized_task}\n\n{recent_compare_context}"
+        return normalized_task
 
     @tool
     async def call_agent(
@@ -1045,44 +2961,110 @@ async def create_supervisor_agent(
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
         """Call a specialized agent with a task."""
-        name = (agent_name or "").strip().lower()
+        injected_state = state or {}
+        requested_name = (agent_name or "").strip().lower()
+        resolved_name, resolution_reason = _resolve_agent_name(
+            requested_name,
+            task=task,
+            state=injected_state,
+        )
+        name = resolved_name or requested_name
+        current_turn_id = str(
+            injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
+        ).strip()
         worker = await worker_pool.get(name)
         if not worker:
+            error_message = f"Agent '{agent_name}' not available."
             return json.dumps(
-                {"error": f"Agent '{agent_name}' not available."}, ensure_ascii=True
+                {
+                    "agent": name,
+                    "requested_agent": requested_name,
+                    "agent_resolution": resolution_reason,
+                    "error": error_message,
+                    "result_contract": _build_agent_result_contract(
+                        agent_name=name,
+                        task=task,
+                        response_text="",
+                        error_text=error_message,
+                        used_tools=[],
+                        final_requested=bool(final),
+                    ),
+                    "turn_id": current_turn_id,
+                },
+                ensure_ascii=True,
             )
-        if name == "synthesis" and state:
-            task = _prepare_task_for_synthesis(task, state)
+        if name == "synthesis" and injected_state:
+            task = _prepare_task_for_synthesis(task, injected_state)
+        turn_key = _current_turn_key(injected_state)
+        base_thread_id = str(dependencies.get("thread_id") or "thread")
+        resolved_tools_map = injected_state.get("resolved_tools_by_agent")
+        selected_tool_ids: list[str] = []
+        if isinstance(resolved_tools_map, dict):
+            candidate_tools = resolved_tools_map.get(name) or resolved_tools_map.get(
+                requested_name
+            )
+            if isinstance(candidate_tools, list):
+                selected_tool_ids = [
+                    str(tool_id).strip()
+                    for tool_id in candidate_tools
+                    if str(tool_id).strip()
+                ][:8]
+        if not selected_tool_ids:
+            selected_tool_ids = _focused_tool_ids_for_agent(name, task, limit=6)
+        if name == "weather":
+            selected_tool_ids = list(weather_tool_ids)
+        if name == "trafik":
+            selected_tool_ids = [
+                tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
+            ]
+            if not selected_tool_ids:
+                selected_tool_ids = list(trafik_tool_ids)
         prompt = worker_prompts.get(name, "")
+        scoped_prompt = _build_scoped_prompt_for_agent(name, task)
+        if scoped_prompt:
+            prompt = f"{prompt.rstrip()}\n\n{scoped_prompt}".strip() if prompt else scoped_prompt
+        tool_prompt_block = _build_tool_prompt_block(
+            selected_tool_ids,
+            tool_prompt_overrides,
+            max_tools=2,
+        )
+        if tool_prompt_block:
+            prompt = (
+                f"{prompt.rstrip()}\n\n{tool_prompt_block}".strip()
+                if prompt
+                else tool_prompt_block
+            )
         messages = []
         if prompt:
             messages.append(SystemMessage(content=prompt))
         messages.append(HumanMessage(content=task))
-        selected_tool_ids: list[str] = []
-        if name == "trafik":
-            selected_tool_ids = list(trafik_tool_ids)
-        state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
+        worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
+        worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
+        worker_configurable = {"thread_id": f"{base_thread_id}:{name}:{turn_key}"}
+        if worker_checkpoint_ns:
+            worker_configurable["checkpoint_ns"] = f"{worker_checkpoint_ns}:worker:{name}"
         config = {
-            "configurable": {"thread_id": f"{dependencies['thread_id']}:{name}"},
+            "configurable": worker_configurable,
             "recursion_limit": 60,
         }
-        result = await worker.ainvoke(state, config=config)
+        result = await worker.ainvoke(worker_state, config=config)
         response_text = ""
+        messages_out: list[Any] = []
         if isinstance(result, dict):
             messages_out = result.get("messages") or []
             if messages_out:
                 response_text = str(getattr(messages_out[-1], "content", "") or "")
             if name == "trafik":
+                initial_tool_names = _tool_names_from_messages(messages_out)
                 used_trafik_tool = any(
-                    isinstance(message, ToolMessage)
-                    and getattr(message, "name", "").startswith("trafikverket_")
-                    for message in messages_out
+                    tool_name.startswith("trafikverket_")
+                    for tool_name in initial_tool_names
                 )
                 if not used_trafik_tool:
                     enforced_prompt = (
-                        f"{prompt}\n\n"
-                        "Du måste använda retrieve_tools och sedan minst ett "
-                        "trafikverket_* verktyg innan du svarar."
+                        f"{prompt.rstrip()}\n\n{trafik_enforcement_message}".strip()
+                        if prompt
+                        else trafik_enforcement_message
                     )
                     enforced_messages = [SystemMessage(content=enforced_prompt), HumanMessage(content=task)]
                     retry_state = {
@@ -1098,21 +3080,32 @@ async def create_supervisor_agent(
                             )
         if not response_text:
             response_text = str(result)
+        used_tool_names = _tool_names_from_messages(messages_out)
 
-        critic_prompt = append_datetime_context(
-            "Du ar en kritisk granskare. Bedom om svaret ar komplett och korrekt. "
-            "Svara kort i JSON med {\"status\": \"ok\"|\"needs_more\", \"reason\": \"...\"}."
-        )
+        critic_prompt = append_datetime_context(critic_prompt_template)
         critic_input = f"Uppgift: {task}\nSvar: {response_text}"
-        critic_msg = await llm.ainvoke(
-            [SystemMessage(content=critic_prompt), HumanMessage(content=critic_input)]
-        )
-        critic_text = str(getattr(critic_msg, "content", "") or "").strip()
-        critic_payload = _safe_json(critic_text)
-        if not critic_payload:
-            critic_payload = {"status": "ok", "reason": critic_text}
+        try:
+            critic_msg = await llm.ainvoke(
+                [SystemMessage(content=critic_prompt), HumanMessage(content=critic_input)]
+            )
+            critic_text = str(getattr(critic_msg, "content", "") or "").strip()
+            critic_payload = _safe_json(critic_text)
+            if not critic_payload:
+                critic_payload = {"status": "ok", "reason": critic_text}
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            critic_payload = {
+                "status": "unavailable",
+                "reason": f"critic_unavailable:{type(exc).__name__}",
+            }
 
         response_text = _strip_critic_json(response_text)
+        result_contract = _build_agent_result_contract(
+            agent_name=name,
+            task=task,
+            response_text=response_text,
+            used_tools=used_tool_names,
+            final_requested=bool(final),
+        )
 
         # Compress response for context efficiency when not final
         if not final:
@@ -1121,10 +3114,15 @@ async def create_supervisor_agent(
         return json.dumps(
             {
                 "agent": name,
+                "requested_agent": requested_name,
+                "agent_resolution": resolution_reason,
                 "task": task,
                 "response": response_text,
+                "used_tools": used_tool_names,
+                "result_contract": result_contract,
                 "critic": critic_payload,
                 "final": bool(final),
+                "turn_id": current_turn_id,
             },
             ensure_ascii=True,
         )
@@ -1135,43 +3133,159 @@ async def create_supervisor_agent(
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
         """Call multiple agents in parallel. Each call dict has 'agent' and 'task' keys.
-        Use when tasks are independent and don't depend on each other's results."""
+        Use when tasks are independent and don't depend on each other's results.
+
+        IMPORTANT: Use exact internal agent ids from retrieve_agents()."""
+        injected_state = state or {}
+        current_turn_id = str(
+            injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
+        ).strip()
+        serialized_mode = not compare_mode
+        dropped_calls = 0
+        if serialized_mode and isinstance(calls, list) and len(calls) > 1:
+            dropped_calls = len(calls) - 1
+            calls = calls[:1]
         
         async def _run_one(call_spec: dict) -> dict:
-            agent_name = (call_spec.get("agent") or "").strip().lower()
+            requested_agent_name = (call_spec.get("agent") or "").strip().lower()
             task = call_spec.get("task") or ""
+            resolved_agent_name, resolution_reason = _resolve_agent_name(
+                requested_agent_name,
+                task=task,
+                state=injected_state,
+            )
+            agent_name = resolved_agent_name or requested_agent_name
             worker = await worker_pool.get(agent_name)
             if not worker:
-                return {"agent": agent_name, "error": f"Agent '{agent_name}' not available."}
+                error_message = f"Agent '{agent_name}' not available."
+                return {
+                    "agent": agent_name,
+                    "requested_agent": requested_agent_name,
+                    "agent_resolution": resolution_reason,
+                    "error": error_message,
+                    "result_contract": _build_agent_result_contract(
+                        agent_name=agent_name,
+                        task=task,
+                        response_text="",
+                        error_text=error_message,
+                        used_tools=[],
+                        final_requested=False,
+                    ),
+                    "turn_id": current_turn_id,
+                }
             try:
                 # Reuse same worker invocation logic as call_agent
-                if agent_name == "synthesis" and state:
-                    task = _prepare_task_for_synthesis(task, state)
+                if agent_name == "synthesis" and injected_state:
+                    task = _prepare_task_for_synthesis(task, injected_state)
+                turn_key = _current_turn_key(injected_state)
+                base_thread_id = str(dependencies.get("thread_id") or "thread")
+                resolved_tools_map = injected_state.get("resolved_tools_by_agent")
+                selected_tool_ids: list[str] = []
+                if isinstance(resolved_tools_map, dict):
+                    candidate_tools = resolved_tools_map.get(agent_name) or resolved_tools_map.get(
+                        requested_agent_name
+                    )
+                    if isinstance(candidate_tools, list):
+                        selected_tool_ids = [
+                            str(tool_id).strip()
+                            for tool_id in candidate_tools
+                            if str(tool_id).strip()
+                        ][:8]
+                if not selected_tool_ids:
+                    selected_tool_ids = _focused_tool_ids_for_agent(
+                        agent_name, task, limit=6
+                    )
+                if agent_name == "weather":
+                    selected_tool_ids = list(weather_tool_ids)
+                if agent_name == "trafik":
+                    selected_tool_ids = [
+                        tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
+                    ]
+                    if not selected_tool_ids:
+                        selected_tool_ids = list(trafik_tool_ids)
                 prompt = worker_prompts.get(agent_name, "")
+                scoped_prompt = _build_scoped_prompt_for_agent(agent_name, task)
+                if scoped_prompt:
+                    prompt = (
+                        f"{prompt.rstrip()}\n\n{scoped_prompt}".strip()
+                        if prompt
+                        else scoped_prompt
+                    )
+                tool_prompt_block = _build_tool_prompt_block(
+                    selected_tool_ids,
+                    tool_prompt_overrides,
+                    max_tools=2,
+                )
+                if tool_prompt_block:
+                    prompt = (
+                        f"{prompt.rstrip()}\n\n{tool_prompt_block}".strip()
+                        if prompt
+                        else tool_prompt_block
+                    )
                 messages = []
                 if prompt:
                     messages.append(SystemMessage(content=prompt))
                 messages.append(HumanMessage(content=task))
-                selected_tool_ids = list(trafik_tool_ids) if agent_name == "trafik" else []
                 worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
+                worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
+                worker_configurable = {
+                    "thread_id": f"{base_thread_id}:{agent_name}:{turn_key}"
+                }
+                if worker_checkpoint_ns:
+                    worker_configurable["checkpoint_ns"] = (
+                        f"{worker_checkpoint_ns}:worker:{agent_name}"
+                    )
                 config = {
-                    "configurable": {"thread_id": f"{dependencies['thread_id']}:{agent_name}"},
+                    "configurable": worker_configurable,
                     "recursion_limit": 60,
                 }
                 result = await worker.ainvoke(worker_state, config=config)
                 response_text = ""
+                messages_out: list[Any] = []
                 if isinstance(result, dict):
                     messages_out = result.get("messages") or []
                     if messages_out:
                         last_msg = messages_out[-1]
                         response_text = str(getattr(last_msg, "content", "") or "")
-                return {"agent": agent_name, "task": task, "response": response_text}
-            except Exception as exc:
+                if not response_text:
+                    response_text = str(result)
+                response_text = _strip_critic_json(response_text)
+                used_tool_names = _tool_names_from_messages(messages_out)
+                result_contract = _build_agent_result_contract(
+                    agent_name=agent_name,
+                    task=task,
+                    response_text=response_text,
+                    used_tools=used_tool_names,
+                    final_requested=False,
+                )
                 return {
                     "agent": agent_name,
+                    "requested_agent": requested_agent_name,
+                    "agent_resolution": resolution_reason,
                     "task": task,
-                    "error": str(exc),
+                    "response": response_text,
+                    "used_tools": used_tool_names,
+                    "result_contract": result_contract,
+                    "turn_id": current_turn_id,
+                }
+            except Exception as exc:
+                error_message = str(exc)
+                return {
+                    "agent": agent_name,
+                    "requested_agent": requested_agent_name,
+                    "agent_resolution": resolution_reason,
+                    "task": task,
+                    "error": error_message,
                     "error_type": type(exc).__name__,
+                    "result_contract": _build_agent_result_contract(
+                        agent_name=agent_name,
+                        task=task,
+                        response_text="",
+                        error_text=error_message,
+                        used_tools=[],
+                        final_requested=False,
+                    ),
+                    "turn_id": current_turn_id,
                 }
         
         results = await asyncio.gather(
@@ -1186,7 +3300,14 @@ async def create_supervisor_agent(
             else:
                 processed.append(r)
         
-        return json.dumps({"results": processed}, ensure_ascii=True)
+        return json.dumps(
+            {
+                "results": processed,
+                "serialized_mode": serialized_mode,
+                "dropped_calls": dropped_calls,
+            },
+            ensure_ascii=True,
+        )
 
     tool_registry = {
         "retrieve_agents": retrieve_agents,
@@ -1202,75 +3323,111 @@ async def create_supervisor_agent(
     llm_with_tools = llm.bind_tools(list(tool_registry.values()))
     tool_node = ToolNode(tool_registry.values())
 
-    def call_model(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        final_response = state.get("final_agent_response")
-        messages_state = state.get("messages") or []
-        last_message = messages_state[-1] if messages_state else None
-        if final_response and isinstance(last_message, ToolMessage):
-            return {"messages": [AIMessage(content=final_response)]}
-        messages = _sanitize_messages(list(state.get("messages") or []))
-        plan_context = _format_plan_context(state)
-        recent_context = _format_recent_calls(state)
-        route_context = _format_route_hint(state)
-        system_bits = [
-            item for item in (plan_context, recent_context, route_context) if item
-        ]
-        if system_bits:
-            messages = [SystemMessage(content="\n".join(system_bits))] + messages
-        
-        # Apply token budget
-        model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
-        if model_name:
-            budget = TokenBudget(model_name=str(model_name))
-            messages = budget.fit_messages(messages)
-        
-        response = llm_with_tools.invoke(messages)
-        updates: SupervisorState = {"messages": [response]}
-        if final_response and isinstance(last_message, HumanMessage):
-            updates["final_agent_response"] = None
-            updates["final_agent_name"] = None
-        return updates
+    resolve_intent_node = build_intent_resolver_node(
+        llm=llm,
+        route_to_intent_id=route_to_intent_id,
+        intent_resolver_prompt_template=intent_resolver_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        parse_hitl_confirmation_fn=_parse_hitl_confirmation,
+        normalize_route_hint_fn=_normalize_route_hint_value,
+        intent_from_route_fn=_intent_from_route,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+        coerce_confidence_fn=_coerce_confidence,
+    )
 
-    async def acall_model(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        final_response = state.get("final_agent_response")
-        messages_state = state.get("messages") or []
-        last_message = messages_state[-1] if messages_state else None
-        if final_response and isinstance(last_message, ToolMessage):
-            return {"messages": [AIMessage(content=final_response)]}
-        messages = _sanitize_messages(list(state.get("messages") or []))
-        plan_context = _format_plan_context(state)
-        recent_context = _format_recent_calls(state)
-        route_context = _format_route_hint(state)
-        system_bits = [
-            item for item in (plan_context, recent_context, route_context) if item
-        ]
-        if system_bits:
-            messages = [SystemMessage(content="\n".join(system_bits))] + messages
-        
-        # Apply token budget
-        model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
-        if model_name:
-            budget = TokenBudget(model_name=str(model_name))
-            messages = budget.fit_messages(messages)
-        
-        response = await llm_with_tools.ainvoke(messages)
-        updates: SupervisorState = {"messages": [response]}
-        if final_response and isinstance(last_message, HumanMessage):
-            updates["final_agent_response"] = None
-            updates["final_agent_name"] = None
-        return updates
+    resolve_agents_node = build_agent_resolver_node(
+        llm=llm,
+        agent_resolver_prompt_template=agent_resolver_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        normalize_route_hint_fn=_normalize_route_hint_value,
+        route_allowed_agents_fn=_route_allowed_agents,
+        route_default_agent_fn=_route_default_agent,
+        smart_retrieve_agents_fn=_smart_retrieve_agents,
+        agent_definitions=agent_definitions,
+        agent_by_name=agent_by_name,
+        agent_payload_fn=_agent_payload,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+    )
+
+    planner_node = build_planner_node(
+        llm=llm,
+        planner_prompt_template=planner_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+    )
+
+    planner_hitl_gate_node = build_planner_hitl_gate_node(
+        hitl_enabled_fn=_hitl_enabled,
+        plan_preview_text_fn=_plan_preview_text,
+        render_hitl_message_fn=_render_hitl_message,
+        hitl_planner_message_template=hitl_planner_message_template,
+    )
+
+    tool_resolver_node = build_tool_resolver_node(
+        tool_resolver_prompt_template=tool_resolver_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        next_plan_step_fn=_next_plan_step,
+        focused_tool_ids_for_agent_fn=(
+            lambda agent_name, task: _focused_tool_ids_for_agent(
+                agent_name, task, limit=6
+            )
+        ),
+        weather_tool_ids=weather_tool_ids,
+        trafik_tool_ids=trafik_tool_ids,
+    )
+
+    execution_hitl_gate_node = build_execution_hitl_gate_node(
+        hitl_enabled_fn=_hitl_enabled,
+        next_plan_step_fn=_next_plan_step,
+        render_hitl_message_fn=_render_hitl_message,
+        hitl_execution_message_template=hitl_execution_message_template,
+    )
+
+    critic_node = build_critic_node(
+        llm=llm,
+        critic_gate_prompt_template=critic_gate_prompt_template,
+        loop_guard_template=loop_guard_template,
+        default_loop_guard_message=DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+        max_replan_attempts=_MAX_REPLAN_ATTEMPTS,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+        render_guard_message_fn=_render_guard_message,
+    )
+
+    synthesis_hitl_gate_node = build_synthesis_hitl_gate_node(
+        hitl_enabled_fn=_hitl_enabled,
+        truncate_for_prompt_fn=_truncate_for_prompt,
+        render_hitl_message_fn=_render_hitl_message,
+        hitl_synthesis_message_template=hitl_synthesis_message_template,
+    )
+
+    synthesizer_node = build_synthesizer_node(
+        llm=llm,
+        synthesizer_prompt_template=synthesizer_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+        strip_critic_json_fn=_strip_critic_json,
+    )
+
+    call_model, acall_model = build_executor_nodes(
+        llm=llm,
+        llm_with_tools=llm_with_tools,
+        compare_mode=compare_mode,
+        strip_critic_json_fn=_strip_critic_json,
+        sanitize_messages_fn=_sanitize_messages,
+        format_plan_context_fn=_format_plan_context,
+        format_recent_calls_fn=_format_recent_calls,
+        format_route_hint_fn=_format_route_hint,
+        format_intent_context_fn=_format_intent_context,
+        format_selected_agents_context_fn=_format_selected_agents_context,
+        format_resolved_tools_context_fn=_format_resolved_tools_context,
+        coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
+    )
 
     async def post_tools(
         state: SupervisorState,
@@ -1282,14 +3439,26 @@ async def create_supervisor_agent(
         updates: dict[str, Any] = {}
         recent_updates: list[dict[str, Any]] = []
         compare_updates: list[dict[str, Any]] = []
+        parallel_preview: list[str] = []
         plan_update: list[dict[str, Any]] | None = None
         plan_complete: bool | None = None
         last_call_payload: dict[str, Any] | None = None
+        route_hint = _normalize_route_hint_value(state.get("route_hint"))
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        messages = list(state.get("messages") or [])
+        tool_call_index = _tool_call_name_index(messages)
 
-        for message in reversed(state.get("messages") or []):
+        for message in reversed(messages):
+            if isinstance(message, HumanMessage):
+                break
             if not isinstance(message, ToolMessage):
                 continue
-            tool_name = message.name or ""
+            tool_name = _resolve_tool_message_name(
+                message,
+                tool_call_index=tool_call_index,
+            )
+            if not tool_name:
+                continue
             payload = _safe_json(message.content)
             if tool_name == "write_todos":
                 todos = payload.get("todos") or []
@@ -1309,21 +3478,75 @@ async def create_supervisor_agent(
             elif tool_name == "call_agent":
                 last_call_payload = payload
                 if payload:
+                    payload_contract = _contract_from_payload(payload)
                     recent_updates.append(
                         {
                             "agent": payload.get("agent"),
                             "task": payload.get("task"),
                             "response": payload.get("response"),
+                            "result_contract": payload_contract,
                         }
                     )
                     if payload.get("final") and payload.get("response"):
-                        critic_payload = payload.get("critic") or {}
-                        if not (
-                            isinstance(critic_payload, dict)
-                            and critic_payload.get("status") == "needs_more"
+                        cleaned_response = _strip_critic_json(
+                            str(payload.get("response") or "").strip()
+                        )
+                        if _should_finalize_from_contract(
+                            contract=payload_contract,
+                            response_text=cleaned_response,
+                            route_hint=route_hint,
+                            agent_name=str(payload.get("agent") or ""),
+                            latest_user_query=latest_user_query,
+                            agent_hops=int(state.get("agent_hops") or 0),
                         ):
-                            updates["final_agent_response"] = payload.get("response")
+                            updates["final_agent_response"] = cleaned_response
+                            updates["final_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
+                            updates["orchestration_phase"] = "finalize"
+                    elif payload.get("response"):
+                        cleaned_response = _strip_critic_json(
+                            str(payload.get("response") or "").strip()
+                        )
+                        selected_agent = str(payload.get("agent") or "").strip().lower()
+                        if _should_finalize_from_contract(
+                            contract=payload_contract,
+                            response_text=cleaned_response,
+                            route_hint=route_hint,
+                            agent_name=selected_agent,
+                            latest_user_query=latest_user_query,
+                            agent_hops=int(state.get("agent_hops") or 0),
+                        ):
+                            updates["final_agent_response"] = cleaned_response
+                            updates["final_response"] = cleaned_response
+                            updates["final_agent_name"] = payload.get("agent")
+                            updates["orchestration_phase"] = "finalize"
+            elif tool_name == "call_agents_parallel":
+                parallel_results = payload.get("results")
+                if isinstance(parallel_results, list):
+                    for item in parallel_results:
+                        if not isinstance(item, dict):
+                            continue
+                        agent_name = str(item.get("agent") or "").strip()
+                        task_text = str(item.get("task") or "").strip()
+                        response_text = _strip_critic_json(
+                            str(item.get("response") or "").strip()
+                        )
+                        error_text = str(item.get("error") or "").strip()
+                        compact_response = response_text or error_text
+                        if compact_response:
+                            recent_updates.append(
+                                {
+                                    "agent": agent_name or "agent",
+                                    "task": task_text,
+                                    "response": compact_response,
+                                    "result_contract": _contract_from_payload(item),
+                                }
+                            )
+                        if response_text and len(parallel_preview) < 3:
+                            label = agent_name or "agent"
+                            parallel_preview.append(
+                                f"- {label}: {_truncate_for_prompt(response_text, 220)}"
+                            )
             elif tool_name in _EXTERNAL_MODEL_TOOL_NAMES:
                 if payload and payload.get("status") == "success":
                     compare_updates.append(
@@ -1346,55 +3569,369 @@ async def create_supervisor_agent(
             updates["plan_complete"] = plan_complete
         if recent_updates:
             updates["recent_agent_calls"] = recent_updates
+            existing_steps = [
+                item
+                for item in (state.get("step_results") or [])
+                if isinstance(item, dict)
+            ]
+            merged_steps = (existing_steps + recent_updates)[-12:]
+            updates["step_results"] = merged_steps
+            updates["plan_step_index"] = min(
+                len(merged_steps),
+                len(state.get("active_plan") or []),
+            )
         if compare_updates:
             updates["compare_outputs"] = compare_updates
+        updates["guard_parallel_preview"] = parallel_preview[:3]
+        return updates
+
+    async def orchestration_guard(
+        state: SupervisorState,
+        config: dict | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        updates: dict[str, Any] = {}
+        route_hint = str(state.get("route_hint") or "").strip().lower()
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        parallel_preview = list(state.get("guard_parallel_preview") or [])[:3]
+        current_turn_id = str(
+            state.get("active_turn_id") or state.get("turn_id") or ""
+        ).strip()
+        call_entries = _agent_call_entries_since_last_user(
+            state.get("messages") or [],
+            turn_id=current_turn_id or None,
+        )
+        if not parallel_preview and call_entries:
+            for item in reversed(call_entries):
+                response_text = _strip_critic_json(str(item.get("response") or "").strip())
+                if not response_text:
+                    continue
+                agent_name = str(item.get("agent") or "agent").strip() or "agent"
+                parallel_preview.append(
+                    f"- {agent_name}: {_truncate_for_prompt(response_text, 220)}"
+                )
+                if len(parallel_preview) >= 3:
+                    break
+        messages = list(state.get("messages") or [])
+        tool_call_index = _tool_call_name_index(messages)
+        last_call_payload: dict[str, Any] | None = None
+        for message in reversed(messages):
+            if isinstance(message, HumanMessage):
+                break
+            if not isinstance(message, ToolMessage):
+                continue
+            tool_name = _resolve_tool_message_name(
+                message,
+                tool_call_index=tool_call_index,
+            )
+            if tool_name != "call_agent":
+                continue
+            payload = _safe_json(getattr(message, "content", ""))
+            if payload:
+                last_call_payload = payload
+                break
+
+        agent_hops = len(call_entries)
+        updates["agent_hops"] = agent_hops
+        updates["orchestration_phase"] = (
+            "validate_agent_output" if agent_hops > 0 else "select_agent"
+        )
+
+        no_progress_runs = int(state.get("no_progress_runs") or 0)
+        if call_entries:
+            last_entry = call_entries[-1]
+            last_agent = str(last_entry.get("agent") or "").strip().lower()
+            last_task = _normalize_task_for_fingerprint(
+                str(last_entry.get("task") or "")
+            )
+            last_fp = f"{last_agent}|{last_task}" if (last_agent or last_task) else ""
+            if last_fp:
+                fp_count = 0
+                for entry in call_entries:
+                    agent = str(entry.get("agent") or "").strip().lower()
+                    task_fp = _normalize_task_for_fingerprint(
+                        str(entry.get("task") or "")
+                    )
+                    if f"{agent}|{task_fp}" == last_fp:
+                        fp_count += 1
+                no_progress_runs = no_progress_runs + 1 if fp_count >= 2 else 0
+            else:
+                no_progress_runs = 0
+        else:
+            no_progress_runs = 0
+        updates["no_progress_runs"] = no_progress_runs
+
+        if "final_agent_response" not in updates and call_entries and route_hint != "compare":
+            last_entry = call_entries[-1]
+            last_response = _strip_critic_json(
+                str(last_entry.get("response") or "").strip()
+            )
+            last_contract = _contract_from_payload(last_entry)
+            if _should_finalize_from_contract(
+                contract=last_contract,
+                response_text=last_response,
+                route_hint=route_hint,
+                agent_name=str(last_entry.get("agent") or ""),
+                latest_user_query=latest_user_query,
+                agent_hops=agent_hops,
+            ):
+                updates["final_agent_response"] = last_response
+                updates["final_response"] = last_response
+                updates["final_agent_name"] = (
+                    str(last_entry.get("agent") or "").strip() or "agent"
+                )
+                updates["orchestration_phase"] = "finalize"
+
+        if (
+            "final_agent_response" not in updates
+            and no_progress_runs >= 2
+        ):
+            best = _best_actionable_entry(call_entries)
+            if best:
+                updates["final_agent_response"] = best[0]
+                updates["final_response"] = best[0]
+                updates["final_agent_name"] = best[1]
+                updates["orchestration_phase"] = "finalize"
+            else:
+                rendered = _render_guard_message(loop_guard_template, parallel_preview)
+                if not rendered:
+                    rendered = _render_guard_message(
+                        DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+                        parallel_preview,
+                    )
+                updates["final_agent_response"] = rendered
+                updates["final_response"] = rendered
+                updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
+                updates["orchestration_phase"] = "finalize"
 
         if last_call_payload:
-            critic_payload = last_call_payload.get("critic") or {}
-            if isinstance(critic_payload, dict):
-                if critic_payload.get("status") == "needs_more":
-                    updates["plan_complete"] = False
+            last_contract = _contract_from_payload(last_call_payload)
+            if (
+                bool(last_contract.get("retry_recommended"))
+                and "final_agent_response" not in updates
+            ):
+                updates["plan_complete"] = False
+
+        # Fallback safety: avoid endless supervisor loops on repeated retrieval/delegation tools.
+        if "final_agent_response" not in updates:
+            loop_count = _count_consecutive_loop_tools(
+                state.get("messages") or [],
+                turn_id=current_turn_id or None,
+            )
+            if loop_count >= _LOOP_GUARD_MAX_CONSECUTIVE:
+                rendered = _render_guard_message(loop_guard_template, parallel_preview)
+                if not rendered:
+                    rendered = _render_guard_message(
+                        DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+                        parallel_preview,
+                    )
+                updates["final_agent_response"] = rendered
+                updates["final_response"] = rendered
+                updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
+                updates["orchestration_phase"] = "finalize"
+
+        if "final_agent_response" not in updates and agent_hops >= _MAX_AGENT_HOPS_PER_TURN:
+            best = _best_actionable_entry(call_entries)
+            if best:
+                updates["final_agent_response"] = best[0]
+                updates["final_response"] = best[0]
+                updates["final_agent_name"] = best[1]
+            else:
+                rendered = _render_guard_message(
+                    tool_limit_guard_template,
+                    parallel_preview[:3],
+                )
+                if not rendered:
+                    rendered = _render_guard_message(
+                        DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+                        parallel_preview[:3],
+                    )
+                updates["final_agent_response"] = rendered
+                updates["final_response"] = rendered
+                updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
+            updates["orchestration_phase"] = "finalize"
+
+        # Hard guardrail: stop runaway tool loops within a single user turn.
+        if "final_agent_response" not in updates:
+            tool_calls_this_turn = _count_tools_since_last_user(
+                state.get("messages") or []
+            )
+            if tool_calls_this_turn >= _MAX_TOOL_CALLS_PER_TURN:
+                rendered = _render_guard_message(
+                    tool_limit_guard_template,
+                    parallel_preview[:3],
+                )
+                if not rendered:
+                    rendered = _render_guard_message(
+                        DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+                        parallel_preview[:3],
+                    )
+                updates["final_agent_response"] = rendered
+                updates["final_response"] = rendered
+                updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
+                updates["orchestration_phase"] = "finalize"
 
         # Progressive message pruning when messages get long
-        messages = state.get("messages") or []
         if len(messages) > MESSAGE_PRUNING_THRESHOLD:
-            # Count ToolMessages
             tool_msgs = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
             if len(tool_msgs) > TOOL_MSG_THRESHOLD:
-                # Keep only the last KEEP_TOOL_MSG_COUNT tool messages and their context
                 keep_from = tool_msgs[-KEEP_TOOL_MSG_COUNT]
-                # Find the AI message that triggered the first kept tool message
                 keep_start = max(0, keep_from - 1)
-                
-                # Summarize what we're dropping
                 dropped_count = keep_start
                 if dropped_count > 0:
                     pruned = messages[keep_start:]
                     summary_msg = SystemMessage(
                         content=f"[{dropped_count} earlier messages (including tool calls) condensed. Recent context retained.]"
                     )
-                    # Preserve any leading system messages
                     leading_system = [m for m in messages[:keep_start] if isinstance(m, SystemMessage)]
                     updates["messages"] = leading_system + [summary_msg] + pruned
 
+        updates["guard_parallel_preview"] = []
         return updates
 
-    def should_continue(state: SupervisorState, *, store=None):
+    def route_after_intent(state: SupervisorState, *, store=None):
+        if bool(state.get("awaiting_confirmation")):
+            stage = str(state.get("pending_hitl_stage") or "").strip().lower()
+            if stage == "planner":
+                return "planner_hitl_gate"
+            if stage == "execution":
+                return "execution_hitl_gate"
+            if stage == "synthesis":
+                return "synthesis_hitl"
+        phase = str(state.get("orchestration_phase") or "").strip().lower()
+        has_final = bool(
+            str(state.get("final_response") or state.get("final_agent_response") or "").strip()
+        )
+        if phase == "finalize" and has_final:
+            return "synthesis_hitl"
+        if phase in {"resolve_tools", "execute"}:
+            return "tool_resolver"
+        if phase in {"plan"}:
+            return "planner"
+        return "agent_resolver"
+
+    def planner_hitl_should_continue(state: SupervisorState, *, store=None):
+        awaiting = bool(state.get("awaiting_confirmation"))
+        stage = str(state.get("pending_hitl_stage") or "").strip().lower()
+        if awaiting and stage == "planner":
+            return END
+        return "tool_resolver"
+
+    def execution_hitl_should_continue(state: SupervisorState, *, store=None):
+        awaiting = bool(state.get("awaiting_confirmation"))
+        stage = str(state.get("pending_hitl_stage") or "").strip().lower()
+        if awaiting and stage == "execution":
+            return END
+        return "executor"
+
+    def executor_should_continue(state: SupervisorState, *, store=None):
         messages = state.get("messages") or []
         if not messages:
-            return END
+            return "critic"
         last_message = messages[-1]
         if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
             return "tools"
-        return END
+        return "critic"
+
+    def critic_should_continue(state: SupervisorState, *, store=None):
+        decision = str(state.get("critic_decision") or "").strip().lower()
+        final_response = str(
+            state.get("final_response") or state.get("final_agent_response") or ""
+        ).strip()
+        replan_count = int(state.get("replan_count") or 0)
+        if final_response and decision in {"ok", "pass", "finalize"}:
+            return "synthesis_hitl"
+        if decision == "replan" and replan_count < _MAX_REPLAN_ATTEMPTS:
+            return "planner"
+        if decision == "needs_more" and replan_count < _MAX_REPLAN_ATTEMPTS:
+            return "tool_resolver"
+        if final_response:
+            return "synthesis_hitl"
+        return "planner"
+
+    def synthesis_hitl_should_continue(state: SupervisorState, *, store=None):
+        awaiting = bool(state.get("awaiting_confirmation"))
+        stage = str(state.get("pending_hitl_stage") or "").strip().lower()
+        if awaiting and stage == "synthesis":
+            return END
+        return "synthesizer"
 
     graph_builder = StateGraph(SupervisorState)
-    graph_builder.add_node("agent", RunnableCallable(call_model, acall_model))
+    graph_builder.add_node("resolve_intent", RunnableCallable(None, resolve_intent_node))
+    graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
+    graph_builder.add_node("planner", RunnableCallable(None, planner_node))
+    graph_builder.add_node(
+        "planner_hitl_gate",
+        RunnableCallable(None, planner_hitl_gate_node),
+    )
+    graph_builder.add_node("tool_resolver", RunnableCallable(None, tool_resolver_node))
+    graph_builder.add_node(
+        "execution_hitl_gate",
+        RunnableCallable(None, execution_hitl_gate_node),
+    )
+    graph_builder.add_node("executor", RunnableCallable(call_model, acall_model))
     graph_builder.add_node("tools", tool_node)
     graph_builder.add_node("post_tools", RunnableCallable(None, post_tools))
-    graph_builder.set_entry_point("agent")
-    graph_builder.add_conditional_edges("agent", should_continue, path_map=["tools", END])
+    graph_builder.add_node(
+        "orchestration_guard",
+        RunnableCallable(None, orchestration_guard),
+    )
+    graph_builder.add_node("critic", RunnableCallable(None, critic_node))
+    graph_builder.add_node(
+        "synthesis_hitl",
+        RunnableCallable(None, synthesis_hitl_gate_node),
+    )
+    graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
+    graph_builder.set_entry_point("resolve_intent")
+    graph_builder.add_conditional_edges(
+        "resolve_intent",
+        route_after_intent,
+        path_map=[
+            "agent_resolver",
+            "planner",
+            "planner_hitl_gate",
+            "tool_resolver",
+            "execution_hitl_gate",
+            "synthesis_hitl",
+        ],
+    )
+    graph_builder.add_edge("agent_resolver", "planner")
+    graph_builder.add_edge("planner", "planner_hitl_gate")
+    graph_builder.add_conditional_edges(
+        "planner_hitl_gate",
+        planner_hitl_should_continue,
+        path_map=["tool_resolver", END],
+    )
+    graph_builder.add_edge("tool_resolver", "execution_hitl_gate")
+    graph_builder.add_conditional_edges(
+        "execution_hitl_gate",
+        execution_hitl_should_continue,
+        path_map=["executor", END],
+    )
+    graph_builder.add_conditional_edges(
+        "executor",
+        executor_should_continue,
+        path_map=["tools", "critic"],
+    )
     graph_builder.add_edge("tools", "post_tools")
-    graph_builder.add_edge("post_tools", "agent")
+    graph_builder.add_edge("post_tools", "orchestration_guard")
+    graph_builder.add_edge("orchestration_guard", "critic")
+    graph_builder.add_conditional_edges(
+        "critic",
+        critic_should_continue,
+        path_map=["synthesis_hitl", "tool_resolver", "planner"],
+    )
+    graph_builder.add_conditional_edges(
+        "synthesis_hitl",
+        synthesis_hitl_should_continue,
+        path_map=["synthesizer", END],
+    )
+    graph_builder.add_edge("synthesizer", END)
 
     return graph_builder.compile(checkpointer=checkpointer, name="supervisor-agent")

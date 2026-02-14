@@ -214,7 +214,10 @@ class BaseApiService {
 
 			return data;
 		} catch (error) {
-			console.error("Request failed:", JSON.stringify(error));
+			console.error("Request failed:", error);
+			if (error instanceof Error) {
+				console.error("Request failed message:", error.message);
+			}
 			throw error;
 		}
 	}

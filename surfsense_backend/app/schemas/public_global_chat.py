@@ -12,3 +12,4 @@ class PublicGlobalChatRequest(BaseModel):
     user_query: str = Field(min_length=1, max_length=4000)
     messages: list[PublicGlobalChatMessage] | None = None
     llm_config_id: int | None = None
+    citation_instructions: str | bool | None = None

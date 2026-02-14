@@ -22,6 +22,25 @@ from app.agents.new_chat.subagent_utils import (
 )
 from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PROMPT
 from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
+from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+)
+from app.agents.new_chat.supervisor_pipeline_prompts import (
+    DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
+    DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+)
+from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
+from app.agents.new_chat.system_prompt import SURFSENSE_SYSTEM_INSTRUCTIONS
 from app.agents.new_chat.trafik_prompts import DEFAULT_TRAFFIC_SYSTEM_PROMPT
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
@@ -106,6 +125,92 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Supervisor prompt",
         description="System prompt for the supervisor agent.",
         default_prompt=DEFAULT_SUPERVISOR_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.critic.system",
+        label="Supervisor critic prompt",
+        description="Prompt used by supervisor critic to validate delegated agent answers.",
+        default_prompt=DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.loop_guard.message",
+        label="Supervisor loop guard message",
+        description=(
+            "Fallback response when supervisor detects repeated planning loops. "
+            "Use {recent_preview} placeholder to include latest partial results."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.tool_limit_guard.message",
+        label="Supervisor tool-limit guard message",
+        description=(
+            "Fallback response when too many tools are called in one user turn. "
+            "Use {recent_preview} placeholder to include latest partial results."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.trafik.enforcement.message",
+        label="Supervisor Trafik enforcement prompt",
+        description=(
+            "Extra instruction injected when trafik agent must retry with proper trafikverket tool usage."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.intent_resolver.system",
+        label="Supervisor intent resolver prompt",
+        description="Prompt for intent_resolver node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.agent_resolver.system",
+        label="Supervisor agent resolver prompt",
+        description="Prompt for agent_resolver node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.planner.system",
+        label="Supervisor planner prompt",
+        description="Prompt for planner node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.tool_resolver.system",
+        label="Supervisor tool resolver prompt",
+        description="Prompt for tool_resolver node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.critic_gate.system",
+        label="Supervisor critic gate prompt",
+        description="Prompt for critic node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.synthesizer.system",
+        label="Supervisor synthesizer prompt",
+        description="Prompt for synthesizer node in supervisor pipeline.",
+        default_prompt=DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    ),
+    PromptDefinition(
+        key="supervisor.hitl.planner.message",
+        label="Supervisor HITL planner confirmation message",
+        description="User-facing confirmation message before executing planner output.",
+        default_prompt=DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.hitl.execution.message",
+        label="Supervisor HITL execution confirmation message",
+        description="User-facing confirmation message before running the next execution step.",
+        default_prompt=DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.hitl.synthesis.message",
+        label="Supervisor HITL synthesis confirmation message",
+        description="User-facing confirmation message before delivering synthesized response.",
+        default_prompt=DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
     ),
     PromptDefinition(
         key="agent.worker.knowledge",
@@ -196,6 +301,20 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Compare external model prompt",
         description="System prompt sent to external models in compare.",
         default_prompt=DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+    ),
+    PromptDefinition(
+        key="system.default.instructions",
+        label="Core system prompt",
+        description="Default system instructions from system_prompt.py.",
+        default_prompt=SURFSENSE_SYSTEM_INSTRUCTIONS,
+    ),
+    PromptDefinition(
+        key="citation.instructions",
+        label="Citation instructions",
+        description=(
+            "Opt-in citation block injected only when citation_instructions is enabled in chat requests."
+        ),
+        default_prompt=SURFSENSE_CITATION_INSTRUCTIONS,
     ),
 ]
 

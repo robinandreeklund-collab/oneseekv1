@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const agentPromptKeyEnum = z.enum([
+export const knownAgentPromptKeys = [
 	"router.top_level",
 	"router.knowledge",
 	"router.action",
@@ -28,7 +28,20 @@ export const agentPromptKeyEnum = z.enum([
 	"agent.riksdagen.system",
 	"compare.analysis.system",
 	"compare.external.system",
-]);
+	"system.default.instructions",
+	"citation.instructions",
+	"supervisor.critic.system",
+	"supervisor.loop_guard.message",
+	"supervisor.tool_limit_guard.message",
+	"supervisor.trafik.enforcement.message",
+] as const;
+
+/**
+ * Keep known keys for editor UX, but allow unknown keys in API payloads/responses
+ * so frontend doesn't break when backend adds prompt keys before web is redeployed.
+ */
+export const knownAgentPromptKeyEnum = z.enum(knownAgentPromptKeys);
+export const agentPromptKeyEnum = z.string().min(1);
 
 export const agentPromptItem = z.object({
 	key: agentPromptKeyEnum,

@@ -12,7 +12,9 @@ Supports loading LLM configurations from:
 import json
 import re
 import uuid
+import ast
 from collections.abc import AsyncGenerator
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -21,7 +23,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.agents.new_chat.chat_deepagent import create_surfsense_deep_agent
-from app.agents.new_chat.checkpointer import get_checkpointer
+from app.agents.new_chat.checkpointer import (
+    build_checkpoint_namespace,
+    get_checkpointer,
+    resolve_checkpoint_namespace_for_thread,
+)
 from app.agents.new_chat.llm_config import (
     AgentConfig,
     create_chat_litellm_from_agent_config,
@@ -46,11 +52,15 @@ from app.agents.new_chat.compare_prompts import (
 )
 from app.agents.new_chat.dispatcher import (
     DEFAULT_ROUTE_SYSTEM_PROMPT,
-    dispatch_route,
+    dispatch_route_with_trace,
 )
 from app.agents.new_chat.prompt_registry import resolve_prompt
-from app.agents.new_chat.routing import Route, ROUTE_CITATIONS_ENABLED, ROUTE_TOOL_SETS
-from app.agents.new_chat.supervisor_agent import create_supervisor_agent
+from app.agents.new_chat.routing import Route, ROUTE_TOOL_SETS
+from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CITATION_INSTRUCTIONS,
+    SURFSENSE_SYSTEM_INSTRUCTIONS,
+)
+from app.agents.new_chat.complete_graph import build_complete_graph
 from app.agents.new_chat.supervisor_prompts import (
     DEFAULT_SUPERVISOR_PROMPT,
     build_supervisor_prompt,
@@ -71,7 +81,14 @@ from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PR
 from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
 from app.agents.new_chat.tools.display_image import extract_domain, generate_image_id
 from app.services.agent_prompt_service import get_global_prompt_overrides
-from app.db import ChatTraceSession, Document, SurfsenseDocsDocument, async_session_maker
+from app.db import (
+    ChatTraceSession,
+    Document,
+    NewChatMessage,
+    NewChatMessageRole,
+    SurfsenseDocsDocument,
+    async_session_maker,
+)
 from app.schemas.new_chat import ChatAttachment
 from app.services.chat_session_state_service import (
     clear_ai_responding,
@@ -81,6 +98,10 @@ from app.agents.new_chat.tools.user_memory import create_save_memory_tool
 from app.services.connector_service import ConnectorService
 from app.services.new_streaming_service import VercelStreamingService
 from app.services.trace_service import TraceRecorder
+from app.services.intent_definition_service import (
+    get_default_intent_definitions,
+    get_effective_intent_definitions,
+)
 from app.tasks.chat.stream_compare_chat import (
     extract_compare_query,
     is_compare_request,
@@ -94,6 +115,7 @@ from app.utils.context_metrics import (
     estimate_tokens_from_text,
     serialize_context_payload,
 )
+from app.utils.content_utils import bootstrap_history_from_db, extract_text_content
 
 AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (
@@ -200,7 +222,146 @@ def extract_auto_memories(text: str) -> list[tuple[str, str]]:
         unique.append((content, category))
 
     return unique[:3]
-from app.utils.content_utils import bootstrap_history_from_db
+
+
+def _normalize_router_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+async def _load_conversation_history_for_routing(
+    session: AsyncSession,
+    chat_id: int,
+    current_user_query: str,
+    *,
+    limit: int = 8,
+) -> list[dict[str, str]]:
+    result = await session.execute(
+        select(NewChatMessage)
+        .filter(NewChatMessage.thread_id == chat_id)
+        .order_by(NewChatMessage.created_at.desc())
+        .limit(limit + 3)
+    )
+    rows = list(result.scalars().all())
+    rows.reverse()
+    history: list[dict[str, str]] = []
+    for row in rows:
+        role = str(getattr(row.role, "value", row.role) or "").strip().lower()
+        if role not in {NewChatMessageRole.USER.value, NewChatMessageRole.ASSISTANT.value}:
+            continue
+        text = _normalize_router_text(extract_text_content(row.content))
+        if not text:
+            continue
+        if role == NewChatMessageRole.ASSISTANT.value:
+            text = _normalize_router_text(_clean_assistant_output_text(text))
+        if not text:
+            continue
+        history.append({"role": role, "content": text[:420]})
+    current_norm = _normalize_router_text(current_user_query).lower()
+    if history and history[-1].get("role") == NewChatMessageRole.USER.value:
+        trailing = _normalize_router_text(history[-1].get("content") or "").lower()
+        if trailing == current_norm:
+            history.pop()
+    return history[-limit:]
+
+
+_FOLLOWUP_CONFIRMATION_RE = re.compile(
+    r"^(ja|nej|ok|okej|kör|go|yes|no|stopp?)\.?$",
+    re.IGNORECASE,
+)
+_FOLLOWUP_MARKER_RE = re.compile(
+    r"\b(och|också|även|då|samma|där|dit|här|dessa|båda|bada|de två)\b",
+    re.IGNORECASE,
+)
+_FOLLOWUP_COMPARE_RE = re.compile(
+    r"\b(jämför|jamfor|jämförelse|jamforelse|skillnad(?:en)?(?:\s+mellan)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_previous_user_query_from_history(history: list[dict[str, str]]) -> str:
+    for item in reversed(history or []):
+        if str(item.get("role") or "").strip().lower() != NewChatMessageRole.USER.value:
+            continue
+        content = _normalize_router_text(item.get("content") or "")
+        if content:
+            return content
+    return ""
+
+
+def _looks_contextual_followup(query: str) -> bool:
+    text = _normalize_router_text(query)
+    if not text:
+        return False
+    lowered = text.lower().strip(" ?!.")
+    if not lowered:
+        return False
+    if _FOLLOWUP_CONFIRMATION_RE.match(lowered):
+        return False
+    words = lowered.split()
+    if len(words) > 9 or len(lowered) > 90:
+        return False
+    if lowered.startswith(("och ", "i ", "på ", "för ", "om ")):
+        return True
+    if lowered.endswith(" då") or lowered.endswith(" också"):
+        return True
+    if _FOLLOWUP_COMPARE_RE.search(lowered):
+        return True
+    if _FOLLOWUP_MARKER_RE.search(lowered):
+        return True
+    return False
+
+
+def _extract_previous_assistant_answers_from_history(
+    history: list[dict[str, str]],
+    *,
+    limit: int = 2,
+) -> list[str]:
+    results: list[str] = []
+    for item in reversed(history or []):
+        role = str(item.get("role") or "").strip().lower()
+        if role != NewChatMessageRole.ASSISTANT.value:
+            continue
+        content = _normalize_router_text(item.get("content") or "")
+        if not content:
+            continue
+        results.append(content)
+        if len(results) >= max(1, int(limit)):
+            break
+    results.reverse()
+    return results
+
+
+def _build_followup_context_block(
+    raw_query: str,
+    routing_history: list[dict[str, str]],
+) -> str:
+    current = _normalize_router_text(raw_query)
+    if not _looks_contextual_followup(current):
+        return ""
+    previous = _extract_previous_user_query_from_history(routing_history)
+    if not previous:
+        return ""
+    if previous.lower() == current.lower():
+        return ""
+    context = (
+        "<followup_context>\n"
+        "Detta är en uppföljningsfråga. Tolka den med samma ämne, metod och verktygsnivå "
+        "som föregående användarfråga om inget annat uttryckligen anges.\n"
+        f"Föregående användarfråga: {previous}\n"
+    )
+    if _FOLLOWUP_COMPARE_RE.search(current.lower()):
+        previous_answers = _extract_previous_assistant_answers_from_history(
+            routing_history, limit=2
+        )
+        if previous_answers:
+            for index, answer in enumerate(previous_answers, start=1):
+                context += f"Föregående assistentsvar {index}: {answer[:420]}\n"
+            context += (
+                "Om användaren säger 'dessa två' eller liknande: utgå i första hand från de två "
+                "senaste assistentsvaren ovan.\n"
+            )
+    context += "</followup_context>"
+    return context
 
 
 
@@ -348,6 +509,385 @@ def _collect_trafikverket_photos(payload: Any) -> list[dict[str, str]]:
     return photos
 
 
+def _content_to_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                chunks.append(item)
+                continue
+            if isinstance(item, dict):
+                text_value = item.get("text") or item.get("content")
+                if isinstance(text_value, str):
+                    chunks.append(text_value)
+                continue
+            text_attr = getattr(item, "text", None) or getattr(item, "content", None)
+            if isinstance(text_attr, str):
+                chunks.append(text_attr)
+        return "".join(chunks)
+    return str(content)
+
+
+def _extract_assistant_text_from_message(message: Any) -> str:
+    if message is None:
+        return ""
+    if isinstance(message, dict):
+        role = str(message.get("role") or message.get("type") or "").lower()
+        if role in {"human", "user", "system", "tool"}:
+            return ""
+        tool_calls = message.get("tool_calls") or message.get("toolCalls")
+        if tool_calls:
+            return ""
+        return _content_to_text(message.get("content")).strip()
+    class_name = message.__class__.__name__.lower()
+    if any(token in class_name for token in ("human", "system", "tool")):
+        return ""
+    tool_calls = getattr(message, "tool_calls", None) or getattr(message, "toolCalls", None)
+    if tool_calls:
+        return ""
+    return _content_to_text(getattr(message, "content", "")).strip()
+
+
+def _extract_assistant_text_from_event_output(output: Any) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, dict):
+        messages = output.get("messages")
+        if isinstance(messages, list):
+            for message in reversed(messages):
+                text = _extract_assistant_text_from_message(message)
+                if text:
+                    return text
+        generations = output.get("generations")
+        if isinstance(generations, list):
+            for generation in reversed(generations):
+                text = _extract_assistant_text_from_event_output(generation)
+                if text:
+                    return text
+        message = output.get("message")
+        if message is not None:
+            text = _extract_assistant_text_from_event_output(message)
+            if text:
+                return text
+        if "content" in output:
+            return _extract_assistant_text_from_message(output)
+        return ""
+    if isinstance(output, list):
+        for item in reversed(output):
+            text = _extract_assistant_text_from_event_output(item)
+            if text:
+                return text
+        return ""
+    if hasattr(output, "generations"):
+        return _extract_assistant_text_from_event_output(getattr(output, "generations"))
+    if hasattr(output, "message"):
+        return _extract_assistant_text_from_event_output(getattr(output, "message"))
+    if hasattr(output, "content"):
+        return _extract_assistant_text_from_message(output)
+    return ""
+
+
+_CRITIC_JSON_SNIPPET_RE = re.compile(
+    r"\{\s*[\"']status[\"']\s*:\s*[\"'](?:ok|needs_more|replan)[\"'][\s\S]*?[\"']reason[\"']\s*:\s*[\"'][\s\S]*?[\"']\s*\}",
+    re.IGNORECASE,
+)
+_CITATION_MARKER_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
+_CITATION_SPACING_RE = re.compile(r"\[citation:\s*([^\]]+?)\s*\]", re.IGNORECASE)
+_REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
+_STREAM_JSON_DECODER = json.JSONDecoder()
+_CRITIC_JSON_START_RE = re.compile(r"\{\s*[\"']status[\"']\s*:", re.IGNORECASE)
+_PIPELINE_JSON_START_RE = re.compile(
+    r"\{\s*[\"'](?:intent_id|selected_agents|status|decision|steps)\b",
+    re.IGNORECASE,
+)
+_PIPELINE_JSON_PARTIAL_KEY_RE = re.compile(
+    r"\{\s*[\"']?([a-zA-Z_]{0,32})\Z",
+    re.IGNORECASE,
+)
+_PIPELINE_JSON_KEYS = (
+    "intent_id",
+    "selected_agents",
+    "status",
+    "decision",
+    "steps",
+    "reason",
+    "confidence",
+)
+_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
+_INTERNAL_PIPELINE_CHAIN_TOKENS = (
+    "resolve_intent",
+    "agent_resolver",
+    "planner",
+    "tool_resolver",
+    "critic",
+    "synthesizer",
+)
+
+
+def _strip_inline_critic_payloads(text: str) -> tuple[str, bool]:
+    if not text:
+        return text, False
+    parts: list[str] = []
+    idx = 0
+    removed = False
+    while idx < len(text):
+        start = text.find("{", idx)
+        if start == -1:
+            parts.append(text[idx:])
+            break
+        parts.append(text[idx:start])
+        segment = text[start:]
+        try:
+            decoded, consumed = _STREAM_JSON_DECODER.raw_decode(segment)
+        except ValueError:
+            decoded = None
+            consumed = 0
+            for end in range(start + 1, min(len(text), start + 2400)):
+                if text[end : end + 1] != "}":
+                    continue
+                candidate = text[start : end + 1]
+                try:
+                    parsed = ast.literal_eval(candidate)
+                except Exception:
+                    continue
+                if isinstance(parsed, dict):
+                    decoded = parsed
+                    consumed = len(candidate)
+                    break
+            if decoded is None:
+                parts.append(text[start : start + 1])
+                idx = start + 1
+                continue
+        status = (
+            str(decoded.get("status") or "").strip().lower()
+            if isinstance(decoded, dict)
+            else ""
+        )
+        if (
+            isinstance(decoded, dict)
+            and status in {"ok", "needs_more", "replan"}
+            and "reason" in decoded
+        ):
+            removed = True
+            idx = start + consumed
+            continue
+        parts.append(text[start : start + consumed])
+        idx = start + consumed
+    return "".join(parts), removed
+
+
+def _normalize_line_for_dedupe(line: str) -> str:
+    value = str(line or "").strip()
+    value = _REPEAT_BULLET_PREFIX_RE.sub("", value)
+    value = _CITATION_MARKER_RE.sub("", value)
+    value = re.sub(r"\s+", " ", value).strip(" ,.;:-").lower()
+    return value
+
+
+def _clean_assistant_output_text(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = _CRITIC_JSON_SNIPPET_RE.sub("", text)
+    cleaned, removed_inline = _strip_inline_critic_payloads(cleaned)
+    cleaned, removed_payloads = _strip_inline_pipeline_payloads(cleaned)
+    cleaned = _HTML_COMMENT_RE.sub("", cleaned)
+    cleaned = _CITATION_SPACING_RE.sub(
+        lambda match: f"[citation:{str(match.group(1) or '').strip()}]",
+        cleaned,
+    )
+    lines = cleaned.splitlines()
+    if removed_inline or removed_payloads or len(lines) > 3:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        duplicate_count = 0
+        for line in lines:
+            normalized = _normalize_line_for_dedupe(line)
+            if normalized and len(normalized) >= 24:
+                if normalized in seen:
+                    duplicate_count += 1
+                    continue
+                seen.add(normalized)
+            deduped.append(line)
+        if duplicate_count:
+            cleaned = "\n".join(deduped)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _extract_json_objects_from_text(text: str, *, max_objects: int = 6) -> list[dict[str, Any]]:
+    value = str(text or "").strip()
+    if not value:
+        return []
+    objects: list[dict[str, Any]] = []
+    cursor = 0
+    while cursor < len(value) and len(objects) < max(1, int(max_objects)):
+        start = value.find("{", cursor)
+        if start < 0:
+            break
+        segment = value[start:]
+        parsed_obj: dict[str, Any] | None = None
+        consumed = 0
+        try:
+            decoded, consumed = _STREAM_JSON_DECODER.raw_decode(segment)
+            if isinstance(decoded, dict):
+                parsed_obj = decoded
+        except Exception:
+            parsed_obj = None
+            consumed = 0
+        if parsed_obj is None:
+            matched = False
+            for end in range(start + 1, min(len(value), start + 2800)):
+                if value[end : end + 1] != "}":
+                    continue
+                candidate = value[start : end + 1]
+                try:
+                    decoded = json.loads(candidate)
+                except Exception:
+                    try:
+                        decoded = ast.literal_eval(candidate)
+                    except Exception:
+                        continue
+                if isinstance(decoded, dict):
+                    parsed_obj = decoded
+                    consumed = len(candidate)
+                    matched = True
+                    break
+            if not matched:
+                cursor = start + 1
+                continue
+        if parsed_obj is not None and consumed > 0:
+            objects.append(parsed_obj)
+            cursor = start + consumed
+        else:
+            cursor = start + 1
+    return objects
+
+
+def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    if "intent_id" in payload and (
+        "reason" in payload or "confidence" in payload
+    ):
+        return "intent"
+    if isinstance(payload.get("selected_agents"), list):
+        return "agent_resolver"
+    if (
+        isinstance(payload.get("steps"), list)
+        and (
+            "reason" in payload
+            or any(
+                isinstance(step, dict)
+                and ("content" in step or "status" in step or "id" in step)
+                for step in payload.get("steps")[:4]
+            )
+        )
+    ):
+        return "planner"
+    status = str(payload.get("status") or "").strip().lower()
+    decision = str(payload.get("decision") or "").strip().lower()
+    if (
+        status in {"ok", "needs_more", "replan"}
+        and isinstance(payload.get("reason"), str)
+    ) or (
+        decision in {"ok", "needs_more", "replan"}
+        and isinstance(payload.get("reason"), str)
+    ):
+        return "critic"
+    return None
+
+
+def _decode_json_object_from_text(
+    text: str, start: int, *, max_scan: int = 3200
+) -> tuple[dict[str, Any] | None, int]:
+    if start < 0 or start >= len(text):
+        return None, 0
+    segment = text[start:]
+    try:
+        decoded, consumed = _STREAM_JSON_DECODER.raw_decode(segment)
+    except Exception:
+        decoded = None
+        consumed = 0
+    if isinstance(decoded, dict) and consumed > 0:
+        return decoded, int(consumed)
+    for end in range(start + 1, min(len(text), start + max_scan)):
+        if text[end : end + 1] != "}":
+            continue
+        candidate = text[start : end + 1]
+        parsed = None
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            try:
+                parsed = ast.literal_eval(candidate)
+            except Exception:
+                parsed = None
+        if isinstance(parsed, dict):
+            return parsed, len(candidate)
+    return None, 0
+
+
+def _strip_inline_pipeline_payloads(
+    text: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    if not text:
+        return text, []
+    parts: list[str] = []
+    captured: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(text):
+        start = text.find("{", idx)
+        if start == -1:
+            parts.append(text[idx:])
+            break
+        parts.append(text[idx:start])
+        decoded, consumed = _decode_json_object_from_text(text, start)
+        if decoded is None or consumed <= 0:
+            parts.append(text[start : start + 1])
+            idx = start + 1
+            continue
+        kind = _pipeline_payload_kind(decoded)
+        if kind:
+            captured.append(decoded)
+            idx = start + consumed
+            continue
+        parts.append(text[start : start + consumed])
+        idx = start + consumed
+    return "".join(parts), captured
+
+
+def _split_trailing_pipeline_prefix(text: str) -> tuple[str, str]:
+    if not text:
+        return "", ""
+    start = text.rfind("{")
+    if start < 0:
+        return text, ""
+    tail = text[start:]
+    if "}" in tail:
+        return text, ""
+    if _PIPELINE_JSON_START_RE.match(tail):
+        return text[:start], tail
+    partial = _PIPELINE_JSON_PARTIAL_KEY_RE.match(tail)
+    if partial and len(tail) <= 80:
+        prefix = str(partial.group(1) or "").strip().lower()
+        if (not prefix and tail.strip() == "{") or any(
+            key.startswith(prefix) for key in _PIPELINE_JSON_KEYS
+        ):
+            return text[:start], tail
+    return text, ""
+
+
+def _is_internal_pipeline_chain_name(chain_name: str) -> bool:
+    normalized = str(chain_name or "").strip().lower()
+    if not normalized:
+        return False
+    return any(token in normalized for token in _INTERNAL_PIPELINE_CHAIN_TOKENS)
+
+
 async def stream_new_chat(
     user_query: str,
     search_space_id: int,
@@ -360,6 +900,9 @@ async def stream_new_chat(
     mentioned_surfsense_doc_ids: list[int] | None = None,
     checkpoint_id: str | None = None,
     needs_history_bootstrap: bool = False,
+    citation_instructions: str | bool | None = None,
+    runtime_hitl: dict[str, Any] | None = None,
+    checkpoint_ns_override: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat responses from the new SurfSense deep agent.
@@ -379,6 +922,15 @@ async def stream_new_chat(
         mentioned_document_ids: Optional list of document IDs mentioned with @ in the chat
         mentioned_surfsense_doc_ids: Optional list of SurfSense doc IDs mentioned with @ in the chat
         checkpoint_id: Optional checkpoint ID to rewind/fork from (for edit/reload operations)
+        citation_instructions:
+            - True: enable admin/default citation instructions.
+            - False/None: disable citation instruction injection.
+            - str: inject custom citation instructions.
+        runtime_hitl:
+            Optional runtime HITL flags for planner/execution/synthesis checkpoints.
+        checkpoint_ns_override:
+            Optional explicit checkpoint namespace. When provided, bypasses automatic
+            namespace resolution and uses this value ("" means legacy namespace).
 
     Yields:
         str: SSE formatted response strings
@@ -496,30 +1048,87 @@ async def stream_new_chat(
             trace_recorder.set_tokenizer_model(tokenizer_model)
 
         prompt_overrides = await get_global_prompt_overrides(session)
+        default_system_prompt = resolve_prompt(
+            prompt_overrides,
+            "system.default.instructions",
+            SURFSENSE_SYSTEM_INSTRUCTIONS,
+        )
+        if agent_config is not None:
+            has_custom_system_prompt = bool(
+                str(agent_config.system_instructions or "").strip()
+            )
+            if (
+                agent_config.use_default_system_instructions
+                and not has_custom_system_prompt
+            ):
+                # Keep default system prompt centrally editable from /admin/prompts.
+                agent_config = replace(
+                    agent_config,
+                    system_instructions=default_system_prompt,
+                    use_default_system_instructions=False,
+                )
         router_prompt = resolve_prompt(
             prompt_overrides, "router.top_level", DEFAULT_ROUTE_SYSTEM_PROMPT
         )
+        try:
+            routing_history = await _load_conversation_history_for_routing(
+                session,
+                chat_id,
+                raw_user_query,
+            )
+        except Exception:
+            routing_history = []
+        followup_context_block = _build_followup_context_block(
+            raw_user_query, routing_history
+        )
 
-        route = await dispatch_route(
+        try:
+            intent_definitions = await get_effective_intent_definitions(session)
+        except Exception:
+            intent_definitions = list(get_default_intent_definitions().values())
+
+        route, route_decision = await dispatch_route_with_trace(
             raw_user_query,
             llm,
             has_attachments=bool(attachments),
             has_mentions=bool(mentioned_document_ids or mentioned_surfsense_doc_ids),
             system_prompt_override=router_prompt,
+            conversation_history=routing_history,
+            intent_definitions=intent_definitions,
         )
         if route == Route.COMPARE and compare_query:
             user_query = compare_query
+            followup_context_block = ""
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
 
-        citations_enabled = ROUTE_CITATIONS_ENABLED.get(route, True)
+        citation_prompt_default = resolve_prompt(
+            prompt_overrides,
+            "citation.instructions",
+            SURFSENSE_CITATION_INSTRUCTIONS,
+        )
+        if isinstance(citation_instructions, bool):
+            citation_instructions_block = (
+                citation_prompt_default.strip() if citation_instructions else None
+            )
+        else:
+            explicit_citation_instructions = str(citation_instructions or "").strip()
+            citation_instructions_block = (
+                explicit_citation_instructions
+                if explicit_citation_instructions
+                else None
+            )
+        citations_enabled = bool(citation_instructions_block)
         supervisor_prompt = resolve_prompt(
             prompt_overrides,
             "agent.supervisor.system",
             DEFAULT_SUPERVISOR_PROMPT,
         )
-        supervisor_system_prompt = build_supervisor_prompt(supervisor_prompt)
+        supervisor_system_prompt = build_supervisor_prompt(
+            supervisor_prompt,
+            citation_instructions=citation_instructions_block,
+        )
         if route == Route.COMPARE:
             supervisor_system_prompt = (
                 supervisor_system_prompt + "\n\n" + COMPARE_SUPERVISOR_INSTRUCTIONS
@@ -535,7 +1144,9 @@ async def stream_new_chat(
             ),
         )
         knowledge_worker_prompt = build_worker_prompt(
-            knowledge_prompt, citations_enabled=True
+            knowledge_prompt,
+            citations_enabled=citations_enabled,
+            citation_instructions=citation_instructions_block,
         )
         action_prompt = resolve_prompt(
             prompt_overrides,
@@ -547,7 +1158,9 @@ async def stream_new_chat(
             ),
         )
         action_worker_prompt = build_worker_prompt(
-            action_prompt, citations_enabled=False
+            action_prompt,
+            citations_enabled=citations_enabled,
+            citation_instructions=citation_instructions_block,
         )
         media_prompt = resolve_prompt(
             prompt_overrides,
@@ -574,7 +1187,10 @@ async def stream_new_chat(
             "agent.statistics.system",
             DEFAULT_STATISTICS_SYSTEM_PROMPT,
         )
-        statistics_worker_prompt = build_statistics_system_prompt(statistics_prompt)
+        statistics_worker_prompt = build_statistics_system_prompt(
+            statistics_prompt,
+            citation_instructions=citation_instructions_block,
+        )
         synthesis_prompt = resolve_prompt(
             prompt_overrides,
             "agent.synthesis.system",
@@ -585,20 +1201,28 @@ async def stream_new_chat(
             "agent.bolag.system",
             DEFAULT_BOLAG_SYSTEM_PROMPT,
         )
-        bolag_worker_prompt = build_bolag_prompt(bolag_prompt)
+        bolag_worker_prompt = build_bolag_prompt(
+            bolag_prompt,
+            citation_instructions=citation_instructions_block,
+        )
         trafik_prompt = resolve_prompt(
             prompt_overrides,
             "agent.trafik.system",
             DEFAULT_TRAFFIC_SYSTEM_PROMPT,
         )
-        trafik_worker_prompt = build_trafik_prompt(trafik_prompt)
+        trafik_worker_prompt = build_trafik_prompt(
+            trafik_prompt,
+            citation_instructions=citation_instructions_block,
+        )
         compare_analysis_prompt = resolve_prompt(
             prompt_overrides,
             "compare.analysis.system",
             DEFAULT_COMPARE_ANALYSIS_PROMPT,
         )
         compare_synthesis_prompt = build_compare_synthesis_prompt(
-            compare_analysis_prompt, citations_enabled=citations_enabled
+            compare_analysis_prompt,
+            citations_enabled=citations_enabled,
+            citation_instructions=citation_instructions_block,
         )
         compare_external_prompt = resolve_prompt(
             prompt_overrides,
@@ -625,7 +1249,13 @@ async def stream_new_chat(
             route_span_id = f"route-{uuid.uuid4().hex[:8]}"
             route_meta = {
                 "route": route.value,
+                "route_source": str(route_decision.get("source") or ""),
+                "route_confidence": route_decision.get("confidence"),
+                "route_reason": str(route_decision.get("reason") or ""),
+                "route_candidates": route_decision.get("candidates") or [],
                 "citations_enabled": citations_enabled,
+                "citation_instructions_enabled": citations_enabled,
+                "runtime_hitl": runtime_hitl or {},
             }
             route_start = await trace_recorder.start_span(
                 span_id=route_span_id,
@@ -660,11 +1290,24 @@ async def stream_new_chat(
         if webcrawler_connector and webcrawler_connector.config:
             firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
 
+        preferred_checkpoint_ns = build_checkpoint_namespace(
+            user_id=user_id,
+            flow="new_chat_v2",
+        )
+
         # Get the PostgreSQL checkpointer for persistent conversation memory
         checkpointer = await get_checkpointer()
+        if checkpoint_ns_override is not None:
+            checkpoint_ns = str(checkpoint_ns_override).strip()
+        else:
+            checkpoint_ns = await resolve_checkpoint_namespace_for_thread(
+                checkpointer=checkpointer,
+                thread_id=chat_id,
+                preferred_namespace=preferred_checkpoint_ns,
+            )
 
         if route != Route.SMALLTALK:
-            agent = await create_supervisor_agent(
+            agent = await build_complete_graph(
                 llm=llm,
                 dependencies={
                     "search_space_id": search_space_id,
@@ -673,20 +1316,39 @@ async def stream_new_chat(
                     "firecrawl_api_key": firecrawl_api_key,
                     "user_id": user_id,
                     "thread_id": chat_id,
+                    "checkpoint_ns": checkpoint_ns,
+                    "runtime_hitl": dict(runtime_hitl or {}),
                 },
                 checkpointer=checkpointer,
                 knowledge_prompt=knowledge_worker_prompt,
                 action_prompt=action_worker_prompt,
                 statistics_prompt=statistics_worker_prompt,
                 synthesis_prompt=compare_synthesis_prompt or synthesis_prompt,
-                compare_mode=route == Route.COMPARE,
+                compare_mode=compare_mode,
                 external_model_prompt=compare_external_prompt,
                 bolag_prompt=bolag_worker_prompt,
                 trafik_prompt=trafik_worker_prompt,
-                media_prompt=build_worker_prompt(media_prompt, citations_enabled=False),
-                browser_prompt=build_worker_prompt(browser_prompt, citations_enabled=True),
-                code_prompt=build_worker_prompt(code_prompt, citations_enabled=True),
-                kartor_prompt=build_worker_prompt(kartor_prompt, citations_enabled=False),
+                media_prompt=build_worker_prompt(
+                    media_prompt,
+                    citations_enabled=citations_enabled,
+                    citation_instructions=citation_instructions_block,
+                ),
+                browser_prompt=build_worker_prompt(
+                    browser_prompt,
+                    citations_enabled=citations_enabled,
+                    citation_instructions=citation_instructions_block,
+                ),
+                code_prompt=build_worker_prompt(
+                    code_prompt,
+                    citations_enabled=citations_enabled,
+                    citation_instructions=citation_instructions_block,
+                ),
+                kartor_prompt=build_worker_prompt(
+                    kartor_prompt,
+                    citations_enabled=citations_enabled,
+                    citation_instructions=citation_instructions_block,
+                ),
+                tool_prompt_overrides=prompt_overrides,
             )
         else:
             # Fallback to deep agent for smalltalk
@@ -703,6 +1365,7 @@ async def stream_new_chat(
                 enabled_tools=ROUTE_TOOL_SETS.get(route, []),
                 tool_names_for_prompt=[],
                 force_citations_enabled=citations_enabled,
+                citation_instructions=citation_instructions_block,
             )
 
         # Build input with message history
@@ -758,6 +1421,10 @@ async def stream_new_chat(
         attachments_context = ""
         mentioned_documents_context = ""
         mentioned_surfsense_context = ""
+        followup_context = followup_context_block.strip()
+
+        if followup_context:
+            context_parts.append(followup_context)
 
         if attachments:
             attachments_context = format_attachments_as_context(attachments)
@@ -794,6 +1461,7 @@ async def stream_new_chat(
             "total_chars": len(final_query),
             "total_tokens": total_tokens,
             "breakdown": {
+                "followup_context_chars": len(followup_context),
                 "attachments_chars": len(attachments_context),
                 "mentioned_docs_chars": len(mentioned_documents_context),
                 "mentioned_surfsense_docs_chars": len(mentioned_surfsense_context),
@@ -812,11 +1480,13 @@ async def stream_new_chat(
         if worker_system_prompt:
             langchain_messages.append(SystemMessage(content=worker_system_prompt))
         langchain_messages.append(HumanMessage(content=final_query))
+        request_turn_id = uuid.uuid4().hex
 
         input_state = {
             # Lets not pass this message atm because we are using the checkpointer to manage the conversation history
             # We will use this to simulate group chat functionality in the future
             "messages": langchain_messages,
+            "turn_id": request_turn_id,
         }
         if route == Route.SMALLTALK:
             input_state["search_space_id"] = search_space_id
@@ -826,6 +1496,8 @@ async def stream_new_chat(
         # Configure LangGraph with thread_id for memory
         # If checkpoint_id is provided, fork from that checkpoint (for edit/reload)
         configurable = {"thread_id": str(chat_id)}
+        if checkpoint_ns:
+            configurable["checkpoint_ns"] = checkpoint_ns
         if checkpoint_id:
             configurable["checkpoint_id"] = checkpoint_id
 
@@ -880,6 +1552,13 @@ async def stream_new_chat(
         just_finished_tool: bool = False
         # Track write_todos calls to show "Creating plan" vs "Updating plan"
         write_todos_call_count: int = 0
+        # Fallback text captured from non-streaming model/chain events
+        fallback_assistant_text: str = ""
+        chain_name_by_run_id: dict[str, str] = {}
+        model_parent_chain_by_run_id: dict[str, str] = {}
+        internal_model_buffers: dict[str, str] = {}
+        emitted_pipeline_payload_signatures: set[str] = set()
+        stream_pipeline_prefix_buffer: str = ""
 
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
@@ -909,8 +1588,118 @@ async def stream_new_chat(
                 )
             return None
 
+        def emit_pipeline_steps_from_payloads(
+            payloads: list[dict[str, Any]],
+            *,
+            source_chain: str | None = None,
+        ) -> list[str]:
+            events: list[str] = []
+            for payload in payloads:
+                kind = _pipeline_payload_kind(payload)
+                if not kind:
+                    continue
+                signature = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+                if signature in emitted_pipeline_payload_signatures:
+                    continue
+                emitted_pipeline_payload_signatures.add(signature)
+
+                completion_event = complete_current_step()
+                if completion_event:
+                    events.append(completion_event)
+
+                step_id = next_thinking_step_id()
+                title = format_step_title("Updating internal planner state")
+                items: list[str] = []
+                if kind == "intent":
+                    title = format_step_title("Resolving intent")
+                    intent_id = str(payload.get("intent_id") or "").strip()
+                    reason = str(payload.get("reason") or "").strip()
+                    confidence = payload.get("confidence")
+                    if intent_id:
+                        items.append(f"Intent: {intent_id}")
+                    if isinstance(confidence, (int, float)):
+                        items.append(f"Confidence: {float(confidence):.2f}")
+                    if reason:
+                        items.append(f"Orsak: {reason[:180]}")
+                elif kind == "agent_resolver":
+                    title = format_step_title("Selecting agents")
+                    selected_agents = payload.get("selected_agents")
+                    if isinstance(selected_agents, list):
+                        clean_agents = [
+                            str(agent).strip() for agent in selected_agents if str(agent).strip()
+                        ]
+                        if clean_agents:
+                            items.append(f"Agenter: {', '.join(clean_agents[:4])}")
+                    reason = str(payload.get("reason") or "").strip()
+                    if reason:
+                        items.append(f"Orsak: {reason[:180]}")
+                elif kind == "planner":
+                    title = format_step_title("Building plan")
+                    steps = payload.get("steps")
+                    if isinstance(steps, list):
+                        for step in steps[:4]:
+                            if not isinstance(step, dict):
+                                continue
+                            content = str(step.get("content") or "").strip()
+                            if content:
+                                items.append(content[:180])
+                    reason = str(payload.get("reason") or "").strip()
+                    if reason:
+                        items.append(f"Planmotiv: {reason[:180]}")
+                elif kind == "critic":
+                    title = format_step_title("Reviewing findings, gaps, and next steps")
+                    decision = str(payload.get("decision") or "").strip()
+                    if not decision:
+                        decision = str(payload.get("status") or "").strip()
+                    reason = str(payload.get("reason") or "").strip()
+                    if decision:
+                        items.append(f"Decision: {decision}")
+                    if reason:
+                        items.append(f"Orsak: {reason[:180]}")
+                if source_chain and _is_internal_pipeline_chain_name(source_chain):
+                    items.insert(0, f"Nod: {source_chain}")
+                events.append(
+                    streaming_service.format_thinking_step(
+                        step_id=step_id,
+                        title=title,
+                        status="in_progress",
+                        items=items or None,
+                    )
+                )
+                events.append(
+                    streaming_service.format_thinking_step(
+                        step_id=step_id,
+                        title=title,
+                        status="completed",
+                        items=items or None,
+                    )
+                )
+                completed_step_ids.add(step_id)
+            return events
+
+        def emit_pipeline_steps_from_text(
+            text: str,
+            *,
+            source_chain: str | None = None,
+        ) -> list[str]:
+            payloads = [
+                payload
+                for payload in _extract_json_objects_from_text(text, max_objects=6)
+                if _pipeline_payload_kind(payload)
+            ]
+            return emit_pipeline_steps_from_payloads(payloads, source_chain=source_chain)
+
         route_step_id = next_thinking_step_id()
         route_items = [f"Route: {route.value}"]
+        route_source = str(route_decision.get("source") or "").strip()
+        route_confidence = route_decision.get("confidence")
+        route_reason = str(route_decision.get("reason") or "").strip()
+        if route_source:
+            route_items.append(f"Källa: {route_source}")
+        if isinstance(route_confidence, (int, float)):
+            route_items.append(f"Confidence: {float(route_confidence):.2f}")
+        if route_reason:
+            route_items.append(f"Orsak: {route_reason}")
         yield streaming_service.format_thinking_step(
             step_id=route_step_id,
             title=format_step_title("Routing request"),
@@ -1012,7 +1801,7 @@ async def stream_new_chat(
             remaining = text
             while remaining:
                 if not suppress_critic:
-                    match = re.search(r"\{\s*\"status\"\s*:", remaining)
+                    match = _CRITIC_JSON_START_RE.search(remaining)
                     if not match:
                         output += remaining
                         break
@@ -1040,15 +1829,31 @@ async def stream_new_chat(
             stripped_existing = accumulated_text.lstrip()
             if not stripped_existing:
                 return text
+            normalized_existing = _REPEAT_BULLET_PREFIX_RE.sub(
+                "", stripped_existing
+            ).lstrip()
             if not repeat_candidate:
-                if text.lstrip().startswith(stripped_existing[:10]):
+                normalized_incoming = _REPEAT_BULLET_PREFIX_RE.sub("", text).lstrip()
+                existing_probe = normalized_existing[:10]
+                incoming_probe = normalized_incoming[:10]
+                if (
+                    existing_probe
+                    and incoming_probe
+                    and (
+                        normalized_incoming.startswith(existing_probe)
+                        or normalized_existing.startswith(incoming_probe)
+                    )
+                ):
                     repeat_candidate = True
                 else:
                     return text
             repeat_buffer += text
             if len(repeat_buffer) < 60:
                 return ""
-            if stripped_existing.startswith(repeat_buffer[:60].lstrip()):
+            normalized_repeat = _REPEAT_BULLET_PREFIX_RE.sub(
+                "", repeat_buffer[:60]
+            ).lstrip()
+            if normalized_repeat and normalized_existing.startswith(normalized_repeat):
                 suppress_repeat = True
                 repeat_buffer = ""
                 return ""
@@ -1064,10 +1869,32 @@ async def stream_new_chat(
             event_type = event.get("event", "")
             run_id = str(event.get("run_id") or "")
             trace_parent = trace_parent_id(event)
+            if event_type == "on_chain_start" and run_id:
+                chain_name_by_run_id.setdefault(
+                    run_id, str(event.get("name") or "chain")
+                )
+            elif event_type in ("on_chat_model_start", "on_llm_start") and run_id:
+                if run_id not in model_parent_chain_by_run_id:
+                    parent_chain_name = ""
+                    parent_ids = [
+                        str(value)
+                        for value in (event.get("parent_ids") or [])
+                        if str(value)
+                    ]
+                    for parent_id in reversed(parent_ids):
+                        candidate_chain_name = chain_name_by_run_id.get(parent_id)
+                        if candidate_chain_name:
+                            parent_chain_name = str(candidate_chain_name)
+                            break
+                    if _is_internal_pipeline_chain_name(parent_chain_name):
+                        model_parent_chain_by_run_id[run_id] = parent_chain_name
+                        internal_model_buffers.setdefault(run_id, "")
 
             if trace_recorder:
                 if event_type == "on_chain_start":
                     chain_name = event.get("name") or "chain"
+                    if run_id:
+                        chain_name_by_run_id[run_id] = str(chain_name)
                     chain_input = event.get("data", {}).get("input")
                     chain_meta = {
                         "tags": event.get("tags") or [],
@@ -1092,6 +1919,26 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
+                    candidate_text = _extract_assistant_text_from_event_output(
+                        chain_output
+                    )
+                    chain_name = chain_name_by_run_id.get(run_id) or str(
+                        event.get("name") or ""
+                    )
+                    if candidate_text:
+                        source_chain = (
+                            chain_name
+                            if _is_internal_pipeline_chain_name(chain_name)
+                            else None
+                        )
+                        for step_event in emit_pipeline_steps_from_text(
+                            candidate_text,
+                            source_chain=source_chain,
+                        ):
+                            yield step_event
+                        cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                        if cleaned_candidate:
+                            fallback_assistant_text = cleaned_candidate
                 elif event_type == "on_chain_error":
                     trace_event = await trace_recorder.end_span(
                         span_id=run_id,
@@ -1100,8 +1947,20 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
+                    if run_id:
+                        chain_name_by_run_id.pop(run_id, None)
                 elif event_type in ("on_chat_model_start", "on_llm_start"):
                     model_data = event.get("data", {})
+                    parent_chain_name = ""
+                    parent_ids = [str(value) for value in (event.get("parent_ids") or []) if str(value)]
+                    for parent_id in reversed(parent_ids):
+                        candidate_chain_name = chain_name_by_run_id.get(parent_id)
+                        if candidate_chain_name:
+                            parent_chain_name = str(candidate_chain_name)
+                            break
+                    if run_id and _is_internal_pipeline_chain_name(parent_chain_name):
+                        model_parent_chain_by_run_id[run_id] = parent_chain_name
+                        internal_model_buffers.setdefault(run_id, "")
                     model_input = (
                         model_data.get("input")
                         or model_data.get("messages")
@@ -1133,6 +1992,24 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
+                    candidate_text = _extract_assistant_text_from_event_output(
+                        model_output
+                    )
+                    internal_chain_name = model_parent_chain_by_run_id.pop(run_id, "")
+                    internal_buffer = internal_model_buffers.pop(run_id, "")
+                    if internal_chain_name:
+                        internal_text = internal_buffer or candidate_text
+                        for step_event in emit_pipeline_steps_from_text(
+                            internal_text,
+                            source_chain=internal_chain_name,
+                        ):
+                            yield step_event
+                    elif candidate_text:
+                        for step_event in emit_pipeline_steps_from_text(candidate_text):
+                            yield step_event
+                        cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                        if cleaned_candidate:
+                            fallback_assistant_text = cleaned_candidate
 
             # Handle chat model stream events (text streaming)
             if event_type == "on_chat_model_stream":
@@ -1140,7 +2017,32 @@ async def stream_new_chat(
                 if chunk and hasattr(chunk, "content"):
                     content = chunk.content
                     if content and isinstance(content, str):
+                        if run_id and run_id in model_parent_chain_by_run_id:
+                            internal_model_buffers[run_id] = (
+                                internal_model_buffers.get(run_id, "") + content
+                            )
+                            if trace_recorder:
+                                trace_update = await trace_recorder.append_span_output(
+                                    span_id=run_id, output_delta=content
+                                )
+                                if trace_update:
+                                    yield trace_update
+                            continue
                         content = filter_critic_json(content)
+                        if stream_pipeline_prefix_buffer:
+                            content = stream_pipeline_prefix_buffer + content
+                            stream_pipeline_prefix_buffer = ""
+                        content, inline_pipeline_payloads = _strip_inline_pipeline_payloads(
+                            content
+                        )
+                        if inline_pipeline_payloads:
+                            for step_event in emit_pipeline_steps_from_payloads(
+                                inline_pipeline_payloads
+                            ):
+                                yield step_event
+                        content, stream_pipeline_prefix_buffer = _split_trailing_pipeline_prefix(
+                            content
+                        )
                         content = filter_repeated_output(content)
                         if not content:
                             continue
@@ -1763,20 +2665,14 @@ async def stream_new_chat(
                 elif tool_name == "call_agent":
                     agent_name = ""
                     response = ""
-                    critic = {}
                     if isinstance(tool_output, dict):
                         agent_name = tool_output.get("agent") or ""
                         response = tool_output.get("response") or ""
-                        critic = tool_output.get("critic") or {}
                     completed_items = []
                     if agent_name:
                         completed_items.append(f"Agent: {agent_name}")
                     if response:
                         completed_items.append(f"Result: {_summarize_text(response)}")
-                    if isinstance(critic, dict) and critic.get("reason"):
-                        completed_items.append(
-                            f"Critic: {_summarize_text(critic.get('reason'))}"
-                        )
                     if not completed_items:
                         completed_items = ["Delegation completed"]
                     title = (
@@ -2491,9 +3387,25 @@ async def stream_new_chat(
 
             # Handle chain/agent end to close any open text blocks
             elif event_type in ("on_chain_end", "on_agent_end"):
+                chain_name = chain_name_by_run_id.get(run_id) or str(event.get("name") or "")
+                candidate_text = _extract_assistant_text_from_event_output(
+                    event.get("data", {}).get("output")
+                )
+                if candidate_text:
+                    source_chain = chain_name if _is_internal_pipeline_chain_name(chain_name) else None
+                    for step_event in emit_pipeline_steps_from_text(
+                        candidate_text,
+                        source_chain=source_chain,
+                    ):
+                        yield step_event
+                    cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                    if cleaned_candidate:
+                        fallback_assistant_text = cleaned_candidate
                 if current_text_id is not None:
                     yield streaming_service.format_text_end(current_text_id)
                     current_text_id = None
+                if event_type == "on_chain_end" and run_id:
+                    chain_name_by_run_id.pop(run_id, None)
 
         # Ensure text block is closed
         if repeat_buffer and not suppress_repeat:
@@ -2503,6 +3415,18 @@ async def stream_new_chat(
             yield streaming_service.format_text_delta(current_text_id, repeat_buffer)
             accumulated_text += repeat_buffer
             repeat_buffer = ""
+        fallback_assistant_text = _clean_assistant_output_text(fallback_assistant_text)
+        if not accumulated_text.strip() and fallback_assistant_text.strip():
+            if current_text_id is None:
+                completion_event = complete_current_step()
+                if completion_event:
+                    yield completion_event
+                current_text_id = streaming_service.generate_text_id()
+                yield streaming_service.format_text_start(current_text_id)
+            yield streaming_service.format_text_delta(
+                current_text_id, fallback_assistant_text
+            )
+            accumulated_text += fallback_assistant_text
         if current_text_id is not None:
             yield streaming_service.format_text_end(current_text_id)
 

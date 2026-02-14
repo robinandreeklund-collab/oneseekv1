@@ -168,6 +168,15 @@ class ChatAttachment(BaseModel):
     content: str  # Extracted markdown content from the file
 
 
+class RuntimeHitlConfig(BaseModel):
+    """Optional runtime human-in-the-loop checkpoints."""
+
+    enabled: bool = True
+    planner: bool = False
+    execution: bool = False
+    synthesis: bool = False
+
+
 class NewChatRequest(BaseModel):
     """Request schema for the deep agent chat endpoint."""
 
@@ -183,6 +192,12 @@ class NewChatRequest(BaseModel):
     )
     mentioned_surfsense_doc_ids: list[int] | None = (
         None  # Optional SurfSense documentation IDs mentioned with @ in the chat
+    )
+    citation_instructions: str | bool | None = (
+        None  # Optional citation controls. True uses configured citation prompt, str injects custom text.
+    )
+    runtime_hitl: RuntimeHitlConfig | None = (
+        None  # Optional runtime HITL checkpoints for planner/execution/synthesis.
     )
 
 
@@ -204,6 +219,8 @@ class RegenerateRequest(BaseModel):
     attachments: list[ChatAttachment] | None = None
     mentioned_document_ids: list[int] | None = None
     mentioned_surfsense_doc_ids: list[int] | None = None
+    citation_instructions: str | bool | None = None
+    runtime_hitl: RuntimeHitlConfig | None = None
 
 
 # =============================================================================

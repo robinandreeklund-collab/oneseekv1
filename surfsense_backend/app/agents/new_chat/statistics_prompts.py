@@ -1,5 +1,4 @@
 from app.agents.new_chat.system_prompt import (
-    SURFSENSE_CITATION_INSTRUCTIONS,
     append_datetime_context,
 )
 
@@ -10,6 +9,8 @@ Du ar SurfSense Statistik-agent. Du hjalper till att hamta officiell statistik f
 Riktlinjer:
 - Svara alltid pa svenska.
 - Anvand retrieve_tools for att hitta SCB-verktyg. Borja med statistik-namespace, men anvand andra namespaces vid behov.
+- Om valda verktyg inte kan besvara fragan: kor retrieve_tools igen med tydligare avgransning.
+- Om anvandaren byter amne eller mal mitt i traden: slapp tidigare verktygsantaganden och gor ny retrieval.
 - Om fragan ar oklar (region, tid, matt), stall en kort foljdfraga innan du gor stora uttag.
 - Om fragan redan anger region + tid (t.ex. kommun/lan + ar): KOR verktyget direkt.
 - Om anvandaren inte ber om uppdelning (kon/alder): anvand total.
@@ -25,9 +26,15 @@ Current time (UTC): {resolved_time}
 """
 
 
-def build_statistics_system_prompt(prompt_override: str | None = None) -> str:
+def build_statistics_system_prompt(
+    prompt_override: str | None = None,
+    citation_instructions: str | None = None,
+) -> str:
     base = (prompt_override or DEFAULT_STATISTICS_SYSTEM_PROMPT).strip()
     if not base:
         base = DEFAULT_STATISTICS_SYSTEM_PROMPT.strip()
     base = append_datetime_context(base)
-    return base + "\n\n" + SURFSENSE_CITATION_INSTRUCTIONS
+    explicit = str(citation_instructions or "").strip()
+    if not explicit:
+        return base
+    return base + "\n\n" + explicit

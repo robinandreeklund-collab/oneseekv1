@@ -54,12 +54,22 @@ const AGENT_PROMPT_ORDER: Record<string, string[]> = {
 	action: ["system", "web", "media", "travel", "data"],
 };
 
-const SYSTEM_SECTION_ORDER = ["router", "supervisor", "worker", "compare", "other"];
+const SYSTEM_SECTION_ORDER = [
+	"core",
+	"router",
+	"supervisor",
+	"worker",
+	"compare",
+	"citations",
+	"other",
+];
 const SYSTEM_SECTION_LABELS: Record<string, string> = {
+	core: "Core",
 	router: "Router",
 	supervisor: "Supervisor",
 	worker: "Workers",
 	compare: "Compare",
+	citations: "Citations",
 	other: "Övrigt",
 };
 
@@ -70,11 +80,20 @@ const ROUTER_NODES = [
 ];
 
 const SYSTEM_NODES = [
+	{ label: "Core system prompt", key: "system.default.instructions" },
 	{ label: "Supervisor", key: "agent.supervisor.system" },
+	{ label: "Supervisor · Critic", key: "supervisor.critic.system" },
+	{ label: "Supervisor · Loop guard", key: "supervisor.loop_guard.message" },
+	{ label: "Supervisor · Tool-limit guard", key: "supervisor.tool_limit_guard.message" },
+	{
+		label: "Supervisor · Trafik enforcement",
+		key: "supervisor.trafik.enforcement.message",
+	},
 	{ label: "Worker · Knowledge", key: "agent.worker.knowledge" },
 	{ label: "Worker · Action", key: "agent.worker.action" },
 	{ label: "Compare · Analysis", key: "compare.analysis.system" },
 	{ label: "Compare · External", key: "compare.external.system" },
+	{ label: "Citation instructions", key: "citation.instructions" },
 ];
 
 const AGENT_NODES = [
@@ -202,11 +221,32 @@ export function AdminPromptsPage() {
 					section: "router",
 				};
 			}
+			if (key.startsWith("system.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "core",
+				};
+			}
+			if (key.startsWith("supervisor.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "supervisor",
+				};
+			}
 			if (key.startsWith("compare.")) {
 				return {
 					item,
 					group: "system" as const,
 					section: "compare",
+				};
+			}
+			if (key.startsWith("citation.")) {
+				return {
+					item,
+					group: "system" as const,
+					section: "citations",
 				};
 			}
 			if (key.startsWith("agent.")) {

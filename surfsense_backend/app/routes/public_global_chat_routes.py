@@ -17,14 +17,16 @@ from app.agents.new_chat.llm_config import (
     create_chat_litellm_from_config,
     load_llm_config_from_yaml,
 )
+from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.system_prompt import (
     SURFSENSE_CITATION_INSTRUCTIONS,
-    SURFSENSE_NO_CITATION_INSTRUCTIONS,
     SURFSENSE_SYSTEM_INSTRUCTIONS,
 )
 from app.agents.new_chat.tools.registry import get_tool_by_name, build_tools_async
 from app.config import config
+from app.db import async_session_maker
 from app.schemas.public_global_chat import PublicGlobalChatRequest
+from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.services.anonymous_session_service import (
     ANON_SESSION_COOKIE_NAME,
     get_or_create_anonymous_session,
@@ -113,6 +115,8 @@ def _build_tool_instructions(enabled_tools: list[str]) -> str:
 def _build_system_prompt(
     llm_config: dict | None,
     enabled_tools: list[str],
+    citation_instructions: str | bool | None = None,
+    default_system_instructions: str | None = None,
 ) -> str:
     now = datetime.now(UTC).astimezone(UTC)
     resolved_today = now.date().isoformat()
@@ -120,33 +124,37 @@ def _build_system_prompt(
     public_guard = PUBLIC_SYSTEM_PROMPT.strip()
 
     system_instructions = ""
-    citations_enabled = True
+    system_default_template = str(
+        default_system_instructions or SURFSENSE_SYSTEM_INSTRUCTIONS
+    )
     if llm_config:
         custom_instructions = llm_config.get("system_instructions") or ""
         use_default = llm_config.get("use_default_system_instructions", True)
-        citations_enabled = llm_config.get("citations_enabled", True)
         if custom_instructions.strip():
             system_instructions = custom_instructions.format(
                 resolved_today=resolved_today,
                 resolved_time=resolved_time,
             ).strip()
         elif use_default:
-            system_instructions = SURFSENSE_SYSTEM_INSTRUCTIONS.format(
+            system_instructions = system_default_template.format(
                 resolved_today=resolved_today,
                 resolved_time=resolved_time,
             ).strip()
     else:
-        system_instructions = SURFSENSE_SYSTEM_INSTRUCTIONS.format(
+        system_instructions = system_default_template.format(
             resolved_today=resolved_today,
             resolved_time=resolved_time,
         ).strip()
 
     tool_instructions = _build_tool_instructions(enabled_tools)
-    citation_instructions = (
-        SURFSENSE_CITATION_INSTRUCTIONS
-        if citations_enabled
-        else SURFSENSE_NO_CITATION_INSTRUCTIONS
-    )
+    if isinstance(citation_instructions, bool):
+        explicit_citation_instructions = (
+            SURFSENSE_CITATION_INSTRUCTIONS.strip()
+            if citation_instructions
+            else ""
+        )
+    else:
+        explicit_citation_instructions = str(citation_instructions or "").strip()
 
     parts = [
         part
@@ -154,7 +162,7 @@ def _build_system_prompt(
             system_instructions,
             public_guard,
             tool_instructions,
-            citation_instructions,
+            explicit_citation_instructions,
         ]
         if part and part.strip()
     ]
@@ -251,13 +259,42 @@ async def build_public_agent(
     request: PublicGlobalChatRequest,
 ):
     llm, llm_config, llm_config_id = await resolve_public_llm(request)
+    prompt_overrides: dict[str, str] = {}
+    try:
+        async with async_session_maker() as session:
+            prompt_overrides = await get_global_prompt_overrides(session)
+    except Exception:
+        logger.exception("Failed to load global prompt overrides for public chat")
+
+    default_system_prompt = resolve_prompt(
+        prompt_overrides,
+        "system.default.instructions",
+        SURFSENSE_SYSTEM_INSTRUCTIONS,
+    )
+    citation_payload: str | bool | None = request.citation_instructions
+    if isinstance(citation_payload, bool):
+        citation_payload = (
+            resolve_prompt(
+                prompt_overrides,
+                "citation.instructions",
+                SURFSENSE_CITATION_INSTRUCTIONS,
+            )
+            if citation_payload
+            else None
+        )
+
     dependencies = {"firecrawl_api_key": config.FIRECRAWL_API_KEY}
     enabled_tools = _resolve_public_tools()
     tools = await build_tools_async(
         dependencies=dependencies,
         enabled_tools=enabled_tools,
     )
-    system_prompt = _build_system_prompt(llm_config, enabled_tools)
+    system_prompt = _build_system_prompt(
+        llm_config,
+        enabled_tools,
+        citation_instructions=citation_payload,
+        default_system_instructions=default_system_prompt,
+    )
     checkpointer = MemorySaver()
     agent = create_deep_agent(
         model=llm,
