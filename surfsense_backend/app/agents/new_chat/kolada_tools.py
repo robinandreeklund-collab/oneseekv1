@@ -639,19 +639,10 @@ def _build_kolada_tool(
             )
 
         try:
-            # Enrich query with hints
-            query_hint = " ".join(
-                [
-                    definition.name,
-                    *definition.keywords,
-                    *definition.kpi_hints,
-                ]
-            ).strip()
-            enriched_query = f"{query} {query_hint}".strip()
-            
-            # Query Kolada service
+            # Use the question directly without over-enriching
+            # The service will handle search term extraction
             results = await kolada_service.query(
-                question=enriched_query,
+                question=query,
                 operating_area=definition.operating_area,
                 municipality=municipality,
                 years=years,

@@ -198,7 +198,23 @@ class KoladaService:
         Returns:
             List of matching KPIs
         """
-        params = {"title": query, "per_page": str(per_page)}
+        # Use 'title' parameter for filtering by title text
+        # Extract key terms from query to improve matching
+        # Remove common words and extract main concepts
+        search_query = query.lower()
+        
+        # Remove common filler words that won't help matching
+        filler_words = ['i', 'per', 'för', 'från', 'till', 'med', 'och', 'eller', 'i', 'på', 'av']
+        terms = [word for word in search_query.split() if word not in filler_words]
+        
+        # If we have many terms, use just the key ones
+        if len(terms) > 3:
+            # Keep the first few meaningful terms
+            search_query = ' '.join(terms[:3])
+        else:
+            search_query = ' '.join(terms)
+        
+        params = {"title": search_query, "per_page": str(per_page)}
         
         try:
             data = await self._get_json("/kpi", params=params)
@@ -437,7 +453,12 @@ class KoladaService:
             List of query results with data
         """
         # Search for relevant KPIs
-        kpis = await self.search_kpis(question, operating_area=operating_area, per_page=max_kpis * 2)
+        # First try with operating_area filter
+        kpis = await self.search_kpis(question, operating_area=operating_area, per_page=max_kpis * 3)
+        
+        # If no results with operating_area, try without it for broader search
+        if not kpis and operating_area:
+            kpis = await self.search_kpis(question, operating_area=None, per_page=max_kpis * 3)
         
         if not kpis:
             return []
