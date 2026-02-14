@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Skolverket">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#005A9C"/>
+  <path d="M20 23c0-2.76 2.24-5 5-5h14c2.76 0 5 2.24 5 5v18c0 2.76-2.24 5-5 5H25c-2.76 0-5-2.24-5-5V23Z" fill="#ffffff"/>
+  <path d="M26 24h12a2 2 0 0 1 2 2v2H26v-4Zm0 8h14v2H26v-2Zm0 6h10v2H26v-2Z" fill="#005A9C"/>
+  <circle cx="45" cy="18" r="7" fill="#00A0E3"/>
+  <path d="M45 14.7l.97 1.96 2.16.31-1.56 1.52.37 2.15L45 19.6l-1.94 1.02.37-2.15-1.56-1.52 2.16-.31L45 14.7Z" fill="#ffffff"/>
+</svg>

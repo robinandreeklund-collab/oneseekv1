@@ -3,9 +3,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, ChevronDown, ExternalLink, FileText, Hash, Sparkles, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import Image from "next/image";
 import { useTranslations } from "next-intl";
 import type React from "react";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MarkdownViewer } from "@/components/markdown-viewer";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,16 @@ const formatDocumentType = (type: string) => {
 		.split("_")
 		.map((word) => word.charAt(0) + word.slice(1).toLowerCase())
 		.join(" ");
+};
+
+const containsSkolverketMarker = (value: unknown): boolean => {
+	if (value === null || value === undefined) return false;
+	const normalized = String(value)
+		.toLowerCase()
+		.replaceAll("å", "a")
+		.replaceAll("ä", "a")
+		.replaceAll("ö", "o");
+	return normalized.includes("skolverket");
 };
 
 export function SourceDetailPanel({
@@ -88,6 +99,24 @@ export function SourceDetailPanel({
 		sourceType === "LINKUP_API" ||
 		sourceType === "SEARXNG_API" ||
 		sourceType === "BAIDU_SEARCH_API";
+
+	const isSkolverketSource = useMemo(() => {
+		const candidates: unknown[] = [sourceType, title, description, url];
+
+		if (documentData && "source" in documentData) {
+			candidates.push(documentData.source);
+		}
+
+		if (documentData && "document_metadata" in documentData && documentData.document_metadata) {
+			const metadata = documentData.document_metadata;
+			candidates.push(metadata.source);
+			candidates.push(metadata.skolverket_tool);
+			candidates.push(metadata.skolverket_category);
+			candidates.push(metadata.source_url);
+		}
+
+		return candidates.some(containsSkolverketMarker);
+	}, [documentData, sourceType, title, description, url]);
 
 	// Find cited chunk index
 	const citedChunkIndex = documentData?.chunks?.findIndex((chunk) => chunk.id === chunkId) ?? -1;
@@ -263,6 +292,18 @@ export function SourceDetailPanel({
 							className="flex items-center justify-between px-6 py-5 border-b bg-linear-to-r from-muted/50 to-muted/30"
 						>
 							<div className="min-w-0 flex-1">
+								{isSkolverketSource && (
+									<div className="mb-2 inline-flex items-center gap-2 rounded-full border border-[#005A9C]/25 bg-[#005A9C]/10 px-2.5 py-1 text-[#005A9C]">
+										<Image
+											src="/connectors/skolverket.svg"
+											alt="Skolverket"
+											width={14}
+											height={14}
+											className="h-3.5 w-3.5"
+										/>
+										<span className="text-xs font-semibold leading-none">Skolverket</span>
+									</div>
+								)}
 								<h2 className="text-xl font-semibold truncate">
 									{documentData?.title || title || "Källdokument"}
 								</h2>
