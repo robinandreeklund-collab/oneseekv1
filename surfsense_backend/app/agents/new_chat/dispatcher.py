@@ -13,10 +13,6 @@ _GREETING_REGEX = re.compile(
     re.IGNORECASE,
 )
 _COMPARE_COMMAND_RE = re.compile(r"^/compare\b", re.IGNORECASE)
-_COMPARE_INTENT_RE = re.compile(
-    r"\b(compare|jämför|jamfor|jämförelse|jamforelse|skillnad(?:en)?(?:\s+mellan)?)\b",
-    re.IGNORECASE,
-)
 _FOLLOWUP_CONTEXT_RE = re.compile(
     r"\b(också|ocksa|även|aven|samma|där|dar|dit|den|det|dom|dem|denna|denne|kolla|fortsätt|fortsatt)\b",
     re.IGNORECASE,
@@ -64,8 +60,6 @@ def _infer_rule_based_route(text: str) -> Route | None:
         return None
     if _COMPARE_COMMAND_RE.match(value):
         return Route.COMPARE
-    if _COMPARE_INTENT_RE.search(value):
-        return Route.COMPARE
     if _GREETING_REGEX.match(value) and len(value) <= 20:
         return Route.SMALLTALK
     return None
@@ -80,6 +74,14 @@ def _looks_context_dependent_followup(text: str) -> bool:
     if len(value) <= 70 and value.startswith(("kan du ", "kan ni ", "och ", "hur ", "vad ")):
         return True
     return False
+
+
+def _first_non_compare_route(candidates: list[dict[str, Any]] | None) -> Route | None:
+    for item in candidates or []:
+        route = _normalize_route(str(item.get("route") or ""))
+        if route and route not in {Route.COMPARE, Route.SMALLTALK}:
+            return route
+    return None
 
 
 async def dispatch_route(
@@ -175,11 +177,49 @@ async def dispatch_route_with_trace(
         for item in (intent_definitions or list(get_default_intent_definitions().values()))
         if isinstance(item, dict) and bool(item.get("enabled", True))
     ]
+    if not previous_route and previous_user_text:
+        previous_decision = resolve_route_from_intents(
+            query=previous_user_text,
+            definitions=normalized_intents,
+        )
+        if previous_decision and previous_decision.route not in {
+            Route.SMALLTALK,
+            Route.COMPARE,
+        }:
+            previous_route = previous_decision.route
+
+    explicit_compare = bool(_COMPARE_COMMAND_RE.match(text))
+
+    def remap_non_explicit_compare(
+        route: Route,
+        *,
+        candidates: list[dict[str, Any]] | None = None,
+    ) -> Route:
+        if route != Route.COMPARE or explicit_compare:
+            return route
+        if previous_route and previous_route not in {Route.SMALLTALK, Route.COMPARE}:
+            return previous_route
+        candidate_route = _first_non_compare_route(candidates)
+        if candidate_route:
+            return candidate_route
+        return Route.KNOWLEDGE
+
     retrieval_decision = resolve_route_from_intents(
         query=text,
         definitions=normalized_intents,
     )
     if retrieval_decision and retrieval_decision.confidence >= 0.62:
+        selected_route = remap_non_explicit_compare(
+            retrieval_decision.route,
+            candidates=retrieval_decision.candidates,
+        )
+        if selected_route != retrieval_decision.route:
+            return selected_route, {
+                "source": "compare_guard",
+                "confidence": max(0.5, retrieval_decision.confidence - 0.1),
+                "reason": "compare_requires_explicit_/compare_command",
+                "candidates": retrieval_decision.candidates,
+            }
         return retrieval_decision.route, {
             "source": retrieval_decision.source,
             "confidence": retrieval_decision.confidence,
@@ -223,11 +263,24 @@ async def dispatch_route_with_trace(
         )
         llm_route = _normalize_route(str(getattr(response, "content", "") or ""))
         if llm_route:
+            guarded_llm_route = remap_non_explicit_compare(
+                llm_route,
+                candidates=retrieval_decision.candidates if retrieval_decision else [],
+            )
+            if guarded_llm_route != llm_route:
+                return guarded_llm_route, {
+                    "source": "compare_guard_llm",
+                    "confidence": 0.76,
+                    "reason": "llm_compare_blocked_without_/compare_command",
+                    "candidates": retrieval_decision.candidates
+                    if retrieval_decision
+                    else [],
+                }
             if (
                 is_followup
                 and previous_route
                 and previous_route not in {Route.SMALLTALK, Route.COMPARE}
-                and llm_route in {Route.KNOWLEDGE, Route.ACTION}
+                and guarded_llm_route in {Route.KNOWLEDGE, Route.ACTION}
             ):
                 return previous_route, {
                     "source": "followup_override",
@@ -237,15 +290,26 @@ async def dispatch_route_with_trace(
                     if retrieval_decision
                     else [],
                 }
-            return llm_route, {
+            return guarded_llm_route, {
                 "source": "llm_tiebreak",
                 "confidence": retrieval_decision.confidence
                 if retrieval_decision
                 else 0.55,
-                "reason": f"llm_selected:{llm_route.value}",
+                "reason": f"llm_selected:{guarded_llm_route.value}",
                 "candidates": retrieval_decision.candidates if retrieval_decision else [],
             }
         if retrieval_decision:
+            fallback_route = remap_non_explicit_compare(
+                retrieval_decision.route,
+                candidates=retrieval_decision.candidates,
+            )
+            if fallback_route != retrieval_decision.route:
+                return fallback_route, {
+                    "source": "compare_guard_fallback",
+                    "confidence": max(0.45, retrieval_decision.confidence - 0.15),
+                    "reason": "fallback_compare_blocked_without_/compare_command",
+                    "candidates": retrieval_decision.candidates,
+                }
             return retrieval_decision.route, {
                 "source": "intent_retrieval_fallback",
                 "confidence": retrieval_decision.confidence,
@@ -261,6 +325,17 @@ async def dispatch_route_with_trace(
         }
     except Exception:
         if retrieval_decision:
+            fallback_route = remap_non_explicit_compare(
+                retrieval_decision.route,
+                candidates=retrieval_decision.candidates,
+            )
+            if fallback_route != retrieval_decision.route:
+                return fallback_route, {
+                    "source": "compare_guard_exception_fallback",
+                    "confidence": max(0.4, retrieval_decision.confidence - 0.2),
+                    "reason": "exception_compare_blocked_without_/compare_command",
+                    "candidates": retrieval_decision.candidates,
+                }
             return retrieval_decision.route, {
                 "source": "intent_retrieval_exception_fallback",
                 "confidence": retrieval_decision.confidence,

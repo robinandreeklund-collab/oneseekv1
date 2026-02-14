@@ -1324,7 +1324,7 @@ async def stream_new_chat(
                 action_prompt=action_worker_prompt,
                 statistics_prompt=statistics_worker_prompt,
                 synthesis_prompt=compare_synthesis_prompt or synthesis_prompt,
-                compare_mode=route == Route.COMPARE,
+                compare_mode=compare_mode,
                 external_model_prompt=compare_external_prompt,
                 bolag_prompt=bolag_worker_prompt,
                 trafik_prompt=trafik_worker_prompt,
