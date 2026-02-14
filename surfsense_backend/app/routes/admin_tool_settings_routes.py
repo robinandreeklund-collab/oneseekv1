@@ -16,6 +16,7 @@ from app.agents.new_chat.bigtool_store import (
     build_global_tool_registry,
     build_tool_index,
     clear_tool_caches,
+    smart_retrieve_tools_with_breakdown,
 )
 from app.db import (
     GlobalToolEvaluationStageRun,
@@ -637,6 +638,296 @@ def _infer_agent_for_tool(
     if normalized_route == "action":
         return "action"
     return "action"
+
+
+def _dedupe_non_empty(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            continue
+        lowered = cleaned.casefold()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(cleaned)
+    return deduped
+
+
+def _normalize_plan_requirements_for_expected(
+    plan_requirements: list[str] | None,
+    *,
+    route: str | None,
+    agent: str | None,
+    tool: str | None,
+) -> list[str]:
+    custom_requirements: list[str] = []
+    for requirement in plan_requirements or []:
+        normalized = str(requirement or "").strip()
+        if not normalized:
+            continue
+        lowered = normalized.casefold()
+        if lowered.startswith("route:") or lowered.startswith("agent:") or lowered.startswith("tool:"):
+            continue
+        custom_requirements.append(normalized)
+    normalized_requirements: list[str] = []
+    if route:
+        normalized_requirements.append(f"route:{route}")
+    if agent:
+        normalized_requirements.append(f"agent:{agent}")
+    if tool:
+        normalized_requirements.append(f"tool:{tool}")
+    normalized_requirements.extend(custom_requirements)
+    return _dedupe_non_empty(normalized_requirements)
+
+
+def _normalize_single_eval_test_for_consistency(
+    *,
+    question: str,
+    expected_payload: dict[str, Any],
+    allowed_tools: list[str],
+    tool_index: list[Any],
+    tool_by_id: dict[str, Any],
+    retrieval_limit: int,
+    retrieval_tuning: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[str], bool, list[str], list[str]]:
+    warnings: list[str] = []
+    normalized_expected = dict(expected_payload or {})
+    normalized = False
+    normalized_allowed_tools = _dedupe_non_empty([str(tool_id) for tool_id in (allowed_tools or [])])
+
+    expected_tool = str(normalized_expected.get("tool") or "").strip()
+    expected_category = str(normalized_expected.get("category") or "").strip()
+
+    retrieved_ids: list[str] = []
+    try:
+        retrieved_ids, _retrieval_breakdown = smart_retrieve_tools_with_breakdown(
+            question,
+            tool_index=tool_index,
+            primary_namespaces=[("tools",)],
+            fallback_namespaces=[],
+            limit=max(int(retrieval_limit or 5), 8),
+            trace_key=None,
+            tuning=retrieval_tuning,
+        )
+    except Exception:
+        retrieved_ids = []
+    retrieved_ids = [str(tool_id).strip() for tool_id in retrieved_ids if str(tool_id).strip()]
+    top_retrieved_tool = retrieved_ids[0] if retrieved_ids else None
+
+    if not expected_tool and len(normalized_allowed_tools) == 1:
+        expected_tool = normalized_allowed_tools[0]
+        normalized_expected["tool"] = expected_tool
+        normalized = True
+        warnings.append("Saknade expected.tool; använde enda allowed_tools som fallback.")
+
+    if expected_tool and expected_tool not in tool_by_id and top_retrieved_tool:
+        warnings.append(
+            f"Okänd expected.tool ({expected_tool}); normaliserad till retrieval-top1 ({top_retrieved_tool})."
+        )
+        expected_tool = top_retrieved_tool
+        normalized_expected["tool"] = expected_tool
+        normalized = True
+    elif not expected_tool and top_retrieved_tool:
+        warnings.append(
+            f"Saknade expected.tool; normaliserad till retrieval-top1 ({top_retrieved_tool})."
+        )
+        expected_tool = top_retrieved_tool
+        normalized_expected["tool"] = expected_tool
+        normalized = True
+    elif expected_tool and top_retrieved_tool and expected_tool != top_retrieved_tool:
+        expected_rank = next(
+            (index + 1 for index, tool_id in enumerate(retrieved_ids) if tool_id == expected_tool),
+            None,
+        )
+        if expected_rank is None or expected_rank > 5:
+            warnings.append(
+                f"Frågan matchar retrieval-top1 ({top_retrieved_tool}) tydligare än expected.tool ({expected_tool}); normaliserad."
+            )
+            expected_tool = top_retrieved_tool
+            normalized_expected["tool"] = expected_tool
+            normalized = True
+        else:
+            warnings.append(
+                f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool} (rank {expected_rank})."
+            )
+
+    entry = tool_by_id.get(expected_tool) if expected_tool else None
+    if entry is not None:
+        canonical_category = str(getattr(entry, "category", "") or "").strip()
+        if canonical_category and expected_category != canonical_category:
+            if expected_category:
+                warnings.append(
+                    f"Kategori normaliserad: {expected_category} -> {canonical_category} (från tool metadata)."
+                )
+            expected_category = canonical_category
+            normalized_expected["category"] = canonical_category
+            normalized = True
+
+    canonical_route: str | None = None
+    canonical_sub_route: str | None = None
+    canonical_intent: str | None = None
+    canonical_agent: str | None = None
+    if expected_tool:
+        inferred_route, inferred_sub_route = _infer_route_for_tool(
+            expected_tool, expected_category
+        )
+        canonical_route = inferred_route
+        canonical_sub_route = inferred_sub_route
+        canonical_intent = _infer_intent_for_route(canonical_route)
+        canonical_agent = _infer_agent_for_tool(
+            expected_tool,
+            expected_category,
+            canonical_route,
+            canonical_sub_route,
+        )
+
+    current_route = str(normalized_expected.get("route") or "").strip().lower()
+    if canonical_route and current_route != canonical_route:
+        if current_route:
+            warnings.append(f"Route normaliserad: {current_route} -> {canonical_route}.")
+        normalized_expected["route"] = canonical_route
+        normalized = True
+    elif canonical_route and not current_route:
+        normalized_expected["route"] = canonical_route
+        normalized = True
+
+    current_sub_route = str(normalized_expected.get("sub_route") or "").strip().lower()
+    if canonical_sub_route and current_sub_route != canonical_sub_route:
+        if current_sub_route:
+            warnings.append(
+                f"Sub-route normaliserad: {current_sub_route} -> {canonical_sub_route}."
+            )
+        normalized_expected["sub_route"] = canonical_sub_route
+        normalized = True
+    elif canonical_sub_route and not current_sub_route:
+        normalized_expected["sub_route"] = canonical_sub_route
+        normalized = True
+
+    current_intent = str(normalized_expected.get("intent") or "").strip().lower()
+    if canonical_intent and current_intent != canonical_intent:
+        if current_intent:
+            warnings.append(f"Intent normaliserad: {current_intent} -> {canonical_intent}.")
+        normalized_expected["intent"] = canonical_intent
+        normalized = True
+    elif canonical_intent and not current_intent:
+        normalized_expected["intent"] = canonical_intent
+        normalized = True
+
+    current_agent = str(normalized_expected.get("agent") or "").strip().lower()
+    if canonical_agent and current_agent != canonical_agent:
+        if current_agent:
+            warnings.append(f"Agent normaliserad: {current_agent} -> {canonical_agent}.")
+        normalized_expected["agent"] = canonical_agent
+        normalized = True
+    elif canonical_agent and not current_agent:
+        normalized_expected["agent"] = canonical_agent
+        normalized = True
+
+    existing_requirements = normalized_expected.get("plan_requirements")
+    if isinstance(existing_requirements, list):
+        normalized_requirements = _normalize_plan_requirements_for_expected(
+            [str(item) for item in existing_requirements],
+            route=str(normalized_expected.get("route") or "").strip() or None,
+            agent=str(normalized_expected.get("agent") or "").strip() or None,
+            tool=str(normalized_expected.get("tool") or "").strip() or None,
+        )
+        if normalized_requirements != existing_requirements:
+            warnings.append("Plan requirements normaliserades för route/agent/tool-konsistens.")
+            normalized = True
+        normalized_expected["plan_requirements"] = normalized_requirements
+
+    normalized_tool = str(normalized_expected.get("tool") or "").strip()
+    if normalized_tool:
+        if normalized_allowed_tools and normalized_tool not in normalized_allowed_tools:
+            warnings.append(
+                f"allowed_tools uppdaterad med expected.tool ({normalized_tool}) för konsistens."
+            )
+            normalized_allowed_tools = _dedupe_non_empty(
+                [normalized_tool, *normalized_allowed_tools]
+            )
+            normalized = True
+        elif not normalized_allowed_tools:
+            normalized_allowed_tools = [normalized_tool]
+            normalized = True
+
+    return (
+        normalized_expected,
+        _dedupe_non_empty(warnings),
+        normalized,
+        normalized_allowed_tools,
+        retrieved_ids[:5],
+    )
+
+
+def _normalize_eval_tests_with_consistency(
+    *,
+    tests: list[dict[str, Any]],
+    tool_index: list[Any],
+    retrieval_limit: int,
+    retrieval_tuning: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    tool_by_id = {
+        str(getattr(entry, "tool_id", "")).strip(): entry
+        for entry in tool_index
+        if str(getattr(entry, "tool_id", "")).strip()
+    }
+    normalized_tests: list[dict[str, Any]] = []
+    warned_tests = 0
+    normalized_count = 0
+    for test in tests:
+        if not isinstance(test, dict):
+            continue
+        expected_payload = test.get("expected")
+        expected_payload = expected_payload if isinstance(expected_payload, dict) else {}
+        allowed_tools = (
+            test.get("allowed_tools") if isinstance(test.get("allowed_tools"), list) else []
+        )
+        (
+            normalized_expected,
+            warnings,
+            expected_normalized,
+            normalized_allowed_tools,
+            retrieval_top_tools,
+        ) = (
+            _normalize_single_eval_test_for_consistency(
+                question=str(test.get("question") or ""),
+                expected_payload=expected_payload,
+                allowed_tools=[str(item) for item in allowed_tools],
+                tool_index=tool_index,
+                tool_by_id=tool_by_id,
+                retrieval_limit=retrieval_limit,
+                retrieval_tuning=retrieval_tuning,
+            )
+        )
+        if warnings:
+            warned_tests += 1
+        if expected_normalized:
+            normalized_count += 1
+        normalized_tests.append(
+            {
+                **test,
+                "expected": normalized_expected,
+                "allowed_tools": (
+                    normalized_allowed_tools
+                    if normalized_allowed_tools
+                    else (
+                        [str(normalized_expected.get("tool") or "").strip()]
+                        if str(normalized_expected.get("tool") or "").strip()
+                        else []
+                    )
+                ),
+                "consistency_warnings": warnings,
+                "expected_normalized": expected_normalized,
+                "consistency_retrieval_top_tools": retrieval_top_tools,
+            }
+        )
+    return normalized_tests, {
+        "total_tests": len(normalized_tests),
+        "warned_tests": warned_tests,
+        "normalized_tests": normalized_count,
+    }
 
 
 def _pick_reference(values: list[str], index: int, offset: int = 0) -> str:
@@ -2432,8 +2723,14 @@ async def _execute_tool_evaluation(
                 "allowed_tools": list(test.allowed_tools),
             }
         )
-    evaluation = await run_tool_evaluation(
+    normalized_tests, consistency_summary = _normalize_eval_tests_with_consistency(
         tests=serialized_tests,
+        tool_index=tool_index,
+        retrieval_limit=payload.retrieval_limit,
+        retrieval_tuning=effective_tuning,
+    )
+    evaluation = await run_tool_evaluation(
+        tests=normalized_tests,
         tool_index=tool_index,
         llm=llm,
         retrieval_limit=payload.retrieval_limit,
@@ -2475,6 +2772,7 @@ async def _execute_tool_evaluation(
         "intent_suggestions": intent_suggestions,
         "retrieval_tuning": effective_tuning,
         "retrieval_tuning_suggestion": retrieval_tuning_suggestion,
+        "consistency_summary": consistency_summary,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),
         "search_space_id": resolved_search_space_id,
     }
@@ -2569,8 +2867,15 @@ async def _execute_api_input_evaluation(
         include_tool_prompts=True,
     )
     effective_intent_definitions = await get_effective_intent_definitions(session)
+    serialized_api_tests = _serialize_api_input_tests(payload.tests)
+    normalized_api_tests, consistency_summary = _normalize_eval_tests_with_consistency(
+        tests=serialized_api_tests,
+        tool_index=tool_index,
+        retrieval_limit=payload.retrieval_limit,
+        retrieval_tuning=effective_tuning,
+    )
     evaluation = await run_tool_api_input_evaluation(
-        tests=_serialize_api_input_tests(payload.tests),
+        tests=normalized_api_tests,
         tool_index=tool_index,
         tool_registry=tool_registry,
         llm=llm,
@@ -2583,8 +2888,17 @@ async def _execute_api_input_evaluation(
     )
     holdout_evaluation: dict[str, Any] | None = None
     if payload.holdout_tests:
+        serialized_holdout_tests = _serialize_api_input_tests(payload.holdout_tests)
+        normalized_holdout_tests, _holdout_consistency_summary = (
+            _normalize_eval_tests_with_consistency(
+                tests=serialized_holdout_tests,
+                tool_index=tool_index,
+                retrieval_limit=payload.retrieval_limit,
+                retrieval_tuning=effective_tuning,
+            )
+        )
         holdout_evaluation = await run_tool_api_input_evaluation(
-            tests=_serialize_api_input_tests(payload.holdout_tests),
+            tests=normalized_holdout_tests,
             tool_index=tool_index,
             tool_registry=tool_registry,
             llm=llm,
@@ -2621,6 +2935,7 @@ async def _execute_api_input_evaluation(
         "prompt_suggestions": prompt_suggestions,
         "intent_suggestions": intent_suggestions,
         "retrieval_tuning": effective_tuning,
+        "consistency_summary": consistency_summary,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),
         "search_space_id": resolved_search_space_id,
     }
@@ -3098,6 +3413,10 @@ async def _run_eval_job_background(
                         if event_type == "test_started":
                             case["status"] = "running"
                             case["error"] = None
+                            case["consistency_warnings"] = list(
+                                event.get("consistency_warnings") or []
+                            )
+                            case["expected_normalized"] = event.get("expected_normalized")
                         elif event_type == "test_completed":
                             case["status"] = "completed"
                             case["selected_route"] = event.get("selected_route")
@@ -3105,9 +3424,21 @@ async def _run_eval_job_background(
                             case["selected_agent"] = event.get("selected_agent")
                             case["selected_tool"] = event.get("selected_tool")
                             case["selected_category"] = event.get("selected_category")
+                            case["consistency_warnings"] = list(
+                                event.get("consistency_warnings") or case.get("consistency_warnings") or []
+                            )
+                            case["expected_normalized"] = event.get(
+                                "expected_normalized", case.get("expected_normalized")
+                            )
                             case["passed"] = event.get("passed")
                         elif event_type == "test_failed":
                             case["status"] = "failed"
+                            case["consistency_warnings"] = list(
+                                event.get("consistency_warnings") or case.get("consistency_warnings") or []
+                            )
+                            case["expected_normalized"] = event.get(
+                                "expected_normalized", case.get("expected_normalized")
+                            )
                             case["error"] = str(event.get("error") or "Unknown error")
                         break
                     job["completed_tests"] = sum(
@@ -4153,6 +4484,10 @@ async def _run_api_input_eval_job_background(
                         if event_type == "test_started":
                             case["status"] = "running"
                             case["error"] = None
+                            case["consistency_warnings"] = list(
+                                event.get("consistency_warnings") or []
+                            )
+                            case["expected_normalized"] = event.get("expected_normalized")
                         elif event_type == "test_completed":
                             case["status"] = "completed"
                             case["selected_route"] = event.get("selected_route")
@@ -4160,9 +4495,21 @@ async def _run_api_input_eval_job_background(
                             case["selected_agent"] = event.get("selected_agent")
                             case["selected_tool"] = event.get("selected_tool")
                             case["selected_category"] = event.get("selected_category")
+                            case["consistency_warnings"] = list(
+                                event.get("consistency_warnings") or case.get("consistency_warnings") or []
+                            )
+                            case["expected_normalized"] = event.get(
+                                "expected_normalized", case.get("expected_normalized")
+                            )
                             case["passed"] = event.get("passed")
                         elif event_type == "test_failed":
                             case["status"] = "failed"
+                            case["consistency_warnings"] = list(
+                                event.get("consistency_warnings") or case.get("consistency_warnings") or []
+                            )
+                            case["expected_normalized"] = event.get(
+                                "expected_normalized", case.get("expected_normalized")
+                            )
                             case["error"] = str(event.get("error") or "Unknown error")
                         break
                     job["completed_tests"] = sum(

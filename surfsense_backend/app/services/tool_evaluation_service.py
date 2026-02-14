@@ -1740,12 +1740,16 @@ async def run_tool_evaluation(
         test_id = str(test.get("id") or f"case-{idx + 1}")
         question = str(test.get("question") or "").strip()
         difficulty = _normalize_difficulty_value(test.get("difficulty"))
+        consistency_warnings = _safe_string_list(test.get("consistency_warnings"))
+        expected_normalized = bool(test.get("expected_normalized"))
         if progress_callback is not None:
             event = {
                 "type": "test_started",
                 "test_id": test_id,
                 "index": idx,
                 "question": question,
+                "consistency_warnings": consistency_warnings,
+                "expected_normalized": expected_normalized,
             }
             maybe_result = progress_callback(event)
             if hasattr(maybe_result, "__await__"):
@@ -2030,6 +2034,8 @@ async def run_tool_evaluation(
                 ],
                 "retrieval_breakdown": retrieval_breakdown[:retrieval_limit],
                 "retrieval_hit_expected_tool": retrieval_hit_expected_tool,
+                "consistency_warnings": consistency_warnings,
+                "expected_normalized": expected_normalized,
                 "passed_intent": passed_intent,
                 "passed_route": passed_route,
                 "passed_sub_route": passed_sub_route,
@@ -2060,6 +2066,8 @@ async def run_tool_evaluation(
                     "agent_selection_analysis": selected_agent_analysis,
                     "selected_tool": selected_tool,
                     "selected_category": selected_category,
+                    "consistency_warnings": consistency_warnings,
+                    "expected_normalized": expected_normalized,
                     "passed": passed,
                 }
                 maybe_result = progress_callback(event)
@@ -2120,6 +2128,8 @@ async def run_tool_evaluation(
                     "retrieval_top_categories": [],
                     "retrieval_breakdown": [],
                     "retrieval_hit_expected_tool": None,
+                    "consistency_warnings": consistency_warnings,
+                    "expected_normalized": expected_normalized,
                     "passed_intent": False if expected_intent is not None else None,
                     "passed_route": False if expected_route is not None else None,
                     "passed_sub_route": False if expected_sub_route is not None else None,
@@ -2161,6 +2171,8 @@ async def run_tool_evaluation(
                     "type": "test_failed",
                     "test_id": test_id,
                     "index": idx,
+                    "consistency_warnings": consistency_warnings,
+                    "expected_normalized": expected_normalized,
                     "error": str(exc),
                 }
                 maybe_result = progress_callback(event)
@@ -3005,12 +3017,16 @@ async def run_tool_api_input_evaluation(
         test_id = str(test.get("id") or f"case-{idx + 1}")
         question = str(test.get("question") or "").strip()
         difficulty = _normalize_difficulty_value(test.get("difficulty"))
+        consistency_warnings = _safe_string_list(test.get("consistency_warnings"))
+        expected_normalized = bool(test.get("expected_normalized"))
         if progress_callback is not None:
             event = {
                 "type": "test_started",
                 "test_id": test_id,
                 "index": idx,
                 "question": question,
+                "consistency_warnings": consistency_warnings,
+                "expected_normalized": expected_normalized,
             }
             maybe_result = progress_callback(event)
             if hasattr(maybe_result, "__await__"):
@@ -3388,6 +3404,8 @@ async def run_tool_api_input_evaluation(
                     if tool_id in index_by_id
                 ],
                 "retrieval_breakdown": retrieval_breakdown[:retrieval_limit],
+                "consistency_warnings": consistency_warnings,
+                "expected_normalized": expected_normalized,
                 "proposed_arguments": proposed_arguments,
                 "target_tool_for_validation": target_tool_for_validation,
                 "schema_required_fields": schema_required_fields,
@@ -3430,6 +3448,8 @@ async def run_tool_api_input_evaluation(
                     "agent_selection_analysis": selected_agent_analysis,
                     "selected_tool": selected_tool,
                     "selected_category": selected_category,
+                    "consistency_warnings": consistency_warnings,
+                    "expected_normalized": expected_normalized,
                     "passed": passed,
                 }
                 maybe_result = progress_callback(event)
@@ -3488,6 +3508,8 @@ async def run_tool_api_input_evaluation(
                 "retrieval_top_tools": [],
                 "retrieval_top_categories": [],
                 "retrieval_breakdown": [],
+                "consistency_warnings": consistency_warnings,
+                "expected_normalized": expected_normalized,
                 "proposed_arguments": {},
                 "target_tool_for_validation": expected_tool,
                 "schema_required_fields": [],
@@ -3548,6 +3570,8 @@ async def run_tool_api_input_evaluation(
                     "type": "test_failed",
                     "test_id": test_id,
                     "index": idx,
+                    "consistency_warnings": consistency_warnings,
+                    "expected_normalized": expected_normalized,
                     "error": str(exc),
                 }
                 maybe_result = progress_callback(event)

@@ -299,6 +299,8 @@ export const toolEvaluationCaseResult = z.object({
 	retrieval_top_categories: z.array(z.string()).default([]),
 	retrieval_breakdown: z.array(z.record(z.string(), z.unknown())).default([]),
 	retrieval_hit_expected_tool: z.boolean().nullable().optional(),
+	consistency_warnings: z.array(z.string()).default([]),
+	expected_normalized: z.boolean().optional().default(false),
 	passed_intent: z.boolean().nullable().optional(),
 	passed_route: z.boolean().nullable().optional(),
 	passed_sub_route: z.boolean().nullable().optional(),
@@ -348,6 +350,8 @@ export const toolApiInputEvaluationCaseResult = z.object({
 	retrieval_top_tools: z.array(z.string()).default([]),
 	retrieval_top_categories: z.array(z.string()).default([]),
 	retrieval_breakdown: z.array(z.record(z.string(), z.unknown())).default([]),
+	consistency_warnings: z.array(z.string()).default([]),
+	expected_normalized: z.boolean().optional().default(false),
 	proposed_arguments: z.record(z.string(), z.unknown()).default({}),
 	target_tool_for_validation: z.string().nullable().optional(),
 	schema_required_fields: z.array(z.string()).default([]),
@@ -457,6 +461,13 @@ export const toolEvaluationResponse = z.object({
 	intent_suggestions: z.array(toolIntentDefinitionSuggestion).default([]),
 	retrieval_tuning: toolRetrievalTuning,
 	retrieval_tuning_suggestion: toolRetrievalTuningSuggestion.nullable().optional(),
+	consistency_summary: z
+		.object({
+			total_tests: z.number().int().default(0),
+			warned_tests: z.number().int().default(0),
+			normalized_tests: z.number().int().default(0),
+		})
+		default({ total_tests: 0, warned_tests: 0, normalized_tests: 0 }),
 	comparison: toolEvaluationRunComparison.nullable().optional(),
 	metadata_version_hash: z.string(),
 	search_space_id: z.number(),
@@ -472,6 +483,13 @@ export const toolApiInputEvaluationResponse = z.object({
 	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
 	intent_suggestions: z.array(toolIntentDefinitionSuggestion).default([]),
 	retrieval_tuning: toolRetrievalTuning,
+	consistency_summary: z
+		.object({
+			total_tests: z.number().int().default(0),
+			warned_tests: z.number().int().default(0),
+			normalized_tests: z.number().int().default(0),
+		})
+		.default({ total_tests: 0, warned_tests: 0, normalized_tests: 0 }),
 	comparison: toolEvaluationRunComparison.nullable().optional(),
 	metadata_version_hash: z.string(),
 	search_space_id: z.number(),
@@ -492,6 +510,8 @@ export const toolEvaluationCaseStatus = z.object({
 	selected_agent: z.string().nullable().optional(),
 	selected_tool: z.string().nullable().optional(),
 	selected_category: z.string().nullable().optional(),
+	consistency_warnings: z.array(z.string()).default([]),
+	expected_normalized: z.boolean().nullable().optional(),
 	passed: z.boolean().nullable().optional(),
 	error: z.string().nullable().optional(),
 });

@@ -3164,6 +3164,15 @@ export function ToolSettingsPage() {
 													Valt verktyg: {caseStatus.selected_tool}
 												</p>
 											)}
+											{caseStatus.expected_normalized && (
+												<Badge variant="secondary">Expected normaliserad</Badge>
+											)}
+											{caseStatus.consistency_warnings?.length > 0 && (
+												<p className="text-amber-400">
+													Konsistensvarning:{" "}
+													{caseStatus.consistency_warnings.join(" · ")}
+												</p>
+											)}
 											{typeof caseStatus.passed === "boolean" && (
 												<p className="text-muted-foreground">
 													Resultat: {caseStatus.passed ? "Rätt" : "Fel"}
@@ -3251,6 +3260,15 @@ export function ToolSettingsPage() {
 											{caseStatus.selected_tool && (
 												<p className="text-muted-foreground">
 													Valt verktyg: {caseStatus.selected_tool}
+												</p>
+											)}
+											{caseStatus.expected_normalized && (
+												<Badge variant="secondary">Expected normaliserad</Badge>
+											)}
+											{caseStatus.consistency_warnings?.length > 0 && (
+												<p className="text-amber-400">
+													Konsistensvarning:{" "}
+													{caseStatus.consistency_warnings.join(" · ")}
 												</p>
 											)}
 											{typeof caseStatus.passed === "boolean" && (
@@ -3403,6 +3421,22 @@ export function ToolSettingsPage() {
 													).toFixed(1)}%`}
 										</p>
 									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Konsistensvarning (antal tester)
+										</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.consistency_summary?.warned_tests ?? 0}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Normaliserade expected (antal)
+										</p>
+										<p className="text-2xl font-semibold">
+											{evaluationResult.consistency_summary?.normalized_tests ?? 0}
+										</p>
+									</div>
 								</CardContent>
 							</Card>
 
@@ -3544,6 +3578,9 @@ export function ToolSettingsPage() {
 													<Badge variant={result.passed ? "default" : "destructive"}>
 														{result.passed ? "PASS" : "FAIL"}
 													</Badge>
+													{result.expected_normalized && (
+														<Badge variant="secondary">Expected normaliserad</Badge>
+													)}
 												</div>
 												<div className="text-xs text-muted-foreground">
 													Route: {result.expected_route || "-"}
@@ -3571,6 +3608,11 @@ export function ToolSettingsPage() {
 												</div>
 											</div>
 											<p className="text-sm">{result.question}</p>
+											{result.consistency_warnings?.length > 0 && (
+												<p className="text-xs text-amber-400">
+													Konsistensvarning: {result.consistency_warnings.join(" · ")}
+												</p>
+											)}
 											{result.agent_selection_analysis && (
 												<p className="text-xs text-muted-foreground">
 													Agentval-analys: {result.agent_selection_analysis}
@@ -4156,6 +4198,22 @@ export function ToolSettingsPage() {
 													).toFixed(1)}%`}
 										</p>
 									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Konsistensvarning (antal tester)
+										</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.consistency_summary?.warned_tests ?? 0}
+										</p>
+									</div>
+									<div className="rounded border p-3">
+										<p className="text-xs text-muted-foreground">
+											Normaliserade expected (antal)
+										</p>
+										<p className="text-2xl font-semibold">
+											{apiInputEvaluationResult.consistency_summary?.normalized_tests ?? 0}
+										</p>
+									</div>
 								</CardContent>
 							</Card>
 
@@ -4311,6 +4369,9 @@ export function ToolSettingsPage() {
 													<Badge variant={result.passed ? "default" : "destructive"}>
 														{result.passed ? "PASS" : "FAIL"}
 													</Badge>
+													{result.expected_normalized && (
+														<Badge variant="secondary">Expected normaliserad</Badge>
+													)}
 												</div>
 												<div className="text-xs text-muted-foreground">
 													Route: {result.expected_route || "-"}
@@ -4338,6 +4399,11 @@ export function ToolSettingsPage() {
 												</div>
 											</div>
 											<p className="text-sm">{result.question}</p>
+											{result.consistency_warnings?.length > 0 && (
+												<p className="text-xs text-amber-400">
+													Konsistensvarning: {result.consistency_warnings.join(" · ")}
+												</p>
+											)}
 											{result.agent_selection_analysis && (
 												<p className="text-xs text-muted-foreground">
 													Agentval-analys: {result.agent_selection_analysis}

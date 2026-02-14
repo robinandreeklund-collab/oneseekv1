@@ -199,6 +199,8 @@ class ToolEvaluationCaseResult(BaseModel):
     retrieval_top_categories: list[str] = Field(default_factory=list)
     retrieval_breakdown: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_hit_expected_tool: bool | None = None
+    consistency_warnings: list[str] = Field(default_factory=list)
+    expected_normalized: bool = False
     passed_route: bool | None = None
     passed_sub_route: bool | None = None
     passed_intent: bool | None = None
@@ -250,6 +252,8 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     retrieval_top_tools: list[str] = Field(default_factory=list)
     retrieval_top_categories: list[str] = Field(default_factory=list)
     retrieval_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    consistency_warnings: list[str] = Field(default_factory=list)
+    expected_normalized: bool = False
     proposed_arguments: dict[str, Any] = Field(default_factory=dict)
     target_tool_for_validation: str | None = None
     schema_required_fields: list[str] = Field(default_factory=list)
@@ -359,6 +363,7 @@ class ToolEvaluationResponse(BaseModel):
     intent_suggestions: list[ToolIntentDefinitionSuggestion] = Field(default_factory=list)
     retrieval_tuning: ToolRetrievalTuning
     retrieval_tuning_suggestion: ToolRetrievalTuningSuggestion | None = None
+    consistency_summary: dict[str, int] = Field(default_factory=dict)
     comparison: ToolEvaluationRunComparison | None = None
     metadata_version_hash: str
     search_space_id: int
@@ -374,6 +379,7 @@ class ToolApiInputEvaluationResponse(BaseModel):
     prompt_suggestions: list[ToolPromptSuggestion] = Field(default_factory=list)
     intent_suggestions: list[ToolIntentDefinitionSuggestion] = Field(default_factory=list)
     retrieval_tuning: ToolRetrievalTuning
+    consistency_summary: dict[str, int] = Field(default_factory=dict)
     comparison: ToolEvaluationRunComparison | None = None
     metadata_version_hash: str
     search_space_id: int
@@ -394,6 +400,8 @@ class ToolEvaluationCaseStatus(BaseModel):
     selected_agent: str | None = None
     selected_tool: str | None = None
     selected_category: str | None = None
+    consistency_warnings: list[str] = Field(default_factory=list)
+    expected_normalized: bool | None = None
     passed: bool | None = None
     error: str | None = None
 
