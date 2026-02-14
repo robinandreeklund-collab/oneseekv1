@@ -1286,7 +1286,11 @@ async def regenerate_response(
     """
     from langchain_core.messages import HumanMessage
 
-    from app.agents.new_chat.checkpointer import get_checkpointer
+    from app.agents.new_chat.checkpointer import (
+        build_checkpoint_namespace,
+        get_checkpointer,
+        resolve_checkpoint_namespace_for_thread,
+    )
 
     try:
         # Verify thread exists and user has permission
@@ -1312,7 +1316,19 @@ async def regenerate_response(
         # Get the checkpointer and state history
         checkpointer = await get_checkpointer()
 
-        config = {"configurable": {"thread_id": str(thread_id)}}
+        preferred_checkpoint_ns = build_checkpoint_namespace(
+            user_id=str(user.id),
+            flow="new_chat_v2",
+        )
+        checkpoint_ns = await resolve_checkpoint_namespace_for_thread(
+            checkpointer=checkpointer,
+            thread_id=thread_id,
+            preferred_namespace=preferred_checkpoint_ns,
+        )
+        configurable: dict[str, str] = {"thread_id": str(thread_id)}
+        if checkpoint_ns:
+            configurable["checkpoint_ns"] = checkpoint_ns
+        config = {"configurable": configurable}
 
         # Collect checkpoint tuples from the async iterator
         # CheckpointTuple has: config, checkpoint (dict with channel_values), metadata, parent_config
@@ -1465,6 +1481,7 @@ async def regenerate_response(
                     mentioned_document_ids=request.mentioned_document_ids,
                     mentioned_surfsense_doc_ids=request.mentioned_surfsense_doc_ids,
                     checkpoint_id=target_checkpoint_id,
+                    checkpoint_ns_override=checkpoint_ns,
                     needs_history_bootstrap=thread.needs_history_bootstrap,
                     citation_instructions=request.citation_instructions,
                     runtime_hitl=(

@@ -2979,8 +2979,12 @@ async def create_supervisor_agent(
             messages.append(SystemMessage(content=prompt))
         messages.append(HumanMessage(content=task))
         worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
+        worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
+        worker_configurable = {"thread_id": f"{base_thread_id}:{name}:{turn_key}"}
+        if worker_checkpoint_ns:
+            worker_configurable["checkpoint_ns"] = f"{worker_checkpoint_ns}:worker:{name}"
         config = {
-            "configurable": {"thread_id": f"{base_thread_id}:{name}:{turn_key}"},
+            "configurable": worker_configurable,
             "recursion_limit": 60,
         }
         result = await worker.ainvoke(worker_state, config=config)
@@ -3163,10 +3167,16 @@ async def create_supervisor_agent(
                     messages.append(SystemMessage(content=prompt))
                 messages.append(HumanMessage(content=task))
                 worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
+                worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
+                worker_configurable = {
+                    "thread_id": f"{base_thread_id}:{agent_name}:{turn_key}"
+                }
+                if worker_checkpoint_ns:
+                    worker_configurable["checkpoint_ns"] = (
+                        f"{worker_checkpoint_ns}:worker:{agent_name}"
+                    )
                 config = {
-                    "configurable": {
-                        "thread_id": f"{base_thread_id}:{agent_name}:{turn_key}"
-                    },
+                    "configurable": worker_configurable,
                     "recursion_limit": 60,
                 }
                 result = await worker.ainvoke(worker_state, config=config)

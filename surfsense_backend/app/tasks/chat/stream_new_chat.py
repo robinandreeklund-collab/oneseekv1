@@ -23,7 +23,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.agents.new_chat.chat_deepagent import create_surfsense_deep_agent
-from app.agents.new_chat.checkpointer import get_checkpointer
+from app.agents.new_chat.checkpointer import (
+    build_checkpoint_namespace,
+    get_checkpointer,
+    resolve_checkpoint_namespace_for_thread,
+)
 from app.agents.new_chat.llm_config import (
     AgentConfig,
     create_chat_litellm_from_agent_config,
@@ -838,6 +842,7 @@ async def stream_new_chat(
     needs_history_bootstrap: bool = False,
     citation_instructions: str | bool | None = None,
     runtime_hitl: dict[str, Any] | None = None,
+    checkpoint_ns_override: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat responses from the new SurfSense deep agent.
@@ -863,6 +868,9 @@ async def stream_new_chat(
             - str: inject custom citation instructions.
         runtime_hitl:
             Optional runtime HITL flags for planner/execution/synthesis checkpoints.
+        checkpoint_ns_override:
+            Optional explicit checkpoint namespace. When provided, bypasses automatic
+            namespace resolution and uses this value ("" means legacy namespace).
 
     Yields:
         str: SSE formatted response strings
@@ -1222,8 +1230,21 @@ async def stream_new_chat(
         if webcrawler_connector and webcrawler_connector.config:
             firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
 
+        preferred_checkpoint_ns = build_checkpoint_namespace(
+            user_id=user_id,
+            flow="new_chat_v2",
+        )
+
         # Get the PostgreSQL checkpointer for persistent conversation memory
         checkpointer = await get_checkpointer()
+        if checkpoint_ns_override is not None:
+            checkpoint_ns = str(checkpoint_ns_override).strip()
+        else:
+            checkpoint_ns = await resolve_checkpoint_namespace_for_thread(
+                checkpointer=checkpointer,
+                thread_id=chat_id,
+                preferred_namespace=preferred_checkpoint_ns,
+            )
 
         if route != Route.SMALLTALK:
             agent = await create_supervisor_agent(
@@ -1235,6 +1256,7 @@ async def stream_new_chat(
                     "firecrawl_api_key": firecrawl_api_key,
                     "user_id": user_id,
                     "thread_id": chat_id,
+                    "checkpoint_ns": checkpoint_ns,
                     "runtime_hitl": dict(runtime_hitl or {}),
                 },
                 checkpointer=checkpointer,
@@ -1414,6 +1436,8 @@ async def stream_new_chat(
         # Configure LangGraph with thread_id for memory
         # If checkpoint_id is provided, fork from that checkpoint (for edit/reload)
         configurable = {"thread_id": str(chat_id)}
+        if checkpoint_ns:
+            configurable["checkpoint_ns"] = checkpoint_ns
         if checkpoint_id:
             configurable["checkpoint_id"] = checkpoint_id
 
