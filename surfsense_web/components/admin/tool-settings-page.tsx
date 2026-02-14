@@ -4,11 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import { useAtomValue } from "jotai";
+import { stringify as stringifyYaml } from "yaml";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import type {
 	ToolAutoLoopDraftPromptItem,
+	ToolApiInputEvaluationJobStatusResponse,
 	ToolApiInputEvaluationResponse,
 	ToolApiInputEvaluationTestCase,
+	ToolEvaluationJobStatusResponse,
 	ToolEvaluationRunComparison,
 	ToolEvaluationResponse,
 	ToolEvaluationStageHistoryResponse,
@@ -37,10 +40,40 @@ import {
 	AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Separator } from "@/components/ui/separator";
-import { AlertCircle, Save, RotateCcw, Plus, X, Loader2 } from "lucide-react";
+import { AlertCircle, Save, RotateCcw, Plus, X, Loader2, Download } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+
+type EvalExportFormat = "json" | "yaml";
+type ExportableEvalJobStatus =
+	| ToolEvaluationJobStatusResponse
+	| ToolApiInputEvaluationJobStatusResponse;
+
+function downloadTextFile(content: string, fileName: string, mimeType: string) {
+	const blob = new Blob([content], { type: mimeType });
+	const blobUrl = URL.createObjectURL(blob);
+	const anchor = document.createElement("a");
+	anchor.href = blobUrl;
+	anchor.download = fileName;
+	document.body.appendChild(anchor);
+	anchor.click();
+	anchor.remove();
+	URL.revokeObjectURL(blobUrl);
+}
+
+function buildEvalExportFileName(
+	evalKind: "tool_selection" | "api_input",
+	jobId: string,
+	format: EvalExportFormat
+) {
+	const normalizedJob = String(jobId || "unknown")
+		.replace(/[^a-zA-Z0-9_-]+/g, "")
+		.slice(0, 14);
+	const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+	const prefix = evalKind === "api_input" ? "api-input-eval-run" : "tool-eval-run";
+	return `${prefix}-${normalizedJob || "unknown"}-${timestamp}.${format}`;
+}
 
 function toUpdateItem(tool: ToolMetadataItem | ToolMetadataUpdateItem): ToolMetadataUpdateItem {
 	return {
@@ -927,6 +960,62 @@ export function ToolSettingsPage() {
 		(!autoLoopJobStatus ||
 			autoLoopJobStatus.status === "pending" ||
 			autoLoopJobStatus.status === "running");
+
+	const handleExportEvalRun = (
+		kind: "tool_selection" | "api_input",
+		format: EvalExportFormat
+	) => {
+		const isApiInput = kind === "api_input";
+		const jobId = isApiInput ? apiInputEvalJobId : evalJobId;
+		const jobStatus: ExportableEvalJobStatus | undefined = isApiInput
+			? apiInputEvalJobStatus
+			: evalJobStatus;
+		const resultPayload = isApiInput
+			? (apiInputEvalJobStatus?.result ?? apiInputEvaluationResult)
+			: (evalJobStatus?.result ?? evaluationResult);
+		if (!jobId || !jobStatus) {
+			toast.error("Ingen eval-körning att exportera ännu.");
+			return;
+		}
+		const exportPayload = {
+			export_version: 1,
+			exported_at: new Date().toISOString(),
+			source: "admin/tool-settings",
+			eval_type: kind,
+			search_space_id: data?.search_space_id ?? null,
+			job: {
+				job_id: jobId,
+				status: jobStatus.status,
+				total_tests: jobStatus.total_tests,
+				completed_tests: jobStatus.completed_tests,
+				started_at: jobStatus.started_at ?? null,
+				completed_at: jobStatus.completed_at ?? null,
+				updated_at: jobStatus.updated_at,
+				error: jobStatus.error ?? null,
+				case_statuses: jobStatus.case_statuses ?? [],
+			},
+			result: resultPayload ?? null,
+		};
+		const fileName = buildEvalExportFileName(kind, jobId, format);
+		try {
+			if (format === "json") {
+				downloadTextFile(
+					`${JSON.stringify(exportPayload, null, 2)}\n`,
+					fileName,
+					"application/json"
+				);
+			} else {
+				downloadTextFile(
+					stringifyYaml(exportPayload),
+					fileName,
+					"application/yaml"
+				);
+			}
+			toast.success(`Exporterade eval-körning som ${format.toUpperCase()}`);
+		} catch (_error) {
+			toast.error("Kunde inte exportera eval-körningen");
+		}
+	};
 
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((prev) => ({
@@ -3100,22 +3189,44 @@ export function ToolSettingsPage() {
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-3">
-								<div className="flex flex-wrap items-center gap-2 text-sm">
-									<Badge
-										variant={
-											evalJobStatus?.status === "failed"
-												? "destructive"
-												: evalJobStatus?.status === "completed"
-													? "default"
-													: "secondary"
-										}
-									>
-										{evalJobStatus?.status ?? "pending"}
-									</Badge>
-									<span>
-										{evalJobStatus?.completed_tests ?? 0}/
-										{evalJobStatus?.total_tests ?? 0} frågor färdiga
-									</span>
+								<div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+									<div className="flex flex-wrap items-center gap-2">
+										<Badge
+											variant={
+												evalJobStatus?.status === "failed"
+													? "destructive"
+													: evalJobStatus?.status === "completed"
+														? "default"
+														: "secondary"
+											}
+										>
+											{evalJobStatus?.status ?? "pending"}
+										</Badge>
+										<span>
+											{evalJobStatus?.completed_tests ?? 0}/
+											{evalJobStatus?.total_tests ?? 0} frågor färdiga
+										</span>
+									</div>
+									<div className="flex items-center gap-2">
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => handleExportEvalRun("tool_selection", "json")}
+											disabled={!evalJobStatus}
+										>
+											<Download className="h-4 w-4 mr-1" />
+											Export JSON
+										</Button>
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => handleExportEvalRun("tool_selection", "yaml")}
+											disabled={!evalJobStatus}
+										>
+											<Download className="h-4 w-4 mr-1" />
+											Export YAML
+										</Button>
+									</div>
 								</div>
 								{evalJobStatus?.error && (
 									<Alert variant="destructive">
@@ -3198,22 +3309,44 @@ export function ToolSettingsPage() {
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-3">
-								<div className="flex flex-wrap items-center gap-2 text-sm">
-									<Badge
-										variant={
-											apiInputEvalJobStatus?.status === "failed"
-												? "destructive"
-												: apiInputEvalJobStatus?.status === "completed"
-													? "default"
-													: "secondary"
-										}
-									>
-										{apiInputEvalJobStatus?.status ?? "pending"}
-									</Badge>
-									<span>
-										{apiInputEvalJobStatus?.completed_tests ?? 0}/
-										{apiInputEvalJobStatus?.total_tests ?? 0} frågor färdiga
-									</span>
+								<div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+									<div className="flex flex-wrap items-center gap-2">
+										<Badge
+											variant={
+												apiInputEvalJobStatus?.status === "failed"
+													? "destructive"
+													: apiInputEvalJobStatus?.status === "completed"
+														? "default"
+														: "secondary"
+											}
+										>
+											{apiInputEvalJobStatus?.status ?? "pending"}
+										</Badge>
+										<span>
+											{apiInputEvalJobStatus?.completed_tests ?? 0}/
+											{apiInputEvalJobStatus?.total_tests ?? 0} frågor färdiga
+										</span>
+									</div>
+									<div className="flex items-center gap-2">
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => handleExportEvalRun("api_input", "json")}
+											disabled={!apiInputEvalJobStatus}
+										>
+											<Download className="h-4 w-4 mr-1" />
+											Export JSON
+										</Button>
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => handleExportEvalRun("api_input", "yaml")}
+											disabled={!apiInputEvalJobStatus}
+										>
+											<Download className="h-4 w-4 mr-1" />
+											Export YAML
+										</Button>
+									</div>
 								</div>
 								{apiInputEvalJobStatus?.error && (
 									<Alert variant="destructive">
