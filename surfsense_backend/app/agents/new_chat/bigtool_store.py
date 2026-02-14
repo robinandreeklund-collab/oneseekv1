@@ -11,6 +11,10 @@ from app.agents.new_chat.statistics_agent import (
     SCB_TOOL_DEFINITIONS,
     build_scb_tool_registry,
 )
+from app.agents.new_chat.kolada_tools import (
+    KOLADA_TOOL_DEFINITIONS,
+    build_kolada_tool_registry,
+)
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
@@ -164,6 +168,22 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "riksdag_ledamoter_parti": ["parti", "socialdemokraterna", "moderaterna", "sverigedemokraterna"],
     "riksdag_ledamoter_valkrets": ["valkrets", "län", "stockholms", "skåne", "västra"],
     "riksdag_voteringar_resultat": ["resultat", "röstresultat", "detaljerat", "parti"],
+    # Kolada tools keywords
+    "kolada_aldreomsorg": ["aldreomsorg", "äldreomsorg", "aldrevard", "äldrevård", "hemtjanst", "hemtjänst", "sarskilt", "särskilt", "boende", "alderdomshem", "älderdomshem", "kolada"],
+    "kolada_lss": ["lss", "funktionshinder", "funktionsnedsattning", "funktionsnedsättning", "personlig", "assistans", "boende", "sarskild", "särskild", "service", "kolada"],
+    "kolada_ifo": ["ifo", "individomsorg", "familjeomsorg", "ekonomiskt", "bistand", "bistånd", "socialbidrag", "familjehem", "missbruk", "beroende", "kolada"],
+    "kolada_barn_unga": ["barn", "unga", "ungdom", "placering", "oppenvard", "öppenvård", "barnvard", "barnvård", "ungdomsvard", "ungdomsvård", "kolada"],
+    "kolada_forskola": ["forskola", "förskola", "dagis", "barn", "barnomsorg", "pedagog", "forskolelarare", "förskolelärare", "kolada"],
+    "kolada_grundskola": ["grundskola", "skola", "elev", "larare", "lärare", "behorighet", "behörighet", "betyg", "resultat", "kolada"],
+    "kolada_gymnasieskola": ["gymnasieskola", "gymnasium", "gymnasie", "elev", "examen", "behorighet", "behörighet", "genomstromning", "genomströmning", "kolada"],
+    "kolada_halsa": ["halsa", "hälsa", "vard", "vård", "sjukvard", "sjukvård", "lakare", "läkare", "primarvard", "primärvård", "sjukhus", "kolada"],
+    "kolada_ekonomi": ["ekonomi", "skattesats", "kostnad", "intakt", "intäkt", "budget", "kommunal", "finansiell", "kolada"],
+    "kolada_miljo": ["miljo", "miljö", "avfall", "atervinning", "återvinning", "koldioxid", "utsläpp", "utslapp", "energi", "klimat", "kolada"],
+    "kolada_boende": ["boende", "bostad", "bostader", "byggande", "nybyggnation", "bostadsbestand", "bostadsbestånd", "hyra", "bostadsko", "bostadskö", "kolada"],
+    "kolada_sammanfattning": ["sammanfattning", "oversikt", "översikt", "allmant", "allmänt", "nyckeltal", "kommun", "kommundata", "kolada"],
+    "kolada_kultur": ["kultur", "bibliotek", "museum", "teater", "fritid", "idrottsanlaggning", "idrottsanläggning", "kulturhus", "kolada"],
+    "kolada_arbetsmarknad": ["arbetsmarknad", "sysselsattning", "sysselsättning", "arbetsloshet", "arbetslöshet", "arbete", "jobb", "arbetsmarknadsatgard", "arbetsmarknadsåtgärd", "kolada"],
+    "kolada_demokrati": ["demokrati", "val", "valdeltagande", "medborgarengagemang", "medborgarservice", "kommunikation", "deltagande", "kolada"],
 }
 
 @dataclass(frozen=True)
@@ -202,6 +222,35 @@ def _namespace_for_scb_tool(tool_id: str) -> tuple[str, ...]:
     if len(parts) >= 3:
         return ("tools", "statistics", "scb", parts[1])
     return ("tools", "statistics", "scb")
+
+
+def _namespace_for_kolada_tool(tool_id: str) -> tuple[str, ...]:
+    """Map Kolada tools to namespaces based on category."""
+    # Find the tool definition to get its category
+    for definition in KOLADA_TOOL_DEFINITIONS:
+        if definition.tool_id == tool_id:
+            category = definition.category
+            if category == "omsorg":
+                return ("tools", "statistics", "kolada", "omsorg")
+            elif category == "skola":
+                return ("tools", "statistics", "kolada", "skola")
+            elif category == "halsa":
+                return ("tools", "statistics", "kolada", "halsa")
+            elif category == "ekonomi":
+                return ("tools", "statistics", "kolada", "ekonomi")
+            elif category == "miljo":
+                return ("tools", "statistics", "kolada", "miljo")
+            elif category == "boende":
+                return ("tools", "statistics", "kolada", "boende")
+            elif category == "ovrig":
+                # Extract subcategory from tool_id (e.g., kolada_kultur -> kultur)
+                parts = tool_id.split("_")
+                if len(parts) >= 2:
+                    return ("tools", "statistics", "kolada", parts[1])
+                return ("tools", "statistics", "kolada", "ovrig")
+    
+    # Default fallback
+    return ("tools", "statistics", "kolada")
 
 
 def _namespace_for_bolagsverket_tool(tool_id: str) -> tuple[str, ...]:
@@ -252,6 +301,8 @@ def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
         return _namespace_for_weather_tool(tool_id)
     if tool_id.startswith("scb_"):
         return _namespace_for_scb_tool(tool_id)
+    if tool_id.startswith("kolada_"):
+        return _namespace_for_kolada_tool(tool_id)
     if tool_id.startswith("bolagsverket_"):
         return _namespace_for_bolagsverket_tool(tool_id)
     if tool_id.startswith("trafikverket_"):
@@ -768,6 +819,13 @@ async def build_global_tool_registry(
         thread_id=dependencies.get("thread_id"),
     )
     registry.update(scb_registry)
+    kolada_registry = build_kolada_tool_registry(
+        connector_service=dependencies["connector_service"],
+        search_space_id=dependencies["search_space_id"],
+        user_id=dependencies.get("user_id"),
+        thread_id=dependencies.get("thread_id"),
+    )
+    registry.update(kolada_registry)
     return registry
 
 
@@ -777,6 +835,7 @@ def build_tool_index(
     metadata_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> list[ToolIndexEntry]:
     scb_by_id = {definition.tool_id: definition for definition in SCB_TOOL_DEFINITIONS}
+    kolada_by_id = {definition.tool_id: definition for definition in KOLADA_TOOL_DEFINITIONS}
     bolagsverket_by_id = {
         definition.tool_id: definition for definition in BOLAGSVERKET_TOOL_DEFINITIONS
     }
@@ -805,6 +864,14 @@ def build_tool_index(
             example_queries = list(definition.example_queries)
             category = "statistics"
             base_path = definition.base_path
+        if tool_id in kolada_by_id:
+            definition = kolada_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = "statistics"
+            # Use operating_area as base_path for Kolada tools, default to empty string if None
+            base_path = definition.operating_area if definition.operating_area else ""
         if tool_id in bolagsverket_by_id:
             definition = bolagsverket_by_id[tool_id]
             description = definition.description
