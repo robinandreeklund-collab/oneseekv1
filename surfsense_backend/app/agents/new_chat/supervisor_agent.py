@@ -21,10 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
 from app.agents.new_chat.bigtool_workers import WorkerConfig
 from app.agents.new_chat.nodes import (
+    build_agent_resolver_node,
     build_critic_node,
     build_executor_nodes,
+    build_execution_hitl_gate_node,
     build_intent_resolver_node,
+    build_planner_hitl_gate_node,
     build_planner_node,
+    build_synthesis_hitl_gate_node,
     build_synthesizer_node,
     build_tool_resolver_node,
 )
@@ -3283,91 +3287,20 @@ async def create_supervisor_agent(
         coerce_confidence_fn=_coerce_confidence,
     )
 
-    async def resolve_agents_node(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        feedback = state.get("user_feedback")
-        if isinstance(feedback, dict):
-            feedback_decision = str(feedback.get("decision") or "").strip().lower()
-            feedback_stage = str(feedback.get("stage") or "").strip().lower()
-            if (
-                feedback_decision == "approve"
-                and feedback_stage in {"planner", "execution", "synthesis"}
-                and state.get("selected_agents")
-            ):
-                return {"orchestration_phase": "plan"}
-        latest_user_query = _latest_user_query(state.get("messages") or [])
-        if not latest_user_query:
-            return {}
-        intent_data = state.get("resolved_intent") or {}
-        route_hint = _normalize_route_hint_value(
-            intent_data.get("route") or state.get("route_hint")
-        )
-        route_allowed = _route_allowed_agents(route_hint)
-        default_for_route = _route_default_agent(route_hint, route_allowed)
-        recent_calls = state.get("recent_agent_calls") or []
-        recent_agents = [
-            str(item.get("agent") or "").strip()
-            for item in recent_calls[-3:]
-            if isinstance(item, dict) and str(item.get("agent") or "").strip()
-        ]
-        selected = _smart_retrieve_agents(
-            latest_user_query,
-            agent_definitions=agent_definitions,
-            recent_agents=recent_agents,
-            limit=3,
-        )
-        if route_allowed:
-            filtered = [agent for agent in selected if agent.name in route_allowed]
-            if filtered:
-                selected = filtered
-            elif default_for_route in agent_by_name:
-                selected = [agent_by_name[default_for_route]]
-        selected_payload = [_agent_payload(agent) for agent in selected]
-        if not selected_payload and default_for_route in agent_by_name:
-            selected_payload = [_agent_payload(agent_by_name[default_for_route])]
-
-        prompt = append_datetime_context(agent_resolver_prompt_template)
-        resolver_input = json.dumps(
-            {
-                "query": latest_user_query,
-                "resolved_intent": intent_data if isinstance(intent_data, dict) else {},
-                "agent_candidates": selected_payload,
-            },
-            ensure_ascii=True,
-        )
-        try:
-            message = await llm.ainvoke(
-                [
-                    SystemMessage(content=prompt),
-                    HumanMessage(content=resolver_input),
-                ]
-            )
-            parsed = _extract_first_json_object(str(getattr(message, "content", "") or ""))
-            requested = parsed.get("selected_agents")
-            if isinstance(requested, list) and requested:
-                by_name = {
-                    str(item.get("name") or "").strip(): item
-                    for item in selected_payload
-                    if isinstance(item, dict)
-                }
-                ordered: list[dict[str, Any]] = []
-                for name in requested:
-                    normalized = str(name or "").strip()
-                    if normalized and normalized in by_name:
-                        ordered.append(by_name[normalized])
-                if ordered:
-                    selected_payload = ordered[:3]
-        except Exception:
-            pass
-        return {
-            "selected_agents": selected_payload[:3],
-            "orchestration_phase": "plan",
-        }
+    resolve_agents_node = build_agent_resolver_node(
+        llm=llm,
+        agent_resolver_prompt_template=agent_resolver_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        normalize_route_hint_fn=_normalize_route_hint_value,
+        route_allowed_agents_fn=_route_allowed_agents,
+        route_default_agent_fn=_route_default_agent,
+        smart_retrieve_agents_fn=_smart_retrieve_agents,
+        agent_definitions=agent_definitions,
+        agent_by_name=agent_by_name,
+        agent_payload_fn=_agent_payload,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+    )
 
     planner_node = build_planner_node(
         llm=llm,
@@ -3377,38 +3310,12 @@ async def create_supervisor_agent(
         extract_first_json_object_fn=_extract_first_json_object,
     )
 
-    async def planner_hitl_gate_node(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        if not _hitl_enabled("planner"):
-            return {"orchestration_phase": "resolve_tools"}
-        if bool(state.get("awaiting_confirmation")) and str(
-            state.get("pending_hitl_stage") or ""
-        ).strip().lower() == "planner":
-            return {"orchestration_phase": "awaiting_confirmation"}
-        feedback = state.get("user_feedback")
-        if isinstance(feedback, dict):
-            if (
-                str(feedback.get("decision") or "").strip().lower() == "approve"
-                and str(feedback.get("stage") or "").strip().lower() == "planner"
-            ):
-                return {"orchestration_phase": "resolve_tools", "user_feedback": None}
-        plan_preview = _plan_preview_text(state)
-        message = _render_hitl_message(
-            hitl_planner_message_template,
-            plan_preview=plan_preview,
-        )
-        return {
-            "messages": [AIMessage(content=message)],
-            "awaiting_confirmation": True,
-            "pending_hitl_stage": "planner",
-            "pending_hitl_payload": {"plan_preview": plan_preview},
-            "orchestration_phase": "awaiting_confirmation",
-        }
+    planner_hitl_gate_node = build_planner_hitl_gate_node(
+        hitl_enabled_fn=_hitl_enabled,
+        plan_preview_text_fn=_plan_preview_text,
+        render_hitl_message_fn=_render_hitl_message,
+        hitl_planner_message_template=hitl_planner_message_template,
+    )
 
     tool_resolver_node = build_tool_resolver_node(
         tool_resolver_prompt_template=tool_resolver_prompt_template,
@@ -3423,60 +3330,12 @@ async def create_supervisor_agent(
         trafik_tool_ids=trafik_tool_ids,
     )
 
-    async def execution_hitl_gate_node(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        if not _hitl_enabled("execution"):
-            return {"orchestration_phase": "execute"}
-        if bool(state.get("awaiting_confirmation")) and str(
-            state.get("pending_hitl_stage") or ""
-        ).strip().lower() == "execution":
-            return {"orchestration_phase": "awaiting_confirmation"}
-        feedback = state.get("user_feedback")
-        if isinstance(feedback, dict):
-            if (
-                str(feedback.get("decision") or "").strip().lower() == "approve"
-                and str(feedback.get("stage") or "").strip().lower() == "execution"
-            ):
-                return {"orchestration_phase": "execute", "user_feedback": None}
-
-        step = _next_plan_step(state)
-        step_preview = (
-            str(step.get("content") or "").strip()
-            if isinstance(step, dict)
-            else "Kora nasta steg i planen."
-        )
-        resolved_map = state.get("resolved_tools_by_agent") or {}
-        tool_preview_parts: list[str] = []
-        if isinstance(resolved_map, dict):
-            for agent_name, tool_ids in list(resolved_map.items())[:2]:
-                if not isinstance(tool_ids, list):
-                    continue
-                names = [str(item).strip() for item in tool_ids if str(item).strip()][:3]
-                if names:
-                    tool_preview_parts.append(f"{agent_name}: {', '.join(names)}")
-        tool_preview = (
-            " | ".join(tool_preview_parts) if tool_preview_parts else "Inga tydliga verktyg valda"
-        )
-        message = _render_hitl_message(
-            hitl_execution_message_template,
-            step_preview=step_preview,
-            tool_preview=tool_preview,
-        )
-        return {
-            "messages": [AIMessage(content=message)],
-            "awaiting_confirmation": True,
-            "pending_hitl_stage": "execution",
-            "pending_hitl_payload": {
-                "step_preview": step_preview,
-                "tool_preview": tool_preview,
-            },
-            "orchestration_phase": "awaiting_confirmation",
-        }
+    execution_hitl_gate_node = build_execution_hitl_gate_node(
+        hitl_enabled_fn=_hitl_enabled,
+        next_plan_step_fn=_next_plan_step,
+        render_hitl_message_fn=_render_hitl_message,
+        hitl_execution_message_template=hitl_execution_message_template,
+    )
 
     critic_node = build_critic_node(
         llm=llm,
@@ -3490,51 +3349,12 @@ async def create_supervisor_agent(
         render_guard_message_fn=_render_guard_message,
     )
 
-    async def synthesis_hitl_gate_node(
-        state: SupervisorState,
-        config: dict | None = None,
-        *,
-        store=None,
-        **kwargs,
-    ) -> SupervisorState:
-        if not _hitl_enabled("synthesis"):
-            return {}
-        if bool(state.get("awaiting_confirmation")) and str(
-            state.get("pending_hitl_stage") or ""
-        ).strip().lower() == "synthesis":
-            return {"orchestration_phase": "awaiting_confirmation"}
-        feedback = state.get("user_feedback")
-        if isinstance(feedback, dict):
-            feedback_decision = str(feedback.get("decision") or "").strip().lower()
-            feedback_stage = str(feedback.get("stage") or "").strip().lower()
-            if feedback_stage == "synthesis":
-                if feedback_decision == "approve":
-                    return {"user_feedback": None}
-                if feedback_decision == "reject":
-                    return {
-                        "final_response": None,
-                        "final_agent_response": None,
-                        "critic_decision": "replan",
-                        "orchestration_phase": "plan",
-                        "user_feedback": None,
-                    }
-        response_preview = _truncate_for_prompt(
-            str(state.get("final_response") or state.get("final_agent_response") or ""),
-            280,
-        )
-        if not response_preview:
-            return {}
-        message = _render_hitl_message(
-            hitl_synthesis_message_template,
-            response_preview=response_preview,
-        )
-        return {
-            "messages": [AIMessage(content=message)],
-            "awaiting_confirmation": True,
-            "pending_hitl_stage": "synthesis",
-            "pending_hitl_payload": {"response_preview": response_preview},
-            "orchestration_phase": "awaiting_confirmation",
-        }
+    synthesis_hitl_gate_node = build_synthesis_hitl_gate_node(
+        hitl_enabled_fn=_hitl_enabled,
+        truncate_for_prompt_fn=_truncate_for_prompt,
+        render_hitl_message_fn=_render_hitl_message,
+        hitl_synthesis_message_template=hitl_synthesis_message_template,
+    )
 
     synthesizer_node = build_synthesizer_node(
         llm=llm,
