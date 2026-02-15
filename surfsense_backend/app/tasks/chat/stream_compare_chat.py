@@ -1,6 +1,26 @@
 """
 Streaming task for SurfSense compare mode.
 
+**DEPRECATED**: This module contains the legacy monolithic compare implementation.
+The new compare flow uses a deterministic LangGraph subgraph in supervisor_agent.py
+with compare_executor.py nodes. This ensures predictable external model calls and
+proper frontend UI rendering.
+
+The utility functions `is_compare_request()` and `extract_compare_query()` are
+still used for compare command detection and should be preserved.
+
+Legacy compare flow (this file):
+- Runs outside supervisor entirely
+- Does its own async model calls, Tavily, synthesis
+- SSE streaming implementation
+- Non-deterministic LLM-based tool calling
+
+New compare flow (supervisor_agent.py + compare_executor.py):
+- Runs within supervisor as a deterministic subgraph
+- Guarantees ALL external models called in parallel
+- Proper AIMessage/ToolMessage emission for frontend model cards
+- Linear execution: fan_out → collect → tavily → synthesizer → END
+
 Compare mode runs the same query across multiple external LLMs in parallel,
 streams thinking steps for each call, then synthesizes an optimized answer
 using a local LLM and Tavily.

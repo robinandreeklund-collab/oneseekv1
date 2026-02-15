@@ -1,0 +1,331 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "skolverket-provider",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Vilka ämnen finns i gymnasieutbildningen i Stockholms län enligt Skolverkets kursplaner?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "search_subjects",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "search_subjects"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:search_subjects"
+        ]
+      },
+      "allowed_tools": [
+        "search_subjects"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Hur många utbildningshändelser finns det i Norrköping som handlar om teknik och är planerade för 2024?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "count_education_events",
+        "category": "statistics",
+        "acceptable_tools": [
+          "count_education_events"
+        ],
+        "intent": "statistics",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:statistics",
+          "tool:count_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "count_education_events"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vilka program finns tillgängliga för gymnasial utbildning i Västerbottens län med distansundervisning?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "filter_adult_education_by_distance",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "filter_adult_education_by_distance"
+        ],
+        "intent": "action",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:filter_adult_education_by_distance"
+        ]
+      },
+      "allowed_tools": [
+        "filter_adult_education_by_distance"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vilka skolor i Malmö erbjuder gymnasial utbildning i naturvetenskap med kursplan GY2011?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "search_school_units_by_name",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "search_school_units_by_name"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:search_school_units_by_name"
+        ]
+      },
+      "allowed_tools": [
+        "search_school_units_by_name"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Vilka ämnen och kurskoder finns i den senaste versionen av kursplanen för svenska i grundskolan?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "get_subject_and_course_codes",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_subject_and_course_codes"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:get_subject_and_course_codes"
+        ]
+      },
+      "allowed_tools": [
+        "get_subject_and_course_codes"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilka dokument finns tillgängliga för skolenhetens kod 69405762 i Uppsala?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "get_school_unit_documents",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_unit_documents"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:get_school_unit_documents"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_unit_documents"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Vilka studieinriktningar finns i gymnasial utbildning i Göteborg, och vilka ämnen ingår i programmet NA?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_program_details",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_program_details"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:get_program_details"
+        ]
+      },
+      "allowed_tools": [
+        "get_program_details"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Hur många skolor i Skåne län är aktiva och erbjuder grundskolans läroplan för årskurs 7–9?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_school_units_by_status",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_units_by_status"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:get_school_units_by_status"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_units_by_status"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilka ämnen och kurser ingår i gymnasieprogrammet för naturvetenskap i Skolverkets v4-data i Jönköping, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "search_courses",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "search_courses"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:search_courses"
+        ]
+      },
+      "allowed_tools": [
+        "search_courses"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Vilka kurser i gymnasial utbildning (GY) har ändrats sedan 2020, och vilka ämnen ingår i dem i Norrköping, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_subject_versions",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_subject_versions"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:get_subject_versions"
+        ]
+      },
+      "allowed_tools": [
+        "get_subject_versions"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vilka utbildningshändelser med söktermen 'klimatpolitik' finns i Västra Götalands län för skolform GY?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "search_education_events",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "search_education_events"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:search_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "search_education_events"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Vilka skolformer och studieinriktningar finns i Skolverkets v4-data för utbildning i Norrland i Umeå, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "get_school_types_v4",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_types_v4"
+        ],
+        "intent": "knowledge",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:knowledge",
+          "tool:get_school_types_v4"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_types_v4"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}

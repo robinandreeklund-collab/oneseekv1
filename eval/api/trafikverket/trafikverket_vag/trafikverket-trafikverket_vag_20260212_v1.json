@@ -1,0 +1,517 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "trafikverket-trafikverket_vag",
+  "target_success_rate": null,
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Hastighetsgräns på E6",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Vägstatus i Västra Götaland i Göteborg, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vägskick på riksväg 70 i Malmö, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vilka avspärrningar finns på E20 i nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Tillfälliga hastigheter på E4",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Framkomlighet på Essingeleden i Örebro, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Planerat underhåll på E18",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Vilka avspärrningar finns på E20 i nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Fartgräns i Stockholm innerstad",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Trafikläge på E4 vid Stockholm",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vägarbeten på E20 mellan Stockholm och Örebro",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Vilka avspärrningar finns på E20 i nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Hastighetsgräns på E6",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Vägstatus i Västra Götaland i Sundsvall, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Vägskick på riksväg 70 i Luleå, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-16",
+      "question": "Vilka avspärrningar finns på E20 i nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-17",
+      "question": "Tillfälliga hastigheter på E4",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-18",
+      "question": "Framkomlighet på Essingeleden i Malmö, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-19",
+      "question": "Planerat underhåll på E18",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-20",
+      "question": "Vilka avspärrningar finns på E20 i nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-21",
+      "question": "Fartgräns i Stockholm innerstad",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-22",
+      "question": "Trafikläge på E4 vid Stockholm",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-23",
+      "question": "Vägarbeten på E20 mellan Stockholm och Örebro",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-24",
+      "question": "Vilka avspärrningar finns på E20 i nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-25",
+      "question": "Hastighetsgräns på E6",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-26",
+      "question": "Vägstatus i Västra Götaland i Lund, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-27",
+      "question": "Vägskick på riksväg 70 i Umeå, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-28",
+      "question": "Vilka avspärrningar finns på E20 i nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-29",
+      "question": "Tillfälliga hastigheter på E4",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-30",
+      "question": "Framkomlighet på Essingeleden i Luleå, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "plan_requirements": [
+          "route:action",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    }
+  ]
+}

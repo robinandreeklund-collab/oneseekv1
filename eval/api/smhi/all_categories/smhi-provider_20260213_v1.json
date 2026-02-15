@@ -1,0 +1,607 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "smhi-provider",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Vad är vädret i Stockholm idag enligt SMHI?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Hur är väderprognosen för Göteborg under de nästa 24 timmarna?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vilken temperatur har det i Malmö idag enligt SMHI?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vad säger SMHI om vädret i Uppsala i morgon?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Hur är väderförhållandena på E4 mellan Sundsvall och Gävle?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilken väderprognos har SMHI för Norrköping under helgen?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Vad säger SMHI om snöfall i Luleå under nästa vecka?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Hur är vädret i Helsingborg i morgon kväll?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilken temperatur och vindstyrka förväntas i Jönköping i morgon?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Vad säger SMHI om regn i Västerås under eftermiddagen?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Hur är väderprognosen för E6 mellan Örebro och Västergötland?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Vad säger SMHI om snö i Lund i morgon?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Hur är väderförhållandena på Riksväg 40 mellan Umeå och Västerbotten?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Vilken väderprognos har SMHI för E18 mellan Skåne och Malmö?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Hur är vädret i Linköping i morgon morgon, speciellt kring klockan 08:00?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-16",
+      "question": "Vad säger SMHI om temperatur och nederbörd i Södra Länken mellan Stockholm och Malmö?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-17",
+      "question": "Hur är väderprognosen för E20 mellan Uppsala och Norrland?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-18",
+      "question": "Vilken temperatur och vindstyrka förväntas i Östergötlands län i morgon?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-19",
+      "question": "Hur är väderförhållandena i Västerbottens län i morgon?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-20",
+      "question": "Vad säger SMHI om snöfall i Norrbottens län under kvällen?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-21",
+      "question": "Hur är vädret i Skåne län i morgon morgon?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-22",
+      "question": "Vad säger SMHI om regn i Västra Götalands län i eftermiddag?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-23",
+      "question": "Hur är väderprognosen för E22 mellan Göteborg och Skåne?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-24",
+      "question": "Vilken temperatur har det i Umeå i morgon?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-25",
+      "question": "Hur är väderförhållandena i Gävle i morgon?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-26",
+      "question": "Vad säger SMHI om vädret i Lund idag?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-27",
+      "question": "Hur är väderprognosen för E4 mellan Stockholm och Norrland?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-28",
+      "question": "Vad säger SMHI om temperatur i Örebro i morgon?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-29",
+      "question": "Hur är väderförhållandena på Norra Länken i morgon?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-30",
+      "question": "Vilken väderprognos har SMHI för E6 mellan Malmö och Göteborg?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "general",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}

@@ -1,0 +1,283 @@
+{
+  "eval_type": "api_input",
+  "eval_name": "trafikverket-trafikverket_vag",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Finns det några avstängningar på E4 vid Stockholm idag?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Vilken hastighetsgräns gäller på E6 i Göteborg just nu?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Hur är framkomligheten på E18 mellan Malmö och Lund just nu?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Har det skett planerat underhåll på E20 mellan Stockholm och Örebro under vecka 45?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Vilka vägarbeten pågår på Riksväg 40 i Västerås nästa vecka?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Finns det några avspärrningar på Södra länken i Stockholm idag?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Vilken vägstatus gäller för E4 vid Linköping just nu?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Vilka temporära hastighetsgränser finns på E6 i Sundsvall nästa vecka?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Har det skett planerat underhåll på E22 i Skåne län idag?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Vilka avstängningar på E18 i Västra Götalands län påverkar trafiken i morgon?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vilken hastighetsgräns gäller på Riksväg 50 i Umeå?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Hur är framkomligheten på E20 mellan Örebro och Norrköping just nu?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ],
+        "required_fields": [],
+        "field_values": {},
+        "allow_clarification": false
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}

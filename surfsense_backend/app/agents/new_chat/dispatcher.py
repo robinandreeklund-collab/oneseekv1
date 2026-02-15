@@ -162,8 +162,16 @@ async def dispatch_route_with_trace(
     if (
         is_followup
         and previous_route
-        and previous_route not in {Route.SMALLTALK, Route.COMPARE}
+        and previous_route not in {Route.SMALLTALK}
     ):
+        # Special handling for compare followups
+        if previous_route == Route.COMPARE:
+            return Route.KNOWLEDGE, {
+                "source": "compare_followup",
+                "confidence": 0.92,
+                "reason": "followup_after_compare_routes_to_knowledge",
+                "candidates": [],
+            }
         # Global continuity rule: preserve prior route for context-dependent follow-ups.
         return previous_route, {
             "source": "followup_continuity",
@@ -182,10 +190,7 @@ async def dispatch_route_with_trace(
             query=previous_user_text,
             definitions=normalized_intents,
         )
-        if previous_decision and previous_decision.route not in {
-            Route.SMALLTALK,
-            Route.COMPARE,
-        }:
+        if previous_decision and previous_decision.route not in {Route.SMALLTALK}:
             previous_route = previous_decision.route
 
     explicit_compare = bool(_COMPARE_COMMAND_RE.match(text))
@@ -197,7 +202,10 @@ async def dispatch_route_with_trace(
     ) -> Route:
         if route != Route.COMPARE or explicit_compare:
             return route
-        if previous_route and previous_route not in {Route.SMALLTALK, Route.COMPARE}:
+        if previous_route and previous_route not in {Route.SMALLTALK}:
+            # Allow compare followups to preserve compare context
+            if previous_route == Route.COMPARE:
+                return Route.KNOWLEDGE
             return previous_route
         candidate_route = _first_non_compare_route(candidates)
         if candidate_route:
@@ -279,9 +287,19 @@ async def dispatch_route_with_trace(
             if (
                 is_followup
                 and previous_route
-                and previous_route not in {Route.SMALLTALK, Route.COMPARE}
+                and previous_route not in {Route.SMALLTALK}
                 and guarded_llm_route in {Route.KNOWLEDGE, Route.ACTION}
             ):
+                # Special handling for compare followups
+                if previous_route == Route.COMPARE:
+                    return Route.KNOWLEDGE, {
+                        "source": "followup_override_compare",
+                        "confidence": 0.85,
+                        "reason": "followup_after_compare_routes_to_knowledge",
+                        "candidates": retrieval_decision.candidates
+                        if retrieval_decision
+                        else [],
+                    }
                 return previous_route, {
                     "source": "followup_override",
                     "confidence": 0.85,

@@ -1,0 +1,637 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "smhi-provider",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-16",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-17",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-18",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-19",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-20",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-21",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-22",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-23",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-24",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-25",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-26",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-27",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-28",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-29",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-30",
+      "question": "Hjälp mig med: Fetch weather data from SMHI for a location or coordinates.\n\nUse this tool when the user asks about current weather or f",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}

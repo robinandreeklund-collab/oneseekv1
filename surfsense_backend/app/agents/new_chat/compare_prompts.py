@@ -57,15 +57,15 @@ DEFAULT_COMPARE_ANALYSIS_PROMPT = (
 
 COMPARE_SUPERVISOR_INSTRUCTIONS = """
 <compare_mode>
-Du kör compare-läge.
+Du kör compare-läge med deterministic orchestration.
 
-Instruktioner:
-- Kör flera externa modellverktyg parallellt i EN och samma verktygskall (t.ex. call_gpt + call_claude + call_grok).
-- När du anropar externa modeller: skicka alltid användarens fråga i argumentet "query".
-- Vänta på alla verktygssvar innan du går vidare.
-- Anropa därefter synthesis-agenten för att skapa slutsvaret.
-- Svara inte själv med slutsvaret; låt synthesis-agenten göra syntesen.
-- Om användaren saknar jämförelseobjekt eller scope, ställ EN kort förtydligande fråga.
+Systemet anropar automatiskt alla externa modeller parallellt och samlar in deras svar.
+Din roll är endast att:
+- Förtydliga användarens fråga om den är oklar eller saknar scope
+- Vänta på att systemet samlar in alla modellsvar
+- Systemet sköter syntesen automatiskt
+
+Du behöver INTE anropa modeller själv - det sker automatiskt.
 </compare_mode>
 """.strip()
 

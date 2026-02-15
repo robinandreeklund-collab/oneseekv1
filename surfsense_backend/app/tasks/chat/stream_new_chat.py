@@ -18,7 +18,7 @@ from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -343,12 +343,26 @@ def _build_followup_context_block(
         return ""
     if previous.lower() == current.lower():
         return ""
+    
+    # Check if previous query was a compare request
+    previous_was_compare = previous.strip().lower().startswith("/compare")
+    
     context = (
         "<followup_context>\n"
         "Detta är en uppföljningsfråga. Tolka den med samma ämne, metod och verktygsnivå "
         "som föregående användarfråga om inget annat uttryckligen anges.\n"
         f"Föregående användarfråga: {previous}\n"
     )
+    
+    # Add special context for compare followups
+    if previous_was_compare:
+        context += (
+            "\nFöregående fråga var en jämförelse (/compare) mellan flera AI-modeller. "
+            "Modellernas svar finns tillgängliga som TOOL_OUTPUT-dokument i kunskapsbasen. "
+            "Du kan söka efter dem med search_knowledge_base för att ge sammanhangsberoende svar "
+            "baserade på jämförelsen.\n"
+        )
+    
     if _FOLLOWUP_COMPARE_RE.search(current.lower()):
         previous_answers = _extract_previous_assistant_answers_from_history(
             routing_history, limit=2
@@ -589,6 +603,87 @@ def _extract_assistant_text_from_event_output(output: Any) -> str:
     if hasattr(output, "content"):
         return _extract_assistant_text_from_message(output)
     return ""
+
+
+def _extract_and_stream_tool_calls(output: Any, streaming_service: Any, streamed_ids: set[str]) -> list[str]:
+    """
+    Extract AIMessage with tool_calls and corresponding ToolMessages from chain output.
+    Returns list of SSE events to stream to frontend.
+    
+    This is critical for compare mode where compare_fan_out creates:
+    - AIMessage with tool_calls array (one per external model)
+    - ToolMessage responses (one per model with results)
+    
+    Without this, frontend doesn't receive tool call events and can't render model cards.
+    
+    Args:
+        output: Chain output dictionary containing messages
+        streaming_service: Service for formatting SSE events
+        streamed_ids: Set of tool_call_ids already streamed (prevents duplicates)
+    """
+    events = []
+    
+    if not isinstance(output, dict):
+        return events
+    
+    messages = output.get("messages")
+    if not isinstance(messages, list) or len(messages) == 0:
+        return events
+    
+    # Find AIMessage with tool_calls and collect corresponding ToolMessages
+    ai_message_with_tools = None
+    tool_messages_by_id = {}
+    
+    for msg in messages:
+        # Check for AIMessage with tool_calls
+        if isinstance(msg, AIMessage) or (isinstance(msg, dict) and msg.get("type") == "ai"):
+            tool_calls = getattr(msg, "tool_calls", None) if hasattr(msg, "tool_calls") else msg.get("tool_calls")
+            if tool_calls and isinstance(tool_calls, list) and len(tool_calls) > 0:
+                ai_message_with_tools = (msg, tool_calls)
+        
+        # Collect ToolMessages
+        if isinstance(msg, ToolMessage) or (isinstance(msg, dict) and msg.get("type") == "tool"):
+            tool_call_id = getattr(msg, "tool_call_id", None) if hasattr(msg, "tool_call_id") else msg.get("tool_call_id")
+            if tool_call_id:
+                tool_messages_by_id[tool_call_id] = msg
+    
+    # If we found tool calls and messages, stream them (but only if not already streamed)
+    if ai_message_with_tools:
+        _msg, tool_calls = ai_message_with_tools
+        
+        for tool_call in tool_calls:
+            tool_call_id = tool_call.get("id") if isinstance(tool_call, dict) else getattr(tool_call, "id", None)
+            tool_name = tool_call.get("name") if isinstance(tool_call, dict) else getattr(tool_call, "name", None)
+            tool_args = tool_call.get("args") if isinstance(tool_call, dict) else getattr(tool_call, "args", {})
+            
+            if not tool_call_id or not tool_name:
+                continue
+            
+            # Skip if already streamed
+            if tool_call_id in streamed_ids:
+                continue
+            
+            # Mark as streamed
+            streamed_ids.add(tool_call_id)
+            
+            # Stream tool input
+            events.append(streaming_service.format_tool_input_start(tool_call_id, tool_name))
+            events.append(streaming_service.format_tool_input_available(tool_call_id, tool_name, tool_args))
+            
+            # Stream tool output if available
+            tool_msg = tool_messages_by_id.get(tool_call_id)
+            if tool_msg:
+                content = getattr(tool_msg, "content", None) if hasattr(tool_msg, "content") else tool_msg.get("content")
+                if content:
+                    # Try to parse as JSON
+                    try:
+                        output_data = json.loads(content) if isinstance(content, str) else content
+                        events.append(streaming_service.format_tool_output_available(tool_call_id, output_data))
+                    except (json.JSONDecodeError, TypeError):
+                        # If not JSON, send as-is
+                        events.append(streaming_service.format_tool_output_available(tool_call_id, content))
+    
+    return events
 
 
 _CRITIC_JSON_SNIPPET_RE = re.compile(
@@ -1096,9 +1191,18 @@ async def stream_new_chat(
             conversation_history=routing_history,
             intent_definitions=intent_definitions,
         )
-        if route == Route.COMPARE and compare_query:
-            user_query = compare_query
+        
+        # Sync compare_mode with route decision
+        # Router can identify compare requests even without /compare prefix
+        if route == Route.COMPARE:
+            compare_mode = True
+            # Always extract compare query when route is COMPARE, even if initial detection failed
+            if not compare_query:
+                compare_query = extract_compare_query(raw_user_query)
+            if compare_query:
+                user_query = compare_query
             followup_context_block = ""
+        
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
@@ -1307,6 +1411,7 @@ async def stream_new_chat(
             )
 
         if route != Route.SMALLTALK:
+            print(f"[DEBUG] Building graph with compare_mode={compare_mode}")
             agent = await build_complete_graph(
                 llm=llm,
                 dependencies={
@@ -1558,6 +1663,7 @@ async def stream_new_chat(
         model_parent_chain_by_run_id: dict[str, str] = {}
         internal_model_buffers: dict[str, str] = {}
         emitted_pipeline_payload_signatures: set[str] = set()
+        streamed_tool_call_ids: set[str] = set()  # Track tool calls already streamed to prevent duplicates
         stream_pipeline_prefix_buffer: str = ""
 
         route_label = f"Supervisor/{route.value.capitalize()}"
@@ -1919,6 +2025,13 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
+                    
+                    # Extract and stream tool calls from chain output (critical for compare mode)
+                    # Pass tracking set to prevent duplicate tool call streaming
+                    tool_call_events = _extract_and_stream_tool_calls(chain_output, streaming_service, streamed_tool_call_ids)
+                    for tool_event in tool_call_events:
+                        yield tool_event
+                    
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
                     )

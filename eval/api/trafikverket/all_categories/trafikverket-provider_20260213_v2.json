@@ -1,0 +1,607 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "trafikverket-provider",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Halka på E45 i Västerbotten",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_vader_halka",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_halka"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_halka"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Tillfälliga hastigheter på E4",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Visa bild från vägkamera vid Stockholm City",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_kameror_snapshot",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_snapshot"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_snapshot"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vägstatus i Sundsvall",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Vägarbeten på E18 mellan Göteborg och Örebro",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_vagarbeten",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_vagarbeten"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_vagarbeten"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Blåst i Skåne i Örebro, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_vader_vind",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_vind"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_vind"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Väglag E22 i Småland imorgon",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_prognos_vag",
+        "category": "trafikverket_prognos",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_prognos_vag"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_prognos_vag"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Är kamera E4-10 online?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_kameror_status",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_status"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Lista kameror vid Essingeleden i Jönköping, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_kameror_lista",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_lista"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_lista"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Avgångar från Uppsala C imorgon",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_tag_tidtabell",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_tidtabell"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_tidtabell"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Förväntade förseningar till Göteborg",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_prognos_tag",
+        "category": "trafikverket_prognos",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_prognos_tag"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_prognos_tag"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Trafikinfo för riksväg 70 i Dalarna i Umeå, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_storningar",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_storningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_storningar"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Vägskick på riksväg 70 i Gävle, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Inställda avgångar Stockholm C",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_tag_installda",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_installda"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_installda"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Restidsprognos på E6",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_prognos_trafik",
+        "category": "trafikverket_prognos",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_prognos_trafik"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_prognos_trafik"
+      ]
+    },
+    {
+      "id": "case-16",
+      "question": "Omledning vid E6 i Jönköping i morgon",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-17",
+      "question": "Stationer som börjar med 'Sundsvall'",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_tag_stationer",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_stationer"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_stationer"
+      ]
+    },
+    {
+      "id": "case-18",
+      "question": "Trafikstockning på Essingeleden i Malmö, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_koer",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_koer"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_koer"
+      ]
+    },
+    {
+      "id": "case-19",
+      "question": "Väder och väglag på E6 nära Uddevalla",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_vader_stationer",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_stationer"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_stationer"
+      ]
+    },
+    {
+      "id": "case-20",
+      "question": "Temperaturer i Dalarna i Västerås, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vader_temperatur",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_temperatur"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_temperatur"
+      ]
+    },
+    {
+      "id": "case-21",
+      "question": "Tågförseningar mot Göteborg just nu",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_tag_forseningar",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_forseningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_forseningar"
+      ]
+    },
+    {
+      "id": "case-22",
+      "question": "Olycka på E6 vid Kungsbacka",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_olyckor",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_olyckor"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_olyckor"
+      ]
+    },
+    {
+      "id": "case-23",
+      "question": "Väglag på E45 vid Södra länken i Stockholm",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vader_halka",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_halka"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_halka"
+      ]
+    },
+    {
+      "id": "case-24",
+      "question": "Fartgräns i Stockholm innerstad",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-25",
+      "question": "Trafikkamera på E4 – senaste bild",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_kameror_snapshot",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_snapshot"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_snapshot"
+      ]
+    },
+    {
+      "id": "case-26",
+      "question": "Vägstatus i Västra Götaland i Lund, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-27",
+      "question": "Vägarbete på riksväg 50",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_vagarbeten",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_vagarbeten"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_vagarbeten"
+      ]
+    },
+    {
+      "id": "case-28",
+      "question": "Vind på Öresundsbron i Gävle, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_vader_vind",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_vind"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_vind"
+      ]
+    },
+    {
+      "id": "case-29",
+      "question": "Vägprojekt i Skåne län",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_prognos_vag",
+        "category": "trafikverket_prognos",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_prognos_vag"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_prognos_vag"
+      ]
+    },
+    {
+      "id": "case-30",
+      "question": "Driftstatus trafikkamera vid E6",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_kameror_status",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_status"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}

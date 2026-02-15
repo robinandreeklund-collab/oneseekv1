@@ -1,0 +1,259 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "smhi-weather",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Vad är vädret i Stockholm idag enligt SMHI?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "weather",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Hur blir det med väder och temperatur i Göteborg under morgondagens trafik, särskilt på E6 mellan Göteborg och Skövde?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vilken temperatur förväntas i Malmö under kvällen, och finns det risk för snöfall på E18 mot Lund?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Hur är väderprognosen i Uppsala i morgon, särskilt kring klockan 15 på Riksväg 40?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Vad säger SMHI om väder och vind på E20 mellan Örebro och Västerås i morgon?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilken temperatur och nederbörd finns det i Linköping under kvällen, och hur påverkar det trafiken på Södra länken?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Hur blir det med väder i Helsingborg i morgon, särskilt på E4 vid kryssningen med E20?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Vad säger SMHI om snöfall i Sundsvall i morgon, och hur påverkar det Norra länken?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilken väderprognos gäller för Jönköping i morgon, särskilt mellan klockan 08 och 10 på Riksväg 50?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Hur blir det med väder och halka på E22 mellan Norrköping och Kalmar i morgon?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vad säger SMHI om regn och vindstyrka i Lund vid klockan 17 i morgon, särskilt på E4 mot Malmö?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Hur är väderprognosen i Umeå i morgon, särskilt på Riksväg 73 mellan Umeå och Skellefteå?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "weather",
+        "intent": "action",
+        "route": "weather",
+        "sub_route": "web",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}

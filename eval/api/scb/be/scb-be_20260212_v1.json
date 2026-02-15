@@ -1,0 +1,517 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "scb-BE",
+  "target_success_rate": null,
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Hur stor var folkmangden i Sverige 2023 enligt SCB?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Hur mange barn fodes i Skane varje ar?",
+      "expected": {
+        "tool": "scb_befolkning_fodda",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_fodda"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_fodda"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vilken region har haft mest inflyttning de senaste fem arna?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Hur har befolkningens alderfordelning i Goteborg forandrats mellan 2015 och 2023?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Hur mange personer flyttade in till Sverige fran andra land i 2022?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "external",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilken kon har flest fodelser i Sverige per ar?",
+      "expected": {
+        "tool": "scb_befolkning_fodda",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_fodda"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_fodda"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Hur stor var befolkningen i Stockholm 2020?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Hur mange dodsfall har det varit i Sverige varje ar under 2015-2024?",
+      "expected": {
+        "tool": "scb_befolkning",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilken region har haft storst nettoflyttning de senaste tre arna?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Hur har antalet fodelser i Skane forandrats mellan 2015 och 2024?",
+      "expected": {
+        "tool": "scb_befolkning_fodda",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_fodda"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_fodda"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vilken aldergrupp har flest personer i Sverige 2023?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Hur stor andel av befolkningen i Sverige ar 2024 ar kvinnor?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Vilken region har flest flyttningar in och ut under 2020-2024?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Hur mange fodelser har det varit i Sverige totalt under 2015-2024?",
+      "expected": {
+        "tool": "scb_befolkning_fodda",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_fodda"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_fodda"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Vilken region har haft mest utrikes migration de senaste arna?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "external",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-16",
+      "question": "Hur stor andel av befolkningen i Goteborg ar over 65 ar?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-17",
+      "question": "Vilken kon har flest dodsfall i Sverige 2023?",
+      "expected": {
+        "tool": "scb_befolkning",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning"
+      ]
+    },
+    {
+      "id": "case-18",
+      "question": "Hur mange personer flyttade mellan lan i Sverige 2021?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "inrikes",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-19",
+      "question": "Vilken region har haft mest nativitet per 1000 invanare 2023?",
+      "expected": {
+        "tool": "scb_befolkning_fodda",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_fodda"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_fodda"
+      ]
+    },
+    {
+      "id": "case-20",
+      "question": "Hur stor var befolkningen i Uppsala lan 2020?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-21",
+      "question": "Vilken region har haft storst befolkningstillvaxt 2020-2024?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-22",
+      "question": "Hur mange fodelser har det varit i Sverige totalt per ar under 2015-2024?",
+      "expected": {
+        "tool": "scb_befolkning_fodda",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_fodda"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_fodda"
+      ]
+    },
+    {
+      "id": "case-23",
+      "question": "Vilken aldergrupp har flest personer i Skane 2023?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-24",
+      "question": "Hur har befolkningen i Sverige forandrats genom in- och utflyttning 2020-2024?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "inrikes",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-25",
+      "question": "Vilken kon har flest fodelser i Stockholm 2023?",
+      "expected": {
+        "tool": "scb_befolkning_fodda",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_fodda"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_fodda"
+      ]
+    },
+    {
+      "id": "case-26",
+      "question": "Hur stor var befolkningen i Sverige 2015?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-27",
+      "question": "Hur mange personer har flyttat till Sverige fran andra land 2022?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "external",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-28",
+      "question": "Vilken region har haft mest inrikes migration 2020-2024?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "inrikes",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-29",
+      "question": "Hur stor andel av befolkningen i Sverige ar 2024 ar under 18 ar?",
+      "expected": {
+        "tool": "scb_befolkning_folkmangd",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_folkmangd"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_folkmangd"
+      ]
+    },
+    {
+      "id": "case-30",
+      "question": "Vilken region har haft mest befolkningstillvaxt genom inrikes flyttningar 2020-2024?",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "route": "statistics",
+        "sub_route": "inrikes",
+        "plan_requirements": [
+          "route:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    }
+  ]
+}

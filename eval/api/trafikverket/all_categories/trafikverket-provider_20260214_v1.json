@@ -1,0 +1,259 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "trafikverket-provider",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Vilka tågavgångar finns från Stockholm C imorgon?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_tag_tidtabell",
+        "category": "trafikverket_tag",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafikverket",
+          "tool:trafikverket_tag_tidtabell"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_tidtabell"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Finns det planerade vägarbeten på E18 mellan Göteborg och Örebro nästa vecka?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_prognos_vag",
+        "category": "trafikverket_prognos",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafikverket",
+          "tool:trafikverket_prognos_vag"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_prognos_vag"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Hur ser trafikflödet ut på E4 vid Stockholm just nu?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:statistics",
+          "agent:trafikverket",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vilka trafikstörningar finns på E6 i Skåne län idag?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_storningar",
+        "category": "trafikverket_trafikinfo",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafikverket",
+          "tool:trafikverket_trafikinfo_storningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_storningar"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Har det skett något planerat underhåll på E22 i Skåne län under vecka 45?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafikverket",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilken vindstyrka och vindriktning finns på Öresundsbron idag i Örebro, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vader_vind",
+        "category": "weather",
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:statistics",
+          "agent:trafikverket",
+          "tool:trafikverket_vader_vind"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_vind"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Vilka trafikkameror finns längs E4 mellan Malmö och Lund?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_kameror_lista",
+        "category": "trafikverket_kameror",
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:trafikverket",
+          "tool:trafikverket_kameror_lista"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_lista"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Vilka tågförseningar finns på Västra stambanan mellan Stockholm och Uppsala just nu?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_tag_forseningar",
+        "category": "trafikverket_tag",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafikverket",
+          "tool:trafikverket_tag_forseningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_forseningar"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilken temperatur finns i Dalarna idag enligt väderstationerna i Jönköping, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_vader_temperatur",
+        "category": "weather",
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:statistics",
+          "agent:trafikverket",
+          "tool:trafikverket_vader_temperatur"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_temperatur"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Finns det halka på E45 i Västerbotten idag?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "trafikverket_vader_halka",
+        "category": "weather",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafikverket",
+          "tool:trafikverket_vader_halka"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_halka"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vilken livebild finns från kamera vid korsningen vid Sältsjö i Jönköping?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "trafikverket_kameror_snapshot",
+        "category": "trafikverket_kameror",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafikverket",
+          "tool:trafikverket_kameror_snapshot"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_snapshot"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Vilka avstängningar finns på E20 mellan Stockholm och Örebro i morgon?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafikverket",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafikverket",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}
