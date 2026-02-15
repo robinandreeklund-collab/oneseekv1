@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compare Mode - Progressive Disclosure Pattern Mockup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        .dark {
+            background: #0a0a0a;
+            color: #ededed;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    
+    <!-- Light Mode Version -->
+    <div class="min-h-screen p-8 bg-gray-50">
+        <div class="max-w-7xl mx-auto">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">Compare Mode - Light Theme</h1>
+            <p class="text-gray-600 mb-8">Progressive Disclosure Pattern för jämförelse av AI-modeller</p>
+            
+            <!-- Chat Container -->
+            <div class="flex gap-6">
+                <!-- Main Chat Area -->
+                <div class="flex-1 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                    
+                    <!-- ThinkingSteps (Collapsed) -->
+                    <div class="mb-4 p-4 rounded-lg bg-gray-50 border border-gray-200">
+                        <button class="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900">
+                            <span>Reviewed 3 steps</span>
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    
+                    <!-- Synthesized Answer -->
+                    <div class="prose prose-sm max-w-none mb-6">
+                        <p class="text-gray-800 leading-relaxed">
+                            Baserat på svar från flera AI-modeller kan jag sammanfatta följande: 
+                            <strong>Python är ett populärt programmeringsspråk</strong> som används inom 
+                            många olika områden som webbutveckling, dataanalys, maskininlärning och 
+                            automatisering.
+                        </p>
+                    </div>
+                    
+                    <!-- CompareSourcesBar (Expanded) -->
+                    <div class="border border-gray-200 rounded-lg bg-gray-50/50">
+                        <div class="flex items-center justify-between px-4 py-3">
+                            <span class="text-sm font-medium">🔍 Modellsvar (4 av 5)</span>
+                            <svg class="w-4 h-4 transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </div>
+                        <div class="border-t border-gray-200 px-4 py-3">
+                            <div class="flex gap-3 pb-2">
+                                <button class="flex flex-col items-center gap-1.5 rounded-lg p-2">
+                                    <div class="relative">
+                                        <div class="w-10 h-10 rounded-lg border bg-white flex items-center justify-center">C</div>
+                                        <div class="absolute -right-0.5 -top-0.5 w-3 h-3 rounded-full border-2 border-white bg-emerald-500"></div>
+                                    </div>
+                                    <div class="text-xs">
+                                        <div class="font-medium">Claude</div>
+                                        <div class="text-gray-600">1.8s</div>
+                                    </div>
+                                </button>
+                            </div>
+                            <div class="mt-3 border-t pt-3 text-xs text-gray-600">
+                                <span>Σ 3.6k tokens · 🌱 0.4g CO₂ · ⚡ Snabbast: Perplexity</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- CompareDetailSheet (Desktop) -->
+                <div class="w-[480px] bg-white rounded-xl shadow-lg border border-gray-200">
+                    <div class="border-b px-4 py-4">
+                        <span class="text-lg font-semibold">Modelljämförelse</span>
+                        <span class="ml-2 px-2 py-0.5 rounded-full bg-gray-100 text-xs">1 av 4</span>
+                    </div>
+                    <div class="p-4">
+                        <div class="flex items-center gap-3 mb-4">
+                            <div class="w-12 h-12 rounded-lg border bg-white flex items-center justify-center">C</div>
+                            <div>
+                                <h3 class="text-lg font-semibold">Claude</h3>
+                                <span class="text-xs text-gray-600">Anthropic</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-4 gap-2 mb-4">
+                            <div class="border rounded-lg p-2">
+                                <div class="text-xs text-gray-600">Svarstid</div>
+                                <div class="text-sm font-semibold">1.8s</div>
+                            </div>
+                            <div class="border rounded-lg p-2">
+                                <div class="text-xs text-gray-600">Tokens</div>
+                                <div class="text-sm font-semibold">1.2k</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+</body>
+</html>

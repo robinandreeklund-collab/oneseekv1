@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CompareDetailSheet - Light Mode</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            padding: 40px;
+            background: #f9fafb;
+        }
+    </style>
+</head>
+<body>
+    <div class="max-w-md mx-auto">
+        <h2 class="text-2xl font-bold mb-6 text-gray-900">CompareDetailSheet - Ljust Läge</h2>
+        
+        <!-- CompareDetailSheet Simulation -->
+        <div class="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
+            <!-- Header -->
+            <div class="border-b border-gray-200 px-4 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="text-lg font-semibold text-gray-900">Modelljämförelse</span>
+                        <span class="px-2 py-0.5 rounded-full bg-gray-100 text-xs text-gray-700">1 av 4</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Content -->
+            <div class="overflow-y-auto" style="max-height: 600px;">
+                <div class="space-y-4 p-4">
+                    <!-- Provider Header -->
+                    <div class="flex items-center gap-3">
+                        <div class="relative">
+                            <div class="w-12 h-12 rounded-lg border border-gray-300 bg-white flex items-center justify-center">
+                                <span class="text-sm font-semibold text-gray-600">C</span>
+                            </div>
+                            <div class="absolute -right-1 -top-1 w-4 h-4 rounded-full border-2 border-white bg-emerald-500"></div>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="text-lg font-semibold text-gray-900">Claude</h3>
+                            <div class="flex flex-wrap items-center gap-2 mt-1">
+                                <span class="px-2 py-0.5 rounded-full bg-gray-100 text-xs text-gray-700">Anthropic</span>
+                                <span class="text-xs text-gray-600">claude-3.5-sonnet</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Stats Grid -->
+                    <div class="grid grid-cols-4 gap-2">
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-2">
+                            <div class="text-xs text-gray-600 mb-1">Svarstid</div>
+                            <div class="text-sm font-semibold text-gray-900">1.8s</div>
+                        </div>
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-2">
+                            <div class="text-xs text-gray-600 mb-1">Tokens</div>
+                            <div class="text-sm font-semibold text-gray-900">1.2k</div>
+                        </div>
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-2">
+                            <div class="text-xs text-gray-600 mb-1">CO₂</div>
+                            <div class="text-sm font-semibold text-gray-900">0.12g</div>
+                        </div>
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-2">
+                            <div class="text-xs text-gray-600 mb-1">Energi</div>
+                            <div class="text-sm font-semibold text-gray-900">0.24Wh</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Full Response -->
+                    <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                        <div class="text-sm font-semibold text-gray-900 mb-3">Fullständigt svar</div>
+                        <div class="prose prose-sm max-w-none">
+                            <p class="text-gray-700 leading-relaxed text-sm">
+                                Python är ett högnivå, tolkat programmeringsspråk som skapades av Guido van Rossum och släpptes första gången 1991. Det är känt för sin tydliga och läsbara syntax, vilket gör det till ett utmärkt val för nybörjare.
+                            </p>
+                            <p class="text-gray-700 leading-relaxed text-sm mt-2">
+                                Språket används brett inom många olika områden: webbutveckling (Django, Flask), dataanalys och visualisering (Pandas, Matplotlib), maskininlärning (TensorFlow, PyTorch), automation och scripting, samt vetenskaplig beräkning.
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <!-- Metadata (Collapsed) -->
+                    <div class="border-t border-gray-200 pt-3">
+                        <button class="w-full flex items-center justify-between text-xs px-3 py-2 hover:bg-gray-50 rounded">
+                            <span class="text-gray-600">Metadata</span>
+                            <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Bottom Navigation -->
+            <div class="border-t border-gray-200 p-4 bg-gray-50">
+                <div class="flex items-center justify-between gap-4">
+                    <button class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm text-gray-400 cursor-not-allowed" disabled>
+                        <span class="flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                            </svg>
+                            Föregående
+                        </span>
+                    </button>
+                    
+                    <!-- Dot Indicators -->
+                    <div class="flex items-center gap-1.5">
+                        <div class="w-1.5 h-1.5 rounded-full bg-blue-600"></div>
+                        <div class="w-1.5 h-1.5 rounded-full bg-gray-300"></div>
+                        <div class="w-1.5 h-1.5 rounded-full bg-gray-300"></div>
+                        <div class="w-1.5 h-1.5 rounded-full bg-gray-300"></div>
+                    </div>
+                    
+                    <button class="px-3 py-1.5 rounded border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50">
+                        <span class="flex items-center gap-1">
+                            Nästa
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CompareSourcesBar - Production Design</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --background: oklch(1 0 0);
+            --foreground: oklch(0.145 0 0);
+            --card: oklch(1 0 0);
+            --card-foreground: oklch(0.145 0 0);
+            --muted: oklch(0.97 0 0);
+            --muted-foreground: oklch(0.556 0 0);
+            --border: oklch(0.922 0 0);
+            --radius: 0.625rem;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+            background: var(--background);
+            color: var(--foreground);
+            padding: 32px;
+            max-width: 704px; /* 44rem max-width from thread */
+            margin: 0 auto;
+        }
+
+        .message-wrapper {
+            margin-bottom: 16px;
+        }
+
+        .assistant-message {
+            background: var(--background);
+            padding: 16px 0;
+        }
+
+        .message-text {
+            font-size: 15px;
+            line-height: 1.7;
+            margin-bottom: 20px;
+            color: var(--foreground);
+        }
+
+        .compare-sources-bar {
+            background: var(--muted);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+        }
+
+        .compare-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .compare-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--foreground);
+        }
+
+        .compare-icon {
+            width: 16px;
+            height: 16px;
+        }
+
+        .chevron {
+            width: 16px;
+            height: 16px;
+            transform: rotate(90deg);
+            transition: transform 200ms;
+            color: var(--muted-foreground);
+        }
+
+        .providers-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            overflow-x: auto;
+            padding: 8px 0;
+        }
+
+        .provider-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            min-width: 100px;
+            padding: 12px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 2px);
+            cursor: pointer;
+            transition: all 150ms;
+        }
+
+        .provider-card:hover {
+            border-color: var(--foreground);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .provider-avatar {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: white;
+            border: 2px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .provider-avatar img {
+            width: 24px;
+            height: 24px;
+            object-fit: contain;
+        }
+
+        .status-dot {
+            position: absolute;
+            bottom: -2px;
+            right: -2px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid var(--background);
+        }
+
+        .status-success {
+            background: #22c55e;
+        }
+
+        .status-error {
+            background: #ef4444;
+        }
+
+        .provider-name {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--foreground);
+        }
+
+        .provider-stats {
+            font-size: 11px;
+            color: var(--muted-foreground);
+        }
+
+        .provider-tokens {
+            font-size: 10px;
+            color: var(--muted-foreground);
+        }
+
+        .stats-footer {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted-foreground);
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .stat-icon {
+            width: 14px;
+            height: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="message-wrapper">
+        <div class="assistant-message">
+            <div class="message-text">
+                <p><strong>Sammanfattning av modellsvar:</strong> Baserat på svaren från Claude, GPT-4, Gemini och Perplexity visar det sig att samtliga modeller är överens om att artificiell intelligens kommer att påverka arbetsmarknaden signifikant under de kommande åren. De betonar vikten av omställning, vidareutbildning och anpassning av arbetskraft.</p>
+                <p style="margin-top: 12px;">De mest relevanta punkterna inkluderar: automatisering av rutinuppgifter, ökad efterfrågan på tech-kompetens, och behovet av livslångt lärande. DeepSeek-modellen misslyckades att svara inom timeout-gränsen.</p>
+            </div>
+
+            <div class="compare-sources-bar">
+                <div class="compare-header">
+                    <div class="compare-title">
+                        <svg class="compare-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/>
+                            <path d="m21 21-4.35-4.35"/>
+                        </svg>
+                        <span>Modellsvar (4 av 5)</span>
+                    </div>
+                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                </div>
+
+                <div class="providers-row">
+                    <div class="provider-card">
+                        <div class="provider-avatar">
+                            <span>🤖</span>
+                            <div class="status-dot status-success"></div>
+                        </div>
+                        <div class="provider-name">Claude</div>
+                        <div class="provider-stats">⏱️ 1.8s</div>
+                        <div class="provider-tokens">1.2k tokens</div>
+                    </div>
+
+                    <div class="provider-card">
+                        <div class="provider-avatar">
+                            <span>🔮</span>
+                            <div class="status-dot status-success"></div>
+                        </div>
+                        <div class="provider-name">GPT-4</div>
+                        <div class="provider-stats">⏱️ 2.1s</div>
+                        <div class="provider-tokens">842 tokens</div>
+                    </div>
+
+                    <div class="provider-card">
+                        <div class="provider-avatar">
+                            <span>💎</span>
+                            <div class="status-dot status-success"></div>
+                        </div>
+                        <div class="provider-name">Gemini</div>
+                        <div class="provider-stats">⏱️ 3.2s</div>
+                        <div class="provider-tokens">920 tokens</div>
+                    </div>
+
+                    <div class="provider-card">
+                        <div class="provider-avatar">
+                            <span>🔍</span>
+                            <div class="status-dot status-success"></div>
+                        </div>
+                        <div class="provider-name">Perplexity</div>
+                        <div class="provider-stats">⏱️ 1.4s</div>
+                        <div class="provider-tokens">650 tokens</div>
+                    </div>
+
+                    <div class="provider-card">
+                        <div class="provider-avatar">
+                            <span>🌊</span>
+                            <div class="status-dot status-error"></div>
+                        </div>
+                        <div class="provider-name">DeepSeek</div>
+                        <div class="provider-stats">✕ timeout</div>
+                        <div class="provider-tokens">-</div>
+                    </div>
+                </div>
+
+                <div class="stats-footer">
+                    <div class="stat-item">
+                        <span>Σ</span>
+                        <span>3.6k tokens</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>🌱</span>
+                        <span>≈0.4g CO₂</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>⚡</span>
+                        <span>Snabbast: Perplexity (1.4s)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
