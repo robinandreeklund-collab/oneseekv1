@@ -18,8 +18,8 @@ const AnimatedSection = ({ children, className }: { children: React.ReactNode; c
 	return (
 		<motion.section
 			ref={ref}
-			initial={{ opacity: 0, y: 50 }}
-			animate={isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 50 }}
+			initial={{ opacity: 1, y: 0 }}
+			animate={isInView ? { opacity: 1, y: 0 } : { opacity: 1, y: 0 }}
 			transition={{ duration: 0.6, ease: "easeOut" }}
 			className={className}
 		>
@@ -278,8 +278,8 @@ const AIModelCard = ({
 	return (
 		<motion.div
 			ref={ref}
-			initial={{ opacity: 0, scale: 0.9 }}
-			animate={isInView ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.9 }}
+			initial={{ opacity: 1, scale: 1 }}
+			animate={isInView ? { opacity: 1, scale: 1 } : { opacity: 1, scale: 1 }}
 			transition={{ duration: 0.4, delay: delay / 1000 }}
 			whileHover={{ scale: 1.05, y: -5 }}
 			className="rounded-xl border border-gray-200 bg-white p-4 shadow-lg dark:border-gray-700 dark:bg-gray-800"
@@ -384,8 +384,8 @@ const DebattSection = () => {
 					<div ref={ref} className="flex flex-col items-center gap-8 lg:flex-row lg:items-center lg:justify-center">
 						{/* Proposition card */}
 						<motion.div
-							initial={{ opacity: 0, x: -50 }}
-							animate={isInView ? { opacity: 1, x: 0 } : { opacity: 0, x: -50 }}
+							initial={{ opacity: 1, x: 0 }}
+							animate={isInView ? { opacity: 1, x: 0 } : { opacity: 1, x: 0 }}
 							transition={{ duration: 0.6 }}
 							className="w-full max-w-sm rounded-xl border border-blue-200 bg-white p-6 shadow-lg dark:border-blue-800 dark:bg-gray-800"
 						>
@@ -415,8 +415,8 @@ const DebattSection = () => {
 
 						{/* VS badge */}
 						<motion.div
-							initial={{ scale: 0 }}
-							animate={isInView ? { scale: 1 } : { scale: 0 }}
+							initial={{ scale: 1 }}
+							animate={isInView ? { scale: 1 } : { scale: 1 }}
 							transition={{ type: "spring", delay: 0.3 }}
 							className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-full border-4 border-amber-500 bg-white text-2xl font-bold text-amber-600 shadow-lg dark:bg-gray-800 dark:text-amber-400"
 						>
@@ -425,8 +425,8 @@ const DebattSection = () => {
 
 						{/* Motion card */}
 						<motion.div
-							initial={{ opacity: 0, x: 50 }}
-							animate={isInView ? { opacity: 1, x: 0 } : { opacity: 0, x: 50 }}
+							initial={{ opacity: 1, x: 0 }}
+							animate={isInView ? { opacity: 1, x: 0 } : { opacity: 1, x: 0 }}
 							transition={{ duration: 0.6 }}
 							className="w-full max-w-sm rounded-xl border border-rose-200 bg-white p-6 shadow-lg dark:border-rose-800 dark:bg-gray-800"
 						>
@@ -469,8 +469,8 @@ const IntegrationLogo = ({ emoji, name, delay = 0 }: { emoji: string; name: stri
 	return (
 		<motion.div
 			ref={ref}
-			initial={{ opacity: 0, scale: 0.8 }}
-			animate={isInView ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.8 }}
+			initial={{ opacity: 1, scale: 1 }}
+			animate={isInView ? { opacity: 1, scale: 1 } : { opacity: 1, scale: 1 }}
 			transition={{ duration: 0.4, delay: delay / 1000 }}
 			whileHover={{ scale: 1.1 }}
 			className="flex flex-col items-center gap-2"
@@ -546,7 +546,7 @@ const IntegrationsSection = () => {
 					{categories.map((category, index) => (
 						<motion.div
 							key={category.title}
-							initial={{ opacity: 0, y: 30 }}
+							initial={{ opacity: 1, y: 0 }}
 							whileInView={{ opacity: 1, y: 0 }}
 							viewport={{ once: true }}
 							transition={{ duration: 0.5, delay: index * 0.1 }}
@@ -574,8 +574,8 @@ const PipelineNode = ({ emoji, label, delay = 0 }: { emoji: string; label: strin
 	return (
 		<motion.div
 			ref={ref}
-			initial={{ opacity: 0, scale: 0.8 }}
-			animate={isInView ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.8 }}
+			initial={{ opacity: 1, scale: 1 }}
+			animate={isInView ? { opacity: 1, scale: 1 } : { opacity: 1, scale: 1 }}
 			transition={{ duration: 0.4, delay: delay / 1000 }}
 			className="flex flex-col items-center gap-2"
 		>
@@ -651,7 +651,7 @@ const PipelineSection = () => {
 						{agents.map((agent, index) => (
 							<motion.div
 								key={agent.name}
-								initial={{ opacity: 0, scale: 0.8 }}
+								initial={{ opacity: 1, scale: 1 }}
 								whileInView={{ opacity: 1, scale: 1 }}
 								viewport={{ once: true }}
 								transition={{ duration: 0.3, delay: index * 0.05 }}
@@ -713,7 +713,7 @@ const LLMProvidersSection = () => {
 					{providers.map((provider, index) => (
 						<motion.span
 							key={provider}
-							initial={{ opacity: 0, scale: 0.8 }}
+							initial={{ opacity: 1, scale: 1 }}
 							whileInView={{ opacity: 1, scale: 1 }}
 							viewport={{ once: true }}
 							transition={{ duration: 0.3, delay: index * 0.03 }}
