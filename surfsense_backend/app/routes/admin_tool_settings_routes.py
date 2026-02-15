@@ -1313,13 +1313,19 @@ def _normalize_generated_tests(
             expected_tool,
             expected_category or str(getattr(entry, "category", "")).strip(),
         )
-        expected_route = str(
-            expected.get("route") or source.get("expected_route") or inferred_route
-        ).strip()
-        expected_sub_route = (
-            str(expected.get("sub_route") or source.get("expected_sub_route") or inferred_sub_route or "").strip()
-            or None
-        )
+        # For marketplace tools, always use inferred route/sub_route (don't trust LLM)
+        # to ensure consistency: all marketplace tools → action/data
+        if expected_tool.startswith("marketplace_"):
+            expected_route = inferred_route
+            expected_sub_route = inferred_sub_route
+        else:
+            expected_route = str(
+                expected.get("route") or source.get("expected_route") or inferred_route
+            ).strip()
+            expected_sub_route = (
+                str(expected.get("sub_route") or source.get("expected_sub_route") or inferred_sub_route or "").strip()
+                or None
+            )
         expected_intent = str(
             expected.get("intent")
             or source.get("expected_intent")
