@@ -255,12 +255,19 @@ async def compare_synthesizer(state: dict[str, Any]) -> dict[str, Any]:
         response = await llm.ainvoke(synthesis_messages)
         synthesis_text = response.content if hasattr(response, "content") else str(response)
         
+        # Add synthesis result as AIMessage so streaming can extract it
+        synthesis_message = AIMessage(content=synthesis_text)
+        
         return {
+            "messages": [synthesis_message],
             "final_response": synthesis_text,
             "orchestration_phase": "compare_synthesis_complete",
         }
     except Exception as e:
+        error_msg = f"Error during synthesis: {e}"
+        error_message = AIMessage(content=error_msg)
         return {
-            "final_response": f"Error during synthesis: {e}",
+            "messages": [error_message],
+            "final_response": error_msg,
             "orchestration_phase": "compare_synthesis_error",
         }
