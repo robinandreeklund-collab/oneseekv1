@@ -40,7 +40,6 @@ async def compare_fan_out(state: dict[str, Any]) -> dict[str, Any]:
     
     Returns state updates with new messages appended.
     """
-    print("[DEBUG] compare_fan_out node ENTERED!")
     messages = state.get("messages", [])
     
     # Extract user query from last HumanMessage
@@ -50,11 +49,8 @@ async def compare_fan_out(state: dict[str, Any]) -> dict[str, Any]:
             user_query = msg.content
             break
     
-    print(f"[DEBUG] compare_fan_out extracted query: {user_query}")
-    
     if not user_query:
         # Shouldn't happen, but safeguard
-        print("[DEBUG] compare_fan_out: No user query found, returning empty!")
         return {}
     
     # Create AIMessage with tool_calls for ALL external models

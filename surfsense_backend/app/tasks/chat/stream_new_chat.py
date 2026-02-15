@@ -952,15 +952,8 @@ async def stream_new_chat(
     streaming_service = VercelStreamingService()
     external_model_tool_names = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
     raw_user_query = user_query
-    
-    # Debug: Check exact bytes of user_query
-    print(f"[DEBUG] user_query type: {type(user_query)}, repr: {repr(user_query[:60] if len(user_query) > 60 else user_query)}")
-    print(f"[DEBUG] user_query.strip().lower()[:10]: {repr(user_query.strip().lower()[:10])}")
-    
     compare_mode = is_compare_request(user_query)
     compare_query = extract_compare_query(user_query) if compare_mode else ""
-    
-    print(f"[DEBUG] Initial state: compare_mode={compare_mode}, compare_query='{compare_query}', user_query='{user_query[:50]}'")
 
     # Track the current text block for streaming (defined early for exception handling)
     current_text_id: str | None = None
@@ -1122,16 +1115,12 @@ async def stream_new_chat(
         # Router can identify compare requests even without /compare prefix
         if route == Route.COMPARE:
             compare_mode = True
-            print(f"[DEBUG] Compare mode activated! compare_mode={compare_mode}, route={route}")
             # Always extract compare query when route is COMPARE, even if initial detection failed
             if not compare_query:
                 compare_query = extract_compare_query(raw_user_query)
-                print(f"[DEBUG] Re-extracted compare_query: '{compare_query}'")
             if compare_query:
                 user_query = compare_query
             followup_context_block = ""
-        
-        print(f"[DEBUG] After route decision: compare_mode={compare_mode}, route={route}, user_query='{user_query[:50] if user_query else ''}'")
         
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
