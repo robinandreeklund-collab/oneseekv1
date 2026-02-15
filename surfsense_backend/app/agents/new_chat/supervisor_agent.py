@@ -141,7 +141,7 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
         "statistics": [],
         "riksdagen": [],
         "bolag": [],
-        "marketplace": [],
+        "action": [],
     }
     for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
         profiles["trafik"].append(
@@ -180,7 +180,7 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
             )
         )
     for definition in MARKETPLACE_TOOL_DEFINITIONS:
-        profiles["marketplace"].append(
+        profiles["action"].append(
             AgentToolProfile(
                 tool_id=str(getattr(definition, "tool_id", "")),
                 category=str(getattr(definition, "category", "marketplace")),
@@ -1810,7 +1810,7 @@ def _guess_agent_from_alias(alias: str) -> str | None:
         (("stat", "scb", "data"), "statistics"),
         (("riks", "parliament", "politik"), "riksdagen"),
         (("bolag", "company", "business", "org"), "bolag"),
-        (("blocket", "tradera", "annons", "begagnat", "köp", "sälj", "marknadsplats"), "marketplace"),
+        (("blocket", "tradera", "annons", "begagnat", "köp", "sälj", "marknadsplats", "bilar", "båtar", "mc"), "action"),
         (("browser", "web", "scrape", "search"), "browser"),
         (("media", "podcast", "image", "video"), "media"),
         (("code", "python", "calc"), "code"),
@@ -2213,7 +2213,7 @@ async def create_supervisor_agent(
         ),
         "action": WorkerConfig(
             name="action-worker",
-            primary_namespaces=[("tools", "action")],
+            primary_namespaces=[("tools", "action"), ("tools", "marketplace")],
             fallback_namespaces=[
                 ("tools", "knowledge"),
                 ("tools", "statistics"),
@@ -2305,15 +2305,6 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "marketplace": WorkerConfig(
-            name="marketplace-worker",
-            primary_namespaces=[("tools", "marketplace")],
-            fallback_namespaces=[
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
         "synthesis": WorkerConfig(
             name="synthesis-worker",
             primary_namespaces=[("tools", "knowledge")],
@@ -2338,7 +2329,6 @@ async def create_supervisor_agent(
         "trafik": trafik_prompt or action_prompt,
         "kartor": kartor_prompt or action_prompt,
         "riksdagen": riksdagen_prompt or knowledge_prompt,
-        "marketplace": marketplace_prompt or action_prompt,
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
@@ -2353,7 +2343,7 @@ async def create_supervisor_agent(
     agent_definitions = [
         AgentDefinition(
             name="action",
-            description="Realtime actions som vader, resor och verktygskorningar",
+            description="Realtime actions, marknadsplatser, väder, resor och verktygsanrop",
             keywords=[
                 "vader",
                 "vadret",
@@ -2371,6 +2361,18 @@ async def create_supervisor_agent(
                 "kartbild",
                 "geoapify",
                 "adress",
+                "blocket",
+                "tradera",
+                "köp",
+                "sälj",
+                "begagnat",
+                "annons",
+                "marknadsplats",
+                "auktion",
+                "bilar",
+                "båtar",
+                "mc",
+                "motorcykel",
             ],
             namespace=("agents", "action"),
             prompt_key="action",
@@ -2553,28 +2555,6 @@ async def create_supervisor_agent(
             ],
             namespace=("agents", "riksdagen"),
             prompt_key="riksdagen",
-        ),
-        AgentDefinition(
-            name="marketplace",
-            description="Sök och jämför annonser på Blocket och Tradera",
-            keywords=[
-                "blocket",
-                "tradera",
-                "köp",
-                "sälj",
-                "begagnat",
-                "annons",
-                "marknadsplats",
-                "auktion",
-                "bilar",
-                "båtar",
-                "mc",
-                "motorcykel",
-                "begagnad",
-                "pris",
-            ],
-            namespace=("agents", "marketplace"),
-            prompt_key="marketplace",
         ),
         AgentDefinition(
             name="synthesis",

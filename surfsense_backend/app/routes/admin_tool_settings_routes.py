@@ -691,7 +691,7 @@ def _infer_agent_for_tool(
     if normalized_tool.startswith("geoapify_"):
         return "kartor"
     if normalized_tool.startswith("marketplace_"):
-        return "marketplace"
+        return "action"
     if normalized_tool in {"generate_podcast", "display_image"}:
         return "media"
     if normalized_tool in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
@@ -1805,7 +1805,7 @@ async def _generate_eval_tests(
         '        "intent": "knowledge|action|statistics|smalltalk|compare",\n'
         '        "route": "action|knowledge|statistics|smalltalk|compare",\n'
         '        "sub_route": "web|media|travel|data|docs|internal|external|null",\n'
-        '        "agent": "weather|trafik|statistics|riksdagen|bolag|kartor|marketplace|media|browser|knowledge|action|synthesis",\n'
+        '        "agent": "weather|trafik|statistics|riksdagen|bolag|kartor|media|browser|knowledge|action|synthesis",\n'
         '        "plan_requirements": ["route:action", "agent:agent_id", "tool:tool_id"]\n'
         "      },\n"
         '      "allowed_tools": ["tool_id"]\n'
