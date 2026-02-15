@@ -952,6 +952,11 @@ async def stream_new_chat(
     streaming_service = VercelStreamingService()
     external_model_tool_names = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
     raw_user_query = user_query
+    
+    # Debug: Check exact bytes of user_query
+    print(f"[DEBUG] user_query type: {type(user_query)}, repr: {repr(user_query[:60] if len(user_query) > 60 else user_query)}")
+    print(f"[DEBUG] user_query.strip().lower()[:10]: {repr(user_query.strip().lower()[:10])}")
+    
     compare_mode = is_compare_request(user_query)
     compare_query = extract_compare_query(user_query) if compare_mode else ""
     
