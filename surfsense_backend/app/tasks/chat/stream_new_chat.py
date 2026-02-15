@@ -954,6 +954,8 @@ async def stream_new_chat(
     raw_user_query = user_query
     compare_mode = is_compare_request(user_query)
     compare_query = extract_compare_query(user_query) if compare_mode else ""
+    
+    print(f"[DEBUG] Initial state: compare_mode={compare_mode}, compare_query='{compare_query}', user_query='{user_query[:50]}'")
 
     # Track the current text block for streaming (defined early for exception handling)
     current_text_id: str | None = None
