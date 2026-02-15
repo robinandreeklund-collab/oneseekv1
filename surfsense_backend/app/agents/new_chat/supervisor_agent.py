@@ -3921,8 +3921,10 @@ async def create_supervisor_agent(
     graph_builder.add_node("resolve_intent", RunnableCallable(None, resolve_intent_node))
     
     # Conditional graph structure based on compare_mode
+    print(f"[DEBUG] Building supervisor graph with compare_mode={compare_mode}")
     if compare_mode:
         # Compare mode: use deterministic compare subgraph
+        print("[DEBUG] Using COMPARE subgraph!")
         from app.agents.new_chat.compare_executor import (
             compare_fan_out,
             compare_collect,
@@ -3944,6 +3946,7 @@ async def create_supervisor_agent(
         graph_builder.add_edge("compare_synthesizer", END)
     else:
         # Normal mode: use standard supervisor pipeline
+        print("[DEBUG] Using NORMAL supervisor pipeline!")
         graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
         graph_builder.add_node("planner", RunnableCallable(None, planner_node))
         graph_builder.add_node(

@@ -1115,9 +1115,12 @@ async def stream_new_chat(
         # Router can identify compare requests even without /compare prefix
         if route == Route.COMPARE:
             compare_mode = True
+            print(f"[DEBUG] Compare mode activated! compare_mode={compare_mode}, route={route}")
             if compare_query:
                 user_query = compare_query
             followup_context_block = ""
+        
+        print(f"[DEBUG] After route decision: compare_mode={compare_mode}, route={route}")
         
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
@@ -1327,6 +1330,7 @@ async def stream_new_chat(
             )
 
         if route != Route.SMALLTALK:
+            print(f"[DEBUG] Building graph with compare_mode={compare_mode}")
             agent = await build_complete_graph(
                 llm=llm,
                 dependencies={
