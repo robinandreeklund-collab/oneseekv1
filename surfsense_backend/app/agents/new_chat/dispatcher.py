@@ -162,7 +162,7 @@ async def dispatch_route_with_trace(
     if (
         is_followup
         and previous_route
-        and previous_route not in {Route.SMALLTALK}  # Remove Route.COMPARE exclusion
+        and previous_route not in {Route.SMALLTALK}
     ):
         # Special handling for compare followups
         if previous_route == Route.COMPARE:
@@ -190,9 +190,7 @@ async def dispatch_route_with_trace(
             query=previous_user_text,
             definitions=normalized_intents,
         )
-        if previous_decision and previous_decision.route not in {
-            Route.SMALLTALK
-        }:
+        if previous_decision and previous_decision.route not in {Route.SMALLTALK}:
             previous_route = previous_decision.route
 
     explicit_compare = bool(_COMPARE_COMMAND_RE.match(text))

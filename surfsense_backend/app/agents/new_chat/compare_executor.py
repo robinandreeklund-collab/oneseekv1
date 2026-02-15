@@ -89,7 +89,7 @@ async def compare_fan_out(state: dict[str, Any]) -> dict[str, Any]:
     # Execute all calls in parallel
     tasks = [
         call_one_model(spec, tc["id"])
-        for spec, tc in zip(EXTERNAL_MODEL_SPECS, tool_calls, strict=False)
+        for spec, tc in zip(EXTERNAL_MODEL_SPECS, tool_calls, strict=True)
     ]
     results = await asyncio.gather(*tasks, return_exceptions=False)
     
