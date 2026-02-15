@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CompareDetailSheet - Production Design</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --background: oklch(1 0 0);
+            --foreground: oklch(0.145 0 0);
+            --card: oklch(1 0 0);
+            --muted: oklch(0.97 0 0);
+            --muted-foreground: oklch(0.556 0 0);
+            --border: oklch(0.922 0 0);
+            --radius: 0.625rem;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+            background: var(--background);
+            color: var(--foreground);
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .main-content {
+            flex: 1;
+            padding: 32px;
+            max-width: 704px;
+            margin: 0 auto;
+            opacity: 0.3;
+        }
+
+        .sheet-overlay {
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 480px;
+            background: var(--background);
+            border-left: 1px solid var(--border);
+            box-shadow: -4px 0 24px rgba(0,0,0,0.08);
+            display: flex;
+            flex-direction: column;
+            z-index: 50;
+        }
+
+        .sheet-header {
+            padding: 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .provider-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .provider-logo {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: white;
+            border: 2px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .provider-info {
+            flex: 1;
+        }
+
+        .provider-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .provider-subtitle {
+            font-size: 13px;
+            color: var(--muted-foreground);
+        }
+
+        .close-button {
+            width: 32px;
+            height: 32px;
+            border-radius: calc(var(--radius) - 2px);
+            border: 1px solid var(--border);
+            background: transparent;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--muted-foreground);
+        }
+
+        .close-button:hover {
+            background: var(--muted);
+            color: var(--foreground);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        .stat-box {
+            padding: 12px;
+            background: var(--muted);
+            border-radius: calc(var(--radius) - 2px);
+            border: 1px solid var(--border);
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: var(--muted-foreground);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--foreground);
+        }
+
+        .sheet-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .content-section {
+            margin-bottom: 24px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--foreground);
+        }
+
+        .response-text {
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--foreground);
+        }
+
+        .response-text p {
+            margin-bottom: 12px;
+        }
+
+        .metadata-section {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+        }
+
+        .metadata-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 13px;
+        }
+
+        .metadata-label {
+            color: var(--muted-foreground);
+        }
+
+        .metadata-value {
+            color: var(--foreground);
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .sheet-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .nav-button {
+            padding: 8px 16px;
+            border-radius: calc(var(--radius) - 2px);
+            border: 1px solid var(--border);
+            background: transparent;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+            color: var(--foreground);
+        }
+
+        .nav-button:hover {
+            background: var(--muted);
+        }
+
+        .nav-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .dot-indicators {
+            display: flex;
+            gap: 6px;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--muted);
+            transition: all 150ms;
+        }
+
+        .dot.active {
+            background: var(--foreground);
+            width: 24px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-content">
+        <p>Main chat content (blurred in background)...</p>
+    </div>
+
+    <div class="sheet-overlay">
+        <div class="sheet-header">
+            <div class="provider-header">
+                <div class="provider-logo">
+                    🤖
+                </div>
+                <div class="provider-info">
+                    <div class="provider-title">Claude 3.5 Sonnet</div>
+                    <div class="provider-subtitle">Anthropic · 1.8s svarstid</div>
+                </div>
+                <button class="close-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-label">Svarstid</div>
+                    <div class="stat-value">1.8s</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Tokens</div>
+                    <div class="stat-value">1.2k</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">CO₂</div>
+                    <div class="stat-value">0.12g</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Energi</div>
+                    <div class="stat-value">0.24Wh</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sheet-content">
+            <div class="content-section">
+                <div class="section-title">Svar från modellen</div>
+                <div class="response-text">
+                    <p><strong>Artificiell intelligens påverkan på arbetsmarknaden</strong></p>
+                    <p>Baserat på aktuell forskning och trender kommer AI att transformera arbetsmarknaden på flera sätt under de kommande åren:</p>
+                    <p><strong>1. Automatisering av rutinuppgifter</strong><br>
+                    Upp till 30% av arbetade timmar kan automatiseras inom 2030. Detta gäller främst:</p>
+                    <ul style="margin-left: 20px; margin-bottom: 12px;">
+                        <li>Databehandling och administration</li>
+                        <li>Kundservice och support</li>
+                        <li>Grundläggande analys och rapportering</li>
+                    </ul>
+                    <p><strong>2. Nya kompetenskrav</strong><br>
+                    Arbetsgivare kommer att söka medarbetare med:</p>
+                    <ul style="margin-left: 20px; margin-bottom: 12px;">
+                        <li>AI-literacy och teknisk förståelse</li>
+                        <li>Kritiskt tänkande och problemlösning</li>
+                        <li>Kreativitet och innovation</li>
+                        <li>Emotionell intelligens</li>
+                    </ul>
+                    <p><strong>3. Omställning och vidareutbildning</strong><br>
+                    Livslångt lärande blir nödvändigt. Regeringar och företag måste investera i:</p>
+                    <ul style="margin-left: 20px;">
+                        <li>Omskolningsprogram</li>
+                        <li>Digitala kompetenscentrum</li>
+                        <li>Flexibla utbildningsvägar</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="metadata-section">
+                <div class="section-title">Metadata</div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Modell</span>
+                    <span class="metadata-value">claude-3-5-sonnet-20241022</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">API Base</span>
+                    <span class="metadata-value">https://api.anthropic.com/v1</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Prompt tokens</span>
+                    <span class="metadata-value">542</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Completion tokens</span>
+                    <span class="metadata-value">658</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="sheet-footer">
+            <button class="nav-button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"/>
+                </svg>
+                Perplexity
+            </button>
+
+            <div class="dot-indicators">
+                <div class="dot"></div>
+                <div class="dot active"></div>
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+
+            <button class="nav-button">
+                GPT-4
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="9 18 15 12 9 6"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+</body>
+</html>
