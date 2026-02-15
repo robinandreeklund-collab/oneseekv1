@@ -36,12 +36,222 @@ const MODEL_DATA = [
 
 
 
-// ==================== SECTION 1: HERO WITH ENHANCED COMPARE PREVIEW ====================
+// ==================== REAL-TIME TYPING DEMO DATA ====================
+const DEMO_RESPONSES = [
+  {
+    model: "Grok",
+    provider: "xAI",
+    response: "Sveriges befolkning är cirka 10,5 miljoner invånare (per 2023). Exakt siffra enligt SCB: 10 521 556 (per 31 december 2023).",
+    latency: "2.1s",
+    tokens: "467",
+    color: "from-purple-500 to-blue-500"
+  },
+  {
+    model: "ChatGPT",
+    provider: "OpenAI",
+    response: "Från och med 2023 har Sverige ungefär 10,5 miljoner invånare.",
+    latency: "2.0s",
+    tokens: "56",
+    color: "from-emerald-500 to-teal-500"
+  },
+  {
+    model: "Gemini",
+    provider: "Google",
+    response: "Enligt de senaste uppgifterna från Statistiska Centralbyrån (SCB) har Sverige drygt 10,5 miljoner invånare.",
+    latency: "1.6s",
+    tokens: "171",
+    color: "from-blue-500 to-cyan-500"
+  },
+  {
+    model: "DeepSeek",
+    provider: "DeepSeek",
+    response: "Sverige har cirka 10,5 miljoner invånare (enligt senaste uppgifter från 2023–2024). Den exakta siffran varierar något över tid på grund av födelse-, dödstal och migration.",
+    latency: "3.3s",
+    tokens: "126",
+    color: "from-indigo-500 to-purple-500"
+  },
+];
+
+// ==================== TYPING ANIMATION COMPONENT ====================
+const TypingText = ({ text, speed = 30, onComplete }: { text: string; speed?: number; onComplete?: () => void }) => {
+  const [displayedText, setDisplayedText] = useState("");
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [showCursor, setShowCursor] = useState(true);
+
+  useEffect(() => {
+    if (currentIndex < text.length) {
+      const timeout = setTimeout(() => {
+        setDisplayedText(prev => prev + text[currentIndex]);
+        setCurrentIndex(prev => prev + 1);
+      }, speed);
+      return () => clearTimeout(timeout);
+    } else if (onComplete) {
+      onComplete();
+    }
+  }, [currentIndex, text, speed, onComplete]);
+
+  useEffect(() => {
+    const cursorInterval = setInterval(() => {
+      setShowCursor(prev => !prev);
+    }, 530);
+    return () => clearInterval(cursorInterval);
+  }, []);
+
+  return (
+    <span className="inline">
+      {displayedText}
+      {currentIndex < text.length && (
+        <span className={cn("inline-block w-0.5 h-4 ml-0.5 bg-orange-500 dark:bg-orange-400", showCursor ? "opacity-100" : "opacity-0")}>
+          |
+        </span>
+      )}
+    </span>
+  );
+};
+
+// ==================== SIDE-BY-SIDE COMPARISON COMPONENT ====================
+const SideBySideComparison = () => {
+  const [currentPair, setCurrentPair] = useState(0);
+  const [typingComplete, setTypingComplete] = useState([false, false]);
+  const ref = useRef(null);
+  const isInView = useInView(ref, { once: true });
+
+  // Cycle through model pairs
+  useEffect(() => {
+    if (typingComplete[0] && typingComplete[1]) {
+      const timeout = setTimeout(() => {
+        setCurrentPair((prev) => (prev + 2) % DEMO_RESPONSES.length);
+        setTypingComplete([false, false]);
+      }, 3000);
+      return () => clearTimeout(timeout);
+    }
+  }, [typingComplete]);
+
+  const leftModel = DEMO_RESPONSES[currentPair];
+  const rightModel = DEMO_RESPONSES[(currentPair + 1) % DEMO_RESPONSES.length];
+
+  return (
+    <div ref={ref} className="relative">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
+        transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+        className="relative rounded-3xl border border-neutral-200/60 dark:border-neutral-800/60 bg-gradient-to-br from-neutral-50/80 to-neutral-100/80 dark:from-neutral-900/50 dark:to-neutral-900/30 p-2 backdrop-blur-xl shadow-2xl"
+      >
+        {/* Glow effect */}
+        <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-blue-500/10 rounded-3xl blur-xl" />
+        
+        <div className="relative rounded-2xl bg-white/90 dark:bg-neutral-950/90 p-6 md:p-8 backdrop-blur-sm">
+          {/* Question */}
+          <div className="mb-6 pb-4 border-b border-neutral-200 dark:border-neutral-800">
+            <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400 mb-2">FRÅGA</p>
+            <p className="text-base md:text-lg font-semibold text-neutral-900 dark:text-white">
+              Hur många invånare har Sverige?
+            </p>
+          </div>
+
+          {/* Side-by-side model responses */}
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* Left Model */}
+            <motion.div
+              key={`left-${currentPair}`}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+              className="group relative"
+            >
+              <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 hover:border-blue-200 dark:hover:border-blue-900 transition-colors duration-300 h-full flex flex-col">
+                {/* Model Header */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className={cn("size-10 rounded-xl bg-gradient-to-br flex items-center justify-center text-white font-bold shadow-lg", leftModel.color)}>
+                      {leftModel.model[0]}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-neutral-900 dark:text-white">{leftModel.model}</h3>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400">{leftModel.provider}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50">
+                      {leftModel.latency}
+                    </span>
+                    <span className="text-xs text-neutral-400">{leftModel.tokens} tokens</span>
+                  </div>
+                </div>
+
+                {/* Response with typing animation */}
+                <div className="flex-1 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+                  <TypingText 
+                    text={leftModel.response} 
+                    speed={30}
+                    onComplete={() => setTypingComplete(prev => [true, prev[1]])}
+                  />
+                </div>
+              </div>
+            </motion.div>
+
+            {/* Right Model */}
+            <motion.div
+              key={`right-${currentPair}`}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+              className="group relative"
+            >
+              <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 hover:border-purple-200 dark:hover:border-purple-900 transition-colors duration-300 h-full flex flex-col">
+                {/* Model Header */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className={cn("size-10 rounded-xl bg-gradient-to-br flex items-center justify-center text-white font-bold shadow-lg", rightModel.color)}>
+                      {rightModel.model[0]}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-neutral-900 dark:text-white">{rightModel.model}</h3>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400">{rightModel.provider}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50">
+                      {rightModel.latency}
+                    </span>
+                    <span className="text-xs text-neutral-400">{rightModel.tokens} tokens</span>
+                  </div>
+                </div>
+
+                {/* Response with typing animation */}
+                <div className="flex-1 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+                  <TypingText 
+                    text={rightModel.response} 
+                    speed={30}
+                    onComplete={() => setTypingComplete(prev => [prev[0], true])}
+                  />
+                </div>
+              </div>
+            </motion.div>
+          </div>
+
+          {/* Progress indicator */}
+          <div className="mt-6 flex items-center justify-center gap-2">
+            {[0, 2].map((index) => (
+              <div
+                key={index}
+                className={cn(
+                  "h-1.5 rounded-full transition-all duration-300",
+                  index === currentPair ? "w-8 bg-blue-500" : "w-1.5 bg-neutral-300 dark:bg-neutral-700"
+                )}
+              />
+            ))}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+// ==================== SECTION 1: HERO WITH SIDE-BY-SIDE TYPING DEMO ====================
 
 const HeroSection = () => {
-  // Map performanceScore to 'progress' for animation compatibility with Framer Motion
-  const models = MODEL_DATA.map(m => ({ ...m, progress: m.performanceScore }));
-
 return (
 <section className="relative py-32 md:py-48 px-4 md:px-8">
 <div className="mx-auto max-w-7xl">
@@ -73,8 +283,7 @@ Jämför.
 className="mt-8 text-xl md:text-2xl text-neutral-600 dark:text-neutral-300 max-w-3xl mx-auto leading-relaxed font-light"
 transition={{ duration: 0.6, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
 >
-Ställ en fråga och se hur 7+ AI-modeller svarar samtidigt. Med latency, token-användning och
-verifierade källor.
+Se AI-modeller svara i realtid, side by side. Jämför latency, kvalitet och precision.
 </motion.p>
 
 <motion.div 
@@ -102,59 +311,12 @@ Se demo
 </motion.div>
 </motion.div>
 
-{/* Enhanced Compare Preview with Glassmorphism */}
+{/* Side-by-side typing demo */}
 <motion.div 
 className="mt-20 md:mt-32 mx-auto max-w-6xl"
 transition={{ duration: 0.8, delay: 0.6, ease: [0.16, 1, 0.3, 1] }}
 >
-<div className="group relative rounded-3xl border border-neutral-200/60 dark:border-neutral-800/60 bg-gradient-to-br from-neutral-50/80 to-neutral-100/80 dark:from-neutral-900/50 dark:to-neutral-900/30 p-2 backdrop-blur-xl shadow-2xl hover:shadow-3xl transition-all duration-500">
-{/* Glow effect */}
-<div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500/20 via-purple-500/20 to-blue-500/20 rounded-3xl opacity-0 group-hover:opacity-100 blur-xl transition-opacity duration-500" />
-<div className="relative rounded-2xl bg-white/90 dark:bg-neutral-950/90 p-8 backdrop-blur-sm">
-<p className="text-sm text-neutral-600 dark:text-neutral-400 mb-6 font-medium">Vad är Sveriges BNP 2025?</p>
-
-{/* Enhanced Model Grid */}
-<div className="grid grid-cols-4 md:grid-cols-7 gap-4">
-{models.map((model, index) => (
-<motion.div
-key={model.id}
-whileHover={{ scale: 1.05, y: -4 }}
-transition={{ 
-duration: 0.3, 
-delay: index * 0.06,
-ease: [0.16, 1, 0.3, 1]
-}}
-className="group/card relative flex flex-col items-center gap-3 px-4 py-3 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200/80 dark:border-neutral-800/80 hover:border-blue-200 dark:hover:border-blue-900 hover:shadow-lg transition-all duration-300"
->
-{/* Progress bar */}
-<div className="absolute top-0 left-0 right-0 h-0.5 bg-neutral-100 dark:bg-neutral-800 rounded-t-xl overflow-hidden">
-<motion.div
-className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
-initial={{ width: 0 }}
-animate={{ width: `${model.progress}%` }}
-transition={{ duration: 1, delay: index * 0.1 + 0.5, ease: "easeOut" }}
-/>
-</div>
-
-<div className="size-8 rounded-lg border border-neutral-200/60 dark:border-neutral-800/60 bg-gradient-to-br from-white to-neutral-50 dark:from-neutral-900 dark:to-neutral-950 flex items-center justify-center p-1 shadow-sm">
-<span className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-br from-neutral-900 to-neutral-600 dark:from-white dark:to-neutral-400">{model.name[0]}</span>
-</div>
-<span className="text-xs font-semibold text-center text-neutral-900 dark:text-white">{model.name}</span>
-<span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50">{model.latency}</span>
-</motion.div>
-))}
-</div>
-
-{/* Enhanced Sources Bar */}
-<motion.div 
-className="mt-6 rounded-xl bg-gradient-to-r from-neutral-50 to-neutral-100 dark:from-neutral-900/70 dark:to-neutral-900/50 border border-neutral-200/50 dark:border-neutral-800/50 px-6 py-4 flex items-center justify-between shadow-sm"
-transition={{ delay: 1.2 }}
->
-<span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Modellsvar (7 av 7)</span>
-<span className="text-sm font-medium text-neutral-600 dark:text-neutral-400">Σ 12.4k tokens · ⚡ DeepSeek</span>
-</motion.div>
-</div>
-</div>
+<SideBySideComparison />
 </motion.div>
 </div>
 </section>
