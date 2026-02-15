@@ -19,6 +19,10 @@ from app.agents.new_chat.skolverket_tools import (
     SKOLVERKET_TOOL_DEFINITIONS,
     build_skolverket_tool_registry,
 )
+from app.agents.new_chat.marketplace_tools import (
+    MARKETPLACE_TOOL_DEFINITIONS,
+    build_marketplace_tool_registry,
+)
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
@@ -99,6 +103,16 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "riksdag_ledamoter_valkrets": ("tools", "politik", "ledamoter", "valkrets"),
     # Riksdagen votering sub-tools
     "riksdag_voteringar_resultat": ("tools", "politik", "voteringar", "resultat"),
+    # Marketplace tools - all under tools/marketplace
+    "marketplace_unified_search": ("tools", "marketplace", "search"),
+    "marketplace_blocket_search": ("tools", "marketplace", "search"),
+    "marketplace_blocket_cars": ("tools", "marketplace", "vehicles"),
+    "marketplace_blocket_boats": ("tools", "marketplace", "vehicles"),
+    "marketplace_blocket_mc": ("tools", "marketplace", "vehicles"),
+    "marketplace_tradera_search": ("tools", "marketplace", "search"),
+    "marketplace_compare_prices": ("tools", "marketplace", "compare"),
+    "marketplace_categories": ("tools", "marketplace", "reference"),
+    "marketplace_regions": ("tools", "marketplace", "reference"),
 }
 
 TOOL_KEYWORDS: dict[str, list[str]] = {
@@ -193,6 +207,16 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "kolada_kultur": ["kultur", "bibliotek", "museum", "teater", "fritid", "idrottsanlaggning", "idrottsanläggning", "kulturhus", "kolada"],
     "kolada_arbetsmarknad": ["arbetsmarknad", "sysselsattning", "sysselsättning", "arbetsloshet", "arbetslöshet", "arbete", "jobb", "arbetsmarknadsatgard", "arbetsmarknadsåtgärd", "kolada"],
     "kolada_demokrati": ["demokrati", "val", "valdeltagande", "medborgarengagemang", "medborgarservice", "kommunikation", "deltagande", "kolada"],
+    # Marketplace tools keywords
+    "marketplace_unified_search": ["marknadsplats", "sök", "köp", "sälj", "begagnat", "annons"],
+    "marketplace_blocket_search": ["blocket", "sök", "köp", "sälj", "begagnat", "annons"],
+    "marketplace_blocket_cars": ["bilar", "bil", "fordon", "volvo", "bmw", "toyota", "begagnad"],
+    "marketplace_blocket_boats": ["båtar", "båt", "segelbåt", "motorbåt", "sjö"],
+    "marketplace_blocket_mc": ["motorcykel", "mc", "moped", "cross", "harley", "yamaha"],
+    "marketplace_tradera_search": ["tradera", "auktion", "budgivning", "samlarobjekt", "antikt"],
+    "marketplace_compare_prices": ["jämför", "prisjämförelse", "billigast", "pris", "compare"],
+    "marketplace_categories": ["kategorier", "kategori", "ämnesområde", "avdelning"],
+    "marketplace_regions": ["regioner", "platser", "orter", "län", "städer"],
 }
 
 @dataclass(frozen=True)
@@ -1031,6 +1055,13 @@ async def build_global_tool_registry(
         thread_id=dependencies.get("thread_id"),
     )
     registry.update(skolverket_registry)
+    marketplace_registry = build_marketplace_tool_registry(
+        connector_service=dependencies["connector_service"],
+        search_space_id=dependencies["search_space_id"],
+        user_id=dependencies.get("user_id"),
+        thread_id=dependencies.get("thread_id"),
+    )
+    registry.update(marketplace_registry)
     return registry
 
 
@@ -1055,6 +1086,9 @@ def build_tool_index(
     }
     riksdagen_by_id = {
         definition.tool_id: definition for definition in RIKSDAGEN_TOOL_DEFINITIONS
+    }
+    marketplace_by_id = {
+        definition.tool_id: definition for definition in MARKETPLACE_TOOL_DEFINITIONS
     }
     entries: list[ToolIndexEntry] = []
 
@@ -1117,6 +1151,13 @@ def build_tool_index(
             example_queries = list(definition.example_queries)
             category = definition.category
             base_path = None  # Riksdagen tools don't use base_path
+        if tool_id in marketplace_by_id:
+            definition = marketplace_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = definition.category
+            base_path = None  # Marketplace tools don't use base_path
         if _is_weather_tool(tool_id):
             # Keep weather tools grouped together across providers.
             category = "weather"
