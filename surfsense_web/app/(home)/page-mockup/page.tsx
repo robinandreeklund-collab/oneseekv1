@@ -13,13 +13,13 @@ import { cn } from "@/lib/utils";
 // Animation library: Framer Motion with spring easing curves
 
 const MODEL_LOGOS: Record<string, string> = {
-gpt: "/llm-logos/openai.svg",
-claude: "/llm-logos/anthropic.svg",
-gemini: "/llm-logos/google.svg",
-grok: "/llm-logos/xai.svg",
-deepseek: "/llm-logos/deepseek.svg",
-perplexity: "/llm-logos/perplexity.svg",
-qwen: "/llm-logos/qwen.svg",
+  gpt: "/model-logos/chatgpt.png",
+  claude: "/model-logos/claude.png",
+  gemini: "/model-logos/gemini.png",
+  grok: "/model-logos/grok.png",
+  deepseek: "/model-logos/deepseek.png",
+  perplexity: "/model-logos/perplexity.png",
+  qwen: "/model-logos/qwen.png",
 };
 
 // ==================== SHARED MODEL DATA ====================
@@ -192,12 +192,23 @@ const SideBySideComparison = () => {
                 {/* Model Header */}
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <div className={cn("size-10 rounded-xl bg-gradient-to-br flex items-center justify-center text-white font-bold shadow-lg", leftModel.color)}>
-                      {leftModel.model[0]}
+                    <div className="relative size-12 flex-shrink-0">
+                      {MODEL_LOGOS[leftModel.model.toLowerCase() === "chatgpt" ? "gpt" : leftModel.model.toLowerCase()] ? (
+                        <Image
+                          src={MODEL_LOGOS[leftModel.model.toLowerCase() === "chatgpt" ? "gpt" : leftModel.model.toLowerCase()]}
+                          alt={`${leftModel.model} logo`}
+                          width={48}
+                          height={48}
+                          className="object-contain"
+                        />
+                      ) : (
+                        <div className={cn("size-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-white font-bold shadow-lg", leftModel.color)}>
+                          {leftModel.model[0]}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-neutral-900 dark:text-white">{leftModel.model}</h3>
-                      <p className="text-xs text-neutral-500 dark:text-neutral-400">{leftModel.provider}</p>
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -231,12 +242,23 @@ const SideBySideComparison = () => {
                 {/* Model Header */}
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <div className={cn("size-10 rounded-xl bg-gradient-to-br flex items-center justify-center text-white font-bold shadow-lg", rightModel.color)}>
-                      {rightModel.model[0]}
+                    <div className="relative size-12 flex-shrink-0">
+                      {MODEL_LOGOS[rightModel.model.toLowerCase() === "chatgpt" ? "gpt" : rightModel.model.toLowerCase()] ? (
+                        <Image
+                          src={MODEL_LOGOS[rightModel.model.toLowerCase() === "chatgpt" ? "gpt" : rightModel.model.toLowerCase()]}
+                          alt={`${rightModel.model} logo`}
+                          width={48}
+                          height={48}
+                          className="object-contain"
+                        />
+                      ) : (
+                        <div className={cn("size-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-white font-bold shadow-lg", rightModel.color)}>
+                          {rightModel.model[0]}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-neutral-900 dark:text-white">{rightModel.model}</h3>
-                      <p className="text-xs text-neutral-500 dark:text-neutral-400">{rightModel.provider}</p>
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -276,8 +298,14 @@ const SideBySideComparison = () => {
 
                 {/* Synthesis header */}
                 <div className="flex items-center gap-3 mb-4 mt-2">
-                  <div className="size-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white font-bold shadow-lg">
-                    O
+                  <div className="relative size-12 flex-shrink-0">
+                    <Image
+                      src="/model-logos/chatgpt.png"
+                      alt="OneSeek logo"
+                      width={48}
+                      height={48}
+                      className="object-contain"
+                    />
                   </div>
                   <div>
                     <h3 className="text-sm font-bold text-neutral-900 dark:text-white">OneSeek Sammanfattning</h3>
@@ -433,9 +461,9 @@ const APIMarquee = () => {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-32 bg-gradient-to-r from-blue-500/5 via-purple-500/5 to-blue-500/5 dark:from-blue-500/10 dark:via-purple-500/10 dark:to-blue-500/10 rounded-full blur-3xl" />
       </div>
 
-      <p className="text-center text-sm tracking-widest uppercase text-neutral-400 font-medium mb-12" style={{ letterSpacing: '0.1em' }}>
+      <h2 className="text-center text-lg md:text-2xl font-semibold tracking-wide text-neutral-900 dark:text-white mb-12">
         Ansluten till Sveriges officiella datakällor
-      </p>
+      </h2>
 
       <div className="overflow-hidden relative">
         {/* Gradient Masks */}
@@ -448,19 +476,18 @@ const APIMarquee = () => {
           {[...apis, ...apis].map((api, index) => (
             <motion.div 
               key={index} 
-              className="group flex items-center gap-3 px-6 py-3 whitespace-nowrap rounded-2xl border border-neutral-200/40 dark:border-neutral-800/40 bg-white/40 dark:bg-neutral-900/40 backdrop-blur-md hover:bg-white/60 dark:hover:bg-neutral-900/60 hover:shadow-lg dark:hover:shadow-lg/50 transition-all duration-300"
+              className="group flex items-center justify-center px-4 py-3 whitespace-nowrap rounded-2xl border border-neutral-200/40 dark:border-neutral-800/40 bg-white/40 dark:bg-neutral-900/40 backdrop-blur-md hover:bg-white/60 dark:hover:bg-neutral-900/60 hover:shadow-lg dark:hover:shadow-lg/50 transition-all duration-300"
               whileHover={{ scale: 1.05, y: -2 }}
             >
-              <div className="relative size-6 flex-shrink-0">
+              <div className="relative size-10 flex-shrink-0">
                 <Image
                   src={api.logo}
                   alt={`${api.name} logo`}
-                  width={24}
-                  height={24}
+                  width={40}
+                  height={40}
                   className="object-contain"
                 />
               </div>
-              <span className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 group-hover:text-neutral-900 dark:group-hover:text-white transition-colors">{api.name}</span>
             </motion.div>
           ))}
         </motion.div>
