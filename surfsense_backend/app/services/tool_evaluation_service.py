@@ -2941,6 +2941,8 @@ def _prompt_key_for_tool(tool_id: str | None, category: str | None = None) -> st
         return "agent.bolag.system"
     if tool_id.startswith("geoapify_"):
         return "agent.kartor.system"
+    if tool_id.startswith("marketplace_"):
+        return "agent.marketplace.system"
     if tool_id in {"trafiklab_route", "smhi_weather"}:
         return "agent.action.travel"
     if tool_id in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:

@@ -36,6 +36,8 @@ from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_p
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
+from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
 from app.agents.new_chat.supervisor_runtime_prompts import (
     DEFAULT_SUPERVISOR_CRITIC_PROMPT,
     DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
@@ -117,6 +119,11 @@ _DYNAMIC_TOOL_QUERY_MARKERS = (
     "komvux",
     "syllabus",
     "curriculum",
+    "blocket",
+    "tradera",
+    "begagnat",
+    "annons",
+    "marknadsplats",
 )
 
 
@@ -134,6 +141,7 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
         "statistics": [],
         "riksdagen": [],
         "bolag": [],
+        "action": [],
     }
     for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
         profiles["trafik"].append(
@@ -167,6 +175,15 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
             AgentToolProfile(
                 tool_id=str(getattr(definition, "tool_id", "")),
                 category=str(getattr(definition, "category", "bolag")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    for definition in MARKETPLACE_TOOL_DEFINITIONS:
+        profiles["action"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "category", "marketplace")),
                 description=str(getattr(definition, "description", "")),
                 keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
             )
@@ -1793,6 +1810,7 @@ def _guess_agent_from_alias(alias: str) -> str | None:
         (("stat", "scb", "data"), "statistics"),
         (("riks", "parliament", "politik"), "riksdagen"),
         (("bolag", "company", "business", "org"), "bolag"),
+        (("blocket", "tradera", "annons", "begagnat", "köp", "sälj", "marknadsplats", "bilar", "båtar", "mc"), "action"),
         (("browser", "web", "scrape", "search"), "browser"),
         (("media", "podcast", "image", "video"), "media"),
         (("code", "python", "calc"), "code"),
@@ -2113,6 +2131,7 @@ async def create_supervisor_agent(
     code_prompt: str | None = None,
     kartor_prompt: str | None = None,
     riksdagen_prompt: str | None = None,
+    marketplace_prompt: str | None = None,
     tool_prompt_overrides: dict[str, str] | None = None,
 ):
     prompt_overrides = dict(tool_prompt_overrides or {})
@@ -2194,7 +2213,7 @@ async def create_supervisor_agent(
         ),
         "action": WorkerConfig(
             name="action-worker",
-            primary_namespaces=[("tools", "action")],
+            primary_namespaces=[("tools", "action"), ("tools", "marketplace")],
             fallback_namespaces=[
                 ("tools", "knowledge"),
                 ("tools", "statistics"),
@@ -2324,7 +2343,7 @@ async def create_supervisor_agent(
     agent_definitions = [
         AgentDefinition(
             name="action",
-            description="Realtime actions som vader, resor och verktygskorningar",
+            description="Realtime actions, marknadsplatser, väder, resor och verktygsanrop",
             keywords=[
                 "vader",
                 "vadret",
@@ -2342,6 +2361,18 @@ async def create_supervisor_agent(
                 "kartbild",
                 "geoapify",
                 "adress",
+                "blocket",
+                "tradera",
+                "köp",
+                "sälj",
+                "begagnat",
+                "annons",
+                "marknadsplats",
+                "auktion",
+                "bilar",
+                "båtar",
+                "mc",
+                "motorcykel",
             ],
             namespace=("agents", "action"),
             prompt_key="action",
