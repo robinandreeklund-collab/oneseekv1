@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from datetime import datetime, timedelta, UTC
 from time import monotonic
 from typing import Any
@@ -12,14 +11,6 @@ import httpx
 
 BLOCKET_BASE_URL = "https://api.blocket.se/search_bff/v2/content"
 TRADERA_API_BASE = "https://api.tradera.com"
-
-
-@dataclass(frozen=True)
-class TraderaBudgetState:
-    """Track Tradera API usage budget."""
-
-    calls_made: int
-    reset_time: datetime
 
 
 class SimpleCache:
@@ -72,7 +63,8 @@ class TraderaBudget:
 
     def __init__(self, max_calls: int = 100):
         self.max_calls = max_calls
-        self.state = TraderaBudgetState(calls_made=0, reset_time=self._next_midnight_utc())
+        self.calls_made = 0
+        self.reset_time = self._next_midnight_utc()
 
     def _next_midnight_utc(self) -> datetime:
         """Calculate next midnight UTC."""
@@ -80,30 +72,27 @@ class TraderaBudget:
         tomorrow = now + timedelta(days=1)
         return tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
 
+    def _check_and_reset(self) -> None:
+        """Check if reset time has passed and reset if necessary."""
+        now = datetime.now(UTC)
+        if now >= self.reset_time:
+            self.calls_made = 0
+            self.reset_time = self._next_midnight_utc()
+
     def can_make_call(self) -> bool:
         """Check if we can make another API call."""
-        now = datetime.now(UTC)
-        # Reset if past midnight
-        if now >= self.state.reset_time:
-            self.state = TraderaBudgetState(calls_made=0, reset_time=self._next_midnight_utc())
-        return self.state.calls_made < self.max_calls
+        self._check_and_reset()
+        return self.calls_made < self.max_calls
 
     def record_call(self) -> None:
         """Record that an API call was made."""
-        now = datetime.now(UTC)
-        # Reset if past midnight
-        if now >= self.state.reset_time:
-            self.state = TraderaBudgetState(calls_made=0, reset_time=self._next_midnight_utc())
-        self.state = TraderaBudgetState(
-            calls_made=self.state.calls_made + 1, reset_time=self.state.reset_time
-        )
+        self._check_and_reset()
+        self.calls_made += 1
 
     def get_remaining_calls(self) -> int:
         """Get number of remaining calls."""
-        now = datetime.now(UTC)
-        if now >= self.state.reset_time:
-            return self.max_calls
-        return max(0, self.max_calls - self.state.calls_made)
+        self._check_and_reset()
+        return max(0, self.max_calls - self.calls_made)
 
 
 class BlocketTraderaService:
