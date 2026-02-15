@@ -1313,11 +1313,18 @@ def _normalize_generated_tests(
             expected_tool,
             expected_category or str(getattr(entry, "category", "")).strip(),
         )
-        # For marketplace tools, always use inferred route/sub_route (don't trust LLM)
-        # to ensure consistency: all marketplace tools → action/data
+        # For marketplace tools, always use inferred values (don't trust LLM)
+        # to ensure consistency: all marketplace tools → action/data/marketplace
         if expected_tool.startswith("marketplace_"):
-            expected_route = inferred_route
-            expected_sub_route = inferred_sub_route
+            expected_route = inferred_route  # Always "action"
+            expected_sub_route = inferred_sub_route  # Always "data"
+            expected_intent = _infer_intent_for_route(inferred_route)  # Always "action"
+            expected_agent = _infer_agent_for_tool(
+                expected_tool,
+                expected_category or str(getattr(entry, "category", "")).strip(),
+                inferred_route,
+                inferred_sub_route,
+            )  # Always "marketplace"
         else:
             expected_route = str(
                 expected.get("route") or source.get("expected_route") or inferred_route
@@ -1326,22 +1333,22 @@ def _normalize_generated_tests(
                 str(expected.get("sub_route") or source.get("expected_sub_route") or inferred_sub_route or "").strip()
                 or None
             )
-        expected_intent = str(
-            expected.get("intent")
-            or source.get("expected_intent")
-            or _infer_intent_for_route(expected_route)
-            or ""
-        ).strip()
-        expected_agent = str(
-            expected.get("agent")
-            or source.get("expected_agent")
-            or _infer_agent_for_tool(
-                expected_tool,
-                expected_category or str(getattr(entry, "category", "")).strip(),
-                expected_route,
-                expected_sub_route,
-            )
-        ).strip()
+            expected_intent = str(
+                expected.get("intent")
+                or source.get("expected_intent")
+                or _infer_intent_for_route(expected_route)
+                or ""
+            ).strip()
+            expected_agent = str(
+                expected.get("agent")
+                or source.get("expected_agent")
+                or _infer_agent_for_tool(
+                    expected_tool,
+                    expected_category or str(getattr(entry, "category", "")).strip(),
+                    expected_route,
+                    expected_sub_route,
+                )
+            ).strip()
         source_plan_requirements = expected.get("plan_requirements") or source.get(
             "plan_requirements"
         )
