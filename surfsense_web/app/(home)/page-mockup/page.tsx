@@ -441,74 +441,290 @@ transition={{ duration: 0.8, delay: 0.6, ease: [0.16, 1, 0.3, 1] }}
 );
 };
 
-// ==================== SECTION 2: API MARQUEE ====================
+// ==================== SECTION 2: INTERACTIVE API REASONING DEMO ====================
 
-const APIMarquee = () => {
-  const apis = [
-    { name: "SCB", logo: "/api-logos/scb-logo.png" },
-    { name: "SMHI", logo: "/api-logos/smhi-logo.png" },
-    { name: "Bolagsverket", logo: "/api-logos/bolagsverket-logo.png" },
-    { name: "Trafikverket", logo: "/api-logos/trafikverket-logo.png" },
-    { name: "Riksdagen", logo: "/api-logos/riksdagen-logo.png" },
-    { name: "Kolada", logo: "/api-logos/kolada-logo.png" },
-    { name: "Tavily", logo: "/api-logos/tavily-logo.png" },
+const APIReasoningDemo = () => {
+  const [currentScenario, setCurrentScenario] = useState(0);
+  const [phase, setPhase] = useState<'question' | 'reasoning' | 'api_call' | 'response' | 'sources'>('question');
+  const [reasoningComplete, setReasoningComplete] = useState(false);
+  const [responseComplete, setResponseComplete] = useState(false);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const isInView = useInView(sectionRef, { once: false, margin: "-100px" });
+
+  const scenarios = [
+    {
+      question: "Hur många invånare har Stockholm?",
+      reasoning: "Identifierar befolkningsfråga → Väljer Statistik-agent → Behöver SCB-data",
+      apiName: "SCB",
+      apiLogo: "/api-logos/scb-logo.png",
+      response: "Stockholm har cirka 975 000 invånare enligt den senaste befolkningsstatistiken från SCB (2023).",
+      sources: ["SCB"]
+    },
+    {
+      question: "Hur blir vädret i Göteborg imorgon?",
+      reasoning: "Identifierar väderfråga → Väljer Väder-agent → Behöver SMHI-data",
+      apiName: "SMHI",
+      apiLogo: "/api-logos/smhi-logo.png",
+      response: "Imorgon blir det delvis molnigt i Göteborg med temperaturer runt 15°C och lätt vind från sydväst.",
+      sources: ["SMHI"]
+    },
+    {
+      question: "Är det störningar på E4 just nu?",
+      reasoning: "Identifierar trafikfråga → Väljer Trafik-agent → Behöver Trafikverket-data",
+      apiName: "Trafikverket",
+      apiLogo: "/api-logos/trafikverket-logo.png",
+      response: "Inga större störningar rapporterade på E4 för tillfället. Normalt trafikflöde i båda riktningar.",
+      sources: ["Trafikverket"]
+    },
+    {
+      question: "Befolkningstillväxt i Stockholm och dagens väder?",
+      reasoning: "Komplex fråga → Behöver både statistik och väder → Anropar SCB + SMHI parallellt",
+      apiName: "SCB + SMHI",
+      apiLogo: "/api-logos/scb-logo.png",
+      apiLogo2: "/api-logos/smhi-logo.png",
+      response: "Stockholm har vuxit med cirka 15 000 invånare det senaste året till 975 000. Vädret idag: Delvis molnigt, 12°C.",
+      sources: ["SCB", "SMHI"]
+    }
   ];
 
+  const currentData = scenarios[currentScenario];
+  const isMultiAPI = currentData.apiName.includes('+');
+
+  // Memoized callbacks
+  const handleReasoningComplete = useCallback(() => {
+    setReasoningComplete(true);
+  }, []);
+
+  const handleResponseComplete = useCallback(() => {
+    setResponseComplete(true);
+  }, []);
+
+  // Animation sequence
+  useEffect(() => {
+    if (!isInView) return;
+
+    const sequence = async () => {
+      // Reset states
+      setPhase('question');
+      setReasoningComplete(false);
+      setResponseComplete(false);
+
+      // Question phase (1s)
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Reasoning phase (3s for typing)
+      setPhase('reasoning');
+      await new Promise(resolve => setTimeout(resolve, 3500));
+      
+      // API call phase (1.5s)
+      setPhase('api_call');
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Response phase (3s for typing)
+      setPhase('response');
+      await new Promise(resolve => setTimeout(resolve, 3500));
+      
+      // Sources phase (0.5s)
+      setPhase('sources');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Move to next scenario
+      setCurrentScenario((prev) => (prev + 1) % scenarios.length);
+    };
+
+    sequence();
+  }, [currentScenario, isInView, scenarios.length]);
+
   return (
-    <section className="relative py-16 md:py-24 bg-white dark:bg-neutral-950 border-y border-neutral-100 dark:border-neutral-800/50 overflow-hidden">
-      {/* Gradient Blur Background */}
+    <section ref={sectionRef} className="relative py-24 md:py-32 bg-gradient-to-b from-white via-neutral-50/50 to-white dark:from-neutral-950 dark:via-neutral-900/50 dark:to-neutral-950 border-y border-neutral-100 dark:border-neutral-800/50 overflow-hidden">
+      {/* Background Effects */}
       <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-32 bg-gradient-to-r from-blue-500/5 via-purple-500/5 to-blue-500/5 dark:from-blue-500/10 dark:via-purple-500/10 dark:to-blue-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-gradient-to-r from-blue-500/5 via-purple-500/5 to-blue-500/5 dark:from-blue-500/10 dark:via-purple-500/10 dark:to-blue-500/10 rounded-full blur-3xl" />
       </div>
 
-      <h2 className="text-center text-lg md:text-2xl font-semibold tracking-wide text-neutral-900 dark:text-white mb-12">
-        Ansluten till Sveriges officiella datakällor
-      </h2>
-
-      <div className="overflow-hidden relative">
-        {/* Gradient Masks */}
-        <div className="absolute left-0 top-0 bottom-0 w-24 bg-gradient-to-r from-white dark:from-neutral-950 to-transparent z-10 pointer-events-none" />
-        <div className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-white dark:from-neutral-950 to-transparent z-10 pointer-events-none" />
-
+      <div className="mx-auto max-w-5xl px-6">
+        {/* Header */}
         <motion.div 
-          className="flex gap-8 animate-marquee"
+          className="text-center mb-16"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
         >
-          {[...apis, ...apis].map((api, index) => (
+          <h2 className="text-2xl md:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white mb-4">
+            OneSeek Reasoning i Realtid
+          </h2>
+          <p className="text-base md:text-lg text-neutral-600 dark:text-neutral-400">
+            Se hur OneSeek analyserar frågor och anropar svenska datakällor
+          </p>
+        </motion.div>
+
+        {/* Demo Container */}
+        <motion.div 
+          key={currentScenario}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="relative"
+        >
+          {/* Question Card */}
+          <motion.div 
+            className="mb-8 p-6 rounded-2xl border-2 border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/20 backdrop-blur-sm"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: phase >= 'question' ? 1 : 0.3, scale: 1 }}
+            transition={{ duration: 0.4 }}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-sm">
+                ?
+              </div>
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide mb-1">Fråga</p>
+                <p className="text-lg font-medium text-neutral-900 dark:text-white">{currentData.question}</p>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Reasoning Card */}
+          {phase >= 'reasoning' && (
             <motion.div 
-              key={index} 
-              className="group flex items-center justify-center px-4 py-3 whitespace-nowrap rounded-2xl border border-neutral-200/40 dark:border-neutral-800/40 bg-white/40 dark:bg-neutral-900/40 backdrop-blur-md hover:bg-white/60 dark:hover:bg-neutral-900/60 hover:shadow-lg dark:hover:shadow-lg/50 transition-all duration-300"
-              whileHover={{ scale: 1.05, y: -2 }}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+              className="mb-8 p-6 rounded-2xl border border-purple-200 dark:border-purple-800/50 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md"
             >
-              <div className="relative size-10 flex-shrink-0">
-                <Image
-                  src={api.logo}
-                  alt={`${api.name} logo`}
-                  width={40}
-                  height={40}
-                  className="object-contain"
-                />
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 text-white flex items-center justify-center font-bold text-sm">
+                  ⚡
+                </div>
+                <div className="flex-1">
+                  <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide mb-2">OneSeek Reasoning</p>
+                  <div className="text-sm text-neutral-700 dark:text-neutral-300">
+                    <TypingText 
+                      text={currentData.reasoning}
+                      speed={20}
+                      onComplete={handleReasoningComplete}
+                    />
+                  </div>
+                </div>
               </div>
             </motion.div>
-          ))}
-        </motion.div>
-      </div>
+          )}
 
-      <style jsx>{`
-        @keyframes marquee {
-          0% {
-            transform: translateX(0);
-          }
-          100% {
-            transform: translateX(-50%);
-          }
-        }
-        .animate-marquee {
-          animation: marquee 40s linear infinite;
-        }
-        .animate-marquee:hover {
-          animation-play-state: paused;
-        }
-      `}</style>
+          {/* API Call Card */}
+          {phase >= 'api_call' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+              className="mb-8 p-6 rounded-2xl border border-emerald-200 dark:border-emerald-800/50 bg-gradient-to-br from-emerald-50/80 to-teal-50/80 dark:from-emerald-950/30 dark:to-teal-950/30 backdrop-blur-md"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">API-anrop</p>
+                  <div className="flex items-center gap-3">
+                    <motion.div
+                      animate={{ scale: [1, 1.1, 1], opacity: [0.7, 1, 0.7] }}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                      className="relative"
+                    >
+                      <Image
+                        src={currentData.apiLogo}
+                        alt={currentData.apiName}
+                        width={32}
+                        height={32}
+                        className="object-contain"
+                      />
+                      <div className="absolute -inset-2 bg-emerald-500/20 rounded-full blur-md" />
+                    </motion.div>
+                    {isMultiAPI && currentData.apiLogo2 && (
+                      <motion.div
+                        animate={{ scale: [1, 1.1, 1], opacity: [0.7, 1, 0.7] }}
+                        transition={{ duration: 1.5, repeat: Infinity, delay: 0.3 }}
+                        className="relative"
+                      >
+                        <Image
+                          src={currentData.apiLogo2}
+                          alt="API 2"
+                          width={32}
+                          height={32}
+                          className="object-contain"
+                        />
+                        <div className="absolute -inset-2 bg-emerald-500/20 rounded-full blur-md" />
+                      </motion.div>
+                    )}
+                  </div>
+                </div>
+                {phase === 'api_call' && (
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full"
+                  />
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* Response Card */}
+          {phase >= 'response' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+              className="mb-6 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md"
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white flex items-center justify-center font-bold text-sm">
+                  ✓
+                </div>
+                <div className="flex-1">
+                  <p className="text-xs font-semibold text-orange-600 dark:text-orange-400 uppercase tracking-wide mb-2">OneSeek Svar</p>
+                  <div className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+                    <TypingText 
+                      text={currentData.response}
+                      speed={25}
+                      onComplete={handleResponseComplete}
+                    />
+                  </div>
+                  
+                  {/* Sources */}
+                  {phase === 'sources' && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.4 }}
+                      className="mt-4 flex flex-wrap items-center gap-2"
+                    >
+                      <span className="text-xs text-neutral-500 dark:text-neutral-400">Källor:</span>
+                      {currentData.sources.map((source, idx) => (
+                        <span 
+                          key={idx}
+                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                        >
+                          [{idx + 1}] {source}
+                        </span>
+                      ))}
+                    </motion.div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </motion.div>
+
+        {/* Progress Indicator */}
+        <div className="mt-12 flex items-center justify-center gap-2">
+          {scenarios.map((_, index) => (
+            <div
+              key={index}
+              className={cn(
+                "h-1.5 rounded-full transition-all duration-300",
+                index === currentScenario ? "w-8 bg-blue-500" : "w-1.5 bg-neutral-300 dark:bg-neutral-700"
+              )}
+            />
+          ))}
+        </div>
+      </div>
     </section>
   );
 };
@@ -1222,7 +1438,7 @@ export default function LandingPageMockup() {
 return (
 <main className="min-h-screen bg-white dark:bg-neutral-950 text-gray-900 dark:text-white">
 <HeroSection />
-<APIMarquee />
+<APIReasoningDemo />
 <CompareShowcase />
 <AgentFlowSection />
 <LLMProvidersSection />
