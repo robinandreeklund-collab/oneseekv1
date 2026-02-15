@@ -1,19 +1,9 @@
-import { CTAHomepage } from "@/components/homepage/cta";
-import { FeaturesBentoGrid } from "@/components/homepage/features-bento-grid";
-import { FeaturesCards } from "@/components/homepage/features-card";
-import { HeroSection } from "@/components/homepage/hero-section";
-// Integrations section removed per requirements
-// import ExternalIntegrations from "@/components/homepage/integrations";
+import { ModernHeroSection } from "@/components/homepage/modern-hero";
 
 export default function HomePage() {
 	return (
-		<main className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 text-gray-900 dark:from-black dark:to-gray-900 dark:text-white">
-			<HeroSection />
-			<FeaturesCards />
-			<FeaturesBentoGrid />
-			{/* Integrations section removed per requirements */}
-			{/* <ExternalIntegrations /> */}
-			<CTAHomepage />
+		<main className="min-h-screen">
+			<ModernHeroSection />
 		</main>
 	);
 }
