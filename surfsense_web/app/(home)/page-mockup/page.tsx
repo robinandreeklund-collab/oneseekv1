@@ -3,7 +3,7 @@
 import { motion, useInView } from "motion/react";
 import Image from "next/image";
 import Link from "next/link";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Balancer from "react-wrap-balancer";
 import { cn } from "@/lib/utils";
 
@@ -85,10 +85,11 @@ const TypingText = ({ text, speed = 30, onComplete }: { text: string; speed?: nu
         setCurrentIndex(prev => prev + 1);
       }, speed);
       return () => clearTimeout(timeout);
-    } else if (onComplete) {
+    } else if (currentIndex === text.length && onComplete) {
+      // Only call onComplete once when we reach the end
       onComplete();
     }
-  }, [currentIndex, text, speed, onComplete]);
+  }, [currentIndex, text.length, speed]); // Remove onComplete from deps to prevent infinite loop
 
   useEffect(() => {
     const cursorInterval = setInterval(() => {
@@ -143,6 +144,19 @@ const SideBySideComparison = () => {
 
   const leftModel = DEMO_RESPONSES[currentPair];
   const rightModel = DEMO_RESPONSES[(currentPair + 1) % DEMO_RESPONSES.length];
+
+  // Memoize callbacks to prevent infinite loops
+  const handleLeftComplete = useCallback(() => {
+    setTypingComplete(prev => [true, prev[1]]);
+  }, []);
+
+  const handleRightComplete = useCallback(() => {
+    setTypingComplete(prev => [prev[0], true]);
+  }, []);
+
+  const handleSynthesisComplete = useCallback(() => {
+    setSynthesisComplete(true);
+  }, []);
 
   return (
     <div ref={ref} className="relative">
@@ -199,7 +213,7 @@ const SideBySideComparison = () => {
                   <TypingText 
                     text={leftModel.response} 
                     speed={30}
-                    onComplete={() => setTypingComplete(prev => [true, prev[1]])}
+                    onComplete={handleLeftComplete}
                   />
                 </div>
               </div>
@@ -238,7 +252,7 @@ const SideBySideComparison = () => {
                   <TypingText 
                     text={rightModel.response} 
                     speed={30}
-                    onComplete={() => setTypingComplete(prev => [prev[0], true])}
+                    onComplete={handleRightComplete}
                   />
                 </div>
               </div>
@@ -276,7 +290,7 @@ const SideBySideComparison = () => {
                   <TypingText 
                     text={`Sverige har cirka 10,5 miljoner invånare (2023). Enligt SCB uppgick befolkningen till 10 540 886 personer. Detta bekräftas av flera källor och utgör den officiella statistiken för Sveriges befolkning.`}
                     speed={25}
-                    onComplete={() => setSynthesisComplete(true)}
+                    onComplete={handleSynthesisComplete}
                   />
                 </div>
 
