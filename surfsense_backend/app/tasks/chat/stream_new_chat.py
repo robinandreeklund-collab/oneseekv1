@@ -1123,11 +1123,15 @@ async def stream_new_chat(
         if route == Route.COMPARE:
             compare_mode = True
             print(f"[DEBUG] Compare mode activated! compare_mode={compare_mode}, route={route}")
+            # Always extract compare query when route is COMPARE, even if initial detection failed
+            if not compare_query:
+                compare_query = extract_compare_query(raw_user_query)
+                print(f"[DEBUG] Re-extracted compare_query: '{compare_query}'")
             if compare_query:
                 user_query = compare_query
             followup_context_block = ""
         
-        print(f"[DEBUG] After route decision: compare_mode={compare_mode}, route={route}")
+        print(f"[DEBUG] After route decision: compare_mode={compare_mode}, route={route}, user_query='{user_query[:50] if user_query else ''}'")
         
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
