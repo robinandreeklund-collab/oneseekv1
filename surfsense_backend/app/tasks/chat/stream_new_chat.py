@@ -18,7 +18,7 @@ from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -603,6 +603,75 @@ def _extract_assistant_text_from_event_output(output: Any) -> str:
     if hasattr(output, "content"):
         return _extract_assistant_text_from_message(output)
     return ""
+
+
+def _extract_and_stream_tool_calls(output: Any, streaming_service: Any) -> list[str]:
+    """
+    Extract AIMessage with tool_calls and corresponding ToolMessages from chain output.
+    Returns list of SSE events to stream to frontend.
+    
+    This is critical for compare mode where compare_fan_out creates:
+    - AIMessage with tool_calls array (one per external model)
+    - ToolMessage responses (one per model with results)
+    
+    Without this, frontend doesn't receive tool call events and can't render model cards.
+    """
+    events = []
+    
+    if not isinstance(output, dict):
+        return events
+    
+    messages = output.get("messages")
+    if not isinstance(messages, list) or len(messages) == 0:
+        return events
+    
+    # Find AIMessage with tool_calls and collect corresponding ToolMessages
+    ai_message_with_tools = None
+    tool_messages_by_id = {}
+    
+    for msg in messages:
+        # Check for AIMessage with tool_calls
+        if isinstance(msg, AIMessage) or (isinstance(msg, dict) and msg.get("type") == "ai"):
+            tool_calls = getattr(msg, "tool_calls", None) if hasattr(msg, "tool_calls") else msg.get("tool_calls")
+            if tool_calls and isinstance(tool_calls, list) and len(tool_calls) > 0:
+                ai_message_with_tools = (msg, tool_calls)
+        
+        # Collect ToolMessages
+        if isinstance(msg, ToolMessage) or (isinstance(msg, dict) and msg.get("type") == "tool"):
+            tool_call_id = getattr(msg, "tool_call_id", None) if hasattr(msg, "tool_call_id") else msg.get("tool_call_id")
+            if tool_call_id:
+                tool_messages_by_id[tool_call_id] = msg
+    
+    # If we found tool calls and messages, stream them
+    if ai_message_with_tools:
+        _msg, tool_calls = ai_message_with_tools
+        
+        for tool_call in tool_calls:
+            tool_call_id = tool_call.get("id") if isinstance(tool_call, dict) else getattr(tool_call, "id", None)
+            tool_name = tool_call.get("name") if isinstance(tool_call, dict) else getattr(tool_call, "name", None)
+            tool_args = tool_call.get("args") if isinstance(tool_call, dict) else getattr(tool_call, "args", {})
+            
+            if not tool_call_id or not tool_name:
+                continue
+            
+            # Stream tool input
+            events.append(streaming_service.format_tool_input_start(tool_call_id, tool_name))
+            events.append(streaming_service.format_tool_input_available(tool_call_id, tool_name, tool_args))
+            
+            # Stream tool output if available
+            tool_msg = tool_messages_by_id.get(tool_call_id)
+            if tool_msg:
+                content = getattr(tool_msg, "content", None) if hasattr(tool_msg, "content") else tool_msg.get("content")
+                if content:
+                    # Try to parse as JSON
+                    try:
+                        output_data = json.loads(content) if isinstance(content, str) else content
+                        events.append(streaming_service.format_tool_output_available(tool_call_id, output_data))
+                    except (json.JSONDecodeError, TypeError):
+                        # If not JSON, send as-is
+                        events.append(streaming_service.format_tool_output_available(tool_call_id, content))
+    
+    return events
 
 
 _CRITIC_JSON_SNIPPET_RE = re.compile(
@@ -1943,6 +2012,12 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
+                    
+                    # Extract and stream tool calls from chain output (critical for compare mode)
+                    tool_call_events = _extract_and_stream_tool_calls(chain_output, streaming_service)
+                    for tool_event in tool_call_events:
+                        yield tool_event
+                    
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
                     )
