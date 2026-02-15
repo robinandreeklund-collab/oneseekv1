@@ -57,6 +57,10 @@ from ..riksdagen_agent import (
     RIKSDAGEN_TOOL_DEFINITIONS,
     build_riksdagen_tool_registry,
 )
+from ..marketplace_tools import (
+    MARKETPLACE_TOOL_DEFINITIONS,
+    build_marketplace_tool_registry,
+)
 from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
@@ -484,6 +488,43 @@ async def build_tools_async(
             )
         except Exception as e:
             logging.exception(f"Failed to build Riksdagen tools: {e!s}")
+
+    # Build Marketplace tools if any are enabled
+    if enabled_tools:
+        marketplace_tools_to_build = [
+            tool_id for tool_id in enabled_tools 
+            if tool_id.startswith("marketplace_")
+        ]
+    else:
+        # Check if any marketplace tools would be enabled by default
+        marketplace_tools_to_build = [
+            definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS
+        ]
+    
+    # Filter out disabled marketplace tools
+    if disabled_tools:
+        marketplace_tools_to_build = [
+            tool_id for tool_id in marketplace_tools_to_build
+            if tool_id not in disabled_tools
+        ]
+    
+    # Build Marketplace tools if any should be enabled
+    if marketplace_tools_to_build and "connector_service" in dependencies and "search_space_id" in dependencies:
+        try:
+            marketplace_registry = build_marketplace_tool_registry(
+                connector_service=dependencies["connector_service"],
+                search_space_id=dependencies["search_space_id"],
+                user_id=dependencies.get("user_id"),
+                thread_id=dependencies.get("thread_id"),
+            )
+            for tool_id in marketplace_tools_to_build:
+                if tool_id in marketplace_registry:
+                    tools.append(marketplace_registry[tool_id])
+            logging.info(
+                f"Registered {len(marketplace_tools_to_build)} Marketplace tools: {marketplace_tools_to_build}",
+            )
+        except Exception as e:
+            logging.exception(f"Failed to build Marketplace tools: {e!s}")
 
     # Load MCP tools if requested and dependencies are available
     if (
