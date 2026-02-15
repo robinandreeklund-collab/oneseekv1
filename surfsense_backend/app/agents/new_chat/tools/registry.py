@@ -65,6 +65,10 @@ from ..skolverket_tools import (
     SKOLVERKET_TOOL_DEFINITIONS,
     build_skolverket_tool_registry,
 )
+from ..kolada_tools import (
+    KOLADA_TOOL_DEFINITIONS,
+    build_kolada_tool_registry,
+)
 from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
@@ -572,6 +576,49 @@ async def build_tools_async(
             )
         except Exception as e:
             logging.exception(f"Failed to build Skolverket tools: {e!s}")
+
+    # Build Kolada tools if requested
+    if enabled_tools is not None:
+        kolada_tools_to_build = [
+            tool_id
+            for tool_id in enabled_tools
+            if any(
+                tool_id == definition.tool_id
+                for definition in KOLADA_TOOL_DEFINITIONS
+            )
+        ]
+    else:
+        # If no enabled_tools specified, build all Kolada tools by default
+        kolada_tools_to_build = [
+            definition.tool_id for definition in KOLADA_TOOL_DEFINITIONS
+        ]
+
+    # Remove disabled tools
+    if disabled_tools:
+        kolada_tools_to_build = [
+            tool_id for tool_id in kolada_tools_to_build if tool_id not in disabled_tools
+        ]
+
+    if kolada_tools_to_build and "connector_service" in dependencies:
+        try:
+            kolada_registry = build_kolada_tool_registry(
+                connector_service=dependencies["connector_service"],
+                search_space_id=dependencies.get("search_space_id"),
+                user_id=dependencies.get("user_id"),
+                thread_id=dependencies.get("thread_id"),
+            )
+
+            # Add tools from registry
+            for tool_id in kolada_tools_to_build:
+                if tool_id in kolada_registry:
+                    tools.append(kolada_registry[tool_id])
+
+            logging.info(
+                f"Registered {len(kolada_tools_to_build)} Kolada tools: "
+                f"{kolada_tools_to_build}"
+            )
+        except Exception as e:
+            logging.exception(f"Failed to build Kolada tools: {e!s}")
 
     # Load MCP tools if requested and dependencies are available
     if (
