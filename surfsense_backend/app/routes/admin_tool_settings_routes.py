@@ -602,6 +602,8 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
         return "action", "media"
     if normalized_tool in {"libris_search", "jobad_links_search"}:
         return "action", "data"
+    # Marketplace tools (including reference tools like categories/regions) map to ACTION
+    # because they're part of the marketplace agent which handles all marketplace operations
     if normalized_tool.startswith(("bolagsverket_", "riksdag_", "marketplace_")):
         return "action", "data"
     if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
