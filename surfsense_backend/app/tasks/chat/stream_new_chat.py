@@ -605,7 +605,7 @@ def _extract_assistant_text_from_event_output(output: Any) -> str:
     return ""
 
 
-def _extract_and_stream_tool_calls(output: Any, streaming_service: Any) -> list[str]:
+def _extract_and_stream_tool_calls(output: Any, streaming_service: Any, streamed_ids: set[str]) -> list[str]:
     """
     Extract AIMessage with tool_calls and corresponding ToolMessages from chain output.
     Returns list of SSE events to stream to frontend.
@@ -615,6 +615,11 @@ def _extract_and_stream_tool_calls(output: Any, streaming_service: Any) -> list[
     - ToolMessage responses (one per model with results)
     
     Without this, frontend doesn't receive tool call events and can't render model cards.
+    
+    Args:
+        output: Chain output dictionary containing messages
+        streaming_service: Service for formatting SSE events
+        streamed_ids: Set of tool_call_ids already streamed (prevents duplicates)
     """
     events = []
     
@@ -642,7 +647,7 @@ def _extract_and_stream_tool_calls(output: Any, streaming_service: Any) -> list[
             if tool_call_id:
                 tool_messages_by_id[tool_call_id] = msg
     
-    # If we found tool calls and messages, stream them
+    # If we found tool calls and messages, stream them (but only if not already streamed)
     if ai_message_with_tools:
         _msg, tool_calls = ai_message_with_tools
         
@@ -653,6 +658,13 @@ def _extract_and_stream_tool_calls(output: Any, streaming_service: Any) -> list[
             
             if not tool_call_id or not tool_name:
                 continue
+            
+            # Skip if already streamed
+            if tool_call_id in streamed_ids:
+                continue
+            
+            # Mark as streamed
+            streamed_ids.add(tool_call_id)
             
             # Stream tool input
             events.append(streaming_service.format_tool_input_start(tool_call_id, tool_name))
@@ -1651,6 +1663,7 @@ async def stream_new_chat(
         model_parent_chain_by_run_id: dict[str, str] = {}
         internal_model_buffers: dict[str, str] = {}
         emitted_pipeline_payload_signatures: set[str] = set()
+        streamed_tool_call_ids: set[str] = set()  # Track tool calls already streamed to prevent duplicates
         stream_pipeline_prefix_buffer: str = ""
 
         route_label = f"Supervisor/{route.value.capitalize()}"
@@ -2014,7 +2027,8 @@ async def stream_new_chat(
                         yield trace_event
                     
                     # Extract and stream tool calls from chain output (critical for compare mode)
-                    tool_call_events = _extract_and_stream_tool_calls(chain_output, streaming_service)
+                    # Pass tracking set to prevent duplicate tool call streaming
+                    tool_call_events = _extract_and_stream_tool_calls(chain_output, streaming_service, streamed_tool_call_ids)
                     for tool_event in tool_call_events:
                         yield tool_event
                     
