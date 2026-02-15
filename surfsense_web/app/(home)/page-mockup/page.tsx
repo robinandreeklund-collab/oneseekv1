@@ -78,6 +78,12 @@ const TypingText = ({ text, speed = 30, onComplete }: { text: string; speed?: nu
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showCursor, setShowCursor] = useState(true);
 
+  // Reset when text changes
+  useEffect(() => {
+    setDisplayedText("");
+    setCurrentIndex(0);
+  }, [text]);
+
   useEffect(() => {
     if (currentIndex < text.length) {
       const timeout = setTimeout(() => {
@@ -85,11 +91,11 @@ const TypingText = ({ text, speed = 30, onComplete }: { text: string; speed?: nu
         setCurrentIndex(prev => prev + 1);
       }, speed);
       return () => clearTimeout(timeout);
-    } else if (currentIndex === text.length && onComplete) {
+    } else if (currentIndex === text.length && currentIndex > 0 && onComplete) {
       // Only call onComplete once when we reach the end
       onComplete();
     }
-  }, [currentIndex, text.length, speed]); // Remove onComplete from deps to prevent infinite loop
+  }, [currentIndex, text, speed]); // text instead of text.length to properly track changes
 
   useEffect(() => {
     const cursorInterval = setInterval(() => {
@@ -522,26 +528,25 @@ const APIReasoningDemo = () => {
     }
   ];
 
-  const currentData = scenarios[currentScenario];
-
   // Animation sequence
   useEffect(() => {
     if (!isInView) return;
 
     const sequence = async () => {
+      const data = scenarios[currentScenario];
       setChatMessages([]);
       setActiveAPIs([]);
 
       // Add messages one by one
-      for (let i = 0; i < currentData.messages.length; i++) {
+      for (let i = 0; i < data.messages.length; i++) {
         await new Promise(resolve => setTimeout(resolve, i === 0 ? 500 : 1500));
         
-        const message = currentData.messages[i];
+        const message = data.messages[i];
         setChatMessages(prev => [...prev, message]);
 
         // Activate APIs when api message appears
         if (message.type === 'api') {
-          setActiveAPIs(currentData.activeTools);
+          setActiveAPIs(data.activeTools);
         }
 
         // Scroll to bottom
@@ -554,7 +559,7 @@ const APIReasoningDemo = () => {
     };
 
     sequence();
-  }, [currentScenario, isInView, currentData]);
+  }, [currentScenario, isInView]);
 
   return (
     <section ref={sectionRef} className="relative py-24 md:py-32 bg-gradient-to-b from-white via-neutral-50/50 to-white dark:from-neutral-950 dark:via-neutral-900/50 dark:to-neutral-950 border-y border-neutral-100 dark:border-neutral-800/50 overflow-hidden">
