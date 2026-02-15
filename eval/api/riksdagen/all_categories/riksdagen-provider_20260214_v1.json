@@ -1,0 +1,637 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "riksdagen-provider",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Propositioner om NATO 2024 i Stockholm, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_dokument_proposition",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_proposition"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_proposition"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Moderater i Riksdagen",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_ledamoter_parti",
+        "category": "riksdagen_ledamoter",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_ledamoter_parti"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_ledamoter_parti"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Omröstningar i Riksdagen senaste året",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_voteringar",
+        "category": "riksdagen_voteringar",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_voteringar"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_voteringar"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Riksrevisionens rapporter 2024 i Uppsala, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_dokument_rir",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_rir"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_rir"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "KOM-dokument senaste året i Västerås, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_dokument_eu",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_eu"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_eu"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Rskr från senaste året i Örebro, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_dokument_rskr",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_rskr"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_rskr"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Protokoll från budgetdebatten 2024 i Linköping, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_dokument_protokoll",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_protokoll"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_protokoll"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Budgetdebatt i Riksdagen",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_anforanden_debatt",
+        "category": "riksdagen_anforanden",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_anforanden_debatt"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_anforanden_debatt"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Frågor från Moderaterna i Jönköping, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_dokument_fraga",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_fraga"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_fraga"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Direktiv för utredningar 2024 i Norrköping, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_dokument_dir",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_dir"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_dir"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Utredningar om klimat 2023 i Lund, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_dokument_sou",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_sou"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_sou"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Resultat av omröstning 2024/25:1 i Umeå, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_voteringar_resultat",
+        "category": "riksdagen_voteringar",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_voteringar_resultat"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_voteringar_resultat"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Dokument om försvar 2024 i Gävle, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_dokument",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Ledamöter i Stockholms län",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_ledamoter",
+        "category": "riksdagen_ledamoter",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_ledamoter"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_ledamoter"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Utskottsbetänkanden om försvar i Luleå, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_dokument_betankande",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_betankande"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_betankande"
+      ]
+    },
+    {
+      "id": "case-16",
+      "question": "Frågestund med statsministern 2024 i Stockholm, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_anforanden_fragestund",
+        "category": "riksdagen_anforanden",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_anforanden_fragestund"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_anforanden_fragestund"
+      ]
+    },
+    {
+      "id": "case-17",
+      "question": "Frågor om skola till utbildningsministern i Göteborg, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_dokument_interpellation",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_interpellation"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_interpellation"
+      ]
+    },
+    {
+      "id": "case-18",
+      "question": "Ds från Finansdepartementet i Malmö, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_dokument_ds",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_ds"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_ds"
+      ]
+    },
+    {
+      "id": "case-19",
+      "question": "Status för proposition 2023/24:1 i Uppsala, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_dokumentstatus",
+        "category": "riksdagen_status",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokumentstatus"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokumentstatus"
+      ]
+    },
+    {
+      "id": "case-20",
+      "question": "Debatt om skola i Riksdagen",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_anforanden",
+        "category": "riksdagen_anforanden",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_anforanden"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_anforanden"
+      ]
+    },
+    {
+      "id": "case-21",
+      "question": "Ledamöter från Västra Götaland i Örebro, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_ledamoter_valkrets",
+        "category": "riksdagen_ledamoter",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_ledamoter_valkrets"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_ledamoter_valkrets"
+      ]
+    },
+    {
+      "id": "case-22",
+      "question": "Motioner om migration 2024 i Linköping, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_dokument_motion",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_motion"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_motion"
+      ]
+    },
+    {
+      "id": "case-23",
+      "question": "Senaste budgetpropositionen i Helsingborg, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_dokument_proposition",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_proposition"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_proposition"
+      ]
+    },
+    {
+      "id": "case-24",
+      "question": "SD:s riksdagsledamöter",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_ledamoter_parti",
+        "category": "riksdagen_ledamoter",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_ledamoter_parti"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_ledamoter_parti"
+      ]
+    },
+    {
+      "id": "case-25",
+      "question": "Voteringar om budgeten 2024 i Norrköping, Sverige?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_voteringar",
+        "category": "riksdagen_voteringar",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_voteringar"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_voteringar"
+      ]
+    },
+    {
+      "id": "case-26",
+      "question": "RiR om statsbudgeten i Lund, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_dokument_rir",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_rir"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_rir"
+      ]
+    },
+    {
+      "id": "case-27",
+      "question": "EU-förslag i Riksdagen",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_dokument_eu",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_eu"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_eu"
+      ]
+    },
+    {
+      "id": "case-28",
+      "question": "Riksdagsskrivelser 2024",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "riksdag_dokument_rskr",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_rskr"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_rskr"
+      ]
+    },
+    {
+      "id": "case-29",
+      "question": "Kammarprotokoll senaste veckan i Sundsvall, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "riksdag_dokument_protokoll",
+        "category": "riksdagen_dokument",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_dokument_protokoll"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_dokument_protokoll"
+      ]
+    },
+    {
+      "id": "case-30",
+      "question": "Utrikesdebatt om NATO i Luleå, Sverige?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "riksdag_anforanden_debatt",
+        "category": "riksdagen_anforanden",
+        "intent": "action",
+        "route": "action",
+        "sub_route": "data",
+        "agent": "riksdagen",
+        "plan_requirements": [
+          "route:action",
+          "agent:riksdagen",
+          "tool:riksdag_anforanden_debatt"
+        ]
+      },
+      "allowed_tools": [
+        "riksdag_anforanden_debatt"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}

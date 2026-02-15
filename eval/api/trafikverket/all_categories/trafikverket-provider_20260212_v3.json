@@ -1,0 +1,292 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "trafikverket-provider",
+  "target_success_rate": null,
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Finns det planerade vägarbeten på E4 mellan Stockholm och Malmö?",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_vagarbeten",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_vagarbeten"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_vagarbeten"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Vilka tågförseningar finns på sträckan mellan Uppsala och Stockholm idag?",
+      "expected": {
+        "tool": "trafikverket_tag_forseningar",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_forseningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_forseningar"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Hur ser trafikläget ut på E18 vid korsningen vid Örebro just nu?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vilka vägarbeten finns på Riksväg 50 i Skåne län under nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_prognos_vag",
+        "category": "trafikverket_prognos",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_prognos_vag"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_prognos_vag"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Finns det en trafikkamera vid E6 vid korsningen vid Gävle som är i drift just nu?",
+      "expected": {
+        "tool": "trafikverket_kameror_status",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_status"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilka stationer finns i Västra Götalands län?",
+      "expected": {
+        "tool": "trafikverket_tag_stationer",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_stationer"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_stationer"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Vilken livebild finns från kamera vid korsningen vid Sältsjö i Västerbotten i Linköping, Sverige?",
+      "expected": {
+        "tool": "trafikverket_kameror_snapshot",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_snapshot"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_snapshot"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Hur ser vägstatusen ut på E20 mellan Göteborg och Örebro idag?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilka avstängningar finns på E22 i Dalarna just nu?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Finns det aktuella störningar på tågtrafiken mellan Lund och Malmö?",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_storningar",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_storningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_storningar"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vilken temperatur finns på E4 vid korsningen vid Sundsvall?",
+      "expected": {
+        "tool": "trafikverket_vader_temperatur",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_temperatur"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_temperatur"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Vilken vindstyrka och vindriktning finns på Öresundsbron idag i Umeå, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vader_vind",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_vind"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_vind"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Vilka vägsträckor på E6 har planerat underhåll i Skåne län?",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Vilka väderstationer finns längs E4 mellan Gävle och Sundsvall?",
+      "expected": {
+        "tool": "trafikverket_vader_stationer",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_stationer"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_stationer"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Vilken hastighetsgräns gäller på E18 vid korsningen vid Helsingborg?",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "web",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    }
+  ]
+}

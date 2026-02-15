@@ -1,0 +1,577 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "trafikverket-provider",
+  "target_success_rate": null,
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Tågförseningar på Västra stambanan idag i Stockholm, Sverige?",
+      "expected": {
+        "tool": "trafikverket_tag_forseningar",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_forseningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_forseningar"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Är kamera E4-10 online?",
+      "expected": {
+        "tool": "trafikverket_kameror_status",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_status"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vägskick på riksväg 70 i Malmö, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Risk för halka i Västerbotten i Uppsala, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vader_halka",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_halka"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_halka"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Stationer som börjar med 'Sundsvall'",
+      "expected": {
+        "tool": "trafikverket_tag_stationer",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_stationer"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_stationer"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Tidtabell för tåg mellan Uppsala och Stockholm imorgon",
+      "expected": {
+        "tool": "trafikverket_tag_tidtabell",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_tidtabell"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_tidtabell"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Störningar på E20 mellan Gävle och Sundsvall",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_storningar",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_storningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_storningar"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Temperaturer i Dalarna i Helsingborg, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vader_temperatur",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_temperatur"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_temperatur"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vägarbete på riksväg 50",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_vagarbeten",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_vagarbeten"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_vagarbeten"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Mätpunkter längs E4",
+      "expected": {
+        "tool": "trafikverket_vader_stationer",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_stationer"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_stationer"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vägprojekt i Skåne län",
+      "expected": {
+        "tool": "trafikverket_prognos_vag",
+        "category": "trafikverket_prognos",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_prognos_vag"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_prognos_vag"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Hämta realtidsbild från kamera 12345 i Umeå, Sverige?",
+      "expected": {
+        "tool": "trafikverket_kameror_snapshot",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_snapshot"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_snapshot"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Var är det köer i Göteborg just nu?",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_koer",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_koer"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_koer"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Vägstatus i Västra Götaland i Sundsvall, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Olycka på riksväg 40",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_olyckor",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_olyckor"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_olyckor"
+      ]
+    },
+    {
+      "id": "case-16",
+      "question": "Vind på Öresundsbron i Stockholm, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vader_vind",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_vind"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_vind"
+      ]
+    },
+    {
+      "id": "case-17",
+      "question": "Inställda avgångar Stockholm C",
+      "expected": {
+        "tool": "trafikverket_tag_installda",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_installda"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_installda"
+      ]
+    },
+    {
+      "id": "case-18",
+      "question": "Lista kameror vid Essingeleden i Malmö, Sverige?",
+      "expected": {
+        "tool": "trafikverket_kameror_lista",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_lista"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_lista"
+      ]
+    },
+    {
+      "id": "case-19",
+      "question": "Hastighetsgräns på E6",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-20",
+      "question": "Vilka avspärrningar finns på E20 i nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-21",
+      "question": "Restidsprognos på E6",
+      "expected": {
+        "tool": "trafikverket_prognos_trafik",
+        "category": "trafikverket_prognos",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_prognos_trafik"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_prognos_trafik"
+      ]
+    },
+    {
+      "id": "case-22",
+      "question": "Tågprognos Stockholm C",
+      "expected": {
+        "tool": "trafikverket_prognos_tag",
+        "category": "trafikverket_prognos",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_prognos_tag"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_prognos_tag"
+      ]
+    },
+    {
+      "id": "case-23",
+      "question": "Försenade tåg från Stockholm C nu",
+      "expected": {
+        "tool": "trafikverket_tag_forseningar",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_forseningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_forseningar"
+      ]
+    },
+    {
+      "id": "case-24",
+      "question": "Driftstatus trafikkamera vid E6",
+      "expected": {
+        "tool": "trafikverket_kameror_status",
+        "category": "trafikverket_kameror",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_kameror_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_kameror_status"
+      ]
+    },
+    {
+      "id": "case-25",
+      "question": "Planerat underhåll på E18",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-26",
+      "question": "Väglag på E45",
+      "expected": {
+        "tool": "trafikverket_vader_halka",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_halka"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_halka"
+      ]
+    },
+    {
+      "id": "case-27",
+      "question": "Lista stationer i Stockholm",
+      "expected": {
+        "tool": "trafikverket_tag_stationer",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_stationer"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_stationer"
+      ]
+    },
+    {
+      "id": "case-28",
+      "question": "Avgångar från Uppsala C imorgon",
+      "expected": {
+        "tool": "trafikverket_tag_tidtabell",
+        "category": "trafikverket_tag",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_tag_tidtabell"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_tag_tidtabell"
+      ]
+    },
+    {
+      "id": "case-29",
+      "question": "Störningar på E18 mellan Gävle och Sundsvall",
+      "expected": {
+        "tool": "trafikverket_trafikinfo_storningar",
+        "category": "trafikverket_trafikinfo",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_trafikinfo_storningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_trafikinfo_storningar"
+      ]
+    },
+    {
+      "id": "case-30",
+      "question": "Minusgrader i Norrbotten i Luleå, Sverige?",
+      "expected": {
+        "tool": "trafikverket_vader_temperatur",
+        "category": "trafikverket_vader",
+        "route": "action",
+        "sub_route": "travel",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vader_temperatur"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vader_temperatur"
+      ]
+    }
+  ]
+}

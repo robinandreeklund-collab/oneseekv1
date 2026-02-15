@@ -1,0 +1,292 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "trafikverket-trafikverket_vag",
+  "target_success_rate": null,
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Finns det planerat underhåll på E4 vid Göteborg nästa vecka?",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Vilken trafikläge finns på E6 mellan Malmö och Lund just nu?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vilka avstängningar finns på E18 vid Norrköping idag?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vilken hastighetsgräns gäller på Riksväg 40 nära Uppsala?",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Hur påverkar en vägavstängning på E20 vid Örebro trafiken i hela Västergötaland?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilka vägarbeten gäller på E45 mellan Östersund och Sundsvall?",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Finns det trafikstörning på Södra länken i Stockholm på morgondagen?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Vilken hastighetsgräns gäller på E6 vid Helsingborg?",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilka avspärrningar finns på E4 mellan Gävle och Umeå?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Hur påverkar planerat underhåll på Riksväg 50 i Västerbottens län trafikflödet?",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vilken vägstatus finns på E18 vid Linköping just nu?",
+      "expected": {
+        "tool": "trafikverket_vag_status",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_status"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_status"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Finns det temporära hastighetsbegränsningar på E22 vid Jönköping?",
+      "expected": {
+        "tool": "trafikverket_vag_hastighet",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_hastighet"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_hastighet"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Vilka omledningar finns på E20 vid Stockholm på grund av en vägavstängning?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Hur påverkar vägarbeten på E45 mellan Luleå och Norrbotten trafikflödet?",
+      "expected": {
+        "tool": "trafikverket_vag_underhall",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_underhall"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_underhall"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Vilka avstängningar på E6 vid Göteborg påverkar framkomligheten i hela Västra Götalands län?",
+      "expected": {
+        "tool": "trafikverket_vag_avstangningar",
+        "category": "trafikverket_vag",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:trafikverket_vag_avstangningar"
+        ]
+      },
+      "allowed_tools": [
+        "trafikverket_vag_avstangningar"
+      ]
+    }
+  ]
+}

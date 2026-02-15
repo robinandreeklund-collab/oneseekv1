@@ -1,0 +1,547 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "scb-provider",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Vilken inflation har registrerats i Sverige under 2023 enligt SCB?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "scb_priser_inflation",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_priser_inflation"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_priser_inflation"
+        ]
+      },
+      "allowed_tools": [
+        "scb_priser_inflation"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Hur har antalet nyregistrerade företag i Skåne län utvecklats mellan 2020 och 2024?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "scb_naringsliv_nyforetagande",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_naringsliv_nyforetagande"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_naringsliv_nyforetagande"
+        ]
+      },
+      "allowed_tools": [
+        "scb_naringsliv_nyforetagande"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vilken andel av befolkningen i Uppsala län hade eftergymnasial utbildning 2023?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "scb_utbildning",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_utbildning"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_utbildning"
+        ]
+      },
+      "allowed_tools": [
+        "scb_utbildning"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Hur många bostäder färdigställdes i Malmö kommun under 2022?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "scb_boende_nybyggnation",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_boende_nybyggnation"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_boende_nybyggnation"
+        ]
+      },
+      "allowed_tools": [
+        "scb_boende_nybyggnation"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Vilken är den genomsnittliga timlönen för kvinnor i Sverige 2023, uppdelad per region?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "scb_arbetsmarknad_lon",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_arbetsmarknad_lon"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_arbetsmarknad_lon"
+        ]
+      },
+      "allowed_tools": [
+        "scb_arbetsmarknad_lon"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Hur har konsumentprisindex (KPI) utvecklats i Stockholm län de senaste 24 månaderna?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "scb_priser_konsumtion",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_priser_konsumtion"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_priser_konsumtion"
+        ]
+      },
+      "allowed_tools": [
+        "scb_priser_konsumtion"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Vilken andel av Sveriges totala energianvändning kom från förnybar energi 2022?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "scb_miljo_energi",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_miljo_energi"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_miljo_energi"
+        ]
+      },
+      "allowed_tools": [
+        "scb_miljo_energi"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Hur många resor med kollektivtrafik gjordes i Västra Götalands län 2023?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "scb_transporter_person",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_transporter_person"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_transporter_person"
+        ]
+      },
+      "allowed_tools": [
+        "scb_transporter_person"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilken är den genomsnittliga inkomsten per hushåll i Norrbottens län enligt SCB 2024?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "scb_offentlig_ekonomi",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_offentlig_ekonomi"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_offentlig_ekonomi"
+        ]
+      },
+      "allowed_tools": [
+        "scb_offentlig_ekonomi"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Vilken andel av befolkningen i Göteborg hade en gymnasieexamen 2022?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "scb_utbildning",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_utbildning"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_utbildning"
+        ]
+      },
+      "allowed_tools": [
+        "scb_utbildning"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vilken är den totala CO2-utsläppet i Sverige per sektor 2023?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "scb_miljo_utslapp",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_miljo_utslapp"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_miljo_utslapp"
+        ]
+      },
+      "allowed_tools": [
+        "scb_miljo_utslapp"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Hur många studenter var registrerade vid svenska högskolor 2023?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "scb_utbildning_hogskola",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_utbildning_hogskola"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_utbildning_hogskola"
+        ]
+      },
+      "allowed_tools": [
+        "scb_utbildning_hogskola"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Vilken är den genomsnittliga timlönen för män i Sverige 2023, särskilt inom industrin?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "scb_arbetsmarknad_lon",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_arbetsmarknad_lon"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_arbetsmarknad_lon"
+        ]
+      },
+      "allowed_tools": [
+        "scb_arbetsmarknad_lon"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Vilken andel av Sveriges export kom från tjenstehandel i 2022?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "scb_handel",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_handel"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_handel"
+        ]
+      },
+      "allowed_tools": [
+        "scb_handel"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Hur många bostäder fanns i Sverige totalt i början av 2024?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "scb_boende_bestand",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_boende_bestand"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_boende_bestand"
+        ]
+      },
+      "allowed_tools": [
+        "scb_boende_bestand"
+      ]
+    },
+    {
+      "id": "case-16",
+      "question": "Vilken är den genomsnittliga räntan på bostadslån i Sverige 2024?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "scb_finansmarknad",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_finansmarknad"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_finansmarknad"
+        ]
+      },
+      "allowed_tools": [
+        "scb_finansmarknad"
+      ]
+    },
+    {
+      "id": "case-17",
+      "question": "Vilken andel av befolkningen i Örebro län flyttade inom landet 2023?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "scb_befolkning_forandringar",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_befolkning_forandringar"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_befolkning_forandringar"
+        ]
+      },
+      "allowed_tools": [
+        "scb_befolkning_forandringar"
+      ]
+    },
+    {
+      "id": "case-18",
+      "question": "Vilket var Sveriges handelsbalans 2022, och hur förändrades den jämfört med 2021?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "scb_handel",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_handel"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_handel"
+        ]
+      },
+      "allowed_tools": [
+        "scb_handel"
+      ]
+    },
+    {
+      "id": "case-19",
+      "question": "Vilken andel av Sveriges befolkning i 2023 hade deltagit i idrottsverksamhet i sin hemkommun?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "scb_kultur",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_kultur"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_kultur"
+        ]
+      },
+      "allowed_tools": [
+        "scb_kultur"
+      ]
+    },
+    {
+      "id": "case-20",
+      "question": "Vilken är den totala sysselsättningen i Sverige per år 2024, uppdelad efter kön och ålder?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "scb_arbetsmarknad_sysselsattning",
+        "category": "statistics",
+        "acceptable_tools": [
+          "scb_arbetsmarknad_sysselsattning"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:scb_arbetsmarknad_sysselsattning"
+        ]
+      },
+      "allowed_tools": [
+        "scb_arbetsmarknad_sysselsattning"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}

@@ -1,0 +1,547 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "skolverket-provider",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Vilka vuxenutbildningsprogram med distansundervisning finns tillgängliga i Västerbottens län?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "filter_adult_education_by_distance",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "filter_adult_education_by_distance"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:filter_adult_education_by_distance"
+        ]
+      },
+      "allowed_tools": [
+        "filter_adult_education_by_distance"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Hur många aktiva skolor i Skåne län erbjuder grundskolans läroplan för årskurs 7–9?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_school_units_by_status",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_units_by_status"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "web",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:get_school_units_by_status"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_units_by_status"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vilka studieinriktningar finns inom gymnasieprogrammet NA i Göteborg enligt Skolverkets v4-data?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_program_details",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_program_details"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_program_details"
+        ]
+      },
+      "allowed_tools": [
+        "get_program_details"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vilka dokument finns tillgängliga för skolenhet 69405762 i Uppsala?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "get_school_unit_documents",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_unit_documents"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_school_unit_documents"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_unit_documents"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Hur många utbildningshändelser med fokus på teknik är planerade i Norrköping under 2024?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "count_education_events",
+        "category": "statistics",
+        "acceptable_tools": [
+          "count_education_events"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "web",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:count_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "count_education_events"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilka skolformer finns tillgängliga i Umeå enligt Skolverkets v4-data?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "get_school_types_v4",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_types_v4"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_school_types_v4"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_types_v4"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Vilka ämnen ingår i gymnasieprogrammet NA i Malmö?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_program_details",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_program_details"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_program_details"
+        ]
+      },
+      "allowed_tools": [
+        "get_program_details"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Vilka versioner har ämnet MAT haft sedan 2020 i gymnasial utbildning i Norrköping?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "get_subject_versions",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_subject_versions"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_subject_versions"
+        ]
+      },
+      "allowed_tools": [
+        "get_subject_versions"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilka utbildningshändelser erbjuds på skolenhet 69405762 i Uppsala?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_school_unit_education_events",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_unit_education_events"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_school_unit_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_unit_education_events"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Vilka vuxenutbildningsprogram med 50 % studiehastighet finns i Västerbottens län?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "filter_adult_education_by_pace",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "filter_adult_education_by_pace"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:filter_adult_education_by_pace"
+        ]
+      },
+      "allowed_tools": [
+        "filter_adult_education_by_pace"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Vilka skolenheter i Sundsvall erbjuder gymnasial utbildning i naturvetenskap enligt kursplan GY2011?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "search_school_units_by_name",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "search_school_units_by_name"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:search_school_units_by_name"
+        ]
+      },
+      "allowed_tools": [
+        "search_school_units_by_name"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Vilka kurskoder finns i kursplanen för svenska i grundskolan enligt Skolverket?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "get_subject_and_course_codes",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_subject_and_course_codes"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_subject_and_course_codes"
+        ]
+      },
+      "allowed_tools": [
+        "get_subject_and_course_codes"
+      ]
+    },
+    {
+      "id": "case-13",
+      "question": "Vilka versioner har kurskoden MATMAT01c haft enligt Skolverkets data i Gävle, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_course_versions",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_course_versions"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_course_versions"
+        ]
+      },
+      "allowed_tools": [
+        "get_course_versions"
+      ]
+    },
+    {
+      "id": "case-14",
+      "question": "Vilka utbildningsprogram erbjuds i Västerås med distansundervisning?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "filter_adult_education_by_distance",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "filter_adult_education_by_distance"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:filter_adult_education_by_distance"
+        ]
+      },
+      "allowed_tools": [
+        "filter_adult_education_by_distance"
+      ]
+    },
+    {
+      "id": "case-15",
+      "question": "Vilka skolenheter i Gävle har aktiva status och erbjuder grundskolans läroplan för årskurs 7–9?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_school_units_by_status",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_units_by_status"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_school_units_by_status"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_units_by_status"
+      ]
+    },
+    {
+      "id": "case-16",
+      "question": "Vilka dokument finns tillgängliga för skolenhet 69405762 i Helsingborg?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "get_school_unit_documents",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_unit_documents"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_school_unit_documents"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_unit_documents"
+      ]
+    },
+    {
+      "id": "case-17",
+      "question": "Vilka skolformer finns i Norrland enligt Skolverkets v4-data i Göteborg, Sverige?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_school_types_v4",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_school_types_v4"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_school_types_v4"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_types_v4"
+      ]
+    },
+    {
+      "id": "case-18",
+      "question": "Vilka utbildningshändelser i Jönköping handlar om energi och är planerade för 2024?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "count_education_events",
+        "category": "statistics",
+        "acceptable_tools": [
+          "count_education_events"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "web",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:count_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "count_education_events"
+      ]
+    },
+    {
+      "id": "case-19",
+      "question": "Vilka skolenheter i Stockholm erbjuder gymnasial utbildning i naturvetenskap enligt kursplan GY2011?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "search_school_units_by_name",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "search_school_units_by_name"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:search_school_units_by_name"
+        ]
+      },
+      "allowed_tools": [
+        "search_school_units_by_name"
+      ]
+    },
+    {
+      "id": "case-20",
+      "question": "Vilka versioner har kurskoden MATMAT01c haft i Sverige sedan 2020?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "get_course_versions",
+        "category": "knowledge",
+        "acceptable_tools": [
+          "get_course_versions"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "web",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:get_course_versions"
+        ]
+      },
+      "allowed_tools": [
+        "get_course_versions"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}
