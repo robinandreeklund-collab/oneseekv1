@@ -441,99 +441,120 @@ transition={{ duration: 0.8, delay: 0.6, ease: [0.16, 1, 0.3, 1] }}
 );
 };
 
-// ==================== SECTION 2: INTERACTIVE API REASONING DEMO ====================
+// ==================== SECTION 2: INTERACTIVE API SKILL TREE + CHAT DEMO ====================
+
+interface APITool {
+  id: string;
+  name: string;
+  category: string;
+  logo: string;
+  description: string;
+}
 
 const APIReasoningDemo = () => {
   const [currentScenario, setCurrentScenario] = useState(0);
-  const [phase, setPhase] = useState<'question' | 'reasoning' | 'api_call' | 'response' | 'sources'>('question');
-  const [reasoningComplete, setReasoningComplete] = useState(false);
-  const [responseComplete, setResponseComplete] = useState(false);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [activeAPIs, setActiveAPIs] = useState<string[]>([]);
   const sectionRef = useRef<HTMLDivElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(sectionRef, { once: false, margin: "-100px" });
+
+  // API Tools Tree
+  const apiTools: APITool[] = [
+    { id: 'scb', name: 'SCB', category: 'Statistik', logo: '/api-logos/scb-logo.png', description: 'Statistiska centralbyrån - Befolkning, ekonomi' },
+    { id: 'kolada', name: 'Kolada', category: 'Statistik', logo: '/api-logos/kolada-logo.png', description: 'Kommun- och landstingsdata' },
+    { id: 'smhi', name: 'SMHI', category: 'Väder', logo: '/api-logos/smhi-logo.png', description: 'Väderdata och prognoser' },
+    { id: 'trafikverket', name: 'Trafikverket', category: 'Transport', logo: '/api-logos/trafikverket-logo.png', description: 'Trafikinfo och störningar' },
+    { id: 'riksdagen', name: 'Riksdagen', category: 'Politik', logo: '/api-logos/riksdagen-logo.png', description: 'Propositioner och debatter' },
+    { id: 'bolagsverket', name: 'Bolagsverket', category: 'Företag', logo: '/api-logos/bolagsverket-logo.png', description: 'Företagsinformation' },
+    { id: 'tavily', name: 'Tavily', category: 'Verifiering', logo: '/api-logos/tavily-logo.png', description: 'Faktakontroll och källor' },
+  ];
 
   const scenarios = [
     {
       question: "Hur många invånare har Stockholm?",
-      reasoning: "Identifierar befolkningsfråga → Väljer Statistik-agent → Behöver SCB-data",
-      apiName: "SCB",
-      apiLogo: "/api-logos/scb-logo.png",
-      response: "Stockholm har cirka 975 000 invånare enligt den senaste befolkningsstatistiken från SCB (2023).",
-      sources: ["SCB"]
+      activeTools: ['scb'],
+      messages: [
+        { type: 'user', text: 'Hur många invånare har Stockholm?' },
+        { type: 'system', text: '🔍 Analyserar fråga: Befolkningsstatistik för Stockholm' },
+        { type: 'system', text: '⚡ Väljer verktyg: SCB API' },
+        { type: 'api', text: '📡 Anropar SCB: get_population_statistics(municipality="Stockholm")' },
+        { type: 'assistant', text: 'Stockholm har cirka 975 000 invånare enligt den senaste befolkningsstatistiken från SCB (2023).' },
+        { type: 'sources', sources: ['SCB'] }
+      ]
     },
     {
       question: "Hur blir vädret i Göteborg imorgon?",
-      reasoning: "Identifierar väderfråga → Väljer Väder-agent → Behöver SMHI-data",
-      apiName: "SMHI",
-      apiLogo: "/api-logos/smhi-logo.png",
-      response: "Imorgon blir det delvis molnigt i Göteborg med temperaturer runt 15°C och lätt vind från sydväst.",
-      sources: ["SMHI"]
+      activeTools: ['smhi'],
+      messages: [
+        { type: 'user', text: 'Hur blir vädret i Göteborg imorgon?' },
+        { type: 'system', text: '🔍 Analyserar fråga: Väderprogos för Göteborg' },
+        { type: 'system', text: '⚡ Väljer verktyg: SMHI API' },
+        { type: 'api', text: '📡 Anropar SMHI: get_weather_forecast(city="Göteborg", date="tomorrow")' },
+        { type: 'assistant', text: 'Imorgon blir det delvis molnigt i Göteborg med temperaturer runt 15°C och lätt vind från sydväst.' },
+        { type: 'sources', sources: ['SMHI'] }
+      ]
     },
     {
       question: "Är det störningar på E4 just nu?",
-      reasoning: "Identifierar trafikfråga → Väljer Trafik-agent → Behöver Trafikverket-data",
-      apiName: "Trafikverket",
-      apiLogo: "/api-logos/trafikverket-logo.png",
-      response: "Inga större störningar rapporterade på E4 för tillfället. Normalt trafikflöde i båda riktningar.",
-      sources: ["Trafikverket"]
+      activeTools: ['trafikverket'],
+      messages: [
+        { type: 'user', text: 'Är det störningar på E4 just nu?' },
+        { type: 'system', text: '🔍 Analyserar fråga: Trafikläge på E4' },
+        { type: 'system', text: '⚡ Väljer verktyg: Trafikverket API' },
+        { type: 'api', text: '📡 Anropar Trafikverket: get_traffic_status(road="E4")' },
+        { type: 'assistant', text: 'Inga större störningar rapporterade på E4 för tillfället. Normalt trafikflöde i båda riktningar.' },
+        { type: 'sources', sources: ['Trafikverket'] }
+      ]
     },
     {
       question: "Befolkningstillväxt i Stockholm och dagens väder?",
-      reasoning: "Komplex fråga → Behöver både statistik och väder → Anropar SCB + SMHI parallellt",
-      apiName: "SCB + SMHI",
-      apiLogo: "/api-logos/scb-logo.png",
-      apiLogo2: "/api-logos/smhi-logo.png",
-      response: "Stockholm har vuxit med cirka 15 000 invånare det senaste året till 975 000. Vädret idag: Delvis molnigt, 12°C.",
-      sources: ["SCB", "SMHI"]
+      activeTools: ['scb', 'smhi'],
+      messages: [
+        { type: 'user', text: 'Befolkningstillväxt i Stockholm och dagens väder?' },
+        { type: 'system', text: '🔍 Analyserar fråga: Komplex fråga med två delar' },
+        { type: 'system', text: '⚡ Väljer verktyg: SCB API + SMHI API' },
+        { type: 'api', text: '📡 Anropar SCB: get_population_growth(municipality="Stockholm")' },
+        { type: 'api', text: '📡 Anropar SMHI: get_current_weather(city="Stockholm")' },
+        { type: 'assistant', text: 'Stockholm har vuxit med cirka 15 000 invånare det senaste året till 975 000. Vädret idag: Delvis molnigt, 12°C.' },
+        { type: 'sources', sources: ['SCB', 'SMHI'] }
+      ]
     }
   ];
 
   const currentData = scenarios[currentScenario];
-  const isMultiAPI = currentData.apiName.includes('+');
-
-  // Memoized callbacks
-  const handleReasoningComplete = useCallback(() => {
-    setReasoningComplete(true);
-  }, []);
-
-  const handleResponseComplete = useCallback(() => {
-    setResponseComplete(true);
-  }, []);
 
   // Animation sequence
   useEffect(() => {
     if (!isInView) return;
 
     const sequence = async () => {
-      // Reset states
-      setPhase('question');
-      setReasoningComplete(false);
-      setResponseComplete(false);
+      setChatMessages([]);
+      setActiveAPIs([]);
 
-      // Question phase (1s)
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Reasoning phase (3s for typing)
-      setPhase('reasoning');
-      await new Promise(resolve => setTimeout(resolve, 3500));
-      
-      // API call phase (1.5s)
-      setPhase('api_call');
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Response phase (3s for typing)
-      setPhase('response');
-      await new Promise(resolve => setTimeout(resolve, 3500));
-      
-      // Sources phase (0.5s)
-      setPhase('sources');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Move to next scenario
+      // Add messages one by one
+      for (let i = 0; i < currentData.messages.length; i++) {
+        await new Promise(resolve => setTimeout(resolve, i === 0 ? 500 : 1500));
+        
+        const message = currentData.messages[i];
+        setChatMessages(prev => [...prev, message]);
+
+        // Activate APIs when api message appears
+        if (message.type === 'api') {
+          setActiveAPIs(currentData.activeTools);
+        }
+
+        // Scroll to bottom
+        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+
+      // Wait before next scenario
+      await new Promise(resolve => setTimeout(resolve, 3000));
       setCurrentScenario((prev) => (prev + 1) % scenarios.length);
     };
 
     sequence();
-  }, [currentScenario, isInView, scenarios.length]);
+  }, [currentScenario, isInView, currentData]);
 
   return (
     <section ref={sectionRef} className="relative py-24 md:py-32 bg-gradient-to-b from-white via-neutral-50/50 to-white dark:from-neutral-950 dark:via-neutral-900/50 dark:to-neutral-950 border-y border-neutral-100 dark:border-neutral-800/50 overflow-hidden">
@@ -542,7 +563,7 @@ const APIReasoningDemo = () => {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-gradient-to-r from-blue-500/5 via-purple-500/5 to-blue-500/5 dark:from-blue-500/10 dark:via-purple-500/10 dark:to-blue-500/10 rounded-full blur-3xl" />
       </div>
 
-      <div className="mx-auto max-w-5xl px-6">
+      <div className="mx-auto max-w-7xl px-6">
         {/* Header */}
         <motion.div 
           className="text-center mb-16"
@@ -558,96 +579,213 @@ const APIReasoningDemo = () => {
           </p>
         </motion.div>
 
-        {/* Demo Container */}
-        <motion.div 
-          key={currentScenario}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="relative"
-        >
-          {/* Question Card */}
+        {/* Two-Column Layout */}
+        <div className="grid md:grid-cols-[400px_1fr] gap-8">
+          
+          {/* Left: API Skill Tree */}
           <motion.div 
-            className="mb-8 p-6 rounded-2xl border-2 border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/20 backdrop-blur-sm"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: phase >= 'question' ? 1 : 0.3, scale: 1 }}
-            transition={{ duration: 0.4 }}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6 }}
+            className="relative"
           >
-            <div className="flex items-start gap-3">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-sm">
-                ?
-              </div>
-              <div className="flex-1">
-                <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide mb-1">Fråga</p>
-                <p className="text-lg font-medium text-neutral-900 dark:text-white">{currentData.question}</p>
+            <div className="sticky top-24 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md p-6 shadow-xl">
+              <h3 className="text-lg font-bold text-neutral-900 dark:text-white mb-1">Svenska Datakällor</h3>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-6">7 API-integrationer</p>
+              
+              {/* API Tools List */}
+              <div className="space-y-3">
+                {apiTools.map((tool) => {
+                  const isActive = activeAPIs.includes(tool.id);
+                  return (
+                    <motion.div
+                      key={tool.id}
+                      animate={{
+                        scale: isActive ? 1.02 : 1,
+                        borderColor: isActive ? 'rgb(34, 197, 94)' : 'rgb(229, 231, 235)'
+                      }}
+                      transition={{ duration: 0.3 }}
+                      className={cn(
+                        "relative p-3 rounded-xl border-2 transition-all duration-300",
+                        isActive 
+                          ? "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-500 shadow-lg shadow-emerald-500/20" 
+                          : "bg-neutral-50/50 dark:bg-neutral-800/50 border-neutral-200 dark:border-neutral-700"
+                      )}
+                    >
+                      {isActive && (
+                        <motion.div
+                          className="absolute -inset-0.5 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 rounded-xl blur-sm -z-10"
+                          animate={{ opacity: [0.5, 1, 0.5] }}
+                          transition={{ duration: 1.5, repeat: Infinity }}
+                        />
+                      )}
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <Image
+                            src={tool.logo}
+                            alt={tool.name}
+                            width={32}
+                            height={32}
+                            className="object-contain"
+                          />
+                          {isActive && (
+                            <motion.div
+                              className="absolute -inset-1 bg-emerald-500/30 rounded-full blur"
+                              animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0.8, 0.5] }}
+                              transition={{ duration: 1, repeat: Infinity }}
+                            />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className={cn(
+                              "text-sm font-semibold",
+                              isActive ? "text-emerald-700 dark:text-emerald-300" : "text-neutral-900 dark:text-white"
+                            )}>
+                              {tool.name}
+                            </p>
+                            {isActive && (
+                              <motion.span
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                className="flex items-center justify-center size-5 rounded-full bg-emerald-500 text-white text-xs font-bold"
+                              >
+                                ✓
+                              </motion.span>
+                            )}
+                          </div>
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-1">
+                            {tool.description}
+                          </p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
               </div>
             </div>
           </motion.div>
 
-          {/* Reasoning Card */}
-          {phase >= 'reasoning' && (
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-              className="mb-8 p-6 rounded-2xl border border-purple-200 dark:border-purple-800/50 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md"
-            >
-              <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 text-white flex items-center justify-center font-bold text-sm">
-                  ⚡
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide mb-2">OneSeek Reasoning</p>
-                  <div className="text-sm text-neutral-700 dark:text-neutral-300">
-                    <TypingText 
-                      text={currentData.reasoning}
-                      speed={20}
-                      onComplete={handleReasoningComplete}
-                    />
-                  </div>
+          {/* Right: Chat View */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6, delay: 0.2 }}
+            className="relative"
+          >
+            <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md shadow-xl overflow-hidden">
+              {/* Chat Header */}
+              <div className="border-b border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50/50 dark:bg-neutral-800/50">
+                <div className="flex items-center gap-3">
+                  <div className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <h4 className="text-sm font-semibold text-neutral-900 dark:text-white">OneSeek Agent Chat</h4>
+                  <span className="ml-auto text-xs text-neutral-500 dark:text-neutral-400">Live</span>
                 </div>
               </div>
-            </motion.div>
-          )}
 
-          {/* API Call Card */}
-          {phase >= 'api_call' && (
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-              className="mb-8 p-6 rounded-2xl border border-emerald-200 dark:border-emerald-800/50 bg-gradient-to-br from-emerald-50/80 to-teal-50/80 dark:from-emerald-950/30 dark:to-teal-950/30 backdrop-blur-md"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">API-anrop</p>
-                  <div className="flex items-center gap-3">
-                    <motion.div
-                      animate={{ scale: [1, 1.1, 1], opacity: [0.7, 1, 0.7] }}
-                      transition={{ duration: 1.5, repeat: Infinity }}
-                      className="relative"
-                    >
-                      <Image
-                        src={currentData.apiLogo}
-                        alt={currentData.apiName}
-                        width={32}
-                        height={32}
-                        className="object-contain"
-                      />
-                      <div className="absolute -inset-2 bg-emerald-500/20 rounded-full blur-md" />
-                    </motion.div>
-                    {isMultiAPI && currentData.apiLogo2 && (
+              {/* Chat Messages */}
+              <div className="h-[600px] overflow-y-auto p-6 space-y-4">
+                {chatMessages.map((message, index) => {
+                  if (message.type === 'user') {
+                    return (
                       <motion.div
-                        animate={{ scale: [1, 1.1, 1], opacity: [0.7, 1, 0.7] }}
-                        transition={{ duration: 1.5, repeat: Infinity, delay: 0.3 }}
-                        className="relative"
+                        key={index}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="flex justify-end"
                       >
-                        <Image
-                          src={currentData.apiLogo2}
-                          alt="API 2"
-                          width={32}
-                          height={32}
-                          className="object-contain"
+                        <div className="max-w-[80%] p-3 rounded-2xl rounded-tr-sm bg-blue-500 text-white text-sm">
+                          {message.text}
+                        </div>
+                      </motion.div>
+                    );
+                  }
+
+                  if (message.type === 'system') {
+                    return (
+                      <motion.div
+                        key={index}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="flex justify-start"
+                      >
+                        <div className="max-w-[80%] p-3 rounded-2xl rounded-tl-sm bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300 text-sm border border-purple-200 dark:border-purple-800">
+                          {message.text}
+                        </div>
+                      </motion.div>
+                    );
+                  }
+
+                  if (message.type === 'api') {
+                    return (
+                      <motion.div
+                        key={index}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.3 }}
+                        className="flex justify-center"
+                      >
+                        <div className="px-4 py-2 rounded-full bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 text-xs font-mono border border-emerald-200 dark:border-emerald-800">
+                          {message.text}
+                        </div>
+                      </motion.div>
+                    );
+                  }
+
+                  if (message.type === 'assistant') {
+                    return (
+                      <motion.div
+                        key={index}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="flex justify-start"
+                      >
+                        <div className="max-w-[80%] p-4 rounded-2xl rounded-tl-sm bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white text-sm border border-neutral-200 dark:border-neutral-700 shadow-sm">
+                          <TypingText text={message.text} speed={25} />
+                        </div>
+                      </motion.div>
+                    );
+                  }
+
+                  if (message.type === 'sources') {
+                    return (
+                      <motion.div
+                        key={index}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="flex justify-start ml-4"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-neutral-500 dark:text-neutral-400">Källor:</span>
+                          {message.sources.map((source: string, i: number) => (
+                            <span
+                              key={i}
+                              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800"
+                            >
+                              [{i + 1}] {source}
+                            </span>
+                          ))}
+                        </div>
+                      </motion.div>
+                    );
+                  }
+
+                  return null;
+                })}
+                <div ref={chatEndRef} />
+              </div>
+            </div>
+          </motion.div>
+
+        </div>
+      </div>
+    </section>
+  );
+};
                         />
                         <div className="absolute -inset-2 bg-emerald-500/20 rounded-full blur-md" />
                       </motion.div>
