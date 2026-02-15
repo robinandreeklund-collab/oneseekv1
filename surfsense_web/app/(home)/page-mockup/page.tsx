@@ -859,7 +859,398 @@ const CompareShowcase = () => {
   );
 };
 
-// ==================== SECTION 4: DETAILED LANGGRAPH FLOW ====================
+// ==================== SECTION 4: INTERACTIVE DEBATE DEMO ====================
+
+interface DebateModel {
+  id: string;
+  name: string;
+  logo: string;
+  argument: string;
+}
+
+interface DebateRound {
+  roundNumber: number;
+  roundName: string;
+  models: DebateModel[];
+  color: string;
+}
+
+const DebateDemo = () => {
+  const [currentRound, setCurrentRound] = useState(0);
+  const [currentModel, setCurrentModel] = useState(0);
+  const [phase, setPhase] = useState<'question' | 'round' | 'synthesis' | 'voting'>('question');
+  const [modelComplete, setModelComplete] = useState(false);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const isInView = useInView(sectionRef, { once: false, margin: "-100px" });
+
+  const question = "Bör Sverige införa en 4-dagars arbetsvecka?";
+
+  const rounds: DebateRound[] = [
+    {
+      roundNumber: 1,
+      roundName: "Inledande Argument",
+      color: "from-blue-500 to-cyan-500",
+      models: [
+        {
+          id: "gemini",
+          name: "Gemini",
+          logo: MODEL_LOGOS.gemini,
+          argument: "En 4-dagars arbetsvecka kan öka produktiviteten genom bättre work-life balance och minskad stress."
+        },
+        {
+          id: "gpt",
+          name: "ChatGPT",
+          logo: MODEL_LOGOS.gpt,
+          argument: "Studier visar att kortare arbetsveckor leder till högre medarbetarengagemang och bättre psykisk hälsa."
+        },
+        {
+          id: "deepseek",
+          name: "DeepSeek",
+          logo: MODEL_LOGOS.deepseek,
+          argument: "Vissa branscher kan få svårigheter med kontinuitet och kundservice vid kortare arbetsvecka."
+        },
+      ],
+    },
+    {
+      roundNumber: 2,
+      roundName: "Utveckling",
+      color: "from-purple-500 to-pink-500",
+      models: [
+        {
+          id: "claude",
+          name: "Claude",
+          logo: MODEL_LOGOS.claude,
+          argument: "Ekonomisk analys visar blandade resultat - vissa företag ser ökad effektivitet, andra ökade kostnader."
+        },
+        {
+          id: "grok",
+          name: "Grok",
+          logo: MODEL_LOGOS.grok,
+          argument: "Vi måste beakta svenska arbetsmarknadsmodellen och kollektivavtal vid eventuella förändringar."
+        },
+        {
+          id: "perplexity",
+          name: "Perplexity",
+          logo: MODEL_LOGOS.perplexity,
+          argument: "Pilotprojekt från Island och Nya Zeeland visar lovande resultat med bibehållen eller ökad produktivitet."
+        },
+      ],
+    },
+    {
+      roundNumber: 3,
+      roundName: "Syntes",
+      color: "from-orange-500 to-amber-500",
+      models: [
+        {
+          id: "qwen",
+          name: "Qwen",
+          logo: MODEL_LOGOS.qwen,
+          argument: "En gradvis övergång med branschspecifika lösningar verkar vara mest realistiskt för Sverige."
+        },
+        {
+          id: "gemini",
+          name: "Gemini",
+          logo: MODEL_LOGOS.gemini,
+          argument: "Viktigt att testa i pilotstudier innan nationell implementering för att identifiera utmaningar."
+        },
+        {
+          id: "gpt",
+          name: "ChatGPT (OneSeek)",
+          logo: MODEL_LOGOS.gpt,
+          argument: "SYNTES: 4-dagars arbetsvecka har potential men kräver noggrant övervägande. Rekommenderar pilotprogram i utvalda sektorer med tydliga KPI:er. Svenska arbetsmarknadsmodellen med stark facklig representation är en fördel för konstruktiv dialog. Fokusera på flexibilitet och medarbetarens behov."
+        },
+      ],
+    },
+  ];
+
+  const votes = [
+    { model: "Gemini", votes: 2, logo: MODEL_LOGOS.gemini },
+    { model: "ChatGPT", votes: 3, logo: MODEL_LOGOS.gpt, winner: true },
+    { model: "Claude", votes: 1, logo: MODEL_LOGOS.claude },
+    { model: "Qwen", votes: 0, logo: MODEL_LOGOS.qwen },
+  ];
+
+  const handleModelComplete = useCallback(() => {
+    setModelComplete(true);
+  }, []);
+
+  // Animation sequence
+  useEffect(() => {
+    if (!isInView) return;
+
+    const sequence = async () => {
+      // Question phase (2s)
+      setPhase('question');
+      setCurrentRound(0);
+      setCurrentModel(0);
+      setModelComplete(false);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Round 1 (15s - 3 models * 5s each)
+      setPhase('round');
+      setCurrentRound(0);
+      for (let i = 0; i < rounds[0].models.length; i++) {
+        setCurrentModel(i);
+        setModelComplete(false);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Round 2 (15s)
+      setCurrentRound(1);
+      for (let i = 0; i < rounds[1].models.length; i++) {
+        setCurrentModel(i);
+        setModelComplete(false);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Round 3 + Synthesis (18s)
+      setCurrentRound(2);
+      for (let i = 0; i < rounds[2].models.length; i++) {
+        setCurrentModel(i);
+        setModelComplete(false);
+        if (i === rounds[2].models.length - 1) {
+          // OneSeek synthesis - longer display
+          await new Promise(resolve => setTimeout(resolve, 7000));
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Voting phase (8s)
+      setPhase('voting');
+      await new Promise(resolve => setTimeout(resolve, 8000));
+
+      // Pause before loop (2s)
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    };
+
+    sequence();
+  }, [isInView]);
+
+  const currentRoundData = rounds[currentRound];
+
+  return (
+    <section 
+      ref={sectionRef} 
+      className="relative py-24 md:py-32 bg-gradient-to-b from-neutral-50 via-white to-neutral-50 dark:from-neutral-900 dark:via-neutral-950 dark:to-neutral-900 border-y border-neutral-100 dark:border-neutral-800/50 overflow-hidden"
+    >
+      {/* Background Effects */}
+      <div className="absolute inset-0 -z-10 overflow-hidden">
+        <div className="absolute top-1/3 left-1/4 w-[500px] h-[500px] bg-gradient-to-r from-purple-500/5 via-pink-500/5 to-orange-500/5 dark:from-purple-500/10 dark:via-pink-500/10 dark:to-orange-500/10 rounded-full blur-3xl" />
+      </div>
+
+      <div className="mx-auto max-w-6xl px-6">
+        {/* Header */}
+        <motion.div 
+          className="text-center mb-16"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+        >
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-950/30 dark:to-pink-950/30 border border-purple-100 dark:border-purple-800/50 mb-6">
+            <span className="text-sm font-semibold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600 dark:from-purple-400 dark:to-pink-400">
+              🎭 DEBATT-LÄGE
+            </span>
+          </div>
+          <h2 className="text-2xl md:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white mb-4">
+            AI-Modeller Diskuterar i 3 Rundor
+          </h2>
+          <p className="text-base md:text-lg text-neutral-600 dark:text-neutral-400">
+            Se hur modeller utvecklar argument, bygger på varandras svar, och röstar på bästa argumentet
+          </p>
+        </motion.div>
+
+        {/* Question Card */}
+        <motion.div 
+          className="mb-8 p-6 md:p-8 rounded-2xl border-2 border-purple-200 dark:border-purple-800/50 bg-gradient-to-br from-purple-50/80 to-pink-50/80 dark:from-purple-950/30 dark:to-pink-950/30 backdrop-blur-sm"
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.6 }}
+        >
+          <div className="flex items-center gap-4 mb-3">
+            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 text-white flex items-center justify-center font-bold text-lg">
+              ?
+            </div>
+            <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">Debattfråga</p>
+          </div>
+          <p className="text-xl md:text-2xl font-semibold text-neutral-900 dark:text-white">{question}</p>
+        </motion.div>
+
+        {/* Round Header */}
+        {phase === 'round' && (
+          <motion.div 
+            key={`round-${currentRound}`}
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="mb-6 flex items-center justify-center gap-3"
+          >
+            <div className={cn(
+              "px-6 py-3 rounded-full bg-gradient-to-r text-white font-bold shadow-lg",
+              `${currentRoundData.color}`
+            )}>
+              Round {currentRoundData.roundNumber}: {currentRoundData.roundName}
+            </div>
+          </motion.div>
+        )}
+
+        {/* Model Cards */}
+        {phase === 'round' && (
+          <div className="space-y-4">
+            {currentRoundData.models.map((model, idx) => (
+              <motion.div
+                key={`${currentRound}-${idx}`}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ 
+                  opacity: idx <= currentModel ? 1 : 0.3,
+                  x: 0 
+                }}
+                transition={{ duration: 0.5, delay: idx * 0.1 }}
+                className={cn(
+                  "p-6 rounded-2xl border backdrop-blur-md transition-all duration-500",
+                  idx === currentModel 
+                    ? "border-2 border-purple-400 dark:border-purple-600 bg-white dark:bg-neutral-900 shadow-lg shadow-purple-500/20"
+                    : "border-neutral-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/60"
+                )}
+              >
+                <div className="flex items-start gap-4">
+                  <motion.div
+                    animate={idx === currentModel ? { 
+                      scale: [1, 1.05, 1],
+                      rotate: [0, 5, -5, 0]
+                    } : {}}
+                    transition={{ duration: 2, repeat: Infinity }}
+                  >
+                    <Image
+                      src={model.logo}
+                      alt={model.name}
+                      width={48}
+                      height={48}
+                      className="rounded-lg"
+                    />
+                  </motion.div>
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-neutral-900 dark:text-white mb-2">{model.name}</p>
+                    <div className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+                      {idx === currentModel ? (
+                        <TypingText 
+                          text={model.argument}
+                          speed={30}
+                          onComplete={handleModelComplete}
+                        />
+                      ) : idx < currentModel ? (
+                        model.argument
+                      ) : (
+                        <span className="text-neutral-400 dark:text-neutral-600">Väntar...</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+
+        {/* Voting Phase */}
+        {phase === 'voting' && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="space-y-6"
+          >
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-950/30 dark:to-amber-950/30 border border-orange-100 dark:border-orange-800/50 mb-4">
+                <span className="text-sm font-semibold text-transparent bg-clip-text bg-gradient-to-r from-orange-600 to-amber-600 dark:from-orange-400 dark:to-amber-400">
+                  🗳️ RÖSTNING
+                </span>
+              </div>
+              <h3 className="text-xl md:text-2xl font-bold text-neutral-900 dark:text-white mb-2">
+                Externa Modeller Röstar
+              </h3>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                4 externa AI-modeller röstar på bästa argumentet från Round 3
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              {votes.map((vote, idx) => (
+                <motion.div
+                  key={vote.model}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.5, delay: idx * 0.2 }}
+                  className={cn(
+                    "p-5 rounded-xl border-2 backdrop-blur-md",
+                    vote.winner
+                      ? "border-amber-400 dark:border-amber-600 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30"
+                      : "border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80"
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <Image
+                        src={vote.logo}
+                        alt={vote.model}
+                        width={40}
+                        height={40}
+                        className="rounded-lg"
+                      />
+                      <div>
+                        <p className="text-sm font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+                          {vote.model}
+                          {vote.winner && <span className="text-lg">🏆</span>}
+                        </p>
+                        {vote.winner && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold">Vinnare</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <p className="text-2xl font-bold text-neutral-900 dark:text-white">{vote.votes}</p>
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400">röster</p>
+                      </div>
+                      <div className="w-24 h-3 bg-neutral-100 dark:bg-neutral-800 rounded-full overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${(vote.votes / 6) * 100}%` }}
+                          transition={{ duration: 1, delay: idx * 0.2 }}
+                          className={cn(
+                            "h-full rounded-full",
+                            vote.winner
+                              ? "bg-gradient-to-r from-amber-400 to-orange-500"
+                              : "bg-neutral-300 dark:bg-neutral-700"
+                          )}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 1 }}
+              className="mt-8 text-center p-4 rounded-xl bg-neutral-50 dark:bg-neutral-900/50 border border-neutral-200 dark:border-neutral-800"
+            >
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                ✓ ChatGPT vinner med mest balanserad syntes och konkreta rekommendationer
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </div>
+    </section>
+  );
+};
+
+// ==================== SECTION 5: DETAILED LANGGRAPH FLOW ====================
 
 // Node data structure matching actual LangGraph implementation
 interface FlowNode {
@@ -1440,6 +1831,7 @@ return (
 <HeroSection />
 <APIReasoningDemo />
 <CompareShowcase />
+<DebateDemo />
 <AgentFlowSection />
 <LLMProvidersSection />
 <CTASection />
