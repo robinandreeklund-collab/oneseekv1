@@ -61,6 +61,10 @@ from ..marketplace_tools import (
     MARKETPLACE_TOOL_DEFINITIONS,
     build_marketplace_tool_registry,
 )
+from ..skolverket_tools import (
+    SKOLVERKET_TOOL_DEFINITIONS,
+    build_skolverket_tool_registry,
+)
 from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
@@ -525,6 +529,49 @@ async def build_tools_async(
             )
         except Exception as e:
             logging.exception(f"Failed to build Marketplace tools: {e!s}")
+
+    # Build Skolverket tools if requested
+    if enabled_tools is not None:
+        skolverket_tools_to_build = [
+            tool_id
+            for tool_id in enabled_tools
+            if any(
+                tool_id == definition.tool_id
+                for definition in SKOLVERKET_TOOL_DEFINITIONS
+            )
+        ]
+    else:
+        # If no enabled_tools specified, build all Skolverket tools by default
+        skolverket_tools_to_build = [
+            definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS
+        ]
+
+    # Remove disabled tools
+    if disabled_tools:
+        skolverket_tools_to_build = [
+            tool_id for tool_id in skolverket_tools_to_build if tool_id not in disabled_tools
+        ]
+
+    if skolverket_tools_to_build and "connector_service" in dependencies:
+        try:
+            skolverket_registry = build_skolverket_tool_registry(
+                connector_service=dependencies["connector_service"],
+                search_space_id=dependencies.get("search_space_id"),
+                user_id=dependencies.get("user_id"),
+                thread_id=dependencies.get("thread_id"),
+            )
+
+            # Add tools from registry
+            for tool_id in skolverket_tools_to_build:
+                if tool_id in skolverket_registry:
+                    tools.append(skolverket_registry[tool_id])
+
+            logging.info(
+                f"Registered {len(skolverket_tools_to_build)} Skolverket tools: "
+                f"{skolverket_tools_to_build}"
+            )
+        except Exception as e:
+            logging.exception(f"Failed to build Skolverket tools: {e!s}")
 
     # Load MCP tools if requested and dependencies are available
     if (
