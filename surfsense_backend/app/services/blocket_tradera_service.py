@@ -343,7 +343,7 @@ class BlocketTraderaService:
             return {
                 "error": "Tradera API budget exceeded",
                 "remaining_calls": 0,
-                "reset_time": self.tradera_budget.state.reset_time.isoformat(),
+                "reset_time": self.tradera_budget.reset_time.isoformat(),
             }
 
         cache_key = f"tradera:search:{query}:{category_id}:{min_price}:{max_price}:{limit}"

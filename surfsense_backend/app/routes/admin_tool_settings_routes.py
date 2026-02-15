@@ -602,9 +602,7 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
         return "action", "media"
     if normalized_tool in {"libris_search", "jobad_links_search"}:
         return "action", "data"
-    if normalized_tool.startswith("bolagsverket_") or normalized_tool.startswith("riksdag_"):
-        return "action", "data"
-    if normalized_tool.startswith("marketplace_"):
+    if normalized_tool.startswith(("bolagsverket_", "riksdag_", "marketplace_")):
         return "action", "data"
     if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
         return "knowledge", "internal"
