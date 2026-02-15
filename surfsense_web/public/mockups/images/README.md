@@ -1,10 +1,34 @@
 # Compare Mode Mockup Screenshots
 
-This directory contains HTML files that demonstrate the Progressive Disclosure Pattern for Compare Mode.
+This directory contains HTML files and screenshots that demonstrate the Progressive Disclosure Pattern for Compare Mode.
 
-## Files
+## Screenshots
 
-### Component Screenshots (Light Mode)
+### 1. CompareSourcesBar Component
+![CompareSourcesBar](screenshots/01-compare-sources-bar.png)
+
+The collapsible summary bar showing all provider responses with:
+- Provider avatars with status indicators (green=success, red=error)
+- Response time and token count for each provider
+- Aggregate statistics (total tokens, CO₂, energy, fastest model)
+
+### 2. CompareDetailSheet Component
+![CompareDetailSheet](screenshots/02-compare-detail-sheet.png)
+
+The detailed view showing a single provider's full response:
+- Provider header with logo and metadata
+- 4-column stats grid (latency, tokens, CO₂, energy)
+- Full markdown-rendered response
+- Navigation controls (Previous/Next with dot indicators)
+
+### 3. Full Mockup Layout
+![Full Mockup](screenshots/03-full-mockup-light.png)
+
+Complete chat interface showing both components in action with ThinkingSteps and synthesized answer.
+
+## Interactive HTML Files
+
+### Component Mockups (Light Mode)
 - `screenshot-sources-bar-light.html` - CompareSourcesBar component with expanded provider avatars
 - `screenshot-detail-sheet-light.html` - CompareDetailSheet component showing full provider details
 
