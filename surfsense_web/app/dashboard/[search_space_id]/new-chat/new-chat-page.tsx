@@ -37,9 +37,16 @@ import {
 	TracePanelContext,
 	type TracePanelContextValue,
 } from "@/components/assistant-ui/trace-context";
+import {
+	CompareProvidersContext,
+	CompareDetailContext,
+	type CompareDetailState,
+} from "@/components/assistant-ui/compare-context";
 import { TraceSheet } from "@/components/assistant-ui/trace-sheet";
 import { ChatHeader } from "@/components/new-chat/chat-header";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
+import type { CompareProvider } from "@/components/tool-ui/compare-sources-bar";
+import { CompareDetailSheet } from "@/components/tool-ui/compare-detail-sheet";
 import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
 import { DisplayImageGalleryToolUI } from "@/components/tool-ui/image-gallery";
 import { GeoapifyStaticMapToolUI } from "@/components/tool-ui/geoapify-static-map";
@@ -281,6 +288,14 @@ export default function NewChatPage() {
 	);
 	const [isTraceOpen, setIsTraceOpen] = useState(false);
 	const [activeTraceMessageId, setActiveTraceMessageId] = useState<string | null>(null);
+	
+	// Store compare providers per message ID
+	const [messageCompareProviders, setMessageCompareProviders] = useState<
+		Map<string, CompareProvider[]>
+	>(new Map());
+	const [selectedCompareProviderKey, setSelectedCompareProviderKey] = useState<string | null>(null);
+	const [isCompareDetailSheetOpen, setIsCompareDetailSheetOpen] = useState(false);
+	
 	const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 	const traceLayoutRef = useRef<HTMLDivElement | null>(null);
 	const [traceMaxWidth, setTraceMaxWidth] = useState<number>(720);
@@ -963,6 +978,68 @@ export default function NewChatPage() {
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
+			
+			// Track compare tool calls for building CompareProvider data
+			const COMPARE_TOOL_NAMES = new Set([
+				"call_grok",
+				"call_claude",
+				"call_gpt",
+				"call_gemini",
+				"call_deepseek",
+				"call_perplexity",
+				"call_qwen",
+				"call_oneseek",
+			]);
+			const compareToolCalls = new Map<string, { toolName: string; result?: unknown }>();
+			
+			// Helper to estimate CO2 and energy from tokens
+			const estimateImpact = (tokens?: number) => {
+				if (!tokens) return { co2g: 0, energyWh: 0 };
+				const ENERGY_WH_PER_1K_TOKENS = 0.2;
+				const CO2G_PER_1K_TOKENS = 0.1;
+				const energyWh = (tokens / 1000) * ENERGY_WH_PER_1K_TOKENS;
+				const co2g = (tokens / 1000) * CO2G_PER_1K_TOKENS;
+				return { co2g, energyWh };
+			};
+			
+			// Helper to build CompareProvider array from tool calls
+			const buildCompareProviders = (): CompareProvider[] => {
+				const providers: CompareProvider[] = [];
+				let index = 0;
+				
+				for (const [toolCallId, toolCall] of compareToolCalls.entries()) {
+					const result = toolCall.result as Record<string, unknown> | undefined;
+					const status = result?.error ? "error" : result?.status === "error" ? "error" : "success";
+					const displayName = result?.model_display_name as string | undefined || 
+						toolCall.toolName.replace("call_", "").charAt(0).toUpperCase() + 
+						toolCall.toolName.replace("call_", "").slice(1);
+					
+					const tokens = (result?.usage as Record<string, unknown> | undefined)?.total_tokens as number | undefined;
+					const impact = estimateImpact(tokens);
+					
+					providers.push({
+						key: `${toolCall.toolName}-${index}`,
+						displayName,
+						status,
+						answer: result?.response as string | undefined,
+						error: result?.error as string | undefined,
+						latencyMs: result?.latency_ms as number | undefined,
+						tokens,
+						co2g: impact.co2g,
+						energyWh: impact.energyWh,
+						isEstimated: true,
+						toolName: toolCall.toolName,
+						model: result?.model as string | undefined,
+						provider: result?.provider as string | undefined,
+						modelString: result?.model_string as string | undefined,
+						apiBase: result?.api_base as string | undefined,
+					});
+					
+					index++;
+				}
+				
+				return providers;
+			};
 
 			// Ordered content parts to preserve inline tool call positions
 			// Each part is either a text segment or a tool call
@@ -1172,6 +1249,14 @@ export default function NewChatPage() {
 										case "tool-input-start":
 											// Add tool call inline - this breaks the current text segment
 											addToolCall(parsed.toolCallId, parsed.toolName, {});
+											
+											// Track compare tool calls
+											if (COMPARE_TOOL_NAMES.has(parsed.toolName)) {
+												compareToolCalls.set(parsed.toolCallId, {
+													toolName: parsed.toolName,
+												});
+											}
+											
 											setMessages((prev) =>
 												prev.map((m) =>
 													m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
@@ -1197,6 +1282,21 @@ export default function NewChatPage() {
 										case "tool-output-available": {
 											// Update the tool call with its result
 											updateToolCall(parsed.toolCallId, { result: parsed.output });
+											
+											// Track compare tool call results
+											if (compareToolCalls.has(parsed.toolCallId)) {
+												compareToolCalls.set(parsed.toolCallId, {
+													...compareToolCalls.get(parsed.toolCallId)!,
+													result: parsed.output,
+												});
+												// Update compare providers state
+												setMessageCompareProviders((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, buildCompareProviders());
+													return newMap;
+												});
+											}
+											
 											// Handle podcast-specific logic
 											if (parsed.output?.status === "pending" && parsed.output?.podcast_id) {
 												// Check if this is a podcast tool by looking at the content part
@@ -2141,60 +2241,86 @@ export default function NewChatPage() {
 			{!isPublicChat && <SaveMemoryToolUI />}
 			{!isPublicChat && <RecallMemoryToolUI />}
 			<TracePanelContext.Provider value={traceContextValue}>
-				<div
-					ref={traceLayoutRef}
-					className="flex h-[calc(100vh-64px)] overflow-hidden"
-				>
-					<div className="flex min-w-0 flex-1 flex-col">
-						<Thread
-							messageThinkingSteps={messageThinkingSteps}
-							messageContextStats={messageContextStats}
-							isPublicChat={isPublicChat}
-							header={
-								<div className="flex items-center justify-between gap-2">
-									<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />
-									{!isPublicChat && (
-										<Button
-											variant="outline"
-											size="sm"
-											className="gap-2"
-											disabled={!lastAssistantMessageId}
-											onClick={() => openTraceForMessage(lastAssistantMessageId)}
-										>
-											<Activity
-												className={cn("size-4", isTraceOpen ? "animate-pulse" : "")}
-											/>
-											Live-spårning
-										</Button>
-									)}
-								</div>
-							}
-						/>
-					</div>
-					{isInlineTrace && (
-						<TraceSheet
-							open={isTraceOpen}
-							onOpenChange={setIsTraceOpen}
-							messageId={activeTraceMessageId}
-							sessionId={activeTraceSessionId}
-							spans={activeTraceSpans}
-							variant="inline"
-							dock="right"
-							maxWidth={traceMaxWidth}
-						/>
-					)}
-				</div>
-				{!isInlineTrace && (
-					<TraceSheet
-						open={isTraceOpen}
-						onOpenChange={setIsTraceOpen}
-						messageId={activeTraceMessageId}
-						sessionId={activeTraceSessionId}
-						spans={activeTraceSpans}
-						variant="overlay"
-						dock="right"
-					/>
-				)}
+				<CompareProvidersContext.Provider value={messageCompareProviders}>
+					<CompareDetailContext.Provider
+						value={{
+							selectedProviderKey: selectedCompareProviderKey,
+							setSelectedProviderKey: setSelectedCompareProviderKey,
+							isDetailSheetOpen: isCompareDetailSheetOpen,
+							setIsDetailSheetOpen: setIsCompareDetailSheetOpen,
+						}}
+					>
+						<div
+							ref={traceLayoutRef}
+							className="flex h-[calc(100vh-64px)] overflow-hidden"
+						>
+							<div className="flex min-w-0 flex-1 flex-col">
+								<Thread
+									messageThinkingSteps={messageThinkingSteps}
+									messageContextStats={messageContextStats}
+									isPublicChat={isPublicChat}
+									header={
+										<div className="flex items-center justify-between gap-2">
+											<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />
+											{!isPublicChat && (
+												<Button
+													variant="outline"
+													size="sm"
+													className="gap-2"
+													disabled={!lastAssistantMessageId}
+													onClick={() => openTraceForMessage(lastAssistantMessageId)}
+												>
+													<Activity
+														className={cn("size-4", isTraceOpen ? "animate-pulse" : "")}
+													/>
+													Live-spårning
+												</Button>
+											)}
+										</div>
+									}
+								/>
+							</div>
+							{isInlineTrace && (
+								<TraceSheet
+									open={isTraceOpen}
+									onOpenChange={setIsTraceOpen}
+									messageId={activeTraceMessageId}
+									sessionId={activeTraceSessionId}
+									spans={activeTraceSpans}
+									variant="inline"
+									dock="right"
+									maxWidth={traceMaxWidth}
+								/>
+							)}
+						</div>
+						{!isInlineTrace && (
+							<TraceSheet
+								open={isTraceOpen}
+								onOpenChange={setIsTraceOpen}
+								messageId={activeTraceMessageId}
+								sessionId={activeTraceSessionId}
+								spans={activeTraceSpans}
+								variant="overlay"
+								dock="right"
+							/>
+						)}
+						
+						{/* CompareDetailSheet - global overlay */}
+						{selectedCompareProviderKey && messageCompareProviders.size > 0 && (
+							<CompareDetailSheet
+								open={isCompareDetailSheetOpen}
+								onOpenChange={setIsCompareDetailSheetOpen}
+								providers={
+									Array.from(messageCompareProviders.values())
+										.flatMap((providers) => providers)
+										.filter((p, i, arr) => arr.findIndex((x) => x.key === p.key) === i)
+								}
+								selectedProviderKey={selectedCompareProviderKey}
+								onSelectProvider={setSelectedCompareProviderKey}
+							/>
+						)}
+					</CompareDetailContext.Provider>
+				</CompareProvidersContext.Provider>
 			</TracePanelContext.Provider>
 		</AssistantRuntimeProvider>
 	);
