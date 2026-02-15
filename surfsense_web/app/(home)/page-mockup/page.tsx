@@ -602,40 +602,184 @@ const CompareShowcase = () => {
   );
 };
 
-// ==================== SECTION 4: AGENT FLOW ====================
+// ==================== SECTION 4: DETAILED LANGGRAPH FLOW ====================
+
+// Node data structure matching actual LangGraph implementation
+interface FlowNode {
+  id: string;
+  label: string;
+  description: string;
+  detailedDesc: string;
+  phase: "intent" | "planning" | "execution" | "validation" | "output";
+  type: "process" | "decision" | "hitl" | "terminal";
+  apiCalls?: string[];
+}
 
 const AgentFlowSection = () => {
-  const flowSteps = [
-    "Din fråga",
-    "→",
-    "Dispatcher",
-    "→",
-    "Agent Resolver",
-    "→",
-    "Executor",
-    "→",
-    "Synthesis",
-    "→",
-    "Svar",
+  const [currentStep, setCurrentStep] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [showTooltip, setShowTooltip] = useState<number | null>(null);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const isInView = useInView(sectionRef, { once: false, amount: 0.3 });
+
+  // 14 actual nodes from supervisor_agent.py
+  const nodes: FlowNode[] = [
+    {
+      id: "start",
+      label: "START",
+      description: "Användaren ställer en fråga",
+      detailedDesc: "Fråga: 'Hur många invånare har Stockholm?'",
+      phase: "intent",
+      type: "process",
+    },
+    {
+      id: "resolve_intent",
+      label: "Intent Router",
+      description: "Analyserar frågetyp",
+      detailedDesc: "Identifierar: Statistik-fråga → Behöver SCB-data",
+      phase: "intent",
+      type: "process",
+    },
+    {
+      id: "agent_resolver",
+      label: "Agent Resolver",
+      description: "Väljer specialiserade agenter",
+      detailedDesc: "Väljer: Statistics Agent, Knowledge Agent",
+      phase: "planning",
+      type: "process",
+    },
+    {
+      id: "planner",
+      label: "Planner",
+      description: "Skapar execution plan",
+      detailedDesc: "Plan: 1) Hämta SCB data 2) Verifiera med Tavily 3) Formatera svar",
+      phase: "planning",
+      type: "process",
+    },
+    {
+      id: "planner_hitl",
+      label: "Plan Approval",
+      description: "Human-in-the-loop checkpoint",
+      detailedDesc: "Kontrollerar om planen är rimlig innan körning",
+      phase: "planning",
+      type: "hitl",
+    },
+    {
+      id: "tool_resolver",
+      label: "Tool Resolver",
+      description: "Mappar agenter till verktyg",
+      detailedDesc: "Statistics Agent → get_population_data från SCB",
+      phase: "execution",
+      type: "process",
+    },
+    {
+      id: "execution_hitl",
+      label: "Execution Approval",
+      description: "Godkänn verktygsanrop",
+      detailedDesc: "Tillåt anrop till SCB API och Tavily",
+      phase: "execution",
+      type: "hitl",
+    },
+    {
+      id: "executor",
+      label: "Executor",
+      description: "LLM genererar tool calls",
+      detailedDesc: "Skapar strukturerade API-anrop med parametrar",
+      phase: "execution",
+      type: "process",
+    },
+    {
+      id: "tools",
+      label: "External APIs",
+      description: "Kör verktyg och hämtar data",
+      detailedDesc: "Aktiva anrop till externa tjänster",
+      phase: "execution",
+      type: "process",
+      apiCalls: ["SCB Befolkningsdata", "Tavily Verifiering", "SMHI Väderdata"],
+    },
+    {
+      id: "post_tools",
+      label: "Post-Tools",
+      description: "Bearbetar verktygsresultat",
+      detailedDesc: "Formaterar JSON-svar från SCB till läsbar text",
+      phase: "execution",
+      type: "process",
+    },
+    {
+      id: "orchestration_guard",
+      label: "Safety Guard",
+      description: "Säkerhetskontroller",
+      detailedDesc: "Verifierar: Max 3 hopp ✓, Ingen loop ✓, Token limit OK ✓",
+      phase: "validation",
+      type: "process",
+    },
+    {
+      id: "critic",
+      label: "Critic",
+      description: "Validerar svar kvalitet",
+      detailedDesc: "Beslut: ok | needs_more | replan",
+      phase: "validation",
+      type: "decision",
+    },
+    {
+      id: "synthesizer",
+      label: "Synthesizer",
+      description: "Förfinar svar med citeringar",
+      detailedDesc: "Sammanställer data från alla källor med [1] [2] referenser",
+      phase: "output",
+      type: "process",
+    },
+    {
+      id: "end",
+      label: "END",
+      description: "Returnerar verifierat svar",
+      detailedDesc: "Svar: 'Stockholm har 975 551 invånare (SCB 2023) [1]'",
+      phase: "output",
+      type: "terminal",
+    },
   ];
 
-  const agents = [
-    "Knowledge",
-    "Weather",
-    "Trafik",
-    "Statistics",
-    "Kartor",
-    "Bolag",
-    "Riksdagen",
-    "Browser",
-    "Media",
-    "Code",
-    "Action",
-    "Synthesis",
-  ];
+  // Auto-play logic
+  useEffect(() => {
+    if (isInView && !isPlaying) {
+      setIsPlaying(true);
+    }
+  }, [isInView]);
+
+  useEffect(() => {
+    if (isPlaying && currentStep < nodes.length - 1) {
+      const timer = setTimeout(() => {
+        setCurrentStep(prev => prev + 1);
+      }, 2000);
+      return () => clearTimeout(timer);
+    } else if (currentStep >= nodes.length - 1) {
+      setIsPlaying(false);
+    }
+  }, [isPlaying, currentStep, nodes.length]);
+
+  const getPhaseColor = (phase: string) => {
+    switch (phase) {
+      case "intent": return "from-purple-500 to-pink-500";
+      case "planning": return "from-blue-500 to-cyan-500";
+      case "execution": return "from-emerald-500 to-teal-500";
+      case "validation": return "from-amber-500 to-orange-500";
+      case "output": return "from-orange-500 to-red-500";
+      default: return "from-neutral-500 to-neutral-600";
+    }
+  };
+
+  const getNodeShape = (type: string) => {
+    if (type === "decision") return "clip-path-diamond";
+    if (type === "hitl") return "rounded-full";
+    if (type === "terminal") return "rounded-2xl";
+    return "rounded-xl";
+  };
 
   return (
-    <section className="py-24 md:py-32 bg-gradient-to-b from-transparent via-purple-500/5 to-transparent dark:via-purple-500/10 relative overflow-hidden">
+    <section 
+      ref={sectionRef}
+      className="py-24 md:py-32 bg-gradient-to-b from-transparent via-purple-500/5 to-transparent dark:via-purple-500/10 relative overflow-hidden"
+    >
       {/* Background Gradient Elements */}
       <div className="absolute inset-0 -z-10 overflow-hidden">
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-gradient-to-br from-purple-500/5 via-pink-500/5 to-orange-500/5 dark:from-purple-500/10 dark:via-pink-500/10 dark:to-orange-500/10 rounded-full blur-3xl" />
@@ -644,82 +788,171 @@ const AgentFlowSection = () => {
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         <motion.div 
           className="text-center mb-16"
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 1, y: 0 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
         >
           <span className="text-sm font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider">ARKITEKTUR</span>
           <h2 className="mt-2 text-3xl md:text-5xl font-bold tracking-tight text-black dark:text-white">
-            Se hela flödet — från fråga till svar
+            14-Nods LangGraph Pipeline — Exakt som koden
           </h2>
           <p className="mt-4 text-lg text-neutral-500 dark:text-neutral-400">
-            Fullständig transparens i varje steg
+            Se hur varje fråga flödar genom systemet, med alla beslutspunkter och API-anrop
           </p>
         </motion.div>
 
-        {/* Flow Diagram */}
-        <motion.div 
-          className="max-w-5xl mx-auto mb-16"
-          initial={{ opacity: 0 }}
-          whileInView={{ opacity: 1 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.6 }}
-        >
-          <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3">
-            {flowSteps.map((step, index) => (
-              <motion.div
-                key={index}
-                initial={{ opacity: 0, scale: 0.8 }}
-                whileInView={{ opacity: 1, scale: 1 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.05, duration: 0.3 }}
-                whileHover={step !== "→" ? { scale: 1.05, y: -2 } : {}}
-                className={cn(
-                  step === "→" 
-                    ? "text-neutral-400 dark:text-neutral-600 text-lg font-semibold" 
-                    : "rounded-xl border border-neutral-200/60 dark:border-neutral-800/60 bg-gradient-to-br from-white/80 to-neutral-50/80 dark:from-neutral-900/60 dark:to-neutral-900/40 backdrop-blur-md px-4 py-2 text-sm font-semibold text-neutral-900 dark:text-white shadow-md hover:shadow-lg dark:hover:shadow-purple-900/20 hover:border-purple-300/60 dark:hover:border-purple-700/60 transition-all duration-300"
-                )}
-              >
-                {step}
-              </motion.div>
-            ))}
+        {/* Playback Controls */}
+        <div className="max-w-4xl mx-auto mb-12 flex items-center justify-center gap-4">
+          <button
+            onClick={() => setIsPlaying(!isPlaying)}
+            className="px-6 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-300"
+          >
+            {isPlaying ? "⏸ Pause" : "▶ Play"}
+          </button>
+          <button
+            onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+            disabled={currentStep === 0}
+            className="px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white/50 dark:bg-neutral-900/50 backdrop-blur-md disabled:opacity-30 hover:bg-white/80 dark:hover:bg-neutral-900/80 transition-all"
+          >
+            ← Prev
+          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-neutral-600 dark:text-neutral-400">
+              Step {currentStep + 1} / {nodes.length}
+            </span>
           </div>
-        </motion.div>
+          <button
+            onClick={() => setCurrentStep(Math.min(nodes.length - 1, currentStep + 1))}
+            disabled={currentStep === nodes.length - 1}
+            className="px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white/50 dark:bg-neutral-900/50 backdrop-blur-md disabled:opacity-30 hover:bg-white/80 dark:hover:bg-neutral-900/80 transition-all"
+          >
+            Next →
+          </button>
+        </div>
 
-        {/* Agent Grid */}
-        <motion.div 
-          className="rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60 bg-gradient-to-br from-white/50 to-neutral-50/50 dark:from-neutral-900/50 dark:to-neutral-900/30 backdrop-blur-lg p-8 shadow-xl hover:shadow-2xl dark:hover:shadow-purple-900/30 transition-all duration-300 group relative overflow-hidden"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ delay: 0.2, duration: 0.6 }}
-        >
-          {/* Glow effect */}
-          <div className="absolute -inset-1 bg-gradient-to-r from-purple-500/0 via-pink-500/0 to-purple-500/0 group-hover:from-purple-500/20 group-hover:via-pink-500/20 group-hover:to-purple-500/20 rounded-2xl opacity-0 group-hover:opacity-100 blur-xl transition-all duration-500 -z-10" />
+        {/* Node Flow Visualization */}
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {nodes.map((node, index) => {
+              const isActive = index === currentStep;
+              const isPast = index < currentStep;
+              const isFuture = index > currentStep;
 
-          <h3 className="text-center text-sm font-bold uppercase tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600 dark:from-purple-400 dark:to-pink-400 mb-8">
-            12 Specialiserade Agenter
-          </h3>
+              return (
+                <motion.div
+                  key={node.id}
+                  initial={{ opacity: 1, scale: 1 }}
+                  animate={{
+                    opacity: isFuture ? 0.4 : 1,
+                    scale: isActive ? 1.05 : 1,
+                  }}
+                  transition={{ duration: 0.3 }}
+                  onMouseEnter={() => setShowTooltip(index)}
+                  onMouseLeave={() => setShowTooltip(null)}
+                  className="relative"
+                >
+                  <div
+                    className={cn(
+                      "relative p-4 border-2 backdrop-blur-lg transition-all duration-300 overflow-hidden cursor-pointer",
+                      getNodeShape(node.type),
+                      isActive
+                        ? `border-transparent bg-gradient-to-br ${getPhaseColor(node.phase)} shadow-2xl`
+                        : isPast
+                        ? "border-neutral-300 dark:border-neutral-700 bg-white/60 dark:bg-neutral-900/60"
+                        : "border-neutral-200 dark:border-neutral-800 bg-white/40 dark:bg-neutral-900/40"
+                    )}
+                  >
+                    {/* Shine effect on active node */}
+                    {isActive && (
+                      <motion.div
+                        className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
+                        animate={{
+                          x: ["-100%", "200%"],
+                        }}
+                        transition={{
+                          duration: 2,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                      />
+                    )}
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-            {agents.map((agent, index) => (
-              <motion.div
-                key={agent}
-                initial={{ opacity: 0, scale: 0.8 }}
-                whileInView={{ opacity: 1, scale: 1 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.04, duration: 0.3 }}
-                whileHover={{ scale: 1.06, y: -4 }}
-                className="group/agent relative rounded-xl border border-neutral-200/60 dark:border-neutral-800/60 bg-gradient-to-br from-white/70 to-neutral-50/70 dark:from-neutral-900/70 dark:to-neutral-900/50 backdrop-blur-sm p-4 text-center text-xs font-semibold text-neutral-900 dark:text-white shadow-md hover:shadow-lg dark:hover:shadow-purple-900/20 hover:border-purple-300/60 dark:hover:border-purple-700/60 transition-all duration-300 cursor-pointer overflow-hidden"
-              >
-                {/* Subtle glow on hover */}
-                <div className="absolute inset-0 bg-gradient-to-br from-purple-500/0 to-pink-500/0 group-hover/agent:from-purple-500/10 group-hover/agent:to-pink-500/10 transition-all duration-300 rounded-xl" />
-                <span className="relative z-10">{agent}</span>
-              </motion.div>
-            ))}
+                    <div className="relative z-10">
+                      <div className={cn(
+                        "text-xs font-bold uppercase tracking-wider mb-1",
+                        isActive ? "text-white" : "text-neutral-500 dark:text-neutral-400"
+                      )}>
+                        {node.phase}
+                      </div>
+                      <div className={cn(
+                        "text-sm font-semibold mb-1",
+                        isActive ? "text-white" : "text-neutral-900 dark:text-white"
+                      )}>
+                        {node.label}
+                      </div>
+                      <div className={cn(
+                        "text-xs",
+                        isActive ? "text-white/90" : "text-neutral-600 dark:text-neutral-400"
+                      )}>
+                        {node.description}
+                      </div>
+                    </div>
+
+                    {/* Tooltip */}
+                    {showTooltip === index && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 px-4 py-3 rounded-xl bg-neutral-900 dark:bg-neutral-800 text-white text-xs font-medium shadow-2xl border border-neutral-700 whitespace-nowrap max-w-xs"
+                      >
+                        <div className="font-semibold mb-1">{node.label}</div>
+                        <div className="text-neutral-300">{node.detailedDesc}</div>
+                        {node.apiCalls && (
+                          <div className="mt-2 pt-2 border-t border-neutral-700">
+                            <div className="text-[10px] text-neutral-400 mb-1">API Calls:</div>
+                            {node.apiCalls.map((api, i) => (
+                              <div key={i} className="text-[10px] text-green-400">⏳ {api}</div>
+                            ))}
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+                  </div>
+
+                  {/* Connection arrow */}
+                  {index < nodes.length - 1 && index % 4 !== 3 && (
+                    <div className="absolute top-1/2 -right-2 -translate-y-1/2 text-neutral-400 dark:text-neutral-600 text-lg z-20">
+                      →
+                    </div>
+                  )}
+                </motion.div>
+              );
+            })}
           </div>
-        </motion.div>
+
+          {/* Conditional Routing Explanation */}
+          <motion.div
+            className="mt-12 p-6 rounded-2xl border border-amber-200 dark:border-amber-800/50 bg-gradient-to-br from-amber-50/50 to-orange-50/50 dark:from-amber-950/30 dark:to-orange-950/30 backdrop-blur-md"
+            initial={{ opacity: 1, y: 0 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+          >
+            <div className="flex items-start gap-3">
+              <div className="size-8 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center flex-shrink-0 text-white font-bold">
+                ◆
+              </div>
+              <div>
+                <h4 className="font-semibold text-neutral-900 dark:text-white mb-2">Villkorlig Routing från Critic</h4>
+                <div className="text-sm text-neutral-700 dark:text-neutral-300 space-y-1">
+                  <div>✓ <span className="font-semibold">ok</span> → Går till Synthesizer (slutför)</div>
+                  <div>⟲ <span className="font-semibold">needs_more</span> → Går tillbaka till Tool Resolver (hämta mer data)</div>
+                  <div>↺ <span className="font-semibold">replan</span> → Går tillbaka till Planner (skapa ny plan)</div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
       </div>
     </section>
   );
