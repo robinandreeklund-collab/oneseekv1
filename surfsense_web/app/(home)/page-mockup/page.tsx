@@ -463,7 +463,7 @@ const APIReasoningDemo = () => {
   const [activeAPIs, setActiveAPIs] = useState<string[]>([]);
   const sectionRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const isInView = useInView(sectionRef, { once: false, margin: "-100px" });
+  const isInView = useInView(sectionRef, { once: true, margin: "-100px" });
 
   // API Tools Tree
   const apiTools: APITool[] = [
@@ -549,12 +549,8 @@ const APIReasoningDemo = () => {
           setActiveAPIs(data.activeTools);
         }
 
-        // Scroll to bottom within chat container only (don't scroll page)
-        chatEndRef.current?.scrollIntoView({ 
-          behavior: 'smooth',
-          block: 'nearest',
-          inline: 'nearest'
-        });
+        // Chat container handles scroll automatically with overflow-y-auto
+        // NO scrollIntoView to prevent page jumping
       }
 
       // Wait before next scenario
@@ -954,7 +950,7 @@ const DebateDemo = () => {
   const [phase, setPhase] = useState<'question' | 'round' | 'synthesis' | 'voting'>('question');
   const [modelComplete, setModelComplete] = useState(false);
   const sectionRef = useRef<HTMLDivElement>(null);
-  const isInView = useInView(sectionRef, { once: false, margin: "-100px" });
+  const isInView = useInView(sectionRef, { once: true, margin: "-100px" });
 
   const question = "Bör Sverige införa en 4-dagars arbetsvecka?";
 
@@ -1347,7 +1343,7 @@ const RadicalTransparencySection = () => {
   const [activeStep, setActiveStep] = useState<number | null>(null);
   const sectionRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const isInView = useInView(sectionRef, { once: false, amount: 0.3 });
+  const isInView = useInView(sectionRef, { once: true, amount: 0.3 });
 
   // Demo scenarios
   const scenarios = [
@@ -1628,7 +1624,7 @@ const AgentFlowSection = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showTooltip, setShowTooltip] = useState<number | null>(null);
   const sectionRef = useRef<HTMLDivElement>(null);
-  const isInView = useInView(sectionRef, { once: false, amount: 0.3 });
+  const isInView = useInView(sectionRef, { once: true, amount: 0.3 });
 
   // 14 actual nodes from supervisor_agent.py
   const nodes: FlowNode[] = [
