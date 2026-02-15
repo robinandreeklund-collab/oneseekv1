@@ -343,12 +343,26 @@ def _build_followup_context_block(
         return ""
     if previous.lower() == current.lower():
         return ""
+    
+    # Check if previous query was a compare request
+    previous_was_compare = previous.strip().lower().startswith("/compare")
+    
     context = (
         "<followup_context>\n"
         "Detta är en uppföljningsfråga. Tolka den med samma ämne, metod och verktygsnivå "
         "som föregående användarfråga om inget annat uttryckligen anges.\n"
         f"Föregående användarfråga: {previous}\n"
     )
+    
+    # Add special context for compare followups
+    if previous_was_compare:
+        context += (
+            "\nFöregående fråga var en jämförelse (/compare) mellan flera AI-modeller. "
+            "Modellernas svar finns tillgängliga som TOOL_OUTPUT-dokument i kunskapsbasen. "
+            "Du kan söka efter dem med search_knowledge_base för att ge sammanhangsberoende svar "
+            "baserade på jämförelsen.\n"
+        )
+    
     if _FOLLOWUP_COMPARE_RE.search(current.lower()):
         previous_answers = _extract_previous_assistant_answers_from_history(
             routing_history, limit=2

@@ -3919,74 +3919,99 @@ async def create_supervisor_agent(
 
     graph_builder = StateGraph(SupervisorState)
     graph_builder.add_node("resolve_intent", RunnableCallable(None, resolve_intent_node))
-    graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
-    graph_builder.add_node("planner", RunnableCallable(None, planner_node))
-    graph_builder.add_node(
-        "planner_hitl_gate",
-        RunnableCallable(None, planner_hitl_gate_node),
-    )
-    graph_builder.add_node("tool_resolver", RunnableCallable(None, tool_resolver_node))
-    graph_builder.add_node(
-        "execution_hitl_gate",
-        RunnableCallable(None, execution_hitl_gate_node),
-    )
-    graph_builder.add_node("executor", RunnableCallable(call_model, acall_model))
-    graph_builder.add_node("tools", tool_node)
-    graph_builder.add_node("post_tools", RunnableCallable(None, post_tools))
-    graph_builder.add_node(
-        "orchestration_guard",
-        RunnableCallable(None, orchestration_guard),
-    )
-    graph_builder.add_node("critic", RunnableCallable(None, critic_node))
-    graph_builder.add_node(
-        "synthesis_hitl",
-        RunnableCallable(None, synthesis_hitl_gate_node),
-    )
-    graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
-    graph_builder.set_entry_point("resolve_intent")
-    graph_builder.add_conditional_edges(
-        "resolve_intent",
-        route_after_intent,
-        path_map=[
-            "agent_resolver",
-            "planner",
+    
+    # Conditional graph structure based on compare_mode
+    if compare_mode:
+        # Compare mode: use deterministic compare subgraph
+        from app.agents.new_chat.compare_executor import (
+            compare_fan_out,
+            compare_collect,
+            compare_tavily,
+            compare_synthesizer,
+        )
+        
+        graph_builder.add_node("compare_fan_out", RunnableCallable(None, compare_fan_out))
+        graph_builder.add_node("compare_collect", RunnableCallable(None, compare_collect))
+        graph_builder.add_node("compare_tavily", RunnableCallable(None, compare_tavily))
+        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synthesizer))
+        
+        # Direct routing: resolve_intent -> compare_fan_out -> ... -> END
+        graph_builder.set_entry_point("resolve_intent")
+        graph_builder.add_edge("resolve_intent", "compare_fan_out")
+        graph_builder.add_edge("compare_fan_out", "compare_collect")
+        graph_builder.add_edge("compare_collect", "compare_tavily")
+        graph_builder.add_edge("compare_tavily", "compare_synthesizer")
+        graph_builder.add_edge("compare_synthesizer", END)
+    else:
+        # Normal mode: use standard supervisor pipeline
+        graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
+        graph_builder.add_node("planner", RunnableCallable(None, planner_node))
+        graph_builder.add_node(
             "planner_hitl_gate",
-            "tool_resolver",
+            RunnableCallable(None, planner_hitl_gate_node),
+        )
+        graph_builder.add_node("tool_resolver", RunnableCallable(None, tool_resolver_node))
+        graph_builder.add_node(
             "execution_hitl_gate",
+            RunnableCallable(None, execution_hitl_gate_node),
+        )
+        graph_builder.add_node("executor", RunnableCallable(call_model, acall_model))
+        graph_builder.add_node("tools", tool_node)
+        graph_builder.add_node("post_tools", RunnableCallable(None, post_tools))
+        graph_builder.add_node(
+            "orchestration_guard",
+            RunnableCallable(None, orchestration_guard),
+        )
+        graph_builder.add_node("critic", RunnableCallable(None, critic_node))
+        graph_builder.add_node(
             "synthesis_hitl",
-        ],
-    )
-    graph_builder.add_edge("agent_resolver", "planner")
-    graph_builder.add_edge("planner", "planner_hitl_gate")
-    graph_builder.add_conditional_edges(
-        "planner_hitl_gate",
-        planner_hitl_should_continue,
-        path_map=["tool_resolver", END],
-    )
-    graph_builder.add_edge("tool_resolver", "execution_hitl_gate")
-    graph_builder.add_conditional_edges(
-        "execution_hitl_gate",
-        execution_hitl_should_continue,
-        path_map=["executor", END],
-    )
-    graph_builder.add_conditional_edges(
-        "executor",
-        executor_should_continue,
-        path_map=["tools", "critic"],
-    )
-    graph_builder.add_edge("tools", "post_tools")
-    graph_builder.add_edge("post_tools", "orchestration_guard")
-    graph_builder.add_edge("orchestration_guard", "critic")
-    graph_builder.add_conditional_edges(
-        "critic",
-        critic_should_continue,
-        path_map=["synthesis_hitl", "tool_resolver", "planner"],
-    )
-    graph_builder.add_conditional_edges(
-        "synthesis_hitl",
-        synthesis_hitl_should_continue,
-        path_map=["synthesizer", END],
-    )
-    graph_builder.add_edge("synthesizer", END)
+            RunnableCallable(None, synthesis_hitl_gate_node),
+        )
+        graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
+        graph_builder.set_entry_point("resolve_intent")
+        graph_builder.add_conditional_edges(
+            "resolve_intent",
+            route_after_intent,
+            path_map=[
+                "agent_resolver",
+                "planner",
+                "planner_hitl_gate",
+                "tool_resolver",
+                "execution_hitl_gate",
+                "synthesis_hitl",
+            ],
+        )
+        graph_builder.add_edge("agent_resolver", "planner")
+        graph_builder.add_edge("planner", "planner_hitl_gate")
+        graph_builder.add_conditional_edges(
+            "planner_hitl_gate",
+            planner_hitl_should_continue,
+            path_map=["tool_resolver", END],
+        )
+        graph_builder.add_edge("tool_resolver", "execution_hitl_gate")
+        graph_builder.add_conditional_edges(
+            "execution_hitl_gate",
+            execution_hitl_should_continue,
+            path_map=["executor", END],
+        )
+        graph_builder.add_conditional_edges(
+            "executor",
+            executor_should_continue,
+            path_map=["tools", "critic"],
+        )
+        graph_builder.add_edge("tools", "post_tools")
+        graph_builder.add_edge("post_tools", "orchestration_guard")
+        graph_builder.add_edge("orchestration_guard", "critic")
+        graph_builder.add_conditional_edges(
+            "critic",
+            critic_should_continue,
+            path_map=["synthesis_hitl", "tool_resolver", "planner"],
+        )
+        graph_builder.add_conditional_edges(
+            "synthesis_hitl",
+            synthesis_hitl_should_continue,
+            path_map=["synthesizer", END],
+        )
+        graph_builder.add_edge("synthesizer", END)
 
     return graph_builder.compile(checkpointer=checkpointer, name="supervisor-agent")

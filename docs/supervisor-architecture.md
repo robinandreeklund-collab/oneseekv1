@@ -95,19 +95,35 @@ Namespace-first retrieval keeps context small and reduces tool mismatch.
 ```mermaid
 flowchart TD
     A[User message] --> B{Is /compare?}
-    B -- yes --> C[stream_compare_chat]
+    B -- yes --> C[stream_new_chat with compare_mode=True]
     B -- no --> D[stream_new_chat]
 
     D --> E[dispatch_route]
+    C --> E
     E -->|smalltalk| S[Smalltalk DeepAgent]
     E -->|knowledge/action/statistics| G[Supervisor Agent]
+    E -->|compare| COMP[Supervisor Agent compare_mode=True]
 
-    subgraph SUP["Supervisor"]
-        G0[retrieve_agents] --> G1[write_todos plan]
-        G1 --> G2[call_agent(worker)]
-        G2 --> G3[reflect_on_progress]
-        G3 --> G4[final response]
+    subgraph SUP["Supervisor (Normal Mode)"]
+        G0[resolve_intent] --> G1[agent_resolver]
+        G1 --> G2[planner]
+        G2 --> G3[tool_resolver]
+        G3 --> G4[executor]
+        G4 --> G5[critic]
+        G5 --> G6[synthesizer]
+        G6 --> G7[final response]
     end
+
+    subgraph COMPARE["Supervisor (Compare Mode - Deterministic)"]
+        C0[resolve_intent] --> C1[compare_fan_out]
+        C1 -->|Parallel external model calls| C2[compare_collect]
+        C2 --> C3[compare_tavily]
+        C3 --> C4[compare_synthesizer]
+        C4 --> C5[final response]
+    end
+
+    G --> SUP
+    COMP --> COMPARE
 
     subgraph WORK["Workers (Bigtool)"]
         W1[Knowledge Worker]
@@ -117,7 +133,7 @@ flowchart TD
         W5[Browser Worker]
     end
 
-    G2 --> WORK
+    G4 --> WORK
 
     subgraph STORE["Global Tool Store"]
         T1[tools/knowledge/*]
@@ -127,7 +143,41 @@ flowchart TD
     end
 
     WORK --> STORE
+    
+    subgraph EXT["External Models (Compare)"]
+        E1[Grok]
+        E2[Claude]
+        E3[GPT]
+        E4[Gemini]
+        E5[DeepSeek]
+        E6[Perplexity]
+        E7[Qwen]
+    end
+    
+    C1 --> EXT
 ```
+
+**Compare Flow Details:**
+
+The compare subgraph is deterministic and bypasses the normal planner/executor/critic pipeline:
+
+1. **compare_fan_out**: Calls ALL configured external models in parallel using `asyncio.gather`
+   - Creates AIMessage with tool_calls for each model
+   - Executes all model calls simultaneously
+   - Ingests results via ConnectorService for citations
+   - Emits ToolMessages for frontend model card rendering
+
+2. **compare_collect**: Validates completeness (success/failure counts)
+
+3. **compare_tavily**: Optional Swedish web enrichment (placeholder for future)
+
+4. **compare_synthesizer**: Produces final synthesis using DEFAULT_COMPARE_ANALYSIS_PROMPT
+
+**Key Differences from Legacy Compare:**
+- No LLM decision-making for tool calls (deterministic orchestration)
+- Proper AIMessage/ToolMessage structure for UI compatibility
+- Runs within supervisor graph (not separate flow)
+- Consistent citations and streaming
 
 ---
 
