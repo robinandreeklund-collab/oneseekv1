@@ -549,8 +549,12 @@ const APIReasoningDemo = () => {
           setActiveAPIs(data.activeTools);
         }
 
-        // Scroll to bottom
-        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        // Scroll to bottom within chat container only (don't scroll page)
+        chatEndRef.current?.scrollIntoView({ 
+          behavior: 'smooth',
+          block: 'nearest',
+          inline: 'nearest'
+        });
       }
 
       // Wait before next scenario
