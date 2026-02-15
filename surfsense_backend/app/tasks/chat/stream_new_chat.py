@@ -1110,9 +1110,15 @@ async def stream_new_chat(
             conversation_history=routing_history,
             intent_definitions=intent_definitions,
         )
-        if route == Route.COMPARE and compare_query:
-            user_query = compare_query
+        
+        # Sync compare_mode with route decision
+        # Router can identify compare requests even without /compare prefix
+        if route == Route.COMPARE:
+            compare_mode = True
+            if compare_query:
+                user_query = compare_query
             followup_context_block = ""
+        
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
