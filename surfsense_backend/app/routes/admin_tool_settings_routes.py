@@ -18,6 +18,7 @@ from app.agents.new_chat.bigtool_store import (
     clear_tool_caches,
     smart_retrieve_tools_with_breakdown,
 )
+from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
 from app.db import (
     GlobalToolEvaluationStageRun,
     GlobalToolEvaluationRun,
@@ -216,6 +217,12 @@ _SWEDISH_DIACRITIC_REPLACEMENTS: list[tuple[str, str]] = [
     (r"\bfraga(n|r|s)?\b", r"fråga\1"),
 ]
 _DIFFICULTY_LABELS = ("lätt", "medel", "svår")
+_SKOLVERKET_TOOL_CATEGORY_BY_ID: dict[str, str] = {
+    str(definition.tool_id).strip().lower(): str(definition.category or "").strip().lower()
+    for definition in SKOLVERKET_TOOL_DEFINITIONS
+    if str(definition.tool_id or "").strip()
+}
+_SKOLVERKET_TOOL_IDS = set(_SKOLVERKET_TOOL_CATEGORY_BY_ID.keys())
 
 
 def _utcnow_iso() -> str:
@@ -450,6 +457,8 @@ def _slugify(value: str, fallback: str = "eval") -> str:
 
 def _provider_for_tool_id(tool_id: str) -> str:
     normalized = str(tool_id or "").strip().lower()
+    if normalized in _SKOLVERKET_TOOL_IDS:
+        return "skolverket"
     if normalized.startswith("scb_"):
         return "scb"
     if normalized.startswith("riksdag_"):
@@ -525,6 +534,7 @@ def _is_mixed_weather_question(question: str) -> bool:
 def _provider_display_name(provider_key: str) -> str:
     mapping = {
         "scb": "SCB",
+        "skolverket": "Skolverket",
         "riksdagen": "Riksdagen",
         "trafikverket": "Trafikverket",
         "bolagsverket": "Bolagsverket",
@@ -547,6 +557,14 @@ def _provider_display_name(provider_key: str) -> str:
 def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[str, str | None]:
     normalized_tool = str(tool_id or "").strip().lower()
     normalized_category = str(category or "").strip().lower()
+    if normalized_tool in _SKOLVERKET_TOOL_IDS:
+        skolverket_category = _SKOLVERKET_TOOL_CATEGORY_BY_ID.get(
+            normalized_tool,
+            normalized_category,
+        )
+        if skolverket_category == "statistics":
+            return "statistics", None
+        return "knowledge", "external"
     if normalized_tool.startswith("scb_") or normalized_category in {"statistics", "scb_statistics"}:
         return "statistics", None
     if normalized_tool in {"trafiklab_route"} or _is_weather_domain_tool(
@@ -767,7 +785,18 @@ def _normalize_single_eval_test_for_consistency(
     except Exception:
         retrieved_ids = []
     retrieved_ids = [str(tool_id).strip() for tool_id in retrieved_ids if str(tool_id).strip()]
-    top_retrieved_tool = retrieved_ids[0] if retrieved_ids else None
+    constraint_candidates = _dedupe_non_empty([*acceptable_tools, *normalized_allowed_tools])
+    constraint_set = set(constraint_candidates)
+    constrained_retrieved_ids = (
+        [tool_id for tool_id in retrieved_ids if tool_id in constraint_set]
+        if constraint_set
+        else []
+    )
+    top_retrieved_tool = (
+        constrained_retrieved_ids[0]
+        if constrained_retrieved_ids
+        else (retrieved_ids[0] if retrieved_ids else None)
+    )
 
     if not expected_tool and len(acceptable_tools) == 1:
         expected_tool = acceptable_tools[0]
@@ -800,12 +829,20 @@ def _normalize_single_eval_test_for_consistency(
             None,
         )
         if expected_rank is None or expected_rank > 5:
-            warnings.append(
-                f"Frågan matchar retrieval-top1 ({top_retrieved_tool}) tydligare än expected.tool ({expected_tool}); normaliserad."
-            )
-            expected_tool = top_retrieved_tool
-            normalized_expected["tool"] = expected_tool
-            normalized = True
+            expected_provider = _provider_for_tool_id(expected_tool)
+            top_provider = _provider_for_tool_id(top_retrieved_tool)
+            if constraint_set and expected_tool in constraint_set:
+                warnings.append(
+                    f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool}; behöll expected.tool p.g.a. allowed/acceptable constraints."
+                )
+            elif expected_provider != top_provider:
+                warnings.append(
+                    f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool}; behöll expected.tool p.g.a. provider-skillnad ({expected_provider} vs {top_provider})."
+                )
+            else:
+                warnings.append(
+                    f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool} (rank {expected_rank}); behöll expected.tool."
+                )
         else:
             warnings.append(
                 f"Potential mismatch: expected.tool={expected_tool} men retrieval-top1={top_retrieved_tool} (rank {expected_rank})."
@@ -1092,6 +1129,11 @@ def _sweden_focus_hint_for_entry(entry: Any) -> str:
             "Frågan ska handla om svensk politik/riksdagen, till exempel "
             "motioner, interpellationer eller utskott."
         )
+    if tool_id in _SKOLVERKET_TOOL_IDS:
+        return (
+            "Frågan ska gälla svensk utbildning/skolverkets data, till exempel "
+            "kursplaner, ämnen, skolformer eller utbildningsstatistik."
+        )
     if _is_weather_domain_tool(tool_id, category):
         return "Frågan ska gälla svenskt väder i svenska städer, gärna med vägkoppling."
     if sub_route == "travel" or "trafik" in tool_id or "trafik" in category:
@@ -1124,6 +1166,16 @@ def _build_swedish_question_for_entry(entry: Any, index: int) -> str:
         return (
             f"Vilka riksdagsdokument handlar om {topic} i Sverige "
             "under det senaste året?"
+        )
+    if tool_id in _SKOLVERKET_TOOL_IDS:
+        if route == "statistics":
+            return (
+                f"Vilken statistik finns om gymnasieutbildningar i {city} "
+                f"och {region} enligt Skolverket?"
+            )
+        return (
+            f"Hitta information från Skolverket om kursplaner eller utbildningar i {city} "
+            "för en elev som vill jämföra alternativ."
         )
     if sub_route == "travel" or "trafik" in tool_id or "trafik" in category:
         if _is_weather_domain_tool(tool_id, category) or "halka" in tool_id:

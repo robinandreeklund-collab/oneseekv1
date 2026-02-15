@@ -18,6 +18,7 @@ from app.agents.new_chat.bigtool_store import (
 from app.agents.new_chat.dispatcher import dispatch_route_with_trace
 from app.agents.new_chat.knowledge_router import KnowledgeRoute, dispatch_knowledge_route
 from app.agents.new_chat.routing import Route
+from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
 
 _SUGGESTION_STOPWORDS = {
     "a",
@@ -116,6 +117,12 @@ _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
     "synthesis": "Cross-source compare/synthesis tasks.",
 }
 _DIFFICULTY_ORDER = ("lätt", "medel", "svår")
+_SKOLVERKET_TOOL_CATEGORY_BY_ID: dict[str, str] = {
+    str(definition.tool_id).strip().lower(): str(definition.category or "").strip().lower()
+    for definition in SKOLVERKET_TOOL_DEFINITIONS
+    if str(definition.tool_id or "").strip()
+}
+_SKOLVERKET_TOOL_IDS = set(_SKOLVERKET_TOOL_CATEGORY_BY_ID.keys())
 
 
 def compute_metadata_version_hash(tool_index: list[ToolIndexEntry]) -> str:
@@ -465,6 +472,11 @@ def _agent_for_tool(
 ) -> str | None:
     tool = str(tool_id or "").strip().lower()
     cat = str(category or "").strip().lower()
+    if tool in _SKOLVERKET_TOOL_IDS:
+        skolverket_category = _SKOLVERKET_TOOL_CATEGORY_BY_ID.get(tool, cat)
+        if skolverket_category == "statistics":
+            return "statistics"
+        return "knowledge"
     if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
         return "statistics"
     if tool.startswith("riksdag_") or cat.startswith("riksdag"):
@@ -551,6 +563,11 @@ def _route_sub_route_for_tool(
 ) -> tuple[str | None, str | None]:
     tool = str(tool_id or "").strip().lower()
     cat = str(category or "").strip().lower()
+    if tool in _SKOLVERKET_TOOL_IDS:
+        skolverket_category = _SKOLVERKET_TOOL_CATEGORY_BY_ID.get(tool, cat)
+        if skolverket_category == "statistics":
+            return Route.STATISTICS.value, None
+        return Route.KNOWLEDGE.value, KnowledgeRoute.EXTERNAL.value
     if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
         return Route.STATISTICS.value, None
     if tool == "trafiklab_route" or _is_weather_domain_tool(tool, cat):

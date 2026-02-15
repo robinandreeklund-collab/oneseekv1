@@ -476,7 +476,7 @@ export const toolEvaluationResponse = z.object({
 			warned_tests: z.number().int().default(0),
 			normalized_tests: z.number().int().default(0),
 		})
-		default({ total_tests: 0, warned_tests: 0, normalized_tests: 0 }),
+		.default({ total_tests: 0, warned_tests: 0, normalized_tests: 0 }),
 	comparison: toolEvaluationRunComparison.nullable().optional(),
 	metadata_version_hash: z.string(),
 	search_space_id: z.number(),

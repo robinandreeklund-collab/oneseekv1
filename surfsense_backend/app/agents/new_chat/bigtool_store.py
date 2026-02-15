@@ -15,6 +15,10 @@ from app.agents.new_chat.kolada_tools import (
     KOLADA_TOOL_DEFINITIONS,
     build_kolada_tool_registry,
 )
+from app.agents.new_chat.skolverket_tools import (
+    SKOLVERKET_TOOL_DEFINITIONS,
+    build_skolverket_tool_registry,
+)
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
@@ -25,6 +29,11 @@ from app.agents.new_chat.tools.registry import (
     build_tools_async,
     get_default_enabled_tools,
 )
+
+_SKOLVERKET_DEFINITION_BY_ID = {
+    definition.tool_id: definition for definition in SKOLVERKET_TOOL_DEFINITIONS
+}
+_SKOLVERKET_TOOL_IDS = set(_SKOLVERKET_DEFINITION_BY_ID.keys())
 
 
 @dataclass(frozen=True)
@@ -253,6 +262,20 @@ def _namespace_for_kolada_tool(tool_id: str) -> tuple[str, ...]:
     return ("tools", "statistics", "kolada")
 
 
+def _namespace_for_skolverket_tool(tool_id: str) -> tuple[str, ...]:
+    definition = _SKOLVERKET_DEFINITION_BY_ID.get(tool_id)
+    if definition:
+        category = str(definition.category or "").strip().lower()
+        if category == "statistics":
+            return ("tools", "statistics", "skolverket")
+        if category == "knowledge":
+            return ("tools", "knowledge", "skolverket")
+        if category == "general":
+            return ("tools", "general", "skolverket")
+        return ("tools", "knowledge", "skolverket")
+    return ("tools", "knowledge", "skolverket")
+
+
 def _namespace_for_bolagsverket_tool(tool_id: str) -> tuple[str, ...]:
     parts = tool_id.split("_")
     if len(parts) >= 2:
@@ -303,6 +326,8 @@ def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
         return _namespace_for_scb_tool(tool_id)
     if tool_id.startswith("kolada_"):
         return _namespace_for_kolada_tool(tool_id)
+    if tool_id in _SKOLVERKET_TOOL_IDS:
+        return _namespace_for_skolverket_tool(tool_id)
     if tool_id.startswith("bolagsverket_"):
         return _namespace_for_bolagsverket_tool(tool_id)
     if tool_id.startswith("trafikverket_"):
@@ -310,6 +335,179 @@ def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
     if tool_id.startswith("geoapify_"):
         return _namespace_for_geoapify_tool(tool_id)
     return TOOL_NAMESPACE_OVERRIDES.get(tool_id, ("tools", "general"))
+
+
+def _tool_metadata(tool: BaseTool) -> dict[str, Any]:
+    metadata = getattr(tool, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _is_mcp_tool(tool: BaseTool) -> bool:
+    metadata = _tool_metadata(tool)
+    return bool(metadata.get("mcp_transport"))
+
+
+_MCP_KEYWORD_STOPWORDS = {
+    "tool",
+    "tools",
+    "get",
+    "search",
+    "list",
+    "fetch",
+    "call",
+    "data",
+    "api",
+    "mcp",
+    "for",
+    "the",
+    "with",
+    "and",
+}
+_MCP_SKOLVERKET_KNOWLEDGE_HINTS = (
+    "skolverket",
+    "syllabus",
+    "curriculum",
+    "laroplan",
+    "läroplan",
+    "amnesplan",
+    "ämnesplan",
+    "kursplan",
+    "course",
+    "subject",
+    "program",
+    "utbildning",
+    "education",
+    "skolenhet",
+    "school unit",
+    "komvux",
+    "vuxenutbildning",
+)
+_MCP_SKOLVERKET_STATISTICS_HINTS = (
+    "statistik",
+    "statistics",
+    "salsa",
+    "count",
+    "andel",
+    "proportion",
+)
+
+
+def _contains_any_marker(text: str, markers: Iterable[str]) -> bool:
+    lowered = str(text or "").lower()
+    return any(str(marker).lower() in lowered for marker in markers if str(marker).strip())
+
+
+def _namespace_for_mcp_tool(
+    tool_id: str,
+    *,
+    metadata: dict[str, Any],
+    description: str,
+) -> tuple[str, ...]:
+    connector_name = str(metadata.get("mcp_connector_name") or "")
+    connector_url = str(metadata.get("mcp_url") or "")
+    normalized_blob = " ".join(
+        [
+            _normalize_text(tool_id.replace("_", " ")),
+            _normalize_text(description),
+            _normalize_text(connector_name),
+            _normalize_text(connector_url),
+        ]
+    )
+
+    if _contains_any_marker(
+        normalized_blob,
+        ("skolverket", "skolverket mcp", "skolverket api"),
+    ):
+        if _contains_any_marker(normalized_blob, _MCP_SKOLVERKET_STATISTICS_HINTS):
+            return ("tools", "statistics", "skolverket")
+        if _contains_any_marker(normalized_blob, _MCP_SKOLVERKET_KNOWLEDGE_HINTS):
+            return ("tools", "knowledge", "skolverket")
+        return ("tools", "knowledge", "skolverket")
+
+    if _contains_any_marker(normalized_blob, ("statistics", "statistik", "timeseries")):
+        return ("tools", "statistics", "mcp")
+    if _contains_any_marker(normalized_blob, ("weather", "väder", "vader")):
+        return ("tools", "weather", "mcp")
+    if _contains_any_marker(normalized_blob, ("traffic", "trafik", "route", "resa")):
+        return ("tools", "action", "mcp")
+    return ("tools", "knowledge", "mcp")
+
+
+def _keywords_from_text(text: str, *, max_keywords: int = 18) -> list[str]:
+    results: list[str] = []
+    for token in _tokenize(text):
+        if len(token) < 3:
+            continue
+        if token in _MCP_KEYWORD_STOPWORDS:
+            continue
+        results.append(token)
+        if len(results) >= max(1, int(max_keywords)):
+            break
+    return results
+
+
+def _unique_keywords(
+    keywords: Iterable[str],
+    *,
+    max_keywords: int = 20,
+) -> list[str]:
+    results: list[str] = []
+    seen: set[str] = set()
+    for raw in keywords:
+        token = str(raw or "").strip()
+        if not token:
+            continue
+        normalized = _normalize_text(token)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        results.append(token)
+        if len(results) >= max(1, int(max_keywords)):
+            break
+    return results
+
+
+def _keywords_for_mcp_tool(
+    tool_id: str,
+    *,
+    metadata: dict[str, Any],
+    description: str,
+) -> list[str]:
+    connector_name = str(metadata.get("mcp_connector_name") or "")
+    connector_url = str(metadata.get("mcp_url") or "")
+    generated: list[str] = []
+    generated.extend(_keywords_from_text(tool_id.replace("_", " ")))
+    generated.extend(_keywords_from_text(description))
+    generated.extend(_keywords_from_text(connector_name))
+    generated.extend(_keywords_from_text(connector_url))
+
+    if _contains_any_marker(
+        f"{tool_id} {description} {connector_name} {connector_url}",
+        ("skolverket",),
+    ):
+        generated.extend(
+            [
+                "skolverket",
+                "skola",
+                "kurs",
+                "amne",
+                "ämne",
+                "laroplan",
+                "läroplan",
+                "utbildning",
+                "komvux",
+                "gymnasium",
+                "vuxenutbildning",
+            ]
+        )
+
+    return _unique_keywords(generated, max_keywords=24)
+
+
+def _category_for_namespace(namespace: tuple[str, ...]) -> str:
+    if len(namespace) >= 2 and namespace[1]:
+        return str(namespace[1])
+    return "general"
 
 
 def _match_namespace(entry_namespace: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
@@ -826,6 +1024,13 @@ async def build_global_tool_registry(
         thread_id=dependencies.get("thread_id"),
     )
     registry.update(kolada_registry)
+    skolverket_registry = build_skolverket_tool_registry(
+        connector_service=dependencies["connector_service"],
+        search_space_id=dependencies["search_space_id"],
+        user_id=dependencies.get("user_id"),
+        thread_id=dependencies.get("thread_id"),
+    )
+    registry.update(skolverket_registry)
     return registry
 
 
@@ -836,6 +1041,9 @@ def build_tool_index(
 ) -> list[ToolIndexEntry]:
     scb_by_id = {definition.tool_id: definition for definition in SCB_TOOL_DEFINITIONS}
     kolada_by_id = {definition.tool_id: definition for definition in KOLADA_TOOL_DEFINITIONS}
+    skolverket_by_id = {
+        definition.tool_id: definition for definition in SKOLVERKET_TOOL_DEFINITIONS
+    }
     bolagsverket_by_id = {
         definition.tool_id: definition for definition in BOLAGSVERKET_TOOL_DEFINITIONS
     }
@@ -851,12 +1059,14 @@ def build_tool_index(
     entries: list[ToolIndexEntry] = []
 
     for tool_id, tool in tool_registry.items():
+        namespace = namespace_for_tool(tool_id)
         description = getattr(tool, "description", "") or ""
         keywords = TOOL_KEYWORDS.get(tool_id, [])
         example_queries: list[str] = []
         category = "weather" if _is_weather_tool(tool_id) else "general"
         base_path: str | None = None
         name = getattr(tool, "name", tool_id)
+        metadata = _tool_metadata(tool)
         if tool_id in scb_by_id:
             definition = scb_by_id[tool_id]
             description = definition.description
@@ -872,6 +1082,13 @@ def build_tool_index(
             category = "statistics"
             # Use operating_area as base_path for Kolada tools, default to empty string if None
             base_path = definition.operating_area if definition.operating_area else ""
+        if tool_id in skolverket_by_id:
+            definition = skolverket_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = str(definition.category or "knowledge")
+            base_path = "https://api.skolverket.se"
         if tool_id in bolagsverket_by_id:
             definition = bolagsverket_by_id[tool_id]
             description = definition.description
@@ -940,9 +1157,23 @@ def build_tool_index(
             "trafikverket_vader",
         }:
             category = "weather"
+        if _is_mcp_tool(tool):
+            namespace = _namespace_for_mcp_tool(
+                tool_id,
+                metadata=metadata,
+                description=description,
+            )
+            inferred_keywords = _keywords_for_mcp_tool(
+                tool_id,
+                metadata=metadata,
+                description=description,
+            )
+            keywords = _unique_keywords([*keywords, *inferred_keywords], max_keywords=24)
+            if str(category or "").strip().lower() in {"", "general"}:
+                category = _category_for_namespace(namespace)
         entry = ToolIndexEntry(
             tool_id=tool_id,
-            namespace=namespace_for_tool(tool_id),
+            namespace=namespace,
             name=name,
             description=description,
             keywords=keywords,

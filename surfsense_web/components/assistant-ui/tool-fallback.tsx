@@ -1,8 +1,92 @@
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon, XCircleIcon } from "lucide-react";
+import Image from "next/image";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+const SKOLVERKET_TOOL_NAMES = new Set([
+	"search_subjects",
+	"get_subject_details",
+	"get_subject_versions",
+	"search_courses",
+	"get_course_details",
+	"get_course_versions",
+	"search_programs",
+	"get_program_details",
+	"get_program_versions",
+	"search_curriculums",
+	"get_curriculum_details",
+	"get_curriculum_versions",
+	"get_school_types",
+	"get_types_of_syllabus",
+	"get_subject_and_course_codes",
+	"get_study_path_codes",
+	"get_api_info",
+	"search_school_units",
+	"get_school_unit_details",
+	"get_school_units_by_status",
+	"search_school_units_by_name",
+	"search_adult_education",
+	"get_adult_education_details",
+	"filter_adult_education_by_distance",
+	"filter_adult_education_by_pace",
+	"get_education_areas",
+	"get_directions",
+	"search_education_events",
+	"count_education_events",
+	"count_adult_education_events",
+	"get_adult_education_areas_v4",
+	"search_school_units_v4",
+	"get_school_unit_education_events",
+	"get_school_types_v4",
+	"get_geographical_areas_v4",
+	"get_programs_v4",
+	"get_school_unit_documents",
+	"get_school_unit_statistics",
+	"get_national_statistics",
+	"get_program_statistics",
+	"health_check",
+]);
+
+const containsSkolverketMarker = (value: unknown): boolean => {
+	if (value === null || value === undefined) return false;
+	const normalized = String(value)
+		.toLowerCase()
+		.replaceAll("å", "a")
+		.replaceAll("ä", "a")
+		.replaceAll("ö", "o");
+	return normalized.includes("skolverket");
+};
+
+const isSkolverketResultPayload = (value: unknown): boolean => {
+	if (value === null || value === undefined) return false;
+	if (containsSkolverketMarker(value)) return true;
+
+	if (typeof value === "string") {
+		try {
+			const parsed = JSON.parse(value);
+			return isSkolverketResultPayload(parsed);
+		} catch {
+			return false;
+		}
+	}
+
+	if (typeof value === "object") {
+		const payload = value as Record<string, unknown>;
+		if (containsSkolverketMarker(payload.source)) return true;
+		if (containsSkolverketMarker(payload.skolverket_tool)) return true;
+		if (containsSkolverketMarker(payload.skolverket_category)) return true;
+	}
+
+	return false;
+};
+
+const isSkolverketToolName = (toolName: string | undefined): boolean => {
+	if (!toolName) return false;
+	if (SKOLVERKET_TOOL_NAMES.has(toolName)) return true;
+	return containsSkolverketMarker(toolName);
+};
 
 export const ToolFallback: ToolCallMessagePartComponent = ({
 	toolName,
@@ -11,6 +95,7 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
 	status,
 }) => {
 	const [isCollapsed, setIsCollapsed] = useState(true);
+	const showSkolverketBranding = isSkolverketToolName(toolName) || isSkolverketResultPayload(result);
 
 	const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
 	const cancelledReason =
@@ -42,6 +127,18 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
 					{isCancelled ? "Avbrutet verktyg: " : "Använt verktyg: "}
 					<b>{toolName}</b>
 				</p>
+				{showSkolverketBranding && (
+					<div className="inline-flex items-center gap-1.5 rounded-full border border-[#005A9C]/30 bg-[#005A9C]/10 px-2 py-0.5 text-[#005A9C]">
+						<Image
+							src="/connectors/skolverket.svg"
+							alt="Skolverket"
+							width={12}
+							height={12}
+							className="h-3 w-3"
+						/>
+						<span className="text-[11px] font-semibold">Skolverket</span>
+					</div>
+				)}
 				<Button onClick={() => setIsCollapsed(!isCollapsed)}>
 					{isCollapsed ? <ChevronUpIcon /> : <ChevronDownIcon />}
 				</Button>
