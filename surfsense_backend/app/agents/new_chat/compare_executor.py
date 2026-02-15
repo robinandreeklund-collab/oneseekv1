@@ -18,8 +18,6 @@ import uuid
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.tools import tool
-from langgraph_bigtool.tools import InjectedState
 
 from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.system_prompt import append_datetime_context
@@ -27,7 +25,6 @@ from app.agents.new_chat.tools.external_models import (
     EXTERNAL_MODEL_SPECS,
     call_external_model,
 )
-from app.services.connector_service import ConnectorService
 
 
 async def compare_fan_out(state: dict[str, Any]) -> dict[str, Any]:
@@ -78,8 +75,8 @@ async def compare_fan_out(state: dict[str, Any]) -> dict[str, Any]:
         """Call a single external model and return (tool_name, tool_call_id, result)"""
         try:
             result = await call_external_model(
+                spec=spec,
                 query=user_query,
-                config_id=spec.config_id,
             )
             return spec.tool_name, tool_call_id, result
         except Exception as e:
@@ -96,42 +93,9 @@ async def compare_fan_out(state: dict[str, Any]) -> dict[str, Any]:
     ]
     results = await asyncio.gather(*tasks, return_exceptions=False)
     
-    # Ingest successful results into connector service for citations
-    connector_service = None
-    user_id = state.get("user_id")
-    thread_id = state.get("thread_id")
-    search_space_id = state.get("origin_search_space_id")
-    
-    if user_id:
-        try:
-            # Create connector service instance for ingesting results
-            from sqlalchemy.ext.asyncio import AsyncSession
-            from app.db import async_session_maker
-            
-            async with async_session_maker() as session:
-                connector_service = ConnectorService(session, user_id=user_id)
-                
-                for tool_name, _, result in results:
-                    if result.get("status") == "success" and result.get("response"):
-                        try:
-                            await connector_service.ingest_tool_output(
-                                tool_name=tool_name,
-                                tool_output=result,
-                                title=f"{result.get('model_display_name', tool_name)}: {user_query[:100]}",
-                                metadata={
-                                    "source": "COMPARE_MODEL",
-                                    "provider": result.get("provider"),
-                                    "model": result.get("model"),
-                                },
-                                user_id=user_id,
-                                origin_search_space_id=search_space_id,
-                                thread_id=thread_id,
-                            )
-                        except Exception as e:
-                            # Don't fail if ingestion fails, just log
-                            print(f"Failed to ingest {tool_name} output: {e}")
-        except Exception as e:
-            print(f"Failed to create connector service: {e}")
+    # Note: Tool output ingestion for citations is handled by the supervisor's
+    # post_tools node, which has access to the full dependency context
+    # (db_session, connector_service, user_id, etc.)
     
     # Create ToolMessage for each result
     tool_messages = []
