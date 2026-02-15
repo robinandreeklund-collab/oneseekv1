@@ -848,8 +848,14 @@ const CompareShowcase = () => {
               {/* Glow effect */}
               <div className="absolute -inset-1 bg-gradient-to-r from-blue-500/0 via-purple-500/0 to-blue-500/0 group-hover:from-blue-500/20 group-hover:via-purple-500/20 group-hover:to-blue-500/20 rounded-2xl opacity-0 group-hover:opacity-100 blur-xl transition-all duration-500 -z-10" />
 
-              <div className="size-8 rounded-md mx-auto border border-neutral-200/60 dark:border-neutral-800/60 bg-gradient-to-br from-white to-neutral-50 dark:from-neutral-900 dark:to-neutral-950 flex items-center justify-center p-1 shadow-sm group-hover:shadow-md transition-shadow">
-                <span className="text-xs font-bold bg-clip-text text-transparent bg-gradient-to-br from-blue-600 to-purple-600 dark:from-blue-400 dark:to-purple-400">{model.name[0]}</span>
+              <div className="size-10 rounded-md mx-auto border border-neutral-200/60 dark:border-neutral-800/60 bg-white dark:bg-neutral-900 flex items-center justify-center p-1.5 shadow-sm group-hover:shadow-md transition-shadow">
+                <Image
+                  src={MODEL_LOGOS[model.id]}
+                  alt={model.name}
+                  width={40}
+                  height={40}
+                  className="object-contain"
+                />
               </div>
 
               <h4 className="mt-3 text-sm font-semibold text-center text-neutral-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{model.name}</h4>
