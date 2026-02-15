@@ -113,19 +113,33 @@ const TypingText = ({ text, speed = 30, onComplete }: { text: string; speed?: nu
 const SideBySideComparison = () => {
   const [currentPair, setCurrentPair] = useState(0);
   const [typingComplete, setTypingComplete] = useState([false, false]);
+  const [showSynthesis, setShowSynthesis] = useState(false);
+  const [synthesisComplete, setSynthesisComplete] = useState(false);
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true });
 
-  // Cycle through model pairs
+  // Show synthesis after both models complete
   useEffect(() => {
-    if (typingComplete[0] && typingComplete[1]) {
+    if (typingComplete[0] && typingComplete[1] && !showSynthesis) {
+      const timeout = setTimeout(() => {
+        setShowSynthesis(true);
+      }, 800);
+      return () => clearTimeout(timeout);
+    }
+  }, [typingComplete, showSynthesis]);
+
+  // Cycle through model pairs after synthesis completes
+  useEffect(() => {
+    if (synthesisComplete) {
       const timeout = setTimeout(() => {
         setCurrentPair((prev) => (prev + 2) % DEMO_RESPONSES.length);
         setTypingComplete([false, false]);
-      }, 3000);
+        setShowSynthesis(false);
+        setSynthesisComplete(false);
+      }, 2000);
       return () => clearTimeout(timeout);
     }
-  }, [typingComplete]);
+  }, [synthesisComplete]);
 
   const leftModel = DEMO_RESPONSES[currentPair];
   const rightModel = DEMO_RESPONSES[(currentPair + 1) % DEMO_RESPONSES.length];
@@ -230,6 +244,68 @@ const SideBySideComparison = () => {
               </div>
             </motion.div>
           </div>
+
+          {/* OneSeek Synthesis Phase */}
+          {showSynthesis && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+              className="mt-6"
+            >
+              <div className="relative rounded-2xl bg-gradient-to-br from-orange-500/10 via-amber-500/10 to-orange-500/10 dark:from-orange-500/20 dark:via-amber-500/20 dark:to-orange-500/20 border border-orange-200/50 dark:border-orange-800/50 p-6 backdrop-blur-sm">
+                {/* Sparkle animation */}
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-lg">
+                  <span className="animate-pulse">✨</span>
+                  <span>OneSeek Syntes</span>
+                </div>
+
+                {/* Synthesis header */}
+                <div className="flex items-center gap-3 mb-4 mt-2">
+                  <div className="size-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white font-bold shadow-lg">
+                    O
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-neutral-900 dark:text-white">OneSeek Sammanfattning</h3>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400">Verifierad • Med källor</p>
+                  </div>
+                </div>
+
+                {/* Synthesized response */}
+                <div className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+                  <TypingText 
+                    text={`Sverige har cirka 10,5 miljoner invånare (2023). Enligt SCB uppgick befolkningen till 10 540 886 personer. Detta bekräftas av flera källor och utgör den officiella statistiken för Sveriges befolkning.`}
+                    speed={25}
+                    onComplete={() => setSynthesisComplete(true)}
+                  />
+                </div>
+
+                {/* Citation badges */}
+                {synthesisComplete && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4 }}
+                    className="mt-4 flex flex-wrap items-center gap-2"
+                  >
+                    <span className="text-xs text-neutral-500 dark:text-neutral-400">Källor:</span>
+                    <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                      [1] SCB
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                      [2] Tavily
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 ml-auto">
+                      <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Verifierat
+                    </span>
+                  </motion.div>
+                )}
+              </div>
+            </motion.div>
+          )}
 
           {/* Progress indicator */}
           <div className="mt-6 flex items-center justify-center gap-2">
