@@ -165,14 +165,13 @@ transition={{ delay: 1.2 }}
 
 const APIMarquee = () => {
   const apis = [
-    "SCB",
-    "SMHI",
-    "Bolagsverket",
-    "Trafikverket",
-    "Riksdagen",
-    "Kolada",
-    "Tavily",
-    "Geoapify",
+    { name: "SCB", logo: "/api-logos/scb-logo.png" },
+    { name: "SMHI", logo: "/api-logos/smhi-logo.png" },
+    { name: "Bolagsverket", logo: "/api-logos/bolagsverket-logo.png" },
+    { name: "Trafikverket", logo: "/api-logos/trafikverket-logo.png" },
+    { name: "Riksdagen", logo: "/api-logos/riksdagen-logo.png" },
+    { name: "Kolada", logo: "/api-logos/kolada-logo.png" },
+    { name: "Tavily", logo: "/api-logos/tavily-logo.png" },
   ];
 
   return (
@@ -200,10 +199,16 @@ const APIMarquee = () => {
               className="group flex items-center gap-3 px-6 py-3 whitespace-nowrap rounded-2xl border border-neutral-200/40 dark:border-neutral-800/40 bg-white/40 dark:bg-neutral-900/40 backdrop-blur-md hover:bg-white/60 dark:hover:bg-neutral-900/60 hover:shadow-lg dark:hover:shadow-lg/50 transition-all duration-300"
               whileHover={{ scale: 1.05, y: -2 }}
             >
-              <div className="size-5 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
-                {api[0]}
+              <div className="relative size-6 flex-shrink-0">
+                <Image
+                  src={api.logo}
+                  alt={`${api.name} logo`}
+                  width={24}
+                  height={24}
+                  className="object-contain"
+                />
               </div>
-              <span className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 group-hover:text-neutral-900 dark:group-hover:text-white transition-colors">{api}</span>
+              <span className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 group-hover:text-neutral-900 dark:group-hover:text-white transition-colors">{api.name}</span>
             </motion.div>
           ))}
         </motion.div>
