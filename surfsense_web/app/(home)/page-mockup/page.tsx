@@ -1336,6 +1336,293 @@ interface FlowNode {
   apiCalls?: string[];
 }
 
+// ==================== RADICAL TRANSPARENCY SECTION ====================
+const RadicalTransparencySection = () => {
+  const [currentScenario, setCurrentScenario] = useState(0);
+  const [chatMessages, setChatMessages] = useState<Array<{
+    type: 'user' | 'system' | 'api' | 'thinking' | 'assistant' | 'sources';
+    text: string;
+    sources?: string[];
+  }>>([]);
+  const [activeStep, setActiveStep] = useState<number | null>(null);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const isInView = useInView(sectionRef, { once: false, amount: 0.3 });
+
+  // Demo scenarios
+  const scenarios = [
+    {
+      question: "Hur många invånare har Stockholm?",
+      messages: [
+        { type: 'user' as const, text: "Hur många invånare har Stockholm?" },
+        { type: 'system' as const, text: "🔍 Analyserar fråga..." },
+        { type: 'system' as const, text: "⚡ Väljer Statistics Agent" },
+        { type: 'system' as const, text: "📋 Skapar execution plan" },
+        { type: 'api' as const, text: "📡 Anropar SCB: get_population_statistics(municipality='Stockholm', year=2023)" },
+        { type: 'thinking' as const, text: "Bearbetar data från SCB..." },
+        { type: 'system' as const, text: "✅ Säkerhetskontroller godkända" },
+        { type: 'system' as const, text: "🔄 Validerar svarskvalitet" },
+        { type: 'assistant' as const, text: "Stockholm har 975 551 invånare enligt SCB:s senaste folkräkning (2023). Detta inkluderar hela Stockholms kommun." },
+        { type: 'sources' as const, text: "", sources: ['SCB'] },
+      ],
+      steps: [0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    },
+    {
+      question: "Jämför befolkning och väder i Stockholm",
+      messages: [
+        { type: 'user' as const, text: "Jämför befolkning och väder i Stockholm" },
+        { type: 'system' as const, text: "🔍 Analyserar komplex multi-domain fråga..." },
+        { type: 'system' as const, text: "⚡ Väljer Statistics Agent + Weather Agent" },
+        { type: 'system' as const, text: "📋 Skapar parallell execution plan" },
+        { type: 'api' as const, text: "📡 Anropar SCB + SMHI parallellt" },
+        { type: 'thinking' as const, text: "Kombinerar data från båda källor..." },
+        { type: 'system' as const, text: "✅ Verifierar konsistens mellan källor" },
+        { type: 'assistant' as const, text: "Stockholm har 975 551 invånare (SCB 2023) och idag är det 8°C med delvis molnighet (SMHI). Staden har vuxit med 1.2% senaste året." },
+        { type: 'sources' as const, text: "", sources: ['SCB', 'SMHI'] },
+      ],
+      steps: [0, 1, 2, 3, 4, 5, 5, 6, 7, 8, 9, 10, 11]
+    }
+  ];
+
+  // LangGraph pipeline steps
+  const pipelineSteps = [
+    { id: 0, label: "START", phase: "intent", color: "from-purple-500 to-pink-500" },
+    { id: 1, label: "Intent Router", phase: "intent", color: "from-purple-500 to-pink-500" },
+    { id: 2, label: "Agent Resolver", phase: "planning", color: "from-blue-500 to-cyan-500" },
+    { id: 3, label: "Planner", phase: "planning", color: "from-blue-500 to-cyan-500" },
+    { id: 4, label: "Tool Resolver", phase: "execution", color: "from-emerald-500 to-teal-500" },
+    { id: 5, label: "Executor", phase: "execution", color: "from-emerald-500 to-teal-500" },
+    { id: 6, label: "External APIs", phase: "execution", color: "from-emerald-500 to-teal-500" },
+    { id: 7, label: "Post-Tools", phase: "execution", color: "from-emerald-500 to-teal-500" },
+    { id: 8, label: "Safety Guard", phase: "validation", color: "from-amber-500 to-orange-500" },
+    { id: 9, label: "Critic", phase: "validation", color: "from-amber-500 to-orange-500" },
+    { id: 10, label: "Synthesizer", phase: "output", color: "from-orange-500 to-red-500" },
+    { id: 11, label: "END", phase: "output", color: "from-orange-500 to-red-500" },
+  ];
+
+  // Animation sequence
+  useEffect(() => {
+    if (!isInView) return;
+
+    const runSequence = async () => {
+      const data = scenarios[currentScenario];
+      setChatMessages([]);
+      setActiveStep(null);
+
+      // Add messages sequentially with corresponding step highlights
+      for (let i = 0; i < data.messages.length; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        setChatMessages(prev => [...prev, data.messages[i]]);
+        setActiveStep(data.steps[i]);
+      }
+
+      // Pause before next scenario
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      setCurrentScenario((prev) => (prev + 1) % scenarios.length);
+    };
+
+    runSequence();
+  }, [currentScenario, isInView]);
+
+  return (
+    <section ref={sectionRef} className="relative py-24 md:py-32 bg-white dark:bg-neutral-950">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6 }}
+          className="text-center mb-16"
+        >
+          <h2 className="text-3xl md:text-5xl font-bold mb-4">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-600 to-red-600">
+              Radikal transparens
+            </span>
+            {" "}— Ner till sista punkten
+          </h2>
+          <p className="text-lg md:text-xl text-neutral-600 dark:text-neutral-400 max-w-3xl mx-auto">
+            Se exakt hur OneSeek bearbetar din fråga genom hela LangGraph-pipelinen med full transparens.
+          </p>
+        </motion.div>
+
+        {/* Two-column layout: Chat left, Pipeline right */}
+        <div className="flex flex-col lg:flex-row gap-8 max-w-7xl mx-auto">
+          {/* Left: Chat View */}
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6 }}
+            className="flex-1 lg:max-w-2xl"
+          >
+            <div className="bg-white/40 dark:bg-neutral-900/40 backdrop-blur-md rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 h-[700px] overflow-y-auto">
+              {/* Chat header */}
+              <div className="flex items-center gap-2 mb-6 pb-4 border-b border-neutral-200 dark:border-neutral-800">
+                <div className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
+                  Live Execution Trace
+                </span>
+              </div>
+
+              {/* Messages */}
+              <div className="space-y-4">
+                {chatMessages.map((message, idx) => (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className={cn(
+                      "flex",
+                      message.type === 'user' ? "justify-end" : "justify-start"
+                    )}
+                  >
+                    {message.type === 'user' && (
+                      <div className="max-w-[80%] bg-blue-500 text-white rounded-2xl rounded-tr-sm px-4 py-3">
+                        <p className="text-sm">{message.text}</p>
+                      </div>
+                    )}
+                    
+                    {message.type === 'system' && (
+                      <div className="max-w-[80%] bg-purple-500/10 border border-purple-500/20 rounded-2xl rounded-tl-sm px-4 py-3">
+                        <p className="text-sm text-purple-700 dark:text-purple-300">{message.text}</p>
+                      </div>
+                    )}
+                    
+                    {message.type === 'api' && (
+                      <div className="w-full flex justify-center">
+                        <div className="bg-emerald-500/20 border border-emerald-500/40 rounded-lg px-4 py-2">
+                          <p className="text-xs font-mono text-emerald-700 dark:text-emerald-300">{message.text}</p>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {message.type === 'thinking' && (
+                      <div className="max-w-[80%] bg-neutral-100 dark:bg-neutral-800 rounded-2xl rounded-tl-sm px-4 py-3">
+                        <p className="text-sm italic text-neutral-600 dark:text-neutral-400">{message.text}</p>
+                      </div>
+                    )}
+                    
+                    {message.type === 'assistant' && (
+                      <div className="max-w-[80%] bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                        <TypingText text={message.text} speed={25} />
+                      </div>
+                    )}
+                    
+                    {message.type === 'sources' && message.sources && (
+                      <div className="flex gap-2 mt-2">
+                        {message.sources.map((source, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800"
+                          >
+                            [{i + 1}] {source}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </motion.div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Right: LangGraph Pipeline */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6 }}
+            className="lg:w-[500px]"
+          >
+            <div className="bg-white/40 dark:bg-neutral-900/40 backdrop-blur-md rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 sticky top-24">
+              <h3 className="text-lg font-semibold mb-6 text-neutral-900 dark:text-white">
+                LangGraph Pipeline
+              </h3>
+              
+              <div className="space-y-3">
+                {pipelineSteps.map((step, idx) => {
+                  const isActive = activeStep === step.id;
+                  const isCompleted = activeStep !== null && activeStep > step.id;
+                  const isPending = activeStep === null || activeStep < step.id;
+
+                  return (
+                    <motion.div
+                      key={step.id}
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.05 }}
+                      className="relative"
+                    >
+                      {/* Connection line */}
+                      {idx < pipelineSteps.length - 1 && (
+                        <div className={cn(
+                          "absolute left-5 top-12 w-0.5 h-6 transition-colors duration-300",
+                          isCompleted ? "bg-emerald-500" : "bg-neutral-300 dark:bg-neutral-700"
+                        )} />
+                      )}
+
+                      {/* Step card */}
+                      <div className={cn(
+                        "flex items-center gap-3 p-3 rounded-xl transition-all duration-300",
+                        isActive && "bg-gradient-to-r scale-105 shadow-lg",
+                        isActive && step.color,
+                        !isActive && isCompleted && "bg-emerald-50 dark:bg-emerald-900/20",
+                        !isActive && isPending && "bg-neutral-50 dark:bg-neutral-800/50"
+                      )}>
+                        {/* Status icon */}
+                        <div className={cn(
+                          "flex-shrink-0 size-10 rounded-full flex items-center justify-center transition-all duration-300",
+                          isActive && "bg-white/20 backdrop-blur-sm scale-110",
+                          isCompleted && "bg-emerald-500",
+                          isPending && "bg-neutral-200 dark:bg-neutral-700"
+                        )}>
+                          {isActive && (
+                            <span className="text-white text-lg">⚡</span>
+                          )}
+                          {isCompleted && (
+                            <span className="text-white text-lg">✓</span>
+                          )}
+                          {isPending && (
+                            <span className="text-neutral-400 text-sm font-medium">{step.id}</span>
+                          )}
+                        </div>
+
+                        {/* Step label */}
+                        <div className="flex-1">
+                          <p className={cn(
+                            "text-sm font-medium transition-colors duration-300",
+                            isActive && "text-white",
+                            !isActive && isCompleted && "text-emerald-700 dark:text-emerald-300",
+                            !isActive && isPending && "text-neutral-600 dark:text-neutral-400"
+                          )}>
+                            {step.label}
+                          </p>
+                        </div>
+
+                        {/* Active indicator */}
+                        {isActive && (
+                          <motion.div
+                            animate={{ scale: [1, 1.2, 1] }}
+                            transition={{ repeat: Infinity, duration: 1.5 }}
+                            className="size-2 rounded-full bg-white"
+                          />
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
 const AgentFlowSection = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -1905,6 +2192,7 @@ return (
 <APIReasoningDemo />
 <CompareShowcase />
 <DebateDemo />
+<RadicalTransparencySection />
 <AgentFlowSection />
 <LLMProvidersSection />
 <CTASection />
