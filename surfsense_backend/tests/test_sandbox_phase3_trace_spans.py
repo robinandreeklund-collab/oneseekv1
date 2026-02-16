@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import types
 
 
 def _load_module(module_name: str, relative_path: str):
@@ -19,10 +20,22 @@ def _load_module(module_name: str, relative_path: str):
     return module
 
 
+project_root = Path(__file__).resolve().parents[1]
+app_pkg = types.ModuleType("app")
+app_pkg.__path__ = [str(project_root / "app")]
+agents_pkg = types.ModuleType("app.agents")
+agents_pkg.__path__ = [str(project_root / "app" / "agents")]
+new_chat_pkg = types.ModuleType("app.agents.new_chat")
+new_chat_pkg.__path__ = [str(project_root / "app" / "agents" / "new_chat")]
+sys.modules["app"] = app_pkg
+sys.modules["app.agents"] = agents_pkg
+sys.modules["app.agents.new_chat"] = new_chat_pkg
+
 sandbox_runtime = _load_module(
-    "sandbox_phase3_trace_runtime_module",
+    "app.agents.new_chat.sandbox_runtime",
     "app/agents/new_chat/sandbox_runtime.py",
 )
+sys.modules["app.agents.new_chat.sandbox_runtime"] = sandbox_runtime
 sandbox_execute_module = _load_module(
     "sandbox_phase3_trace_execute_module",
     "app/agents/new_chat/tools/sandbox_execute.py",
