@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 
 from app.agents.new_chat.sandbox_runtime import (
     SANDBOX_MODE_DOCKER,
+    SANDBOX_MODE_PROVISIONER,
     SandboxExecutionError,
     build_sandbox_container_name,
     sandbox_list_directory,
@@ -33,6 +34,8 @@ def _sandbox_preview(
             thread_id=thread_id,
             container_prefix=config.docker_container_prefix,
         )
+    if config.mode == SANDBOX_MODE_PROVISIONER:
+        preview["provisioner_url"] = str(config.provisioner_url or "").strip()
     return preview
 
 

@@ -2,21 +2,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import threading
 from typing import Any
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 SANDBOX_MODE_LOCAL = "local"
 SANDBOX_MODE_DOCKER = "docker"
+SANDBOX_MODE_PROVISIONER = "provisioner"
 _DEFAULT_SANDBOX_MODE = SANDBOX_MODE_DOCKER
-_ALLOWED_SANDBOX_MODES = {SANDBOX_MODE_LOCAL, SANDBOX_MODE_DOCKER}
+_ALLOWED_SANDBOX_MODES = {
+    SANDBOX_MODE_LOCAL,
+    SANDBOX_MODE_DOCKER,
+    SANDBOX_MODE_PROVISIONER,
+}
 
 DEFAULT_SANDBOX_WORKSPACE_ROOT = "/tmp/oneseek-sandbox"
 DEFAULT_SANDBOX_DOCKER_IMAGE = "python:3.12-slim"
 DEFAULT_SANDBOX_CONTAINER_PREFIX = "oneseek-sandbox"
+DEFAULT_SANDBOX_PROVISIONER_URL = "http://localhost:8002"
 DEFAULT_SANDBOX_TIMEOUT_SECONDS = 30
 DEFAULT_SANDBOX_MAX_OUTPUT_BYTES = 100_000
 SANDBOX_VIRTUAL_WORKSPACE_PREFIX = "/workspace"
@@ -101,6 +110,8 @@ class SandboxRuntimeConfig:
     workspace_root: str = DEFAULT_SANDBOX_WORKSPACE_ROOT
     docker_image: str = DEFAULT_SANDBOX_DOCKER_IMAGE
     docker_container_prefix: str = DEFAULT_SANDBOX_CONTAINER_PREFIX
+    provisioner_url: str = DEFAULT_SANDBOX_PROVISIONER_URL
+    provisioner_api_key: str | None = None
     timeout_seconds: int = DEFAULT_SANDBOX_TIMEOUT_SECONDS
     max_output_bytes: int = DEFAULT_SANDBOX_MAX_OUTPUT_BYTES
 
@@ -111,6 +122,8 @@ def sandbox_config_from_runtime_flags(
     payload = dict(runtime_hitl or {})
     enabled = _coerce_bool(payload.get("sandbox_enabled"), default=False)
     requested_mode = str(payload.get("sandbox_mode") or _DEFAULT_SANDBOX_MODE).strip().lower()
+    if requested_mode == "remote":
+        requested_mode = SANDBOX_MODE_PROVISIONER
     mode = requested_mode if requested_mode in _ALLOWED_SANDBOX_MODES else _DEFAULT_SANDBOX_MODE
     workspace_root = str(
         payload.get("sandbox_workspace_root") or DEFAULT_SANDBOX_WORKSPACE_ROOT
@@ -121,6 +134,16 @@ def sandbox_config_from_runtime_flags(
     docker_container_prefix = str(
         payload.get("sandbox_container_prefix") or DEFAULT_SANDBOX_CONTAINER_PREFIX
     ).strip() or DEFAULT_SANDBOX_CONTAINER_PREFIX
+    provisioner_url = str(
+        payload.get("sandbox_provisioner_url")
+        or payload.get("sandbox_service_url")
+        or DEFAULT_SANDBOX_PROVISIONER_URL
+    ).strip() or DEFAULT_SANDBOX_PROVISIONER_URL
+    provisioner_api_key = str(
+        payload.get("sandbox_provisioner_api_key")
+        or payload.get("sandbox_service_api_key")
+        or ""
+    ).strip() or None
     timeout_seconds = _coerce_int(
         payload.get("sandbox_timeout_seconds"),
         default=DEFAULT_SANDBOX_TIMEOUT_SECONDS,
@@ -139,6 +162,8 @@ def sandbox_config_from_runtime_flags(
         workspace_root=workspace_root,
         docker_image=docker_image,
         docker_container_prefix=docker_container_prefix,
+        provisioner_url=provisioner_url,
+        provisioner_api_key=provisioner_api_key,
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
     )
@@ -228,6 +253,114 @@ class _DockerSandboxPool:
 
 
 _DOCKER_POOL = _DockerSandboxPool()
+
+
+def _provisioner_headers(config: SandboxRuntimeConfig) -> dict[str, str]:
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    api_key = str(config.provisioner_api_key or "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def _post_to_provisioner(
+    *,
+    config: SandboxRuntimeConfig,
+    endpoint: str,
+    payload: dict[str, Any],
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    normalized_endpoint = str(endpoint or "").strip()
+    if not normalized_endpoint.startswith("/"):
+        normalized_endpoint = f"/{normalized_endpoint}"
+    base_url = str(config.provisioner_url or "").strip().rstrip("/")
+    if not base_url:
+        raise SandboxExecutionError("sandbox_provisioner_url is required in provisioner mode.")
+    url = f"{base_url}{normalized_endpoint}"
+    body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+    request = urllib_request.Request(
+        url=url,
+        data=body,
+        method="POST",
+        headers=_provisioner_headers(config),
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=float(max(1, int(timeout_seconds)))) as response:
+            raw_response = response.read().decode("utf-8", errors="replace")
+    except urllib_error.HTTPError as exc:
+        details = ""
+        if exc.fp is not None:
+            try:
+                details = str(exc.fp.read().decode("utf-8", errors="replace")).strip()
+            except Exception:
+                details = ""
+        message = details or str(exc.reason or exc)
+        raise SandboxExecutionError(
+            f"Provisioner request failed ({exc.code}) for {normalized_endpoint}: {message}"
+        ) from exc
+    except urllib_error.URLError as exc:
+        raise SandboxExecutionError(
+            f"Provisioner request failed for {normalized_endpoint}: {exc.reason}"
+        ) from exc
+    except TimeoutError as exc:
+        raise SandboxExecutionError(
+            f"Provisioner request timed out for {normalized_endpoint}."
+        ) from exc
+    except Exception as exc:
+        raise SandboxExecutionError(
+            f"Provisioner request failed for {normalized_endpoint}: {exc}"
+        ) from exc
+
+    if not raw_response.strip():
+        return {}
+    try:
+        decoded = json.loads(raw_response)
+    except json.JSONDecodeError as exc:
+        raise SandboxExecutionError(
+            f"Provisioner returned invalid JSON for {normalized_endpoint}."
+        ) from exc
+    if not isinstance(decoded, dict):
+        raise SandboxExecutionError(
+            f"Provisioner response must be an object for {normalized_endpoint}."
+        )
+    return decoded
+
+
+def _ensure_sandbox_enabled(config: SandboxRuntimeConfig) -> None:
+    if not config.enabled:
+        raise SandboxExecutionError(
+            "Sandbox execution is disabled. Enable runtime_hitl.sandbox_enabled."
+        )
+
+
+def _coerce_remote_path(path: str) -> str:
+    normalized_path = _coerce_path(path)
+    if normalized_path == SANDBOX_VIRTUAL_WORKSPACE_PREFIX:
+        return normalized_path
+    if normalized_path.startswith(f"{SANDBOX_VIRTUAL_WORKSPACE_PREFIX}/"):
+        relative = normalized_path[len(SANDBOX_VIRTUAL_WORKSPACE_PREFIX) :].lstrip("/")
+    else:
+        relative = normalized_path.lstrip("/")
+    relative_path = Path(relative)
+    if any(part in {"..", ""} for part in relative_path.parts):
+        raise SandboxExecutionError(f"Path traversal is not allowed: {normalized_path}")
+    if not relative:
+        return SANDBOX_VIRTUAL_WORKSPACE_PREFIX
+    return f"{SANDBOX_VIRTUAL_WORKSPACE_PREFIX}/{relative_path.as_posix()}"
+
+
+def _coerce_remote_list(raw_entries: Any) -> list[str]:
+    if not isinstance(raw_entries, list):
+        return []
+    entries: list[str] = []
+    for value in raw_entries:
+        text = str(value or "").strip()
+        if text:
+            entries.append(text)
+    return entries
 
 
 def _run_subprocess(
@@ -323,10 +456,7 @@ def _prepare_workspace_and_path(
     path: str,
 ) -> tuple[SandboxRuntimeConfig, Path, Path, str]:
     config = sandbox_config_from_runtime_flags(runtime_hitl)
-    if not config.enabled:
-        raise SandboxExecutionError(
-            "Sandbox execution is disabled. Enable runtime_hitl.sandbox_enabled."
-        )
+    _ensure_sandbox_enabled(config)
     workspace_path = _workspace_path(config, thread_id)
     host_path, display_path = _resolve_workspace_file_path(
         workspace_path=workspace_path,
@@ -343,18 +473,35 @@ def sandbox_list_directory(
     max_depth: int = 2,
     max_entries: int = 500,
 ) -> list[str]:
+    config = sandbox_config_from_runtime_flags(runtime_hitl)
+    _ensure_sandbox_enabled(config)
+    normalized_path = _coerce_remote_path(path)
+    safe_depth = max(0, min(int(max_depth), 6))
+    safe_max_entries = max(1, min(int(max_entries), 5000))
+    if config.mode == SANDBOX_MODE_PROVISIONER:
+        response = _post_to_provisioner(
+            config=config,
+            endpoint="/v1/sandbox/ls",
+            payload={
+                "thread_id": str(thread_id or ""),
+                "path": normalized_path,
+                "max_depth": safe_depth,
+                "max_entries": safe_max_entries,
+            },
+            timeout_seconds=max(5, min(120, int(config.timeout_seconds))),
+        )
+        return _coerce_remote_list(response.get("entries"))
+
     _config, workspace_path, host_path, _display_path = _prepare_workspace_and_path(
         thread_id=thread_id,
         runtime_hitl=runtime_hitl,
-        path=path,
+        path=normalized_path,
     )
     if not host_path.exists():
-        raise SandboxExecutionError(f"Directory not found: {path}")
+        raise SandboxExecutionError(f"Directory not found: {normalized_path}")
     if not host_path.is_dir():
-        raise SandboxExecutionError(f"Path is not a directory: {path}")
+        raise SandboxExecutionError(f"Path is not a directory: {normalized_path}")
 
-    safe_depth = max(0, min(int(max_depth), 6))
-    safe_max_entries = max(1, min(int(max_entries), 5000))
     root_depth = len(host_path.parts)
     entries: list[str] = []
     for current_root, dirs, files in os.walk(host_path):
@@ -395,36 +542,58 @@ def sandbox_read_text_file(
     end_line: int | None = None,
     max_lines: int = 400,
 ) -> str:
+    config = sandbox_config_from_runtime_flags(runtime_hitl)
+    _ensure_sandbox_enabled(config)
+    normalized_path = _coerce_remote_path(path)
+    safe_max_lines = max(1, min(int(max_lines), 4000))
+    safe_start = None if start_line is None else max(1, int(start_line))
+    safe_end = None if end_line is None else int(end_line)
+    if safe_end is not None and safe_start is not None and safe_end < safe_start:
+        raise SandboxExecutionError("end_line cannot be less than start_line.")
+    if config.mode == SANDBOX_MODE_PROVISIONER:
+        response = _post_to_provisioner(
+            config=config,
+            endpoint="/v1/sandbox/read_file",
+            payload={
+                "thread_id": str(thread_id or ""),
+                "path": normalized_path,
+                "start_line": safe_start,
+                "end_line": safe_end,
+                "max_lines": safe_max_lines,
+            },
+            timeout_seconds=max(5, min(120, int(config.timeout_seconds))),
+        )
+        return str(response.get("content") or "(empty)")
+
     _config, _workspace_path, host_path, _display_path = _prepare_workspace_and_path(
         thread_id=thread_id,
         runtime_hitl=runtime_hitl,
-        path=path,
+        path=normalized_path,
     )
     if not host_path.exists():
-        raise SandboxExecutionError(f"File not found: {path}")
+        raise SandboxExecutionError(f"File not found: {normalized_path}")
     if not host_path.is_file():
-        raise SandboxExecutionError(f"Path is not a file: {path}")
+        raise SandboxExecutionError(f"Path is not a file: {normalized_path}")
 
     try:
         with host_path.open("r", encoding="utf-8") as file_handle:
             lines = file_handle.readlines()
     except UnicodeDecodeError as exc:
-        raise SandboxExecutionError(f"Failed to decode file as UTF-8: {path}") from exc
+        raise SandboxExecutionError(f"Failed to decode file as UTF-8: {normalized_path}") from exc
 
     if not lines:
         return "(empty)"
 
-    safe_max_lines = max(1, min(int(max_lines), 4000))
     line_count = len(lines)
-    safe_start = 1 if start_line is None else max(1, int(start_line))
+    safe_start = 1 if safe_start is None else int(safe_start)
     if safe_start > line_count:
         raise SandboxExecutionError(
             f"start_line {safe_start} exceeds file length ({line_count})."
         )
-    if end_line is None:
+    if safe_end is None:
         safe_end = min(line_count, safe_start + safe_max_lines - 1)
     else:
-        safe_end = min(line_count, int(end_line))
+        safe_end = min(line_count, int(safe_end))
         if safe_end < safe_start:
             raise SandboxExecutionError("end_line cannot be less than start_line.")
         if (safe_end - safe_start + 1) > safe_max_lines:
@@ -445,15 +614,34 @@ def sandbox_write_text_file(
     content: str,
     append: bool = False,
 ) -> str:
+    config = sandbox_config_from_runtime_flags(runtime_hitl)
+    _ensure_sandbox_enabled(config)
+    normalized_path = _coerce_remote_path(path)
+    text = str(content or "")
+    if config.mode == SANDBOX_MODE_PROVISIONER:
+        response = _post_to_provisioner(
+            config=config,
+            endpoint="/v1/sandbox/write_file",
+            payload={
+                "thread_id": str(thread_id or ""),
+                "path": normalized_path,
+                "content": text,
+                "append": bool(append),
+            },
+            timeout_seconds=max(5, min(120, int(config.timeout_seconds))),
+        )
+        response_path = str(response.get("path") or "").strip()
+        return response_path or normalized_path
+
     _config, _workspace_path, host_path, display_path = _prepare_workspace_and_path(
         thread_id=thread_id,
         runtime_hitl=runtime_hitl,
-        path=path,
+        path=normalized_path,
     )
     host_path.parent.mkdir(parents=True, exist_ok=True)
     mode = "a" if append else "w"
     with host_path.open(mode, encoding="utf-8") as file_handle:
-        file_handle.write(str(content or ""))
+        file_handle.write(text)
     return display_path
 
 
@@ -466,19 +654,43 @@ def sandbox_replace_text_file(
     new_text: str,
     replace_all: bool = False,
 ) -> tuple[str, int]:
-    _config, _workspace_path, host_path, display_path = _prepare_workspace_and_path(
-        thread_id=thread_id,
-        runtime_hitl=runtime_hitl,
-        path=path,
-    )
-    if not host_path.exists():
-        raise SandboxExecutionError(f"File not found: {path}")
-    if not host_path.is_file():
-        raise SandboxExecutionError(f"Path is not a file: {path}")
+    config = sandbox_config_from_runtime_flags(runtime_hitl)
+    _ensure_sandbox_enabled(config)
+    normalized_path = _coerce_remote_path(path)
     old_value = str(old_text or "")
     if not old_value:
         raise SandboxExecutionError("old_text cannot be empty.")
     new_value = str(new_text or "")
+    if config.mode == SANDBOX_MODE_PROVISIONER:
+        response = _post_to_provisioner(
+            config=config,
+            endpoint="/v1/sandbox/replace",
+            payload={
+                "thread_id": str(thread_id or ""),
+                "path": normalized_path,
+                "old_text": old_value,
+                "new_text": new_value,
+                "replace_all": bool(replace_all),
+            },
+            timeout_seconds=max(5, min(120, int(config.timeout_seconds))),
+        )
+        replaced_raw = response.get("replaced", 0)
+        try:
+            replaced_count = int(replaced_raw)
+        except (TypeError, ValueError):
+            replaced_count = 0
+        response_path = str(response.get("path") or "").strip() or normalized_path
+        return response_path, max(0, replaced_count)
+
+    _config, _workspace_path, host_path, display_path = _prepare_workspace_and_path(
+        thread_id=thread_id,
+        runtime_hitl=runtime_hitl,
+        path=normalized_path,
+    )
+    if not host_path.exists():
+        raise SandboxExecutionError(f"File not found: {normalized_path}")
+    if not host_path.is_file():
+        raise SandboxExecutionError(f"Path is not a file: {normalized_path}")
 
     with host_path.open("r", encoding="utf-8") as file_handle:
         original_content = file_handle.read()
@@ -528,6 +740,36 @@ def run_sandbox_command(
         if timeout_seconds is not None
         else int(config.timeout_seconds)
     )
+    if config.mode == SANDBOX_MODE_PROVISIONER:
+        response = _post_to_provisioner(
+            config=config,
+            endpoint="/v1/sandbox/execute",
+            payload={
+                "thread_id": str(thread_id or ""),
+                "command": normalized_command,
+                "timeout_seconds": int(effective_timeout),
+                "max_output_bytes": int(config.max_output_bytes),
+            },
+            timeout_seconds=max(5, min(600, int(effective_timeout) + 5)),
+        )
+        output = str(response.get("output") or "<no output>")
+        try:
+            exit_code = int(response.get("exit_code", 1))
+        except (TypeError, ValueError):
+            exit_code = 1
+        container_name_raw = str(response.get("container_name") or "").strip()
+        workspace_path = str(
+            response.get("workspace_path") or SANDBOX_VIRTUAL_WORKSPACE_PREFIX
+        ).strip() or SANDBOX_VIRTUAL_WORKSPACE_PREFIX
+        return SandboxCommandResult(
+            mode=SANDBOX_MODE_PROVISIONER,
+            workspace_path=workspace_path,
+            output=output,
+            exit_code=exit_code,
+            truncated=bool(response.get("truncated", False)),
+            container_name=container_name_raw or None,
+        )
+
     workspace_path = _workspace_path(config, thread_id)
     max_output_bytes = int(config.max_output_bytes)
 

@@ -142,6 +142,8 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "sandbox_execute": [
         "sandbox",
         "docker",
+        "provisioner",
+        "remote",
         "shell",
         "bash",
         "python",
@@ -153,6 +155,8 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "sandbox_ls": [
         "sandbox",
         "docker",
+        "provisioner",
+        "remote",
         "list",
         "ls",
         "tree",
@@ -163,6 +167,8 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "sandbox_read_file": [
         "sandbox",
         "docker",
+        "provisioner",
+        "remote",
         "read",
         "file",
         "cat",
@@ -172,6 +178,8 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "sandbox_write_file": [
         "sandbox",
         "docker",
+        "provisioner",
+        "remote",
         "write",
         "edit",
         "save",
@@ -181,6 +189,8 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "sandbox_replace": [
         "sandbox",
         "docker",
+        "provisioner",
+        "remote",
         "replace",
         "edit",
         "patch",

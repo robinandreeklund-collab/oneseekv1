@@ -1132,7 +1132,8 @@ async def stream_new_chat(
             - hybrid_mode (bool): enables hybrid supervisor routing.
             - speculative_enabled (bool): enables speculative execution paths.
             - sandbox_enabled (bool): enables sandbox execution tools for code tasks.
-            - sandbox_mode (str): sandbox runtime mode ("docker" or "local").
+            - sandbox_mode (str): sandbox runtime mode ("docker", "local", or "provisioner").
+            - sandbox_provisioner_url (str): provisioner base URL when mode=provisioner.
         checkpoint_ns_override:
             Optional explicit checkpoint namespace. When provided, bypasses automatic
             namespace resolution and uses this value ("" means legacy namespace).
@@ -1467,6 +1468,13 @@ async def stream_new_chat(
             default=False,
         )
         sandbox_mode = str(runtime_flags.get("sandbox_mode") or "docker").strip().lower()
+        if sandbox_mode == "remote":
+            sandbox_mode = "provisioner"
+        sandbox_provisioner_url = str(
+            runtime_flags.get("sandbox_provisioner_url")
+            or runtime_flags.get("sandbox_service_url")
+            or ""
+        ).strip()
         if not hybrid_mode:
             speculative_enabled = False
 
@@ -1491,6 +1499,7 @@ async def stream_new_chat(
                 "speculative_enabled": speculative_enabled,
                 "sandbox_enabled": sandbox_enabled,
                 "sandbox_mode": sandbox_mode,
+                "sandbox_provisioner_url": sandbox_provisioner_url,
             }
             route_start = await trace_recorder.start_span(
                 span_id=route_span_id,
@@ -1548,7 +1557,8 @@ async def stream_new_chat(
                 f"hybrid_mode={hybrid_mode}, "
                 f"speculative_enabled={speculative_enabled}, "
                 f"sandbox_enabled={sandbox_enabled}, "
-                f"sandbox_mode={sandbox_mode}"
+                f"sandbox_mode={sandbox_mode}, "
+                f"sandbox_provisioner_url={sandbox_provisioner_url or '<none>'}"
             )
             agent = await build_complete_graph(
                 llm=llm,
