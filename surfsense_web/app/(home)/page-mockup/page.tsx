@@ -1594,7 +1594,7 @@ Använd verktyget \`scb_befolkning_folkmangd\` med filter på region = Riket, ta
   - 2013: ca 121 000  
   - 2014: ca 122 000  
   - 2015: ca 123 000  
-  [citation:40485]
+  [citation: 40485]
 
 - **Invandrare (2010–2015):**  
   - 2010: ca 140 000  
@@ -1603,7 +1603,7 @@ Använd verktyget \`scb_befolkning_folkmangd\` med filter på region = Riket, ta
   - 2013: ca 155 000  
   - 2014: ca 160 000  
   - 2015: ca 165 000  
-  [citation:40485]
+  [citation: 40485]
 
 > *Notering: Dessa siffror inkluderar personer som kom in till Sverige under året, men inte nödvändigtvis de som var fullt arbetsmarknadsaktiva eller hade inkomster i samma år. Data är baserat på folkmängd per 31 december och inkluderar födelse och flyttning.*
 
@@ -1619,7 +1619,7 @@ Använd verktyget \`scb_arbetsmarknad\` med frågan:
   - Andel sysselsatta bland invandrare: ca 58 %  
   - Andel arbetslösa: ca 12 %  
   - Andel utanför arbetsförhållande: ca 30 %  
-  [citation:40485]
+  [citation: 40485]
 
 > *Data från 2015 visar att invandrare har en lägre arbetsmarknadsdeltagande än födda i Sverige, men en ökande trend under 2010–2015. Fullständig tidsserie från 2010–2015 kräver mer detaljerad extraktion, men generellt visar SCB att andelen sysselsatta bland invandrare ökade från ca 52 % (2010) till 58 % (2015).*
 
@@ -1633,12 +1633,37 @@ Använd verktyget \`scb_offentlig_ekonomi\` med frågan:
 - **Kommunala skatteintakter (inkl. invandrare):**  
   - 2015: ca 420 miljarder kr  
   - Andel från invandrare: ca 12 % av totala skatteintakter (uppskattat)  
-  [citation:40485]
+  [citation: 40485]
 
 - **Offentliga utgifter (inkl. sociala insatser, skola, vård):**  
   - 2015: ca 1 000 miljarder kr i kommunala utgifter  
-  - Utgifter kopplade till invandrare: ca 120 miljarder kr (inkl.
-[response truncated]` },
+  - Utgifter kopplade till invandrare: ca 120 miljarder kr (inkl. integrationsinsatser, skola, vård, boende)  
+  [citation: 40485]
+
+> *SCB publicerar inte direkt "effekter av invandring" i offentlig ekonomi, men kan skatta att invandring bidrog till ökade utgifter i sociala sektorer och en gradvis ökning i skatteintakter genom arbetsmarknadsdeltagande.*
+
+---
+
+### Sammanfattning av ekonomiska effekter (2010–2015):
+
+| Indikator                          | 2010 (uppskattat) | 2015 (uppskattat) | Utveckling |
+|------------------------------------|-------------------|-------------------|-----------|
+| Antal invandrare till Sverige        | ~140 000          | ~165 000          | +18 %     |
+| Andel sysselsatt bland invandrare   | ~52 %             | ~58 %             | +6 p.p.   |
+| Skatteintakter från invandrare      | ~50 miljarder kr   | ~70 miljarder kr   | +40 %     |
+| Offentliga utgifter kopplade till invandrare | ~100 miljarder kr | ~120 miljarder kr | +20 %     |
+
+> *Observera: SCB publicerar inte direkt "effekter av invandring" i offentlig ekonomi, men data visar att invandrare ökade i arbetsmarknadsdeltagande och bidrog till ökade skatteintakter och utgifter under 2010–2015.*
+
+---
+
+### Källa:
+- Folkmängd: SCB, tabell BE0101A (Folkmängd per månad)
+- Arbetsmarknad: SCB, tabell AM0211 (Sysselsättning och arbetslöshet)
+- Offentlig ekonomi: SCB, tabell OE0106 (Kommunernas finansiella tillgångar och skulder)
+
+> **Alla siffror baserade på SCB:s officiella statistik.**  
+> *Observera: SCB publicerar inte framtida siffror. År 2025 är inte tillgängligt i denna kontext.*` },
         { type: 'sources' as const, text: "", sources: ['SCB'] },
       ],
       steps: [0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11]
