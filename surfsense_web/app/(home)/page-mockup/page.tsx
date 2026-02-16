@@ -246,7 +246,7 @@ const extractResponse = (jsonStr: string): string => {
     }
     return parsed.response || parsed.summary || "No response available";
   } catch (error) {
-    console.warn("Failed to parse model response:", error);
+    console.warn("Failed to parse model response:", jsonStr.substring(0, 100), error);
     return jsonStr;
   }
 };
@@ -461,7 +461,9 @@ const SideBySideComparison = () => {
   if (!currentQuestion) {
     return (
       <div ref={ref} className="relative">
-        <div className="text-center text-neutral-500">Loading questions...</div>
+        <div className="text-center text-neutral-500" role="status" aria-live="polite">
+          Loading questions...
+        </div>
       </div>
     );
   }
