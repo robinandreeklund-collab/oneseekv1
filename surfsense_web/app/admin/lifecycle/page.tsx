@@ -1,10 +1,7 @@
-import { AdminLayout } from "@/components/admin/admin-layout";
+"use client";
+
 import { ToolLifecyclePage } from "@/components/admin/tool-lifecycle-page";
 
 export default function LifecyclePage() {
-	return (
-		<AdminLayout>
-			<ToolLifecyclePage />
-		</AdminLayout>
-	);
+	return <ToolLifecyclePage />;
 }
