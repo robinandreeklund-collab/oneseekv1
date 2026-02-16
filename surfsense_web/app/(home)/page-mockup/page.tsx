@@ -647,14 +647,14 @@ const SideBySideComparison = () => {
 
 const HeroSection = () => {
 return (
-<section className="relative py-32 md:py-48 px-4 md:px-8">
+<section className="relative py-32 md:py-48 px-4 md:px-8 bg-gradient-to-b from-gray-900 via-gray-900 to-black">
 <div className="mx-auto max-w-7xl">
 {/* Heading - Enhanced */}
 <motion.div 
 className="mx-auto max-w-5xl text-center"
 >
 <motion.h1 
-className="text-5xl md:text-8xl font-bold tracking-tight text-black dark:text-white leading-[1.05]"
+className="text-5xl md:text-8xl font-bold tracking-tight text-white leading-[1.05]"
 transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
 >
 <Balancer>
@@ -674,7 +674,7 @@ Jämför.
 </motion.h1>
 
 <motion.p 
-className="mt-8 text-xl md:text-2xl text-neutral-600 dark:text-neutral-300 max-w-3xl mx-auto leading-relaxed font-light"
+className="mt-8 text-xl md:text-2xl text-neutral-300 max-w-3xl mx-auto leading-relaxed font-light"
 transition={{ duration: 0.6, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
 >
 Se AI-modeller svara i realtid, side by side. Jämför latency, kvalitet och precision.
@@ -686,11 +686,11 @@ transition={{ duration: 0.6, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
 >
 <Link
 href="/dashboard/public/new-chat"
-className="group relative h-14 px-10 rounded-2xl bg-black dark:bg-white text-white dark:text-black text-base font-semibold transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-black/20 dark:hover:shadow-white/20 flex items-center justify-center overflow-hidden"
+className="group relative h-14 px-10 rounded-2xl bg-white text-black text-base font-semibold transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-white/20 flex items-center justify-center overflow-hidden"
 >
-<span className="relative z-10">Börja söka</span>
+<span className="relative z-10">Skapa konto</span>
 <motion.div 
-className="absolute inset-0 bg-gradient-to-r from-black via-neutral-800 to-black dark:from-white dark:via-neutral-200 dark:to-white"
+className="absolute inset-0 bg-gradient-to-r from-white via-neutral-200 to-white"
 initial={{ x: "-100%" }}
 whileHover={{ x: "100%" }}
 transition={{ duration: 0.6, ease: "easeInOut" }}
@@ -698,19 +698,25 @@ transition={{ duration: 0.6, ease: "easeInOut" }}
 </Link>
 <Link
 href="#compare"
-className="h-14 px-10 rounded-2xl ring-2 ring-neutral-200 dark:ring-neutral-700 text-base font-semibold transition-all duration-300 hover:scale-105 hover:ring-neutral-300 dark:hover:ring-neutral-600 hover:shadow-xl flex items-center justify-center backdrop-blur-sm bg-white/50 dark:bg-neutral-900/50"
+className="h-14 px-10 rounded-2xl ring-2 ring-neutral-700 text-base font-semibold transition-all duration-300 hover:scale-105 hover:ring-neutral-600 hover:shadow-xl flex items-center justify-center backdrop-blur-sm bg-neutral-900/50 text-white"
 >
-Se demo
+Skapa konto
 </Link>
 </motion.div>
 </motion.div>
 
-{/* Side-by-side typing demo */}
+{/* Side-by-side typing demo - Now in a glassmorphic box */}
 <motion.div 
 className="mt-20 md:mt-32 mx-auto max-w-6xl"
 transition={{ duration: 0.8, delay: 0.6, ease: [0.16, 1, 0.3, 1] }}
 >
-<SideBySideComparison />
+  {/* Glassmorphic container */}
+  <div className="relative rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-8 md:p-12 shadow-2xl">
+    {/* Subtle glow effect */}
+    <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-blue-500/10 rounded-3xl blur-xl -z-10" />
+    
+    <SideBySideComparison />
+  </div>
 </motion.div>
 </div>
 </section>
@@ -838,10 +844,10 @@ const APIReasoningDemo = () => {
   }, [currentScenario, isInView]);
 
   return (
-    <section ref={sectionRef} className="relative py-24 md:py-32 bg-gradient-to-b from-white via-neutral-50/50 to-white dark:from-neutral-950 dark:via-neutral-900/50 dark:to-neutral-950 border-y border-neutral-100 dark:border-neutral-800/50 overflow-hidden">
+    <section ref={sectionRef} className="relative py-24 md:py-32 bg-gradient-to-b from-gray-900 via-gray-900 to-black border-y border-neutral-800/50 overflow-hidden">
       {/* Background Effects */}
       <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-gradient-to-r from-blue-500/5 via-purple-500/5 to-blue-500/5 dark:from-blue-500/10 dark:via-purple-500/10 dark:to-blue-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-blue-500/10 rounded-full blur-3xl" />
       </div>
 
       <div className="mx-auto max-w-7xl px-6">
@@ -852,10 +858,10 @@ const APIReasoningDemo = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
         >
-          <h2 className="text-2xl md:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white mb-4">
+          <h2 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-4">
             OneSeek Reasoning i Realtid
           </h2>
-          <p className="text-base md:text-lg text-neutral-600 dark:text-neutral-400">
+          <p className="text-base md:text-lg text-neutral-400">
             Se hur OneSeek analyserar frågor och anropar svenska datakällor
           </p>
         </motion.div>
@@ -872,10 +878,10 @@ const APIReasoningDemo = () => {
           >
             <div className="sticky top-24 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md p-6 shadow-xl">
               <h3 className="text-lg font-bold text-neutral-900 dark:text-white mb-1">Svenska Datakällor</h3>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-6">7 API-integrationer</p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-6">13 API-integrationer</p>
               
               {/* API Tools List */}
-              <div className="space-y-3">
+              <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-neutral-300 dark:scrollbar-thumb-neutral-700 scrollbar-track-transparent">
                 {apiTools.map((tool) => {
                   const isActive = activeAPIs.includes(tool.id);
                   return (
@@ -1087,10 +1093,10 @@ const CompareShowcase = () => {
   }, []);
 
   return (
-    <section id="compare" className="py-24 md:py-32 relative overflow-hidden">
+    <section id="compare" className="py-24 md:py-32 relative overflow-hidden bg-gradient-to-b from-gray-900 via-gray-900 to-black">
       {/* Background Gradient Elements */}
       <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-0 right-1/4 w-96 h-96 bg-gradient-to-br from-blue-500/5 to-purple-500/5 dark:from-blue-500/10 dark:to-purple-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-0 right-1/4 w-96 h-96 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-full blur-3xl" />
       </div>
 
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
@@ -1103,10 +1109,10 @@ const CompareShowcase = () => {
           transition={{ duration: 0.6 }}
         >
           <span className="text-sm font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">COMPARE MODE</span>
-          <h2 className="mt-2 text-3xl md:text-5xl font-bold tracking-tight text-black dark:text-white">
+          <h2 className="mt-2 text-3xl md:text-5xl font-bold tracking-tight text-white">
             Jämför AI-modeller — side by side
           </h2>
-          <p className="mt-4 text-lg text-neutral-500 dark:text-neutral-400 max-w-2xl mx-auto">
+          <p className="mt-4 text-lg text-neutral-400 max-w-2xl mx-auto">
             Ställ en fråga och se hur 7+ modeller svarar, med latency, token-användning och CO₂-estimat
           </p>
         </motion.div>
@@ -1516,11 +1522,11 @@ const DebateDemo = () => {
   return (
     <section 
       ref={sectionRef} 
-      className="relative py-24 md:py-32 bg-gradient-to-b from-neutral-50 via-white to-neutral-50 dark:from-neutral-900 dark:via-neutral-950 dark:to-neutral-900 border-y border-neutral-100 dark:border-neutral-800/50 overflow-hidden"
+      className="relative py-24 md:py-32 bg-gradient-to-b from-gray-900 via-gray-900 to-black border-y border-neutral-800/50 overflow-hidden"
     >
       {/* Background Effects */}
       <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-1/3 left-1/4 w-[500px] h-[500px] bg-gradient-to-r from-purple-500/5 via-pink-500/5 to-orange-500/5 dark:from-purple-500/10 dark:via-pink-500/10 dark:to-orange-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 left-1/4 w-[500px] h-[500px] bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-orange-500/10 rounded-full blur-3xl" />
       </div>
 
       <div className="mx-auto max-w-6xl px-6">
@@ -1536,10 +1542,10 @@ const DebateDemo = () => {
               🎭 DEBATT-LÄGE
             </span>
           </div>
-          <h2 className="text-2xl md:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white mb-4">
+          <h2 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-4">
             AI-Modeller Diskuterar i 3 Rundor
           </h2>
-          <p className="text-base md:text-lg text-neutral-600 dark:text-neutral-400">
+          <p className="text-base md:text-lg text-neutral-400">
             Se hur modeller utvecklar argument, bygger på varandras svar, och röstar på bästa argumentet
           </p>
         </motion.div>
@@ -1842,7 +1848,7 @@ const RadicalTransparencySection = () => {
   }, [currentScenario, isInView, langGraphData]);
 
   return (
-    <section ref={sectionRef} className="relative py-24 md:py-32 bg-white dark:bg-neutral-950">
+    <section ref={sectionRef} className="relative py-24 md:py-32 bg-gradient-to-b from-gray-900 via-gray-900 to-black">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <motion.div
@@ -2482,11 +2488,11 @@ const LLMProvidersSection = () => {
   };
 
   return (
-    <section className="py-24 md:py-32 border-t border-neutral-100 dark:border-neutral-800/50 relative overflow-hidden">
+    <section className="py-24 md:py-32 border-t border-neutral-800/50 relative overflow-hidden bg-gradient-to-b from-gray-900 via-gray-900 to-black">
       {/* Background Gradient */}
       <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-0 left-1/3 w-96 h-96 bg-gradient-to-br from-blue-500/5 to-cyan-500/5 dark:from-blue-500/10 dark:to-cyan-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-gradient-to-tl from-purple-500/5 to-pink-500/5 dark:from-purple-500/10 dark:to-pink-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-0 left-1/3 w-96 h-96 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-gradient-to-tl from-purple-500/10 to-pink-500/10 rounded-full blur-3xl" />
       </div>
 
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
@@ -2497,10 +2503,10 @@ const LLMProvidersSection = () => {
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
         >
-          <h2 className="text-3xl md:text-5xl font-bold tracking-tight text-black dark:text-white">
+          <h2 className="text-3xl md:text-5xl font-bold tracking-tight text-white">
             20+ LLM-providers
           </h2>
-          <p className="mt-4 text-lg text-neutral-500 dark:text-neutral-400">
+          <p className="mt-4 text-lg text-neutral-400">
             Flexibel arkitektur med stöd för alla större språkmodeller
           </p>
         </motion.div>
@@ -2548,10 +2554,10 @@ const LLMProvidersSection = () => {
 
 const CTASection = () => {
   return (
-    <section className="py-24 md:py-32 border-t border-neutral-100 dark:border-neutral-800 relative overflow-hidden">
+    <section className="py-24 md:py-32 border-t border-neutral-800 relative overflow-hidden bg-gradient-to-b from-gray-900 via-gray-900 to-black">
       {/* Background Gradient Elements */}
       <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-gradient-to-br from-orange-500/5 via-amber-500/5 to-orange-500/5 dark:from-orange-500/10 dark:via-amber-500/10 dark:to-orange-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-gradient-to-br from-orange-500/10 via-amber-500/10 to-orange-500/10 rounded-full blur-3xl" />
       </div>
 
       <motion.div 
@@ -2562,7 +2568,7 @@ const CTASection = () => {
         transition={{ duration: 0.6 }}
       >
         <motion.h2 
-          className="text-3xl md:text-5xl font-bold tracking-tight text-black dark:text-white"
+          className="text-3xl md:text-5xl font-bold tracking-tight text-white"
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
@@ -2582,7 +2588,7 @@ const CTASection = () => {
         </motion.h2>
 
         <motion.p 
-          className="mt-6 text-lg text-neutral-500 dark:text-neutral-400"
+          className="mt-6 text-lg text-neutral-400"
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
@@ -2610,7 +2616,7 @@ const CTASection = () => {
             <div className="absolute -inset-1 bg-gradient-to-r from-orange-500/20 to-amber-500/20 rounded-2xl opacity-0 group-hover:opacity-100 blur-xl transition-opacity duration-500 -z-10" />
             
             <span className="relative z-10 flex items-center gap-2">
-              <span>Kom igång nu</span>
+              <span>Skapa konto</span>
               <motion.span
                 animate={{ x: [0, 4, 0] }}
                 transition={{ duration: 2, repeat: Infinity }}
@@ -2667,7 +2673,7 @@ const CTASection = () => {
 
 export default function LandingPageMockup() {
 return (
-<main className="min-h-screen bg-white dark:bg-neutral-950 text-gray-900 dark:text-white">
+<main className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-black text-white">
 <HeroSection />
 <APIReasoningDemo />
 <CompareShowcase />
