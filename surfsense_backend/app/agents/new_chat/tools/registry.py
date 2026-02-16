@@ -80,6 +80,7 @@ from .public_web_search import create_public_web_search_tool
 from .reflect_on_progress import create_reflect_on_progress_tool
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
+from .sandbox_execute import create_sandbox_execute_tool
 from .smhi_weather import create_smhi_weather_tool
 from .tavily_search import create_tavily_search_tool
 from .trafiklab_route import create_trafiklab_route_tool
@@ -216,6 +217,16 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         name="search_web",
         description="Search the public web using globally configured providers",
         factory=lambda deps: create_public_web_search_tool(),
+        requires=[],
+        enabled_by_default=False,
+    ),
+    ToolDefinition(
+        name="sandbox_execute",
+        description="Execute shell commands inside a thread-isolated sandbox workspace",
+        factory=lambda deps: create_sandbox_execute_tool(
+            thread_id=deps.get("thread_id"),
+            runtime_hitl=deps.get("runtime_hitl"),
+        ),
         requires=[],
         enabled_by_default=False,
     ),

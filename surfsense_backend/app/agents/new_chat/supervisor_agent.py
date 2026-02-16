@@ -2370,8 +2370,9 @@ async def create_supervisor_agent(
         ),
         "code": WorkerConfig(
             name="code-worker",
-            primary_namespaces=[("tools", "general")],
+            primary_namespaces=[("tools", "code")],
             fallback_namespaces=[
+                ("tools", "general"),
                 ("tools", "knowledge"),
                 ("tools", "action"),
                 ("tools", "statistics"),

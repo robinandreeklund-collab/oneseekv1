@@ -39,6 +39,7 @@ from .libris_search import create_libris_search_tool
 from .podcast import create_generate_podcast_tool
 from .public_web_search import create_public_web_search_tool
 from .reflect_on_progress import create_reflect_on_progress_tool
+from .sandbox_execute import create_sandbox_execute_tool
 from .registry import (
     BUILTIN_TOOLS,
     ToolDefinition,
@@ -73,6 +74,7 @@ __all__ = [
     "create_reflect_on_progress_tool",
     "create_recall_memory_tool",
     "create_save_memory_tool",
+    "create_sandbox_execute_tool",
     "create_scrape_webpage_tool",
     "create_search_knowledge_base_tool",
     "create_search_surfsense_docs_tool",

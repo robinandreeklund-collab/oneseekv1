@@ -30,6 +30,7 @@ from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.services.reranker_service import RerankerService
 from app.services.cache_control import is_cache_disabled
 from app.agents.new_chat.retrieval_feedback import get_global_retrieval_feedback_store
+from app.agents.new_chat.sandbox_runtime import sandbox_config_from_runtime_flags
 from app.agents.new_chat.tools.registry import (
     build_tools_async,
     get_default_enabled_tools,
@@ -64,6 +65,7 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "display_image": ("tools", "action", "media"),
     "link_preview": ("tools", "action", "web"),
     "scrape_webpage": ("tools", "action", "web"),
+    "sandbox_execute": ("tools", "code", "sandbox"),
     "smhi_weather": ("tools", "weather", "smhi"),
     "trafiklab_route": ("tools", "action", "travel"),
     "libris_search": ("tools", "action", "data"),
@@ -133,6 +135,17 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     ],
     "link_preview": ["lank", "link", "preview", "url"],
     "scrape_webpage": ["scrape", "skrapa", "webb", "article"],
+    "sandbox_execute": [
+        "sandbox",
+        "docker",
+        "shell",
+        "bash",
+        "python",
+        "script",
+        "kod",
+        "code",
+        "terminal",
+    ],
     "smhi_weather": [
         "weather",
         "vader",
@@ -1056,6 +1069,12 @@ async def build_global_tool_registry(
     include_mcp_tools: bool = True,
 ) -> dict[str, BaseTool]:
     enabled_tools = list(get_default_enabled_tools())
+    runtime_hitl = dependencies.get("runtime_hitl")
+    sandbox_config = sandbox_config_from_runtime_flags(
+        runtime_hitl if isinstance(runtime_hitl, dict) else None
+    )
+    if sandbox_config.enabled and "sandbox_execute" not in enabled_tools:
+        enabled_tools.append("sandbox_execute")
     for extra in ("write_todos", "reflect_on_progress"):
         if extra not in enabled_tools:
             enabled_tools.append(extra)

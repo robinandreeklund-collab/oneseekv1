@@ -1131,6 +1131,8 @@ async def stream_new_chat(
             - planner/execution/synthesis HITL checkpoints.
             - hybrid_mode (bool): enables hybrid supervisor routing.
             - speculative_enabled (bool): enables speculative execution paths.
+            - sandbox_enabled (bool): enables sandbox execution tools for code tasks.
+            - sandbox_mode (str): sandbox runtime mode ("docker" or "local").
         checkpoint_ns_override:
             Optional explicit checkpoint namespace. When provided, bypasses automatic
             namespace resolution and uses this value ("" means legacy namespace).
@@ -1460,6 +1462,11 @@ async def stream_new_chat(
             runtime_flags.get("speculative_enabled"),
             default=False,
         )
+        sandbox_enabled = _coerce_runtime_flag(
+            runtime_flags.get("sandbox_enabled"),
+            default=False,
+        )
+        sandbox_mode = str(runtime_flags.get("sandbox_mode") or "docker").strip().lower()
         if not hybrid_mode:
             speculative_enabled = False
 
@@ -1482,6 +1489,8 @@ async def stream_new_chat(
                 "runtime_hitl": runtime_hitl or {},
                 "hybrid_mode": hybrid_mode,
                 "speculative_enabled": speculative_enabled,
+                "sandbox_enabled": sandbox_enabled,
+                "sandbox_mode": sandbox_mode,
             }
             route_start = await trace_recorder.start_span(
                 span_id=route_span_id,
@@ -1537,7 +1546,9 @@ async def stream_new_chat(
                 "[DEBUG] Building graph with "
                 f"compare_mode={compare_mode}, "
                 f"hybrid_mode={hybrid_mode}, "
-                f"speculative_enabled={speculative_enabled}"
+                f"speculative_enabled={speculative_enabled}, "
+                f"sandbox_enabled={sandbox_enabled}, "
+                f"sandbox_mode={sandbox_mode}"
             )
             agent = await build_complete_graph(
                 llm=llm,
