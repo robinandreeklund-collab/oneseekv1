@@ -72,6 +72,83 @@ Recommended rollout:
 
 ---
 
+## 2.1 Copy-paste only minimal quickstart
+
+### Docker (minimal)
+
+```bash
+cd /workspace/surfsense_backend
+python3 -m pytest -q tests/test_sandbox_phase1.py tests/test_sandbox_phase2_filesystem.py
+```
+
+Runtime payload:
+
+```json
+{
+  "runtime_hitl": {
+    "hybrid_mode": true,
+    "speculative_enabled": true,
+    "subagent_enabled": true,
+    "subagent_isolation_enabled": true,
+    "subagent_sandbox_scope": "subagent",
+    "sandbox_enabled": true,
+    "sandbox_mode": "docker",
+    "sandbox_docker_image": "python:3.12-slim",
+    "sandbox_container_prefix": "oneseek-sandbox",
+    "sandbox_state_store": "file",
+    "sandbox_idle_timeout_seconds": 900
+  }
+}
+```
+
+Quick verify:
+
+```bash
+docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+```
+
+### Docker Desktop Kubernetes (minimal)
+
+```bash
+cd /workspace
+kubectl config use-context docker-desktop
+docker build -f surfsense_backend/docker/provisioner/Dockerfile -t oneseek-sandbox-provisioner:local surfsense_backend
+kubectl apply -k surfsense_backend/deploy/k8s/sandbox-provisioner
+kubectl -n oneseek-sandbox set image deployment/sandbox-provisioner sandbox-provisioner=oneseek-sandbox-provisioner:local
+kubectl -n oneseek-sandbox rollout status deployment/sandbox-provisioner
+kubectl -n oneseek-sandbox port-forward svc/sandbox-provisioner 8002:8002
+```
+
+In another terminal:
+
+```bash
+curl http://127.0.0.1:8002/healthz
+```
+
+Runtime payload:
+
+```json
+{
+  "runtime_hitl": {
+    "hybrid_mode": true,
+    "speculative_enabled": true,
+    "subagent_enabled": true,
+    "subagent_isolation_enabled": true,
+    "subagent_max_concurrency": 3,
+    "subagent_context_max_chars": 1400,
+    "subagent_result_max_chars": 1000,
+    "subagent_sandbox_scope": "subagent",
+    "sandbox_enabled": true,
+    "sandbox_mode": "provisioner",
+    "sandbox_provisioner_url": "http://127.0.0.1:8002",
+    "sandbox_state_store": "file",
+    "sandbox_idle_timeout_seconds": 900
+  }
+}
+```
+
+---
+
 ## 3. Runtime settings (full flag reference)
 
 All flags are passed in `runtime_hitl`.

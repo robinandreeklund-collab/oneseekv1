@@ -21,7 +21,8 @@ Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalo
 12. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
 13. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
 14. [Sandbox step-by-step guide](#sandbox-step-by-step-guide)
-15. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
+15. [Copy-paste only quickstart (Docker + K8s)](#copy-paste-only-quickstart-docker--k8s)
+16. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
 
 ---
 
@@ -448,6 +449,83 @@ Runtime-flaggor i chatflodet:
 Full setup, installation, manifests, runtime settings, Docker + Kubernetes drift och manuella tester finns i:
 
 - [`docs/sandbox-kubernetes-provisioner-guide.md`](docs/sandbox-kubernetes-provisioner-guide.md)
+
+---
+
+## Copy-paste only quickstart (Docker + K8s)
+
+### A) Docker quickstart (minimal)
+
+```bash
+cd /workspace/surfsense_backend
+python3 -m pytest -q tests/test_sandbox_phase1.py tests/test_sandbox_phase2_filesystem.py
+```
+
+Use this runtime payload:
+
+```json
+{
+  "runtime_hitl": {
+    "hybrid_mode": true,
+    "speculative_enabled": true,
+    "subagent_enabled": true,
+    "subagent_isolation_enabled": true,
+    "subagent_sandbox_scope": "subagent",
+    "sandbox_enabled": true,
+    "sandbox_mode": "docker",
+    "sandbox_docker_image": "python:3.12-slim",
+    "sandbox_container_prefix": "oneseek-sandbox",
+    "sandbox_state_store": "file",
+    "sandbox_idle_timeout_seconds": 900
+  }
+}
+```
+
+Optional check:
+
+```bash
+docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+```
+
+### B) Docker Desktop Kubernetes quickstart (minimal)
+
+```bash
+cd /workspace
+kubectl config use-context docker-desktop
+docker build -f surfsense_backend/docker/provisioner/Dockerfile -t oneseek-sandbox-provisioner:local surfsense_backend
+kubectl apply -k surfsense_backend/deploy/k8s/sandbox-provisioner
+kubectl -n oneseek-sandbox set image deployment/sandbox-provisioner sandbox-provisioner=oneseek-sandbox-provisioner:local
+kubectl -n oneseek-sandbox rollout status deployment/sandbox-provisioner
+kubectl -n oneseek-sandbox port-forward svc/sandbox-provisioner 8002:8002
+```
+
+In another terminal:
+
+```bash
+curl http://127.0.0.1:8002/healthz
+```
+
+Use this runtime payload:
+
+```json
+{
+  "runtime_hitl": {
+    "hybrid_mode": true,
+    "speculative_enabled": true,
+    "subagent_enabled": true,
+    "subagent_isolation_enabled": true,
+    "subagent_max_concurrency": 3,
+    "subagent_context_max_chars": 1400,
+    "subagent_result_max_chars": 1000,
+    "subagent_sandbox_scope": "subagent",
+    "sandbox_enabled": true,
+    "sandbox_mode": "provisioner",
+    "sandbox_provisioner_url": "http://127.0.0.1:8002",
+    "sandbox_state_store": "file",
+    "sandbox_idle_timeout_seconds": 900
+  }
+}
+```
 
 ---
 
