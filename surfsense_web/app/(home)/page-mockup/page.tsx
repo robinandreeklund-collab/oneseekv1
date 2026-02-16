@@ -218,40 +218,54 @@ const DETAILED_LANGGRAPH_STEPS = [
 
 
 // ==================== REAL-TIME TYPING DEMO DATA ====================
-const DEMO_RESPONSES = [
-  {
-    model: "Grok",
-    provider: "xAI",
-    response: "Sveriges befolkning är cirka 10,5 miljoner invånare (per 2023). Exakt siffra enligt SCB: 10 521 556 (per 31 december 2023).",
-    latency: "2.1s",
-    tokens: "467",
-    color: "from-purple-500 to-blue-500"
-  },
-  {
-    model: "ChatGPT",
-    provider: "OpenAI",
-    response: "Från och med 2023 har Sverige ungefär 10,5 miljoner invånare.",
-    latency: "2.0s",
-    tokens: "56",
-    color: "from-emerald-500 to-teal-500"
-  },
-  {
-    model: "Gemini",
-    provider: "Google",
-    response: "Enligt de senaste uppgifterna från Statistiska Centralbyrån (SCB) har Sverige drygt 10,5 miljoner invånare.",
-    latency: "1.6s",
-    tokens: "171",
-    color: "from-blue-500 to-cyan-500"
-  },
-  {
-    model: "DeepSeek",
-    provider: "DeepSeek",
-    response: "Sverige har cirka 10,5 miljoner invånare (enligt senaste uppgifter från 2023–2024). Den exakta siffran varierar något över tid på grund av födelse-, dödstal och migration.",
-    latency: "3.3s",
-    tokens: "126",
-    color: "from-indigo-500 to-purple-500"
-  },
-];
+// Constants for truncation and timing
+const MAX_RESPONSE_LENGTH = 200;
+const MAX_SYNTHESIS_LENGTH = 350;
+const QUESTION_ROTATION_INTERVAL = 45000; // 45 seconds
+
+// Question data interface
+interface QuestionData {
+  id: string;
+  question: string;
+  models: Array<{
+    name: string;
+    response: string;
+  }>;
+  oneseek_response: string;
+}
+
+// Helper to extract response text from JSON string
+const extractResponse = (jsonStr: string): string => {
+  if (jsonStr === "Model unavailable") {
+    return "Model currently unavailable";
+  }
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (parsed.status === "error") {
+      return "Model currently unavailable";
+    }
+    return parsed.response || parsed.summary || "No response available";
+  } catch (error) {
+    console.warn("Failed to parse model response:", error);
+    return jsonStr;
+  }
+};
+
+// Map model names to MODEL_DATA
+const getModelData = (modelName: string) => {
+  const normalizedName = modelName.toLowerCase();
+  const modelMap: Record<string, string> = {
+    chatgpt: "gpt",
+    gpt: "gpt",
+    claude: "claude",
+    gemini: "gemini",
+    deepseek: "deepseek",
+    perplexity: "perplexity",
+    grok: "grok",
+  };
+  const mappedId = modelMap[normalizedName] || normalizedName;
+  return MODEL_DATA.find((m) => m.id === mappedId) || MODEL_DATA[0];
+};
 
 // ==================== TYPING ANIMATION COMPONENT ====================
 const TypingText = ({ text, speed = 30, onComplete }: { text: string; speed?: number; onComplete?: () => void }) => {
@@ -388,16 +402,27 @@ const StreamingMarkdown = ({
 
 // ==================== SIDE-BY-SIDE COMPARISON COMPONENT ====================
 const SideBySideComparison = () => {
-  const [currentPair, setCurrentPair] = useState(0);
-  const [typingComplete, setTypingComplete] = useState([false, false]);
+  const [questions, setQuestions] = useState<QuestionData[]>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [typingComplete, setTypingComplete] = useState<boolean[]>([false, false, false, false, false, false]);
   const [showSynthesis, setShowSynthesis] = useState(false);
   const [synthesisComplete, setSynthesisComplete] = useState(false);
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true });
 
-  // Show synthesis after both models complete
+  // Load questions from JSON
   useEffect(() => {
-    if (typingComplete[0] && typingComplete[1] && !showSynthesis) {
+    fetch("/compare_questions.json")
+      .then((res) => res.json())
+      .then((data: QuestionData[]) => {
+        setQuestions(data);
+      })
+      .catch((err) => console.error("Failed to load questions:", err));
+  }, []);
+
+  // Show synthesis after all 6 models complete
+  useEffect(() => {
+    if (typingComplete.every((c) => c) && !showSynthesis) {
       const timeout = setTimeout(() => {
         setShowSynthesis(true);
       }, 800);
@@ -405,34 +430,41 @@ const SideBySideComparison = () => {
     }
   }, [typingComplete, showSynthesis]);
 
-  // Cycle through model pairs after synthesis completes
+  // Rotate to next question after synthesis completes (45s total cycle)
   useEffect(() => {
-    if (synthesisComplete) {
+    if (synthesisComplete && questions.length > 0) {
       const timeout = setTimeout(() => {
-        setCurrentPair((prev) => (prev + 2) % DEMO_RESPONSES.length);
-        setTypingComplete([false, false]);
+        setCurrentQuestionIndex((prev) => (prev + 1) % questions.length);
+        setTypingComplete([false, false, false, false, false, false]);
         setShowSynthesis(false);
         setSynthesisComplete(false);
-      }, 2000);
+      }, QUESTION_ROTATION_INTERVAL);
       return () => clearTimeout(timeout);
     }
-  }, [synthesisComplete]);
+  }, [synthesisComplete, questions.length]);
 
-  const leftModel = DEMO_RESPONSES[currentPair];
-  const rightModel = DEMO_RESPONSES[(currentPair + 1) % DEMO_RESPONSES.length];
+  const currentQuestion = questions[currentQuestionIndex];
 
   // Memoize callbacks to prevent infinite loops
-  const handleLeftComplete = useCallback(() => {
-    setTypingComplete(prev => [true, prev[1]]);
-  }, []);
-
-  const handleRightComplete = useCallback(() => {
-    setTypingComplete(prev => [prev[0], true]);
+  const handleModelComplete = useCallback((index: number) => {
+    setTypingComplete(prev => {
+      const updated = [...prev];
+      updated[index] = true;
+      return updated;
+    });
   }, []);
 
   const handleSynthesisComplete = useCallback(() => {
     setSynthesisComplete(true);
   }, []);
+
+  if (!currentQuestion) {
+    return (
+      <div ref={ref} className="relative">
+        <div className="text-center text-neutral-500">Loading questions...</div>
+      </div>
+    );
+  }
 
   return (
     <div ref={ref} className="relative">
@@ -446,115 +478,86 @@ const SideBySideComparison = () => {
         <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-blue-500/10 rounded-3xl blur-xl" />
         
         <div className="relative rounded-2xl bg-white/90 dark:bg-neutral-950/90 p-6 md:p-8 backdrop-blur-sm">
+          {/* Question indicator dots */}
+          <div className="mb-4 flex items-center justify-center gap-2">
+            {questions.map((_, index) => (
+              <div
+                key={index}
+                className={cn(
+                  "h-2 w-2 rounded-full transition-all duration-300",
+                  index === currentQuestionIndex ? "bg-blue-500 scale-125" : "bg-neutral-300 dark:bg-neutral-700"
+                )}
+              />
+            ))}
+          </div>
+
           {/* Question */}
           <div className="mb-6 pb-4 border-b border-neutral-200 dark:border-neutral-800">
             <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400 mb-2">FRÅGA</p>
             <p className="text-base md:text-lg font-semibold text-neutral-900 dark:text-white">
-              Hur många invånare har Sverige?
+              {currentQuestion.question}
             </p>
           </div>
 
-          {/* Side-by-side model responses */}
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* Left Model */}
-            <motion.div
-              key={`left-${currentPair}`}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              className="group relative"
-            >
-              <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 hover:border-blue-200 dark:hover:border-blue-900 transition-colors duration-300 h-full flex flex-col">
-                {/* Model Header */}
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="relative size-12 flex-shrink-0">
-                      {MODEL_LOGOS[leftModel.model.toLowerCase() === "chatgpt" ? "gpt" : leftModel.model.toLowerCase()] ? (
-                        <Image
-                          src={MODEL_LOGOS[leftModel.model.toLowerCase() === "chatgpt" ? "gpt" : leftModel.model.toLowerCase()]}
-                          alt={`${leftModel.model} logo`}
-                          width={48}
-                          height={48}
-                          className="object-contain"
-                        />
-                      ) : (
-                        <div className={cn("size-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-white font-bold shadow-lg", leftModel.color)}>
-                          {leftModel.model[0]}
+          {/* 6 models in grid: 3 cols on desktop, 2 on tablet, 1 on mobile */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {currentQuestion.models.map((model, index) => {
+              const modelData = getModelData(model.name);
+              const modelLogoKey = model.name.toLowerCase() === "chatgpt" ? "gpt" : model.name.toLowerCase();
+              const responseText = extractResponse(model.response);
+              
+              return (
+                <motion.div
+                  key={`${currentQuestion.id}-${model.name}-${index}`}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: index * 0.1 }}
+                  className="group relative"
+                >
+                  <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 hover:border-blue-200 dark:hover:border-blue-900 transition-colors duration-300 h-full flex flex-col">
+                    {/* Model Header */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="relative size-10 flex-shrink-0">
+                          {MODEL_LOGOS[modelLogoKey] ? (
+                            <Image
+                              src={MODEL_LOGOS[modelLogoKey]}
+                              alt={`${modelData.name} logo`}
+                              width={40}
+                              height={40}
+                              className="object-contain"
+                            />
+                          ) : (
+                            <div className="size-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold shadow-lg">
+                              {modelData.name[0]}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-neutral-900 dark:text-white">{leftModel.model}</h3>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50">
-                      {leftModel.latency}
-                    </span>
-                    <span className="text-xs text-neutral-400">{leftModel.tokens} tokens</span>
-                  </div>
-                </div>
-
-                {/* Response with typing animation */}
-                <div className="flex-1 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
-                  <TypingText 
-                    text={leftModel.response} 
-                    speed={30}
-                    onComplete={handleLeftComplete}
-                  />
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Right Model */}
-            <motion.div
-              key={`right-${currentPair}`}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              className="group relative"
-            >
-              <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 hover:border-purple-200 dark:hover:border-purple-900 transition-colors duration-300 h-full flex flex-col">
-                {/* Model Header */}
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="relative size-12 flex-shrink-0">
-                      {MODEL_LOGOS[rightModel.model.toLowerCase() === "chatgpt" ? "gpt" : rightModel.model.toLowerCase()] ? (
-                        <Image
-                          src={MODEL_LOGOS[rightModel.model.toLowerCase() === "chatgpt" ? "gpt" : rightModel.model.toLowerCase()]}
-                          alt={`${rightModel.model} logo`}
-                          width={48}
-                          height={48}
-                          className="object-contain"
-                        />
-                      ) : (
-                        <div className={cn("size-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-white font-bold shadow-lg", rightModel.color)}>
-                          {rightModel.model[0]}
+                        <div>
+                          <h3 className="text-xs font-bold text-neutral-900 dark:text-white">{modelData.name}</h3>
+                          <p className="text-[10px] text-neutral-500 dark:text-neutral-400">{modelData.provider}</p>
                         </div>
-                      )}
+                      </div>
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50">
+                          {modelData.latency}
+                        </span>
+                        <span className="text-[9px] text-neutral-400">{modelData.tokens}</span>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-neutral-900 dark:text-white">{rightModel.model}</h3>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50">
-                      {rightModel.latency}
-                    </span>
-                    <span className="text-xs text-neutral-400">{rightModel.tokens} tokens</span>
-                  </div>
-                </div>
 
-                {/* Response with typing animation */}
-                <div className="flex-1 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
-                  <TypingText 
-                    text={rightModel.response} 
-                    speed={30}
-                    onComplete={handleRightComplete}
-                  />
-                </div>
-              </div>
-            </motion.div>
+                    {/* Response with typing animation */}
+                    <div className="flex-1 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300 line-clamp-6">
+                      <TypingText 
+                        text={responseText.slice(0, MAX_RESPONSE_LENGTH)} 
+                        speed={20}
+                        onComplete={() => handleModelComplete(index)}
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
           </div>
 
           {/* OneSeek Synthesis Phase */}
@@ -592,7 +595,7 @@ const SideBySideComparison = () => {
                 {/* Synthesized response */}
                 <div className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
                   <TypingText 
-                    text={`Sverige har cirka 10,5 miljoner invånare (2023). Enligt SCB uppgick befolkningen till 10 540 886 personer. Detta bekräftas av flera källor och utgör den officiella statistiken för Sveriges befolkning.`}
+                    text={currentQuestion.oneseek_response.slice(0, MAX_SYNTHESIS_LENGTH)}
                     speed={25}
                     onComplete={handleSynthesisComplete}
                   />
@@ -624,19 +627,6 @@ const SideBySideComparison = () => {
               </div>
             </motion.div>
           )}
-
-          {/* Progress indicator */}
-          <div className="mt-6 flex items-center justify-center gap-2">
-            {[0, 2].map((index) => (
-              <div
-                key={index}
-                className={cn(
-                  "h-1.5 rounded-full transition-all duration-300",
-                  index === currentPair ? "w-8 bg-blue-500" : "w-1.5 bg-neutral-300 dark:bg-neutral-700"
-                )}
-              />
-            ))}
-          </div>
         </div>
       </motion.div>
     </div>
