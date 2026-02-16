@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 
 
 def build_synthesizer_node(
@@ -18,7 +19,7 @@ def build_synthesizer_node(
 ):
     async def synthesizer_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

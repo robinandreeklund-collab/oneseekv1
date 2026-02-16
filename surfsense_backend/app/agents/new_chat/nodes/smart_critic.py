@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from typing import Any, Awaitable, Callable
+from langchain_core.runnables import RunnableConfig
 
 
 def _normalize_status(value: Any) -> str:
@@ -59,7 +60,7 @@ def build_smart_critic_node(
 ):
     async def smart_critic_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

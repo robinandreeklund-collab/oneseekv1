@@ -61,6 +61,7 @@ from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
 from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
     DEFAULT_SUPERVISOR_CRITIC_PROMPT,
     DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
     DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
@@ -271,6 +272,14 @@ _LOOP_GUARD_TOOL_NAMES = {
 }
 _LOOP_GUARD_MAX_CONSECUTIVE = 12
 _MAX_AGENT_HOPS_PER_TURN = 3
+_SANDBOX_CODE_TOOL_IDS = (
+    "sandbox_write_file",
+    "sandbox_read_file",
+    "sandbox_ls",
+    "sandbox_replace",
+    "sandbox_execute",
+    "sandbox_release",
+)
 _AGENT_NAME_ALIAS_MAP = {
     "weather": "weather",
     "weather_agent": "weather",
@@ -2425,6 +2434,11 @@ async def create_supervisor_agent(
         "supervisor.trafik.enforcement.message",
         DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
     )
+    code_sandbox_enforcement_message = resolve_prompt(
+        prompt_overrides,
+        "supervisor.code.sandbox.enforcement.message",
+        DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
+    )
     intent_resolver_prompt_template = resolve_prompt(
         prompt_overrides,
         "supervisor.intent_resolver.system",
@@ -3965,6 +3979,41 @@ async def create_supervisor_agent(
             state_payload["sandbox_scope_id"] = subagent_id
         return state_payload
 
+    def _is_filesystem_sandbox_task(agent_name: str, task: str) -> bool:
+        return (
+            bool(sandbox_enabled)
+            and str(agent_name or "").strip().lower() == "code"
+            and _has_filesystem_intent(task)
+        )
+
+    def _prioritize_sandbox_code_tools(
+        tool_ids: list[str],
+        *,
+        agent_name: str,
+        task: str,
+        limit: int = 8,
+    ) -> list[str]:
+        merged = list(tool_ids or [])
+        if _is_filesystem_sandbox_task(agent_name, task):
+            merged = list(_SANDBOX_CODE_TOOL_IDS) + merged
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for tool_id in merged:
+            normalized = str(tool_id or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            ordered.append(normalized)
+            if len(ordered) >= max(1, int(limit)):
+                break
+        return ordered
+
+    def _uses_sandbox_tool(tool_names: list[str] | None) -> bool:
+        return any(
+            str(name or "").strip().lower().startswith("sandbox_")
+            for name in (tool_names or [])
+        )
+
     @tool
     async def call_agent(
         agent_name: str,
@@ -4075,8 +4124,17 @@ async def create_supervisor_agent(
             ]
             if not selected_tool_ids:
                 selected_tool_ids = list(trafik_tool_ids)
+        selected_tool_ids = _prioritize_sandbox_code_tools(
+            selected_tool_ids,
+            agent_name=name,
+            task=task,
+            limit=8,
+        )
+        filesystem_sandbox_task = _is_filesystem_sandbox_task(name, task)
         speculative_response, speculative_tools, speculative_payloads = (
-            _collect_speculative_response(
+            ("", [], [])
+            if filesystem_sandbox_task
+            else _collect_speculative_response(
                 selected_tool_ids=selected_tool_ids,
                 state=injected_state,
             )
@@ -4137,9 +4195,13 @@ async def create_supervisor_agent(
             if selected_tool_ids
             else f"agent:{name or 'unknown'}"
         )
-        cached_payload = episodic_store.get(
-            tool_id=memory_scope_id,
-            query=task,
+        cached_payload = (
+            None
+            if filesystem_sandbox_task
+            else episodic_store.get(
+                tool_id=memory_scope_id,
+                query=task,
+            )
         )
         if isinstance(cached_payload, dict):
             cached_response = _strip_critic_json(
@@ -4352,90 +4414,100 @@ async def create_supervisor_agent(
             messages_out = result.get("messages") or []
             if messages_out:
                 response_text = str(getattr(messages_out[-1], "content", "") or "")
+            initial_tool_names = _tool_names_from_messages(messages_out)
+            enforcement_message: str | None = None
             if name == "trafik":
-                initial_tool_names = _tool_names_from_messages(messages_out)
                 used_trafik_tool = any(
                     tool_name.startswith("trafikverket_")
                     for tool_name in initial_tool_names
                 )
                 if not used_trafik_tool:
-                    enforced_prompt = (
-                        f"{prompt.rstrip()}\n\n{trafik_enforcement_message}".strip()
-                        if prompt
-                        else trafik_enforcement_message
+                    enforcement_message = trafik_enforcement_message
+            elif filesystem_sandbox_task and not _uses_sandbox_tool(initial_tool_names):
+                enforcement_message = code_sandbox_enforcement_message
+            if enforcement_message:
+                enforced_prompt = (
+                    f"{prompt.rstrip()}\n\n{enforcement_message}".strip()
+                    if prompt
+                    else enforcement_message
+                )
+                enforced_messages = [
+                    SystemMessage(content=enforced_prompt),
+                    HumanMessage(content=task_for_worker),
+                ]
+                retry_state = _build_subagent_worker_state(
+                    base_messages=enforced_messages,
+                    selected_tool_ids=selected_tool_ids,
+                    isolated=subagent_isolated,
+                    subagent_id=subagent_id,
+                )
+                try:
+                    result = await asyncio.wait_for(
+                        worker.ainvoke(retry_state, config=config),
+                        timeout=float(execution_timeout_seconds),
                     )
-                    enforced_messages = [
-                        SystemMessage(content=enforced_prompt),
-                        HumanMessage(content=task_for_worker),
-                    ]
-                    retry_state = _build_subagent_worker_state(
-                        base_messages=enforced_messages,
-                        selected_tool_ids=selected_tool_ids,
-                        isolated=subagent_isolated,
-                        subagent_id=subagent_id,
+                except asyncio.TimeoutError:
+                    error_message = (
+                        f"Agent '{name}' retry timed out after "
+                        f"{int(execution_timeout_seconds)}s."
                     )
-                    try:
-                        result = await asyncio.wait_for(
-                            worker.ainvoke(retry_state, config=config),
-                            timeout=float(execution_timeout_seconds),
-                        )
-                    except asyncio.TimeoutError:
-                        error_message = (
-                            f"Agent '{name}' retry timed out after "
-                            f"{int(execution_timeout_seconds)}s."
-                        )
-                        return json.dumps(
-                            {
-                                "agent": name,
-                                "requested_agent": requested_name,
-                                "agent_resolution": resolution_reason,
-                                "task": task,
-                                "error": error_message,
-                                "error_type": "TimeoutError",
-                                "result_contract": _build_agent_result_contract(
+                    return json.dumps(
+                        {
+                            "agent": name,
+                            "requested_agent": requested_name,
+                            "agent_resolution": resolution_reason,
+                            "task": task,
+                            "error": error_message,
+                            "error_type": "TimeoutError",
+                            "result_contract": _build_agent_result_contract(
+                                agent_name=name,
+                                task=task,
+                                response_text="",
+                                error_text=error_message,
+                                used_tools=[],
+                                final_requested=bool(final),
+                            ),
+                            "final": bool(final),
+                            "turn_id": current_turn_id,
+                            "execution_strategy": execution_strategy or "inline",
+                            "subagent_isolated": bool(subagent_isolated),
+                            "subagent_id": subagent_id,
+                            "subagent_handoff": (
+                                _build_subagent_handoff_payload(
+                                    subagent_id=str(subagent_id or ""),
                                     agent_name=name,
-                                    task=task,
                                     response_text="",
-                                    error_text=error_message,
-                                    used_tools=[],
-                                    final_requested=bool(final),
-                                ),
-                                "final": bool(final),
-                                "turn_id": current_turn_id,
-                                "execution_strategy": execution_strategy or "inline",
-                                "subagent_isolated": bool(subagent_isolated),
-                                "subagent_id": subagent_id,
-                                "subagent_handoff": (
-                                    _build_subagent_handoff_payload(
-                                        subagent_id=str(subagent_id or ""),
+                                    result_contract=_build_agent_result_contract(
                                         agent_name=name,
+                                        task=task,
                                         response_text="",
-                                        result_contract=_build_agent_result_contract(
-                                            agent_name=name,
-                                            task=task,
-                                            response_text="",
-                                            error_text=error_message,
-                                            used_tools=[],
-                                            final_requested=bool(final),
-                                        ),
-                                        result_max_chars=subagent_result_max_chars,
                                         error_text=error_message,
-                                    )
-                                    if subagent_isolated and subagent_id
-                                    else None
-                                ),
-                            },
-                            ensure_ascii=True,
+                                        used_tools=[],
+                                        final_requested=bool(final),
+                                    ),
+                                    result_max_chars=subagent_result_max_chars,
+                                    error_text=error_message,
+                                )
+                                if subagent_isolated and subagent_id
+                                else None
+                            ),
+                        },
+                        ensure_ascii=True,
+                    )
+                if isinstance(result, dict):
+                    messages_out = result.get("messages") or []
+                    if messages_out:
+                        response_text = str(
+                            getattr(messages_out[-1], "content", "") or ""
                         )
-                    if isinstance(result, dict):
-                        messages_out = result.get("messages") or []
-                        if messages_out:
-                            response_text = str(
-                                getattr(messages_out[-1], "content", "") or ""
-                            )
         if not response_text:
             response_text = str(result)
         used_tool_names = _tool_names_from_messages(messages_out)
+        if filesystem_sandbox_task and not _uses_sandbox_tool(used_tool_names):
+            response_text = (
+                "Kunde inte verifiera filsystemsandringen eftersom inga sandbox-verktyg anropades. "
+                "Forsok igen med sandbox_write_file/sandbox_read_file aktiverade."
+            )
 
         critic_prompt = append_datetime_context(critic_prompt_template)
         critic_input = f"Uppgift: {task}\nSvar: {response_text}"
@@ -4461,10 +4533,30 @@ async def create_supervisor_agent(
             used_tools=used_tool_names,
             final_requested=bool(final),
         )
-        if str(result_contract.get("status") or "").strip().lower() in {
+        if filesystem_sandbox_task and not _uses_sandbox_tool(used_tool_names):
+            result_contract.update(
+                {
+                    "status": "partial",
+                    "actionable": False,
+                    "retry_recommended": True,
+                    "confidence": min(
+                        float(result_contract.get("confidence") or 0.45),
+                        0.45,
+                    ),
+                    "reason": (
+                        "Filsystemsuppgift maste verifieras med sandbox-verktyg "
+                        "(sandbox_write_file/sandbox_read_file)."
+                    ),
+                }
+            )
+        if (
+            not filesystem_sandbox_task
+            and str(result_contract.get("status") or "").strip().lower() in {
             "success",
             "partial",
-        } and str(response_text).strip():
+        }
+            and str(response_text).strip()
+        ):
             episodic_store.put(
                 tool_id=memory_scope_id,
                 query=task,
@@ -4636,13 +4728,26 @@ async def create_supervisor_agent(
                     ]
                     if not selected_tool_ids:
                         selected_tool_ids = list(trafik_tool_ids)
+                selected_tool_ids = _prioritize_sandbox_code_tools(
+                    selected_tool_ids,
+                    agent_name=agent_name,
+                    task=task,
+                    limit=8,
+                )
+                filesystem_sandbox_task = _is_filesystem_sandbox_task(
+                    agent_name, task
+                )
                 (
                     speculative_response,
                     speculative_tools,
                     speculative_payloads,
-                ) = _collect_speculative_response(
-                    selected_tool_ids=selected_tool_ids,
-                    state=injected_state,
+                ) = (
+                    ("", [], [])
+                    if filesystem_sandbox_task
+                    else _collect_speculative_response(
+                        selected_tool_ids=selected_tool_ids,
+                        state=injected_state,
+                    )
                 )
                 if speculative_response:
                     result_contract = _build_agent_result_contract(
@@ -4689,9 +4794,13 @@ async def create_supervisor_agent(
                     if selected_tool_ids
                     else f"agent:{agent_name or 'unknown'}"
                 )
-                cached_payload = episodic_store.get(
-                    tool_id=memory_scope_id,
-                    query=task,
+                cached_payload = (
+                    None
+                    if filesystem_sandbox_task
+                    else episodic_store.get(
+                        tool_id=memory_scope_id,
+                        query=task,
+                    )
                 )
                 if isinstance(cached_payload, dict):
                     cached_response = _strip_critic_json(
@@ -4851,6 +4960,11 @@ async def create_supervisor_agent(
                     response_text = str(result)
                 response_text = _strip_critic_json(response_text)
                 used_tool_names = _tool_names_from_messages(messages_out)
+                if filesystem_sandbox_task and not _uses_sandbox_tool(used_tool_names):
+                    response_text = (
+                        "Kunde inte verifiera filsystemsandringen eftersom inga sandbox-verktyg anropades. "
+                        "Forsok igen med sandbox_write_file/sandbox_read_file aktiverade."
+                    )
                 result_contract = _build_agent_result_contract(
                     agent_name=agent_name,
                     task=task,
@@ -4858,10 +4972,30 @@ async def create_supervisor_agent(
                     used_tools=used_tool_names,
                     final_requested=False,
                 )
-                if str(result_contract.get("status") or "").strip().lower() in {
+                if filesystem_sandbox_task and not _uses_sandbox_tool(used_tool_names):
+                    result_contract.update(
+                        {
+                            "status": "partial",
+                            "actionable": False,
+                            "retry_recommended": True,
+                            "confidence": min(
+                                float(result_contract.get("confidence") or 0.45),
+                                0.45,
+                            ),
+                            "reason": (
+                                "Filsystemsuppgift maste verifieras med sandbox-verktyg "
+                                "(sandbox_write_file/sandbox_read_file)."
+                            ),
+                        }
+                    )
+                if (
+                    not filesystem_sandbox_task
+                    and str(result_contract.get("status") or "").strip().lower() in {
                     "success",
                     "partial",
-                } and str(response_text).strip():
+                    }
+                    and str(response_text).strip()
+                ):
                     episodic_store.put(
                         tool_id=memory_scope_id,
                         query=task,
@@ -5047,8 +5181,11 @@ async def create_supervisor_agent(
         latest_user_query_fn=_latest_user_query,
         next_plan_step_fn=_next_plan_step,
         focused_tool_ids_for_agent_fn=(
-            lambda agent_name, task: _focused_tool_ids_for_agent(
-                agent_name, task, limit=6
+            lambda agent_name, task: _prioritize_sandbox_code_tools(
+                _focused_tool_ids_for_agent(agent_name, task, limit=6),
+                agent_name=agent_name,
+                task=task,
+                limit=8,
             )
         ),
         weather_tool_ids=weather_tool_ids,

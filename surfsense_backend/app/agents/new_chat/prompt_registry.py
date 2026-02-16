@@ -24,6 +24,7 @@ from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PRO
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
 from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
 from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
     DEFAULT_SUPERVISOR_CRITIC_PROMPT,
     DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
     DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
@@ -158,6 +159,14 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
             "Extra instruction injected when trafik agent must retry with proper trafikverket tool usage."
         ),
         default_prompt=DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.code.sandbox.enforcement.message",
+        label="Supervisor Code sandbox enforcement prompt",
+        description=(
+            "Extra instruction injected when code agent must retry with mandatory sandbox tool usage."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
     ),
     PromptDefinition(
         key="supervisor.intent_resolver.system",

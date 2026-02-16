@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 
 from app.agents.new_chat.token_budget import TokenBudget
 
@@ -112,7 +113,7 @@ def build_executor_nodes(
 
     def call_model(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -154,7 +155,7 @@ def build_executor_nodes(
 
     async def acall_model(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Awaitable, Callable
+from langchain_core.runnables import RunnableConfig
 
 
 def _safe_candidates(values: Any, *, max_candidates: int) -> list[dict[str, Any]]:
@@ -34,7 +35,7 @@ def build_speculative_node(
 ):
     async def speculative_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -98,7 +99,7 @@ def build_speculative_node(
 def build_speculative_merge_node():
     async def speculative_merge_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

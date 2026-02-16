@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from langchain_core.runnables import RunnableConfig
 
 
 def build_tool_resolver_node(
@@ -14,7 +15,7 @@ def build_tool_resolver_node(
 ):
     async def tool_resolver_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

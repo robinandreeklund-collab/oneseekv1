@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from langchain_core.runnables import RunnableConfig
 
 
 def _safe_confidence(value: Any, default: float = 0.0) -> float:
@@ -50,7 +51,7 @@ def build_progressive_synthesizer_node(
 ):
     async def progressive_synthesizer_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

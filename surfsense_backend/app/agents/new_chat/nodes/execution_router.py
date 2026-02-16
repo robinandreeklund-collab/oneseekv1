@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Callable
+from langchain_core.runnables import RunnableConfig
 
 EXECUTION_STRATEGY_INLINE = "inline"
 EXECUTION_STRATEGY_PARALLEL = "parallel"
@@ -109,7 +110,7 @@ def build_execution_router_node(
 ):
     async def execution_router_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

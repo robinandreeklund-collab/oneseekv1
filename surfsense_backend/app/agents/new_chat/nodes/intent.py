@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 
 
 def build_intent_resolver_node(
@@ -25,7 +26,7 @@ def build_intent_resolver_node(
 ):
     async def resolve_intent_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

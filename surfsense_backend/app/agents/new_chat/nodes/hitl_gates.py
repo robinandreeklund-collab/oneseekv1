@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableConfig
 
 
 def build_planner_hitl_gate_node(
@@ -14,7 +15,7 @@ def build_planner_hitl_gate_node(
 ):
     async def planner_hitl_gate_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -57,7 +58,7 @@ def build_execution_hitl_gate_node(
 ):
     async def execution_hitl_gate_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -126,7 +127,7 @@ def build_synthesis_hitl_gate_node(
 ):
     async def synthesis_hitl_gate_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

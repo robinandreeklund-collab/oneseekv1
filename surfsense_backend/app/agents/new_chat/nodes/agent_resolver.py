@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 
 
 def build_agent_resolver_node(
@@ -23,7 +24,7 @@ def build_agent_resolver_node(
 ):
     async def resolve_agents_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
