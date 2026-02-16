@@ -29,6 +29,7 @@ from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.services.reranker_service import RerankerService
 from app.services.cache_control import is_cache_disabled
+from app.agents.new_chat.retrieval_feedback import get_global_retrieval_feedback_store
 from app.agents.new_chat.tools.registry import (
     build_tools_async,
     get_default_enabled_tools,
@@ -815,6 +816,7 @@ def _run_smart_retrieval(
     tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     normalized_tuning = normalize_retrieval_tuning(tuning)
+    retrieval_feedback_store = get_global_retrieval_feedback_store()
     query_norm = _normalize_text(query)
     query_tokens = set(_tokenize(query_norm))
     fallback_namespaces = fallback_namespaces or []
@@ -851,8 +853,15 @@ def _run_smart_retrieval(
             _match_namespace(entry.namespace, prefix) for prefix in fallback_namespaces
         )
         namespace_bonus = normalized_tuning.namespace_boost if is_primary else 0.0
+        retrieval_feedback_boost = retrieval_feedback_store.get_boost(
+            tool_id=entry.tool_id,
+            query=query_norm or query,
+        )
         pre_rerank_score = (
-            breakdown["lexical_score"] + embedding_weighted + namespace_bonus
+            breakdown["lexical_score"]
+            + embedding_weighted
+            + namespace_bonus
+            + retrieval_feedback_boost
         )
         breakdown_by_id[entry.tool_id] = {
             "tool_id": entry.tool_id,
@@ -866,6 +875,7 @@ def _run_smart_retrieval(
             "embedding_score_raw": float(semantic_score),
             "embedding_score_weighted": float(embedding_weighted),
             "namespace_bonus": float(namespace_bonus),
+            "retrieval_feedback_boost": float(retrieval_feedback_boost),
             "pre_rerank_score": float(pre_rerank_score),
             "namespace_scope": "primary" if is_primary else ("fallback" if is_fallback else "none"),
         }
@@ -939,6 +949,9 @@ def _run_smart_retrieval(
                     breakdown.get("embedding_score_weighted", 0.0)
                 ),
                 "namespace_bonus": float(breakdown.get("namespace_bonus", 0.0)),
+                "retrieval_feedback_boost": float(
+                    breakdown.get("retrieval_feedback_boost", 0.0)
+                ),
                 "namespace_scope": breakdown.get("namespace_scope"),
             }
         )

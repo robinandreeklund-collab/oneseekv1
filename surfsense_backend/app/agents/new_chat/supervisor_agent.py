@@ -40,6 +40,11 @@ from app.agents.new_chat.hybrid_state import (
     build_trivial_response,
     classify_graph_complexity,
 )
+from app.agents.new_chat.episodic_memory import (
+    get_or_create_episodic_store,
+    infer_ttl_seconds,
+)
+from app.agents.new_chat.retrieval_feedback import get_global_retrieval_feedback_store
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
@@ -2694,6 +2699,19 @@ async def create_supervisor_agent(
     search_space_id = dependencies.get("search_space_id")
     user_id = dependencies.get("user_id")
     thread_id = dependencies.get("thread_id")
+    episodic_store = get_or_create_episodic_store(
+        search_space_id=search_space_id,
+        user_id=user_id,
+        max_entries=500,
+    )
+    retrieval_feedback_store = get_global_retrieval_feedback_store()
+
+    def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
+        retrieval_feedback_store.record(
+            tool_id=str(tool_id or "").strip(),
+            query=str(query or "").strip(),
+            success=bool(success),
+        )
     weather_tool_ids = ["smhi_weather"]
     weather_tool_ids.extend(
         definition.tool_id
@@ -3374,6 +3392,62 @@ async def create_supervisor_agent(
             ]
             if not selected_tool_ids:
                 selected_tool_ids = list(trafik_tool_ids)
+        memory_scope_id = (
+            str(selected_tool_ids[0]).strip()
+            if selected_tool_ids
+            else f"agent:{name or 'unknown'}"
+        )
+        cached_payload = episodic_store.get(
+            tool_id=memory_scope_id,
+            query=task,
+        )
+        if isinstance(cached_payload, dict):
+            cached_response = _strip_critic_json(
+                str(cached_payload.get("response") or "").strip()
+            )
+            if cached_response:
+                cached_used_tools_raw = cached_payload.get("used_tools")
+                cached_used_tools = (
+                    [
+                        str(item).strip()
+                        for item in cached_used_tools_raw
+                        if str(item).strip()
+                    ][:8]
+                    if isinstance(cached_used_tools_raw, list)
+                    else []
+                )
+                cached_contract = cached_payload.get("result_contract")
+                if not isinstance(cached_contract, dict):
+                    cached_contract = _build_agent_result_contract(
+                        agent_name=name,
+                        task=task,
+                        response_text=cached_response,
+                        used_tools=cached_used_tools,
+                        final_requested=bool(final),
+                    )
+                output_response = cached_response
+                if not final:
+                    output_response = compress_response(output_response, agent_name=name)
+                return json.dumps(
+                    {
+                        "agent": name,
+                        "requested_agent": requested_name,
+                        "agent_resolution": resolution_reason,
+                        "task": task,
+                        "response": output_response,
+                        "used_tools": cached_used_tools,
+                        "result_contract": cached_contract,
+                        "critic": {
+                            "status": "cached",
+                            "reason": "episodic_memory_hit",
+                        },
+                        "final": bool(final),
+                        "turn_id": current_turn_id,
+                        "execution_strategy": execution_strategy or "inline",
+                        "from_episodic_cache": True,
+                    },
+                    ensure_ascii=True,
+                )
         prompt = worker_prompts.get(name, "")
         scoped_prompt = _build_scoped_prompt_for_agent(name, task)
         if scoped_prompt:
@@ -3480,10 +3554,38 @@ async def create_supervisor_agent(
                         "messages": enforced_messages,
                         "selected_tool_ids": selected_tool_ids,
                     }
-                    result = await asyncio.wait_for(
-                        worker.ainvoke(retry_state, config=config),
-                        timeout=float(execution_timeout_seconds),
-                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            worker.ainvoke(retry_state, config=config),
+                            timeout=float(execution_timeout_seconds),
+                        )
+                    except asyncio.TimeoutError:
+                        error_message = (
+                            f"Agent '{name}' retry timed out after "
+                            f"{int(execution_timeout_seconds)}s."
+                        )
+                        return json.dumps(
+                            {
+                                "agent": name,
+                                "requested_agent": requested_name,
+                                "agent_resolution": resolution_reason,
+                                "task": task,
+                                "error": error_message,
+                                "error_type": "TimeoutError",
+                                "result_contract": _build_agent_result_contract(
+                                    agent_name=name,
+                                    task=task,
+                                    response_text="",
+                                    error_text=error_message,
+                                    used_tools=[],
+                                    final_requested=bool(final),
+                                ),
+                                "final": bool(final),
+                                "turn_id": current_turn_id,
+                                "execution_strategy": execution_strategy or "inline",
+                            },
+                            ensure_ascii=True,
+                        )
                     if isinstance(result, dict):
                         messages_out = result.get("messages") or []
                         if messages_out:
@@ -3518,6 +3620,24 @@ async def create_supervisor_agent(
             used_tools=used_tool_names,
             final_requested=bool(final),
         )
+        if str(result_contract.get("status") or "").strip().lower() in {
+            "success",
+            "partial",
+        } and str(response_text).strip():
+            episodic_store.put(
+                tool_id=memory_scope_id,
+                query=task,
+                value={
+                    "response": response_text,
+                    "used_tools": used_tool_names,
+                    "result_contract": result_contract,
+                    "agent": name,
+                },
+                ttl_seconds=infer_ttl_seconds(
+                    tool_id=memory_scope_id,
+                    agent_name=name,
+                ),
+            )
 
         # Compress response for context efficiency when not final
         if not final:
@@ -3536,6 +3656,7 @@ async def create_supervisor_agent(
                 "final": bool(final),
                 "turn_id": current_turn_id,
                 "execution_strategy": execution_strategy or "inline",
+                "from_episodic_cache": False,
             },
             ensure_ascii=True,
         )
@@ -3619,6 +3740,51 @@ async def create_supervisor_agent(
                     ]
                     if not selected_tool_ids:
                         selected_tool_ids = list(trafik_tool_ids)
+                memory_scope_id = (
+                    str(selected_tool_ids[0]).strip()
+                    if selected_tool_ids
+                    else f"agent:{agent_name or 'unknown'}"
+                )
+                cached_payload = episodic_store.get(
+                    tool_id=memory_scope_id,
+                    query=task,
+                )
+                if isinstance(cached_payload, dict):
+                    cached_response = _strip_critic_json(
+                        str(cached_payload.get("response") or "").strip()
+                    )
+                    if cached_response:
+                        cached_used_tools_raw = cached_payload.get("used_tools")
+                        cached_used_tools = (
+                            [
+                                str(item).strip()
+                                for item in cached_used_tools_raw
+                                if str(item).strip()
+                            ][:8]
+                            if isinstance(cached_used_tools_raw, list)
+                            else []
+                        )
+                        cached_contract = cached_payload.get("result_contract")
+                        if not isinstance(cached_contract, dict):
+                            cached_contract = _build_agent_result_contract(
+                                agent_name=agent_name,
+                                task=task,
+                                response_text=cached_response,
+                                used_tools=cached_used_tools,
+                                final_requested=False,
+                            )
+                        return {
+                            "agent": agent_name,
+                            "requested_agent": requested_agent_name,
+                            "agent_resolution": resolution_reason,
+                            "task": task,
+                            "response": cached_response,
+                            "used_tools": cached_used_tools,
+                            "result_contract": cached_contract,
+                            "turn_id": current_turn_id,
+                            "execution_strategy": requested_strategy or "inline",
+                            "from_episodic_cache": True,
+                        }
                 prompt = worker_prompts.get(agent_name, "")
                 scoped_prompt = _build_scoped_prompt_for_agent(agent_name, task)
                 if scoped_prompt:
@@ -3655,10 +3821,34 @@ async def create_supervisor_agent(
                     "configurable": worker_configurable,
                     "recursion_limit": 60,
                 }
-                result = await asyncio.wait_for(
-                    worker.ainvoke(worker_state, config=config),
-                    timeout=float(execution_timeout_seconds),
-                )
+                try:
+                    result = await asyncio.wait_for(
+                        worker.ainvoke(worker_state, config=config),
+                        timeout=float(execution_timeout_seconds),
+                    )
+                except asyncio.TimeoutError:
+                    error_message = (
+                        f"Agent '{agent_name}' timed out after "
+                        f"{int(execution_timeout_seconds)}s."
+                    )
+                    return {
+                        "agent": agent_name,
+                        "requested_agent": requested_agent_name,
+                        "agent_resolution": resolution_reason,
+                        "task": task,
+                        "error": error_message,
+                        "error_type": "TimeoutError",
+                        "result_contract": _build_agent_result_contract(
+                            agent_name=agent_name,
+                            task=task,
+                            response_text="",
+                            error_text=error_message,
+                            used_tools=[],
+                            final_requested=False,
+                        ),
+                        "turn_id": current_turn_id,
+                        "execution_strategy": requested_strategy or "inline",
+                    }
                 response_text = ""
                 messages_out: list[Any] = []
                 if isinstance(result, dict):
@@ -3677,6 +3867,24 @@ async def create_supervisor_agent(
                     used_tools=used_tool_names,
                     final_requested=False,
                 )
+                if str(result_contract.get("status") or "").strip().lower() in {
+                    "success",
+                    "partial",
+                } and str(response_text).strip():
+                    episodic_store.put(
+                        tool_id=memory_scope_id,
+                        query=task,
+                        value={
+                            "response": response_text,
+                            "used_tools": used_tool_names,
+                            "result_contract": result_contract,
+                            "agent": agent_name,
+                        },
+                        ttl_seconds=infer_ttl_seconds(
+                            tool_id=memory_scope_id,
+                            agent_name=agent_name,
+                        ),
+                    )
                 return {
                     "agent": agent_name,
                     "requested_agent": requested_agent_name,
@@ -3687,6 +3895,7 @@ async def create_supervisor_agent(
                     "result_contract": result_contract,
                     "turn_id": current_turn_id,
                     "execution_strategy": requested_strategy or "inline",
+                    "from_episodic_cache": False,
                 }
             except Exception as exc:
                 error_message = str(exc)
@@ -3833,6 +4042,7 @@ async def create_supervisor_agent(
         latest_user_query_fn=_latest_user_query,
         max_replan_attempts=_MAX_REPLAN_ATTEMPTS,
         min_mechanical_confidence=0.7,
+        record_retrieval_feedback_fn=_record_retrieval_feedback,
     )
 
     synthesis_hitl_gate_node = build_synthesis_hitl_gate_node(
