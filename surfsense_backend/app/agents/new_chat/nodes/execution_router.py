@@ -68,6 +68,7 @@ def classify_execution_strategy(
     state: dict[str, Any],
     latest_user_query: str,
     next_step_text: str,
+    subagent_enabled: bool = True,
 ) -> tuple[str, str]:
     selected_agents = _selected_agent_names(state)
     plan_steps = _plan_step_count(state)
@@ -81,8 +82,12 @@ def classify_execution_strategy(
             f"multiple_agents:{','.join(selected_agents[:4])}",
         )
     if _BULK_SIGNAL_RE.search(combined_text):
+        if not subagent_enabled:
+            return EXECUTION_STRATEGY_INLINE, "subagent_disabled:bulk_signal_detected"
         return EXECUTION_STRATEGY_SUBAGENT, "bulk_signal_detected"
     if plan_steps > 3:
+        if not subagent_enabled:
+            return EXECUTION_STRATEGY_INLINE, f"subagent_disabled:plan_steps:{plan_steps}"
         return EXECUTION_STRATEGY_SUBAGENT, f"plan_steps:{plan_steps}"
     if _speculative_covers_all_tools(state):
         return EXECUTION_STRATEGY_INLINE, "speculative_cover_all"
@@ -100,6 +105,7 @@ def build_execution_router_node(
     *,
     latest_user_query_fn: Callable[[list[Any] | None], str],
     next_plan_step_fn: Callable[[dict[str, Any]], dict[str, Any] | None],
+    subagent_enabled: bool = True,
 ):
     async def execution_router_node(
         state: dict[str, Any],
@@ -119,6 +125,7 @@ def build_execution_router_node(
             state=state,
             latest_user_query=latest_user_query,
             next_step_text=next_step_text,
+            subagent_enabled=bool(subagent_enabled),
         )
         return {
             "execution_strategy": strategy,

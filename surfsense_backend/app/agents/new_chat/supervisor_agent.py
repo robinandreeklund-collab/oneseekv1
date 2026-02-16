@@ -417,6 +417,14 @@ _COMPARE_FOLLOWUP_RE = re.compile(
     r"\b(jamfor|jämför|jamforelse|jämförelse|skillnad|dessa två|de två|båda|bada)\b",
     re.IGNORECASE,
 )
+_SUBAGENT_ARTIFACT_RE = re.compile(
+    r"(/workspace/[A-Za-z0-9._/\-]+)",
+    re.IGNORECASE,
+)
+_SUBAGENT_DEFAULT_CONTEXT_MAX_CHARS = 1400
+_SUBAGENT_DEFAULT_RESULT_MAX_CHARS = 1000
+_SUBAGENT_DEFAULT_MAX_CONCURRENCY = 3
+_SUBAGENT_MAX_HANDOFFS_IN_PROMPT = 6
 
 
 def _has_trafik_intent(text: str) -> bool:
@@ -946,6 +954,30 @@ def _append_compare_outputs(
     return list(merged.values())
 
 
+def _append_subagent_handoffs(
+    left: list[dict[str, Any]] | None,
+    right: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if right == []:
+        return []
+    merged: dict[str, dict[str, Any]] = {}
+    for item in left or []:
+        if not isinstance(item, dict):
+            continue
+        subagent_id = str(item.get("subagent_id") or item.get("id") or "").strip()
+        if not subagent_id:
+            continue
+        merged[subagent_id] = item
+    for item in right or []:
+        if not isinstance(item, dict):
+            continue
+        subagent_id = str(item.get("subagent_id") or item.get("id") or "").strip()
+        if not subagent_id:
+            continue
+        merged[subagent_id] = item
+    return list(merged.values())[-12:]
+
+
 def _format_compare_outputs_for_prompt(compare_outputs: list[dict[str, Any]] | None) -> str:
     if not compare_outputs:
         return ""
@@ -999,6 +1031,7 @@ class SupervisorState(TypedDict, total=False):
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
     route_hint: Annotated[str | None, _replace]
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
+    subagent_handoffs: Annotated[list[dict[str, Any]], _append_subagent_handoffs]
     final_agent_response: Annotated[str | None, _replace]
     final_response: Annotated[str | None, _replace]
     critic_decision: Annotated[str | None, _replace]
@@ -1133,6 +1166,39 @@ def _format_resolved_tools_context(state: dict[str, Any]) -> str | None:
     if not lines:
         return None
     return "<resolved_tools>\n" + "\n".join(lines) + "\n</resolved_tools>"
+
+
+def _format_subagent_handoffs_context(state: dict[str, Any]) -> str | None:
+    handoffs = state.get("subagent_handoffs")
+    if not isinstance(handoffs, list) or not handoffs:
+        return None
+    lines: list[str] = []
+    for handoff in handoffs[-_SUBAGENT_MAX_HANDOFFS_IN_PROMPT:]:
+        if not isinstance(handoff, dict):
+            continue
+        subagent_id = str(handoff.get("subagent_id") or "").strip()
+        agent = str(handoff.get("agent") or "agent").strip() or "agent"
+        summary = _truncate_for_prompt(str(handoff.get("summary") or "").strip(), 220)
+        if not summary:
+            continue
+        artifact_refs_raw = handoff.get("artifact_refs")
+        artifact_refs = (
+            [
+                str(item).strip()
+                for item in artifact_refs_raw
+                if str(item).strip()
+            ][:3]
+            if isinstance(artifact_refs_raw, list)
+            else []
+        )
+        artifact_hint = f" artifacts={','.join(artifact_refs)}" if artifact_refs else ""
+        prefix = f"- {agent}"
+        if subagent_id:
+            prefix += f" ({subagent_id})"
+        lines.append(f"{prefix}: {summary}{artifact_hint}")
+    if not lines:
+        return None
+    return "<subagent_handoffs>\n" + "\n".join(lines) + "\n</subagent_handoffs>"
 
 
 _HITL_APPROVE_RE = re.compile(r"\b(ja|yes|ok|okej|kor|kör|go|fortsatt|fortsätt)\b", re.IGNORECASE)
@@ -1881,6 +1947,97 @@ def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> 
     if len(value) <= max_chars:
         return value
     return value[: max_chars - 3].rstrip() + "..."
+
+
+def _coerce_int_range(
+    value: Any,
+    *,
+    default: int,
+    min_value: int,
+    max_value: int,
+) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(min_value, min(max_value, parsed))
+
+
+def _build_subagent_id(
+    *,
+    base_thread_id: str,
+    turn_key: str,
+    agent_name: str,
+    call_index: int,
+    task: str,
+) -> str:
+    seed = "|".join(
+        [
+            str(base_thread_id or "").strip() or "thread",
+            str(turn_key or "").strip() or "turn",
+            str(agent_name or "").strip().lower() or "agent",
+            str(max(0, int(call_index))),
+            hashlib.sha1(str(task or "").encode("utf-8")).hexdigest()[:10],
+        ]
+    )
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:14]
+    agent_slug = _normalize_agent_identifier(agent_name) or "agent"
+    return f"sa-{agent_slug[:18]}-{digest}"
+
+
+def _extract_subagent_artifact_refs(text: str, *, limit: int = 4) -> list[str]:
+    if not text:
+        return []
+    refs: list[str] = []
+    seen: set[str] = set()
+    for match in _SUBAGENT_ARTIFACT_RE.findall(str(text or "")):
+        normalized = str(match or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        refs.append(normalized)
+        if len(refs) >= max(1, int(limit)):
+            break
+    return refs
+
+
+def _build_subagent_handoff_payload(
+    *,
+    subagent_id: str,
+    agent_name: str,
+    response_text: str,
+    result_contract: dict[str, Any] | None,
+    result_max_chars: int,
+    error_text: str = "",
+) -> dict[str, Any]:
+    contract = result_contract if isinstance(result_contract, dict) else {}
+    response = _strip_critic_json(str(response_text or "").strip())
+    summary = _truncate_for_prompt(response, max(180, int(result_max_chars)))
+    findings: list[str] = []
+    for line in response.splitlines():
+        cleaned = str(line or "").strip(" -*")
+        if not cleaned:
+            continue
+        findings.append(_truncate_for_prompt(cleaned, 180))
+        if len(findings) >= 4:
+            break
+    if not findings and summary:
+        findings = [_truncate_for_prompt(summary, 180)]
+    status = _normalize_result_status(contract.get("status"))
+    try:
+        confidence = float(contract.get("confidence"))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {
+        "subagent_id": str(subagent_id or "").strip(),
+        "agent": str(agent_name or "").strip(),
+        "status": status,
+        "confidence": round(max(0.0, min(1.0, confidence)), 2),
+        "summary": summary,
+        "findings": findings,
+        "artifact_refs": _extract_subagent_artifact_refs(response),
+        "error": _truncate_for_prompt(str(error_text or "").strip(), 240),
+    }
 
 
 def _normalize_agent_identifier(value: str) -> str:
@@ -2767,6 +2924,36 @@ async def create_supervisor_agent(
             # Retrieval ranking should continue even when persistence is unavailable.
             retrieval_feedback_db_enabled = False
 
+    subagent_enabled = _coerce_bool(
+        runtime_hitl_cfg.get("subagent_enabled"),
+        default=True,
+    )
+    subagent_isolation_enabled = (
+        subagent_enabled
+        and _coerce_bool(
+            runtime_hitl_cfg.get("subagent_isolation_enabled"),
+            default=False,
+        )
+    )
+    subagent_context_max_chars = _coerce_int_range(
+        runtime_hitl_cfg.get("subagent_context_max_chars"),
+        default=_SUBAGENT_DEFAULT_CONTEXT_MAX_CHARS,
+        min_value=240,
+        max_value=8_000,
+    )
+    subagent_result_max_chars = _coerce_int_range(
+        runtime_hitl_cfg.get("subagent_result_max_chars"),
+        default=_SUBAGENT_DEFAULT_RESULT_MAX_CHARS,
+        min_value=180,
+        max_value=4_000,
+    )
+    subagent_max_concurrency = _coerce_int_range(
+        runtime_hitl_cfg.get("subagent_max_concurrency"),
+        default=_SUBAGENT_DEFAULT_MAX_CONCURRENCY,
+        min_value=1,
+        max_value=8,
+    )
+
     async def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
         normalized_tool_id = str(tool_id or "").strip()
         normalized_query = str(query or "").strip()
@@ -3644,6 +3831,73 @@ async def create_supervisor_agent(
             deduped.append(response)
         return "\n\n".join(deduped).strip(), used_tools, payloads
 
+    def _subagent_isolation_active(execution_strategy: str) -> bool:
+        if not subagent_enabled:
+            return False
+        if str(execution_strategy or "").strip().lower() != "subagent":
+            return False
+        return bool(subagent_isolation_enabled)
+
+    def _build_subagent_task(
+        *,
+        task: str,
+        state: dict[str, Any],
+        subagent_id: str,
+        agent_name: str,
+    ) -> str:
+        if not str(task or "").strip():
+            return ""
+        latest_query = _truncate_for_prompt(
+            _latest_user_query((state or {}).get("messages") or []),
+            max(120, int(subagent_context_max_chars // 2)),
+        )
+        route_hint = _normalize_route_hint_value(
+            ((state or {}).get("resolved_intent") or {}).get("route")
+            or (state or {}).get("route_hint")
+        )
+        focused_tools = (
+            ((state or {}).get("resolved_tools_by_agent") or {}).get(agent_name)
+            if isinstance((state or {}).get("resolved_tools_by_agent"), dict)
+            else []
+        )
+        focused_tools_text = ", ".join(
+            str(item).strip()
+            for item in (focused_tools if isinstance(focused_tools, list) else [])
+            if str(item).strip()
+        )
+        task_body = _truncate_for_prompt(str(task or "").strip(), int(subagent_context_max_chars))
+        context_lines = [f"subagent_id={subagent_id}"]
+        if route_hint:
+            context_lines.append(f"route_hint={route_hint}")
+        if latest_query:
+            context_lines.append(f"parent_query={latest_query}")
+        if focused_tools_text:
+            context_lines.append(f"preferred_tools={focused_tools_text}")
+        return (
+            "<subagent_context>\n"
+            + "\n".join(context_lines)
+            + "\n"
+            + "</subagent_context>\n\n"
+            + task_body
+        ).strip()
+
+    def _build_subagent_worker_state(
+        *,
+        base_messages: list[Any],
+        selected_tool_ids: list[str],
+        isolated: bool,
+        subagent_id: str | None,
+    ) -> dict[str, Any]:
+        state_payload: dict[str, Any] = {
+            "messages": list(base_messages),
+            "selected_tool_ids": selected_tool_ids,
+        }
+        if isolated and subagent_id:
+            state_payload["subagent_id"] = subagent_id
+            state_payload["sandbox_scope_mode"] = "subagent"
+            state_payload["sandbox_scope_id"] = subagent_id
+        return state_payload
+
     @tool
     async def call_agent(
         agent_name: str,
@@ -3664,6 +3918,20 @@ async def create_supervisor_agent(
             injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
         ).strip()
         execution_strategy = str(injected_state.get("execution_strategy") or "").strip().lower()
+        subagent_isolated = _subagent_isolation_active(execution_strategy)
+        turn_key = _current_turn_key(injected_state)
+        base_thread_id = str(dependencies.get("thread_id") or "thread")
+        subagent_id = (
+            _build_subagent_id(
+                base_thread_id=base_thread_id,
+                turn_key=turn_key,
+                agent_name=name,
+                call_index=0,
+                task=task,
+            )
+            if subagent_isolated
+            else None
+        )
         execution_timeout_seconds = get_execution_timeout_seconds(execution_strategy)
         worker = await worker_pool.get(name)
         if not worker:
@@ -3684,13 +3952,40 @@ async def create_supervisor_agent(
                     ),
                     "turn_id": current_turn_id,
                     "execution_strategy": execution_strategy or "inline",
+                    "subagent_isolated": bool(subagent_isolated),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": (
+                        _build_subagent_handoff_payload(
+                            subagent_id=str(subagent_id or ""),
+                            agent_name=name,
+                            response_text="",
+                            result_contract=_build_agent_result_contract(
+                                agent_name=name,
+                                task=task,
+                                response_text="",
+                                error_text=error_message,
+                                used_tools=[],
+                                final_requested=bool(final),
+                            ),
+                            result_max_chars=subagent_result_max_chars,
+                            error_text=error_message,
+                        )
+                        if subagent_isolated and subagent_id
+                        else None
+                    ),
                 },
                 ensure_ascii=True,
             )
         if name == "synthesis" and injected_state:
             task = _prepare_task_for_synthesis(task, injected_state)
-        turn_key = _current_turn_key(injected_state)
-        base_thread_id = str(dependencies.get("thread_id") or "thread")
+        task_for_worker = task
+        if subagent_isolated and subagent_id:
+            task_for_worker = _build_subagent_task(
+                task=task,
+                state=injected_state,
+                subagent_id=subagent_id,
+                agent_name=name,
+            )
         resolved_tools_map = injected_state.get("resolved_tools_by_agent")
         selected_tool_ids: list[str] = []
         if isinstance(resolved_tools_map, dict):
@@ -3730,6 +4025,22 @@ async def create_supervisor_agent(
             output_response = speculative_response
             if not final:
                 output_response = compress_response(output_response, agent_name=name)
+            if subagent_isolated:
+                output_response = _truncate_for_prompt(
+                    output_response,
+                    subagent_result_max_chars,
+                )
+            subagent_handoff = (
+                _build_subagent_handoff_payload(
+                    subagent_id=str(subagent_id or ""),
+                    agent_name=name,
+                    response_text=speculative_response,
+                    result_contract=result_contract,
+                    result_max_chars=subagent_result_max_chars,
+                )
+                if subagent_isolated and subagent_id
+                else None
+            )
             return json.dumps(
                 {
                     "agent": name,
@@ -3748,6 +4059,9 @@ async def create_supervisor_agent(
                     "turn_id": current_turn_id,
                     "execution_strategy": execution_strategy or "inline",
                     "from_speculative_cache": True,
+                    "subagent_isolated": bool(subagent_isolated),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": subagent_handoff,
                 },
                 ensure_ascii=True,
             )
@@ -3787,6 +4101,22 @@ async def create_supervisor_agent(
                 output_response = cached_response
                 if not final:
                     output_response = compress_response(output_response, agent_name=name)
+                if subagent_isolated:
+                    output_response = _truncate_for_prompt(
+                        output_response,
+                        subagent_result_max_chars,
+                    )
+                subagent_handoff = (
+                    _build_subagent_handoff_payload(
+                        subagent_id=str(subagent_id or ""),
+                        agent_name=name,
+                        response_text=cached_response,
+                        result_contract=cached_contract,
+                        result_max_chars=subagent_result_max_chars,
+                    )
+                    if subagent_isolated and subagent_id
+                    else None
+                )
                 return json.dumps(
                     {
                         "agent": name,
@@ -3805,6 +4135,9 @@ async def create_supervisor_agent(
                         "execution_strategy": execution_strategy or "inline",
                         "from_speculative_cache": False,
                         "from_episodic_cache": True,
+                        "subagent_isolated": bool(subagent_isolated),
+                        "subagent_id": subagent_id,
+                        "subagent_handoff": subagent_handoff,
                     },
                     ensure_ascii=True,
                 )
@@ -3826,12 +4159,25 @@ async def create_supervisor_agent(
         messages = []
         if prompt:
             messages.append(SystemMessage(content=prompt))
-        messages.append(HumanMessage(content=task))
-        worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
+        messages.append(HumanMessage(content=task_for_worker))
+        worker_state = _build_subagent_worker_state(
+            base_messages=messages,
+            selected_tool_ids=selected_tool_ids,
+            isolated=subagent_isolated,
+            subagent_id=subagent_id,
+        )
         worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
-        worker_configurable = {"thread_id": f"{base_thread_id}:{name}:{turn_key}"}
+        worker_thread_id = f"{base_thread_id}:{name}:{turn_key}"
+        if subagent_isolated and subagent_id:
+            worker_thread_id = f"{worker_thread_id}:{subagent_id}"
+        worker_configurable = {"thread_id": worker_thread_id}
         if worker_checkpoint_ns:
-            worker_configurable["checkpoint_ns"] = f"{worker_checkpoint_ns}:worker:{name}"
+            if subagent_isolated and subagent_id:
+                worker_configurable["checkpoint_ns"] = (
+                    f"{worker_checkpoint_ns}:subagent:{name}:{subagent_id}"
+                )
+            else:
+                worker_configurable["checkpoint_ns"] = f"{worker_checkpoint_ns}:worker:{name}"
         config = {
             "configurable": worker_configurable,
             "recursion_limit": 60,
@@ -3864,6 +4210,27 @@ async def create_supervisor_agent(
                     "final": bool(final),
                     "turn_id": current_turn_id,
                     "execution_strategy": execution_strategy or "inline",
+                    "subagent_isolated": bool(subagent_isolated),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": (
+                        _build_subagent_handoff_payload(
+                            subagent_id=str(subagent_id or ""),
+                            agent_name=name,
+                            response_text="",
+                            result_contract=_build_agent_result_contract(
+                                agent_name=name,
+                                task=task,
+                                response_text="",
+                                error_text=error_message,
+                                used_tools=[],
+                                final_requested=bool(final),
+                            ),
+                            result_max_chars=subagent_result_max_chars,
+                            error_text=error_message,
+                        )
+                        if subagent_isolated and subagent_id
+                        else None
+                    ),
                 },
                 ensure_ascii=True,
             )
@@ -3888,6 +4255,27 @@ async def create_supervisor_agent(
                     "final": bool(final),
                     "turn_id": current_turn_id,
                     "execution_strategy": execution_strategy or "inline",
+                    "subagent_isolated": bool(subagent_isolated),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": (
+                        _build_subagent_handoff_payload(
+                            subagent_id=str(subagent_id or ""),
+                            agent_name=name,
+                            response_text="",
+                            result_contract=_build_agent_result_contract(
+                                agent_name=name,
+                                task=task,
+                                response_text="",
+                                error_text=error_message,
+                                used_tools=[],
+                                final_requested=bool(final),
+                            ),
+                            result_max_chars=subagent_result_max_chars,
+                            error_text=error_message,
+                        )
+                        if subagent_isolated and subagent_id
+                        else None
+                    ),
                 },
                 ensure_ascii=True,
             )
@@ -3909,11 +4297,16 @@ async def create_supervisor_agent(
                         if prompt
                         else trafik_enforcement_message
                     )
-                    enforced_messages = [SystemMessage(content=enforced_prompt), HumanMessage(content=task)]
-                    retry_state = {
-                        "messages": enforced_messages,
-                        "selected_tool_ids": selected_tool_ids,
-                    }
+                    enforced_messages = [
+                        SystemMessage(content=enforced_prompt),
+                        HumanMessage(content=task_for_worker),
+                    ]
+                    retry_state = _build_subagent_worker_state(
+                        base_messages=enforced_messages,
+                        selected_tool_ids=selected_tool_ids,
+                        isolated=subagent_isolated,
+                        subagent_id=subagent_id,
+                    )
                     try:
                         result = await asyncio.wait_for(
                             worker.ainvoke(retry_state, config=config),
@@ -3943,6 +4336,27 @@ async def create_supervisor_agent(
                                 "final": bool(final),
                                 "turn_id": current_turn_id,
                                 "execution_strategy": execution_strategy or "inline",
+                                "subagent_isolated": bool(subagent_isolated),
+                                "subagent_id": subagent_id,
+                                "subagent_handoff": (
+                                    _build_subagent_handoff_payload(
+                                        subagent_id=str(subagent_id or ""),
+                                        agent_name=name,
+                                        response_text="",
+                                        result_contract=_build_agent_result_contract(
+                                            agent_name=name,
+                                            task=task,
+                                            response_text="",
+                                            error_text=error_message,
+                                            used_tools=[],
+                                            final_requested=bool(final),
+                                        ),
+                                        result_max_chars=subagent_result_max_chars,
+                                        error_text=error_message,
+                                    )
+                                    if subagent_isolated and subagent_id
+                                    else None
+                                ),
                             },
                             ensure_ascii=True,
                         )
@@ -3999,9 +4413,23 @@ async def create_supervisor_agent(
                 ),
             )
 
+        raw_response_text = response_text
+        subagent_handoff = (
+            _build_subagent_handoff_payload(
+                subagent_id=str(subagent_id or ""),
+                agent_name=name,
+                response_text=raw_response_text,
+                result_contract=result_contract,
+                result_max_chars=subagent_result_max_chars,
+            )
+            if subagent_isolated and subagent_id
+            else None
+        )
         # Compress response for context efficiency when not final
         if not final:
             response_text = compress_response(response_text, agent_name=name)
+        if subagent_isolated:
+            response_text = _truncate_for_prompt(response_text, subagent_result_max_chars)
 
         return json.dumps(
             {
@@ -4018,6 +4446,9 @@ async def create_supervisor_agent(
                 "execution_strategy": execution_strategy or "inline",
                 "from_speculative_cache": False,
                 "from_episodic_cache": False,
+                "subagent_isolated": bool(subagent_isolated),
+                "subagent_id": subagent_id,
+                "subagent_handoff": subagent_handoff,
             },
             ensure_ascii=True,
         )
@@ -4036,15 +4467,18 @@ async def create_supervisor_agent(
             injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
         ).strip()
         requested_strategy = str(injected_state.get("execution_strategy") or "").strip().lower()
-        allow_parallel = compare_mode or requested_strategy in {"parallel", "subagent"}
+        allow_parallel = compare_mode or requested_strategy == "parallel" or (
+            requested_strategy == "subagent" and subagent_enabled
+        )
+        subagent_isolation_for_parallel = _subagent_isolation_active(requested_strategy)
         serialized_mode = not allow_parallel
         execution_timeout_seconds = get_execution_timeout_seconds(requested_strategy)
         dropped_calls = 0
         if serialized_mode and isinstance(calls, list) and len(calls) > 1:
             dropped_calls = len(calls) - 1
             calls = calls[:1]
-        
-        async def _run_one(call_spec: dict) -> dict:
+
+        async def _run_one(call_spec: dict, *, call_index: int) -> dict:
             requested_agent_name = (call_spec.get("agent") or "").strip().lower()
             task = call_spec.get("task") or ""
             resolved_agent_name, resolution_reason = _resolve_agent_name(
@@ -4053,30 +4487,64 @@ async def create_supervisor_agent(
                 state=injected_state,
             )
             agent_name = resolved_agent_name or requested_agent_name
+            turn_key = _current_turn_key(injected_state)
+            base_thread_id = str(dependencies.get("thread_id") or "thread")
+            subagent_id = (
+                _build_subagent_id(
+                    base_thread_id=base_thread_id,
+                    turn_key=turn_key,
+                    agent_name=agent_name,
+                    call_index=call_index,
+                    task=task,
+                )
+                if subagent_isolation_for_parallel
+                else None
+            )
             worker = await worker_pool.get(agent_name)
             if not worker:
                 error_message = f"Agent '{agent_name}' not available."
+                result_contract = _build_agent_result_contract(
+                    agent_name=agent_name,
+                    task=task,
+                    response_text="",
+                    error_text=error_message,
+                    used_tools=[],
+                    final_requested=False,
+                )
                 return {
                     "agent": agent_name,
                     "requested_agent": requested_agent_name,
                     "agent_resolution": resolution_reason,
                     "error": error_message,
-                    "result_contract": _build_agent_result_contract(
-                        agent_name=agent_name,
-                        task=task,
-                        response_text="",
-                        error_text=error_message,
-                        used_tools=[],
-                        final_requested=False,
-                    ),
+                    "result_contract": result_contract,
                     "turn_id": current_turn_id,
+                    "subagent_isolated": bool(subagent_isolation_for_parallel),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": (
+                        _build_subagent_handoff_payload(
+                            subagent_id=str(subagent_id or ""),
+                            agent_name=agent_name,
+                            response_text="",
+                            result_contract=result_contract,
+                            result_max_chars=subagent_result_max_chars,
+                            error_text=error_message,
+                        )
+                        if subagent_isolation_for_parallel and subagent_id
+                        else None
+                    ),
                 }
             try:
                 # Reuse same worker invocation logic as call_agent
                 if agent_name == "synthesis" and injected_state:
                     task = _prepare_task_for_synthesis(task, injected_state)
-                turn_key = _current_turn_key(injected_state)
-                base_thread_id = str(dependencies.get("thread_id") or "thread")
+                task_for_worker = task
+                if subagent_isolation_for_parallel and subagent_id:
+                    task_for_worker = _build_subagent_task(
+                        task=task,
+                        state=injected_state,
+                        subagent_id=subagent_id,
+                        agent_name=agent_name,
+                    )
                 resolved_tools_map = injected_state.get("resolved_tools_by_agent")
                 selected_tool_ids: list[str] = []
                 if isinstance(resolved_tools_map, dict):
@@ -4110,24 +4578,44 @@ async def create_supervisor_agent(
                     state=injected_state,
                 )
                 if speculative_response:
+                    result_contract = _build_agent_result_contract(
+                        agent_name=agent_name,
+                        task=task,
+                        response_text=speculative_response,
+                        used_tools=speculative_tools,
+                        final_requested=False,
+                    )
+                    response_value = speculative_response
+                    if subagent_isolation_for_parallel:
+                        response_value = _truncate_for_prompt(
+                            response_value,
+                            subagent_result_max_chars,
+                        )
                     return {
                         "agent": agent_name,
                         "requested_agent": requested_agent_name,
                         "agent_resolution": resolution_reason,
                         "task": task,
-                        "response": speculative_response,
+                        "response": response_value,
                         "used_tools": speculative_tools,
-                        "result_contract": _build_agent_result_contract(
-                            agent_name=agent_name,
-                            task=task,
-                            response_text=speculative_response,
-                            used_tools=speculative_tools,
-                            final_requested=False,
-                        ),
+                        "result_contract": result_contract,
                         "turn_id": current_turn_id,
                         "execution_strategy": requested_strategy or "inline",
                         "from_speculative_cache": True,
                         "speculative_source_count": len(speculative_payloads),
+                        "subagent_isolated": bool(subagent_isolation_for_parallel),
+                        "subagent_id": subagent_id,
+                        "subagent_handoff": (
+                            _build_subagent_handoff_payload(
+                                subagent_id=str(subagent_id or ""),
+                                agent_name=agent_name,
+                                response_text=speculative_response,
+                                result_contract=result_contract,
+                                result_max_chars=subagent_result_max_chars,
+                            )
+                            if subagent_isolation_for_parallel and subagent_id
+                            else None
+                        ),
                     }
                 memory_scope_id = (
                     str(selected_tool_ids[0]).strip()
@@ -4167,13 +4655,33 @@ async def create_supervisor_agent(
                             "requested_agent": requested_agent_name,
                             "agent_resolution": resolution_reason,
                             "task": task,
-                            "response": cached_response,
+                            "response": (
+                                _truncate_for_prompt(
+                                    cached_response,
+                                    subagent_result_max_chars,
+                                )
+                                if subagent_isolation_for_parallel
+                                else cached_response
+                            ),
                             "used_tools": cached_used_tools,
                             "result_contract": cached_contract,
                             "turn_id": current_turn_id,
                             "execution_strategy": requested_strategy or "inline",
                             "from_speculative_cache": False,
                             "from_episodic_cache": True,
+                            "subagent_isolated": bool(subagent_isolation_for_parallel),
+                            "subagent_id": subagent_id,
+                            "subagent_handoff": (
+                                _build_subagent_handoff_payload(
+                                    subagent_id=str(subagent_id or ""),
+                                    agent_name=agent_name,
+                                    response_text=cached_response,
+                                    result_contract=cached_contract,
+                                    result_max_chars=subagent_result_max_chars,
+                                )
+                                if subagent_isolation_for_parallel and subagent_id
+                                else None
+                            ),
                         }
                 prompt = worker_prompts.get(agent_name, "")
                 scoped_prompt = _build_scoped_prompt_for_agent(agent_name, task)
@@ -4197,16 +4705,27 @@ async def create_supervisor_agent(
                 messages = []
                 if prompt:
                     messages.append(SystemMessage(content=prompt))
-                messages.append(HumanMessage(content=task))
-                worker_state = {"messages": messages, "selected_tool_ids": selected_tool_ids}
+                messages.append(HumanMessage(content=task_for_worker))
+                worker_state = _build_subagent_worker_state(
+                    base_messages=messages,
+                    selected_tool_ids=selected_tool_ids,
+                    isolated=subagent_isolation_for_parallel,
+                    subagent_id=subagent_id,
+                )
                 worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
-                worker_configurable = {
-                    "thread_id": f"{base_thread_id}:{agent_name}:{turn_key}"
-                }
+                worker_thread_id = f"{base_thread_id}:{agent_name}:{turn_key}"
+                if subagent_isolation_for_parallel and subagent_id:
+                    worker_thread_id = f"{worker_thread_id}:{subagent_id}"
+                worker_configurable = {"thread_id": worker_thread_id}
                 if worker_checkpoint_ns:
-                    worker_configurable["checkpoint_ns"] = (
-                        f"{worker_checkpoint_ns}:worker:{agent_name}"
-                    )
+                    if subagent_isolation_for_parallel and subagent_id:
+                        worker_configurable["checkpoint_ns"] = (
+                            f"{worker_checkpoint_ns}:subagent:{agent_name}:{subagent_id}"
+                        )
+                    else:
+                        worker_configurable["checkpoint_ns"] = (
+                            f"{worker_checkpoint_ns}:worker:{agent_name}"
+                        )
                 config = {
                     "configurable": worker_configurable,
                     "recursion_limit": 60,
@@ -4221,6 +4740,14 @@ async def create_supervisor_agent(
                         f"Agent '{agent_name}' timed out after "
                         f"{int(execution_timeout_seconds)}s."
                     )
+                    result_contract = _build_agent_result_contract(
+                        agent_name=agent_name,
+                        task=task,
+                        response_text="",
+                        error_text=error_message,
+                        used_tools=[],
+                        final_requested=False,
+                    )
                     return {
                         "agent": agent_name,
                         "requested_agent": requested_agent_name,
@@ -4228,16 +4755,23 @@ async def create_supervisor_agent(
                         "task": task,
                         "error": error_message,
                         "error_type": "TimeoutError",
-                        "result_contract": _build_agent_result_contract(
-                            agent_name=agent_name,
-                            task=task,
-                            response_text="",
-                            error_text=error_message,
-                            used_tools=[],
-                            final_requested=False,
-                        ),
+                        "result_contract": result_contract,
                         "turn_id": current_turn_id,
                         "execution_strategy": requested_strategy or "inline",
+                        "subagent_isolated": bool(subagent_isolation_for_parallel),
+                        "subagent_id": subagent_id,
+                        "subagent_handoff": (
+                            _build_subagent_handoff_payload(
+                                subagent_id=str(subagent_id or ""),
+                                agent_name=agent_name,
+                                response_text="",
+                                result_contract=result_contract,
+                                result_max_chars=subagent_result_max_chars,
+                                error_text=error_message,
+                            )
+                            if subagent_isolation_for_parallel and subagent_id
+                            else None
+                        ),
                     }
                 response_text = ""
                 messages_out: list[Any] = []
@@ -4275,21 +4809,49 @@ async def create_supervisor_agent(
                             agent_name=agent_name,
                         ),
                     )
+                subagent_handoff = (
+                    _build_subagent_handoff_payload(
+                        subagent_id=str(subagent_id or ""),
+                        agent_name=agent_name,
+                        response_text=response_text,
+                        result_contract=result_contract,
+                        result_max_chars=subagent_result_max_chars,
+                    )
+                    if subagent_isolation_for_parallel and subagent_id
+                    else None
+                )
+                response_value = response_text
+                if subagent_isolation_for_parallel:
+                    response_value = _truncate_for_prompt(
+                        response_text,
+                        subagent_result_max_chars,
+                    )
                 return {
                     "agent": agent_name,
                     "requested_agent": requested_agent_name,
                     "agent_resolution": resolution_reason,
                     "task": task,
-                    "response": response_text,
+                    "response": response_value,
                     "used_tools": used_tool_names,
                     "result_contract": result_contract,
                     "turn_id": current_turn_id,
                     "execution_strategy": requested_strategy or "inline",
                     "from_speculative_cache": False,
                     "from_episodic_cache": False,
+                    "subagent_isolated": bool(subagent_isolation_for_parallel),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": subagent_handoff,
                 }
             except Exception as exc:
                 error_message = str(exc)
+                result_contract = _build_agent_result_contract(
+                    agent_name=agent_name,
+                    task=task,
+                    response_text="",
+                    error_text=error_message,
+                    used_tools=[],
+                    final_requested=False,
+                )
                 return {
                     "agent": agent_name,
                     "requested_agent": requested_agent_name,
@@ -4297,20 +4859,38 @@ async def create_supervisor_agent(
                     "task": task,
                     "error": error_message,
                     "error_type": type(exc).__name__,
-                    "result_contract": _build_agent_result_contract(
-                        agent_name=agent_name,
-                        task=task,
-                        response_text="",
-                        error_text=error_message,
-                        used_tools=[],
-                        final_requested=False,
-                    ),
+                    "result_contract": result_contract,
                     "turn_id": current_turn_id,
                     "execution_strategy": requested_strategy or "inline",
+                    "subagent_isolated": bool(subagent_isolation_for_parallel),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": (
+                        _build_subagent_handoff_payload(
+                            subagent_id=str(subagent_id or ""),
+                            agent_name=agent_name,
+                            response_text="",
+                            result_contract=result_contract,
+                            result_max_chars=subagent_result_max_chars,
+                            error_text=error_message,
+                        )
+                        if subagent_isolation_for_parallel and subagent_id
+                        else None
+                    ),
                 }
-        
+
+        parallel_semaphore = asyncio.Semaphore(max(1, int(subagent_max_concurrency)))
+
+        async def _run_with_guard(call_spec: dict, *, call_index: int) -> dict:
+            if serialized_mode:
+                return await _run_one(call_spec, call_index=call_index)
+            async with parallel_semaphore:
+                return await _run_one(call_spec, call_index=call_index)
+
         results = await asyncio.gather(
-            *[_run_one(c) for c in calls],
+            *[
+                _run_with_guard(call_spec, call_index=index)
+                for index, call_spec in enumerate(calls)
+            ],
             return_exceptions=True,
         )
         
@@ -4327,6 +4907,9 @@ async def create_supervisor_agent(
                 "serialized_mode": serialized_mode,
                 "dropped_calls": dropped_calls,
                 "execution_strategy": requested_strategy or "inline",
+                "subagent_enabled": bool(subagent_enabled),
+                "subagent_isolation_enabled": bool(subagent_isolation_for_parallel),
+                "subagent_max_concurrency": int(subagent_max_concurrency),
             },
             ensure_ascii=True,
         )
@@ -4407,6 +4990,7 @@ async def create_supervisor_agent(
     execution_router_node = build_execution_router_node(
         latest_user_query_fn=_latest_user_query,
         next_plan_step_fn=_next_plan_step,
+        subagent_enabled=subagent_enabled,
     )
     speculative_node = build_speculative_node(
         run_speculative_candidate_fn=_run_speculative_candidate,
@@ -4474,6 +5058,7 @@ async def create_supervisor_agent(
         format_intent_context_fn=_format_intent_context,
         format_selected_agents_context_fn=_format_selected_agents_context,
         format_resolved_tools_context_fn=_format_resolved_tools_context,
+        format_subagent_handoffs_context_fn=_format_subagent_handoffs_context,
         coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
     )
 
@@ -4487,6 +5072,7 @@ async def create_supervisor_agent(
         updates: dict[str, Any] = {}
         recent_updates: list[dict[str, Any]] = []
         compare_updates: list[dict[str, Any]] = []
+        subagent_handoff_updates: list[dict[str, Any]] = []
         parallel_preview: list[str] = []
         plan_update: list[dict[str, Any]] | None = None
         plan_complete: bool | None = None
@@ -4535,6 +5121,9 @@ async def create_supervisor_agent(
                             "result_contract": payload_contract,
                         }
                     )
+                    handoff = payload.get("subagent_handoff")
+                    if isinstance(handoff, dict):
+                        subagent_handoff_updates.append(handoff)
                     if payload.get("final") and payload.get("response"):
                         cleaned_response = _strip_critic_json(
                             str(payload.get("response") or "").strip()
@@ -4595,6 +5184,9 @@ async def create_supervisor_agent(
                             parallel_preview.append(
                                 f"- {label}: {_truncate_for_prompt(response_text, 220)}"
                             )
+                        handoff = item.get("subagent_handoff")
+                        if isinstance(handoff, dict):
+                            subagent_handoff_updates.append(handoff)
             elif tool_name in _EXTERNAL_MODEL_TOOL_NAMES:
                 if payload and payload.get("status") == "success":
                     compare_updates.append(
@@ -4630,6 +5222,8 @@ async def create_supervisor_agent(
             )
         if compare_updates:
             updates["compare_outputs"] = compare_updates
+        if subagent_handoff_updates:
+            updates["subagent_handoffs"] = subagent_handoff_updates
         updates["guard_parallel_preview"] = parallel_preview[:3]
         return updates
 

@@ -44,6 +44,17 @@ def test_classify_execution_strategy_subagent_for_bulk_signal() -> None:
     assert reason == "bulk_signal_detected"
 
 
+def test_classify_execution_strategy_falls_back_when_subagent_disabled() -> None:
+    strategy, reason = execution_router.classify_execution_strategy(
+        state={"selected_agents": [{"name": "statistics"}]},
+        latest_user_query="Hamta statistik for alla kommuner",
+        next_step_text="",
+        subagent_enabled=False,
+    )
+    assert strategy == execution_router.EXECUTION_STRATEGY_INLINE
+    assert reason == "subagent_disabled:bulk_signal_detected"
+
+
 def test_classify_execution_strategy_subagent_for_long_plan() -> None:
     strategy, reason = execution_router.classify_execution_strategy(
         state={

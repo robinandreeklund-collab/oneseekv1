@@ -30,6 +30,7 @@ def _build_executor_updates_for_new_user_turn(
         "step_results": [],
         "recent_agent_calls": [],
         "compare_outputs": [],
+        "subagent_handoffs": [],
         "final_agent_response": None,
         "final_response": None,
         "critic_decision": None,
@@ -62,6 +63,7 @@ def build_executor_nodes(
     format_intent_context_fn: Callable[[dict[str, Any]], str | None],
     format_selected_agents_context_fn: Callable[[dict[str, Any]], str | None],
     format_resolved_tools_context_fn: Callable[[dict[str, Any]], str | None],
+    format_subagent_handoffs_context_fn: Callable[[dict[str, Any]], str | None],
     coerce_supervisor_tool_calls_fn: Callable[..., Any],
 ):
     def _build_context_messages(
@@ -83,6 +85,9 @@ def build_executor_nodes(
         resolved_tools_context = (
             None if new_user_turn else format_resolved_tools_context_fn(state)
         )
+        subagent_handoffs_context = (
+            None if new_user_turn else format_subagent_handoffs_context_fn(state)
+        )
         system_bits = [
             item
             for item in (
@@ -93,6 +98,7 @@ def build_executor_nodes(
                 intent_context,
                 selected_agents_context,
                 resolved_tools_context,
+                subagent_handoffs_context,
             )
             if item
         ]
