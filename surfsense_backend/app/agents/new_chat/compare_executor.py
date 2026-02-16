@@ -197,18 +197,27 @@ def _build_synthesis_context(
     return "\n".join(blocks)
 
 
-async def compare_synthesizer(state: dict[str, Any]) -> dict[str, Any]:
+async def compare_synthesizer(
+    state: dict[str, Any],
+    prompt_override: str | None = None,
+) -> dict[str, Any]:
     """
     Compare synthesizer node: Create final synthesis response.
     
     Takes all compare_outputs from state and produces the final
-    synthesis response using the LLM with DEFAULT_COMPARE_ANALYSIS_PROMPT.
+    synthesis response using the LLM with compare.analysis.system prompt.
     
     This node:
     1. Builds context from all model responses
     2. Uses synthesis LLM to create optimized answer
     3. Handles citations properly
     4. Returns final response in state
+    
+    Args:
+        state: Current graph state
+        prompt_override: Optional override for the synthesis prompt.
+                        If provided, uses this instead of DEFAULT_COMPARE_ANALYSIS_PROMPT.
+                        This allows admin customizations from /admin/prompts to be used.
     """
     from app.agents.new_chat.llm_config import create_chat_litellm_from_config
     
@@ -241,8 +250,9 @@ async def compare_synthesizer(state: dict[str, Any]) -> dict[str, Any]:
             "orchestration_phase": "compare_synthesis_error",
         }
     
-    # Build synthesis prompt
-    synthesis_prompt = append_datetime_context(DEFAULT_COMPARE_ANALYSIS_PROMPT)
+    # Build synthesis prompt - use override if provided, otherwise use default
+    base_prompt = prompt_override if prompt_override else DEFAULT_COMPARE_ANALYSIS_PROMPT
+    synthesis_prompt = append_datetime_context(base_prompt)
     
     # Create synthesis messages
     synthesis_messages = [

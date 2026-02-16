@@ -4131,6 +4131,7 @@ async def create_supervisor_agent(
     # Conditional graph structure based on compare_mode
     if compare_mode:
         # Compare mode: use deterministic compare subgraph
+        from functools import partial
         from app.agents.new_chat.compare_executor import (
             compare_fan_out,
             compare_collect,
@@ -4138,10 +4139,16 @@ async def create_supervisor_agent(
             compare_synthesizer,
         )
         
+        # Create compare_synthesizer with resolved prompt override
+        compare_synthesizer_with_prompt = partial(
+            compare_synthesizer,
+            prompt_override=compare_synthesizer_prompt_template
+        )
+        
         graph_builder.add_node("compare_fan_out", RunnableCallable(None, compare_fan_out))
         graph_builder.add_node("compare_collect", RunnableCallable(None, compare_collect))
         graph_builder.add_node("compare_tavily", RunnableCallable(None, compare_tavily))
-        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synthesizer))
+        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synthesizer_with_prompt))
         
         # Direct routing: resolve_intent -> compare_fan_out -> ... -> END
         graph_builder.set_entry_point("resolve_intent")
