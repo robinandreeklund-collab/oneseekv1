@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Annotated, Any
 from uuid import uuid4
 
 from langchain_core.tools import tool
+from langgraph_bigtool.tools import InjectedState
 
 from app.agents.new_chat.sandbox_runtime import (
     SANDBOX_MODE_PROVISIONER,
@@ -56,6 +57,33 @@ async def _trace_end(
         return
 
 
+def _runtime_hitl_with_scope(
+    *,
+    runtime_hitl: dict[str, Any] | None,
+    state: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    merged = dict(runtime_hitl or {})
+    injected = state if isinstance(state, dict) else {}
+    scope_mode = str(
+        injected.get("sandbox_scope_mode")
+        or merged.get("sandbox_scope")
+        or ""
+    ).strip().lower()
+    scope_id = str(
+        injected.get("sandbox_scope_id")
+        or injected.get("subagent_id")
+        or merged.get("sandbox_scope_id")
+        or ""
+    ).strip()
+    if scope_mode in {"thread", "subagent"}:
+        merged["sandbox_scope"] = scope_mode
+    elif scope_id:
+        merged["sandbox_scope"] = "subagent"
+    if scope_id:
+        merged["sandbox_scope_id"] = scope_id
+    return merged
+
+
 def create_sandbox_release_tool(
     *,
     thread_id: int | None,
@@ -67,9 +95,14 @@ def create_sandbox_release_tool(
     async def sandbox_release(
         description: str,
         reason: str = "manual-release",
+        state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
         """Release and cleanup the sandbox lease for the current thread."""
         _ = str(description or "").strip()
+        scoped_runtime_hitl = _runtime_hitl_with_scope(
+            runtime_hitl=runtime_hitl,
+            state=state,
+        )
         span_id = await _trace_start(
             trace_recorder=trace_recorder,
             parent_span_id=trace_parent_span_id,
@@ -79,11 +112,11 @@ def create_sandbox_release_tool(
             },
         )
         try:
-            config = sandbox_config_from_runtime_flags(runtime_hitl)
+            config = sandbox_config_from_runtime_flags(scoped_runtime_hitl)
             released = await asyncio.to_thread(
                 release_sandbox_lease,
                 thread_id=thread_id,
-                runtime_hitl=runtime_hitl,
+                runtime_hitl=scoped_runtime_hitl,
                 reason=str(reason or "manual-release"),
             )
             payload: dict[str, Any] = {
@@ -91,6 +124,8 @@ def create_sandbox_release_tool(
                 "thread_id": thread_id,
                 "mode": config.mode,
                 "sandbox_enabled": bool(config.enabled),
+                "scope": config.scope,
+                "scope_id": config.scope_id,
             }
             if config.mode == SANDBOX_MODE_PROVISIONER:
                 payload["provisioner_url"] = str(config.provisioner_url or "").strip()

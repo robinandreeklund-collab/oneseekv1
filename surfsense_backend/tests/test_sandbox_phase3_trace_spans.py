@@ -153,3 +153,16 @@ def test_sandbox_release_tool_emits_release_span(monkeypatch, tmp_path: Path) ->
     assert payload.get("released") is True
     started_names = [item["name"] for item in fake_recorder.started]
     assert "sandbox.release" in started_names
+
+
+def test_sandbox_execute_merges_subagent_scope_from_injected_state() -> None:
+    merged = sandbox_execute_module._runtime_hitl_with_scope(
+        runtime_hitl={"sandbox_enabled": True, "sandbox_mode": "local"},
+        state={
+            "sandbox_scope_mode": "subagent",
+            "subagent_id": "sa-test-1",
+        },
+    )
+    assert isinstance(merged, dict)
+    assert merged.get("sandbox_scope") == "subagent"
+    assert merged.get("sandbox_scope_id") == "sa-test-1"

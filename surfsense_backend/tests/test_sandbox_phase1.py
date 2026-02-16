@@ -40,6 +40,8 @@ def test_sandbox_config_parses_flags() -> None:
             "sandbox_timeout_seconds": "75",
             "sandbox_max_output_bytes": "2048",
             "sandbox_container_prefix": "custom-prefix",
+            "sandbox_scope": "subagent",
+            "sandbox_scope_id": "sa-123",
         }
     )
     assert config.enabled is True
@@ -48,6 +50,8 @@ def test_sandbox_config_parses_flags() -> None:
     assert config.timeout_seconds == 75
     assert config.max_output_bytes == 2048
     assert config.docker_container_prefix == "custom-prefix"
+    assert config.scope == "subagent"
+    assert config.scope_id == "sa-123"
 
 
 def test_build_sandbox_container_name_is_deterministic() -> None:

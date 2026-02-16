@@ -135,3 +135,78 @@ def test_sandbox_auto_state_store_falls_back_to_file(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     assert result.state_backend == "file"
+
+
+def test_sandbox_subagent_scope_isolates_leases(tmp_path: Path) -> None:
+    common = {
+        "sandbox_enabled": True,
+        "sandbox_mode": "local",
+        "sandbox_workspace_root": str(tmp_path / "ws"),
+        "sandbox_state_store": "file",
+        "sandbox_state_file_path": str(tmp_path / "state.json"),
+        "sandbox_scope": "subagent",
+    }
+    alpha_first = sandbox_runtime.run_sandbox_command(
+        command="python3 -c \"print('alpha-1')\"",
+        thread_id="thread-scope",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-alpha"},
+    )
+    beta_first = sandbox_runtime.run_sandbox_command(
+        command="python3 -c \"print('beta-1')\"",
+        thread_id="thread-scope",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-beta"},
+    )
+    alpha_second = sandbox_runtime.run_sandbox_command(
+        command="python3 -c \"print('alpha-2')\"",
+        thread_id="thread-scope",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-alpha"},
+    )
+
+    assert alpha_first.scope == "subagent"
+    assert alpha_first.scope_id == "sa-alpha"
+    assert beta_first.scope_id == "sa-beta"
+    assert beta_first.lease_id != alpha_first.lease_id
+    assert alpha_second.scope_id == "sa-alpha"
+    assert alpha_second.reused is True
+    assert alpha_second.lease_id == alpha_first.lease_id
+
+
+def test_sandbox_release_subagent_scope_is_targeted(tmp_path: Path) -> None:
+    common = {
+        "sandbox_enabled": True,
+        "sandbox_mode": "local",
+        "sandbox_workspace_root": str(tmp_path / "ws"),
+        "sandbox_state_store": "file",
+        "sandbox_state_file_path": str(tmp_path / "state.json"),
+        "sandbox_scope": "subagent",
+    }
+    alpha_first = sandbox_runtime.run_sandbox_command(
+        command="python3 -c \"print('alpha')\"",
+        thread_id="thread-scope-release",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-alpha"},
+    )
+    beta_first = sandbox_runtime.run_sandbox_command(
+        command="python3 -c \"print('beta')\"",
+        thread_id="thread-scope-release",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-beta"},
+    )
+    assert sandbox_runtime.release_sandbox_lease(
+        thread_id="thread-scope-release",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-alpha"},
+        reason="unit-test-release-alpha",
+    )
+    beta_second = sandbox_runtime.run_sandbox_command(
+        command="python3 -c \"print('beta-2')\"",
+        thread_id="thread-scope-release",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-beta"},
+    )
+    alpha_second = sandbox_runtime.run_sandbox_command(
+        command="python3 -c \"print('alpha-2')\"",
+        thread_id="thread-scope-release",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-alpha"},
+    )
+
+    assert beta_second.reused is True
+    assert beta_second.lease_id == beta_first.lease_id
+    assert alpha_second.reused is False
+    assert alpha_second.lease_id != alpha_first.lease_id

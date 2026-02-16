@@ -287,3 +287,65 @@ def test_sandbox_provisioner_idle_timeout_triggers_release(
     )
     assert second.exit_code == 0
     assert any(url.endswith("/v1/sandbox/release") for url in calls)
+
+
+def test_sandbox_provisioner_subagent_scope_changes_thread_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    acquire_payloads: list[dict[str, object]] = []
+
+    def _fake_urlopen(request, timeout=0):
+        _ = timeout
+        url = str(request.full_url)
+        payload = _decode_request_payload(request)
+        if url.endswith("/v1/sandbox/acquire"):
+            acquire_payloads.append(payload)
+            return _FakeHTTPResponse(
+                {
+                    "sandbox_id": str(payload.get("sandbox_id") or "sandbox"),
+                    "workspace_path": "/workspace",
+                    "pod_name": "sandbox-pod-scope",
+                }
+            )
+        if url.endswith("/v1/sandbox/execute"):
+            return _FakeHTTPResponse(
+                {
+                    "output": "ok",
+                    "exit_code": 0,
+                    "workspace_path": "/workspace",
+                    "container_name": "sandbox-pod-scope",
+                }
+            )
+        raise AssertionError(f"Unexpected endpoint: {url}")
+
+    monkeypatch.setattr(sandbox_runtime.urllib_request, "urlopen", _fake_urlopen)
+    common = {
+        "sandbox_enabled": True,
+        "sandbox_mode": "provisioner",
+        "sandbox_provisioner_url": "http://sandbox.local:8002",
+        "sandbox_state_store": "file",
+        "sandbox_state_file_path": str(tmp_path / "sandbox_state.json"),
+        "sandbox_scope": "subagent",
+    }
+    first = sandbox_runtime.run_sandbox_command(
+        command="echo scope-a",
+        thread_id="thread-scope",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-a"},
+    )
+    second = sandbox_runtime.run_sandbox_command(
+        command="echo scope-b",
+        thread_id="thread-scope",
+        runtime_hitl={**common, "sandbox_scope_id": "sa-b"},
+    )
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert first.scope == "subagent"
+    assert second.scope_id == "sa-b"
+    assert len(acquire_payloads) >= 2
+    first_key = str(acquire_payloads[0].get("thread_key") or "")
+    second_key = str(acquire_payloads[1].get("thread_key") or "")
+    assert first_key
+    assert second_key
+    assert first_key != second_key

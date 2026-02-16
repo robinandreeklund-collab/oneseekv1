@@ -37,6 +37,9 @@ DEFAULT_SANDBOX_LOCK_TIMEOUT_SECONDS = 15
 DEFAULT_SANDBOX_STATE_STORE = "file"
 DEFAULT_SANDBOX_STATE_FILE_NAME = ".sandbox_state.json"
 DEFAULT_SANDBOX_STATE_REDIS_PREFIX = "oneseek:sandbox"
+DEFAULT_SANDBOX_SCOPE = "thread"
+SANDBOX_SCOPE_THREAD = "thread"
+SANDBOX_SCOPE_SUBAGENT = "subagent"
 SANDBOX_VIRTUAL_WORKSPACE_PREFIX = "/workspace"
 
 _LONG_LIVED_PATTERNS = (
@@ -127,6 +130,8 @@ class SandboxRuntimeConfig:
     state_file_path: str | None = None
     state_redis_url: str | None = None
     state_redis_prefix: str = DEFAULT_SANDBOX_STATE_REDIS_PREFIX
+    scope: str = DEFAULT_SANDBOX_SCOPE
+    scope_id: str | None = None
     timeout_seconds: int = DEFAULT_SANDBOX_TIMEOUT_SECONDS
     max_output_bytes: int = DEFAULT_SANDBOX_MAX_OUTPUT_BYTES
 
@@ -191,6 +196,23 @@ def sandbox_config_from_runtime_flags(
     state_redis_prefix = str(
         payload.get("sandbox_state_redis_prefix") or DEFAULT_SANDBOX_STATE_REDIS_PREFIX
     ).strip() or DEFAULT_SANDBOX_STATE_REDIS_PREFIX
+    requested_scope = str(
+        payload.get("sandbox_scope")
+        or payload.get("subagent_sandbox_scope")
+        or DEFAULT_SANDBOX_SCOPE
+    ).strip().lower()
+    scope = (
+        requested_scope
+        if requested_scope in {SANDBOX_SCOPE_THREAD, SANDBOX_SCOPE_SUBAGENT}
+        else DEFAULT_SANDBOX_SCOPE
+    )
+    scope_id = str(
+        payload.get("sandbox_scope_id")
+        or payload.get("subagent_scope_id")
+        or ""
+    ).strip() or None
+    if scope == SANDBOX_SCOPE_SUBAGENT and not scope_id:
+        scope = SANDBOX_SCOPE_THREAD
     timeout_seconds = _coerce_int(
         payload.get("sandbox_timeout_seconds"),
         default=DEFAULT_SANDBOX_TIMEOUT_SECONDS,
@@ -217,6 +239,8 @@ def sandbox_config_from_runtime_flags(
         state_file_path=state_file_path,
         state_redis_url=state_redis_url,
         state_redis_prefix=state_redis_prefix,
+        scope=scope,
+        scope_id=scope_id,
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
     )
@@ -235,6 +259,8 @@ class SandboxCommandResult:
     reused: bool = False
     state_backend: str = "file"
     idle_releases: list[str] | None = None
+    scope: str = SANDBOX_SCOPE_THREAD
+    scope_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -249,6 +275,8 @@ class SandboxLease:
     reused: bool
     state_backend: str
     idle_releases: list[str]
+    scope: str
+    scope_id: str | None
 
 
 class SandboxExecutionError(RuntimeError):
@@ -338,6 +366,22 @@ def _now_ts() -> int:
 
 def _thread_key(thread_id: Any) -> str:
     return _sanitize_segment(thread_id, fallback="thread-default").lower()
+
+
+def _effective_thread_identity(
+    *,
+    thread_id: Any,
+    config: SandboxRuntimeConfig,
+) -> str:
+    base_id = str(thread_id or "thread-default").strip() or "thread-default"
+    if str(config.scope or DEFAULT_SANDBOX_SCOPE).strip().lower() != SANDBOX_SCOPE_SUBAGENT:
+        return base_id
+    scope_id = str(config.scope_id or "").strip()
+    if not scope_id:
+        return base_id
+    safe_scope = _sanitize_segment(scope_id, fallback="subagent").lower()[:36]
+    scope_hash = hashlib.sha1(scope_id.encode("utf-8")).hexdigest()[:10]
+    return f"{base_id}::subagent::{safe_scope}-{scope_hash}"
 
 
 def _default_state_file_path(config: SandboxRuntimeConfig) -> Path:
@@ -584,6 +628,8 @@ def _build_new_record(
         "thread_id": str(thread_id or ""),
         "thread_key": thread_key,
         "mode": config.mode,
+        "scope": str(config.scope or DEFAULT_SANDBOX_SCOPE).strip().lower(),
+        "scope_id": str(config.scope_id or "").strip() or None,
         "workspace_path": workspace_path,
         "container_name": None,
         "sandbox_id": None,
@@ -613,6 +659,8 @@ def _finalize_record_for_mode(
     updated["thread_id"] = str(updated.get("thread_id") or str(thread_id or ""))
     updated["thread_key"] = thread_key
     updated["mode"] = config.mode
+    updated["scope"] = str(config.scope or DEFAULT_SANDBOX_SCOPE).strip().lower()
+    updated["scope_id"] = str(config.scope_id or "").strip() or None
     updated["workspace_path"] = str(updated.get("workspace_path") or _workspace_path(config, thread_id))
     if config.mode == SANDBOX_MODE_DOCKER:
         container_name = str(updated.get("container_name") or "").strip()
@@ -675,6 +723,8 @@ def _lease_from_record(
         reused=bool(reused),
         state_backend=state_backend,
         idle_releases=list(idle_releases),
+        scope=str(record.get("scope") or DEFAULT_SANDBOX_SCOPE),
+        scope_id=str(record.get("scope_id") or "").strip() or None,
     )
 
 
@@ -766,7 +816,11 @@ def acquire_sandbox_lease(
 ) -> SandboxLease:
     config = sandbox_config_from_runtime_flags(runtime_hitl)
     _ensure_sandbox_enabled(config)
-    thread_key = _thread_key(thread_id)
+    effective_thread_id = _effective_thread_identity(
+        thread_id=thread_id,
+        config=config,
+    )
+    thread_key = _thread_key(effective_thread_id)
     now_ts = _now_ts()
     state_backend, redis_client = _resolve_state_backend(config)
     idle_releases: list[str] = []
@@ -808,12 +862,12 @@ def acquire_sandbox_lease(
             if not reused:
                 record = _build_new_record(
                     config=config,
-                    thread_id=thread_id,
+                    thread_id=effective_thread_id,
                     thread_key=thread_key,
                 )
             record = _finalize_record_for_mode(
                 config=config,
-                thread_id=thread_id,
+                thread_id=effective_thread_id,
                 thread_key=thread_key,
                 record=record,
             )
@@ -823,7 +877,7 @@ def acquire_sandbox_lease(
                 record["created_at"] = now_ts
             redis_client.hset(hash_key, thread_key, json.dumps(record, ensure_ascii=True))
             return _lease_from_record(
-                thread_id=thread_id,
+                thread_id=effective_thread_id,
                 thread_key=thread_key,
                 record=record,
                 reused=reused,
@@ -875,13 +929,13 @@ def acquire_sandbox_lease(
         if not isinstance(record, dict):
             record = _build_new_record(
                 config=config,
-                thread_id=thread_id,
+                thread_id=effective_thread_id,
                 thread_key=thread_key,
             )
             reused = False
         record = _finalize_record_for_mode(
             config=config,
-            thread_id=thread_id,
+            thread_id=effective_thread_id,
             thread_key=thread_key,
             record=record,
         )
@@ -892,7 +946,7 @@ def acquire_sandbox_lease(
         threads[thread_key] = record
 
         return _lease_from_record(
-            thread_id=thread_id,
+            thread_id=effective_thread_id,
             thread_key=thread_key,
             record=record,
             reused=reused,
@@ -909,7 +963,11 @@ def release_sandbox_lease(
 ) -> bool:
     config = sandbox_config_from_runtime_flags(runtime_hitl)
     _ensure_sandbox_enabled(config)
-    thread_key = _thread_key(thread_id)
+    effective_thread_id = _effective_thread_identity(
+        thread_id=thread_id,
+        config=config,
+    )
+    thread_key = _thread_key(effective_thread_id)
     state_backend, redis_client = _resolve_state_backend(config)
 
     if state_backend == _STATE_BACKEND_REDIS and redis_client is not None:
@@ -1433,6 +1491,8 @@ def run_sandbox_command(
             reused=bool(lease.reused),
             state_backend=lease.state_backend,
             idle_releases=list(lease.idle_releases),
+            scope=lease.scope,
+            scope_id=lease.scope_id,
         )
 
     workspace_path = Path(str(lease.workspace_path)).expanduser()
@@ -1458,6 +1518,8 @@ def run_sandbox_command(
             reused=bool(lease.reused),
             state_backend=lease.state_backend,
             idle_releases=list(lease.idle_releases),
+            scope=lease.scope,
+            scope_id=lease.scope_id,
         )
 
     output, exit_code, truncated = _run_subprocess(
@@ -1478,4 +1540,6 @@ def run_sandbox_command(
         reused=bool(lease.reused),
         state_backend=lease.state_backend,
         idle_releases=list(lease.idle_releases),
+        scope=lease.scope,
+        scope_id=lease.scope_id,
     )
