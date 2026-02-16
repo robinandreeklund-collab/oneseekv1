@@ -221,7 +221,8 @@ const DETAILED_LANGGRAPH_STEPS = [
 // Constants for truncation and timing
 const MAX_RESPONSE_LENGTH = 500;
 const MAX_SYNTHESIS_LENGTH = 600;
-const QUESTION_ROTATION_INTERVAL = 60000; // 60 seconds (15s pair1 + 15s pair2 + 15s pair3 + 15s synthesis)
+const PAIR_ROTATION_INTERVAL = 15000; // 15 seconds per model pair
+const SYNTHESIS_DISPLAY_INTERVAL = 15000; // 15 seconds for synthesis display
 
 // Question data interface
 interface QuestionData {
@@ -406,7 +407,7 @@ const SideBySideComparison = () => {
   const [questions, setQuestions] = useState<QuestionData[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [modelPairIndex, setModelPairIndex] = useState(0);
-  const [typingComplete, setTypingComplete] = useState<boolean[]>([false, false]);
+  const [typingComplete, setTypingComplete] = useState<boolean[]>([]);
   const [showSynthesis, setShowSynthesis] = useState(false);
   const [synthesisComplete, setSynthesisComplete] = useState(false);
   const ref = useRef(null);
@@ -418,6 +419,11 @@ const SideBySideComparison = () => {
     ["gemini", "deepseek"],
     ["perplexity", "qwen"]
   ];
+
+  // Initialize typingComplete based on current pair size
+  useEffect(() => {
+    setTypingComplete(new Array(MODEL_PAIRS[0].length).fill(false));
+  }, []);
 
   // Load questions from JSON
   useEffect(() => {
@@ -435,12 +441,12 @@ const SideBySideComparison = () => {
       const timeout = setTimeout(() => {
         if (modelPairIndex < MODEL_PAIRS.length - 1) {
           setModelPairIndex(prev => prev + 1);
-          setTypingComplete([false, false]);
+          setTypingComplete(new Array(MODEL_PAIRS[0].length).fill(false));
         } else {
           // All pairs shown, show synthesis
           setShowSynthesis(true);
         }
-      }, 15000);
+      }, PAIR_ROTATION_INTERVAL);
       return () => clearTimeout(timeout);
     }
   }, [modelPairIndex, showSynthesis]);
@@ -451,10 +457,10 @@ const SideBySideComparison = () => {
       const timeout = setTimeout(() => {
         setCurrentQuestionIndex((prev) => (prev + 1) % questions.length);
         setModelPairIndex(0);
-        setTypingComplete([false, false]);
+        setTypingComplete(new Array(MODEL_PAIRS[0].length).fill(false));
         setShowSynthesis(false);
         setSynthesisComplete(false);
-      }, 15000);
+      }, SYNTHESIS_DISPLAY_INTERVAL);
       return () => clearTimeout(timeout);
     }
   }, [synthesisComplete, questions.length]);
