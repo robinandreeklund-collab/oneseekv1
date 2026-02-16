@@ -25,6 +25,7 @@ from app.services.tool_lifecycle_service import (
     get_all_tool_lifecycle_statuses,
     get_tool_lifecycle_status,
     set_tool_status,
+    initialize_tool_lifecycle_statuses,
 )
 from app.users import current_active_user
 
@@ -120,11 +121,26 @@ async def list_tool_lifecycle(
     List all tool lifecycle statuses with metrics.
     
     Returns summary counts and detailed status for each tool.
+    Automatically initializes tools if table is empty.
     """
     await _require_admin(session, user)
     
     # Get all lifecycle statuses
     statuses = await get_all_tool_lifecycle_statuses(session)
+    
+    # If empty, initialize with all registered tools
+    if not statuses:
+        from app.agents.new_chat.tools.registry import get_all_tool_names
+        
+        tool_names = get_all_tool_names()
+        if tool_names:
+            await initialize_tool_lifecycle_statuses(
+                session, 
+                tool_names, 
+                default_status=ToolLifecycleStatus.REVIEW
+            )
+            # Re-fetch after initialization
+            statuses = await get_all_tool_lifecycle_statuses(session)
     
     # Calculate summary stats
     live_count = sum(1 for s in statuses if s.status == ToolLifecycleStatus.LIVE)
