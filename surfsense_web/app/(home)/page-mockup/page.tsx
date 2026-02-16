@@ -1956,27 +1956,6 @@ const RadicalTransparencySection = () => {
               </div>
             </div>
           </motion.div>
-                            !isActive && isPending && "text-neutral-600 dark:text-neutral-400"
-                          )}>
-                            {step.label}
-                          </p>
-                        </div>
-
-                        {/* Active indicator */}
-                        {isActive && (
-                          <motion.div
-                            animate={{ scale: [1, 1.2, 1] }}
-                            transition={{ repeat: Infinity, duration: 1.5 }}
-                            className="size-1.5 rounded-full bg-white flex-shrink-0"
-                          />
-                        )}
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            </div>
-          </motion.div>
         </div>
       </div>
     </section>
