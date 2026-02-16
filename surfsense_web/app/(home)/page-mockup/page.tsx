@@ -1753,211 +1753,84 @@ const RadicalTransparencySection = () => {
     sources?: string[];
   }>>([]);
   const [activeStep, setActiveStep] = useState<number | null>(null);
+  const [langGraphData, setLangGraphData] = useState<any>(null);
   const sectionRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(sectionRef, { once: true, amount: 0.3 });
 
-  // REAL DATA from actual LangGraph execution (langgraph-flow-msg-3727-1771204720984.json)
-  const scenarios = [
+  // Load real LangGraph JSON from /public
+  useEffect(() => {
+    fetch('/langgraph-flow-msg-3727-1771204720984.json')
+      .then(res => res.json())
+      .then(data => {
+        console.log('Loaded LangGraph data:', data.metadata);
+        setLangGraphData(data);
+      })
+      .catch(err => console.error('Failed to load LangGraph data:', err));
+  }, []);
+
+  // Extract query and response from loaded JSON
+  const realQuery = langGraphData?.spans?.[0]?.input?.query || "";
+  const realResponse = (() => {
+    if (!langGraphData) return "";
+    // Find the final response from critic_node span
+    for (let i = langGraphData.spans.length - 1; i >= 0; i--) {
+      const span = langGraphData.spans[i];
+      if (span.name === 'critic_node' && span.output?.final_response) {
+        return span.output.final_response;
+      }
+    }
+    return "";
+  })();
+
+  // REAL DATA from actual LangGraph execution (loaded dynamically from JSON file)
+  const scenarios = langGraphData ? [
     {
-      question: "Sverige har haft en av Europas mest generösa invandringspolitiker sedan 1990-talet, särskilt under perioden 2010–2015. Har den höga invandringen netto varit positiv eller negativ för Sverige ekonomiskt, socialt och trygghetsmässigt?",
+      question: realQuery,
       messages: [
-        { type: 'user' as const, text: "Sverige har haft en av Europas mest generösa invandringspolitiker sedan 1990-talet, särskilt under perioden 2010–2015. Har den höga invandringen netto varit positiv eller negativ för Sverige ekonomiskt, socialt och trygghetsmässigt?" },
+        { type: 'user' as const, text: realQuery },
         { type: 'system' as const, text: "🔍 Analyserar komplex policy-fråga..." },
         { type: 'system' as const, text: "⚡ Väljer Statistics Agent" },
         { type: 'system' as const, text: "📋 Skapar research plan med flera källor" },
         { type: 'api' as const, text: "📡 Anropar SCB: befolkningsdata, arbetsmarknad, integration" },
-        { type: 'thinking' as const, text: "Bearbetar data från 127 execution steg..." },
+        { type: 'thinking' as const, text: `Bearbetar data från ${langGraphData.metadata.totalSpans} execution steg...` },
         { type: 'system' as const, text: "✅ Orchestration guard: kvalitetskontroller" },
         { type: 'system' as const, text: "🔄 Critic validerar sources och reasoning" },
-        { type: 'assistant' as const, text: `För att besvara din fråga om ekonomiska effekter av invandring i Sverige mellan 2010 och 2015 – särskilt inkomstutveckling, arbetsmarknadsdeltagande och offentlig ekonomi – krävs specifika statistikområden från SCB. Det finns dock begränsad tillgång till detaljerad, direkt kopplad statistik för dessa tre aspekter inom perioden 2010–2015, särskilt när det gäller invandringens ekonomiska effekter.
-
-Följande är de mest relevanta verktygen och deras resultat:
-
----
-
-### 1. **Folkmängd i Sverige 2010–2015 (invandrare och födda i Sverige)**  
-Använd verktyget \`scb_befolkning_folkmangd\` med filter på region = Riket, tabellinnehåll = "Folkmängd", tid = 2010–2015, och kategori = "invandrare" och "födda i Sverige".
-
-**Resultat (fördelning efter födelseområde och kännetecken):**
-- **Födda i Sverige (2010–2015):**  
-  - 2010: ca 118 000  
-  - 2011: ca 119 000  
-  - 2012: ca 120 000  
-  - 2013: ca 121 000  
-  - 2014: ca 122 000  
-  - 2015: ca 123 000  
-  [citation: 40485]
-
-- **Invandrare (2010–2015):**  
-  - 2010: ca 140 000  
-  - 2011: ca 145 000  
-  - 2012: ca 150 000  
-  - 2013: ca 155 000  
-  - 2014: ca 160 000  
-  - 2015: ca 165 000  
-  [citation: 40485]
-
-> *Notering: Dessa siffror inkluderar personer som kom in till Sverige under året, men inte nödvändigtvis de som var fullt arbetsmarknadsaktiva eller hade inkomster i samma år. Data är baserat på folkmängd per 31 december och inkluderar födelse och flyttning.*
-
----
-
-### 2. **Arbetsmarknadsdeltagande bland invandrare (2010–2015)**  
-Använd verktyget \`scb_arbetsmarknad\` med frågan:  
-*"Arbetsmarknadsdeltagande bland invandrare i Sverige 2010–2015, per kön och ålder."*
-
-**Tillgänglig data (2015):**  
-- Invandrare (födda utanför Sverige) i arbetsförhållande (sysselsättning eller arbetslöshet) i Sverige:  
-  - 2015: 1,1 miljoner personer (inklusive arbetslösa och sysselsatta)  
-  - Andel sysselsatta bland invandrare: ca 58 %  
-  - Andel arbetslösa: ca 12 %  
-  - Andel utanför arbetsförhållande: ca 30 %  
-  [citation: 40485]
-
-> *Data från 2015 visar att invandrare har en lägre arbetsmarknadsdeltagande än födda i Sverige, men en ökande trend under 2010–2015. Fullständig tidsserie från 2010–2015 kräver mer detaljerad extraktion, men generellt visar SCB att andelen sysselsatta bland invandrare ökade från ca 52 % (2010) till 58 % (2015).*
-
----
-
-### 3. **Offentlig ekonomi – skatteintakter och utgifter kopplade till invandring (2010–2015)**  
-Använd verktyget \`scb_offentlig_ekonomi\` med frågan:  
-*"Offentliga utgifter och skatteintakter i Sverige 2010–2015, särskilt kopplat till invandring."*
-
-**Tillgängliga nyckeltal (2015):**  
-- **Kommunala skatteintakter (inkl. invandrare):**  
-  - 2015: ca 420 miljarder kr  
-  - Andel från invandrare: ca 12 % av totala skatteintakter (uppskattat)  
-  [citation: 40485]
-
-- **Offentliga utgifter (inkl. sociala insatser, skola, vård):**  
-  - 2015: ca 1 000 miljarder kr i kommunala utgifter  
-  - Utgifter kopplade till invandrare: ca 120 miljarder kr (inkl. integrationsinsatser, skola, vård, boende)  
-  [citation: 40485]
-
-> *SCB publicerar inte direkt "effekter av invandring" i offentlig ekonomi, men kan skatta att invandring bidrog till ökade utgifter i sociala sektorer och en gradvis ökning i skatteintakter genom arbetsmarknadsdeltagande.*
-
----
-
-### Sammanfattning av ekonomiska effekter (2010–2015):
-
-| Indikator                          | 2010 (uppskattat) | 2015 (uppskattat) | Utveckling |
-|------------------------------------|-------------------|-------------------|-----------|
-| Antal invandrare till Sverige        | ~140 000          | ~165 000          | +18 %     |
-| Andel sysselsatt bland invandrare   | ~52 %             | ~58 %             | +6 p.p.   |
-| Skatteintakter från invandrare      | ~50 miljarder kr   | ~70 miljarder kr   | +40 %     |
-| Offentliga utgifter kopplade till invandrare | ~100 miljarder kr | ~120 miljarder kr | +20 %     |
-
-> *Observera: SCB publicerar inte direkt "effekter av invandring" i offentlig ekonomi, men data visar att invandrare ökade i arbetsmarknadsdeltagande och bidrog till ökade skatteintakter och utgifter under 2010–2015.*
-
----
-
-### Källa:
-- Folkmängd: SCB, tabell BE0101A (Folkmängd per månad)
-- Arbetsmarknad: SCB, tabell AM0211 (Sysselsättning och arbetslöshet)
-- Offentlig ekonomi: SCB, tabell OE0106 (Kommunernas finansiella tillgångar och skulder)
-
-> **Alla siffror baserade på SCB:s officiella statistik.**  
-> *Observera: SCB publicerar inte framtida siffror. År 2025 är inte tillgängligt i denna kontext.*` },
+        { type: 'assistant' as const, text: realResponse },
         { type: 'sources' as const, text: "", sources: ['SCB'] },
       ],
       steps: [0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     }
-  ];
+  ] : [];
 
-  // JSON export data structure from REAL LangGraph execution
-  const [jsonData, setJsonData] = useState({
+  // JSON export data - use loaded LangGraph data
+  const jsonData = langGraphData || {
     metadata: {
-      exportedAt: "2026-02-16T01:18:40.974Z",
-      messageId: "msg-3727",
-      sessionId: "07c9ef1472ce449989410c47e6ae03c8",
-      totalSpans: 127,
+      exportedAt: "",
+      messageId: "",
+      sessionId: "",
+      totalSpans: 0,
       completedSpans: 0,
       runningSpans: 0,
       errorSpans: 0
     },
-    spans: [] as Array<{
-      id: string;
-      parent_id: string | null;
-      name: string;
-      status: "completed" | "running" | "pending";
-      sequence: number;
-      start_time: string;
-      end_time: string | null;
-      duration_ms: number | null;
-      input: any;
-      output: any;
-      meta: any;
-      error: any;
-    }>
-  });
+    spans: []
+  };
 
   // Animation sequence - now updates both chat and JSON
   useEffect(() => {
-    if (!isInView) return;
+    if (!isInView || !langGraphData || scenarios.length === 0) return;
 
     const runSequence = async () => {
       const data = scenarios[currentScenario];
       setChatMessages([]);
       setActiveStep(null);
-      
-      // Reset JSON data with REAL metadata from actual execution
-      setJsonData({
-        metadata: {
-          exportedAt: "2026-02-16T01:18:40.974Z",
-          messageId: "msg-3727",
-          sessionId: "07c9ef1472ce449989410c47e6ae03c8",
-          totalSpans: 127,
-          completedSpans: 0,
-          runningSpans: 0,
-          errorSpans: 0
-        },
-        spans: []
-      });
 
-      // Add messages sequentially with corresponding JSON spans
+      // Add messages sequentially
       for (let i = 0; i < data.messages.length; i++) {
         await new Promise(resolve => setTimeout(resolve, 1500));
         setChatMessages(prev => [...prev, data.messages[i]]);
         setActiveStep(data.steps[i]);
-        
-        // Add corresponding span to JSON
-        const message = data.messages[i];
-        const spanId = `span_${String(i + 1).padStart(3, '0')}`;
-        const newSpan = {
-          id: spanId,
-          parent_id: i === 0 ? null : `span_${String(i).padStart(3, '0')}`,
-          name: message.type === 'user' ? 'USER_INPUT' : 
-                message.type === 'system' ? message.text.includes('Analyserar') ? 'INTENT_RESOLUTION' :
-                                            message.text.includes('Väljer') ? 'AGENT_SELECTION' :
-                                            message.text.includes('Skapar') ? 'PLANNING' :
-                                            message.text.includes('Säkerhet') ? 'SAFETY_CHECK' :
-                                            message.text.includes('Validerar') ? 'VALIDATION' : 'SYSTEM' :
-                message.type === 'api' ? 'API_CALL_SCB' :
-                message.type === 'thinking' ? 'POST_PROCESSING' :
-                message.type === 'assistant' ? 'SYNTHESIS' :
-                message.type === 'sources' ? 'FINALIZATION' : 'UNKNOWN',
-          status: "completed" as const,
-          sequence: i,
-          start_time: new Date(Date.now() - (data.messages.length - i) * 1500).toISOString(),
-          end_time: new Date(Date.now() - (data.messages.length - i - 1) * 1500).toISOString(),
-          duration_ms: Math.floor(Math.random() * 500) + 100,
-          input: { query: message.text },
-          output: message.type === 'api' ? { data: "SCB response data..." } : 
-                  message.type === 'assistant' ? { response: message.text } : null,
-          meta: {
-            tokens: message.type === 'assistant' ? Math.floor(Math.random() * 200) + 50 : null,
-            model: message.type === 'assistant' ? "gpt-4o" : null
-          },
-          error: null
-        };
-        
-        setJsonData(prev => ({
-          ...prev,
-          metadata: {
-            ...prev.metadata,
-            completedSpans: prev.metadata.completedSpans + 1
-          },
-          spans: [...prev.spans, newSpan]
-        }));
       }
 
       // Pause before next scenario
@@ -1966,7 +1839,7 @@ Använd verktyget \`scb_offentlig_ekonomi\` med frågan:
     };
 
     runSequence();
-  }, [currentScenario, isInView]);
+  }, [currentScenario, isInView, langGraphData]);
 
   return (
     <section ref={sectionRef} className="relative py-24 md:py-32 bg-white dark:bg-neutral-950">
