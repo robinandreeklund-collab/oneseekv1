@@ -107,6 +107,111 @@ const EVALUATION_METRICS = [
   }
 ];
 
+// ==================== DETAILED LANGGRAPH STEPS ====================
+const DETAILED_LANGGRAPH_STEPS = [
+  // System Initialization (1-5)
+  { id: 1, name: "START", icon: "▶️", phase: "init", description: "Initialize execution" },
+  { id: 2, name: "Load Configuration", icon: "⚙️", phase: "init", description: "Load system config" },
+  { id: 3, name: "Initialize LangGraph", icon: "⚙️", phase: "init", description: "Setup state machine" },
+  { id: 4, name: "Set Checkpointer", icon: "⚙️", phase: "init", description: "Enable state persistence" },
+  { id: 5, name: "Prepare State", icon: "⚙️", phase: "init", description: "Initialize execution state" },
+  
+  // Intent Resolution (6-15)
+  { id: 6, name: "Parse Query", icon: "💭", phase: "intent", description: "Extract query structure" },
+  { id: 7, name: "Tokenize Input", icon: "💭", phase: "intent", description: "Break into tokens" },
+  { id: 8, name: "Run Intent Classifier", icon: "💭", phase: "intent", description: "Determine query type" },
+  { id: 9, name: "Intent: Statistics", icon: "✓", phase: "intent", description: "Detected: statistics query" },
+  { id: 10, name: "Confidence: 0.94", icon: "✓", phase: "intent", description: "High confidence score" },
+  { id: 11, name: "Extract Entities", icon: "💭", phase: "intent", description: "Find: Stockholm, population" },
+  { id: 12, name: "Validate Intent", icon: "✓", phase: "intent", description: "Intent validated" },
+  { id: 13, name: "Save Intent State", icon: "⚙️", phase: "intent", description: "Store intent data" },
+  { id: 14, name: "Prepare Routing", icon: "💭", phase: "intent", description: "Setup for agent selection" },
+  { id: 15, name: "Intent Complete", icon: "✓", phase: "intent", description: "Intent resolution done" },
+  
+  // Agent Selection (16-25)
+  { id: 16, name: "Query Embeddings", icon: "🤖", phase: "planning", description: "Generate query vector" },
+  { id: 17, name: "Retrieve Agents", icon: "🤖", phase: "planning", description: "Get top 5 candidates" },
+  { id: 18, name: "Score: Statistics 0.92", icon: "✓", phase: "planning", description: "Best match found" },
+  { id: 19, name: "Score: Action 0.31", icon: "💭", phase: "planning", description: "Lower score" },
+  { id: 20, name: "Score: Knowledge 0.28", icon: "💭", phase: "planning", description: "Lower score" },
+  { id: 21, name: "Select: Statistics", icon: "✓", phase: "planning", description: "Statistics agent chosen" },
+  { id: 22, name: "Load Agent Config", icon: "⚙️", phase: "planning", description: "Load agent definition" },
+  { id: 23, name: "Initialize Context", icon: "⚙️", phase: "planning", description: "Setup agent context" },
+  { id: 24, name: "Validate Selection", icon: "✓", phase: "planning", description: "Agent validated" },
+  { id: 25, name: "Agent Ready", icon: "✓", phase: "planning", description: "Agent selection complete" },
+  
+  // Planning (26-35)
+  { id: 26, name: "Generate Plan", icon: "🤖", phase: "planning", description: "Model: Claude Sonnet 3.5" },
+  { id: 27, name: "Plan Prompt", icon: "💭", phase: "planning", description: "312 tokens sent" },
+  { id: 28, name: "LLM Response", icon: "🤖", phase: "planning", description: "Plan generated" },
+  { id: 29, name: "Parse Plan Steps", icon: "💭", phase: "planning", description: "Extract action steps" },
+  { id: 30, name: "Step 1: Query SCB", icon: "✓", phase: "planning", description: "For Stockholm population" },
+  { id: 31, name: "Step 2: Validate", icon: "✓", phase: "planning", description: "Check data quality" },
+  { id: 32, name: "Step 3: Format", icon: "✓", phase: "planning", description: "Prepare response" },
+  { id: 33, name: "Validate Plan", icon: "✓", phase: "planning", description: "Plan structure OK" },
+  { id: 34, name: "Save Plan", icon: "⚙️", phase: "planning", description: "Store in state" },
+  { id: 35, name: "Planning Complete", icon: "✓", phase: "planning", description: "Ready for execution" },
+  
+  // Tool Resolution (36-45)
+  { id: 36, name: "Map to Tools", icon: "🔧", phase: "execution", description: "Find matching tools" },
+  { id: 37, name: "Tool: get_population", icon: "🔧", phase: "execution", description: "SCB tool identified" },
+  { id: 38, name: "Load Definition", icon: "⚙️", phase: "execution", description: "Load tool schema" },
+  { id: 39, name: "Validate Params", icon: "✓", phase: "execution", description: "Check parameters" },
+  { id: 40, name: "Check Rate Limit", icon: "✓", phase: "execution", description: "SCB: 100/day available" },
+  { id: 41, name: "Check Cache", icon: "💭", phase: "execution", description: "No cached result" },
+  { id: 42, name: "Prepare Call", icon: "🔧", phase: "execution", description: "Build API request" },
+  { id: 43, name: "Set Params", icon: "⚙️", phase: "execution", description: "municipality=Stockholm" },
+  { id: 44, name: "Validate Tool", icon: "✓", phase: "execution", description: "Tool ready" },
+  { id: 45, name: "Tool Resolution Done", icon: "✓", phase: "execution", description: "Ready to execute" },
+  
+  // Execution (46-50)
+  { id: 46, name: "Generate Call", icon: "🤖", phase: "execution", description: "Model: GPT-4o" },
+  { id: 47, name: "Function Call", icon: "🔧", phase: "execution", description: "get_population_statistics" },
+  { id: 48, name: "Validate Call", icon: "✓", phase: "execution", description: "Call structure OK" },
+  { id: 49, name: "Execute Tool", icon: "📡", phase: "execution", description: "Running external API" },
+  { id: 50, name: "Execution Started", icon: "✓", phase: "execution", description: "API call in progress" },
+  
+  // API Call Detail (51-60)
+  { id: 51, name: "Prepare HTTP", icon: "📡", phase: "api", description: "Build HTTP request" },
+  { id: 52, name: "Set Headers", icon: "📡", phase: "api", description: "Authorization, Content-Type" },
+  { id: 53, name: "POST to SCB", icon: "📡", phase: "api", description: "api.scb.se/OV0104" },
+  { id: 54, name: "Wait Response", icon: "⏳", phase: "api", description: "Waiting... (1.2s)" },
+  { id: 55, name: "Response: 200 OK", icon: "✓", phase: "api", description: "Success status" },
+  { id: 56, name: "Parse JSON", icon: "💭", phase: "api", description: "Extract data structure" },
+  { id: 57, name: "Extract Data", icon: "💭", phase: "api", description: "Get population values" },
+  { id: 58, name: "Validate Data", icon: "✓", phase: "api", description: "Schema validation passed" },
+  { id: 59, name: "Cache Response", icon: "⚙️", phase: "api", description: "Save for 1 hour" },
+  { id: 60, name: "API Call Complete", icon: "✓", phase: "api", description: "Data retrieved" },
+  
+  // Post-Processing (61-65)
+  { id: 61, name: "Extract Fields", icon: "💭", phase: "validation", description: "Get relevant fields" },
+  { id: 62, name: "Transform Format", icon: "💭", phase: "validation", description: "Convert to standard format" },
+  { id: 63, name: "Add Metadata", icon: "⚙️", phase: "validation", description: "Source, timestamp, version" },
+  { id: 64, name: "Validate Schema", icon: "✓", phase: "validation", description: "Output schema OK" },
+  { id: 65, name: "Post-Process Done", icon: "✓", phase: "validation", description: "Data ready for synthesis" },
+  
+  // Safety & Validation (66-70)
+  { id: 66, name: "Orchestration Guard", icon: "🛡️", phase: "validation", description: "Run safety checks" },
+  { id: 67, name: "Loop Count: 1/3", icon: "✓", phase: "validation", description: "Under limit" },
+  { id: 68, name: "Validate Sources", icon: "✓", phase: "validation", description: "SCB is trusted" },
+  { id: 69, name: "Run Critic", icon: "🤖", phase: "validation", description: "Model: Claude Sonnet" },
+  { id: 70, name: "Critic: OK", icon: "✓", phase: "validation", description: "Quality approved" },
+  
+  // Synthesis (71-77)
+  { id: 71, name: "Generate Response", icon: "🤖", phase: "output", description: "Model: GPT-4o" },
+  { id: 72, name: "Synthesis Prompt", icon: "💭", phase: "output", description: "845 tokens sent" },
+  { id: 73, name: "Response Generated", icon: "✓", phase: "output", description: "Answer created" },
+  { id: 74, name: "Add Citations", icon: "📖", phase: "output", description: "Add [1] SCB reference" },
+  { id: 75, name: "Format Markdown", icon: "💭", phase: "output", description: "Apply formatting" },
+  { id: 76, name: "Validate Output", icon: "✓", phase: "output", description: "Response validated" },
+  { id: 77, name: "Synthesis Complete", icon: "✓", phase: "output", description: "Ready to return" },
+  
+  // Finalization (78-80)
+  { id: 78, name: "Save Checkpoint", icon: "⚙️", phase: "output", description: "Persist final state" },
+  { id: 79, name: "Prepare Response", icon: "💭", phase: "output", description: "Package for return" },
+  { id: 80, name: "END", icon: "⏹️", phase: "output", description: "Execution complete" }
+];
+
 
 
 
