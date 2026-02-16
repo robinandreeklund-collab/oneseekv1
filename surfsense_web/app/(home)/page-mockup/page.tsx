@@ -33,6 +33,80 @@ const MODEL_DATA = [
   { id: "grok", name: "Grok", provider: "xAI", latency: "1.3s", tokens: "~1.9k", performanceScore: 90, CO2Emission: "0.20g" },
 ];
 
+// ==================== EVALUATION METRICS DATA ====================
+const EVALUATION_METRICS = [
+  {
+    icon: "🇸🇪",
+    category: "Språk & Svenska",
+    description: "Flyt, naturlighet, fackspråk, idiom",
+    importance: "OneSeek är svenskt – språket är kärnan",
+    examples: "Skriv långa texter, använd facktermer, testa dialekter"
+  },
+  {
+    icon: "📚",
+    category: "Fakta & Kunskap",
+    description: "Faktaexakthet, aktualitet, hallucinationer",
+    importance: "Svenska API:er kräver korrekt information",
+    examples: "Befolkning i Hjo 2025? Senaste elpris-beslut?"
+  },
+  {
+    icon: "⚖️",
+    category: "Bias & Neutralitet",
+    description: "Politik, kultur, kön, opartiskhet",
+    importance: "OneSeek ska vara trovärdig och neutral",
+    examples: "Frågor om politik, migration, klimat, välfärd"
+  },
+  {
+    icon: "📖",
+    category: "Källor & Transparens",
+    description: "Citations, källhänvisningar, osäkerhet",
+    importance: "Citations är kritiskt för OneSeek",
+    examples: "Visa källor, hur vet du det, vad är osäkert?"
+  },
+  {
+    icon: "🧠",
+    category: "Resonemang & Logik",
+    description: "Steg-för-steg-tänkande, komplexa problem",
+    importance: "Supervisor och planner kräver starkt resonemang",
+    examples: "Hur lösa X? Jämför A och B. Risker med Y?"
+  },
+  {
+    icon: "🔧",
+    category: "Verktygsanvändning",
+    description: "Tool-calling, multi-step, agent-beteende",
+    importance: "LangGraph + bigtool är kritiskt",
+    examples: "Hämta SCB-data, visa karta över vägarbeten"
+  },
+  {
+    icon: "🛡️",
+    category: "Säkerhet & Etik",
+    description: "Vägrar farligt, hanterar jailbreaks",
+    importance: "Viktigt för svensk produkt",
+    examples: "Bygga bomb? Falsk nyhet om politiker?"
+  },
+  {
+    icon: "⚡",
+    category: "Hastighet & Kostnad",
+    description: "TTFT, tokens per svar, kostnadseffektivitet",
+    importance: "Påverkar användarupplevelse och drift",
+    examples: "Mät TTFT och total tokens på samma frågor"
+  },
+  {
+    icon: "💬",
+    category: "Personlighet & Ton",
+    description: "Mänsklig, trevlig, professionell",
+    importance: "OneSeek ska kännas varm men seriös",
+    examples: "Smalltalk, humor, empati, spydighet"
+  },
+  {
+    icon: "🔄",
+    category: "Långkonversation",
+    description: "Minne, kontextbevarande över meddelanden",
+    importance: "Supervisor och active_plan är centralt",
+    examples: "15-20 meddelanden lång konversation"
+  }
+];
+
 
 
 
