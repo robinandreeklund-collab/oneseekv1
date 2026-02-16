@@ -6,7 +6,11 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 from langchain_core.tools import tool
-from langgraph_bigtool.tools import InjectedState
+
+try:  # pragma: no cover - compatibility for isolated unit tests
+    from langgraph_bigtool.tools import InjectedState
+except Exception:  # pragma: no cover
+    InjectedState = Any  # type: ignore[misc,assignment]
 
 from app.agents.new_chat.sandbox_runtime import (
     SANDBOX_MODE_DOCKER,
