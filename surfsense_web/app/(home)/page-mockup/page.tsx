@@ -1074,8 +1074,8 @@ const CompareShowcase = () => {
   // Map performanceScore to 'progress' for animation compatibility with Framer Motion
   const models = MODEL_DATA.map(m => ({ ...m, progress: m.performanceScore }));
   
-  // State for cycling evaluation metrics
-  const [currentMetric, setCurrentMetric] = React.useState(0);
+  // State for metrics drawer
+  const [drawerExpanded, setDrawerExpanded] = React.useState(false);
   
   // Auto-cycle through evaluation metrics every 3 seconds
   React.useEffect(() => {
@@ -1184,32 +1184,128 @@ const CompareShowcase = () => {
           ))}
         </motion.div>
 
-        {/* Evaluation Metrics Display */}
+        {/* Interactive Metrics Drawer */}
         <motion.div
-          className="max-w-3xl mx-auto mb-12 rounded-2xl border border-orange-200 dark:border-orange-800 bg-gradient-to-br from-orange-50/50 to-amber-50/50 dark:from-orange-950/20 dark:to-amber-950/20 backdrop-blur-md shadow-lg p-6"
-          initial={{ opacity: 0, scale: 0.95 }}
-          whileInView={{ opacity: 1, scale: 1 }}
+          className="max-w-5xl mx-auto mb-12"
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.5 }}
         >
-          <div className="flex items-center gap-3 mb-4">
-            <span className="text-2xl">{EVALUATION_METRICS[currentMetric % EVALUATION_METRICS.length].icon}</span>
-            <div>
-              <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">VÅR UTVÄRDERING</p>
-              <h3 className="text-lg font-bold text-neutral-900 dark:text-white">
-                {EVALUATION_METRICS[currentMetric % EVALUATION_METRICS.length].category}
-              </h3>
+          {/* Drawer Toggle Button */}
+          <motion.button
+            onClick={() => setDrawerExpanded(!drawerExpanded)}
+            className="w-full rounded-2xl border border-orange-200 dark:border-orange-800 bg-gradient-to-r from-orange-50/80 via-amber-50/80 to-orange-50/80 dark:from-orange-950/30 dark:via-amber-950/30 dark:to-orange-950/30 backdrop-blur-md shadow-lg hover:shadow-xl transition-all duration-300 p-6 cursor-pointer group relative overflow-hidden"
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.99 }}
+          >
+            {/* Subtle pulse effect */}
+            <motion.div 
+              className="absolute inset-0 bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/10"
+              animate={{ opacity: [0.5, 0.8, 0.5] }}
+              transition={{ duration: 2, repeat: Infinity }}
+            />
+
+            <div className="relative flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <span className="text-3xl">📊</span>
+                <div className="text-left">
+                  <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">VÅR UTVÄRDERING</p>
+                  <h3 className="text-lg font-bold text-neutral-900 dark:text-white">
+                    Se alla utvärderingsmetrics
+                  </h3>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
+                    {EVALUATION_METRICS.length} kategorier som utvärderar modellernas prestanda
+                  </p>
+                </div>
+              </div>
+              
+              <motion.div
+                animate={{ rotate: drawerExpanded ? 180 : 0 }}
+                transition={{ duration: 0.3 }}
+                className="text-2xl text-orange-600 dark:text-orange-400"
+              >
+                ↓
+              </motion.div>
             </div>
-          </div>
-          <p className="text-sm text-neutral-700 dark:text-neutral-300 mb-3">
-            {EVALUATION_METRICS[currentMetric % EVALUATION_METRICS.length].description}
-          </p>
-          <p className="text-xs text-orange-600 dark:text-orange-400 font-semibold mb-2">
-            Varför det är viktigt för OneSeek:
-          </p>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            {EVALUATION_METRICS[currentMetric % EVALUATION_METRICS.length].whyImportant}
-          </p>
+          </motion.button>
+
+          {/* Expandable Drawer Content */}
+          <motion.div
+            initial={false}
+            animate={{
+              height: drawerExpanded ? "auto" : 0,
+              opacity: drawerExpanded ? 1 : 0
+            }}
+            transition={{
+              height: { duration: 0.4, ease: [0.4, 0, 0.2, 1] },
+              opacity: { duration: 0.3, delay: drawerExpanded ? 0.1 : 0 }
+            }}
+            className="overflow-hidden"
+          >
+            <div className="pt-6">
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {EVALUATION_METRICS.map((metric, index) => (
+                  <motion.div
+                    key={index}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={drawerExpanded ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
+                    transition={{ delay: index * 0.05, duration: 0.3 }}
+                    whileHover={{ y: -4, scale: 1.02 }}
+                    className="rounded-xl border border-neutral-200/60 dark:border-neutral-800/60 bg-gradient-to-br from-white/90 to-neutral-50/90 dark:from-neutral-900/60 dark:to-neutral-900/40 backdrop-blur-md p-4 shadow-sm hover:shadow-md hover:border-orange-300/60 dark:hover:border-orange-700/60 transition-all duration-300 group"
+                  >
+                    <div className="flex items-start gap-3 mb-3">
+                      <span className="text-2xl flex-shrink-0">{metric.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-bold text-neutral-900 dark:text-white group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">
+                          {metric.category}
+                        </h4>
+                        <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-1 leading-relaxed">
+                          {metric.description}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-[10px] text-neutral-500 dark:text-neutral-500">
+                        <span>Viktighet</span>
+                        <span className="text-orange-600 dark:text-orange-400 font-semibold">Hög</span>
+                      </div>
+                      <div className="h-1 w-full bg-neutral-200 dark:bg-neutral-800 rounded-full overflow-hidden">
+                        <motion.div
+                          className="h-full bg-gradient-to-r from-orange-500 to-amber-500"
+                          initial={{ width: 0 }}
+                          animate={drawerExpanded ? { width: "90%" } : { width: 0 }}
+                          transition={{ delay: index * 0.05 + 0.2, duration: 0.6 }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-3 pt-3 border-t border-neutral-200/60 dark:border-neutral-800/60">
+                      <p className="text-[10px] text-neutral-500 dark:text-neutral-500 font-medium mb-1">
+                        Varför viktigt:
+                      </p>
+                      <p className="text-xs text-neutral-600 dark:text-neutral-400 leading-relaxed line-clamp-2">
+                        {metric.importance}
+                      </p>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+
+              {/* Additional info when expanded */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={drawerExpanded ? { opacity: 1 } : { opacity: 0 }}
+                transition={{ delay: 0.4 }}
+                className="mt-6 p-4 rounded-xl bg-gradient-to-r from-blue-50/50 to-purple-50/50 dark:from-blue-950/20 dark:to-purple-950/20 border border-blue-200/60 dark:border-blue-800/60"
+              >
+                <p className="text-sm text-neutral-700 dark:text-neutral-300 text-center">
+                  <span className="font-semibold text-blue-600 dark:text-blue-400">OneSeek utvärderar kontinuerligt</span> alla modeller mot dessa kriterier för att säkerställa bästa möjliga svar med svenska källor.
+                </p>
+              </motion.div>
+            </div>
+          </motion.div>
         </motion.div>
 
         {/* Synthesis Bar */}
