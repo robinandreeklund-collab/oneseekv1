@@ -405,6 +405,26 @@ def _build_tool_api_categories_response(
     except Exception:
         logger.exception("Failed to load Riksdagen API categories")
 
+    try:
+        from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
+
+        _ensure_provider("marketplace", "Blocket & Tradera")
+        for definition in MARKETPLACE_TOOL_DEFINITIONS:
+            _append_item(
+                "marketplace",
+                {
+                    "tool_id": definition.tool_id,
+                    "tool_name": definition.name,
+                    "category_id": definition.category,
+                    "category_name": definition.name,
+                    "level": "subcategory",
+                    "description": definition.description,
+                    "base_path": None,
+                },
+            )
+    except Exception:
+        logger.exception("Failed to load Marketplace API categories")
+
     for entry in tool_index or []:
         if not _is_eval_candidate_entry(entry):
             continue
@@ -469,6 +489,8 @@ def _provider_for_tool_id(tool_id: str) -> str:
         return "bolagsverket"
     if normalized.startswith("geoapify_"):
         return "geoapify"
+    if normalized.startswith("marketplace_"):
+        return "marketplace"
     if normalized.startswith("smhi_") or normalized == "smhi_weather":
         return "smhi"
     if normalized.startswith("trafiklab_") or normalized == "trafiklab_route":
@@ -580,7 +602,9 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
         return "action", "media"
     if normalized_tool in {"libris_search", "jobad_links_search"}:
         return "action", "data"
-    if normalized_tool.startswith("bolagsverket_") or normalized_tool.startswith("riksdag_"):
+    # Marketplace tools (including reference tools like categories/regions) map to ACTION
+    # because they're part of the marketplace agent which handles all marketplace operations
+    if normalized_tool.startswith(("bolagsverket_", "riksdag_", "marketplace_")):
         return "action", "data"
     if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
         return "knowledge", "internal"
@@ -668,6 +692,8 @@ def _infer_agent_for_tool(
         return "bolag"
     if normalized_tool.startswith("geoapify_"):
         return "kartor"
+    if normalized_tool.startswith("marketplace_"):
+        return "marketplace"
     if normalized_tool in {"generate_podcast", "display_image"}:
         return "media"
     if normalized_tool in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
@@ -1287,29 +1313,42 @@ def _normalize_generated_tests(
             expected_tool,
             expected_category or str(getattr(entry, "category", "")).strip(),
         )
-        expected_route = str(
-            expected.get("route") or source.get("expected_route") or inferred_route
-        ).strip()
-        expected_sub_route = (
-            str(expected.get("sub_route") or source.get("expected_sub_route") or inferred_sub_route or "").strip()
-            or None
-        )
-        expected_intent = str(
-            expected.get("intent")
-            or source.get("expected_intent")
-            or _infer_intent_for_route(expected_route)
-            or ""
-        ).strip()
-        expected_agent = str(
-            expected.get("agent")
-            or source.get("expected_agent")
-            or _infer_agent_for_tool(
+        # For marketplace tools, always use inferred values (don't trust LLM)
+        # to ensure consistency: all marketplace tools → action/data/marketplace
+        if expected_tool.startswith("marketplace_"):
+            expected_route = inferred_route  # Always "action"
+            expected_sub_route = inferred_sub_route  # Always "data"
+            expected_intent = _infer_intent_for_route(inferred_route)  # Always "action"
+            expected_agent = _infer_agent_for_tool(
                 expected_tool,
                 expected_category or str(getattr(entry, "category", "")).strip(),
-                expected_route,
-                expected_sub_route,
+                inferred_route,
+                inferred_sub_route,
+            )  # Always "marketplace"
+        else:
+            expected_route = str(
+                expected.get("route") or source.get("expected_route") or inferred_route
+            ).strip()
+            expected_sub_route = (
+                str(expected.get("sub_route") or source.get("expected_sub_route") or inferred_sub_route or "").strip()
+                or None
             )
-        ).strip()
+            expected_intent = str(
+                expected.get("intent")
+                or source.get("expected_intent")
+                or _infer_intent_for_route(expected_route)
+                or ""
+            ).strip()
+            expected_agent = str(
+                expected.get("agent")
+                or source.get("expected_agent")
+                or _infer_agent_for_tool(
+                    expected_tool,
+                    expected_category or str(getattr(entry, "category", "")).strip(),
+                    expected_route,
+                    expected_sub_route,
+                )
+            ).strip()
         source_plan_requirements = expected.get("plan_requirements") or source.get(
             "plan_requirements"
         )
@@ -1781,7 +1820,7 @@ async def _generate_eval_tests(
         '        "intent": "knowledge|action|statistics|smalltalk|compare",\n'
         '        "route": "action|knowledge|statistics|smalltalk|compare",\n'
         '        "sub_route": "web|media|travel|data|docs|internal|external|null",\n'
-        '        "agent": "weather|trafik|statistics|riksdagen|bolag|kartor|media|browser|knowledge|action|synthesis",\n'
+        '        "agent": "weather|trafik|statistics|riksdagen|bolag|kartor|marketplace|media|browser|knowledge|action|synthesis",\n'
         '        "plan_requirements": ["route:action", "agent:agent_id", "tool:tool_id"]\n'
         "      },\n"
         '      "allowed_tools": ["tool_id"]\n'

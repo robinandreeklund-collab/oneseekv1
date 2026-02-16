@@ -36,6 +36,8 @@ from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_p
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
+from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
 from app.agents.new_chat.supervisor_runtime_prompts import (
     DEFAULT_SUPERVISOR_CRITIC_PROMPT,
     DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
@@ -117,6 +119,11 @@ _DYNAMIC_TOOL_QUERY_MARKERS = (
     "komvux",
     "syllabus",
     "curriculum",
+    "blocket",
+    "tradera",
+    "begagnat",
+    "annons",
+    "marknadsplats",
 )
 
 
@@ -134,6 +141,7 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
         "statistics": [],
         "riksdagen": [],
         "bolag": [],
+        "marketplace": [],
     }
     for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
         profiles["trafik"].append(
@@ -167,6 +175,15 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
             AgentToolProfile(
                 tool_id=str(getattr(definition, "tool_id", "")),
                 category=str(getattr(definition, "category", "bolag")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
+    for definition in MARKETPLACE_TOOL_DEFINITIONS:
+        profiles["marketplace"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "category", "marketplace")),
                 description=str(getattr(definition, "description", "")),
                 keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
             )
@@ -697,7 +714,7 @@ def _smart_retrieve_agents(
     *,
     agent_definitions: list[AgentDefinition],
     recent_agents: list[str] | None = None,
-    limit: int = 3,
+    limit: int = 5,
 ) -> list[AgentDefinition]:
     query_norm = _normalize_text(query)
     tokens = set(_tokenize(query_norm))
@@ -1793,6 +1810,7 @@ def _guess_agent_from_alias(alias: str) -> str | None:
         (("stat", "scb", "data"), "statistics"),
         (("riks", "parliament", "politik"), "riksdagen"),
         (("bolag", "company", "business", "org"), "bolag"),
+        (("blocket", "tradera", "annons", "begagnat", "köp", "sälj", "marknadsplats"), "marketplace"),
         (("browser", "web", "scrape", "search"), "browser"),
         (("media", "podcast", "image", "video"), "media"),
         (("code", "python", "calc"), "code"),
@@ -2113,6 +2131,7 @@ async def create_supervisor_agent(
     code_prompt: str | None = None,
     kartor_prompt: str | None = None,
     riksdagen_prompt: str | None = None,
+    marketplace_prompt: str | None = None,
     tool_prompt_overrides: dict[str, str] | None = None,
 ):
     prompt_overrides = dict(tool_prompt_overrides or {})
@@ -2286,6 +2305,15 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
+        "marketplace": WorkerConfig(
+            name="marketplace-worker",
+            primary_namespaces=[("tools", "marketplace")],
+            fallback_namespaces=[
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
         "synthesis": WorkerConfig(
             name="synthesis-worker",
             primary_namespaces=[("tools", "knowledge")],
@@ -2310,6 +2338,7 @@ async def create_supervisor_agent(
         "trafik": trafik_prompt or action_prompt,
         "kartor": kartor_prompt or action_prompt,
         "riksdagen": riksdagen_prompt or knowledge_prompt,
+        "marketplace": marketplace_prompt or action_prompt,
         "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
@@ -2524,6 +2553,46 @@ async def create_supervisor_agent(
             ],
             namespace=("agents", "riksdagen"),
             prompt_key="riksdagen",
+        ),
+        AgentDefinition(
+            name="marketplace",
+            description="Sök och jämför annonser på Blocket och Tradera för begagnade varor, bilar, båtar, motorcyklar",
+            keywords=[
+                "blocket",
+                "tradera",
+                "köp",
+                "köpa",
+                "sälj",
+                "sälja",
+                "begagnat",
+                "begagnad",
+                "begagnade",
+                "annons",
+                "annonser",
+                "marknadsplats",
+                "marknadsplatser",
+                "auktion",
+                "auktioner",
+                "bilar",
+                "bil",
+                "båtar",
+                "båt",
+                "mc",
+                "motorcykel",
+                "motorcyklar",
+                "pris",
+                "priser",
+                "prisjämförelse",
+                "jämför",
+                "kategorier",
+                "kategori",
+                "regioner",
+                "sök",
+                "hitta",
+                "finns",
+            ],
+            namespace=("agents", "marketplace"),
+            prompt_key="agent.marketplace.system",
         ),
         AgentDefinition(
             name="synthesis",

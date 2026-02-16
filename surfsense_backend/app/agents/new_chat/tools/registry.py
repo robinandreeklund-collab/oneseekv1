@@ -57,6 +57,18 @@ from ..riksdagen_agent import (
     RIKSDAGEN_TOOL_DEFINITIONS,
     build_riksdagen_tool_registry,
 )
+from ..marketplace_tools import (
+    MARKETPLACE_TOOL_DEFINITIONS,
+    build_marketplace_tool_registry,
+)
+from ..skolverket_tools import (
+    SKOLVERKET_TOOL_DEFINITIONS,
+    build_skolverket_tool_registry,
+)
+from ..kolada_tools import (
+    KOLADA_TOOL_DEFINITIONS,
+    build_kolada_tool_registry,
+)
 from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
@@ -341,9 +353,12 @@ def get_all_tool_names() -> list[str]:
 def get_default_enabled_tools() -> list[str]:
     """Get names of tools that are enabled by default."""
     default_tools = [tool_def.name for tool_def in BUILTIN_TOOLS if tool_def.enabled_by_default]
-    # Add all Riksdagen tools to default enabled tools
+    # Add all specialized domain tools to default enabled tools
     riksdagen_tool_ids = [definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS]
-    return default_tools + riksdagen_tool_ids
+    marketplace_tool_ids = [definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS]
+    skolverket_tool_ids = [definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS]
+    kolada_tool_ids = [definition.tool_id for definition in KOLADA_TOOL_DEFINITIONS]
+    return default_tools + riksdagen_tool_ids + marketplace_tool_ids + skolverket_tool_ids + kolada_tool_ids
 
 
 def build_tools(
@@ -484,6 +499,129 @@ async def build_tools_async(
             )
         except Exception as e:
             logging.exception(f"Failed to build Riksdagen tools: {e!s}")
+
+    # Build Marketplace tools if any are enabled
+    if enabled_tools:
+        marketplace_tools_to_build = [
+            tool_id for tool_id in enabled_tools 
+            if tool_id.startswith("marketplace_")
+        ]
+    else:
+        # Check if any marketplace tools would be enabled by default
+        marketplace_tools_to_build = [
+            definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS
+        ]
+    
+    # Filter out disabled marketplace tools
+    if disabled_tools:
+        marketplace_tools_to_build = [
+            tool_id for tool_id in marketplace_tools_to_build
+            if tool_id not in disabled_tools
+        ]
+    
+    # Build Marketplace tools if any should be enabled
+    if marketplace_tools_to_build and "connector_service" in dependencies and "search_space_id" in dependencies:
+        try:
+            marketplace_registry = build_marketplace_tool_registry(
+                connector_service=dependencies["connector_service"],
+                search_space_id=dependencies["search_space_id"],
+                user_id=dependencies.get("user_id"),
+                thread_id=dependencies.get("thread_id"),
+            )
+            for tool_id in marketplace_tools_to_build:
+                if tool_id in marketplace_registry:
+                    tools.append(marketplace_registry[tool_id])
+            logging.info(
+                f"Registered {len(marketplace_tools_to_build)} Marketplace tools: {marketplace_tools_to_build}",
+            )
+        except Exception as e:
+            logging.exception(f"Failed to build Marketplace tools: {e!s}")
+
+    # Build Skolverket tools if requested
+    if enabled_tools is not None:
+        skolverket_tools_to_build = [
+            tool_id
+            for tool_id in enabled_tools
+            if any(
+                tool_id == definition.tool_id
+                for definition in SKOLVERKET_TOOL_DEFINITIONS
+            )
+        ]
+    else:
+        # If no enabled_tools specified, build all Skolverket tools by default
+        skolverket_tools_to_build = [
+            definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS
+        ]
+
+    # Remove disabled tools
+    if disabled_tools:
+        skolverket_tools_to_build = [
+            tool_id for tool_id in skolverket_tools_to_build if tool_id not in disabled_tools
+        ]
+
+    if skolverket_tools_to_build and "connector_service" in dependencies:
+        try:
+            skolverket_registry = build_skolverket_tool_registry(
+                connector_service=dependencies["connector_service"],
+                search_space_id=dependencies.get("search_space_id"),
+                user_id=dependencies.get("user_id"),
+                thread_id=dependencies.get("thread_id"),
+            )
+
+            # Add tools from registry
+            for tool_id in skolverket_tools_to_build:
+                if tool_id in skolverket_registry:
+                    tools.append(skolverket_registry[tool_id])
+
+            logging.info(
+                f"Registered {len(skolverket_tools_to_build)} Skolverket tools: "
+                f"{skolverket_tools_to_build}"
+            )
+        except Exception as e:
+            logging.exception(f"Failed to build Skolverket tools: {e!s}")
+
+    # Build Kolada tools if requested
+    if enabled_tools is not None:
+        kolada_tools_to_build = [
+            tool_id
+            for tool_id in enabled_tools
+            if any(
+                tool_id == definition.tool_id
+                for definition in KOLADA_TOOL_DEFINITIONS
+            )
+        ]
+    else:
+        # If no enabled_tools specified, build all Kolada tools by default
+        kolada_tools_to_build = [
+            definition.tool_id for definition in KOLADA_TOOL_DEFINITIONS
+        ]
+
+    # Remove disabled tools
+    if disabled_tools:
+        kolada_tools_to_build = [
+            tool_id for tool_id in kolada_tools_to_build if tool_id not in disabled_tools
+        ]
+
+    if kolada_tools_to_build and "connector_service" in dependencies:
+        try:
+            kolada_registry = build_kolada_tool_registry(
+                connector_service=dependencies["connector_service"],
+                search_space_id=dependencies.get("search_space_id"),
+                user_id=dependencies.get("user_id"),
+                thread_id=dependencies.get("thread_id"),
+            )
+
+            # Add tools from registry
+            for tool_id in kolada_tools_to_build:
+                if tool_id in kolada_registry:
+                    tools.append(kolada_registry[tool_id])
+
+            logging.info(
+                f"Registered {len(kolada_tools_to_build)} Kolada tools: "
+                f"{kolada_tools_to_build}"
+            )
+        except Exception as e:
+            logging.exception(f"Failed to build Kolada tools: {e!s}")
 
     # Load MCP tools if requested and dependencies are available
     if (
