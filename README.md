@@ -9,18 +9,19 @@ Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalo
 
 1. [Plattformsoversikt](#plattformsoversikt)
 2. [Karnfunktioner](#karnfunktioner)
-3. [LangGraph-flode (Fas 1-4)](#langgraph-flode-fas-1-4)
-4. [Intent + Bigtool + Namespace + Rerank](#intent--bigtool--namespace--rerank)
-5. [Realtidsdata och API-integrationer](#realtidsdata-och-api-integrationer)
-6. [Compare-lage](#compare-lage)
-7. [LangSmith + full transparens (trace)](#langsmith--full-transparens-trace)
-8. [Memory och feedback-loopar](#memory-och-feedback-loopar)
-9. [Eval-systemet](#eval-systemet)
-10. [SSE/Data Stream-events](#ssedata-stream-events)
-11. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
-12. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
-13. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
-14. [Sandbox Kubernetes-provisioner (guide)](#sandbox-kubernetes-provisioner-guide)
+3. [LangGraph-flode (Fas 1-4 + subagent A/B/C)](#langgraph-flode-fas-1-4--subagent-abc)
+4. [Strict subagent isolation (A/B/C)](#strict-subagent-isolation-abc)
+5. [Intent + Bigtool + Namespace + Rerank](#intent--bigtool--namespace--rerank)
+6. [Realtidsdata och API-integrationer](#realtidsdata-och-api-integrationer)
+7. [Compare-lage](#compare-lage)
+8. [LangSmith + full transparens (trace)](#langsmith--full-transparens-trace)
+9. [Memory och feedback-loopar](#memory-och-feedback-loopar)
+10. [Eval-systemet](#eval-systemet)
+11. [SSE/Data Stream-events](#ssedata-stream-events)
+12. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
+13. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
+14. [Sandbox step-by-step guide](#sandbox-step-by-step-guide)
+15. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
 
 ---
 
@@ -52,6 +53,7 @@ Tekniskt anvands:
   - execution strategy-router (`inline`, `parallel`, `subagent`)
   - speculative branch + merge
   - progressive synthesizer med draft-streaming
+  - strict subagent isolation (A/B/C) med handoff contracts + sandbox scope
 - **Deterministiskt compare-lage**
   - parallella externa modellanrop
   - separat compare-subgraf
@@ -67,7 +69,7 @@ Tekniskt anvands:
 
 ---
 
-## LangGraph-flode (Fas 1-4)
+## LangGraph-flode (Fas 1-4 + subagent A/B/C)
 
 ### Huvudflode (normal mode)
 
@@ -131,6 +133,41 @@ flowchart TD
   - `speculative` + `speculative_merge`
   - ateranvandning av speculative resultat i `call_agent` och `call_agents_parallel`
   - `progressive_synthesizer` + `data-synthesis-draft` i stream
+
+---
+
+## Strict subagent isolation (A/B/C)
+
+OneSeek har nu ett strict isolation-spor som kan slas pa med runtime-flaggor.
+
+### Fas A - context isolation + handoff contracts
+
+- subagent-korningar far eget `subagent_id`
+- subagent worker invoke far egen checkpoint namespace
+- parent far kompakta handoff-kontrakt (`summary/findings/artifact_refs`)
+
+### Fas B - sandbox scope isolation
+
+- sandbox leases kan scopeas per `thread` eller per `subagent`
+- strict mode injicerar `sandbox_scope=subagent` + `sandbox_scope_id=<subagent_id>`
+- olika subagents i samma thread kan fa separata leases/pods
+
+### Fas C - context management + observability
+
+- parent prompt fylls med kompakta `subagent_handoffs` i stallet for full historik
+- subagent parallelism kan begransas med `subagent_max_concurrency`
+- route/runtime metadata exponerar subagent-flaggor i trace
+
+```mermaid
+flowchart LR
+  S[Supervisor] --> R[execution_strategy=subagent]
+  R --> A[subagent context build]
+  A --> W[subagent worker invoke]
+  W --> H[subagent_handoff contract]
+  H --> P[parent merge + compact context]
+  W --> X[sandbox tools]
+  X -->|scope=thread or subagent| L[lease/pod isolation]
+```
 
 ---
 
@@ -374,11 +411,18 @@ Runtime-flaggor i chatflodet:
     "enabled": true,
     "hybrid_mode": true,
     "speculative_enabled": true,
+    "subagent_enabled": true,
+    "subagent_isolation_enabled": true,
+    "subagent_max_concurrency": 3,
+    "subagent_context_max_chars": 1400,
+    "subagent_result_max_chars": 1000,
+    "subagent_sandbox_scope": "subagent",
     "sandbox_enabled": true,
     "sandbox_mode": "provisioner",
     "sandbox_provisioner_url": "http://sandbox-provisioner.oneseek-sandbox.svc.cluster.local:8002",
     "sandbox_state_store": "redis",
-    "sandbox_idle_timeout_seconds": 900
+    "sandbox_idle_timeout_seconds": 900,
+    "sandbox_scope": "subagent"
   }
 }
 ```
@@ -386,15 +430,22 @@ Runtime-flaggor i chatflodet:
 - `hybrid_mode=false`: legacy/kompatibilitetsflode
 - `hybrid_mode=true`: aktiverar hybridnoder
 - `speculative_enabled=true`: aktiverar speculative branch i komplexa queries
+- `subagent_enabled=true`: tillater execution_strategy=subagent
+- `subagent_isolation_enabled=true`: strict subagent context isolation + handoff contracts
+- `subagent_max_concurrency=3`: begransar parallel subagent-korning per steg
+- `subagent_context_max_chars`: max parent-context in i subagent prompt
+- `subagent_result_max_chars`: max compact resultat tillbaka till parent
+- `subagent_sandbox_scope=subagent`: rekommenderat for strict sandbox-isolering
 - `sandbox_enabled=true`: aktiverar sandbox-tools for code-agent
 - `sandbox_mode=provisioner`: kor via extern sandbox-provisioner (Kubernetes)
 - `sandbox_state_store=redis`: rekommenderat vid flera backend-replikor
+- `sandbox_scope=subagent`: explicit scope policy (kan satts automatiskt i strict mode)
 
 ---
 
-## Sandbox Kubernetes-provisioner (guide)
+## Sandbox step-by-step guide
 
-Full setup, manifests, runtime-flaggor, drift och manuella tester finns i:
+Full setup, installation, manifests, runtime settings, Docker + Kubernetes drift och manuella tester finns i:
 
 - [`docs/sandbox-kubernetes-provisioner-guide.md`](docs/sandbox-kubernetes-provisioner-guide.md)
 
@@ -408,6 +459,11 @@ Karnsviter for hybrid och eval:
 - `tests/test_execution_router_phase2.py`
 - `tests/test_phase3_memory_feedback.py`
 - `tests/test_phase4_speculative_progressive.py`
+- `tests/test_sandbox_phase1.py`
+- `tests/test_sandbox_phase2_filesystem.py`
+- `tests/test_sandbox_phase3_robustness.py`
+- `tests/test_sandbox_phase3_provisioner.py`
+- `tests/test_sandbox_phase3_trace_spans.py`
 - `tests/test_tool_evaluation_service.py`
 
 Exempelkommando:
@@ -419,7 +475,12 @@ python3 -m pytest -q \
   tests/test_hybrid_phase1.py \
   tests/test_execution_router_phase2.py \
   tests/test_phase3_memory_feedback.py \
-  tests/test_phase4_speculative_progressive.py
+  tests/test_phase4_speculative_progressive.py \
+  tests/test_sandbox_phase1.py \
+  tests/test_sandbox_phase2_filesystem.py \
+  tests/test_sandbox_phase3_robustness.py \
+  tests/test_sandbox_phase3_provisioner.py \
+  tests/test_sandbox_phase3_trace_spans.py
 ```
 
 ---
@@ -429,6 +490,7 @@ python3 -m pytest -q \
 OneSeek ar nu en hybrid, transparent och eval-driven agentplattform med:
 
 - adaptiv LangGraph-orkestrering (Fas 1-4)
+- strict subagent isolation (A/B/C) med kontext- och sandbox-scope-kontroll
 - dynamiskt agent- och verktygsval med Bigtool namespaces + rerank
 - realtidsdata och compare-subgraf
 - LangSmith + intern trace for full observability

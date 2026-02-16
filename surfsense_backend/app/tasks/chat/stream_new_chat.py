@@ -1131,6 +1131,12 @@ async def stream_new_chat(
             - planner/execution/synthesis HITL checkpoints.
             - hybrid_mode (bool): enables hybrid supervisor routing.
             - speculative_enabled (bool): enables speculative execution paths.
+            - subagent_enabled (bool): allows execution_strategy=subagent paths.
+            - subagent_isolation_enabled (bool): enables strict subagent context isolation.
+            - subagent_max_concurrency (int): max parallel subagent calls per step.
+            - subagent_context_max_chars (int): max parent context chars injected to subagent.
+            - subagent_result_max_chars (int): max compacted subagent result chars.
+            - subagent_sandbox_scope (str): sandbox scope policy ("thread" or "subagent").
             - sandbox_enabled (bool): enables sandbox execution tools for code tasks.
             - sandbox_mode (str): sandbox runtime mode ("docker", "local", or "provisioner").
             - sandbox_provisioner_url (str): provisioner base URL when mode=provisioner.
@@ -1486,6 +1492,40 @@ async def stream_new_chat(
             )
         except (TypeError, ValueError):
             sandbox_idle_timeout_seconds = 15 * 60
+        subagent_enabled = _coerce_runtime_flag(
+            runtime_flags.get("subagent_enabled"),
+            default=True,
+        )
+        subagent_isolation_enabled = (
+            subagent_enabled
+            and _coerce_runtime_flag(
+                runtime_flags.get("subagent_isolation_enabled"),
+                default=False,
+            )
+        )
+        try:
+            subagent_max_concurrency = int(
+                runtime_flags.get("subagent_max_concurrency") or 3
+            )
+        except (TypeError, ValueError):
+            subagent_max_concurrency = 3
+        try:
+            subagent_context_max_chars = int(
+                runtime_flags.get("subagent_context_max_chars") or 1400
+            )
+        except (TypeError, ValueError):
+            subagent_context_max_chars = 1400
+        try:
+            subagent_result_max_chars = int(
+                runtime_flags.get("subagent_result_max_chars") or 1000
+            )
+        except (TypeError, ValueError):
+            subagent_result_max_chars = 1000
+        subagent_sandbox_scope = str(
+            runtime_flags.get("subagent_sandbox_scope")
+            or runtime_flags.get("sandbox_scope")
+            or "thread"
+        ).strip().lower()
         if not hybrid_mode:
             speculative_enabled = False
 
@@ -1508,6 +1548,12 @@ async def stream_new_chat(
                 "runtime_hitl": runtime_hitl or {},
                 "hybrid_mode": hybrid_mode,
                 "speculative_enabled": speculative_enabled,
+                "subagent_enabled": subagent_enabled,
+                "subagent_isolation_enabled": subagent_isolation_enabled,
+                "subagent_max_concurrency": subagent_max_concurrency,
+                "subagent_context_max_chars": subagent_context_max_chars,
+                "subagent_result_max_chars": subagent_result_max_chars,
+                "subagent_sandbox_scope": subagent_sandbox_scope,
                 "sandbox_enabled": sandbox_enabled,
                 "sandbox_mode": sandbox_mode,
                 "sandbox_provisioner_url": sandbox_provisioner_url,
@@ -1569,6 +1615,10 @@ async def stream_new_chat(
                 f"compare_mode={compare_mode}, "
                 f"hybrid_mode={hybrid_mode}, "
                 f"speculative_enabled={speculative_enabled}, "
+                f"subagent_enabled={subagent_enabled}, "
+                f"subagent_isolation_enabled={subagent_isolation_enabled}, "
+                f"subagent_max_concurrency={subagent_max_concurrency}, "
+                f"subagent_sandbox_scope={subagent_sandbox_scope}, "
                 f"sandbox_enabled={sandbox_enabled}, "
                 f"sandbox_mode={sandbox_mode}, "
                 f"sandbox_provisioner_url={sandbox_provisioner_url or '<none>'}, "

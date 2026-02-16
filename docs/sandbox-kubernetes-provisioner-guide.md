@@ -1,359 +1,394 @@
-# OneSeek Sandbox Provisioner (Docker Desktop Kubernetes) - Complete Guide
+# OneSeek Sandbox: complete step-by-step guide (settings, Docker, Kubernetes)
 
-This guide describes the full setup for running OneSeek sandbox execution with a DeerFlow-style Kubernetes provisioner on Docker Desktop Kubernetes.
+This guide is the operational playbook for the full sandbox stack in OneSeek:
 
-It covers:
+- local sandbox execution
+- Docker sandbox execution
+- Kubernetes provisioner execution
+- strict subagent isolation (context + sandbox scope)
+- runtime settings and validation tests
 
-- architecture and flow
-- backend/runtime settings
-- provisioner service settings
-- Kubernetes deployment
-- manual validation for phase 3 and phase 4 goals
-- troubleshooting and operations
+Use this when you want a single, practical document for setup and operations.
 
 ---
 
-## 1) Architecture overview
+## 0. What this guide assumes
+
+- Repo root: `/workspace`
+- Backend code: `surfsense_backend`
+- You are on a feature branch and can run `python3`, `docker`, `kubectl`
+- Docker Desktop Kubernetes is enabled when running the K8s steps
+
+---
+
+## 1. Architecture and exact flow
 
 ```mermaid
 flowchart LR
-    U[User request] --> B[OneSeek backend]
-    B -->|runtime_hitl.sandbox_mode=provisioner| P[Sandbox Provisioner API]
+    U[User request] --> S[Supervisor graph]
+    S --> ER[execution_router]
+    ER -->|inline/parallel| W1[Worker invoke]
+    ER -->|subagent strategy| SA[Strict subagent isolation]
+
+    SA --> C1[Isolated subagent context]
+    SA --> C2[Subagent handoff contract]
+    SA --> C3[Optional subagent sandbox scope]
+
+    W1 --> T[Sandbox tools]
+    C3 --> T
+
+    T -->|sandbox_mode=local| L[Local process workspace]
+    T -->|sandbox_mode=docker| D[Docker container per lease]
+    T -->|sandbox_mode=provisioner| P[Provisioner API]
+
     P --> K[Kubernetes API]
-    K --> POD1[Sandbox Pod A]
-    K --> POD2[Sandbox Pod B]
-    B -->|trace spans| T[TraceRecorder / UI / LangSmith]
+    K --> POD[Sandbox worker pod]
+
+    S --> TR[Trace spans + metadata]
 ```
 
-Execution model:
+### A/B/C delivery mapping
 
-1. Backend selects sandbox tools (`sandbox_execute`, `sandbox_ls`, `sandbox_read_file`, `sandbox_write_file`, `sandbox_replace`, `sandbox_release`).
-2. Backend acquires a sandbox lease (`acquire`) via provisioner.
-3. Provisioner creates or reuses a pod per `thread/sandbox`.
-4. Backend executes commands/file operations via provisioner endpoints.
-5. Backend + provisioner perform idle cleanup and explicit release.
+- **Phase A**: strict subagent context isolation + compact handoff contracts
+- **Phase B**: strict subagent sandbox scope (`thread` vs `subagent`)
+- **Phase C**: context management/observability wiring + rollout-ready docs/settings
 
 ---
 
-## 2) What is implemented now
+## 2. Quick mode selection
 
-### Backend (already integrated)
+Pick one mode first:
 
-- `sandbox_mode=provisioner` (also accepts `remote` alias).
-- Lease/state store with lock support:
-  - `sandbox_state_store=file|redis|auto`
-  - file lock via `fcntl`
-  - redis lock when redis configured
-- restart-safe reuse (same thread can reuse lease after backend restart)
-- idle timeout cleanup (`sandbox_idle_timeout_seconds`)
-- trace spans for:
-  - `sandbox.acquire`
-  - `sandbox.execute`
-  - `sandbox.release`
+1. **local**: fastest for backend logic debugging (no container boundaries)
+2. **docker**: local isolation with container boundary
+3. **provisioner**: production-style backend -> provisioner -> Kubernetes pod
 
-### Provisioner service (new)
+Recommended rollout:
 
-- FastAPI service at `app/sandbox_provisioner/main.py`
-- Endpoints:
-  - `POST /v1/sandbox/acquire`
-  - `POST /v1/sandbox/release`
-  - `POST /v1/sandbox/execute`
-  - `POST /v1/sandbox/ls`
-  - `POST /v1/sandbox/read_file`
-  - `POST /v1/sandbox/write_file`
-  - `POST /v1/sandbox/replace`
-  - `POST /v1/sandbox/cleanup_idle`
-  - `GET /healthz`
-- Kubernetes Pod lifecycle via `kubectl`:
-  - create/reuse sandbox pod
-  - execute commands (`kubectl exec`)
-  - cleanup idle pods
-
-### Kubernetes manifests (new)
-
-Folder:
-
-`surfsense_backend/deploy/k8s/sandbox-provisioner`
-
-Includes:
-
-- `namespace.yaml`
-- `rbac.yaml`
-- `deployment.yaml`
-- `service.yaml`
-- `kustomization.yaml`
+1. Start with `sandbox_mode=local`
+2. Move to `sandbox_mode=docker`
+3. Move to `sandbox_mode=provisioner`
+4. Enable strict subagent isolation flags
 
 ---
 
-## 3) Prerequisites
+## 3. Runtime settings (full flag reference)
 
-1. Docker Desktop with Kubernetes enabled.
-2. `kubectl` configured to Docker Desktop context.
-3. OneSeek backend running (local or cluster).
-4. Optional but recommended for multi-backend replicas: Redis.
+All flags are passed in `runtime_hitl`.
 
-Quick checks:
+### Core orchestration flags
+
+| Flag | Type | Default | Purpose |
+|---|---|---|---|
+| `hybrid_mode` | bool | `false` | Enables hybrid supervisor flow |
+| `speculative_enabled` | bool | `false` | Enables speculative branch |
+| `subagent_enabled` | bool | `true` | Allows subagent execution strategy |
+| `subagent_isolation_enabled` | bool | `false` | Enables strict subagent context isolation |
+| `subagent_max_concurrency` | int | `3` | Parallel subagent cap per step |
+| `subagent_context_max_chars` | int | `1400` | Max context chars injected into subagent |
+| `subagent_result_max_chars` | int | `1000` | Max compacted subagent result chars |
+| `subagent_sandbox_scope` | str | `thread` | Preferred sandbox scope policy for subagents |
+
+### Sandbox flags
+
+| Flag | Type | Default | Purpose |
+|---|---|---|---|
+| `sandbox_enabled` | bool | `false` | Enables sandbox tools |
+| `sandbox_mode` | str | `docker` | `local`, `docker`, `provisioner` (or `remote`) |
+| `sandbox_provisioner_url` | str | `http://localhost:8002` | Provisioner base URL |
+| `sandbox_provisioner_api_key` | str | empty | Bearer auth for provisioner |
+| `sandbox_state_store` | str | `file` | `file`, `redis`, `auto` |
+| `sandbox_state_file_path` | str | auto | File-state path for lease store |
+| `sandbox_state_redis_url` | str | empty | Redis lease store URL |
+| `sandbox_state_redis_prefix` | str | `oneseek:sandbox` | Redis key prefix |
+| `sandbox_idle_timeout_seconds` | int | `900` | Idle lease cleanup timeout |
+| `sandbox_lock_timeout_seconds` | int | `15` | Lease lock timeout |
+| `sandbox_timeout_seconds` | int | `30` | Command timeout |
+| `sandbox_max_output_bytes` | int | `100000` | Command output cap |
+| `sandbox_scope` | str | `thread` | Effective sandbox scope (`thread` or `subagent`) |
+| `sandbox_scope_id` | str | empty | Scope id used when `sandbox_scope=subagent` |
+
+Notes:
+
+- `sandbox_scope` + `sandbox_scope_id` are used internally for strict subagent scope.
+- In strict subagent mode, supervisor injects per-subagent `sandbox_scope_id` automatically.
+
+---
+
+## 4. Step-by-step: local mode (baseline)
+
+### Step 4.1 - minimal runtime payload
+
+```json
+{
+  "runtime_hitl": {
+    "hybrid_mode": true,
+    "speculative_enabled": true,
+    "subagent_enabled": true,
+    "subagent_isolation_enabled": true,
+    "sandbox_enabled": true,
+    "sandbox_mode": "local",
+    "sandbox_state_store": "file",
+    "sandbox_idle_timeout_seconds": 900
+  }
+}
+```
+
+### Step 4.2 - run validation tests
+
+```bash
+cd /workspace/surfsense_backend
+python3 -m pytest -q \
+  tests/test_sandbox_phase1.py \
+  tests/test_sandbox_phase2_filesystem.py \
+  tests/test_sandbox_phase3_robustness.py
+```
+
+### Step 4.3 - manual chat checks
+
+Run a code-style prompt that triggers sandbox tools:
+
+1. Ask for file creation in `/workspace`
+2. Ask for read/update/replace
+3. Confirm tool outputs include:
+   - `mode`
+   - `scope`
+   - `scope_id` (when strict subagent scope is active)
+   - `lease_id`
+
+---
+
+## 5. Step-by-step: Docker mode
+
+### Step 5.1 - runtime payload
+
+```json
+{
+  "runtime_hitl": {
+    "hybrid_mode": true,
+    "speculative_enabled": true,
+    "subagent_enabled": true,
+    "subagent_isolation_enabled": true,
+    "sandbox_enabled": true,
+    "sandbox_mode": "docker",
+    "sandbox_docker_image": "python:3.12-slim",
+    "sandbox_container_prefix": "oneseek-sandbox",
+    "sandbox_state_store": "file"
+  }
+}
+```
+
+### Step 5.2 - verify containers
+
+```bash
+docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+```
+
+Expected:
+
+- one container per active lease/scope key
+- same scope reuses lease/container
+- different subagent scope ids create isolated leases
+
+---
+
+## 6. Step-by-step: Kubernetes provisioner mode
+
+## 6.1 Prerequisites
 
 ```bash
 kubectl config use-context docker-desktop
 kubectl get nodes
-kubectl get ns
 ```
 
----
-
-## 4) Build and run the provisioner image
-
-Provisioner Dockerfile:
-
-`surfsense_backend/docker/provisioner/Dockerfile`
-
-Build image:
+## 6.2 Build provisioner image
 
 ```bash
+cd /workspace
 docker build \
   -f surfsense_backend/docker/provisioner/Dockerfile \
   -t oneseek-sandbox-provisioner:local \
   surfsense_backend
 ```
 
-For Docker Desktop Kubernetes, local images are typically available directly in the cluster.
-
----
-
-## 5) Deploy provisioner to Kubernetes
-
-Apply manifests:
+## 6.3 Deploy manifests
 
 ```bash
-kubectl apply -k surfsense_backend/deploy/k8s/sandbox-provisioner
-```
-
-Set deployment image:
-
-```bash
+kubectl apply -k /workspace/surfsense_backend/deploy/k8s/sandbox-provisioner
 kubectl -n oneseek-sandbox set image \
   deployment/sandbox-provisioner \
   sandbox-provisioner=oneseek-sandbox-provisioner:local
 ```
 
-Verify:
+## 6.4 Verify provisioner health
 
 ```bash
-kubectl -n oneseek-sandbox get pods -o wide
+kubectl -n oneseek-sandbox get pods
 kubectl -n oneseek-sandbox get svc sandbox-provisioner
 kubectl -n oneseek-sandbox logs deployment/sandbox-provisioner --tail=100
-```
-
-Optional local access from host:
-
-```bash
 kubectl -n oneseek-sandbox port-forward svc/sandbox-provisioner 8002:8002
 curl http://127.0.0.1:8002/healthz
 ```
 
----
-
-## 6) Backend configuration (runtime flags)
-
-Set these in `runtime_hitl` for a chat/session:
+## 6.5 Backend runtime payload for provisioner
 
 ```json
 {
   "runtime_hitl": {
+    "hybrid_mode": true,
+    "speculative_enabled": true,
+    "subagent_enabled": true,
+    "subagent_isolation_enabled": true,
+    "subagent_max_concurrency": 3,
+    "subagent_context_max_chars": 1400,
+    "subagent_result_max_chars": 1000,
+    "subagent_sandbox_scope": "subagent",
     "sandbox_enabled": true,
     "sandbox_mode": "provisioner",
-    "sandbox_provisioner_url": "http://127.0.0.1:8002",
+    "sandbox_provisioner_url": "http://sandbox-provisioner.oneseek-sandbox.svc.cluster.local:8002",
     "sandbox_provisioner_api_key": "",
     "sandbox_state_store": "redis",
-    "sandbox_state_redis_url": "redis://localhost:6379/0",
+    "sandbox_state_redis_url": "redis://redis.default.svc.cluster.local:6379/0",
     "sandbox_idle_timeout_seconds": 900
   }
 }
 ```
 
-### Important flags
-
-| Flag | Type | Recommended | Description |
-|---|---|---|---|
-| `sandbox_enabled` | bool | `true` | Enables sandbox tools |
-| `sandbox_mode` | str | `provisioner` | `local`, `docker`, or `provisioner` |
-| `sandbox_provisioner_url` | str | set | Base URL for provisioner service |
-| `sandbox_provisioner_api_key` | str | optional | Bearer auth from backend to provisioner |
-| `sandbox_state_store` | str | `redis` in multi-replica | `file`, `redis`, `auto` |
-| `sandbox_state_redis_url` | str | set for redis | Shared lease/state coordination |
-| `sandbox_idle_timeout_seconds` | int | `900` | Idle timeout for lease cleanup |
-| `sandbox_timeout_seconds` | int | `30` | Command timeout default |
-| `sandbox_max_output_bytes` | int | `100000` | Output cap per command |
-
-### Multi-replica backend note
-
-If backend runs with multiple replicas, use:
-
-- `sandbox_state_store=redis`
-- shared `sandbox_state_redis_url`
-
-This avoids lease collisions when requests for the same thread hit different backend pods.
-
 ---
 
-## 7) Provisioner environment settings
+## 7. Step-by-step validation matrix
 
-Environment variables for provisioner deployment:
+Run these checks in order.
 
-| Variable | Default | Description |
-|---|---|---|
-| `PROVISIONER_NAMESPACE` | `oneseek-sandbox` | Namespace for worker pods |
-| `PROVISIONER_KUBECTL_BINARY` | `kubectl` | Kubectl executable |
-| `PROVISIONER_KUBECTL_CONTEXT` | empty | Optional context override |
-| `PROVISIONER_SANDBOX_IMAGE` | `python:3.12-slim` | Image used for sandbox worker pods |
-| `PROVISIONER_WORKER_CONTAINER_NAME` | `sandbox` | Container name in worker pod |
-| `PROVISIONER_POD_PREFIX` | `oneseek-sb` | Prefix for pod names |
-| `PROVISIONER_WORKSPACE_DIR` | `/workspace` | Working directory in pod |
-| `PROVISIONER_STARTUP_TIMEOUT_SECONDS` | `120` | Wait timeout for pod ready |
-| `PROVISIONER_IDLE_TIMEOUT_SECONDS` | `900` | Idle timeout before cleanup |
-| `PROVISIONER_CLEANUP_INTERVAL_SECONDS` | `60` | Background cleanup loop interval |
-| `PROVISIONER_MAX_TIMEOUT_SECONDS` | `600` | Max allowed command timeout |
-| `PROVISIONER_MAX_OUTPUT_BYTES` | `1000000` | Max output size from exec |
-| `PROVISIONER_API_KEY` | empty | Optional Bearer API key |
-| `PROVISIONER_POD_CPU_REQUEST` | empty | Optional worker CPU request |
-| `PROVISIONER_POD_MEMORY_REQUEST` | empty | Optional worker memory request |
-| `PROVISIONER_POD_CPU_LIMIT` | empty | Optional worker CPU limit |
-| `PROVISIONER_POD_MEMORY_LIMIT` | empty | Optional worker memory limit |
+### Check A - strict context isolation
 
----
+Goal: subagent output is compact handoff, not full sibling context.
 
-## 8) Manual validation (phase 3 + phase 4)
+Expected in supervisor/tool payload:
 
-### A) Restart-safe reuse (phase 3)
+- `subagent_isolated=true`
+- `subagent_id`
+- `subagent_handoff.summary`
+- `subagent_handoff.findings`
 
-Goal: same thread reuses sandbox lease after backend restart.
+### Check B - strict sandbox scope isolation
 
-1. Run with:
-   - `sandbox_enabled=true`
-   - `sandbox_mode=provisioner`
-2. In one thread, trigger `sandbox_execute` (e.g. `python3 -c "print(42)"`).
-3. Restart backend process/pod.
-4. Trigger another sandbox command in the same thread.
-5. Verify:
-   - tool output reports `reused=true` (or same lease/pod metadata)
-   - same sandbox pod remains in Kubernetes.
+Goal: different subagent scope ids do not share the same lease.
 
-Check:
+Expected:
+
+- scope A and scope B have different `lease_id`
+- scope A repeated call reuses the same `lease_id`
+
+### Check C - provisioner pod isolation
+
+Goal: different scope keys map to different pod identities.
 
 ```bash
 kubectl -n oneseek-sandbox get pods -l app=oneseek-sandbox-worker
 ```
 
-### B) Idle timeout rotation (phase 3)
+Expected:
 
-Goal: idle timeout leads to new sandbox creation.
+- one pod per active sandbox id
+- no collisions across concurrent thread/scope execution
 
-1. Set short timeout for test: `sandbox_idle_timeout_seconds=30`.
-2. Execute once in thread A.
-3. Wait >30 seconds.
-4. Execute again in thread A.
-5. Verify:
-   - old lease/pod released
-   - new lease/pod created.
+### Check D - restart-safe lease reuse
 
-### C) Trace observability (phase 3)
+Goal: same scope can be reused after backend restart.
 
-Goal: acquire/execute/release visible in trace.
+Expected:
 
-For sandbox operations, verify trace contains:
+- `reused=true` on repeated call with same scope
+- same pod/container identity when not idle-expired
 
-- `sandbox.acquire`
-- `sandbox.execute`
-- `sandbox.release` (idle cleanup or explicit release)
+### Check E - idle timeout cleanup
 
-### D) Pod-per-thread isolation (phase 4)
+Set low timeout (example `30s`), wait past timeout, re-run command.
 
-Goal: parallel threads -> separate pods.
+Expected:
 
-1. Start N chat threads in parallel.
-2. Trigger sandbox operations in each thread.
-3. Verify N worker pods created.
+- previous lease/pod released
+- new lease_id/pod generated
 
-```bash
-kubectl -n oneseek-sandbox get pods -l app=oneseek-sandbox-worker
-```
+---
 
-### E) Scale backend replicas without collisions (phase 4)
+## 8. Operations and cleanup
 
-Goal: multiple backend replicas still coordinate leases.
-
-1. Scale backend deployment to >1 replica.
-2. Ensure shared Redis and `sandbox_state_store=redis`.
-3. Send repeated sandbox requests for same thread.
-4. Verify stable reuse (no duplicate conflicting pods for same thread/sandbox).
-
-### F) Pod cleanup after release/timeout (phase 4)
-
-1. Trigger explicit `sandbox_release`.
-2. Verify pod removal.
-3. For timeout cleanup, wait beyond idle timeout or call:
+### Manual cleanup endpoint
 
 ```bash
 curl -X POST http://127.0.0.1:8002/v1/sandbox/cleanup_idle
 ```
 
+### Explicit release from tooling
+
+Use `sandbox_release` tool to release current lease for active scope.
+
+### Kubernetes cleanup
+
+```bash
+kubectl -n oneseek-sandbox delete pod -l app=oneseek-sandbox-worker
+```
+
 ---
 
-## 9) Security notes
-
-- Keep `sandbox_mode=provisioner` behind explicit runtime flags.
-- Use `PROVISIONER_API_KEY` + `sandbox_provisioner_api_key` in production.
-- Restrict provisioner RBAC to namespace-scoped Role (already in manifests).
-- Keep worker image minimal and unprivileged where possible.
-- Keep command timeouts and output caps enforced.
-
----
-
-## 10) Troubleshooting
-
-### Provisioner returns kubectl not found
-
-- Ensure `kubectl` exists in provisioner image/container.
+## 9. Troubleshooting
 
 ### 401 from provisioner
 
-- Backend `sandbox_provisioner_api_key` must match provisioner `PROVISIONER_API_KEY`.
-- Header format is `Authorization: Bearer <key>`.
+- Set matching values:
+  - backend `sandbox_provisioner_api_key`
+  - provisioner `PROVISIONER_API_KEY`
+- Header must be `Authorization: Bearer <key>`
 
-### Pod stuck Pending
+### Provisioner unreachable
 
-- Check resources/events:
+- Check service/pods in namespace:
+
+```bash
+kubectl -n oneseek-sandbox get svc,pods
+```
+
+### Leases collide across backend replicas
+
+- Use:
+  - `sandbox_state_store=redis`
+  - shared `sandbox_state_redis_url`
+
+### Pod pending/stuck
 
 ```bash
 kubectl -n oneseek-sandbox describe pod <pod-name>
 kubectl -n oneseek-sandbox get events --sort-by=.metadata.creationTimestamp
 ```
 
-### Backend does not reuse across replicas
+### Path traversal errors
 
-- Ensure `sandbox_state_store=redis` and same Redis URL on all backend replicas.
-
-### File operation path errors
-
-- Only absolute paths are accepted.
-- Paths are constrained to `/workspace`.
+- Sandbox file APIs only accept absolute paths and enforce `/workspace` boundary.
 
 ---
 
-## 11) Quick command reference
+## 10. Copy/paste command block
 
 ```bash
-# Deploy provisioner stack
+# 1) Build provisioner image
+docker build -f surfsense_backend/docker/provisioner/Dockerfile -t oneseek-sandbox-provisioner:local surfsense_backend
+
+# 2) Deploy K8s resources
 kubectl apply -k surfsense_backend/deploy/k8s/sandbox-provisioner
+kubectl -n oneseek-sandbox set image deployment/sandbox-provisioner sandbox-provisioner=oneseek-sandbox-provisioner:local
 
-# See provisioner logs
-kubectl -n oneseek-sandbox logs deployment/sandbox-provisioner -f
+# 3) Health and logs
+kubectl -n oneseek-sandbox get pods
+kubectl -n oneseek-sandbox logs deployment/sandbox-provisioner --tail=100
 
-# See active worker pods
-kubectl -n oneseek-sandbox get pods -l app=oneseek-sandbox-worker
-
-# Port-forward service to local host
+# 4) Port-forward for local testing
 kubectl -n oneseek-sandbox port-forward svc/sandbox-provisioner 8002:8002
+curl http://127.0.0.1:8002/healthz
 ```
+
+---
+
+If you follow sections 4 -> 10 in order, you have a full end-to-end sandbox setup with strict subagent isolation, local and Docker validation, and Kubernetes provisioner production path.
 
