@@ -3,6 +3,66 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
+import types
+
+try:  # pragma: no cover - environment dependent
+    import fastapi  # type: ignore  # noqa: F401
+except Exception:  # pragma: no cover - fallback stub for isolated test env
+    fastapi_stub = types.ModuleType("fastapi")
+
+    class _FakeHTTPException(Exception):
+        def __init__(self, status_code: int, detail: str):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+    class _FakeFastAPI:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        def on_event(self, *args, **kwargs):
+            _ = args, kwargs
+
+            def _decorator(func):
+                return func
+
+            return _decorator
+
+        def get(self, *args, **kwargs):
+            _ = args, kwargs
+
+            def _decorator(func):
+                return func
+
+            return _decorator
+
+        def post(self, *args, **kwargs):
+            _ = args, kwargs
+
+            def _decorator(func):
+                return func
+
+            return _decorator
+
+    fastapi_stub.Depends = lambda value=None: value
+    fastapi_stub.FastAPI = _FakeFastAPI
+    fastapi_stub.Header = lambda default=None: default
+    fastapi_stub.HTTPException = _FakeHTTPException
+    sys.modules["fastapi"] = fastapi_stub
+
+try:  # pragma: no cover - environment dependent
+    import pydantic  # type: ignore  # noqa: F401
+except Exception:  # pragma: no cover - fallback stub for isolated test env
+    pydantic_stub = types.ModuleType("pydantic")
+
+    class _FakeBaseModel:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    pydantic_stub.BaseModel = _FakeBaseModel
+    pydantic_stub.Field = lambda default=None, **kwargs: default
+    sys.modules["pydantic"] = pydantic_stub
 
 
 def _load_module(module_name: str, relative_path: str):
