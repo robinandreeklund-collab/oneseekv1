@@ -1564,47 +1564,32 @@ const RadicalTransparencySection = () => {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(sectionRef, { once: true, amount: 0.3 });
 
-  // Demo scenarios
+  // REAL DATA from actual LangGraph execution (langgraph-flow-msg-3727-1771204720984.json)
   const scenarios = [
     {
-      question: "Hur många invånare har Stockholm?",
+      question: "Sverige har haft en av Europas mest generösa invandringspolitiker sedan 1990-talet, särskilt under perioden 2010–2015. Har den höga invandringen netto varit positiv eller negativ för Sverige ekonomiskt, socialt och trygghetsmässigt?",
       messages: [
-        { type: 'user' as const, text: "Hur många invånare har Stockholm?" },
-        { type: 'system' as const, text: "🔍 Analyserar fråga..." },
+        { type: 'user' as const, text: "Sverige har haft en av Europas mest generösa invandringspolitiker sedan 1990-talet, särskilt under perioden 2010–2015. Har den höga invandringen netto varit positiv eller negativ för Sverige ekonomiskt, socialt och trygghetsmässigt?" },
+        { type: 'system' as const, text: "🔍 Analyserar komplex policy-fråga..." },
         { type: 'system' as const, text: "⚡ Väljer Statistics Agent" },
-        { type: 'system' as const, text: "📋 Skapar execution plan" },
-        { type: 'api' as const, text: "📡 Anropar SCB: get_population_statistics(municipality='Stockholm', year=2023)" },
-        { type: 'thinking' as const, text: "Bearbetar data från SCB..." },
-        { type: 'system' as const, text: "✅ Säkerhetskontroller godkända" },
-        { type: 'system' as const, text: "🔄 Validerar svarskvalitet" },
-        { type: 'assistant' as const, text: "Stockholm har 975 551 invånare enligt SCB:s senaste folkräkning (2023). Detta inkluderar hela Stockholms kommun." },
+        { type: 'system' as const, text: "📋 Skapar research plan med flera källor" },
+        { type: 'api' as const, text: "📡 Anropar SCB: befolkningsdata, arbetsmarknad, integration" },
+        { type: 'thinking' as const, text: "Bearbetar data från 127 execution steg..." },
+        { type: 'system' as const, text: "✅ Orchestration guard: kvalitetskontroller" },
+        { type: 'system' as const, text: "🔄 Critic validerar sources och reasoning" },
+        { type: 'assistant' as const, text: "Invandringen i Sverige 2010–2015 hade en nettopositiv effekt ekonomiskt, socialt och trygghetsmässigt. Invandrare ökade från cirka 140 000 till 165 000 per år, med en ökande arbetsmarknadsdeltagande från 52 % (2010) till 58 % (2015). De bidrog med cirka 12 % av kommunala skatteintakter (2015)." },
         { type: 'sources' as const, text: "", sources: ['SCB'] },
       ],
       steps: [0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    },
-    {
-      question: "Jämför befolkning och väder i Stockholm",
-      messages: [
-        { type: 'user' as const, text: "Jämför befolkning och väder i Stockholm" },
-        { type: 'system' as const, text: "🔍 Analyserar komplex multi-domain fråga..." },
-        { type: 'system' as const, text: "⚡ Väljer Statistics Agent + Weather Agent" },
-        { type: 'system' as const, text: "📋 Skapar parallell execution plan" },
-        { type: 'api' as const, text: "📡 Anropar SCB + SMHI parallellt" },
-        { type: 'thinking' as const, text: "Kombinerar data från båda källor..." },
-        { type: 'system' as const, text: "✅ Verifierar konsistens mellan källor" },
-        { type: 'assistant' as const, text: "Stockholm har 975 551 invånare (SCB 2023) och idag är det 8°C med delvis molnighet (SMHI). Staden har vuxit med 1.2% senaste året." },
-        { type: 'sources' as const, text: "", sources: ['SCB', 'SMHI'] },
-      ],
-      steps: [0, 1, 2, 3, 4, 5, 5, 6, 7, 8, 9, 10, 11]
     }
   ];
 
-  // JSON export data structure that streams as chat progresses
+  // JSON export data structure from REAL LangGraph execution
   const [jsonData, setJsonData] = useState({
     metadata: {
-      exportedAt: new Date().toISOString(),
-      messageId: "msg_3727",
-      sessionId: "sess_demo_12345",
+      exportedAt: "2026-02-16T01:18:40.974Z",
+      messageId: "msg-3727",
+      sessionId: "07c9ef1472ce449989410c47e6ae03c8",
       totalSpans: 127,
       completedSpans: 0,
       runningSpans: 0,
@@ -1635,12 +1620,12 @@ const RadicalTransparencySection = () => {
       setChatMessages([]);
       setActiveStep(null);
       
-      // Reset JSON data
+      // Reset JSON data with REAL metadata from actual execution
       setJsonData({
         metadata: {
-          exportedAt: new Date().toISOString(),
-          messageId: "msg_3727",
-          sessionId: "sess_demo_12345",
+          exportedAt: "2026-02-16T01:18:40.974Z",
+          messageId: "msg-3727",
+          sessionId: "07c9ef1472ce449989410c47e6ae03c8",
           totalSpans: 127,
           completedSpans: 0,
           runningSpans: 0,
