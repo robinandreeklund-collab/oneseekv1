@@ -2309,7 +2309,7 @@ async def create_supervisor_agent(
             name="marketplace-worker",
             primary_namespaces=[("tools", "marketplace")],
             fallback_namespaces=[
-                ("tools", "action"),
+                # ("tools", "action"),  # REMOVED: Prevents browser/tavily tools from being selected
                 ("tools", "knowledge"),
                 ("tools", "general"),
             ],
