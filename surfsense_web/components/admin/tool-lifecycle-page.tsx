@@ -35,27 +35,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import { getBackendUrl } from "@/lib/config";
-
-interface ToolLifecycleStatus {
-	tool_id: string;
-	status: "review" | "live";
-	success_rate: number | null;
-	total_tests: number | null;
-	last_eval_at: string | null;
-	required_success_rate: number;
-	changed_by_id: string | null;
-	changed_at: string;
-	notes: string | null;
-	created_at: string;
-}
-
-interface ToolLifecycleListResponse {
-	tools: ToolLifecycleStatus[];
-	total_count: number;
-	live_count: number;
-	review_count: number;
-}
+import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
+import type { 
+	ToolLifecycleStatusResponse as ToolLifecycleStatus,
+	ToolLifecycleListResponse 
+} from "@/contracts/types/admin-tool-lifecycle.types";
 
 export function ToolLifecyclePage() {
 	const [data, setData] = useState<ToolLifecycleListResponse | null>(null);
@@ -72,11 +56,7 @@ export function ToolLifecyclePage() {
 	const fetchLifecycleData = async () => {
 		try {
 			setLoading(true);
-			const response = await fetch(`${getBackendUrl()}/admin/tool-lifecycle`, {
-				credentials: "include",
-			});
-			if (!response.ok) throw new Error("Failed to fetch lifecycle data");
-			const result = await response.json();
+			const result = await adminToolLifecycleApiService.getToolLifecycleList();
 			setData(result);
 		} catch (error) {
 			toast.error("Failed to load lifecycle data");
@@ -103,23 +83,10 @@ export function ToolLifecyclePage() {
 
 		try {
 			setActionLoading(tool.tool_id);
-			const response = await fetch(
-				`${getBackendUrl()}/admin/tool-lifecycle/${encodeURIComponent(tool.tool_id)}`,
-				{
-					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					credentials: "include",
-					body: JSON.stringify({
-						status: newStatus,
-						notes: `Status changed to ${newStatus}`,
-					}),
-				}
-			);
-
-			if (!response.ok) {
-				const error = await response.json();
-				throw new Error(error.detail || "Failed to update status");
-			}
+			await adminToolLifecycleApiService.updateToolStatus(tool.tool_id, {
+				status: newStatus,
+				notes: `Status changed to ${newStatus}`,
+			});
 
 			toast.success(`Tool ${tool.tool_id} set to ${newStatus}`);
 			await fetchLifecycleData();
@@ -139,20 +106,9 @@ export function ToolLifecyclePage() {
 
 		try {
 			setActionLoading(rollbackTool.tool_id);
-			const response = await fetch(
-				`${getBackendUrl()}/admin/tool-lifecycle/${encodeURIComponent(rollbackTool.tool_id)}/rollback`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					credentials: "include",
-					body: JSON.stringify({ notes: rollbackNotes }),
-				}
-			);
-
-			if (!response.ok) {
-				const error = await response.json();
-				throw new Error(error.detail || "Failed to rollback");
-			}
+			await adminToolLifecycleApiService.rollbackTool(rollbackTool.tool_id, {
+				notes: rollbackNotes,
+			});
 
 			toast.success(`Emergency rollback completed for ${rollbackTool.tool_id}`);
 			setRollbackTool(null);
