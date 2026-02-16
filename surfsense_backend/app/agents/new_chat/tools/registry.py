@@ -81,6 +81,12 @@ from .reflect_on_progress import create_reflect_on_progress_tool
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
 from .sandbox_execute import create_sandbox_execute_tool
+from .sandbox_filesystem import (
+    create_sandbox_ls_tool,
+    create_sandbox_read_file_tool,
+    create_sandbox_replace_tool,
+    create_sandbox_write_file_tool,
+)
 from .smhi_weather import create_smhi_weather_tool
 from .tavily_search import create_tavily_search_tool
 from .trafiklab_route import create_trafiklab_route_tool
@@ -224,6 +230,46 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         name="sandbox_execute",
         description="Execute shell commands inside a thread-isolated sandbox workspace",
         factory=lambda deps: create_sandbox_execute_tool(
+            thread_id=deps.get("thread_id"),
+            runtime_hitl=deps.get("runtime_hitl"),
+        ),
+        requires=[],
+        enabled_by_default=False,
+    ),
+    ToolDefinition(
+        name="sandbox_ls",
+        description="List files and directories inside a thread-isolated sandbox workspace",
+        factory=lambda deps: create_sandbox_ls_tool(
+            thread_id=deps.get("thread_id"),
+            runtime_hitl=deps.get("runtime_hitl"),
+        ),
+        requires=[],
+        enabled_by_default=False,
+    ),
+    ToolDefinition(
+        name="sandbox_read_file",
+        description="Read UTF-8 text files from a thread-isolated sandbox workspace",
+        factory=lambda deps: create_sandbox_read_file_tool(
+            thread_id=deps.get("thread_id"),
+            runtime_hitl=deps.get("runtime_hitl"),
+        ),
+        requires=[],
+        enabled_by_default=False,
+    ),
+    ToolDefinition(
+        name="sandbox_write_file",
+        description="Write UTF-8 text files inside a thread-isolated sandbox workspace",
+        factory=lambda deps: create_sandbox_write_file_tool(
+            thread_id=deps.get("thread_id"),
+            runtime_hitl=deps.get("runtime_hitl"),
+        ),
+        requires=[],
+        enabled_by_default=False,
+    ),
+    ToolDefinition(
+        name="sandbox_replace",
+        description="Replace text within UTF-8 files in a thread-isolated sandbox workspace",
+        factory=lambda deps: create_sandbox_replace_tool(
             thread_id=deps.get("thread_id"),
             runtime_hitl=deps.get("runtime_hitl"),
         ),

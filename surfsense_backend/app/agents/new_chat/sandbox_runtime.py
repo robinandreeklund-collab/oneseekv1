@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -18,6 +19,7 @@ DEFAULT_SANDBOX_DOCKER_IMAGE = "python:3.12-slim"
 DEFAULT_SANDBOX_CONTAINER_PREFIX = "oneseek-sandbox"
 DEFAULT_SANDBOX_TIMEOUT_SECONDS = 30
 DEFAULT_SANDBOX_MAX_OUTPUT_BYTES = 100_000
+SANDBOX_VIRTUAL_WORKSPACE_PREFIX = "/workspace"
 
 _LONG_LIVED_PATTERNS = (
     re.compile(r"\bnpm\s+run\s+(dev|start)\b", re.IGNORECASE),
@@ -270,6 +272,234 @@ def _workspace_path(config: SandboxRuntimeConfig, thread_id: Any) -> Path:
     path = (root / thread_segment).resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _coerce_path(path: str) -> str:
+    normalized_path = str(path or "").strip()
+    if not normalized_path:
+        raise SandboxExecutionError("Path cannot be empty.")
+    if not normalized_path.startswith("/"):
+        raise SandboxExecutionError("Path must be absolute and start with '/'.")
+    return normalized_path
+
+
+def _resolve_workspace_file_path(
+    *,
+    workspace_path: Path,
+    path: str,
+) -> tuple[Path, str]:
+    normalized_path = _coerce_path(path)
+    if normalized_path == SANDBOX_VIRTUAL_WORKSPACE_PREFIX:
+        relative = ""
+    elif normalized_path.startswith(f"{SANDBOX_VIRTUAL_WORKSPACE_PREFIX}/"):
+        relative = normalized_path[len(SANDBOX_VIRTUAL_WORKSPACE_PREFIX) :].lstrip("/")
+    else:
+        # Treat other absolute paths as virtual paths under /workspace.
+        relative = normalized_path.lstrip("/")
+
+    relative_path = Path(relative)
+    if any(part in {"..", ""} for part in relative_path.parts):
+        raise SandboxExecutionError(f"Path traversal is not allowed: {normalized_path}")
+
+    candidate = (workspace_path / relative_path).resolve()
+    try:
+        candidate.relative_to(workspace_path)
+    except ValueError as exc:
+        raise SandboxExecutionError(
+            f"Path escapes sandbox workspace: {normalized_path}"
+        ) from exc
+
+    if relative:
+        display_path = f"{SANDBOX_VIRTUAL_WORKSPACE_PREFIX}/{relative_path.as_posix()}"
+    else:
+        display_path = SANDBOX_VIRTUAL_WORKSPACE_PREFIX
+    return candidate, display_path
+
+
+def _prepare_workspace_and_path(
+    *,
+    thread_id: Any,
+    runtime_hitl: dict[str, Any] | None,
+    path: str,
+) -> tuple[SandboxRuntimeConfig, Path, Path, str]:
+    config = sandbox_config_from_runtime_flags(runtime_hitl)
+    if not config.enabled:
+        raise SandboxExecutionError(
+            "Sandbox execution is disabled. Enable runtime_hitl.sandbox_enabled."
+        )
+    workspace_path = _workspace_path(config, thread_id)
+    host_path, display_path = _resolve_workspace_file_path(
+        workspace_path=workspace_path,
+        path=path,
+    )
+    return config, workspace_path, host_path, display_path
+
+
+def sandbox_list_directory(
+    *,
+    thread_id: Any,
+    runtime_hitl: dict[str, Any] | None,
+    path: str = SANDBOX_VIRTUAL_WORKSPACE_PREFIX,
+    max_depth: int = 2,
+    max_entries: int = 500,
+) -> list[str]:
+    _config, workspace_path, host_path, _display_path = _prepare_workspace_and_path(
+        thread_id=thread_id,
+        runtime_hitl=runtime_hitl,
+        path=path,
+    )
+    if not host_path.exists():
+        raise SandboxExecutionError(f"Directory not found: {path}")
+    if not host_path.is_dir():
+        raise SandboxExecutionError(f"Path is not a directory: {path}")
+
+    safe_depth = max(0, min(int(max_depth), 6))
+    safe_max_entries = max(1, min(int(max_entries), 5000))
+    root_depth = len(host_path.parts)
+    entries: list[str] = []
+    for current_root, dirs, files in os.walk(host_path):
+        current = Path(current_root)
+        depth = len(current.parts) - root_depth
+        if depth > safe_depth:
+            dirs[:] = []
+            continue
+        dirs.sort()
+        files.sort()
+        try:
+            relative_root = current.resolve().relative_to(workspace_path)
+        except ValueError:
+            continue
+        if str(relative_root) == ".":
+            display_root = SANDBOX_VIRTUAL_WORKSPACE_PREFIX
+        else:
+            display_root = f"{SANDBOX_VIRTUAL_WORKSPACE_PREFIX}/{relative_root.as_posix()}"
+        for directory in dirs:
+            entries.append(f"{display_root}/{directory}/")
+            if len(entries) >= safe_max_entries:
+                return entries
+        for file_name in files:
+            entries.append(f"{display_root}/{file_name}")
+            if len(entries) >= safe_max_entries:
+                return entries
+        if depth >= safe_depth:
+            dirs[:] = []
+    return entries
+
+
+def sandbox_read_text_file(
+    *,
+    thread_id: Any,
+    runtime_hitl: dict[str, Any] | None,
+    path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+    max_lines: int = 400,
+) -> str:
+    _config, _workspace_path, host_path, _display_path = _prepare_workspace_and_path(
+        thread_id=thread_id,
+        runtime_hitl=runtime_hitl,
+        path=path,
+    )
+    if not host_path.exists():
+        raise SandboxExecutionError(f"File not found: {path}")
+    if not host_path.is_file():
+        raise SandboxExecutionError(f"Path is not a file: {path}")
+
+    try:
+        with host_path.open("r", encoding="utf-8") as file_handle:
+            lines = file_handle.readlines()
+    except UnicodeDecodeError as exc:
+        raise SandboxExecutionError(f"Failed to decode file as UTF-8: {path}") from exc
+
+    if not lines:
+        return "(empty)"
+
+    safe_max_lines = max(1, min(int(max_lines), 4000))
+    line_count = len(lines)
+    safe_start = 1 if start_line is None else max(1, int(start_line))
+    if safe_start > line_count:
+        raise SandboxExecutionError(
+            f"start_line {safe_start} exceeds file length ({line_count})."
+        )
+    if end_line is None:
+        safe_end = min(line_count, safe_start + safe_max_lines - 1)
+    else:
+        safe_end = min(line_count, int(end_line))
+        if safe_end < safe_start:
+            raise SandboxExecutionError("end_line cannot be less than start_line.")
+        if (safe_end - safe_start + 1) > safe_max_lines:
+            safe_end = safe_start + safe_max_lines - 1
+
+    selected = lines[safe_start - 1 : safe_end]
+    formatted: list[str] = []
+    for index, line in enumerate(selected, start=safe_start):
+        formatted.append(f"{index}|{line.rstrip()}")
+    return "\n".join(formatted)
+
+
+def sandbox_write_text_file(
+    *,
+    thread_id: Any,
+    runtime_hitl: dict[str, Any] | None,
+    path: str,
+    content: str,
+    append: bool = False,
+) -> str:
+    _config, _workspace_path, host_path, display_path = _prepare_workspace_and_path(
+        thread_id=thread_id,
+        runtime_hitl=runtime_hitl,
+        path=path,
+    )
+    host_path.parent.mkdir(parents=True, exist_ok=True)
+    mode = "a" if append else "w"
+    with host_path.open(mode, encoding="utf-8") as file_handle:
+        file_handle.write(str(content or ""))
+    return display_path
+
+
+def sandbox_replace_text_file(
+    *,
+    thread_id: Any,
+    runtime_hitl: dict[str, Any] | None,
+    path: str,
+    old_text: str,
+    new_text: str,
+    replace_all: bool = False,
+) -> tuple[str, int]:
+    _config, _workspace_path, host_path, display_path = _prepare_workspace_and_path(
+        thread_id=thread_id,
+        runtime_hitl=runtime_hitl,
+        path=path,
+    )
+    if not host_path.exists():
+        raise SandboxExecutionError(f"File not found: {path}")
+    if not host_path.is_file():
+        raise SandboxExecutionError(f"Path is not a file: {path}")
+    old_value = str(old_text or "")
+    if not old_value:
+        raise SandboxExecutionError("old_text cannot be empty.")
+    new_value = str(new_text or "")
+
+    with host_path.open("r", encoding="utf-8") as file_handle:
+        original_content = file_handle.read()
+
+    occurrences = original_content.count(old_value)
+    if occurrences <= 0:
+        raise SandboxExecutionError("old_text not found in file.")
+    if not replace_all and occurrences != 1:
+        raise SandboxExecutionError(
+            "old_text appears multiple times; set replace_all=true to replace all."
+        )
+
+    updated_content = (
+        original_content.replace(old_value, new_value)
+        if replace_all
+        else original_content.replace(old_value, new_value, 1)
+    )
+    with host_path.open("w", encoding="utf-8") as file_handle:
+        file_handle.write(updated_content)
+    replaced = occurrences if replace_all else 1
+    return display_path, replaced
 
 
 def run_sandbox_command(

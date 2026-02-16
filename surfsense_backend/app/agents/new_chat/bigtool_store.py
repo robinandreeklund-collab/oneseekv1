@@ -66,6 +66,10 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "link_preview": ("tools", "action", "web"),
     "scrape_webpage": ("tools", "action", "web"),
     "sandbox_execute": ("tools", "code", "sandbox"),
+    "sandbox_ls": ("tools", "code", "sandbox"),
+    "sandbox_read_file": ("tools", "code", "sandbox"),
+    "sandbox_write_file": ("tools", "code", "sandbox"),
+    "sandbox_replace": ("tools", "code", "sandbox"),
     "smhi_weather": ("tools", "weather", "smhi"),
     "trafiklab_route": ("tools", "action", "travel"),
     "libris_search": ("tools", "action", "data"),
@@ -145,6 +149,43 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "kod",
         "code",
         "terminal",
+    ],
+    "sandbox_ls": [
+        "sandbox",
+        "docker",
+        "list",
+        "ls",
+        "tree",
+        "directory",
+        "folder",
+        "files",
+    ],
+    "sandbox_read_file": [
+        "sandbox",
+        "docker",
+        "read",
+        "file",
+        "cat",
+        "content",
+        "open",
+    ],
+    "sandbox_write_file": [
+        "sandbox",
+        "docker",
+        "write",
+        "edit",
+        "save",
+        "file",
+        "create",
+    ],
+    "sandbox_replace": [
+        "sandbox",
+        "docker",
+        "replace",
+        "edit",
+        "patch",
+        "string",
+        "update",
     ],
     "smhi_weather": [
         "weather",
@@ -1073,8 +1114,16 @@ async def build_global_tool_registry(
     sandbox_config = sandbox_config_from_runtime_flags(
         runtime_hitl if isinstance(runtime_hitl, dict) else None
     )
-    if sandbox_config.enabled and "sandbox_execute" not in enabled_tools:
-        enabled_tools.append("sandbox_execute")
+    if sandbox_config.enabled:
+        for sandbox_tool_id in (
+            "sandbox_execute",
+            "sandbox_ls",
+            "sandbox_read_file",
+            "sandbox_write_file",
+            "sandbox_replace",
+        ):
+            if sandbox_tool_id not in enabled_tools:
+                enabled_tools.append(sandbox_tool_id)
     for extra in ("write_todos", "reflect_on_progress"):
         if extra not in enabled_tools:
             enabled_tools.append(extra)
