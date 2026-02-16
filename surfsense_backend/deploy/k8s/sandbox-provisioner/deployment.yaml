@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-provisioner
+  namespace: oneseek-sandbox
+  labels:
+    app: sandbox-provisioner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox-provisioner
+  template:
+    metadata:
+      labels:
+        app: sandbox-provisioner
+    spec:
+      serviceAccountName: oneseek-sandbox-provisioner
+      containers:
+        - name: sandbox-provisioner
+          # Build/push this image from surfsense_backend/docker/provisioner/Dockerfile.
+          image: ghcr.io/your-org/oneseek-sandbox-provisioner:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+              name: http
+          env:
+            - name: PROVISIONER_NAMESPACE
+              value: oneseek-sandbox
+            - name: PROVISIONER_POD_PREFIX
+              value: oneseek-sb
+            - name: PROVISIONER_SANDBOX_IMAGE
+              value: python:3.12-slim
+            - name: PROVISIONER_WORKER_CONTAINER_NAME
+              value: sandbox
+            - name: PROVISIONER_WORKSPACE_DIR
+              value: /workspace
+            - name: PROVISIONER_IDLE_TIMEOUT_SECONDS
+              value: "900"
+            - name: PROVISIONER_CLEANUP_INTERVAL_SECONDS
+              value: "60"
+            # Optional shared auth between backend and provisioner:
+            # - name: PROVISIONER_API_KEY
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: sandbox-provisioner-secret
+            #       key: api-key
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

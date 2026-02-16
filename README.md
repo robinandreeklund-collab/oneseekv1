@@ -20,6 +20,7 @@ Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalo
 11. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
 12. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
 13. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
+14. [Sandbox Kubernetes-provisioner (guide)](#sandbox-kubernetes-provisioner-guide)
 
 ---
 
@@ -372,7 +373,12 @@ Runtime-flaggor i chatflodet:
   "runtime_hitl": {
     "enabled": true,
     "hybrid_mode": true,
-    "speculative_enabled": true
+    "speculative_enabled": true,
+    "sandbox_enabled": true,
+    "sandbox_mode": "provisioner",
+    "sandbox_provisioner_url": "http://sandbox-provisioner.oneseek-sandbox.svc.cluster.local:8002",
+    "sandbox_state_store": "redis",
+    "sandbox_idle_timeout_seconds": 900
   }
 }
 ```
@@ -380,6 +386,17 @@ Runtime-flaggor i chatflodet:
 - `hybrid_mode=false`: legacy/kompatibilitetsflode
 - `hybrid_mode=true`: aktiverar hybridnoder
 - `speculative_enabled=true`: aktiverar speculative branch i komplexa queries
+- `sandbox_enabled=true`: aktiverar sandbox-tools for code-agent
+- `sandbox_mode=provisioner`: kor via extern sandbox-provisioner (Kubernetes)
+- `sandbox_state_store=redis`: rekommenderat vid flera backend-replikor
+
+---
+
+## Sandbox Kubernetes-provisioner (guide)
+
+Full setup, manifests, runtime-flaggor, drift och manuella tester finns i:
+
+- [`docs/sandbox-kubernetes-provisioner-guide.md`](docs/sandbox-kubernetes-provisioner-guide.md)
 
 ---
 

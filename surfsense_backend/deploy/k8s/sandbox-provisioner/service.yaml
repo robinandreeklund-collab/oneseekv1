@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-provisioner
+  namespace: oneseek-sandbox
+  labels:
+    app: sandbox-provisioner
+spec:
+  type: ClusterIP
+  selector:
+    app: sandbox-provisioner
+  ports:
+    - name: http
+      port: 8002
+      targetPort: http
