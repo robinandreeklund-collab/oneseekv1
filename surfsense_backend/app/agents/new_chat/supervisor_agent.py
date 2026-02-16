@@ -3979,12 +3979,14 @@ async def create_supervisor_agent(
             state_payload["sandbox_scope_id"] = subagent_id
         return state_payload
 
-    def _is_filesystem_sandbox_task(agent_name: str, task: str) -> bool:
+    def _is_filesystem_task(agent_name: str, task: str) -> bool:
         return (
-            bool(sandbox_enabled)
-            and str(agent_name or "").strip().lower() == "code"
+            str(agent_name or "").strip().lower() == "code"
             and _has_filesystem_intent(task)
         )
+
+    def _is_filesystem_sandbox_task(agent_name: str, task: str) -> bool:
+        return bool(sandbox_enabled) and _is_filesystem_task(agent_name, task)
 
     def _prioritize_sandbox_code_tools(
         tool_ids: list[str],
@@ -4049,6 +4051,50 @@ async def create_supervisor_agent(
             else None
         )
         execution_timeout_seconds = get_execution_timeout_seconds(execution_strategy)
+        filesystem_task = _is_filesystem_task(name, task)
+        if filesystem_task and not sandbox_enabled:
+            error_message = (
+                "Sandbox is disabled for this runtime. Enable "
+                "runtime_hitl.sandbox_enabled=true and set sandbox_mode "
+                "to provisioner or docker."
+            )
+            result_contract = _build_agent_result_contract(
+                agent_name=name,
+                task=task,
+                response_text="",
+                error_text=error_message,
+                used_tools=[],
+                final_requested=bool(final),
+            )
+            return json.dumps(
+                {
+                    "agent": name,
+                    "requested_agent": requested_name,
+                    "agent_resolution": resolution_reason,
+                    "task": task,
+                    "error": error_message,
+                    "error_type": "SandboxDisabledError",
+                    "result_contract": result_contract,
+                    "final": bool(final),
+                    "turn_id": current_turn_id,
+                    "execution_strategy": execution_strategy or "inline",
+                    "subagent_isolated": bool(subagent_isolated),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": (
+                        _build_subagent_handoff_payload(
+                            subagent_id=str(subagent_id or ""),
+                            agent_name=name,
+                            response_text="",
+                            result_contract=result_contract,
+                            result_max_chars=subagent_result_max_chars,
+                            error_text=error_message,
+                        )
+                        if subagent_isolated and subagent_id
+                        else None
+                    ),
+                },
+                ensure_ascii=True,
+            )
         worker = await worker_pool.get(name)
         if not worker:
             error_message = f"Agent '{agent_name}' not available."
@@ -4659,6 +4705,46 @@ async def create_supervisor_agent(
                 if subagent_isolation_for_parallel
                 else None
             )
+            filesystem_task = _is_filesystem_task(agent_name, task)
+            if filesystem_task and not sandbox_enabled:
+                error_message = (
+                    "Sandbox is disabled for this runtime. Enable "
+                    "runtime_hitl.sandbox_enabled=true and set sandbox_mode "
+                    "to provisioner or docker."
+                )
+                result_contract = _build_agent_result_contract(
+                    agent_name=agent_name,
+                    task=task,
+                    response_text="",
+                    error_text=error_message,
+                    used_tools=[],
+                    final_requested=False,
+                )
+                return {
+                    "agent": agent_name,
+                    "requested_agent": requested_agent_name,
+                    "agent_resolution": resolution_reason,
+                    "task": task,
+                    "error": error_message,
+                    "error_type": "SandboxDisabledError",
+                    "result_contract": result_contract,
+                    "turn_id": current_turn_id,
+                    "execution_strategy": requested_strategy or "inline",
+                    "subagent_isolated": bool(subagent_isolation_for_parallel),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": (
+                        _build_subagent_handoff_payload(
+                            subagent_id=str(subagent_id or ""),
+                            agent_name=agent_name,
+                            response_text="",
+                            result_contract=result_contract,
+                            result_max_chars=subagent_result_max_chars,
+                            error_text=error_message,
+                        )
+                        if subagent_isolation_for_parallel and subagent_id
+                        else None
+                    ),
+                }
             worker = await worker_pool.get(agent_name)
             if not worker:
                 error_message = f"Agent '{agent_name}' not available."
