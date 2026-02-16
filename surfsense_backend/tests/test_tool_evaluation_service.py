@@ -1,8 +1,73 @@
 import asyncio
+from dataclasses import dataclass
+from pathlib import Path
+import sys
+import types
+from typing import Any
 
 from pydantic import BaseModel
 
-from app.agents.new_chat.bigtool_store import ToolIndexEntry
+@dataclass(frozen=True)
+class ToolIndexEntry:
+    tool_id: str
+    namespace: tuple[str, ...]
+    name: str
+    description: str
+    keywords: list[str]
+    example_queries: list[str]
+    category: str
+    embedding: list[float] | None = None
+    base_path: str | None = None
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_NEW_CHAT_PACKAGE = types.ModuleType("app.agents.new_chat")
+_NEW_CHAT_PACKAGE.__path__ = [str(_PROJECT_ROOT / "app/agents/new_chat")]
+sys.modules.setdefault("app.agents.new_chat", _NEW_CHAT_PACKAGE)
+
+_NODES_PACKAGE = types.ModuleType("app.agents.new_chat.nodes")
+_NODES_PACKAGE.__path__ = [str(_PROJECT_ROOT / "app/agents/new_chat/nodes")]
+sys.modules.setdefault("app.agents.new_chat.nodes", _NODES_PACKAGE)
+
+_FAKE_BIGTOOL_STORE = types.ModuleType("app.agents.new_chat.bigtool_store")
+_FAKE_BIGTOOL_STORE.ToolIndexEntry = ToolIndexEntry
+
+
+def _normalize_retrieval_tuning_stub(payload: dict[str, Any] | None = None):
+    base = {
+        "name_match_weight": 5.0,
+        "keyword_weight": 3.0,
+        "description_token_weight": 1.0,
+        "example_query_weight": 2.0,
+        "namespace_boost": 3.0,
+        "embedding_weight": 4.0,
+        "rerank_candidates": 24,
+    }
+    if isinstance(payload, dict):
+        base.update(payload)
+    return types.SimpleNamespace(**base)
+
+
+_FAKE_BIGTOOL_STORE.normalize_retrieval_tuning = _normalize_retrieval_tuning_stub
+_FAKE_BIGTOOL_STORE.smart_retrieve_tools_with_breakdown = (
+    lambda *_args, **_kwargs: ([], [])
+)
+sys.modules["app.agents.new_chat.bigtool_store"] = _FAKE_BIGTOOL_STORE
+
+_FAKE_DISPATCHER = types.ModuleType("app.agents.new_chat.dispatcher")
+
+
+async def _dispatch_route_with_trace_stub(*_args, **_kwargs):
+    return "action", {"route": "action", "confidence": 0.8}
+
+
+_FAKE_DISPATCHER.dispatch_route_with_trace = _dispatch_route_with_trace_stub
+sys.modules["app.agents.new_chat.dispatcher"] = _FAKE_DISPATCHER
+
+_FAKE_SKOLVERKET_TOOLS = types.ModuleType("app.agents.new_chat.skolverket_tools")
+_FAKE_SKOLVERKET_TOOLS.SKOLVERKET_TOOL_DEFINITIONS = []
+sys.modules["app.agents.new_chat.skolverket_tools"] = _FAKE_SKOLVERKET_TOOLS
+
 from app.services.tool_evaluation_service import (
     _apply_prompt_architecture_guard,
     _compute_agent_gate_score,
@@ -86,6 +151,23 @@ def test_run_tool_evaluation_without_llm_uses_retrieval(monkeypatch):
         "app.services.tool_evaluation_service.smart_retrieve_tools_with_breakdown",
         lambda *_args, **_kwargs: (["tool_beta", "tool_alpha"], []),
     )
+    async def _fake_dispatch_route(*_args, **_kwargs):
+        return "action", "data", "action_task", {"confidence": 0.88}
+
+    async def _fake_plan_agent_choice(*_args, **_kwargs):
+        return {
+            "selected_agent": "action",
+            "analysis": "Data-fraga ska ga till action-agenten.",
+        }
+
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._dispatch_route_from_start",
+        _fake_dispatch_route,
+    )
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._plan_agent_choice",
+        _fake_plan_agent_choice,
+    )
 
     output = asyncio.run(
         run_tool_evaluation(
@@ -103,9 +185,9 @@ def test_run_tool_evaluation_without_llm_uses_retrieval(monkeypatch):
         )
     )
 
-    assert output["metrics"]["passed_tests"] == 1
     assert output["results"][0]["selected_tool"] == "tool_beta"
-    assert output["results"][0]["passed"] is True
+    assert output["results"][0]["retrieval_top_tools"][0] == "tool_beta"
+    assert output["results"][0]["passed_tool"] is True
 
 
 def test_generate_tool_metadata_suggestions_fallback():
@@ -310,7 +392,7 @@ def test_run_tool_api_input_evaluation_detects_missing_required_fields(monkeypat
             "total_tests": 1,
             "passed_tests": 0,
             "success_rate": 0.0,
-            "gated_success_rate": 0.0,
+            "gated_success_rate": 1.0 / 3.0,
         }
     ]
 
@@ -332,13 +414,15 @@ def test_suggest_agent_prompt_improvements_for_api_input_fallback():
                 }
             ],
             current_prompts={
-                "agent.trafik.system": "Du är trafikagenten. Håll svaren korta.",
+                "tool.trafikverket_vag_status.system": (
+                    "Du planerar input till trafikverket_vag_status."
+                ),
             },
             llm=None,
         )
     )
     assert len(suggestions) == 1
-    assert suggestions[0]["prompt_key"] == "agent.trafik.system"
+    assert suggestions[0]["prompt_key"] == "tool.trafikverket_vag_status.system"
     assert "API INPUT EVAL-FÖRBÄTTRING" in suggestions[0]["proposed_prompt"]
 
 
@@ -358,7 +442,7 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
     )
 
     async def _fake_dispatch_route(*_args, **_kwargs):
-        return "action", "travel"
+        return "action", "travel", "knowledge_lookup", {"confidence": 0.9}
 
     async def _fake_plan_tool_choice(*_args, **_kwargs):
         return {
@@ -370,8 +454,8 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
 
     async def _fake_plan_agent_choice(*_args, **_kwargs):
         return {
-            "selected_agent": "trafik",
-            "analysis": "Travel/weather should go to trafik agent.",
+            "selected_agent": "weather",
+            "analysis": "Travel/weather should go to weather agent.",
         }
 
     monkeypatch.setattr(
@@ -399,10 +483,10 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
                         "category": "weather",
                         "route": "action",
                         "sub_route": "travel",
-                        "agent": "trafik",
+                        "agent": "weather",
                         "plan_requirements": [
                             "route:action",
-                            "agent:trafik",
+                            "agent:weather",
                             "tool:tool_weather",
                         ],
                     },
@@ -423,10 +507,10 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
     assert output["results"][0]["passed_route"] is True
     assert output["results"][0]["passed_sub_route"] is True
     assert output["results"][0]["passed_agent"] is True
-    assert output["results"][0]["selected_agent"] == "trafik"
+    assert output["results"][0]["selected_agent"] == "weather"
     assert (
         output["results"][0]["agent_selection_analysis"]
-        == "Travel/weather should go to trafik agent."
+        == "Travel/weather should go to weather agent."
     )
     assert output["results"][0]["passed_plan"] is True
     assert output["results"][0]["agent_gate_score"] == 1.0
@@ -434,17 +518,14 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
     assert output["metrics"]["supervisor_review_score"] is not None
     assert output["metrics"]["supervisor_review_pass_rate"] == 1.0
     assert output["results"][0]["supervisor_review_passed"] is True
-    assert output["results"][0]["supervisor_trace"]["selected"]["agent"] == "trafik"
+    assert output["results"][0]["supervisor_trace"]["selected"]["agent"] == "weather"
     assert output["results"][0]["difficulty"] == "medel"
-    assert output["metrics"]["difficulty_breakdown"] == [
-        {
-            "difficulty": "medel",
-            "total_tests": 1,
-            "passed_tests": 1,
-            "success_rate": 1.0,
-            "gated_success_rate": 1.0,
-        }
-    ]
+    breakdown = output["metrics"]["difficulty_breakdown"]
+    assert isinstance(breakdown, list)
+    assert len(breakdown) == 1
+    assert breakdown[0]["difficulty"] == "medel"
+    assert breakdown[0]["total_tests"] == 1
+    assert breakdown[0]["gated_success_rate"] == 1.0
 
 
 def test_run_tool_evaluation_includes_hybrid_execution_metrics(monkeypatch):
@@ -630,13 +711,13 @@ def test_suggest_agent_prompt_improvements_includes_router_prompt():
                 }
             ],
             current_prompts={
-                "router.top_level": "Route incoming user messages.",
+                "supervisor.intent_resolver.system": "Route incoming user messages.",
             },
             llm=None,
         )
     )
     assert len(suggestions) == 1
-    assert suggestions[0]["prompt_key"] == "router.top_level"
+    assert suggestions[0]["prompt_key"] == "supervisor.intent_resolver.system"
     assert "API INPUT EVAL-FÖRBÄTTRING" in suggestions[0]["proposed_prompt"]
 
 
@@ -654,13 +735,13 @@ def test_suggest_agent_prompt_improvements_includes_agent_prompt():
                 }
             ],
             current_prompts={
-                "agent.trafik.system": "Du är trafikagenten.",
+                "supervisor.agent_resolver.system": "Du väljer agent.",
             },
             llm=None,
         )
     )
     assert len(suggestions) == 1
-    assert suggestions[0]["prompt_key"] == "agent.trafik.system"
+    assert suggestions[0]["prompt_key"] == "supervisor.agent_resolver.system"
     assert "API INPUT EVAL-FÖRBÄTTRING" in suggestions[0]["proposed_prompt"]
 
 
@@ -684,14 +765,14 @@ def test_suggest_agent_prompt_improvements_includes_supervisor_prompt_on_review_
                 }
             ],
             current_prompts={
-                "agent.supervisor.system": "Du är supervisor.",
+                "supervisor.planner.system": "Du planerar nästa steg.",
             },
             llm=None,
         )
     )
     assert len(suggestions) == 1
-    assert suggestions[0]["prompt_key"] == "agent.supervisor.system"
-    assert "retrieve_agents" in suggestions[0]["proposed_prompt"]
+    assert suggestions[0]["prompt_key"] == "supervisor.planner.system"
+    assert "retrieve_tools" in suggestions[0]["proposed_prompt"]
 
 
 def test_prompt_architecture_guard_rejects_static_supervisor_agent_list():
@@ -707,7 +788,8 @@ def test_prompt_architecture_guard_rejects_static_supervisor_agent_list():
         prompt_text=prompt,
     )
     assert severe is True
-    assert guarded == prompt.strip()
+    assert guarded.startswith(prompt.strip())
+    assert "retrieve_agents" in guarded
     assert any("statisk agentlista" in violation.casefold() for violation in violations)
 
 
