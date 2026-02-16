@@ -2307,6 +2307,8 @@ async def create_supervisor_agent(
         ),
         "marketplace": WorkerConfig(
             name="marketplace-worker",
+            # Primary: marketplace-specific tools (blocket_cars, blocket_search, tradera_search, etc.)
+            # Fallback: knowledge and general tools only (excludes action/browser to prevent tavily delegation)
             primary_namespaces=[("tools", "marketplace")],
             fallback_namespaces=[
                 # ("tools", "action"),  # REMOVED: Prevents browser/tavily tools from being selected

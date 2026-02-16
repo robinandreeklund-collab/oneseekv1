@@ -41,7 +41,7 @@ Regler:
 - Max 4 steg.
 - Ett steg = en konkret delegerbar aktivitet.
 - **VIKTIGT: Använd ENDAST de agenter som redan finns i `selected_agents`. Lägg INTE till fler agenter.**
-- Om "marketplace" agent är vald för Blocket/Tradera-frågor, använd ENDAST den agenten.
+- Om en specialiserad agent (marketplace, statistics, etc.) är vald, använd ENDAST den agenten.
 - Hall stegen korta och pa svenska.
 
 Returnera strikt JSON:
