@@ -219,9 +219,9 @@ const DETAILED_LANGGRAPH_STEPS = [
 
 // ==================== REAL-TIME TYPING DEMO DATA ====================
 // Constants for truncation and timing
-const MAX_RESPONSE_LENGTH = 200;
-const MAX_SYNTHESIS_LENGTH = 350;
-const QUESTION_ROTATION_INTERVAL = 45000; // 45 seconds
+const MAX_RESPONSE_LENGTH = 500;
+const MAX_SYNTHESIS_LENGTH = 600;
+const QUESTION_ROTATION_INTERVAL = 60000; // 60 seconds (15s pair1 + 15s pair2 + 15s pair3 + 15s synthesis)
 
 // Question data interface
 interface QuestionData {
@@ -262,6 +262,7 @@ const getModelData = (modelName: string) => {
     deepseek: "deepseek",
     perplexity: "perplexity",
     grok: "grok",
+    qwen: "qwen",
   };
   const mappedId = modelMap[normalizedName] || normalizedName;
   return MODEL_DATA.find((m) => m.id === mappedId) || MODEL_DATA[0];
@@ -404,11 +405,19 @@ const StreamingMarkdown = ({
 const SideBySideComparison = () => {
   const [questions, setQuestions] = useState<QuestionData[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [typingComplete, setTypingComplete] = useState<boolean[]>([false, false, false, false, false, false]);
+  const [modelPairIndex, setModelPairIndex] = useState(0);
+  const [typingComplete, setTypingComplete] = useState<boolean[]>([false, false]);
   const [showSynthesis, setShowSynthesis] = useState(false);
   const [synthesisComplete, setSynthesisComplete] = useState(false);
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true });
+
+  // Define model pairs: [grok+chatgpt], [gemini+deepseek], [perplexity+qwen]
+  const MODEL_PAIRS = [
+    ["grok", "chatgpt"],
+    ["gemini", "deepseek"],
+    ["perplexity", "qwen"]
+  ];
 
   // Load questions from JSON
   useEffect(() => {
@@ -420,25 +429,32 @@ const SideBySideComparison = () => {
       .catch((err) => console.error("Failed to load questions:", err));
   }, []);
 
-  // Show synthesis after all 6 models complete
+  // Rotate through model pairs every 15 seconds
   useEffect(() => {
-    if (typingComplete.every((c) => c) && !showSynthesis) {
+    if (!showSynthesis) {
       const timeout = setTimeout(() => {
-        setShowSynthesis(true);
-      }, 800);
+        if (modelPairIndex < MODEL_PAIRS.length - 1) {
+          setModelPairIndex(prev => prev + 1);
+          setTypingComplete([false, false]);
+        } else {
+          // All pairs shown, show synthesis
+          setShowSynthesis(true);
+        }
+      }, 15000);
       return () => clearTimeout(timeout);
     }
-  }, [typingComplete, showSynthesis]);
+  }, [modelPairIndex, showSynthesis]);
 
-  // Rotate to next question after synthesis completes (45s total cycle)
+  // Rotate to next question after synthesis completes
   useEffect(() => {
     if (synthesisComplete && questions.length > 0) {
       const timeout = setTimeout(() => {
         setCurrentQuestionIndex((prev) => (prev + 1) % questions.length);
-        setTypingComplete([false, false, false, false, false, false]);
+        setModelPairIndex(0);
+        setTypingComplete([false, false]);
         setShowSynthesis(false);
         setSynthesisComplete(false);
-      }, QUESTION_ROTATION_INTERVAL);
+      }, 15000);
       return () => clearTimeout(timeout);
     }
   }, [synthesisComplete, questions.length]);
@@ -467,6 +483,12 @@ const SideBySideComparison = () => {
       </div>
     );
   }
+
+  // Get current pair of models
+  const currentPair = MODEL_PAIRS[modelPairIndex];
+  const currentModels = currentQuestion.models.filter(m => 
+    currentPair.includes(m.name.toLowerCase())
+  );
 
   return (
     <div ref={ref} className="relative">
@@ -501,66 +523,83 @@ const SideBySideComparison = () => {
             </p>
           </div>
 
-          {/* 6 models in grid: 3 cols on desktop, 2 on tablet, 1 on mobile */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {currentQuestion.models.map((model, index) => {
-              const modelData = getModelData(model.name);
-              const modelLogoKey = model.name.toLowerCase() === "chatgpt" ? "gpt" : model.name.toLowerCase();
-              const responseText = extractResponse(model.response);
-              
-              return (
-                <motion.div
-                  key={`${currentQuestion.id}-${model.name}-${index}`}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: index * 0.1 }}
-                  className="group relative"
-                >
-                  <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 hover:border-blue-200 dark:hover:border-blue-900 transition-colors duration-300 h-full flex flex-col">
-                    {/* Model Header */}
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="relative size-10 flex-shrink-0">
-                          {MODEL_LOGOS[modelLogoKey] ? (
-                            <Image
-                              src={MODEL_LOGOS[modelLogoKey]}
-                              alt={`${modelData.name} logo`}
-                              width={40}
-                              height={40}
-                              className="object-contain"
-                            />
-                          ) : (
-                            <div className="size-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold shadow-lg">
-                              {modelData.name[0]}
-                            </div>
-                          )}
-                        </div>
-                        <div>
-                          <h3 className="text-xs font-bold text-neutral-900 dark:text-white">{modelData.name}</h3>
-                          <p className="text-[10px] text-neutral-500 dark:text-neutral-400">{modelData.provider}</p>
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50">
-                          {modelData.latency}
-                        </span>
-                        <span className="text-[9px] text-neutral-400">{modelData.tokens}</span>
-                      </div>
-                    </div>
+          {/* Model pair indicator dots */}
+          {!showSynthesis && (
+            <div className="mb-4 flex items-center justify-center gap-2">
+              {MODEL_PAIRS.map((_, index) => (
+                <div
+                  key={index}
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full transition-all duration-300",
+                    index === modelPairIndex ? "bg-purple-500 scale-125" : "bg-neutral-300 dark:bg-neutral-700"
+                  )}
+                />
+              ))}
+            </div>
+          )}
 
-                    {/* Response with typing animation */}
-                    <div className="flex-1 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300 line-clamp-6">
-                      <TypingText 
-                        text={responseText.slice(0, MAX_RESPONSE_LENGTH)} 
-                        speed={20}
-                        onComplete={() => handleModelComplete(index)}
-                      />
+          {/* 2 models side-by-side */}
+          {!showSynthesis && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {currentModels.map((model, index) => {
+                const modelData = getModelData(model.name);
+                const modelLogoKey = model.name.toLowerCase() === "chatgpt" ? "gpt" : model.name.toLowerCase();
+                const responseText = extractResponse(model.response);
+                
+                return (
+                  <motion.div
+                    key={`${currentQuestion.id}-${model.name}-${modelPairIndex}-${index}`}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: index * 0.1 }}
+                    className="group relative"
+                  >
+                    <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 hover:border-blue-200 dark:hover:border-blue-900 transition-colors duration-300 h-full flex flex-col">
+                      {/* Model Header */}
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <div className="relative size-10 flex-shrink-0">
+                            {MODEL_LOGOS[modelLogoKey] ? (
+                              <Image
+                                src={MODEL_LOGOS[modelLogoKey]}
+                                alt={`${modelData.name} logo`}
+                                width={40}
+                                height={40}
+                                className="object-contain"
+                              />
+                            ) : (
+                              <div className="size-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold shadow-lg">
+                                {modelData.name[0]}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <h3 className="text-xs font-bold text-neutral-900 dark:text-white">{modelData.name}</h3>
+                            <p className="text-[10px] text-neutral-500 dark:text-neutral-400">{modelData.provider}</p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50">
+                            {modelData.latency}
+                          </span>
+                          <span className="text-[9px] text-neutral-400">{modelData.tokens}</span>
+                        </div>
+                      </div>
+
+                      {/* Response with typing animation */}
+                      <div className="flex-1 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300 line-clamp-6">
+                        <TypingText 
+                          text={responseText.slice(0, MAX_RESPONSE_LENGTH)} 
+                          speed={20}
+                          onComplete={() => handleModelComplete(index)}
+                        />
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
 
           {/* OneSeek Synthesis Phase */}
           {showSynthesis && (
