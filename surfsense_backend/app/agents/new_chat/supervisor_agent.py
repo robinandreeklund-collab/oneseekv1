@@ -28,9 +28,15 @@ from app.agents.new_chat.nodes import (
     build_intent_resolver_node,
     build_planner_hitl_gate_node,
     build_planner_node,
+    build_smart_critic_node,
     build_synthesis_hitl_gate_node,
     build_synthesizer_node,
     build_tool_resolver_node,
+)
+from app.agents.new_chat.hybrid_state import (
+    build_speculative_candidates,
+    build_trivial_response,
+    classify_graph_complexity,
 )
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
@@ -956,6 +962,14 @@ class SupervisorState(TypedDict, total=False):
     turn_id: Annotated[str | None, _replace]
     active_turn_id: Annotated[str | None, _replace]
     resolved_intent: Annotated[dict[str, Any] | None, _replace]
+    graph_complexity: Annotated[str | None, _replace]
+    speculative_candidates: Annotated[list[dict[str, Any]], _replace]
+    speculative_results: Annotated[dict[str, Any], _replace]
+    execution_strategy: Annotated[str | None, _replace]
+    worker_results: Annotated[list[dict[str, Any]], _replace]
+    synthesis_drafts: Annotated[list[dict[str, Any]], _replace]
+    retrieval_feedback: Annotated[dict[str, Any], _replace]
+    targeted_missing_info: Annotated[list[str], _replace]
     selected_agents: Annotated[list[dict[str, Any]], _replace]
     resolved_tools_by_agent: Annotated[dict[str, list[str]], _replace]
     query_embedding: Annotated[list[float] | None, _replace]
@@ -2161,6 +2175,8 @@ async def create_supervisor_agent(
     statistics_prompt: str,
     synthesis_prompt: str | None = None,
     compare_mode: bool = False,
+    hybrid_mode: bool = False,
+    speculative_enabled: bool = False,
     external_model_prompt: str | None = None,
     bolag_prompt: str | None = None,
     trafik_prompt: str | None = None,
@@ -2697,6 +2713,22 @@ async def create_supervisor_agent(
         "compare": "compare",
         "smalltalk": "smalltalk",
     }
+    route_to_speculative_tool_ids: dict[str, list[str]] = {
+        "knowledge": ["search_knowledge_base", "search_surfsense_docs", "search_tavily"],
+        "action": list(dict.fromkeys((weather_tool_ids[:2] + trafik_tool_ids[:2]))),
+        "weather": weather_tool_ids[:6],
+        "trafik": trafik_tool_ids[:6],
+        "statistics": [
+            str(definition.tool_id).strip()
+            for definition in SCB_TOOL_DEFINITIONS[:6]
+            if str(definition.tool_id).strip()
+        ],
+        "marketplace": [
+            str(definition.tool_id).strip()
+            for definition in MARKETPLACE_TOOL_DEFINITIONS[:6]
+            if str(definition.tool_id).strip()
+        ],
+    }
 
     def _intent_from_route(route_value: str | None) -> dict[str, Any]:
         normalized = _normalize_route_hint_value(route_value)
@@ -2707,6 +2739,40 @@ async def create_supervisor_agent(
             "reason": "Fallback baserad pa route_hint.",
             "confidence": 0.5,
         }
+
+    def _route_default_agent_for_intent(route_value: str | None) -> str:
+        normalized = _normalize_route_hint_value(route_value)
+        allowed = _route_allowed_agents(normalized)
+        return _route_default_agent(normalized, allowed)
+
+    def _classify_graph_complexity(
+        resolved_intent_payload: dict[str, Any],
+        latest_user_query: str,
+    ) -> str:
+        if not hybrid_mode:
+            return "complex"
+        return classify_graph_complexity(
+            resolved_intent=resolved_intent_payload,
+            user_query=latest_user_query,
+        )
+
+    def _build_speculative_candidates_for_intent(
+        resolved_intent_payload: dict[str, Any],
+        latest_user_query: str,
+    ) -> list[dict[str, Any]]:
+        if not (hybrid_mode and speculative_enabled):
+            return []
+        return build_speculative_candidates(
+            resolved_intent=resolved_intent_payload,
+            user_query=latest_user_query,
+            route_to_tool_ids=route_to_speculative_tool_ids,
+            max_candidates=3,
+        )
+
+    def _build_trivial_response_for_intent(latest_user_query: str) -> str | None:
+        if not hybrid_mode:
+            return None
+        return build_trivial_response(latest_user_query)
 
     def _agent_payload(definition: AgentDefinition) -> dict[str, Any]:
         return {
@@ -3596,6 +3662,10 @@ async def create_supervisor_agent(
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
         coerce_confidence_fn=_coerce_confidence,
+        classify_graph_complexity_fn=_classify_graph_complexity,
+        build_speculative_candidates_fn=_build_speculative_candidates_for_intent,
+        build_trivial_response_fn=_build_trivial_response_for_intent,
+        route_default_agent_fn=_route_default_agent_for_intent,
     )
 
     resolve_agents_node = build_agent_resolver_node(
@@ -3658,6 +3728,13 @@ async def create_supervisor_agent(
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
         render_guard_message_fn=_render_guard_message,
+    )
+    smart_critic_node = build_smart_critic_node(
+        fallback_critic_node=critic_node,
+        contract_from_payload_fn=_contract_from_payload,
+        latest_user_query_fn=_latest_user_query,
+        max_replan_attempts=_MAX_REPLAN_ATTEMPTS,
+        min_mechanical_confidence=0.7,
     )
 
     synthesis_hitl_gate_node = build_synthesis_hitl_gate_node(
@@ -4077,6 +4154,15 @@ async def create_supervisor_agent(
             return "tool_resolver"
         if phase in {"plan"}:
             return "planner"
+        if hybrid_mode and not compare_mode:
+            complexity = str(state.get("graph_complexity") or "").strip().lower()
+            if complexity == "simple":
+                return "tool_resolver"
+            if complexity == "trivial":
+                if has_final:
+                    return "synthesis_hitl"
+                return "agent_resolver"
+            return "agent_resolver"
         return "agent_resolver"
 
     def planner_hitl_should_continue(state: SupervisorState, *, store=None):
@@ -4177,7 +4263,10 @@ async def create_supervisor_agent(
             "orchestration_guard",
             RunnableCallable(None, orchestration_guard),
         )
-        graph_builder.add_node("critic", RunnableCallable(None, critic_node))
+        selected_critic_node = (
+            smart_critic_node if hybrid_mode and not compare_mode else critic_node
+        )
+        graph_builder.add_node("critic", RunnableCallable(None, selected_critic_node))
         graph_builder.add_node(
             "synthesis_hitl",
             RunnableCallable(None, synthesis_hitl_gate_node),

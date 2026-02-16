@@ -983,6 +983,19 @@ def _is_internal_pipeline_chain_name(chain_name: str) -> bool:
     return any(token in normalized for token in _INTERNAL_PIPELINE_CHAIN_TOKENS)
 
 
+def _coerce_runtime_flag(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return bool(default)
+
+
 async def stream_new_chat(
     user_query: str,
     search_space_id: int,
@@ -1022,7 +1035,10 @@ async def stream_new_chat(
             - False/None: disable citation instruction injection.
             - str: inject custom citation instructions.
         runtime_hitl:
-            Optional runtime HITL flags for planner/execution/synthesis checkpoints.
+            Optional runtime flags. Supports:
+            - planner/execution/synthesis HITL checkpoints.
+            - hybrid_mode (bool): enables hybrid supervisor routing.
+            - speculative_enabled (bool): enables speculative execution paths.
         checkpoint_ns_override:
             Optional explicit checkpoint namespace. When provided, bypasses automatic
             namespace resolution and uses this value ("" means legacy namespace).
@@ -1343,6 +1359,18 @@ async def stream_new_chat(
         else:
             worker_system_prompt = supervisor_system_prompt
 
+        runtime_flags = dict(runtime_hitl or {})
+        hybrid_mode = _coerce_runtime_flag(
+            runtime_flags.get("hybrid_mode"),
+            default=False,
+        )
+        speculative_enabled = _coerce_runtime_flag(
+            runtime_flags.get("speculative_enabled"),
+            default=False,
+        )
+        if not hybrid_mode:
+            speculative_enabled = False
+
         effective_agent_config = agent_config
         if route == Route.SMALLTALK and smalltalk_prompt:
             effective_agent_config = build_subagent_config(
@@ -1360,6 +1388,8 @@ async def stream_new_chat(
                 "citations_enabled": citations_enabled,
                 "citation_instructions_enabled": citations_enabled,
                 "runtime_hitl": runtime_hitl or {},
+                "hybrid_mode": hybrid_mode,
+                "speculative_enabled": speculative_enabled,
             }
             route_start = await trace_recorder.start_span(
                 span_id=route_span_id,
@@ -1411,7 +1441,12 @@ async def stream_new_chat(
             )
 
         if route != Route.SMALLTALK:
-            print(f"[DEBUG] Building graph with compare_mode={compare_mode}")
+            print(
+                "[DEBUG] Building graph with "
+                f"compare_mode={compare_mode}, "
+                f"hybrid_mode={hybrid_mode}, "
+                f"speculative_enabled={speculative_enabled}"
+            )
             agent = await build_complete_graph(
                 llm=llm,
                 dependencies={
@@ -1430,6 +1465,8 @@ async def stream_new_chat(
                 statistics_prompt=statistics_worker_prompt,
                 synthesis_prompt=compare_synthesis_prompt or synthesis_prompt,
                 compare_mode=compare_mode,
+                hybrid_mode=hybrid_mode,
+                speculative_enabled=speculative_enabled,
                 external_model_prompt=compare_external_prompt,
                 bolag_prompt=bolag_worker_prompt,
                 trafik_prompt=trafik_worker_prompt,
@@ -1719,10 +1756,13 @@ async def stream_new_chat(
                 if kind == "intent":
                     title = format_step_title("Resolving intent")
                     intent_id = str(payload.get("intent_id") or "").strip()
+                    graph_complexity = str(payload.get("graph_complexity") or "").strip()
                     reason = str(payload.get("reason") or "").strip()
                     confidence = payload.get("confidence")
                     if intent_id:
                         items.append(f"Intent: {intent_id}")
+                    if graph_complexity:
+                        items.append(f"Graph complexity: {graph_complexity}")
                     if isinstance(confidence, (int, float)):
                         items.append(f"Confidence: {float(confidence):.2f}")
                     if reason:

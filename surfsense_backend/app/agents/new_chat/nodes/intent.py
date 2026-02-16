@@ -18,6 +18,10 @@ def build_intent_resolver_node(
     append_datetime_context_fn: Callable[[str], str],
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
     coerce_confidence_fn: Callable[[Any, float], float],
+    classify_graph_complexity_fn: Callable[[dict[str, Any], str], str],
+    build_speculative_candidates_fn: Callable[[dict[str, Any], str], list[dict[str, Any]]],
+    build_trivial_response_fn: Callable[[str], str | None],
+    route_default_agent_fn: Callable[[str | None], str],
 ):
     async def resolve_intent_node(
         state: dict[str, Any],
@@ -135,8 +139,48 @@ def build_intent_resolver_node(
             except Exception:
                 pass
 
+        graph_complexity = str(
+            classify_graph_complexity_fn(resolved, latest_user_query)
+        ).strip().lower()
+        if graph_complexity not in {"trivial", "simple", "complex"}:
+            graph_complexity = "complex"
+        speculative_candidates = build_speculative_candidates_fn(
+            resolved,
+            latest_user_query,
+        )
+        if not isinstance(speculative_candidates, list):
+            speculative_candidates = []
+        speculative_candidates = [
+            item for item in speculative_candidates[:3] if isinstance(item, dict)
+        ]
+
+        selected_agents_for_simple: list[dict[str, Any]] = []
+        if graph_complexity == "simple":
+            default_agent_name = route_default_agent_fn(resolved.get("route"))
+            if default_agent_name:
+                selected_agents_for_simple = [
+                    {
+                        "name": str(default_agent_name),
+                        "description": "Preselected from hybrid intent complexity.",
+                    }
+                ]
+
+        trivial_response = (
+            build_trivial_response_fn(latest_user_query)
+            if graph_complexity == "trivial"
+            else None
+        )
+
         updates: dict[str, Any] = {
             "resolved_intent": resolved,
+            "graph_complexity": graph_complexity,
+            "speculative_candidates": speculative_candidates,
+            "speculative_results": {},
+            "execution_strategy": None,
+            "worker_results": [],
+            "synthesis_drafts": [],
+            "retrieval_feedback": {},
+            "targeted_missing_info": [],
             "orchestration_phase": "select_agent",
         }
         if new_user_turn:
@@ -159,10 +203,27 @@ def build_intent_resolver_node(
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
             updates["guard_parallel_preview"] = []
+            updates["graph_complexity"] = graph_complexity
+            updates["speculative_candidates"] = speculative_candidates
+            updates["speculative_results"] = {}
+            updates["execution_strategy"] = None
+            updates["worker_results"] = []
+            updates["synthesis_drafts"] = []
+            updates["retrieval_feedback"] = {}
+            updates["targeted_missing_info"] = []
             if incoming_turn_id:
                 updates["active_turn_id"] = incoming_turn_id
         elif incoming_turn_id and not active_turn_id:
             updates["active_turn_id"] = incoming_turn_id
+
+        if selected_agents_for_simple:
+            updates["selected_agents"] = selected_agents_for_simple
+
+        if trivial_response:
+            updates["final_agent_response"] = trivial_response
+            updates["final_response"] = trivial_response
+            updates["final_agent_name"] = "supervisor"
+            updates["orchestration_phase"] = "finalize"
         return updates
 
     return resolve_intent_node

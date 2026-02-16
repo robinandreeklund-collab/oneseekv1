@@ -13,6 +13,14 @@ def _build_executor_updates_for_new_user_turn(
 ) -> dict[str, Any]:
     updates: dict[str, Any] = {
         "resolved_intent": None,
+        "graph_complexity": None,
+        "speculative_candidates": [],
+        "speculative_results": {},
+        "execution_strategy": None,
+        "worker_results": [],
+        "synthesis_drafts": [],
+        "retrieval_feedback": {},
+        "targeted_missing_info": [],
         "selected_agents": [],
         "resolved_tools_by_agent": {},
         "query_embedding": None,
