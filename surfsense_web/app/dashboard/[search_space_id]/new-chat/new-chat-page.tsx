@@ -94,6 +94,29 @@ import {
 	trackChatResponseReceived,
 } from "@/lib/posthog/events";
 
+type RuntimeHitlPayload = Record<string, unknown>;
+
+function parseRuntimeHitlPayload(raw: string | undefined): RuntimeHitlPayload | null {
+	if (!raw || !raw.trim()) return null;
+	try {
+		const parsed = JSON.parse(raw);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed as RuntimeHitlPayload;
+		}
+		console.error(
+			"[NewChatPage] Ignoring NEXT_PUBLIC_RUNTIME_HITL_JSON: expected a JSON object payload"
+		);
+		return null;
+	} catch (error) {
+		console.error("[NewChatPage] Failed to parse NEXT_PUBLIC_RUNTIME_HITL_JSON:", error);
+		return null;
+	}
+}
+
+const PLATFORM_RUNTIME_HITL = parseRuntimeHitlPayload(
+	process.env.NEXT_PUBLIC_RUNTIME_HITL_JSON
+);
+
 /**
  * Extract thinking steps from message content
  */
@@ -1123,6 +1146,7 @@ export default function NewChatPage() {
 						mentioned_surfsense_doc_ids: hasSurfsenseDocIds
 							? mentionedDocumentIds.surfsense_doc_ids
 							: undefined,
+						runtime_hitl: PLATFORM_RUNTIME_HITL ?? undefined,
 					}),
 					signal: controller.signal,
 				});
@@ -1720,6 +1744,7 @@ export default function NewChatPage() {
 					body: JSON.stringify({
 						search_space_id: searchSpaceId,
 						user_query: newUserQuery || null,
+						runtime_hitl: PLATFORM_RUNTIME_HITL ?? undefined,
 					}),
 					signal: controller.signal,
 				});

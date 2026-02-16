@@ -12,6 +12,7 @@ These endpoints support the ThreadHistoryAdapter pattern from assistant-ui:
 """
 
 import contextlib
+import json
 import os
 import tempfile
 import uuid
@@ -59,6 +60,39 @@ from app.users import current_active_user
 from app.utils.rbac import check_permission
 
 router = APIRouter()
+
+
+def _resolve_runtime_hitl_payload(runtime_hitl_model: object | None) -> dict[str, object] | None:
+    """
+    Resolve runtime HITL flags for chat execution.
+
+    Priority:
+      1) ONESEEK_RUNTIME_HITL_DEFAULT_JSON (platform-wide default)
+      2) request.runtime_hitl (request-level override)
+    """
+    payload: dict[str, object] = {}
+    env_raw = os.getenv("ONESEEK_RUNTIME_HITL_DEFAULT_JSON", "").strip()
+    if env_raw:
+        try:
+            parsed = json.loads(env_raw)
+            if isinstance(parsed, dict):
+                payload.update(parsed)
+            else:
+                print(
+                    "[new_chat_routes] Ignoring ONESEEK_RUNTIME_HITL_DEFAULT_JSON: expected JSON object."
+                )
+        except json.JSONDecodeError as exc:
+            print(
+                "[new_chat_routes] Failed to parse ONESEEK_RUNTIME_HITL_DEFAULT_JSON: "
+                f"{exc}"
+            )
+
+    if runtime_hitl_model is not None and hasattr(runtime_hitl_model, "model_dump"):
+        request_payload = runtime_hitl_model.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+        if isinstance(request_payload, dict):
+            payload.update(request_payload)
+
+    return payload or None
 
 
 async def check_thread_access(
@@ -1233,9 +1267,7 @@ async def handle_new_chat(
                 mentioned_surfsense_doc_ids=request.mentioned_surfsense_doc_ids,
                 needs_history_bootstrap=thread.needs_history_bootstrap,
                 citation_instructions=request.citation_instructions,
-                runtime_hitl=(
-                    request.runtime_hitl.model_dump() if request.runtime_hitl else None
-                ),
+                runtime_hitl=_resolve_runtime_hitl_payload(request.runtime_hitl),
             ),
             media_type="text/event-stream",
             headers={
@@ -1484,9 +1516,7 @@ async def regenerate_response(
                     checkpoint_ns_override=checkpoint_ns,
                     needs_history_bootstrap=thread.needs_history_bootstrap,
                     citation_instructions=request.citation_instructions,
-                    runtime_hitl=(
-                        request.runtime_hitl.model_dump() if request.runtime_hitl else None
-                    ),
+                    runtime_hitl=_resolve_runtime_hitl_payload(request.runtime_hitl),
                 ):
                     yield chunk
                 # If we get here, streaming completed successfully

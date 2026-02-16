@@ -175,6 +175,8 @@ class RuntimeHitlConfig(BaseModel):
     planner: bool = False
     execution: bool = False
     synthesis: bool = False
+    # Allow passthrough of additional runtime flags (hybrid/sandbox/subagent, etc).
+    model_config = ConfigDict(extra="allow")
 
 
 class NewChatRequest(BaseModel):
