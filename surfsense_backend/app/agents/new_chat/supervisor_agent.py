@@ -38,6 +38,7 @@ from app.agents.new_chat.response_compressor import compress_response
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
+from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.supervisor_runtime_prompts import (
     DEFAULT_SUPERVISOR_CRITIC_PROMPT,
     DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
@@ -2223,6 +2224,11 @@ async def create_supervisor_agent(
         "supervisor.synthesizer.system",
         DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     )
+    compare_synthesizer_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "compare.analysis.system",
+        DEFAULT_COMPARE_ANALYSIS_PROMPT,
+    )
     hitl_planner_message_template = resolve_prompt(
         prompt_overrides,
         "supervisor.hitl.planner.message",
@@ -3664,6 +3670,7 @@ async def create_supervisor_agent(
     synthesizer_node = build_synthesizer_node(
         llm=llm,
         synthesizer_prompt_template=synthesizer_prompt_template,
+        compare_synthesizer_prompt_template=compare_synthesizer_prompt_template,
         latest_user_query_fn=_latest_user_query,
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,

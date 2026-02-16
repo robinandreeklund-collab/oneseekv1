@@ -10,6 +10,7 @@ def build_synthesizer_node(
     *,
     llm: Any,
     synthesizer_prompt_template: str,
+    compare_synthesizer_prompt_template: str | None = None,
     latest_user_query_fn: Callable[[list[Any] | None], str],
     append_datetime_context_fn: Callable[[str], str],
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
@@ -28,7 +29,15 @@ def build_synthesizer_node(
         if not source_response:
             return {}
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
-        prompt = append_datetime_context_fn(synthesizer_prompt_template)
+        
+        # Use compare-specific prompt if in compare mode
+        route_hint = str(state.get("route_hint") or "").strip().lower()
+        if route_hint == "compare" and compare_synthesizer_prompt_template:
+            prompt_template = compare_synthesizer_prompt_template
+        else:
+            prompt_template = synthesizer_prompt_template
+        
+        prompt = append_datetime_context_fn(prompt_template)
         synth_input = json.dumps(
             {
                 "query": latest_user_query,
