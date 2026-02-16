@@ -1,45 +1,61 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
+from pathlib import Path
+import sys
 from typing import Any
 
-from app.agents.new_chat.hybrid_state import (
-    GRAPH_COMPLEXITY_COMPLEX,
-    GRAPH_COMPLEXITY_SIMPLE,
-    GRAPH_COMPLEXITY_TRIVIAL,
-    build_trivial_response,
-    classify_graph_complexity,
+
+def _load_module(module_name: str, relative_path: str):
+    project_root = Path(__file__).resolve().parents[1]
+    module_path = project_root / relative_path
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load module spec: {module_name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+hybrid_state = _load_module(
+    "hybrid_state_test_module",
+    "app/agents/new_chat/hybrid_state.py",
 )
-from app.agents.new_chat.nodes.smart_critic import build_smart_critic_node
+smart_critic_module = _load_module(
+    "smart_critic_test_module",
+    "app/agents/new_chat/nodes/smart_critic.py",
+)
 
 
 def test_classify_graph_complexity_trivial_greeting() -> None:
-    result = classify_graph_complexity(
+    result = hybrid_state.classify_graph_complexity(
         resolved_intent={"route": "knowledge", "confidence": 0.9},
         user_query="Hej!",
     )
-    assert result == GRAPH_COMPLEXITY_TRIVIAL
+    assert result == hybrid_state.GRAPH_COMPLEXITY_TRIVIAL
 
 
 def test_classify_graph_complexity_simple_action_query() -> None:
-    result = classify_graph_complexity(
+    result = hybrid_state.classify_graph_complexity(
         resolved_intent={"route": "action", "confidence": 0.84},
         user_query="Vad blir vadret i Uppsala i morgon?",
     )
-    assert result == GRAPH_COMPLEXITY_SIMPLE
+    assert result == hybrid_state.GRAPH_COMPLEXITY_SIMPLE
 
 
 def test_classify_graph_complexity_statistics_forces_complex() -> None:
-    result = classify_graph_complexity(
+    result = hybrid_state.classify_graph_complexity(
         resolved_intent={"route": "statistics", "confidence": 0.95},
         user_query="Visa statistik for arbetsloshet i alla lan",
     )
-    assert result == GRAPH_COMPLEXITY_COMPLEX
+    assert result == hybrid_state.GRAPH_COMPLEXITY_COMPLEX
 
 
 def test_build_trivial_response_only_for_greetings() -> None:
-    assert build_trivial_response("Hej!") is not None
-    assert build_trivial_response("Hur ser trafiken ut?") is None
+    assert hybrid_state.build_trivial_response("Hej!") is not None
+    assert hybrid_state.build_trivial_response("Hur ser trafiken ut?") is None
 
 
 def test_smart_critic_mechanical_ok_path() -> None:
@@ -55,7 +71,7 @@ def test_smart_critic_mechanical_ok_path() -> None:
         fallback_called["value"] = True
         return {"critic_decision": "ok", "orchestration_phase": "finalize"}
 
-    smart_critic = build_smart_critic_node(
+    smart_critic = smart_critic_module.build_smart_critic_node(
         fallback_critic_node=fallback_critic,
         contract_from_payload_fn=lambda payload: dict(payload.get("result_contract") or {})
         if isinstance(payload, dict)
@@ -94,7 +110,7 @@ def test_smart_critic_needs_more_with_targeted_missing_info() -> None:
     ) -> dict[str, Any]:
         return {"critic_decision": "ok", "orchestration_phase": "finalize"}
 
-    smart_critic = build_smart_critic_node(
+    smart_critic = smart_critic_module.build_smart_critic_node(
         fallback_critic_node=fallback_critic,
         contract_from_payload_fn=lambda payload: dict(payload.get("result_contract") or {})
         if isinstance(payload, dict)
