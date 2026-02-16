@@ -54,7 +54,7 @@ class EpisodicFact:
 
 class EpisodicMemoryStore:
     def __init__(self, *, max_entries: int = 500):
-        self._max_entries = max(50, int(max_entries))
+        self._max_entries = max(1, int(max_entries))
         self._entries: OrderedDict[str, EpisodicFact] = OrderedDict()
         self._lock = threading.RLock()
 
