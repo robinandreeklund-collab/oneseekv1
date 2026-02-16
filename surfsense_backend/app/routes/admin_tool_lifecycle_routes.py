@@ -293,3 +293,58 @@ async def emergency_rollback_tool(
         notes=updated.notes,
         created_at=updated.created_at,
     )
+
+
+@router.post(
+    "/tool-lifecycle/bulk-promote",
+)
+async def bulk_promote_tools_to_live(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """
+    Bulk promote all tools in REVIEW status to LIVE status.
+    
+    This is intended for initial setup to promote existing production tools
+    that were initialized as REVIEW. Bypasses success rate threshold checks.
+    
+    Use with caution - only for migrating existing tools to the lifecycle system.
+    """
+    await _require_admin(session, user)
+    
+    # Get all tools in REVIEW status
+    statuses = await get_all_tool_lifecycle_statuses(session)
+    review_tools = [s for s in statuses if s.status == ToolLifecycleStatus.REVIEW]
+    
+    if not review_tools:
+        return {
+            "message": "No tools in REVIEW status to promote",
+            "promoted_count": 0,
+        }
+    
+    # Promote all to LIVE (bypass threshold check)
+    promoted_count = 0
+    for tool_status in review_tools:
+        try:
+            await set_tool_status(
+                session,
+                tool_status.tool_id,
+                ToolLifecycleStatus.LIVE,
+                user_id=user.id,
+                notes="Bulk promotion: Existing production tool migrated to lifecycle system",
+            )
+            promoted_count += 1
+        except Exception as e:
+            logger.error(f"Failed to promote tool {tool_status.tool_id}: {e}")
+    
+    logger.info(
+        f"Bulk promotion completed by user {user.id}: "
+        f"{promoted_count}/{len(review_tools)} tools promoted to LIVE"
+    )
+    
+    return {
+        "message": f"Successfully promoted {promoted_count} tools to LIVE status",
+        "promoted_count": promoted_count,
+        "total_review_tools": len(review_tools),
+    }
+

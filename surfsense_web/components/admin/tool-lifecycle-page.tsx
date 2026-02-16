@@ -122,6 +122,33 @@ export function ToolLifecyclePage() {
 		}
 	};
 
+	const bulkPromoteToLive = async () => {
+		if (!confirm(`Promote ALL ${data?.review_count || 0} review tools to LIVE status?\n\nThis bypasses threshold checks and is intended for initial migration of existing production tools.`)) {
+			return;
+		}
+
+		try {
+			setLoading(true);
+			const response = await fetch(`${process.env.NEXT_PUBLIC_FASTAPI_BACKEND_URL || "http://localhost:8000"}/api/v1/admin/tool-lifecycle/bulk-promote`, {
+				method: "POST",
+				credentials: "include",
+			});
+			
+			if (!response.ok) {
+				throw new Error("Failed to bulk promote tools");
+			}
+			
+			const result = await response.json();
+			toast.success(result.message);
+			await fetchLifecycleData();
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : "Failed to bulk promote");
+			console.error(error);
+		} finally {
+			setLoading(false);
+		}
+	};
+
 	const filteredTools = data?.tools.filter((tool) =>
 		tool.tool_id.toLowerCase().includes(searchQuery.toLowerCase())
 	) || [];
@@ -211,15 +238,29 @@ export function ToolLifecyclePage() {
 				</Card>
 			</div>
 
-			{/* Search */}
-			<div className="flex items-center gap-2">
-				<Search className="h-4 w-4 text-muted-foreground" />
-				<Input
-					placeholder="Sök tool ID..."
-					value={searchQuery}
-					onChange={(e) => setSearchQuery(e.target.value)}
-					className="max-w-sm"
-				/>
+			{/* Search and Actions */}
+			<div className="flex items-center justify-between gap-4">
+				<div className="flex items-center gap-2 flex-1">
+					<Search className="h-4 w-4 text-muted-foreground" />
+					<Input
+						placeholder="Sök tool ID..."
+						value={searchQuery}
+						onChange={(e) => setSearchQuery(e.target.value)}
+						className="max-w-sm"
+					/>
+				</div>
+				
+				{data.review_count > 0 && (
+					<Button 
+						onClick={bulkPromoteToLive}
+						variant="outline"
+						className="gap-2"
+						disabled={loading}
+					>
+						<CheckCircle2 className="h-4 w-4" />
+						Promote All to Live ({data.review_count})
+					</Button>
+				)}
 			</div>
 
 			{/* Tools Table */}
