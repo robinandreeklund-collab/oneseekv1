@@ -9,6 +9,7 @@ import {
 	ChevronRight,
 	CircleDot,
 	Copy,
+	Download,
 } from "lucide-react";
 import { Drawer, DrawerContent, DrawerHandle, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -206,6 +207,44 @@ export function TraceSheet({
 	const attributionEntries = extractAttribution(selectedSpan);
 	const selectedTokenInfo = getTokenInfo(selectedSpan);
 
+	const exportLangGraphFlow = () => {
+		const exportData = {
+			metadata: {
+				exportedAt: new Date().toISOString(),
+				messageId: messageId,
+				sessionId: sessionId,
+				totalSpans: spans.length,
+				completedSpans: spans.filter(s => s.status === "completed").length,
+				runningSpans: spans.filter(s => s.status === "running").length,
+				errorSpans: spans.filter(s => s.status === "error").length,
+			},
+			spans: spans.map(span => ({
+				id: span.id,
+				parent_id: span.parent_id,
+				name: span.name,
+				status: span.status,
+				sequence: span.sequence,
+				start_time: span.start_time,
+				end_time: span.end_time,
+				duration_ms: span.duration_ms,
+				input: span.input,
+				output: span.output,
+				meta: span.meta,
+				error: span.error,
+			}))
+		};
+		
+		const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+			type: 'application/json'
+		});
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `langgraph-flow-${messageId || 'unknown'}-${Date.now()}.json`;
+		a.click();
+		URL.revokeObjectURL(url);
+	};
+
 	const headerContent = (
 		<div className="flex items-center justify-between gap-3">
 			<div className="flex items-center gap-2">
@@ -219,14 +258,26 @@ export function TraceSheet({
 					</div>
 				</div>
 			</div>
-			<Button
-				variant="ghost"
-				size="sm"
-				onClick={() => setFollowLive((prev) => !prev)}
-				className={cn("text-xs", followLive && "text-primary")}
-			>
-				{followLive ? "Följer live" : "Pausa följning"}
-			</Button>
+			<div className="flex items-center gap-2">
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={exportLangGraphFlow}
+					className="text-xs gap-1.5"
+					title="Exportera hela LangGraph-flödet som JSON"
+				>
+					<Download className="size-3.5" />
+					Exportera JSON
+				</Button>
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={() => setFollowLive((prev) => !prev)}
+					className={cn("text-xs", followLive && "text-primary")}
+				>
+					{followLive ? "Följer live" : "Pausa följning"}
+				</Button>
+			</div>
 		</div>
 	);
 
