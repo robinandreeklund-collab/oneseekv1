@@ -2592,7 +2592,7 @@ async def create_supervisor_agent(
                 "finns",
             ],
             namespace=("agents", "marketplace"),
-            prompt_key="marketplace",
+            prompt_key="agent.marketplace.system",
         ),
         AgentDefinition(
             name="synthesis",
