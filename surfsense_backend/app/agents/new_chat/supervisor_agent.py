@@ -3438,6 +3438,17 @@ async def create_supervisor_agent(
             and requested_raw != "marketplace"
         ):
             return "marketplace", f"marketplace_lock:{requested_raw}->marketplace"
+        # For filesystem operations in sandbox mode, always execute through code agent.
+        # This prevents fallback/alias drift to generic action agents that may answer
+        # textually without invoking sandbox_* tools.
+        if (
+            route_hint == "action"
+            and sandbox_enabled
+            and filesystem_task
+            and "code" in agent_by_name
+            and requested_raw != "code"
+        ):
+            return "code", f"filesystem_hard_lock:{requested_raw}->code"
         if (
             route_hint == "action"
             and sandbox_enabled
