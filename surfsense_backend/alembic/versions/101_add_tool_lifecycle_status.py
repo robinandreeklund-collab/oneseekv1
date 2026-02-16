@@ -1,7 +1,7 @@
 """Add global tool lifecycle status table
 
-Revision ID: 100
-Revises: 99
+Revision ID: 101
+Revises: 100
 """
 
 from collections.abc import Sequence
@@ -12,8 +12,8 @@ from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision: str = "100"
-down_revision: str | None = "99"
+revision: str = "101"
+down_revision: str | None = "100"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
