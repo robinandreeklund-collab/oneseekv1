@@ -115,10 +115,11 @@ Pass criteria for Phase 1:
 
 ---
 
-## Phase 4 - speculative branch + progressive synthesis
+## Phase 4 - speculative branch + progressive synthesis (implemented)
 
 ### Scope
-- Add speculative branch and merge rules.
+- Add speculative branch and merge rules (`speculative` -> `speculative_merge`).
+- Reuse speculative hits in `call_agent`/`call_agents_parallel` to avoid duplicate calls.
 - Add progressive draft synthesis (`data-synthesis-draft` SSE event).
 
 ### Manual tests

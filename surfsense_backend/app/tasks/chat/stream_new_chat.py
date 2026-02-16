@@ -696,7 +696,7 @@ _REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _STREAM_JSON_DECODER = json.JSONDecoder()
 _CRITIC_JSON_START_RE = re.compile(r"\{\s*[\"']status[\"']\s*:", re.IGNORECASE)
 _PIPELINE_JSON_START_RE = re.compile(
-    r"\{\s*[\"'](?:intent_id|selected_agents|status|decision|steps|execution_strategy)\b",
+    r"\{\s*[\"'](?:intent_id|graph_complexity|selected_agents|status|decision|steps|execution_strategy|speculative_candidates|speculative_reused_tools|synthesis_drafts)\b",
     re.IGNORECASE,
 )
 _PIPELINE_JSON_PARTIAL_KEY_RE = re.compile(
@@ -705,23 +705,32 @@ _PIPELINE_JSON_PARTIAL_KEY_RE = re.compile(
 )
 _PIPELINE_JSON_KEYS = (
     "intent_id",
+    "graph_complexity",
     "selected_agents",
     "status",
     "decision",
     "steps",
     "execution_strategy",
     "execution_reason",
+    "speculative_candidates",
+    "speculative_reused_tools",
+    "speculative_remaining_tools",
+    "speculative_discarded_tools",
+    "synthesis_drafts",
     "reason",
     "confidence",
 )
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
 _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "resolve_intent",
+    "speculative",
+    "speculative_merge",
     "agent_resolver",
     "planner",
     "tool_resolver",
     "execution_router",
     "critic",
+    "progressive_synthesizer",
     "synthesizer",
 )
 
@@ -899,7 +908,84 @@ def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
     execution_strategy = str(payload.get("execution_strategy") or "").strip().lower()
     if execution_strategy in {"inline", "parallel", "subagent"}:
         return "execution_router"
+    if isinstance(payload.get("speculative_candidates"), list) or isinstance(
+        payload.get("speculative_reused_tools"),
+        list,
+    ):
+        return "speculative"
+    if isinstance(payload.get("synthesis_drafts"), list):
+        return "progressive_synthesizer"
     return None
+
+
+def _normalize_synthesis_draft_payload(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    draft_text = str(
+        value.get("draft") or value.get("text") or value.get("content") or ""
+    ).strip()
+    if not draft_text:
+        return None
+    confidence_raw = value.get("confidence")
+    try:
+        confidence = float(confidence_raw)
+    except (TypeError, ValueError):
+        confidence = 0.5
+    version_raw = value.get("version")
+    try:
+        version = int(version_raw)
+    except (TypeError, ValueError):
+        version = 0
+    return {
+        "draft": draft_text,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "version": max(0, version),
+    }
+
+
+def _extract_synthesis_drafts_from_event_output(output: Any) -> list[dict[str, Any]]:
+    if output is None:
+        return []
+    if isinstance(output, dict):
+        drafts = output.get("synthesis_drafts")
+        if isinstance(drafts, list):
+            normalized: list[dict[str, Any]] = []
+            for item in drafts:
+                payload = _normalize_synthesis_draft_payload(item)
+                if payload:
+                    normalized.append(payload)
+            if normalized:
+                return normalized
+        for key in ("output", "message", "messages", "generations"):
+            if key not in output:
+                continue
+            nested = _extract_synthesis_drafts_from_event_output(output.get(key))
+            if nested:
+                return nested
+        return []
+    if isinstance(output, list):
+        for item in reversed(output):
+            nested = _extract_synthesis_drafts_from_event_output(item)
+            if nested:
+                return nested
+        return []
+    if hasattr(output, "generations"):
+        nested = _extract_synthesis_drafts_from_event_output(
+            getattr(output, "generations"),
+        )
+        if nested:
+            return nested
+    if hasattr(output, "message"):
+        nested = _extract_synthesis_drafts_from_event_output(
+            getattr(output, "message"),
+        )
+        if nested:
+            return nested
+    if hasattr(output, "synthesis_drafts"):
+        return _extract_synthesis_drafts_from_event_output(
+            getattr(output, "synthesis_drafts"),
+        )
+    return []
 
 
 def _decode_json_object_from_text(
@@ -1706,6 +1792,7 @@ async def stream_new_chat(
         model_parent_chain_by_run_id: dict[str, str] = {}
         internal_model_buffers: dict[str, str] = {}
         emitted_pipeline_payload_signatures: set[str] = set()
+        emitted_synthesis_draft_signatures: set[str] = set()
         streamed_tool_call_ids: set[str] = set()  # Track tool calls already streamed to prevent duplicates
         stream_pipeline_prefix_buffer: str = ""
 
@@ -1816,6 +1903,37 @@ async def stream_new_chat(
                         items.append(f"Strategi: {strategy}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
+                elif kind == "speculative":
+                    title = format_step_title("Running speculative tools")
+                    candidates = payload.get("speculative_candidates")
+                    if isinstance(candidates, list):
+                        candidate_ids = [
+                            str((item or {}).get("tool_id") or "").strip()
+                            for item in candidates
+                            if isinstance(item, dict)
+                        ]
+                        candidate_ids = [item for item in candidate_ids if item]
+                        if candidate_ids:
+                            items.append(
+                                f"Kandidater: {', '.join(candidate_ids[:4])}"
+                            )
+                    reused = payload.get("speculative_reused_tools")
+                    if isinstance(reused, list) and reused:
+                        items.append(f"Återanvända: {len(reused)}")
+                    remaining = payload.get("speculative_remaining_tools")
+                    if isinstance(remaining, list) and remaining:
+                        items.append(f"Kvar att köra: {len(remaining)}")
+                elif kind == "progressive_synthesizer":
+                    title = format_step_title("Preparing answer draft")
+                    drafts = payload.get("synthesis_drafts")
+                    if isinstance(drafts, list) and drafts:
+                        first_draft = drafts[0] if isinstance(drafts[0], dict) else {}
+                        confidence = first_draft.get("confidence")
+                        draft_text = str(first_draft.get("draft") or "").strip()
+                        if isinstance(confidence, (int, float)):
+                            items.append(f"Draft confidence: {float(confidence):.2f}")
+                        if draft_text:
+                            items.append(draft_text[:180])
                 if source_chain and _is_internal_pipeline_chain_name(source_chain):
                     items.insert(0, f"Nod: {source_chain}")
                 events.append(
@@ -1848,6 +1966,22 @@ async def stream_new_chat(
                 if _pipeline_payload_kind(payload)
             ]
             return emit_pipeline_steps_from_payloads(payloads, source_chain=source_chain)
+
+        def emit_synthesis_draft_events(output: Any) -> list[str]:
+            events: list[str] = []
+            for draft_payload in _extract_synthesis_drafts_from_event_output(output):
+                signature = json.dumps(
+                    draft_payload,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+                if signature in emitted_synthesis_draft_signatures:
+                    continue
+                emitted_synthesis_draft_signatures.add(signature)
+                events.append(
+                    streaming_service.format_data("synthesis-draft", draft_payload)
+                )
+            return events
 
         route_step_id = next_thinking_step_id()
         route_items = [f"Route: {route.value}"]
@@ -2072,6 +2206,8 @@ async def stream_new_chat(
                         yield trace_event
                 elif event_type == "on_chain_end":
                     chain_output = event.get("data", {}).get("output")
+                    for synthesis_event in emit_synthesis_draft_events(chain_output):
+                        yield synthesis_event
                     trace_event = await trace_recorder.end_span(
                         span_id=run_id,
                         output_data=chain_output,
@@ -3554,9 +3690,12 @@ async def stream_new_chat(
 
             # Handle chain/agent end to close any open text blocks
             elif event_type in ("on_chain_end", "on_agent_end"):
+                chain_output = event.get("data", {}).get("output")
+                for synthesis_event in emit_synthesis_draft_events(chain_output):
+                    yield synthesis_event
                 chain_name = chain_name_by_run_id.get(run_id) or str(event.get("name") or "")
                 candidate_text = _extract_assistant_text_from_event_output(
-                    event.get("data", {}).get("output")
+                    chain_output
                 )
                 if candidate_text:
                     source_chain = chain_name if _is_internal_pipeline_chain_name(chain_name) else None

@@ -5,6 +5,7 @@ import ast
 import json
 import hashlib
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Annotated, TypedDict
@@ -29,7 +30,10 @@ from app.agents.new_chat.nodes import (
     build_intent_resolver_node,
     build_planner_hitl_gate_node,
     build_planner_node,
+    build_progressive_synthesizer_node,
     build_smart_critic_node,
+    build_speculative_merge_node,
+    build_speculative_node,
     build_synthesis_hitl_gate_node,
     build_synthesizer_node,
     build_tool_resolver_node,
@@ -2772,6 +2776,222 @@ async def create_supervisor_agent(
         ],
     }
 
+    def _agent_name_for_speculative_tool_id(
+        tool_id: str,
+        *,
+        state: dict[str, Any] | None,
+    ) -> str:
+        normalized_tool_id = str(tool_id or "").strip().lower()
+        if not normalized_tool_id:
+            return "knowledge"
+        if normalized_tool_id in {str(item).strip().lower() for item in weather_tool_ids}:
+            return "weather"
+        if normalized_tool_id in {str(item).strip().lower() for item in trafik_tool_ids}:
+            return "trafik"
+        if normalized_tool_id.startswith(("scb_", "kolada_", "skolverket_")):
+            return "statistics"
+        if normalized_tool_id.startswith("riksdag_"):
+            return "riksdagen"
+        if normalized_tool_id.startswith("bolagsverket_"):
+            return "bolag"
+        if normalized_tool_id.startswith("marketplace_"):
+            return "marketplace"
+        if normalized_tool_id.startswith("geoapify_"):
+            return "kartor"
+        if normalized_tool_id in {"generate_podcast", "display_image"}:
+            return "media"
+        if normalized_tool_id in {
+            "search_knowledge_base",
+            "search_surfsense_docs",
+            "search_tavily",
+            "recall_memory",
+        }:
+            return "knowledge"
+        state_route = str(
+            ((state or {}).get("resolved_intent") or {}).get("route")
+            or (state or {}).get("route_hint")
+            or ""
+        ).strip()
+        allowed = _route_allowed_agents(state_route)
+        return _route_default_agent(state_route, allowed)
+
+    async def _run_speculative_candidate(
+        *,
+        tool_id: str,
+        candidate: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        if not latest_user_query:
+            return {
+                "status": "failed",
+                "reason": "empty_query",
+                "tool_id": tool_id,
+            }
+        probability = _coerce_confidence(candidate.get("probability"), 0.5)
+        selected_agent_name = _agent_name_for_speculative_tool_id(
+            tool_id,
+            state=state,
+        )
+        worker = await worker_pool.get(selected_agent_name)
+        if worker is None:
+            return {
+                "status": "failed",
+                "reason": "worker_unavailable",
+                "tool_id": tool_id,
+                "agent": selected_agent_name,
+            }
+
+        cached_payload = episodic_store.get(tool_id=tool_id, query=latest_user_query)
+        if isinstance(cached_payload, dict):
+            cached_response = _strip_critic_json(
+                str(cached_payload.get("response") or "").strip()
+            )
+            if cached_response:
+                cached_used_tools_raw = cached_payload.get("used_tools")
+                cached_used_tools = (
+                    [
+                        str(item).strip()
+                        for item in cached_used_tools_raw
+                        if str(item).strip()
+                    ][:6]
+                    if isinstance(cached_used_tools_raw, list)
+                    else [tool_id]
+                )
+                cached_contract = cached_payload.get("result_contract")
+                if not isinstance(cached_contract, dict):
+                    cached_contract = _build_agent_result_contract(
+                        agent_name=selected_agent_name,
+                        task=latest_user_query,
+                        response_text=cached_response,
+                        used_tools=cached_used_tools,
+                        final_requested=False,
+                    )
+                return {
+                    "status": "cached",
+                    "reason": "episodic_memory_hit",
+                    "tool_id": tool_id,
+                    "agent": selected_agent_name,
+                    "response": cached_response,
+                    "used_tools": cached_used_tools,
+                    "result_contract": cached_contract,
+                    "probability": probability,
+                    "duration_ms": 0,
+                    "from_episodic_cache": True,
+                }
+
+        prompt = worker_prompts.get(selected_agent_name, "")
+        scoped_prompt = _build_scoped_prompt_for_agent(
+            selected_agent_name,
+            latest_user_query,
+        )
+        if scoped_prompt:
+            prompt = (
+                f"{prompt.rstrip()}\n\n{scoped_prompt}".strip()
+                if prompt
+                else scoped_prompt
+            )
+        tool_prompt_block = _build_tool_prompt_block(
+            [tool_id],
+            tool_prompt_overrides,
+            max_tools=1,
+        )
+        if tool_prompt_block:
+            prompt = (
+                f"{prompt.rstrip()}\n\n{tool_prompt_block}".strip()
+                if prompt
+                else tool_prompt_block
+            )
+        worker_messages: list[Any] = []
+        if prompt:
+            worker_messages.append(SystemMessage(content=prompt))
+        worker_messages.append(HumanMessage(content=latest_user_query))
+        worker_state = {"messages": worker_messages, "selected_tool_ids": [tool_id]}
+        turn_key = _current_turn_key(state)
+        base_thread_id = str(dependencies.get("thread_id") or "thread")
+        worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
+        worker_configurable = {
+            "thread_id": (
+                f"{base_thread_id}:{selected_agent_name}:speculative:{turn_key}:{tool_id[:24]}"
+            )
+        }
+        if worker_checkpoint_ns:
+            worker_configurable["checkpoint_ns"] = (
+                f"{worker_checkpoint_ns}:worker:{selected_agent_name}"
+            )
+        worker_config = {"configurable": worker_configurable, "recursion_limit": 40}
+        started = time.monotonic()
+        try:
+            result = await asyncio.wait_for(
+                worker.ainvoke(worker_state, config=worker_config),
+                timeout=10.0,
+            )
+        except asyncio.TimeoutError:
+            return {
+                "status": "failed",
+                "reason": "timeout",
+                "tool_id": tool_id,
+                "agent": selected_agent_name,
+                "probability": probability,
+            }
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "reason": f"exception:{type(exc).__name__}",
+                "tool_id": tool_id,
+                "agent": selected_agent_name,
+                "probability": probability,
+            }
+        duration_ms = int((time.monotonic() - started) * 1000)
+        response_text = ""
+        messages_out: list[Any] = []
+        if isinstance(result, dict):
+            messages_out = result.get("messages") or []
+            if messages_out:
+                response_text = str(getattr(messages_out[-1], "content", "") or "")
+        if not response_text:
+            response_text = str(result)
+        response_text = _strip_critic_json(response_text)
+        used_tool_names = _tool_names_from_messages(messages_out) or [tool_id]
+        result_contract = _build_agent_result_contract(
+            agent_name=selected_agent_name,
+            task=latest_user_query,
+            response_text=response_text,
+            used_tools=used_tool_names,
+            final_requested=False,
+        )
+        status = str(result_contract.get("status") or "").strip().lower()
+        speculative_status = (
+            status if status in {"success", "partial"} else "failed"
+        )
+        if speculative_status in {"success", "partial"} and response_text:
+            episodic_store.put(
+                tool_id=tool_id,
+                query=latest_user_query,
+                value={
+                    "response": response_text,
+                    "used_tools": used_tool_names,
+                    "result_contract": result_contract,
+                    "agent": selected_agent_name,
+                },
+                ttl_seconds=infer_ttl_seconds(
+                    tool_id=tool_id,
+                    agent_name=selected_agent_name,
+                ),
+            )
+        return {
+            "status": speculative_status,
+            "reason": str(result_contract.get("reason") or ""),
+            "tool_id": tool_id,
+            "agent": selected_agent_name,
+            "response": response_text,
+            "used_tools": used_tool_names,
+            "result_contract": result_contract,
+            "probability": probability,
+            "duration_ms": duration_ms,
+            "from_episodic_cache": False,
+        }
+
     def _intent_from_route(route_value: str | None) -> dict[str, Any]:
         normalized = _normalize_route_hint_value(route_value)
         intent_id = route_to_intent_id.get(normalized, "knowledge")
@@ -3323,6 +3543,47 @@ async def create_supervisor_agent(
             normalized_task = f"{normalized_task}\n\n{recent_compare_context}"
         return normalized_task
 
+    def _collect_speculative_response(
+        *,
+        selected_tool_ids: list[str],
+        state: dict[str, Any] | None,
+    ) -> tuple[str, list[str], list[dict[str, Any]]]:
+        if not selected_tool_ids:
+            return "", [], []
+        injected_state = state or {}
+        speculative_results = injected_state.get("speculative_results")
+        if not isinstance(speculative_results, dict):
+            return "", [], []
+
+        accepted_statuses = {"success", "partial", "cached", "ok"}
+        used_tools: list[str] = []
+        raw_responses: list[str] = []
+        payloads: list[dict[str, Any]] = []
+        for tool_id in selected_tool_ids:
+            payload = speculative_results.get(str(tool_id).strip())
+            if not isinstance(payload, dict):
+                return "", [], []
+            status = str(payload.get("status") or "").strip().lower()
+            if status not in accepted_statuses:
+                return "", [], []
+            response_text = _strip_critic_json(str(payload.get("response") or "").strip())
+            if response_text:
+                raw_responses.append(response_text)
+            used_tools.append(str(tool_id).strip())
+            payloads.append(payload)
+
+        if not raw_responses:
+            return "", [], []
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for response in raw_responses:
+            normalized = response.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(response)
+        return "\n\n".join(deduped).strip(), used_tools, payloads
+
     @tool
     async def call_agent(
         agent_name: str,
@@ -3392,6 +3653,44 @@ async def create_supervisor_agent(
             ]
             if not selected_tool_ids:
                 selected_tool_ids = list(trafik_tool_ids)
+        speculative_response, speculative_tools, speculative_payloads = (
+            _collect_speculative_response(
+                selected_tool_ids=selected_tool_ids,
+                state=injected_state,
+            )
+        )
+        if speculative_response:
+            result_contract = _build_agent_result_contract(
+                agent_name=name,
+                task=task,
+                response_text=speculative_response,
+                used_tools=speculative_tools,
+                final_requested=bool(final),
+            )
+            output_response = speculative_response
+            if not final:
+                output_response = compress_response(output_response, agent_name=name)
+            return json.dumps(
+                {
+                    "agent": name,
+                    "requested_agent": requested_name,
+                    "agent_resolution": resolution_reason,
+                    "task": task,
+                    "response": output_response,
+                    "used_tools": speculative_tools,
+                    "result_contract": result_contract,
+                    "critic": {
+                        "status": "cached",
+                        "reason": "speculative_reuse_hit",
+                        "sources": len(speculative_payloads),
+                    },
+                    "final": bool(final),
+                    "turn_id": current_turn_id,
+                    "execution_strategy": execution_strategy or "inline",
+                    "from_speculative_cache": True,
+                },
+                ensure_ascii=True,
+            )
         memory_scope_id = (
             str(selected_tool_ids[0]).strip()
             if selected_tool_ids
@@ -3444,6 +3743,7 @@ async def create_supervisor_agent(
                         "final": bool(final),
                         "turn_id": current_turn_id,
                         "execution_strategy": execution_strategy or "inline",
+                        "from_speculative_cache": False,
                         "from_episodic_cache": True,
                     },
                     ensure_ascii=True,
@@ -3656,6 +3956,7 @@ async def create_supervisor_agent(
                 "final": bool(final),
                 "turn_id": current_turn_id,
                 "execution_strategy": execution_strategy or "inline",
+                "from_speculative_cache": False,
                 "from_episodic_cache": False,
             },
             ensure_ascii=True,
@@ -3740,6 +4041,34 @@ async def create_supervisor_agent(
                     ]
                     if not selected_tool_ids:
                         selected_tool_ids = list(trafik_tool_ids)
+                (
+                    speculative_response,
+                    speculative_tools,
+                    speculative_payloads,
+                ) = _collect_speculative_response(
+                    selected_tool_ids=selected_tool_ids,
+                    state=injected_state,
+                )
+                if speculative_response:
+                    return {
+                        "agent": agent_name,
+                        "requested_agent": requested_agent_name,
+                        "agent_resolution": resolution_reason,
+                        "task": task,
+                        "response": speculative_response,
+                        "used_tools": speculative_tools,
+                        "result_contract": _build_agent_result_contract(
+                            agent_name=agent_name,
+                            task=task,
+                            response_text=speculative_response,
+                            used_tools=speculative_tools,
+                            final_requested=False,
+                        ),
+                        "turn_id": current_turn_id,
+                        "execution_strategy": requested_strategy or "inline",
+                        "from_speculative_cache": True,
+                        "speculative_source_count": len(speculative_payloads),
+                    }
                 memory_scope_id = (
                     str(selected_tool_ids[0]).strip()
                     if selected_tool_ids
@@ -3783,6 +4112,7 @@ async def create_supervisor_agent(
                             "result_contract": cached_contract,
                             "turn_id": current_turn_id,
                             "execution_strategy": requested_strategy or "inline",
+                            "from_speculative_cache": False,
                             "from_episodic_cache": True,
                         }
                 prompt = worker_prompts.get(agent_name, "")
@@ -3895,6 +4225,7 @@ async def create_supervisor_agent(
                     "result_contract": result_contract,
                     "turn_id": current_turn_id,
                     "execution_strategy": requested_strategy or "inline",
+                    "from_speculative_cache": False,
                     "from_episodic_cache": False,
                 }
             except Exception as exc:
@@ -4017,6 +4348,11 @@ async def create_supervisor_agent(
         latest_user_query_fn=_latest_user_query,
         next_plan_step_fn=_next_plan_step,
     )
+    speculative_node = build_speculative_node(
+        run_speculative_candidate_fn=_run_speculative_candidate,
+        max_candidates=3,
+    )
+    speculative_merge_node = build_speculative_merge_node()
 
     execution_hitl_gate_node = build_execution_hitl_gate_node(
         hitl_enabled_fn=_hitl_enabled,
@@ -4060,6 +4396,9 @@ async def create_supervisor_agent(
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
         strip_critic_json_fn=_strip_critic_json,
+    )
+    progressive_synthesizer_node = build_progressive_synthesizer_node(
+        truncate_for_prompt_fn=_truncate_for_prompt,
     )
 
     call_model, acall_model = build_executor_nodes(
@@ -4471,6 +4810,8 @@ async def create_supervisor_agent(
                 if has_final:
                     return "synthesis_hitl"
                 return "agent_resolver"
+            if complexity == "complex" and speculative_enabled:
+                return "speculative"
             return "agent_resolver"
         return "agent_resolver"
 
@@ -4518,6 +4859,8 @@ async def create_supervisor_agent(
         stage = str(state.get("pending_hitl_stage") or "").strip().lower()
         if awaiting and stage == "synthesis":
             return END
+        if hybrid_mode and not compare_mode:
+            return "progressive_synthesizer"
         return "synthesizer"
 
     graph_builder = StateGraph(SupervisorState)
@@ -4554,6 +4897,8 @@ async def create_supervisor_agent(
         graph_builder.add_edge("compare_synthesizer", END)
     else:
         # Normal mode: use standard supervisor pipeline
+        if hybrid_mode and not compare_mode and speculative_enabled:
+            graph_builder.add_node("speculative", RunnableCallable(None, speculative_node))
         graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
         graph_builder.add_node("planner", RunnableCallable(None, planner_node))
         graph_builder.add_node(
@@ -4561,6 +4906,11 @@ async def create_supervisor_agent(
             RunnableCallable(None, planner_hitl_gate_node),
         )
         graph_builder.add_node("tool_resolver", RunnableCallable(None, tool_resolver_node))
+        if hybrid_mode and not compare_mode and speculative_enabled:
+            graph_builder.add_node(
+                "speculative_merge",
+                RunnableCallable(None, speculative_merge_node),
+            )
         if hybrid_mode and not compare_mode:
             graph_builder.add_node(
                 "execution_router",
@@ -4585,20 +4935,30 @@ async def create_supervisor_agent(
             "synthesis_hitl",
             RunnableCallable(None, synthesis_hitl_gate_node),
         )
+        if hybrid_mode and not compare_mode:
+            graph_builder.add_node(
+                "progressive_synthesizer",
+                RunnableCallable(None, progressive_synthesizer_node),
+            )
         graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
         graph_builder.set_entry_point("resolve_intent")
+        resolve_intent_paths = [
+            "agent_resolver",
+            "planner",
+            "planner_hitl_gate",
+            "tool_resolver",
+            "execution_hitl_gate",
+            "synthesis_hitl",
+        ]
+        if hybrid_mode and not compare_mode and speculative_enabled:
+            resolve_intent_paths.append("speculative")
         graph_builder.add_conditional_edges(
             "resolve_intent",
             route_after_intent,
-            path_map=[
-                "agent_resolver",
-                "planner",
-                "planner_hitl_gate",
-                "tool_resolver",
-                "execution_hitl_gate",
-                "synthesis_hitl",
-            ],
+            path_map=resolve_intent_paths,
         )
+        if hybrid_mode and not compare_mode and speculative_enabled:
+            graph_builder.add_edge("speculative", "agent_resolver")
         graph_builder.add_edge("agent_resolver", "planner")
         graph_builder.add_edge("planner", "planner_hitl_gate")
         graph_builder.add_conditional_edges(
@@ -4606,7 +4966,11 @@ async def create_supervisor_agent(
             planner_hitl_should_continue,
             path_map=["tool_resolver", END],
         )
-        if hybrid_mode and not compare_mode:
+        if hybrid_mode and not compare_mode and speculative_enabled:
+            graph_builder.add_edge("tool_resolver", "speculative_merge")
+            graph_builder.add_edge("speculative_merge", "execution_router")
+            graph_builder.add_edge("execution_router", "execution_hitl_gate")
+        elif hybrid_mode and not compare_mode:
             graph_builder.add_edge("tool_resolver", "execution_router")
             graph_builder.add_edge("execution_router", "execution_hitl_gate")
         else:
@@ -4632,8 +4996,18 @@ async def create_supervisor_agent(
         graph_builder.add_conditional_edges(
             "synthesis_hitl",
             synthesis_hitl_should_continue,
-            path_map=["synthesizer", END],
+            path_map=[
+                *(
+                    ["progressive_synthesizer"]
+                    if hybrid_mode and not compare_mode
+                    else []
+                ),
+                "synthesizer",
+                END,
+            ],
         )
+        if hybrid_mode and not compare_mode:
+            graph_builder.add_edge("progressive_synthesizer", "synthesizer")
         graph_builder.add_edge("synthesizer", END)
 
     return graph_builder.compile(checkpointer=checkpointer, name="supervisor-agent")
