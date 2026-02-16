@@ -74,6 +74,22 @@ from app.services.reranker_service import RerankerService
 
 _AGENT_CACHE_TTL = timedelta(minutes=20)
 _AGENT_COMBO_CACHE: dict[str, tuple[datetime, list[str]]] = {}
+
+# Specialized agents that have their own WorkerConfig with specific primary_namespaces
+# These should NOT be overridden by route_policy if explicitly selected
+# This scales to 100s of APIs without needing regex patterns for each one
+_SPECIALIZED_AGENTS = {
+    "marketplace",  # Blocket/Tradera tools
+    "statistics",   # SCB/Kolada tools
+    "riksdagen",    # Parliament data tools
+    "bolag",        # Company registry tools
+    "trafik",       # Traffic/transport tools
+    "weather",      # Weather-specific tools
+    "kartor",       # Map generation tools
+    # Future specialized agents will be added here automatically
+    # as long as they have dedicated WorkerConfig entries
+}
+
 _AGENT_STOPWORDS = {
     "hur",
     "vad",
@@ -2307,9 +2323,11 @@ async def create_supervisor_agent(
         ),
         "marketplace": WorkerConfig(
             name="marketplace-worker",
+            # Primary: marketplace-specific tools (blocket_cars, blocket_search, tradera_search, etc.)
+            # Fallback: knowledge and general tools only (excludes action/browser to prevent tavily delegation)
             primary_namespaces=[("tools", "marketplace")],
             fallback_namespaces=[
-                ("tools", "action"),
+                # ("tools", "action"),  # REMOVED: Prevents browser/tavily tools from being selected
                 ("tools", "knowledge"),
                 ("tools", "general"),
             ],
@@ -2718,6 +2736,7 @@ async def create_supervisor_agent(
         default_for_route = _route_default_agent(route_hint, route_allowed)
         strict_trafik_task = _has_strict_trafik_intent(task)
         weather_task = _has_weather_intent(task)
+        # Specific safety locks for weather and trafik remain
         if route_hint == "action" and weather_task and not strict_trafik_task:
             if requested_raw in agent_by_name and requested_raw != "weather":
                 return "weather", f"weather_lock:{requested_raw}->weather"
@@ -2725,7 +2744,13 @@ async def create_supervisor_agent(
             allowed_for_strict = {"trafik", "kartor", "action"}
             if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
                 return "trafik", f"strict_trafik_lock:{requested_raw}->trafik"
+        # SCALABLE FIX: If requested agent is a specialized agent with dedicated tools,
+        # respect that choice and DON'T override with route_policy.
+        # This scales to 100s of APIs without needing regex patterns.
         if requested_raw in agent_by_name:
+            if requested_raw in _SPECIALIZED_AGENTS:
+                # Specialized agents bypass route restrictions
+                return requested_raw, None
             if route_allowed and requested_raw not in route_allowed:
                 if default_for_route in agent_by_name:
                     return default_for_route, f"route_policy:{requested_raw}->{default_for_route}"

@@ -40,6 +40,8 @@ Skapa en kort exekverbar plan utifran fragan och valda agenter.
 Regler:
 - Max 4 steg.
 - Ett steg = en konkret delegerbar aktivitet.
+- **VIKTIGT: Använd ENDAST de agenter som redan finns i `selected_agents`. Lägg INTE till fler agenter.**
+- Om en specialiserad agent (marketplace, statistics, etc.) är vald, använd ENDAST den agenten.
 - Hall stegen korta och pa svenska.
 
 Returnera strikt JSON:
