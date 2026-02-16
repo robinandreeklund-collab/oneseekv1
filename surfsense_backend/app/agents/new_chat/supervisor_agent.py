@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Annotated, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.graph.message import add_messages
 from langgraph.types import Checkpointer
@@ -359,6 +360,18 @@ _MARKETPLACE_PROVIDER_RE = re.compile(
     r"\b(blocket|tradera|marknadsplats|marknadsplatser|annons|annonser|auktion|auktioner)\b",
     re.IGNORECASE,
 )
+_FILESYSTEM_INTENT_RE = re.compile(
+    r"\b("
+    r"fil|files?|filsystem|filesystem|"
+    r"mapp|katalog|directory|folder|"
+    r"skriv|write|skapa|create|"
+    r"l[aä]s|read|inneh[aå]ll|content|"
+    r"append|replace|ers[aä]tt|"
+    r"sandbox|docker|terminal|bash|shell|python|script|"
+    r"/tmp|/workspace"
+    r")\b",
+    re.IGNORECASE,
+)
 _MISSING_SIGNAL_RE = re.compile(
     r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
     re.IGNORECASE,
@@ -437,6 +450,10 @@ def _has_map_intent(text: str) -> bool:
 
 def _has_marketplace_intent(text: str) -> bool:
     return bool(text and _MARKETPLACE_INTENT_RE.search(text))
+
+
+def _has_filesystem_intent(text: str) -> bool:
+    return bool(text and _FILESYSTEM_INTENT_RE.search(text))
 
 
 def _has_strict_trafik_intent(text: str) -> bool:
@@ -2741,7 +2758,27 @@ async def create_supervisor_agent(
         AgentDefinition(
             name="code",
             description="Kalkyler och kodrelaterade uppgifter",
-            keywords=["kod", "berakna", "script", "python"],
+            keywords=[
+                "kod",
+                "berakna",
+                "script",
+                "python",
+                "fil",
+                "filer",
+                "file",
+                "filesystem",
+                "filsystem",
+                "skriv fil",
+                "läs fil",
+                "las fil",
+                "create file",
+                "read file",
+                "write file",
+                "sandbox",
+                "docker",
+                "bash",
+                "terminal",
+            ],
             namespace=("agents", "code"),
             prompt_key="code",
         ),
@@ -2952,6 +2989,10 @@ async def create_supervisor_agent(
         default=_SUBAGENT_DEFAULT_MAX_CONCURRENCY,
         min_value=1,
         max_value=8,
+    )
+    sandbox_enabled = _coerce_bool(
+        runtime_hitl_cfg.get("sandbox_enabled"),
+        default=False,
     )
 
     async def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
@@ -3339,6 +3380,7 @@ async def create_supervisor_agent(
         strict_trafik_task = _has_strict_trafik_intent(task)
         weather_task = _has_weather_intent(task)
         marketplace_task = _has_marketplace_intent(task)
+        filesystem_task = _has_filesystem_intent(task)
         explicit_marketplace_provider = bool(
             task and _MARKETPLACE_PROVIDER_RE.search(str(task))
         )
@@ -3382,6 +3424,15 @@ async def create_supervisor_agent(
             and requested_raw != "marketplace"
         ):
             return "marketplace", f"marketplace_lock:{requested_raw}->marketplace"
+        if (
+            route_hint == "action"
+            and sandbox_enabled
+            and filesystem_task
+            and requested_raw in agent_by_name
+            and requested_raw != "code"
+            and "code" in agent_by_name
+        ):
+            return "code", f"filesystem_lock:{requested_raw}->code"
         # SCALABLE FIX: If requested agent is a specialized agent with dedicated tools,
         # respect that choice and DON'T override with route_policy.
         # This scales to 100s of APIs without needing regex patterns.
@@ -3452,6 +3503,8 @@ async def create_supervisor_agent(
             if str(route_hint) == "action":
                 if weather_task and not strict_trafik_task:
                     preferred = ["weather", "action"]
+                if sandbox_enabled and filesystem_task:
+                    preferred = ["code", "action"]
                 if marketplace_task and "marketplace" not in preferred:
                     preferred.insert(0, "marketplace")
                 if _has_map_intent(task) and "kartor" not in preferred:
@@ -3566,6 +3619,7 @@ async def create_supervisor_agent(
         has_map_intent = _has_map_intent(policy_query)
         has_weather_intent = _has_weather_intent(policy_query)
         has_marketplace_intent = _has_marketplace_intent(policy_query)
+        has_filesystem_intent = _has_filesystem_intent(policy_query)
         route_allowed = _route_allowed_agents(route_hint)
         default_for_route = _route_default_agent(route_hint, route_allowed)
         if route_hint == "action" and has_weather_intent and not has_strict_trafik_intent:
@@ -3631,10 +3685,16 @@ async def create_supervisor_agent(
                 if str(route_hint) == "action":
                     if has_weather_intent and not has_strict_trafik_intent:
                         preferred = ["weather", "action"]
+                    if sandbox_enabled and has_filesystem_intent:
+                        preferred = ["code", "action"]
                     if has_marketplace_intent and "marketplace" not in preferred:
                         preferred.insert(0, "marketplace")
                     # Keep route_hint as advisory only unless action intent is explicit.
-                    if not (has_map_intent or has_trafik_intent):
+                    if not (
+                        has_map_intent
+                        or has_trafik_intent
+                        or (sandbox_enabled and has_filesystem_intent)
+                    ):
                         preferred = []
                         if has_marketplace_intent:
                             preferred = ["marketplace"]
@@ -3666,6 +3726,13 @@ async def create_supervisor_agent(
                 trafik_agent = agent_by_name.get("trafik")
                 if trafik_agent and trafik_agent not in selected:
                     selected.insert(0, trafik_agent)
+                    selected = selected[:limit]
+            if route_hint == "action" and sandbox_enabled and has_filesystem_intent:
+                code_agent = agent_by_name.get("code")
+                if code_agent:
+                    if code_agent in selected:
+                        selected = [agent for agent in selected if agent != code_agent]
+                    selected.insert(0, code_agent)
                     selected = selected[:limit]
 
             if route_allowed:
@@ -5064,7 +5131,7 @@ async def create_supervisor_agent(
 
     async def post_tools(
         state: SupervisorState,
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -5229,7 +5296,7 @@ async def create_supervisor_agent(
 
     async def orchestration_guard(
         state: SupervisorState,
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

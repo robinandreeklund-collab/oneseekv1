@@ -22,6 +22,8 @@ Du far kandidatagenter fran retrieval.
 Uppgift:
 - Valj 1-3 agenter som bor anvandas i nasta steg.
 - Agentnamn maste vara exakta och komma fran kandidaterna.
+- Om uppgiften galler filsystem, terminal, kod eller sandbox: prioritera `code`-agent.
+- Anvand aldrig memory-verktyg som ersattning for filsystemsoperationer.
 - Hall motivering kort och pa svenska.
 
 Returnera strikt JSON:
