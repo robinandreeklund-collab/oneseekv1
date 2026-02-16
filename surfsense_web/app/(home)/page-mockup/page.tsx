@@ -224,6 +224,16 @@ const MAX_SYNTHESIS_LENGTH = 600;
 const PAIR_ROTATION_INTERVAL = 15000; // 15 seconds per model pair
 const SYNTHESIS_DISPLAY_INTERVAL = 15000; // 15 seconds for synthesis display
 
+// Define model pairs: [grok+chatgpt], [gemini+deepseek], [perplexity+qwen]
+const MODEL_PAIRS = [
+  ["grok", "chatgpt"],
+  ["gemini", "deepseek"],
+  ["perplexity", "qwen"]
+];
+
+// Helper to create initial typing state
+const createInitialTypingState = () => new Array(MODEL_PAIRS[0].length).fill(false);
+
 // Question data interface
 interface QuestionData {
   id: string;
@@ -407,23 +417,11 @@ const SideBySideComparison = () => {
   const [questions, setQuestions] = useState<QuestionData[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [modelPairIndex, setModelPairIndex] = useState(0);
-  const [typingComplete, setTypingComplete] = useState<boolean[]>([]);
+  const [typingComplete, setTypingComplete] = useState<boolean[]>(createInitialTypingState());
   const [showSynthesis, setShowSynthesis] = useState(false);
   const [synthesisComplete, setSynthesisComplete] = useState(false);
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true });
-
-  // Define model pairs: [grok+chatgpt], [gemini+deepseek], [perplexity+qwen]
-  const MODEL_PAIRS = [
-    ["grok", "chatgpt"],
-    ["gemini", "deepseek"],
-    ["perplexity", "qwen"]
-  ];
-
-  // Initialize typingComplete based on current pair size
-  useEffect(() => {
-    setTypingComplete(new Array(MODEL_PAIRS[0].length).fill(false));
-  }, []);
 
   // Load questions from JSON
   useEffect(() => {
@@ -441,7 +439,7 @@ const SideBySideComparison = () => {
       const timeout = setTimeout(() => {
         if (modelPairIndex < MODEL_PAIRS.length - 1) {
           setModelPairIndex(prev => prev + 1);
-          setTypingComplete(new Array(MODEL_PAIRS[0].length).fill(false));
+          setTypingComplete(createInitialTypingState());
         } else {
           // All pairs shown, show synthesis
           setShowSynthesis(true);
@@ -457,7 +455,7 @@ const SideBySideComparison = () => {
       const timeout = setTimeout(() => {
         setCurrentQuestionIndex((prev) => (prev + 1) % questions.length);
         setModelPairIndex(0);
-        setTypingComplete(new Array(MODEL_PAIRS[0].length).fill(false));
+        setTypingComplete(createInitialTypingState());
         setShowSynthesis(false);
         setSynthesisComplete(false);
       }, SYNTHESIS_DISPLAY_INTERVAL);
