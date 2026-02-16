@@ -2609,6 +2609,67 @@ async def _record_eval_stage_summaries(
         logger.exception("Failed to persist eval stage history")
 
 
+async def _sync_eval_to_lifecycle(
+    session: AsyncSession,
+    result: dict[str, Any],
+) -> None:
+    """
+    Sync evaluation results to tool lifecycle status.
+    Groups results by tool_id and updates lifecycle metrics.
+    """
+    try:
+        from app.services.tool_lifecycle_service import update_eval_metrics
+        
+        # Extract results from eval
+        eval_results = result.get("results", [])
+        logger.info(f"Syncing eval to lifecycle: found {len(eval_results)} test results")
+        
+        if not eval_results:
+            logger.warning("No eval results to sync to lifecycle")
+            return
+        
+        # Group results by tool_id
+        tool_stats: dict[str, dict[str, Any]] = {}
+        for test_result in eval_results:
+            expected = test_result.get("expected", {})
+            tool_id = expected.get("tool")
+            if not tool_id:
+                logger.debug(f"Test result missing tool_id: {test_result.get('id', 'unknown')}")
+                continue
+            
+            if tool_id not in tool_stats:
+                tool_stats[tool_id] = {"total": 0, "passed": 0}
+            
+            tool_stats[tool_id]["total"] += 1
+            if test_result.get("passed_tool"):
+                tool_stats[tool_id]["passed"] += 1
+        
+        logger.info(f"Grouped results into {len(tool_stats)} tools: {list(tool_stats.keys())}")
+        
+        # Update lifecycle metrics for each tool
+        for tool_id, stats in tool_stats.items():
+            total = stats["total"]
+            passed = stats["passed"]
+            success_rate = passed / total if total > 0 else 0.0
+            
+            try:
+                await update_eval_metrics(
+                    session,
+                    tool_id=tool_id,
+                    success_rate=success_rate,
+                    total_tests=total,
+                )
+                logger.info(
+                    f"Synced lifecycle metrics for {tool_id}: "
+                    f"{passed}/{total} ({success_rate:.2%})"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to sync lifecycle metrics for {tool_id}: {e}")
+        
+    except Exception:
+        logger.exception("Failed to sync eval results to lifecycle")
+
+
 async def _get_eval_stage_history(
     session: AsyncSession,
     *,
@@ -3707,6 +3768,11 @@ async def evaluate_tool_settings(
         stages=["agent", "tool"],
         updated_by_id=user.id,
     )
+    # Sync eval results to lifecycle status
+    await _sync_eval_to_lifecycle(
+        session,
+        result=result,
+    )
     return result
 
 
@@ -3810,6 +3876,11 @@ async def _run_eval_job_background(
                 result=result,
                 stages=["agent", "tool"],
                 updated_by_id=job_user.id,
+            )
+            # Sync eval results to lifecycle status
+            await _sync_eval_to_lifecycle(
+                job_session,
+                result=result,
             )
             await _update_eval_job(
                 job_id,

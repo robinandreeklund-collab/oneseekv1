@@ -38,6 +38,7 @@ from app.agents.new_chat.response_compressor import compress_response
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
+from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.supervisor_runtime_prompts import (
     DEFAULT_SUPERVISOR_CRITIC_PROMPT,
     DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
@@ -2223,6 +2224,11 @@ async def create_supervisor_agent(
         "supervisor.synthesizer.system",
         DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     )
+    compare_synthesizer_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "compare.analysis.system",
+        DEFAULT_COMPARE_ANALYSIS_PROMPT,
+    )
     hitl_planner_message_template = resolve_prompt(
         prompt_overrides,
         "supervisor.hitl.planner.message",
@@ -3664,6 +3670,7 @@ async def create_supervisor_agent(
     synthesizer_node = build_synthesizer_node(
         llm=llm,
         synthesizer_prompt_template=synthesizer_prompt_template,
+        compare_synthesizer_prompt_template=compare_synthesizer_prompt_template,
         latest_user_query_fn=_latest_user_query,
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
@@ -4124,6 +4131,7 @@ async def create_supervisor_agent(
     # Conditional graph structure based on compare_mode
     if compare_mode:
         # Compare mode: use deterministic compare subgraph
+        from functools import partial
         from app.agents.new_chat.compare_executor import (
             compare_fan_out,
             compare_collect,
@@ -4131,10 +4139,16 @@ async def create_supervisor_agent(
             compare_synthesizer,
         )
         
+        # Create compare_synthesizer with resolved prompt override
+        compare_synthesizer_with_prompt = partial(
+            compare_synthesizer,
+            prompt_override=compare_synthesizer_prompt_template
+        )
+        
         graph_builder.add_node("compare_fan_out", RunnableCallable(None, compare_fan_out))
         graph_builder.add_node("compare_collect", RunnableCallable(None, compare_collect))
         graph_builder.add_node("compare_tavily", RunnableCallable(None, compare_tavily))
-        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synthesizer))
+        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synthesizer_with_prompt))
         
         # Direct routing: resolve_intent -> compare_fan_out -> ... -> END
         graph_builder.set_entry_point("resolve_intent")

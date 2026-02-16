@@ -8,6 +8,7 @@ import {
 	MessageSquare, 
 	Database, 
 	Wrench,
+	ToggleLeft,
 	ChevronRight 
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
@@ -25,6 +26,12 @@ const ADMIN_NAV_ITEMS = [
 		href: "/admin/tools",
 		icon: Wrench,
 		description: "Hantera verktygsmetadata och inställningar",
+	},
+	{
+		title: "Tool Lifecycle",
+		href: "/admin/lifecycle",
+		icon: ToggleLeft,
+		description: "Hantera tool lifecycle och gating",
 	},
 	{
 		title: "Cache Management",

@@ -157,6 +157,16 @@ class LogStatus(str, Enum):
     FAILED = "FAILED"
 
 
+class ToolLifecycleStatus(str, Enum):
+    """
+    Lifecycle status for tools in the system.
+    - REVIEW: New tools, only available for eval testing
+    - LIVE: Validated tools, available for production use
+    """
+    REVIEW = "review"
+    LIVE = "live"
+
+
 class IncentiveTaskType(str, Enum):
     """
     Enum for incentive task types that users can complete to earn free pages.
@@ -1400,6 +1410,48 @@ class GlobalToolEvaluationStageRun(BaseModel, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
     updated_by = relationship("User")
+
+
+class GlobalToolLifecycleStatus(BaseModel, TimestampMixin):
+    """
+    Manages lifecycle status for tools across the system.
+    Tools start in 'review' status and are promoted to 'live' after validation.
+    """
+    __tablename__ = "global_tool_lifecycle_status"
+    __table_args__ = (
+        UniqueConstraint(
+            "tool_id", name="uq_global_tool_lifecycle_status_tool_id"
+        ),
+    )
+
+    tool_id = Column(String(160), nullable=False, index=True, unique=True)
+    status = Column(
+        SQLAlchemyEnum(ToolLifecycleStatus),
+        nullable=False,
+        default=ToolLifecycleStatus.REVIEW,
+        index=True,
+    )
+    
+    # Eval metrics
+    success_rate = Column(Float, nullable=True)
+    total_tests = Column(Integer, nullable=True)
+    last_eval_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    
+    # Threshold configuration
+    required_success_rate = Column(Float, nullable=False, default=0.80)
+    
+    # Audit trail
+    changed_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    changed_by = relationship("User")
+    changed_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    notes = Column(Text, nullable=True)
 
 
 class AgentComboCache(BaseModel, TimestampMixin):

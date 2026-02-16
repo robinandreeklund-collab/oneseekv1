@@ -361,6 +361,30 @@ def get_default_enabled_tools() -> list[str]:
     return default_tools + riksdagen_tool_ids + marketplace_tool_ids + skolverket_tool_ids + kolada_tool_ids
 
 
+def get_all_tool_names() -> list[str]:
+    """
+    Get all registered tool names across all categories.
+    
+    Returns:
+        List of all tool IDs/names in the registry
+    """
+    builtin_tool_names = [tool_def.name for tool_def in BUILTIN_TOOLS]
+    riksdagen_tool_ids = [definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS]
+    marketplace_tool_ids = [definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS]
+    skolverket_tool_ids = [definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS]
+    kolada_tool_ids = [definition.tool_id for definition in KOLADA_TOOL_DEFINITIONS]
+    external_model_ids = [spec.tool_name for spec in EXTERNAL_MODEL_SPECS]
+    
+    return (
+        builtin_tool_names
+        + riksdagen_tool_ids
+        + marketplace_tool_ids
+        + skolverket_tool_ids
+        + kolada_tool_ids
+        + external_model_ids
+    )
+
+
 def build_tools(
     dependencies: dict[str, Any],
     enabled_tools: list[str] | None = None,
@@ -437,6 +461,7 @@ async def build_tools_async(
     disabled_tools: list[str] | None = None,
     additional_tools: list[BaseTool] | None = None,
     include_mcp_tools: bool = True,
+    respect_lifecycle: bool = True,
 ) -> list[BaseTool]:
     """Async version of build_tools that also loads MCP tools from database.
 
@@ -455,11 +480,32 @@ async def build_tools_async(
         disabled_tools: List of tool names to disable (applied after enabled_tools).
         additional_tools: Extra tools to add (e.g., custom tools not in registry).
         include_mcp_tools: Whether to load user's MCP tools from database.
+        respect_lifecycle: If True, only load tools with 'live' status. If False, load all tools (for eval).
 
     Returns:
         List of configured tool instances ready for the agent, including MCP tools.
 
     """
+    # Apply lifecycle filtering if enabled
+    if respect_lifecycle and "db_session" in dependencies:
+        try:
+            from app.services.tool_lifecycle_service import get_live_tool_ids
+            live_tool_ids = await get_live_tool_ids(dependencies["db_session"])
+            
+            if live_tool_ids:
+                # Filter enabled_tools to only include live tools
+                if enabled_tools is not None:
+                    enabled_tools = [t for t in enabled_tools if t in live_tool_ids]
+                else:
+                    # Use default tools but filter to only live ones
+                    default_tools = set(get_default_enabled_tools())
+                    enabled_tools = [t for t in default_tools if t in live_tool_ids]
+                
+                logging.info(f"Lifecycle filtering enabled: {len(live_tool_ids)} live tools")
+        except Exception as e:
+            # Fallback: if lifecycle check fails, continue with original behavior
+            logging.warning(f"Lifecycle filtering failed, using all tools: {e}")
+    
     # Build standard tools
     tools = build_tools(dependencies, enabled_tools, disabled_tools, additional_tools)
 
