@@ -265,6 +265,12 @@ const TOOLS_WITH_UI = new Set([
 	"call_perplexity",
 	"call_qwen",
 	"call_oneseek",
+	"sandbox_execute",
+	"sandbox_ls",
+	"sandbox_read_file",
+	"sandbox_write_file",
+	"sandbox_replace",
+	"sandbox_release",
 ]);
 
 /**
