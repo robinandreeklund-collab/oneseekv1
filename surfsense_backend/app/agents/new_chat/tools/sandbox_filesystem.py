@@ -7,12 +7,33 @@ from typing import Any
 from langchain_core.tools import tool
 
 from app.agents.new_chat.sandbox_runtime import (
+    SANDBOX_MODE_DOCKER,
     SandboxExecutionError,
+    build_sandbox_container_name,
     sandbox_list_directory,
+    sandbox_config_from_runtime_flags,
     sandbox_read_text_file,
     sandbox_replace_text_file,
     sandbox_write_text_file,
 )
+
+
+def _sandbox_preview(
+    *,
+    thread_id: int | None,
+    runtime_hitl: dict[str, Any] | None,
+) -> dict[str, Any]:
+    config = sandbox_config_from_runtime_flags(runtime_hitl)
+    preview: dict[str, Any] = {
+        "sandbox_enabled": bool(config.enabled),
+        "mode": config.mode,
+    }
+    if config.mode == SANDBOX_MODE_DOCKER:
+        preview["container_name"] = build_sandbox_container_name(
+            thread_id=thread_id,
+            container_prefix=config.docker_container_prefix,
+        )
+    return preview
 
 
 def create_sandbox_ls_tool(
@@ -50,16 +71,19 @@ def create_sandbox_ls_tool(
                 "entries": entries,
                 "count": len(entries),
                 "max_depth": int(max_depth),
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         except SandboxExecutionError as exc:
             payload = {
                 "error": str(exc),
                 "error_type": "SandboxExecutionError",
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         except Exception as exc:
             payload = {
                 "error": str(exc),
                 "error_type": type(exc).__name__,
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         return json.dumps(payload, ensure_ascii=True)
 
@@ -103,16 +127,19 @@ def create_sandbox_read_file_tool(
                 "path": str(path or ""),
                 "content": content,
                 "line_count": 0 if content == "(empty)" else len(content.splitlines()),
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         except SandboxExecutionError as exc:
             payload = {
                 "error": str(exc),
                 "error_type": "SandboxExecutionError",
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         except Exception as exc:
             payload = {
                 "error": str(exc),
                 "error_type": type(exc).__name__,
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         return json.dumps(payload, ensure_ascii=True)
 
@@ -155,16 +182,19 @@ def create_sandbox_write_file_tool(
                 "written_chars": len(text),
                 "written_bytes": len(text.encode("utf-8")),
                 "append": bool(append),
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         except SandboxExecutionError as exc:
             payload = {
                 "error": str(exc),
                 "error_type": "SandboxExecutionError",
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         except Exception as exc:
             payload = {
                 "error": str(exc),
                 "error_type": type(exc).__name__,
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         return json.dumps(payload, ensure_ascii=True)
 
@@ -208,16 +238,19 @@ def create_sandbox_replace_tool(
                 "path": updated_path,
                 "replaced": int(replaced),
                 "replace_all": bool(replace_all),
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         except SandboxExecutionError as exc:
             payload = {
                 "error": str(exc),
                 "error_type": "SandboxExecutionError",
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         except Exception as exc:
             payload = {
                 "error": str(exc),
                 "error_type": type(exc).__name__,
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
         return json.dumps(payload, ensure_ascii=True)
 
