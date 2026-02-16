@@ -2622,7 +2622,10 @@ async def _sync_eval_to_lifecycle(
         
         # Extract results from eval
         eval_results = result.get("results", [])
+        logger.info(f"Syncing eval to lifecycle: found {len(eval_results)} test results")
+        
         if not eval_results:
+            logger.warning("No eval results to sync to lifecycle")
             return
         
         # Group results by tool_id
@@ -2631,6 +2634,7 @@ async def _sync_eval_to_lifecycle(
             expected = test_result.get("expected", {})
             tool_id = expected.get("tool")
             if not tool_id:
+                logger.debug(f"Test result missing tool_id: {test_result.get('id', 'unknown')}")
                 continue
             
             if tool_id not in tool_stats:
@@ -2639,6 +2643,8 @@ async def _sync_eval_to_lifecycle(
             tool_stats[tool_id]["total"] += 1
             if test_result.get("passed_tool"):
                 tool_stats[tool_id]["passed"] += 1
+        
+        logger.info(f"Grouped results into {len(tool_stats)} tools: {list(tool_stats.keys())}")
         
         # Update lifecycle metrics for each tool
         for tool_id, stats in tool_stats.items():
