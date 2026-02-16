@@ -1,467 +1,419 @@
-<a href="https://www.surfsense.com/"><img width="1584" height="396" alt="readme_banner" src="https://github.com/user-attachments/assets/9361ef58-1753-4b6e-b275-5020d8847261" /></a>
+# OneSeek Platform
 
+OneSeek ar en agentplattform for realtidsanalys, verktygsorkestrering och transparent AI-beslutslogik.
+Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalognamn (`surfsense_backend`, `surfsense_web`), men arkitekturen nedan beskriver den aktuella OneSeek-implementationen.
 
+---
 
-<div align="center">
-<a href="https://discord.gg/ejRNvftDp9">
-<img src="https://img.shields.io/discord/1359368468260192417" alt="Discord">
-</a>
-<a href="https://www.reddit.com/r/SurfSense/">
-<img src="https://img.shields.io/reddit/subreddit-subscribers/SurfSense?style=social" alt="Reddit">
-</a>
-</div>
+## Innehallsforteckning
 
-<div align="center">
+1. [Plattformsoversikt](#plattformsoversikt)
+2. [Karnfunktioner](#karnfunktioner)
+3. [LangGraph-flode (Fas 1-4)](#langgraph-flode-fas-1-4)
+4. [Intent + Bigtool + Namespace + Rerank](#intent--bigtool--namespace--rerank)
+5. [Realtidsdata och API-integrationer](#realtidsdata-och-api-integrationer)
+6. [Compare-lage](#compare-lage)
+7. [LangSmith + full transparens (trace)](#langsmith--full-transparens-trace)
+8. [Memory och feedback-loopar](#memory-och-feedback-loopar)
+9. [Eval-systemet](#eval-systemet)
+10. [SSE/Data Stream-events](#ssedata-stream-events)
+11. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
+12. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
+13. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+---
 
-</div>
+## Plattformsoversikt
 
-# SurfSense
-Connect any LLM to your internal knowledge sources and chat with it in real time alongside your team. OSS alternative to NotebookLM, Perplexity, and Glean.
+OneSeek ar byggt for att:
 
-SurfSense is a highly customizable AI research agent, connected to external sources such as Search Engines (SearxNG, Tavily, LinkUp), Google Drive, Slack, Microsoft Teams, Linear, Jira, ClickUp, Confluence, BookStack, Gmail, Notion, YouTube, GitHub, Discord, Airtable, Google Calendar, Luma, Circleback, Elasticsearch, Obsidian and more to come.
+- routa fragor till ratt agent och verktyg
+- hamta data fran interna och externa kallor i realtid
+- kombinera deterministisk kontroll med LLM-baserad syntes
+- exponera hela kedjan (fraga -> route -> plan -> verktyg -> svar) via trace
+- evaluera och iterera systematiskt med inbyggt eval-system
 
-<div align="center">
-<a href="https://trendshift.io/repositories/13606" target="_blank"><img src="https://trendshift.io/api/badge/repositories/13606" alt="MODSetter%2FSurfSense | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-</div>
+Tekniskt anvands:
 
+- **FastAPI** (backend/API)
+- **LangGraph** (agentgraf och tillstand)
+- **Bigtool-retrieval** (dynamiskt verktygsval)
+- **LiteLLM** (modellabstraktion)
+- **PostgreSQL + Redis + Celery** (persistens och asynkjobb)
+- **Vercel AI Data Stream-protokoll (SSE)** for realtidsstreaming i UI
 
-# Video 
+---
 
-https://github.com/user-attachments/assets/cc0c84d3-1f2f-4f7a-b519-2ecce22310b1
+## Karnfunktioner
 
+- **Hybrid Supervisor v2 (Fas 1-4)**
+  - graph complexity-klassning (`trivial`, `simple`, `complex`)
+  - execution strategy-router (`inline`, `parallel`, `subagent`)
+  - speculative branch + merge
+  - progressive synthesizer med draft-streaming
+- **Deterministiskt compare-lage**
+  - parallella externa modellanrop
+  - separat compare-subgraf
+- **Realtids-APIer**
+  - trafik, vader, statistik, riksdag, bolag, geodata, marknadsplatser m.m.
+- **Transparens och observability**
+  - in-app trace spans (input/output/meta/tokens/duration)
+  - LangSmith-stod via env-konfiguration
+- **Eval och auto-loop**
+  - route/agent/tool/API-input-eval
+  - metadata/prompt/tuning-forslag
+  - stage-jamforelse over tid
 
-## Podcast Sample
+---
 
-https://github.com/user-attachments/assets/a0a16566-6967-4374-ac51-9b3e07fbecd7
+## LangGraph-flode (Fas 1-4)
 
+### Huvudflode (normal mode)
 
+```mermaid
+flowchart TD
+    U[User query] --> RI[resolve_intent]
 
+    RI -->|compare_mode| CF[compare_fan_out]
+    CF --> CC[compare_collect]
+    CC --> CT[compare_tavily]
+    CT --> CS[compare_synthesizer]
+    CS --> END1([END])
 
-## Key Features
+    RI -->|hybrid complex + speculative_enabled| SP[speculative]
+    RI -->|hybrid simple| TR[tool_resolver]
+    RI -->|default/trivial| AR[agent_resolver]
 
-### 💡 **Idea**: 
-- Open source alternative to NotebookLM, Perplexity, and Glean. Connect any LLM to your internal knowledge sources and collaborate with your team in real time.
-### 📁 **Multiple File Format Uploading Support**
-- Save content from your own personal files *(Documents, images, videos and supports **50+ file extensions**)* to your own personal knowledge base .
-### 🔍 **Powerful Search**
-- Quickly research or find anything in your saved content .
-### 💬 **Chat with your Saved Content**
-- Interact in Natural Language and get cited answers.
-### 📄 **Cited Answers**
-- Get Cited answers just like Perplexity.
-### 🧩 **Universal Compatibility**
-- Connect virtually any inference provider via the OpenAI spec and LiteLLM.
-### 🔔 **Privacy & Local LLM Support**
-- Works Flawlessly with local LLMs like vLLM and Ollama.
-- **NEW**: Test mode available - run without database/auth for local LLM testing (see [TESTING_WITHOUT_DATABASE.md](TESTING_WITHOUT_DATABASE.md))
-### 🏠 **Self Hostable**
-- Open source and easy to deploy locally.
-### 👥 **Team Collaboration with RBAC**
-- Role-Based Access Control for Search Spaces
-- Invite team members with customizable roles (Owner, Admin, Editor, Viewer)
-- Granular permissions for documents, chats, connectors, and settings
-- Share knowledge bases securely within your organization
-- Team chats update in real-time and "Chat about the chat" in comment threads
-### 🎙️ Podcasts 
-- Blazingly fast podcast generation agent. (Creates a 3-minute podcast in under 20 seconds.)
-- Convert your chat conversations into engaging audio content
-- Support for local TTS providers (Kokoro TTS)
-- Support for multiple TTS providers (OpenAI, Azure, Google Vertex AI)
+    SP --> AR
+    AR --> PL[planner]
+    PL --> PH[planner_hitl_gate]
+    PH -->|continue| TR
+    PH -->|stop| END2([END])
 
-### 🤖 **Deep Agent Architecture**
-- Powered by [LangChain Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview) - agents that can plan, use subagents, and leverage file systems for complex tasks.
+    TR -->|hybrid + speculative| SM[speculative_merge]
+    SM --> ER[execution_router]
+    TR -->|no speculative| ER
 
-### 📊 **Advanced RAG Techniques**
-- Supports 100+ LLM's
-- Supports 6000+ Embedding Models.
-- Supports all major Rerankers (Pinecone, Cohere, Flashrank etc)
-- Uses Hierarchical Indices (2 tiered RAG setup).
-- Utilizes Hybrid Search (Semantic + Full Text Search combined with Reciprocal Rank Fusion).
+    ER --> EH[execution_hitl_gate]
+    EH -->|continue| EX[executor]
+    EH -->|stop| END3([END])
 
-### ℹ️ **External Sources**
-- Search Engines (Tavily, LinkUp)
-- SearxNG (self-hosted instances)
-- Google Drive
-- Slack
-- Microsoft Teams
-- Linear
-- Jira
-- ClickUp
-- Confluence
-- BookStack
-- Notion
-- Gmail
-- Youtube Videos
-- GitHub
-- Discord
-- Airtable
-- Google Calendar
-- Luma
-- Circleback
-- Elasticsearch
-- Obsidian
-- and more to come.....
+    EX -->|tool_calls| TOOLS[tools]
+    EX -->|no more tools| CR[critic]
+    TOOLS --> PT[post_tools]
+    PT --> OG[orchestration_guard]
+    OG --> CR
 
-## 📄 **Supported File Extensions**
+    CR -->|ok/finalize| SH[synthesis_hitl]
+    CR -->|needs_more| TR
+    CR -->|replan| PL
 
-| ETL Service | Formats | Notes |
-|-------------|---------|-------|
-| **LlamaCloud** | 50+ formats | Documents, presentations, spreadsheets, images |
-| **Unstructured** | 34+ formats | Core formats + email support |
-| **Docling** | Core formats | Local processing, no API key required |
+    SH -->|hybrid| PS[progressive_synthesizer]
+    SH -->|legacy/skip| SY[synthesizer]
+    PS --> SY
+    SY --> END4([END])
+```
 
-**Audio/Video** (via STT Service): `.mp3`, `.wav`, `.mp4`, `.webm`, etc.
+### Nodlogik som tillkommit i Fas 1-4
 
-### 🔖 Cross Browser Extension
-- The SurfSense extension can be used to save any webpage you like.
-- Its main usecase is to save any webpages protected beyond authentication.
+- **Fas 1**
+  - `resolve_intent`: klassar `graph_complexity`
+  - `smart_critic`: mekaniska regler + fallback till LLM-critic
+  - `targeted_missing_info` till `tool_resolver`
+- **Fas 2**
+  - `execution_router`: val av `inline/parallel/subagent`
+  - timeout-policy per strategi
+- **Fas 3**
+  - episodic memory (TTL + LRU, scope per `search_space_id` + `user_id`)
+  - retrieval feedback-store som paverkar ranking
+- **Fas 4**
+  - `speculative` + `speculative_merge`
+  - ateranvandning av speculative resultat i `call_agent` och `call_agents_parallel`
+  - `progressive_synthesizer` + `data-synthesis-draft` i stream
 
+---
 
+## Intent + Bigtool + Namespace + Rerank
 
-## FEATURE REQUESTS AND FUTURE
+### Intent och agentval
 
+1. Top-level route dispatch (`knowledge`, `action`, `statistics`, `smalltalk`, `compare`)
+2. Intent resolver bygger `intent_id`, confidence, reason
+3. Supervisor valjer agent(er) dynamiskt (`retrieve_agents`)
 
-**SurfSense is actively being developed.** While it's not yet production-ready, you can help us speed up the process.
+### Bigtool namespace-struktur
 
-Join the [SurfSense Discord](https://discord.gg/ejRNvftDp9) and help shape the future of SurfSense!
+Verktyg indexeras i namespace-hierarki, t.ex.:
 
-## 🚀 Roadmap
+- `tools/knowledge/*`
+- `tools/action/*`
+- `tools/statistics/*`
+- `tools/general/*`
+- `tools/compare/*`
+- doman-specifika som `tools/marketplace/*`, `tools/politik/*`
 
-Stay up to date with our development progress and upcoming features!  
-Check out our public roadmap and contribute your ideas or feedback:
+### Retrieval + scoring + rerank
 
-**📋 Roadmap Discussion:** [SurfSense 2025-2026 Roadmap: Deep Agents, Real-Time Collaboration & MCP Servers](https://github.com/MODSetter/SurfSense/discussions/565)
+Smart retrieval beraknar flera komponenter:
 
-**📊 Kanban Board:** [SurfSense Project Board](https://github.com/users/MODSetter/projects/3)
+- namnmatch
+- keyword-traf
+- beskrivningstraf
+- example-query-traf
+- embedding-likhet
+- namespace-boost
+- retrieval-feedback-boost
 
+Pre-score:
 
-## How to get started?
+```text
+pre_rerank_score =
+  lexical_score
+  + (embedding_score * embedding_weight)
+  + namespace_bonus
+  + retrieval_feedback_boost
+```
 
-### 🚀 New to SurfSense?
+Sedan rerankas kandidater med `RerankerService` och exponerar detaljer i breakdown/trace.
 
-**Start here**: **[GETTING_STARTED.md](GETTING_STARTED.md)** - User Guide
-- 👤 **Create your account** (LOCAL or Google OAuth)
-- 🔐 **Log in** to the platform
-- 📝 **First-time setup** walkthrough
-- 💬 **Start chatting** with your documents
-- ❓ **Troubleshooting** common issues
+---
 
-**⚠️ Windows Users**: Run everything in WSL2 or Docker. Don't mix WSL (backend) + PowerShell (frontend) - this causes networking issues. See [WSL Troubleshooting](GETTING_STARTED.md#wsl-and-windows-mixed-environment-issues).
+## Realtidsdata och API-integrationer
 
-### 📚 Installation Guides
+OneSeek har verktyg for live data och officiella kallor, bl.a.:
 
-Choose the guide that fits your needs:
+- **SMHI** (vader)
+- **Trafiklab** (rutter/avgangar)
+- **Trafikverket** (trafik, kameror, vagstatus m.m.)
+- **SCB** (statistik)
+- **Riksdagen** (dokument, voteringar, anforanden)
+- **Bolagsverket** (bolagsdata)
+- **Geoapify** (kartor/geokodning)
+- **Marketplace** (Blocket/Tradera-relaterade floden)
+- **Web/knowledge** (t.ex. Tavily, docs, intern kunskapsbas)
 
-- **[INSTALLATION.md](INSTALLATION.md)** - **⭐ Complete Installation Guide**
-  - PostgreSQL setup and configuration
-  - Redis installation
-  - Manual installation steps for all platforms
-  - Database management and migrations
-  - Production deployment guide
-  - Comprehensive troubleshooting
+Tool-output kan ingestas till connector-lagret for citationer och historik.
 
-- **[TESTING_WITHOUT_DATABASE.md](TESTING_WITHOUT_DATABASE.md)** - Testing Mode Guide
-  - Quick testing without database
-  - Local LLM integration (vLLM, Ollama)
-  - Development without authentication
+---
 
-### Testing Mode (No Database/Auth Required) 🧪
+## Compare-lage
 
-For quick testing and development with local LLMs:
+Compare ar en deterministisk subgraf (inte "fri" LLM-tool-calling):
+
+1. `compare_fan_out`: anropar **alla** externa compare-modeller parallellt
+2. `compare_collect`: sammanstaller status/komplettering
+3. `compare_tavily`: optional web-enrichment
+4. `compare_synthesizer`: slutlig syntes
+
+Vanliga compare-modeller (via externa toolspecs) inkluderar:
+
+- Grok
+- GPT
+- Claude
+- Gemini
+- DeepSeek
+- Perplexity
+- Qwen
+
+Designmal:
+
+- inga oavsiktliga modellbortfall
+- full verktygshistorik till frontend
+- konsekvent citerings- och outputflode
+
+---
+
+## LangSmith + full transparens (trace)
+
+### LangSmith (ibland kallat "Longsmith")
+
+Projektet har LangSmith-observability via env:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=...
+LANGSMITH_PROJECT=surfsense
+```
+
+### In-app trace (full kedja i plattformen)
+
+Ut over extern observability har OneSeek en intern trace-pipeline:
+
+- `ChatTraceSession` + `ChatTraceSpan` i DB
+- spans for chain/model/tool med:
+  - input (inklusive prompt payload for model-span)
+  - output
+  - meta
+  - input/output/total tokens
+  - duration/status/parent-child
+
+SSE-events:
+
+- `data-trace-session`
+- `data-trace-span`
+
+API-endpoints:
+
+- `GET /threads/{thread_id}/messages/{message_id}/traces`
+- `POST /threads/{thread_id}/trace-sessions/{trace_session_id}/attach`
+
+Detta ger praktisk "fran fraga till svar"-transparens, inklusive verktygsinput/verktygsoutput och interna nodsteg.
+
+---
+
+## Memory och feedback-loopar
+
+### Episodic memory (Fas 3)
+
+- processminne med TTL + LRU
+- keying/scoping per `search_space_id` + `user_id`
+- anvands for att undvika onodiga omanrop av samma query/tool
+
+### Retrieval feedback (Fas 3)
+
+- success/failure-signal per query/tool
+- score -> boost/penalty i retrievalrankingen
+- stanger loopen mellan utfall och framtida verktygsval
+
+### Speculative reuse (Fas 4)
+
+- speculative path forbereder sannolika verktyg
+- `speculative_merge` markerar vad som kan ateranvandas
+- `call_agent` / `call_agents_parallel` hoppar over duplicerade anrop vid hit
+
+---
+
+## Eval-systemet
+
+OneSeek har ett komplett evalsystem for supervised iteration.
+
+### Stage-typer
+
+- **Tool selection eval**
+- **API input eval**
+- **Auto-loop eval** (iterativ tuning)
+
+### Viktiga endpoints
+
+- `POST /tool-settings/evaluate`
+- `POST /tool-settings/evaluate/start`
+- `GET /tool-settings/evaluate/{job_id}`
+- `POST /tool-settings/evaluate-api-input`
+- `POST /tool-settings/evaluate-api-input/start`
+- `GET /tool-settings/evaluate-api-input/{job_id}`
+- `POST /tool-settings/evaluate-auto-loop/start`
+
+### Metriker (inkl. Fas 1-4)
+
+- `intent_accuracy`
+- `route_accuracy`
+- `sub_route_accuracy`
+- `graph_complexity_accuracy`
+- `execution_strategy_accuracy`
+- `agent_accuracy`
+- `plan_accuracy`
+- `tool_accuracy`
+- `retrieval_recall_at_k`
+- `supervisor_review_score` / `supervisor_review_pass_rate`
+- API-input-specifika: schema validity, required field recall, field value accuracy, clarification accuracy
+
+### Eval-output och forslag
+
+Evalsystemet kan generera:
+
+- metadata-forslag for tools
+- prompt-forslag (agent/supervisor/tool)
+- retrieval tuning-forslag
+- intent-definition-forslag
+- stage-jamforelse med trend/guidance
+
+---
+
+## SSE/Data Stream-events
+
+Frontend far live-events via Vercel AI data stream. Exempel:
+
+- `text-delta`
+- `data-thinking-step`
+- `data-context-stats`
+- `data-trace-session`
+- `data-trace-span`
+- `data-synthesis-draft` (Fas 4)
+
+`data-synthesis-draft` skickas innan slutsyntesen nar progressive synthesizer ar aktiv.
+
+---
+
+## Kodstruktur (viktigaste filer)
+
+- `surfsense_backend/app/agents/new_chat/supervisor_agent.py`
+- `surfsense_backend/app/agents/new_chat/nodes/intent.py`
+- `surfsense_backend/app/agents/new_chat/nodes/execution_router.py`
+- `surfsense_backend/app/agents/new_chat/nodes/smart_critic.py`
+- `surfsense_backend/app/agents/new_chat/nodes/speculative.py`
+- `surfsense_backend/app/agents/new_chat/nodes/progressive_synthesizer.py`
+- `surfsense_backend/app/agents/new_chat/episodic_memory.py`
+- `surfsense_backend/app/agents/new_chat/retrieval_feedback.py`
+- `surfsense_backend/app/agents/new_chat/bigtool_store.py`
+- `surfsense_backend/app/tasks/chat/stream_new_chat.py`
+- `surfsense_backend/app/services/tool_evaluation_service.py`
+- `surfsense_backend/app/routes/admin_tool_settings_routes.py`
+- `surfsense_backend/app/services/trace_service.py`
+
+---
+
+## Konfiguration och feature flags
+
+Runtime-flaggor i chatflodet:
+
+```json
+{
+  "runtime_hitl": {
+    "enabled": true,
+    "hybrid_mode": true,
+    "speculative_enabled": true
+  }
+}
+```
+
+- `hybrid_mode=false`: legacy/kompatibilitetsflode
+- `hybrid_mode=true`: aktiverar hybridnoder
+- `speculative_enabled=true`: aktiverar speculative branch i komplexa queries
+
+---
+
+## Teststatus for Fas 1-4 + eval
+
+Karnsviter for hybrid och eval:
+
+- `tests/test_hybrid_phase1.py`
+- `tests/test_execution_router_phase2.py`
+- `tests/test_phase3_memory_feedback.py`
+- `tests/test_phase4_speculative_progressive.py`
+- `tests/test_tool_evaluation_service.py`
+
+Exempelkommando:
 
 ```bash
-# 1. Create minimal .env file
-cat > surfsense_backend/.env << EOF
-DATABASE_REQUIRED=FALSE
-AUTH_REQUIRED=FALSE
-SECRET_KEY=test-secret-key
-NEXT_FRONTEND_URL=http://localhost:3000
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-ETL_SERVICE=DOCLING
-EOF
-
-# 2. Start your local LLM (vLLM example)
-pip install vllm
-python -m vllm.entrypoints.openai.api_server \
-  --model meta-llama/Llama-2-7b-chat-hf \
-  --port 8001
-
-# 3. Start SurfSense backend
 cd surfsense_backend
-python main.py
+python3 -m pytest -q \
+  tests/test_tool_evaluation_service.py \
+  tests/test_hybrid_phase1.py \
+  tests/test_execution_router_phase2.py \
+  tests/test_phase3_memory_feedback.py \
+  tests/test_phase4_speculative_progressive.py
 ```
-
-### Anonymous Access (Public Global Chat)
-
-SurfSense can expose a read-only public chat endpoint that does not require login.
-This is intended for the global model only and does not access user data or saved chats.
-
-**Public endpoints (no auth required):**
-- `POST /api/v1/public/global/chat` - Basic chat with the global model
-- `GET /api/v1/global-new-llm-configs` - Public model list (safe metadata only)
-- `GET /api/v1/public/{share_token}` - Public chat snapshots
-
-Public chat requires global LLM configs (see `app/config/global_llm_config.yaml`).
-
-**Restricted endpoints (login required):**
-- Search spaces, connectors, documents, and saved chats
-- Personalized settings, premium models, data export, and admin tools
-
-**Security notes:**
-- Anonymous sessions use a signed cookie (`surfsense_anon_session`) for rate limiting.
-- Rate limiting is enforced per anonymous session or per authenticated user.
-- Public chat is read-only and does not use personal knowledge sources.
-- Public endpoints can be abused if left unbounded; use rate limits or disable via `ANON_ACCESS_ENABLED`.
- - Public chat tools are enabled via `ANON_CHAT_ENABLED_TOOLS` and use global API keys.
- - `search_web` uses `PUBLIC_TAVILY_API_KEY` and is not user-specific.
-
-**Auth flow overview:**
-- Authentication is handled by FastAPI Users with JWT bearer tokens and optional Google OAuth.
-- Protected routes require the `current_active_user` dependency at the route level.
-- Public routes may use `current_optional_user` to support both anonymous and logged-in access.
-
-**Configuration (backend `.env`):**
-```
-ANON_ACCESS_ENABLED=TRUE
-ANON_SESSION_TTL_SECONDS=86400
-ANON_CHAT_RATE_LIMIT_MAX_REQUESTS=20
-ANON_CHAT_RATE_LIMIT_WINDOW_SECONDS=60
-ANON_CHAT_MAX_HISTORY_MESSAGES=10
-ANON_CHAT_DEFAULT_LLM_ID=0
-ANON_CHAT_TEMPERATURE=0.2
-ANON_CHAT_RECURSION_LIMIT=40
-ANON_CHAT_ENABLED_TOOLS=link_preview,display_image,scrape_webpage,search_web
-
-# Public tool API keys (global)
-PUBLIC_TAVILY_API_KEY=your_public_tavily_key_here
-PUBLIC_WEB_SEARCH_MAX_RESULTS=5
-```
-
-### Quick Start with Docker 🐳
-
-> [!TIP]
-> For production deployments, use the full [Docker Compose setup](https://www.surfsense.com/docs/docker-installation) which offers more control and scalability.
-
-**Linux/macOS:**
-
-```bash
-docker run -d -p 3000:3000 -p 8000:8000 -p 5133:5133 \
-  -v surfsense-data:/data \
-  --name surfsense \
-  --restart unless-stopped \
-  ghcr.io/modsetter/surfsense:latest
-```
-
-**Windows (PowerShell):**
-
-```powershell
-docker run -d -p 3000:3000 -p 8000:8000 -p 5133:5133 `
-  -v surfsense-data:/data `
-  --name surfsense `
-  --restart unless-stopped `
-  ghcr.io/modsetter/surfsense:latest
-```
-
-**With Custom Configuration:**
-
-You can pass any environment variable using `-e` flags:
-
-```bash
-docker run -d -p 3000:3000 -p 8000:8000 -p 5133:5133 \
-  -v surfsense-data:/data \
-  -e EMBEDDING_MODEL=openai://text-embedding-ada-002 \
-  -e OPENAI_API_KEY=your_openai_api_key \
-  -e AUTH_TYPE=GOOGLE \
-  -e GOOGLE_OAUTH_CLIENT_ID=your_google_client_id \
-  -e GOOGLE_OAUTH_CLIENT_SECRET=your_google_client_secret \
-  -e ETL_SERVICE=LLAMACLOUD \
-  -e LLAMA_CLOUD_API_KEY=your_llama_cloud_key \
-  --name surfsense \
-  --restart unless-stopped \
-  ghcr.io/modsetter/surfsense:latest
-```
-
-> [!NOTE]
-> - If deploying behind a reverse proxy with HTTPS, add `-e BACKEND_URL=https://api.yourdomain.com`
-
-After starting, access SurfSense at:
-- **Frontend**: [http://localhost:3000](http://localhost:3000)
-- **Backend API**: [http://localhost:8000](http://localhost:8000)
-- **API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Electric-SQL**: [http://localhost:5133](http://localhost:5133)
-
-**Useful Commands:**
-
-```bash
-docker logs -f surfsense      # View logs
-docker stop surfsense         # Stop
-docker start surfsense        # Start
-docker rm surfsense           # Remove (data preserved in volume)
-```
-
-### Installation Options
-
-SurfSense provides multiple options to get started:
-
-1. **[Complete Installation Guide](INSTALLATION.md)** ⭐ - Comprehensive setup instructions
-   - **PostgreSQL** installation and configuration for all platforms
-   - **Redis** setup and configuration
-   - **Manual installation** with detailed steps
-   - **Database management** and migrations
-   - **Production deployment** guide
-   - **Troubleshooting** common issues
-   - Perfect for production deployments or complete control
-
-2. **[SurfSense Cloud](https://www.surfsense.com/login)** - The easiest way to try SurfSense without any setup.
-   - No installation required
-   - Instant access to all features
-   - Perfect for getting started quickly
-
-3. **Quick Start Docker (Above)** - Single command to get SurfSense running locally.
-   - All-in-one image with PostgreSQL, Redis, and all services bundled
-   - Perfect for evaluation, development, and small deployments
-   - Data persisted via Docker volume
-
-4. **[Docker Compose (Production)](https://www.surfsense.com/docs/docker-installation)** - Full stack deployment with separate services.
-   - Includes pgAdmin for database management through a web UI
-   - Supports environment variable customization via `.env` file
-   - Flexible deployment options (full stack or core services only)
-   - Better for production with separate scaling of services
-
-5. **[Testing Mode](TESTING_WITHOUT_DATABASE.md)** - For testing with local LLMs without database.
-   - No PostgreSQL or authentication required
-   - Perfect for LLM integration testing
-   - Quick setup for development
-
-Before self-hosting installation, refer to the **[Complete Installation Guide](INSTALLATION.md)** for:
-- Auth setup (optional - defaults to LOCAL auth)
-- **File Processing ETL Service** (optional - defaults to Docling):
-  - Docling (default, local processing, no API key required, supports PDF, Office docs, images, HTML, CSV)
-  - Unstructured.io API key (supports 34+ formats)
-  - LlamaIndex API key (enhanced parsing, supports 50+ formats)
-- Other API keys as needed for your use case
-
-
-
-## Tech Stack
-
-
- ### **BackEnd** 
-
--  **LiteLLM**: Universal LLM integration supporting 100+ models (OpenAI, Anthropic, Ollama, etc.)
-
--  **FastAPI**: Modern, fast web framework for building APIs with Python
-  
--  **PostgreSQL with pgvector**: Database with vector search capabilities for similarity searches
-
--  **SQLAlchemy**: SQL toolkit and ORM (Object-Relational Mapping) for database interactions
-
--  **Alembic**: A database migrations tool for SQLAlchemy.
-
--  **FastAPI Users**: Authentication and user management with JWT and OAuth support
-
--  **Deep Agents**: Custom agent framework built on LangGraph for reasoning and acting AI agents with configurable tools
-
--  **LangGraph**: Framework for developing stateful AI agents with conversation persistence
-
--  **LangChain**: Framework for developing AI-powered applications.
-
--  **Rerankers**: Advanced result ranking for improved search relevance
-
--  **Hybrid Search**: Combines vector similarity and full-text search for optimal results using Reciprocal Rank Fusion (RRF)
-
--  **Vector Embeddings**: Document and text embeddings for semantic search
-
--  **pgvector**: PostgreSQL extension for efficient vector similarity operations
-
--  **Redis**: In-memory data structure store used as message broker and result backend for Celery
-
--  **Celery**: Distributed task queue for handling asynchronous background jobs (document processing, podcast generation, etc.)
-
--  **Flower**: Real-time monitoring and administration tool for Celery task queues
-
--  **Chonkie**: Advanced document chunking and embedding library
-
-  
----
- ### **FrontEnd**
-
--  **Next.js**: React framework featuring App Router, server components, automatic code-splitting, and optimized rendering.
-
--  **React**: JavaScript library for building user interfaces.
-
--  **TypeScript**: Static type-checking for JavaScript, enhancing code quality and developer experience.
-
-- **Vercel AI SDK Kit UI Stream Protocol**: To create scalable chat UI.
-
--  **Tailwind CSS**: Utility-first CSS framework for building custom UI designs.
-
--  **Shadcn**: Headless components library.
-
--  **Motion (Framer Motion)**: Animation library for React.
-
-
-
- ### **DevOps**
-
--  **Docker**: Container platform for consistent deployment across environments
-  
--  **Docker Compose**: Tool for defining and running multi-container Docker applications
-
--  **pgAdmin**: Web-based PostgreSQL administration tool included in Docker setup
-
-
-### **Extension** 
- Manifest v3 on Plasmo
-
-
-## Contribute 
-
-Contributions are very welcome! A contribution can be as small as a ⭐ or even finding and creating issues.
-Fine-tuning the Backend is always desired.
-
-### Adding New Agent Tools
-
-Want to add a new tool to the SurfSense agent? It's easy:
-
-1. Create your tool file in `surfsense_backend/app/agents/new_chat/tools/my_tool.py`
-2. Register it in `registry.py`:
-
-```python
-ToolDefinition(
-    name="my_tool",
-    description="What my tool does",
-    factory=lambda deps: create_my_tool(
-        search_space_id=deps["search_space_id"],
-        db_session=deps["db_session"],
-    ),
-    requires=["search_space_id", "db_session"],
-),
-```
-
-For detailed contribution guidelines, please see our [CONTRIBUTING.md](CONTRIBUTING.md) file.
-
-## Star History
-
-<a href="https://www.star-history.com/#MODSetter/SurfSense&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=MODSetter/SurfSense&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=MODSetter/SurfSense&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=MODSetter/SurfSense&type=Date" />
- </picture>
-</a>
 
 ---
----
-<p align="center">
-    <img 
-      src="https://github.com/user-attachments/assets/329c9bc2-6005-4aed-a629-700b5ae296b4" 
-      alt="Catalyst Project" 
-      width="200"
-    />
-</p>
 
----
----
+## Sammanfattning
+
+OneSeek ar nu en hybrid, transparent och eval-driven agentplattform med:
+
+- adaptiv LangGraph-orkestrering (Fas 1-4)
+- dynamiskt agent- och verktygsval med Bigtool namespaces + rerank
+- realtidsdata och compare-subgraf
+- LangSmith + intern trace for full observability
+- produktionsnara evalloop for kontinuerlig forbattring
+
