@@ -48,6 +48,14 @@ class AdminToolLifecycleApiService {
 			}
 		);
 	};
+
+	bulkPromoteToLive = async () => {
+		return baseApiService.post(
+			`/api/v1/admin/tool-lifecycle/bulk-promote`,
+			null, // No response schema validation needed, returns simple message
+			{}
+		);
+	};
 }
 
 export const adminToolLifecycleApiService = new AdminToolLifecycleApiService();

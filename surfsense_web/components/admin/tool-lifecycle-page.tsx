@@ -129,17 +129,8 @@ export function ToolLifecyclePage() {
 
 		try {
 			setLoading(true);
-			const response = await fetch(`${process.env.NEXT_PUBLIC_FASTAPI_BACKEND_URL || "http://localhost:8000"}/api/v1/admin/tool-lifecycle/bulk-promote`, {
-				method: "POST",
-				credentials: "include",
-			});
-			
-			if (!response.ok) {
-				throw new Error("Failed to bulk promote tools");
-			}
-			
-			const result = await response.json();
-			toast.success(result.message);
+			const result = await adminToolLifecycleApiService.bulkPromoteToLive();
+			toast.success(result?.message || "Successfully promoted all tools to LIVE");
 			await fetchLifecycleData();
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : "Failed to bulk promote");
