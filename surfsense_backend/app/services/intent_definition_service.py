@@ -35,7 +35,10 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
         "intent_id": "action",
         "route": Route.ACTION.value,
         "label": "Action",
-        "description": "Realtidsuppgifter och verktygskörningar som väder, trafik, media och web.",
+        "description": (
+            "Realtidsuppgifter och verktygskörningar som väder, trafik, media, "
+            "webb och marknadsplatser (Blocket/Tradera)."
+        ),
         "keywords": [
             "väder",
             "smhi",
@@ -47,6 +50,17 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
             "podcast",
             "bild",
             "verktyg",
+            "blocket",
+            "tradera",
+            "marknadsplats",
+            "annons",
+            "begagnat",
+            "auktion",
+            "motorcykel",
+            "mc",
+            "bilar",
+            "båtar",
+            "prisjämförelse",
         ],
         "priority": 300,
         "enabled": True,

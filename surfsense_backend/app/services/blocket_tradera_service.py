@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, UTC
 from time import monotonic
@@ -9,8 +11,81 @@ from typing import Any
 
 import httpx
 
-BLOCKET_BASE_URL = "https://api.blocket.se/search_bff/v2/content"
+BLOCKET_API_BASE = os.getenv("BLOCKET_API_BASE_URL", "https://blocket-api.se").rstrip("/")
+BLOCKET_SEARCH_URL = f"{BLOCKET_API_BASE}/v1/search"
+BLOCKET_CAR_SEARCH_URL = f"{BLOCKET_API_BASE}/v1/search/car"
+BLOCKET_BOAT_SEARCH_URL = f"{BLOCKET_API_BASE}/v1/search/boat"
+BLOCKET_MC_SEARCH_URL = f"{BLOCKET_API_BASE}/v1/search/mc"
 TRADERA_API_BASE = "https://api.tradera.com"
+
+_BLOCKET_CATEGORY_ALIAS_MAP: dict[str, str] = {
+    "affarsverksamhet": "AFFARSVERKSAMHET",
+    "business": "AFFARSVERKSAMHET",
+    "djur": "DJUR_OCH_TILLBEHOR",
+    "djur och tillbehor": "DJUR_OCH_TILLBEHOR",
+    "elektronik": "ELEKTRONIK_OCH_VITVAROR",
+    "vitvaror": "ELEKTRONIK_OCH_VITVAROR",
+    "fordonstillbehor": "FORDONSTILLBEHOR",
+    "fritid": "FRITID_HOBBY_OCH_UNDERHALLNING",
+    "hobby": "FRITID_HOBBY_OCH_UNDERHALLNING",
+    "underhallning": "FRITID_HOBBY_OCH_UNDERHALLNING",
+    "foraldrar och barn": "FORALDRAR_OCH_BARN",
+    "barn": "FORALDRAR_OCH_BARN",
+    "klader": "KLADER_KOSMETIKA_OCH_ACCESSOARER",
+    "mode": "KLADER_KOSMETIKA_OCH_ACCESSOARER",
+    "konst": "KONST_OCH_ANTIKT",
+    "antik": "KONST_OCH_ANTIKT",
+    "mobler": "MOBLER_OCH_INREDNING",
+    "inredning": "MOBLER_OCH_INREDNING",
+    "sport": "SPORT_OCH_FRITID",
+    "tradgard": "TRADGARD_OCH_RENOVERING",
+    "renovering": "TRADGARD_OCH_RENOVERING",
+}
+_BLOCKET_CAR_CATEGORY_ALIASES = {"bil", "bilar", "car", "cars", "fordon"}
+_BLOCKET_BOAT_CATEGORY_ALIASES = {"bat", "batar", "boat", "boats"}
+_BLOCKET_MC_CATEGORY_ALIASES = {"mc", "motorcykel", "motorcyklar", "moped", "mopeder"}
+_BLOCKET_LOCATION_ALIAS_MAP: dict[str, str] = {
+    "blekinge": "BLEKINGE",
+    "dalarna": "DALARNA",
+    "gotland": "GOTLAND",
+    "gavleborg": "GAVLEBORG",
+    "halland": "HALLAND",
+    "jamtland": "JAMTLAND",
+    "jonkoping": "JONKOPING",
+    "kalmar": "KALMAR",
+    "kronoberg": "KRONOBERG",
+    "norrbotten": "NORRBOTTEN",
+    "skane": "SKANE",
+    "stockholm": "STOCKHOLM",
+    "sodermanland": "SODERMANLAND",
+    "uppsala": "UPPSALA",
+    "varmland": "VARMLAND",
+    "vasterbotten": "VASTERBOTTEN",
+    "vasternorrland": "VASTERNORRLAND",
+    "vastmanland": "VASTMANLAND",
+    "vastra gotaland": "VASTRA_GOTALAND",
+    "orebro": "OREBRO",
+    "ostergotland": "OSTERGOTLAND",
+    # Common city aliases mapped to county codes.
+    "malmo": "SKANE",
+    "lund": "SKANE",
+    "helsingborg": "SKANE",
+    "goteborg": "VASTRA_GOTALAND",
+    "linkoping": "OSTERGOTLAND",
+    "norrkoping": "OSTERGOTLAND",
+    "umea": "VASTERBOTTEN",
+    "gavle": "GAVLEBORG",
+}
+
+
+def _normalize_query_token(value: str | None) -> str:
+    if not value:
+        return ""
+    folded = unicodedata.normalize("NFKD", str(value))
+    ascii_only = folded.encode("ascii", "ignore").decode("ascii")
+    lowered = ascii_only.lower()
+    lowered = re.sub(r"[^a-z0-9]+", " ", lowered)
+    return re.sub(r"\s+", " ", lowered).strip()
 
 
 class SimpleCache:
@@ -106,6 +181,50 @@ class BlocketTraderaService:
         self.tradera_app_id = os.getenv("TRADERA_APP_ID", "5572")
         self.tradera_app_key = os.getenv("TRADERA_APP_KEY", "")
 
+    def _resolve_locations_param(self, location: str | None) -> tuple[list[str] | None, str | None]:
+        normalized = _normalize_query_token(location)
+        if not normalized:
+            return None, None
+        normalized = re.sub(r"\b(lan|lans)\b", "", normalized).strip()
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        if not normalized:
+            return None, None
+        direct = _BLOCKET_LOCATION_ALIAS_MAP.get(normalized)
+        if not direct and normalized.endswith("s"):
+            direct = _BLOCKET_LOCATION_ALIAS_MAP.get(normalized[:-1].strip())
+        if direct:
+            return [direct], None
+        for alias, code in _BLOCKET_LOCATION_ALIAS_MAP.items():
+            if (
+                normalized == alias
+                or normalized.startswith(f"{alias} ")
+                or normalized.endswith(f" {alias}")
+                or f" {alias} " in f" {normalized} "
+            ):
+                return [code], None
+        return None, str(location).strip()
+
+    def _resolve_general_category(self, category: str | None) -> str | None:
+        normalized = _normalize_query_token(category)
+        if not normalized:
+            return None
+        return _BLOCKET_CATEGORY_ALIAS_MAP.get(normalized)
+
+    @staticmethod
+    def _append_query_part(query: str | None, part: str | None) -> str:
+        left = str(query or "").strip()
+        right = str(part or "").strip()
+        if left and right:
+            return f"{left} {right}".strip()
+        return left or right
+
+    async def _blocket_get(self, endpoint: str, *, params: dict[str, Any]) -> dict[str, Any]:
+        await self.blocket_rate_limiter.acquire()
+        async with httpx.AsyncClient() as client:
+            response = await client.get(endpoint, params=params, timeout=30.0)
+            response.raise_for_status()
+            return response.json()
+
     async def blocket_search(
         self,
         query: str,
@@ -134,24 +253,52 @@ class BlocketTraderaService:
         if cached:
             return cached
 
-        await self.blocket_rate_limiter.acquire()
+        normalized_category = _normalize_query_token(category)
+        if normalized_category in _BLOCKET_CAR_CATEGORY_ALIASES:
+            normalized = await self.blocket_search_cars(
+                query=query,
+                location=location,
+                limit=limit,
+            )
+            self.blocket_cache.set(cache_key, normalized)
+            return normalized
+        if normalized_category in _BLOCKET_BOAT_CATEGORY_ALIASES:
+            normalized = await self.blocket_search_boats(
+                query=query,
+                location=location,
+                min_price=min_price,
+                max_price=max_price,
+                limit=limit,
+            )
+            self.blocket_cache.set(cache_key, normalized)
+            return normalized
+        if normalized_category in _BLOCKET_MC_CATEGORY_ALIASES:
+            normalized = await self.blocket_search_mc(
+                query=query,
+                location=location,
+                min_price=min_price,
+                max_price=max_price,
+                limit=limit,
+            )
+            self.blocket_cache.set(cache_key, normalized)
+            return normalized
 
-        params: dict[str, Any] = {"q": query, "limit": limit}
-        if category:
-            params["category"] = category
-        if location:
-            params["location"] = location
+        params: dict[str, Any] = {"query": query, "page": 1}
+        locations, unresolved_location = self._resolve_locations_param(location)
+        if locations:
+            params["locations"] = locations
+        elif unresolved_location:
+            params["query"] = self._append_query_part(params.get("query"), unresolved_location)
+        mapped_category = self._resolve_general_category(category)
+        if mapped_category:
+            params["category"] = mapped_category
         if min_price is not None:
             params["price_from"] = min_price
         if max_price is not None:
             params["price_to"] = max_price
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(BLOCKET_BASE_URL, params=params, timeout=30.0)
-            response.raise_for_status()
-            data = response.json()
-
-        normalized = self._normalize_blocket_response(data)
+        data = await self._blocket_get(BLOCKET_SEARCH_URL, params=params)
+        normalized = self._normalize_blocket_response(data, limit=limit)
         self.blocket_cache.set(cache_key, normalized)
         return normalized
 
@@ -191,24 +338,21 @@ class BlocketTraderaService:
         if cached:
             return cached
 
-        await self.blocket_rate_limiter.acquire()
-
-        params: dict[str, Any] = {"category": "bilar", "limit": limit}
+        params: dict[str, Any] = {"page": 1}
         if search_query:
-            params["q"] = search_query
+            params["query"] = search_query
+        locations, unresolved_location = self._resolve_locations_param(location)
+        if locations:
+            params["locations"] = locations
+        elif unresolved_location:
+            params["query"] = self._append_query_part(params.get("query"), unresolved_location)
         if year_from:
             params["year_from"] = year_from
         if year_to:
             params["year_to"] = year_to
-        if location:
-            params["location"] = location
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(BLOCKET_BASE_URL, params=params, timeout=30.0)
-            response.raise_for_status()
-            data = response.json()
-
-        normalized = self._normalize_blocket_response(data)
+        data = await self._blocket_get(BLOCKET_CAR_SEARCH_URL, params=params)
+        normalized = self._normalize_blocket_response(data, limit=limit)
         self.blocket_cache.set(cache_key, normalized)
         return normalized
 
@@ -244,24 +388,21 @@ class BlocketTraderaService:
         if cached:
             return cached
 
-        await self.blocket_rate_limiter.acquire()
-
-        params: dict[str, Any] = {"category": "batar", "limit": limit}
+        params: dict[str, Any] = {"page": 1}
         if search_query:
-            params["q"] = search_query
-        if location:
-            params["location"] = location
+            params["query"] = search_query
+        locations, unresolved_location = self._resolve_locations_param(location)
+        if locations:
+            params["locations"] = locations
+        elif unresolved_location:
+            params["query"] = self._append_query_part(params.get("query"), unresolved_location)
         if min_price is not None:
             params["price_from"] = min_price
         if max_price is not None:
             params["price_to"] = max_price
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(BLOCKET_BASE_URL, params=params, timeout=30.0)
-            response.raise_for_status()
-            data = response.json()
-
-        normalized = self._normalize_blocket_response(data)
+        data = await self._blocket_get(BLOCKET_BOAT_SEARCH_URL, params=params)
+        normalized = self._normalize_blocket_response(data, limit=limit)
         self.blocket_cache.set(cache_key, normalized)
         return normalized
 
@@ -297,24 +438,21 @@ class BlocketTraderaService:
         if cached:
             return cached
 
-        await self.blocket_rate_limiter.acquire()
-
-        params: dict[str, Any] = {"category": "mc", "limit": limit}
+        params: dict[str, Any] = {"page": 1}
         if search_query:
-            params["q"] = search_query
-        if location:
-            params["location"] = location
+            params["query"] = search_query
+        locations, unresolved_location = self._resolve_locations_param(location)
+        if locations:
+            params["locations"] = locations
+        elif unresolved_location:
+            params["query"] = self._append_query_part(params.get("query"), unresolved_location)
         if min_price is not None:
             params["price_from"] = min_price
         if max_price is not None:
             params["price_to"] = max_price
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(BLOCKET_BASE_URL, params=params, timeout=30.0)
-            response.raise_for_status()
-            data = response.json()
-
-        normalized = self._normalize_blocket_response(data)
+        data = await self._blocket_get(BLOCKET_MC_SEARCH_URL, params=params)
+        normalized = self._normalize_blocket_response(data, limit=limit)
         self.blocket_cache.set(cache_key, normalized)
         return normalized
 
@@ -377,34 +515,135 @@ class BlocketTraderaService:
         self.tradera_cache.set(cache_key, parsed)
         return parsed
 
-    def _normalize_blocket_response(self, data: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _parse_blocket_price(raw_price: Any) -> tuple[int | float | None, str]:
+        if isinstance(raw_price, dict):
+            amount = raw_price.get("amount")
+            if amount is None:
+                amount = raw_price.get("value")
+            currency = (
+                raw_price.get("currency_code")
+                or raw_price.get("currency")
+                or "SEK"
+            )
+        else:
+            amount = raw_price
+            currency = "SEK"
+        if isinstance(amount, str):
+            normalized_amount = amount.replace(" ", "").replace(",", ".")
+            try:
+                amount = float(normalized_amount)
+            except ValueError:
+                amount = None
+        if isinstance(amount, float) and amount.is_integer():
+            amount = int(amount)
+        if not isinstance(amount, (int, float)):
+            amount = None
+        return amount, str(currency or "SEK")
+
+    @staticmethod
+    def _timestamp_to_iso(value: Any) -> str | None:
+        if not isinstance(value, (int, float)):
+            return None
+        try:
+            epoch = float(value)
+            if epoch > 10_000_000_000:
+                epoch /= 1000.0
+            return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None
+
+    @staticmethod
+    def _extract_blocket_total(data: dict[str, Any], *, fallback: int) -> int:
+        metadata = data.get("metadata")
+        if isinstance(metadata, dict):
+            result_size = metadata.get("result_size")
+            if isinstance(result_size, dict):
+                for key in ("match_count", "group_count"):
+                    value = result_size.get(key)
+                    if isinstance(value, int):
+                        return value
+            num_results = metadata.get("num_results")
+            if isinstance(num_results, int):
+                return num_results
+        total = data.get("total")
+        if isinstance(total, int):
+            return total
+        return fallback
+
+    def _normalize_blocket_response(
+        self,
+        data: dict[str, Any],
+        *,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """
         Normalize Blocket API response to consistent format.
 
-        Args:
-            data: Raw API response
-
-        Returns:
-            Normalized data structure
+        Supports both legacy Blocket payloads (`data`) and blocket-api.se payloads (`docs`).
         """
-        items = []
-        raw_items = data.get("data", [])
+        raw_items = data.get("docs")
+        if not isinstance(raw_items, list):
+            raw_items = data.get("data", [])
+        if not isinstance(raw_items, list):
+            raw_items = []
 
+        try:
+            safe_limit = max(1, int(limit)) if limit is not None else None
+        except (TypeError, ValueError):
+            safe_limit = None
+
+        normalized_items: list[dict[str, Any]] = []
         for item in raw_items:
-            normalized_item = {
-                "id": item.get("id"),
-                "title": item.get("subject"),
-                "price": item.get("price", {}).get("value"),
-                "currency": item.get("price", {}).get("currency", "SEK"),
-                "location": item.get("location", {}).get("name"),
-                "url": item.get("share_url"),
-                "image": item.get("image", {}).get("url") if item.get("image") else None,
-                "published": item.get("date"),
-                "category": item.get("category"),
-            }
-            items.append(normalized_item)
+            if not isinstance(item, dict):
+                continue
+            price, currency = self._parse_blocket_price(item.get("price"))
+            location_raw = item.get("location")
+            if isinstance(location_raw, dict):
+                location_name = (
+                    location_raw.get("name")
+                    or location_raw.get("postalName")
+                    or location_raw.get("value")
+                )
+            else:
+                location_name = location_raw
+            image_raw = item.get("image")
+            image_url = (
+                image_raw.get("url")
+                if isinstance(image_raw, dict)
+                else None
+            )
+            if not image_url:
+                image_urls = item.get("image_urls")
+                if isinstance(image_urls, list) and image_urls:
+                    image_url = image_urls[0]
+            published = item.get("date") or self._timestamp_to_iso(item.get("timestamp"))
+            normalized_items.append(
+                {
+                    "id": item.get("id") or item.get("ad_id"),
+                    "title": item.get("heading") or item.get("subject"),
+                    "price": price,
+                    "currency": currency,
+                    "location": location_name,
+                    "url": item.get("canonical_url") or item.get("share_url"),
+                    "image": image_url,
+                    "published": published,
+                    "category": item.get("category") or item.get("boat_class") or item.get("type"),
+                    "year": item.get("year"),
+                    "mileage": item.get("mileage"),
+                    "make": item.get("make"),
+                    "model": item.get("model"),
+                    "dealer_segment": item.get("dealer_segment"),
+                    "type": item.get("type"),
+                }
+            )
 
-        return {"source": "Blocket", "total": len(items), "items": items}
+        if safe_limit is not None:
+            items = normalized_items[:safe_limit]
+        else:
+            items = normalized_items
+        total = self._extract_blocket_total(data, fallback=len(normalized_items))
+        return {"source": "Blocket", "total": total, "items": items}
 
     def _parse_tradera_search_xml(self, xml_text: str) -> dict[str, Any]:
         """
