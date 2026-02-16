@@ -48,7 +48,10 @@ from app.agents.new_chat.episodic_memory import (
     get_or_create_episodic_store,
     infer_ttl_seconds,
 )
-from app.agents.new_chat.retrieval_feedback import get_global_retrieval_feedback_store
+from app.agents.new_chat.retrieval_feedback import (
+    get_global_retrieval_feedback_store,
+    hydrate_global_retrieval_feedback_store,
+)
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
@@ -88,6 +91,11 @@ from app.agents.new_chat.tools.write_todos import create_write_todos_tool
 from app.db import AgentComboCache
 from app.services.cache_control import is_cache_disabled
 from app.services.reranker_service import RerankerService
+from app.services.retrieval_feedback_persistence_service import (
+    load_retrieval_feedback_snapshot,
+    persist_retrieval_feedback_signal,
+)
+from app.services.tool_retrieval_tuning_service import get_global_tool_retrieval_tuning
 
 
 _AGENT_CACHE_TTL = timedelta(minutes=20)
@@ -2709,13 +2717,71 @@ async def create_supervisor_agent(
         max_entries=500,
     )
     retrieval_feedback_store = get_global_retrieval_feedback_store()
+    runtime_hitl_raw = dependencies.get("runtime_hitl")
+    runtime_hitl_cfg = (
+        dict(runtime_hitl_raw)
+        if isinstance(runtime_hitl_raw, dict)
+        else {"enabled": bool(runtime_hitl_raw)}
+    )
+    compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
-    def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
+    def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+        if value is None:
+            return bool(default)
+        if isinstance(value, bool):
+            return value
+        normalized = str(value).strip().lower()
+        if normalized in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "disabled"}:
+            return False
+        return bool(default)
+
+    retrieval_feedback_db_enabled = False
+    if isinstance(db_session, AsyncSession):
+        try:
+            persisted_tuning = await get_global_tool_retrieval_tuning(db_session)
+            retrieval_feedback_db_enabled = bool(
+                persisted_tuning.get("retrieval_feedback_db_enabled")
+            )
+        except Exception:
+            retrieval_feedback_db_enabled = False
+
+    if isinstance(runtime_hitl_cfg, dict) and (
+        "retrieval_feedback_db_enabled" in runtime_hitl_cfg
+    ):
+        retrieval_feedback_db_enabled = _coerce_bool(
+            runtime_hitl_cfg.get("retrieval_feedback_db_enabled"),
+            default=retrieval_feedback_db_enabled,
+        )
+
+    if retrieval_feedback_db_enabled and isinstance(db_session, AsyncSession):
+        try:
+            persisted_rows = await load_retrieval_feedback_snapshot(
+                db_session,
+                limit=5000,
+            )
+            hydrate_global_retrieval_feedback_store(persisted_rows)
+        except Exception:
+            # Retrieval ranking should continue even when persistence is unavailable.
+            retrieval_feedback_db_enabled = False
+
+    async def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
+        normalized_tool_id = str(tool_id or "").strip()
+        normalized_query = str(query or "").strip()
         retrieval_feedback_store.record(
-            tool_id=str(tool_id or "").strip(),
-            query=str(query or "").strip(),
+            tool_id=normalized_tool_id,
+            query=normalized_query,
             success=bool(success),
         )
+        if not retrieval_feedback_db_enabled:
+            return
+        await persist_retrieval_feedback_signal(
+            tool_id=normalized_tool_id,
+            query=normalized_query,
+            success=bool(success),
+        )
+
     weather_tool_ids = ["smhi_weather"]
     weather_tool_ids.extend(
         definition.tool_id
@@ -2729,13 +2795,6 @@ async def create_supervisor_agent(
         for definition in TRAFIKVERKET_TOOL_DEFINITIONS
         if definition.tool_id not in weather_tool_id_set
     ]
-    compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
-    runtime_hitl_raw = dependencies.get("runtime_hitl")
-    runtime_hitl_cfg = (
-        dict(runtime_hitl_raw)
-        if isinstance(runtime_hitl_raw, dict)
-        else {"enabled": bool(runtime_hitl_raw)}
-    )
 
     def _hitl_enabled(stage: str) -> bool:
         if not bool(runtime_hitl_cfg.get("enabled", True)):

@@ -17,11 +17,16 @@ def _normalize_query_pattern(query: str) -> str:
     return " ".join(tokens[:16])
 
 
-def _query_pattern_hash(query: str) -> str:
+def query_pattern_hash(query: str) -> str:
     normalized = _normalize_query_pattern(query)
     if not normalized:
         return ""
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+# Backward-compatible alias for existing internal callers.
+def _query_pattern_hash(query: str) -> str:
+    return query_pattern_hash(query)
 
 
 @dataclass
@@ -45,7 +50,7 @@ class RetrievalFeedbackStore:
 
     def _key(self, tool_id: str, query: str) -> tuple[str, str] | None:
         normalized_tool_id = str(tool_id or "").strip().lower()
-        pattern_hash = _query_pattern_hash(query)
+        pattern_hash = query_pattern_hash(query)
         if not normalized_tool_id or not pattern_hash:
             return None
         return normalized_tool_id, pattern_hash
@@ -100,6 +105,48 @@ class RetrievalFeedbackStore:
         with self._lock:
             self._signals.clear()
 
+    def hydrate_rows(
+        self,
+        rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> int:
+        """Merge persisted feedback rows into the in-process store.
+
+        Existing in-memory counters are preserved when they are already higher than
+        persisted values. This prevents temporary regressions when local writes are
+        ahead of the latest DB snapshot.
+        """
+        if not isinstance(rows, (list, tuple)):
+            return 0
+        applied = 0
+        with self._lock:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                tool_id = str(row.get("tool_id") or "").strip().lower()
+                pattern_hash = str(row.get("query_pattern_hash") or "").strip().lower()
+                if not tool_id or not pattern_hash:
+                    continue
+                try:
+                    successes = max(0, int(row.get("successes") or 0))
+                    failures = max(0, int(row.get("failures") or 0))
+                except (TypeError, ValueError):
+                    continue
+                key = (tool_id, pattern_hash)
+                existing = self._signals.get(key)
+                if existing is None:
+                    self._signals[key] = FeedbackSignal(
+                        successes=successes,
+                        failures=failures,
+                    )
+                else:
+                    existing.successes = max(int(existing.successes), successes)
+                    existing.failures = max(int(existing.failures), failures)
+                self._signals.move_to_end(key)
+                applied += 1
+            while len(self._signals) > self._max_patterns:
+                self._signals.popitem(last=False)
+        return applied
+
 
 _global_feedback_lock = threading.RLock()
 _global_feedback_store: RetrievalFeedbackStore | None = None
@@ -111,3 +158,10 @@ def get_global_retrieval_feedback_store() -> RetrievalFeedbackStore:
         if _global_feedback_store is None:
             _global_feedback_store = RetrievalFeedbackStore(max_patterns=2000)
         return _global_feedback_store
+
+
+def hydrate_global_retrieval_feedback_store(
+    rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> int:
+    store = get_global_retrieval_feedback_store()
+    return store.hydrate_rows(rows)

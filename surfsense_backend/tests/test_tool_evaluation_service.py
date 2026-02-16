@@ -42,6 +42,7 @@ def _normalize_retrieval_tuning_stub(payload: dict[str, Any] | None = None):
         "namespace_boost": 3.0,
         "embedding_weight": 4.0,
         "rerank_candidates": 24,
+        "retrieval_feedback_db_enabled": False,
     }
     if isinstance(payload, dict):
         base.update(payload)
@@ -255,6 +256,7 @@ def test_suggest_retrieval_tuning_fallback():
                 "namespace_boost": 3.0,
                 "embedding_weight": 4.0,
                 "rerank_candidates": 24,
+                "retrieval_feedback_db_enabled": False,
             },
             llm=None,
         )
@@ -284,6 +286,7 @@ def test_suggest_retrieval_tuning_when_all_passed_returns_no_change():
                 "namespace_boost": 3.0,
                 "embedding_weight": 4.0,
                 "rerank_candidates": 24,
+                "retrieval_feedback_db_enabled": False,
             },
             llm=None,
         )

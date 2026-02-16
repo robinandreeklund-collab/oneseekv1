@@ -92,3 +92,25 @@ def test_retrieval_feedback_boost_bounds() -> None:
     for _ in range(400):
         store.record(tool_id="t", query="q", success=False)
     assert -2.0 <= store.get_boost(tool_id="t", query="q") <= 2.0
+
+
+def test_retrieval_feedback_hydrate_rows_merges_counts() -> None:
+    store = retrieval_feedback.RetrievalFeedbackStore(max_patterns=100)
+    store.record(tool_id="smhi_weather", query="vader i malmo", success=True)
+    query_hash = retrieval_feedback.query_pattern_hash("vader i malmo")
+    applied = store.hydrate_rows(
+        [
+            {
+                "tool_id": "smhi_weather",
+                "query_pattern_hash": query_hash,
+                "successes": 3,
+                "failures": 1,
+            }
+        ]
+    )
+    assert applied == 1
+    snapshot = store.snapshot()
+    assert snapshot["count"] == 1
+    row = snapshot["rows"][0]
+    assert row["successes"] == 3
+    assert row["failures"] == 1

@@ -1336,6 +1336,29 @@ class GlobalToolRetrievalTuningHistory(BaseModel, TimestampMixin):
     updated_by = relationship("User")
 
 
+class GlobalRetrievalFeedbackSignal(BaseModel, TimestampMixin):
+    __tablename__ = "retrieval_feedback_signals_global"
+    __table_args__ = (
+        UniqueConstraint(
+            "tool_id",
+            "query_pattern_hash",
+            name="uq_retrieval_feedback_signals_global_tool_pattern",
+        ),
+    )
+
+    tool_id = Column(String(160), nullable=False, index=True)
+    query_pattern_hash = Column(String(32), nullable=False, index=True)
+    successes = Column(Integer, nullable=False, default=0, server_default="0")
+    failures = Column(Integer, nullable=False, default=0, server_default="0")
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
 class GlobalIntentDefinition(BaseModel, TimestampMixin):
     __tablename__ = "intent_definitions_global"
     __table_args__ = (

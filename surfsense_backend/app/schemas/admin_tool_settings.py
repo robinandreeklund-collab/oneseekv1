@@ -38,6 +38,7 @@ class ToolRetrievalTuning(BaseModel):
     namespace_boost: float = 3.0
     embedding_weight: float = 4.0
     rerank_candidates: int = 24
+    retrieval_feedback_db_enabled: bool = False
 
 
 class ToolLatestEvaluationSummary(BaseModel):

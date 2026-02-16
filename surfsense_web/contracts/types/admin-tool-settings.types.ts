@@ -35,6 +35,7 @@ export const toolRetrievalTuning = z.object({
 	namespace_boost: z.number(),
 	embedding_weight: z.number(),
 	rerank_candidates: z.number().int(),
+	retrieval_feedback_db_enabled: z.boolean().optional().default(false),
 });
 
 export const toolRetrievalTuningResponse = z.object({

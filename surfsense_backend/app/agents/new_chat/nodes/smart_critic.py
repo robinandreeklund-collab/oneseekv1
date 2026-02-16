@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any, Awaitable, Callable
 
 
@@ -54,7 +55,7 @@ def build_smart_critic_node(
     latest_user_query_fn: Callable[[list[Any] | None], str],
     max_replan_attempts: int,
     min_mechanical_confidence: float = 0.7,
-    record_retrieval_feedback_fn: Callable[[str, str, bool], None] | None = None,
+    record_retrieval_feedback_fn: Callable[[str, str, bool], Any] | None = None,
 ):
     async def smart_critic_node(
         state: dict[str, Any],
@@ -75,7 +76,7 @@ def build_smart_critic_node(
             limit=3,
         )
 
-        def _record_feedback(success: bool) -> None:
+        async def _record_feedback(success: bool) -> None:
             if record_retrieval_feedback_fn is None:
                 return
             for item in contracts:
@@ -87,11 +88,13 @@ def build_smart_critic_node(
                     if not normalized_tool:
                         continue
                     try:
-                        record_retrieval_feedback_fn(
+                        maybe_awaitable = record_retrieval_feedback_fn(
                             normalized_tool,
                             latest_user_query,
                             bool(success),
                         )
+                        if inspect.isawaitable(maybe_awaitable):
+                            await maybe_awaitable
                     except Exception:
                         continue
 
@@ -127,7 +130,7 @@ def build_smart_critic_node(
         has_success = any(status == "success" for status in statuses)
 
         if all_failed and replan_count < max_replan_attempts:
-            _record_feedback(False)
+            await _record_feedback(False)
             return {
                 "critic_decision": "replan",
                 "final_agent_response": None,
@@ -138,7 +141,7 @@ def build_smart_critic_node(
             }
 
         if missing_info and replan_count < max_replan_attempts:
-            _record_feedback(False)
+            await _record_feedback(False)
             return {
                 "critic_decision": "needs_more",
                 "final_agent_response": None,
@@ -150,14 +153,14 @@ def build_smart_critic_node(
 
         if has_success and avg_confidence >= float(min_mechanical_confidence):
             if final_response:
-                _record_feedback(True)
+                await _record_feedback(True)
                 return {
                     "critic_decision": "ok",
                     "targeted_missing_info": [],
                     "orchestration_phase": "finalize",
                 }
             if replan_count < max_replan_attempts:
-                _record_feedback(False)
+                await _record_feedback(False)
                 return {
                     "critic_decision": "needs_more",
                     "targeted_missing_info": [],
@@ -177,11 +180,11 @@ def build_smart_critic_node(
             if missing_info and not normalized.get("targeted_missing_info"):
                 normalized["targeted_missing_info"] = missing_info[:6]
             normalized["orchestration_phase"] = "resolve_tools"
-            _record_feedback(False)
+            await _record_feedback(False)
         elif decision in {"ok", "pass", "finalize"}:
-            _record_feedback(True)
+            await _record_feedback(True)
         elif decision == "replan":
-            _record_feedback(False)
+            await _record_feedback(False)
         return normalized
 
     return smart_critic_node
