@@ -373,7 +373,7 @@ def get_all_tool_names() -> list[str]:
     marketplace_tool_ids = [definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS]
     skolverket_tool_ids = [definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS]
     kolada_tool_ids = [definition.tool_id for definition in KOLADA_TOOL_DEFINITIONS]
-    external_model_ids = [definition.tool_id for definition in EXTERNAL_MODEL_SPECS]
+    external_model_ids = [spec.tool_name for spec in EXTERNAL_MODEL_SPECS]
     
     return (
         builtin_tool_names
