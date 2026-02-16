@@ -353,9 +353,12 @@ def get_all_tool_names() -> list[str]:
 def get_default_enabled_tools() -> list[str]:
     """Get names of tools that are enabled by default."""
     default_tools = [tool_def.name for tool_def in BUILTIN_TOOLS if tool_def.enabled_by_default]
-    # Add all Riksdagen tools to default enabled tools
+    # Add all specialized domain tools to default enabled tools
     riksdagen_tool_ids = [definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS]
-    return default_tools + riksdagen_tool_ids
+    marketplace_tool_ids = [definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS]
+    skolverket_tool_ids = [definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS]
+    kolada_tool_ids = [definition.tool_id for definition in KOLADA_TOOL_DEFINITIONS]
+    return default_tools + riksdagen_tool_ids + marketplace_tool_ids + skolverket_tool_ids + kolada_tool_ids
 
 
 def build_tools(
