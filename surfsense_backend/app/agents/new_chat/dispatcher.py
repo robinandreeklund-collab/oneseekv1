@@ -13,6 +13,14 @@ _GREETING_REGEX = re.compile(
     re.IGNORECASE,
 )
 _COMPARE_COMMAND_RE = re.compile(r"^/compare\b", re.IGNORECASE)
+_MARKETPLACE_ROUTE_RE = re.compile(
+    r"\b("
+    r"blocket|tradera|marknadsplats|marknadsplatser|"
+    r"begagnat|begagnad|begagnade|annons|annonser|auktion|auktioner|"
+    r"motorcykel|motorcyklar|mc|moped|prisj[aä]mf[oö]relse"
+    r")\b",
+    re.IGNORECASE,
+)
 _FOLLOWUP_CONTEXT_RE = re.compile(
     r"\b(också|ocksa|även|aven|samma|där|dar|dit|den|det|dom|dem|denna|denne|kolla|fortsätt|fortsatt)\b",
     re.IGNORECASE,
@@ -60,6 +68,8 @@ def _infer_rule_based_route(text: str) -> Route | None:
         return None
     if _COMPARE_COMMAND_RE.match(value):
         return Route.COMPARE
+    if _MARKETPLACE_ROUTE_RE.search(value):
+        return Route.ACTION
     if _GREETING_REGEX.match(value) and len(value) <= 20:
         return Route.SMALLTALK
     return None

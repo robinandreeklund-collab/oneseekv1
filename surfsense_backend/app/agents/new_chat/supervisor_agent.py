@@ -264,6 +264,10 @@ _AGENT_NAME_ALIAS_MAP = {
     "parliament_agent": "riksdagen",
     "company_agent": "bolag",
     "code_agent": "code",
+    "marketplace_agent": "marketplace",
+    "market_agent": "marketplace",
+    "blocket_agent": "marketplace",
+    "tradera_agent": "marketplace",
 }
 
 _TRAFFIC_INTENT_RE = re.compile(
@@ -314,6 +318,15 @@ _WEATHER_INTENT_RE = re.compile(
 _MAP_INTENT_RE = re.compile(
     r"\b(karta|kartbild|kartor|map|marker|markor|pin|"
     r"rutt|route|vagbeskrivning|vägbeskrivning)\b",
+    re.IGNORECASE,
+)
+_MARKETPLACE_INTENT_RE = re.compile(
+    r"\b("
+    r"blocket|tradera|marknadsplats|marknadsplatser|"
+    r"begagnat|begagnad|begagnade|annons|annonser|auktion|auktioner|"
+    r"prisj[aä]mf[oö]relse|j[aä]mf[oö]r pris|"
+    r"motorcykel|motorcyklar|mc|moped|bilar|båtar|batar|båt|bat"
+    r")\b",
     re.IGNORECASE,
 )
 _MISSING_SIGNAL_RE = re.compile(
@@ -382,6 +395,10 @@ def _has_trafik_intent(text: str) -> bool:
 
 def _has_map_intent(text: str) -> bool:
     return bool(text and _MAP_INTENT_RE.search(text))
+
+
+def _has_marketplace_intent(text: str) -> bool:
+    return bool(text and _MARKETPLACE_INTENT_RE.search(text))
 
 
 def _has_strict_trafik_intent(text: str) -> bool:
@@ -2736,6 +2753,7 @@ async def create_supervisor_agent(
         default_for_route = _route_default_agent(route_hint, route_allowed)
         strict_trafik_task = _has_strict_trafik_intent(task)
         weather_task = _has_weather_intent(task)
+        marketplace_task = _has_marketplace_intent(task)
         # Specific safety locks for weather and trafik remain
         if route_hint == "action" and weather_task and not strict_trafik_task:
             if requested_raw in agent_by_name and requested_raw != "weather":
@@ -2795,9 +2813,13 @@ async def create_supervisor_agent(
                 "statistics": ["statistics"],
                 "compare": ["synthesis", "knowledge", "statistics"],
             }.get(str(route_hint), [])
+            if marketplace_task and "marketplace" not in preferred:
+                preferred.insert(0, "marketplace")
             if str(route_hint) == "action":
                 if weather_task and not strict_trafik_task:
                     preferred = ["weather", "action"]
+                if marketplace_task and "marketplace" not in preferred:
+                    preferred.insert(0, "marketplace")
                 if _has_map_intent(task) and "kartor" not in preferred:
                     preferred.insert(0, "kartor")
                 if _has_trafik_intent(task) and not weather_task and "trafik" not in preferred:
@@ -2861,7 +2883,7 @@ async def create_supervisor_agent(
 
         IMPORTANT: Reuse agent names exactly as returned in `agents[].name`.
         Allowed internal ids include: action, weather, kartor, statistics, media, knowledge,
-        browser, code, bolag, trafik, riksdagen, synthesis.
+        browser, code, bolag, trafik, riksdagen, marketplace, synthesis.
         """
         try:
             limit = int(limit)
@@ -2901,6 +2923,7 @@ async def create_supervisor_agent(
         has_strict_trafik_intent = _has_strict_trafik_intent(policy_query)
         has_map_intent = _has_map_intent(policy_query)
         has_weather_intent = _has_weather_intent(policy_query)
+        has_marketplace_intent = _has_marketplace_intent(policy_query)
         route_allowed = _route_allowed_agents(route_hint)
         default_for_route = _route_default_agent(route_hint, route_allowed)
         if route_hint == "action" and has_weather_intent and not has_strict_trafik_intent:
@@ -2933,6 +2956,12 @@ async def create_supervisor_agent(
             and "weather" not in cached_agents
         ):
             cached_agents = None
+        if (
+            cached_agents
+            and has_marketplace_intent
+            and "marketplace" not in cached_agents
+        ):
+            cached_agents = None
 
         if cached_agents:
             selected = [
@@ -2955,12 +2984,18 @@ async def create_supervisor_agent(
                     "compare": ["synthesis", "knowledge", "statistics"],
                     "trafik": ["trafik", "action"],
                 }.get(str(route_hint), [])
+                if has_marketplace_intent and "marketplace" not in preferred:
+                    preferred.insert(0, "marketplace")
                 if str(route_hint) == "action":
                     if has_weather_intent and not has_strict_trafik_intent:
                         preferred = ["weather", "action"]
+                    if has_marketplace_intent and "marketplace" not in preferred:
+                        preferred.insert(0, "marketplace")
                     # Keep route_hint as advisory only unless action intent is explicit.
                     if not (has_map_intent or has_trafik_intent):
                         preferred = []
+                        if has_marketplace_intent:
+                            preferred = ["marketplace", "action"]
                     if has_weather_intent and not has_strict_trafik_intent:
                         preferred = ["weather", "action"]
                     if has_map_intent and "kartor" not in preferred:
@@ -3017,6 +3052,17 @@ async def create_supervisor_agent(
                 selected = [agent_by_name[default_for_route]]
 
         selected = selected[:limit]
+        if (
+            route_hint == "action"
+            and has_marketplace_intent
+            and not has_weather_intent
+            and not has_strict_trafik_intent
+        ):
+            marketplace_order = ["marketplace", "action"]
+            marketplace_selected = [
+                agent_by_name[name] for name in marketplace_order if name in agent_by_name
+            ]
+            selected = marketplace_selected[:limit] if marketplace_selected else selected
         if (
             route_hint == "action"
             and has_weather_intent

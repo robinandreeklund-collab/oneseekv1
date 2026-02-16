@@ -56,6 +56,17 @@ _DATA_PATTERNS = [
     r"\blediga jobb\b",
     r"\barbetsförmedlingen\b",
     r"\bjobtech\b",
+    r"\bblocket\b",
+    r"\btradera\b",
+    r"\bmarknadsplats(er)?\b",
+    r"\bbegagnad(e|t)?\b",
+    r"\bannons(er)?\b",
+    r"\bauktion(er)?\b",
+    r"\bprisj[aä]mf[oö]relse\b",
+    r"\bmc\b",
+    r"\bmotorcykel\b",
+    r"\bbilar?\b",
+    r"\bb[åa]tar?\b",
 ]
 
 DEFAULT_ACTION_ROUTE_PROMPT = (
@@ -64,7 +75,7 @@ DEFAULT_ACTION_ROUTE_PROMPT = (
     "Use 'web' for link previews, scraping, and URL-based tasks.\n"
     "Use 'media' for podcast/audio generation.\n"
     "Use 'travel' for weather and public transport routes.\n"
-    "Use 'data' for Libris and job search tools."
+    "Use 'data' for Libris, job search, and marketplace tasks (Blocket/Tradera)."
 )
 
 

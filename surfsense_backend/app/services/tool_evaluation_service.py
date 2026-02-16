@@ -95,6 +95,7 @@ _EVAL_AGENT_CHOICES = (
     "weather",
     "trafik",
     "bolag",
+    "marketplace",
     "kartor",
     "media",
     "browser",
@@ -109,6 +110,7 @@ _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
     "weather": "SMHI weather forecasts and weather context for Swedish cities/regions.",
     "trafik": "Traffic, roads, incidents, rail and transport context.",
     "bolag": "Swedish company/organization registry context.",
+    "marketplace": "Blocket/Tradera marketplace search and price comparison tasks.",
     "kartor": "Geospatial/maps/geocoding context.",
     "media": "Podcast and media generation context.",
     "browser": "Web browsing, URL scraping, and page lookup tasks.",
@@ -400,10 +402,22 @@ def _normalize_sub_route_value(value: Any) -> str | None:
     return None
 
 
+def _normalize_token_for_match(value: Any) -> str:
+    token = str(value or "").strip().casefold()
+    token = re.sub(r"[^a-z0-9åäö]+", "_", token)
+    return re.sub(r"_+", "_", token).strip("_")
+
+
+def _normalize_category_name(value: Any) -> str | None:
+    normalized = _normalize_token_for_match(value)
+    return normalized or None
+
+
 def _normalize_agent_name(value: Any) -> str | None:
     agent = str(value or "").strip().lower()
     if not agent:
         return None
+    normalized_token = _normalize_token_for_match(agent)
     aliases = {
         "statistik": "statistics",
         "stats": "statistics",
@@ -425,8 +439,23 @@ def _normalize_agent_name(value: Any) -> str | None:
         "internal": "knowledge",
         "external": "knowledge",
         "compare": "synthesis",
+        "marketplace": "marketplace",
+        "marknadsplats": "marketplace",
+        "marknadsplatser": "marketplace",
+        "blocket": "marketplace",
+        "tradera": "marketplace",
+        "marketplace_agent": "marketplace",
+        "marketplace_worker": "marketplace",
+        "marketplace_search": "marketplace",
+        "marketplace_compare": "marketplace",
+        "marketplace_reference": "marketplace",
+        "marketplace_vehicles": "marketplace",
+        "marketplace_vehicles_agent": "marketplace",
+        "marketplace_vehicles_worker": "marketplace",
     }
-    normalized = aliases.get(agent, agent)
+    normalized = aliases.get(agent, aliases.get(normalized_token, normalized_token))
+    if normalized.startswith("marketplace_"):
+        normalized = "marketplace"
     return normalized if normalized in _EVAL_AGENT_CHOICES else None
 
 
@@ -489,6 +518,8 @@ def _agent_for_tool(
         return "bolag"
     if tool.startswith("geoapify_"):
         return "kartor"
+    if tool.startswith("marketplace_") or cat.startswith("marketplace"):
+        return "marketplace"
     if tool in {"generate_podcast", "display_image"}:
         return "media"
     if tool in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
@@ -580,6 +611,8 @@ def _route_sub_route_for_tool(
         return Route.ACTION.value, ActionRoute.MEDIA.value
     if tool in {"libris_search", "jobad_links_search"}:
         return Route.ACTION.value, ActionRoute.DATA.value
+    if tool.startswith("marketplace_") or cat.startswith("marketplace"):
+        return Route.ACTION.value, ActionRoute.DATA.value
     if tool.startswith("bolagsverket_") or tool.startswith("riksdag_"):
         return Route.ACTION.value, ActionRoute.DATA.value
     if tool in {"search_surfsense_docs", "search_knowledge_base"}:
@@ -644,8 +677,8 @@ def _candidate_agents_for_route(
         if sub_norm == ActionRoute.MEDIA.value:
             return ["media", "action"]
         if sub_norm == ActionRoute.DATA.value:
-            return ["action", "statistics", "riksdagen", "bolag", "kartor"]
-        return ["action", "browser", "weather", "trafik", "media", "bolag", "kartor"]
+            return ["marketplace", "action", "statistics", "riksdagen", "bolag", "kartor"]
+        return ["marketplace", "action", "browser", "weather", "trafik", "media", "bolag", "kartor"]
     return ["knowledge", "action"]
 
 
@@ -684,6 +717,25 @@ def _heuristic_agent_choice(
         return "trafik" if "trafik" in candidates else candidates[0]
     if any(token in text for token in ("bolag", "organisationsnummer", "företag")):
         return "bolag" if "bolag" in candidates else candidates[0]
+    if any(
+        token in text
+        for token in (
+            "blocket",
+            "tradera",
+            "marknadsplats",
+            "begagnat",
+            "begagnad",
+            "annons",
+            "auktion",
+            "prisjämförelse",
+            "prisjamforelse",
+            "motorcykel",
+            "båtar",
+            "batar",
+            "bilar",
+        )
+    ):
+        return "marketplace" if "marketplace" in candidates else candidates[0]
     if any(token in text for token in ("karta", "koordinat", "lat", "lon", "adress")):
         return "kartor" if "kartor" in candidates else candidates[0]
     if any(token in text for token in ("podcast", "podd", "bild", "image")):
@@ -2050,8 +2102,10 @@ async def run_tool_evaluation(
                 supervisor_review.get("issues")
             )
             supervisor_review_rubric = list(supervisor_review.get("rubric") or [])
+            selected_category_norm = _normalize_category_name(selected_category)
+            expected_category_norm = _normalize_category_name(expected_category)
             passed_category = (
-                selected_category == expected_category
+                selected_category_norm == expected_category_norm
                 if expected_category is not None
                 else None
             )
@@ -3439,8 +3493,10 @@ async def run_tool_api_input_evaluation(
                 )
                 field_value_checks.append(bool(passed_value_check))
 
+            selected_category_norm = _normalize_category_name(selected_category)
+            expected_category_norm = _normalize_category_name(expected_category)
             passed_category = (
-                selected_category == expected_category
+                selected_category_norm == expected_category_norm
                 if expected_category is not None
                 else None
             )
