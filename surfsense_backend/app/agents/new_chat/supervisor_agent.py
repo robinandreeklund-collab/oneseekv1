@@ -329,6 +329,10 @@ _MARKETPLACE_INTENT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_MARKETPLACE_PROVIDER_RE = re.compile(
+    r"\b(blocket|tradera|marknadsplats|marknadsplatser|annons|annonser|auktion|auktioner)\b",
+    re.IGNORECASE,
+)
 _MISSING_SIGNAL_RE = re.compile(
     r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
     re.IGNORECASE,
@@ -2754,6 +2758,29 @@ async def create_supervisor_agent(
         strict_trafik_task = _has_strict_trafik_intent(task)
         weather_task = _has_weather_intent(task)
         marketplace_task = _has_marketplace_intent(task)
+        explicit_marketplace_provider = bool(
+            task and _MARKETPLACE_PROVIDER_RE.search(str(task))
+        )
+        selected_agent_names: list[str] = []
+        if state:
+            for item in state.get("selected_agents") or []:
+                if isinstance(item, dict):
+                    candidate = str(item.get("name") or "").strip().lower()
+                else:
+                    candidate = str(item or "").strip().lower()
+                if candidate and candidate in agent_by_name and candidate not in selected_agent_names:
+                    selected_agent_names.append(candidate)
+        selected_agent_set = set(selected_agent_names)
+
+        def _selected_fallback(preferred: str | None = None) -> str | None:
+            if preferred and preferred in selected_agent_set:
+                return preferred
+            if selected_agent_names:
+                return selected_agent_names[0]
+            if preferred and preferred in agent_by_name:
+                return preferred
+            return None
+
         # Specific safety locks for weather and trafik remain
         if route_hint == "action" and weather_task and not strict_trafik_task:
             if requested_raw in agent_by_name and requested_raw != "weather":
@@ -2762,10 +2789,28 @@ async def create_supervisor_agent(
             allowed_for_strict = {"trafik", "kartor", "action"}
             if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
                 return "trafik", f"strict_trafik_lock:{requested_raw}->trafik"
+        # For explicit marketplace tasks, keep execution on marketplace to avoid
+        # drifting into browser/web-search aliases mid-plan.
+        if (
+            route_hint == "action"
+            and marketplace_task
+            and not weather_task
+            and not strict_trafik_task
+            and (explicit_marketplace_provider or "marketplace" in selected_agent_set)
+            and "marketplace" in agent_by_name
+            and requested_raw != "marketplace"
+        ):
+            return "marketplace", f"marketplace_lock:{requested_raw}->marketplace"
         # SCALABLE FIX: If requested agent is a specialized agent with dedicated tools,
         # respect that choice and DON'T override with route_policy.
         # This scales to 100s of APIs without needing regex patterns.
         if requested_raw in agent_by_name:
+            if selected_agent_set and requested_raw not in selected_agent_set:
+                fallback = _selected_fallback(
+                    "marketplace" if marketplace_task else default_for_route
+                )
+                if fallback and fallback in agent_by_name:
+                    return fallback, f"selected_agents_lock:{requested_raw}->{fallback}"
             if requested_raw in _SPECIALIZED_AGENTS:
                 # Specialized agents bypass route restrictions
                 return requested_raw, None
@@ -2776,6 +2821,12 @@ async def create_supervisor_agent(
 
         alias_guess = _guess_agent_from_alias(requested_raw)
         if alias_guess and alias_guess in agent_by_name:
+            if selected_agent_set and alias_guess not in selected_agent_set:
+                fallback = _selected_fallback(
+                    "marketplace" if marketplace_task else default_for_route
+                )
+                if fallback and fallback in agent_by_name:
+                    return fallback, f"selected_agents_lock_alias:{requested_raw}->{fallback}"
             if route_allowed and alias_guess not in route_allowed:
                 if default_for_route in agent_by_name:
                     return default_for_route, f"route_policy_alias:{requested_raw}->{default_for_route}"
@@ -2806,6 +2857,8 @@ async def create_supervisor_agent(
         )
         if route_allowed:
             retrieved = [agent for agent in retrieved if agent.name in route_allowed]
+        if selected_agent_set:
+            retrieved = [agent for agent in retrieved if agent.name in selected_agent_set]
         if route_hint:
             preferred = {
                 "action": ["action", "media"],
@@ -2826,11 +2879,19 @@ async def create_supervisor_agent(
                     preferred.insert(0, "trafik")
             if route_allowed:
                 preferred = [name for name in preferred if name in route_allowed]
+            if selected_agent_set:
+                preferred = [name for name in preferred if name in selected_agent_set]
             for preferred_name in preferred:
                 if any(agent.name == preferred_name for agent in retrieved):
                     return preferred_name, f"route_pref:{requested_raw}->{preferred_name}"
         if retrieved:
             return retrieved[0].name, f"retrieval:{requested_raw}->{retrieved[0].name}"
+        if selected_agent_names:
+            fallback = _selected_fallback(
+                "marketplace" if marketplace_task else default_for_route
+            )
+            if fallback and fallback in agent_by_name:
+                return fallback, f"selected_agents_fallback:{requested_raw}->{fallback}"
         if route_allowed and default_for_route in agent_by_name:
             return default_for_route, f"route_default:{requested_raw}->{default_for_route}"
         return None, f"unresolved:{requested_raw}"
@@ -2995,7 +3056,7 @@ async def create_supervisor_agent(
                     if not (has_map_intent or has_trafik_intent):
                         preferred = []
                         if has_marketplace_intent:
-                            preferred = ["marketplace", "action"]
+                            preferred = ["marketplace"]
                     if has_weather_intent and not has_strict_trafik_intent:
                         preferred = ["weather", "action"]
                     if has_map_intent and "kartor" not in preferred:
@@ -3058,7 +3119,7 @@ async def create_supervisor_agent(
             and not has_weather_intent
             and not has_strict_trafik_intent
         ):
-            marketplace_order = ["marketplace", "action"]
+            marketplace_order = ["marketplace"]
             marketplace_selected = [
                 agent_by_name[name] for name in marketplace_order if name in agent_by_name
             ]
