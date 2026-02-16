@@ -447,6 +447,175 @@ def test_run_tool_evaluation_includes_route_agent_and_plan_metrics(monkeypatch):
     ]
 
 
+def test_run_tool_evaluation_includes_hybrid_execution_metrics(monkeypatch):
+    tool_index = [
+        _entry(
+            "tool_statistics",
+            name="Statistics Tool",
+            description="Fetch municipality statistics",
+            category="statistics",
+            keywords=["kommun", "statistik"],
+        ),
+    ]
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service.smart_retrieve_tools_with_breakdown",
+        lambda *_args, **_kwargs: (["tool_statistics"], []),
+    )
+
+    async def _fake_dispatch_route(*_args, **_kwargs):
+        return "statistics", None, "statistics_query", {"confidence": 0.94}
+
+    async def _fake_plan_tool_choice(*_args, **_kwargs):
+        return {
+            "selected_tool_id": "tool_statistics",
+            "selected_category": "statistics",
+            "analysis": "Plan starts with route:statistics and selects tool_statistics.",
+            "plan_steps": ["Sammanstall data for alla kommuner."],
+        }
+
+    async def _fake_plan_agent_choice(*_args, **_kwargs):
+        return {
+            "selected_agent": "statistics",
+            "analysis": "Statistics route should use statistics agent.",
+        }
+
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._dispatch_route_from_start",
+        _fake_dispatch_route,
+    )
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._plan_agent_choice",
+        _fake_plan_agent_choice,
+    )
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._plan_tool_choice",
+        _fake_plan_tool_choice,
+    )
+
+    output = asyncio.run(
+        run_tool_evaluation(
+            tests=[
+                {
+                    "id": "h1",
+                    "question": "Hamta statistik for alla kommuner i Sverige.",
+                    "expected": {
+                        "tool": "tool_statistics",
+                        "category": "statistics",
+                        "route": "statistics",
+                        "agent": "statistics",
+                        "graph_complexity": "complex",
+                        "execution_strategy": "subagent",
+                    },
+                    "allowed_tools": ["tool_statistics"],
+                }
+            ],
+            tool_index=tool_index,
+            llm=None,
+            retrieval_limit=5,
+        )
+    )
+
+    assert output["metrics"]["graph_complexity_accuracy"] == 1.0
+    assert output["metrics"]["execution_strategy_accuracy"] == 1.0
+    assert output["results"][0]["selected_graph_complexity"] == "complex"
+    assert output["results"][0]["selected_execution_strategy"] == "subagent"
+    assert output["results"][0]["passed_graph_complexity"] is True
+    assert output["results"][0]["passed_execution_strategy"] is True
+    assert (
+        output["results"][0]["supervisor_trace"]["selected"]["execution_strategy"]
+        == "subagent"
+    )
+
+
+def test_run_tool_api_input_evaluation_includes_hybrid_execution_metrics(monkeypatch):
+    class _StatsArgs(BaseModel):
+        region: str
+
+    class _StatsTool:
+        args_schema = _StatsArgs
+
+    tool_index = [
+        _entry(
+            "tool_statistics",
+            name="Statistics Tool",
+            description="Fetch municipality statistics",
+            category="statistics",
+            keywords=["kommun", "statistik"],
+        ),
+    ]
+    tool_registry = {"tool_statistics": _StatsTool()}
+
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service.smart_retrieve_tools_with_breakdown",
+        lambda *_args, **_kwargs: (["tool_statistics"], []),
+    )
+
+    async def _fake_dispatch_route(*_args, **_kwargs):
+        return "statistics", None, "statistics_query", {"confidence": 0.95}
+
+    async def _fake_plan_agent_choice(*_args, **_kwargs):
+        return {
+            "selected_agent": "statistics",
+            "analysis": "Statistics route should use statistics agent.",
+        }
+
+    async def _fake_plan_tool_api_input(*_args, **_kwargs):
+        return {
+            "selected_tool_id": "tool_statistics",
+            "selected_category": "statistics",
+            "analysis": "Plan starts with route:statistics and prepares API input.",
+            "plan_steps": ["Sammanstall data for alla kommuner."],
+            "proposed_arguments": {"region": "alla kommuner"},
+            "needs_clarification": False,
+            "clarification_question": None,
+        }
+
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._dispatch_route_from_start",
+        _fake_dispatch_route,
+    )
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._plan_agent_choice",
+        _fake_plan_agent_choice,
+    )
+    monkeypatch.setattr(
+        "app.services.tool_evaluation_service._plan_tool_api_input",
+        _fake_plan_tool_api_input,
+    )
+
+    output = asyncio.run(
+        run_tool_api_input_evaluation(
+            tests=[
+                {
+                    "id": "h-api-1",
+                    "question": "Hamta statistik for alla kommuner i Sverige.",
+                    "expected": {
+                        "tool": "tool_statistics",
+                        "category": "statistics",
+                        "route": "statistics",
+                        "agent": "statistics",
+                        "required_fields": ["region"],
+                        "graph_complexity": "complex",
+                        "execution_strategy": "subagent",
+                    },
+                    "allowed_tools": ["tool_statistics"],
+                }
+            ],
+            tool_index=tool_index,
+            tool_registry=tool_registry,
+            llm=None,
+            retrieval_limit=5,
+        )
+    )
+
+    assert output["metrics"]["graph_complexity_accuracy"] == 1.0
+    assert output["metrics"]["execution_strategy_accuracy"] == 1.0
+    assert output["results"][0]["selected_graph_complexity"] == "complex"
+    assert output["results"][0]["selected_execution_strategy"] == "subagent"
+    assert output["results"][0]["passed_graph_complexity"] is True
+    assert output["results"][0]["passed_execution_strategy"] is True
+
+
 def test_suggest_agent_prompt_improvements_includes_router_prompt():
     suggestions = asyncio.run(
         suggest_agent_prompt_improvements_for_api_input(
