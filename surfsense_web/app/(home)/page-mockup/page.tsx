@@ -1599,11 +1599,34 @@ const RadicalTransparencySection = () => {
     }
   ];
 
-  // LangGraph pipeline steps
-  // Use detailed 54-step LangGraph pipeline instead of 12 high-level steps
-  const pipelineSteps = DETAILED_LANGGRAPH_STEPS;
+  // JSON export data structure that streams as chat progresses
+  const [jsonData, setJsonData] = useState({
+    metadata: {
+      exportedAt: new Date().toISOString(),
+      messageId: "msg_3727",
+      sessionId: "sess_demo_12345",
+      totalSpans: 127,
+      completedSpans: 0,
+      runningSpans: 0,
+      errorSpans: 0
+    },
+    spans: [] as Array<{
+      id: string;
+      parent_id: string | null;
+      name: string;
+      status: "completed" | "running" | "pending";
+      sequence: number;
+      start_time: string;
+      end_time: string | null;
+      duration_ms: number | null;
+      input: any;
+      output: any;
+      meta: any;
+      error: any;
+    }>
+  });
 
-  // Animation sequence
+  // Animation sequence - now updates both chat and JSON
   useEffect(() => {
     if (!isInView) return;
 
@@ -1611,12 +1634,66 @@ const RadicalTransparencySection = () => {
       const data = scenarios[currentScenario];
       setChatMessages([]);
       setActiveStep(null);
+      
+      // Reset JSON data
+      setJsonData({
+        metadata: {
+          exportedAt: new Date().toISOString(),
+          messageId: "msg_3727",
+          sessionId: "sess_demo_12345",
+          totalSpans: 127,
+          completedSpans: 0,
+          runningSpans: 0,
+          errorSpans: 0
+        },
+        spans: []
+      });
 
-      // Add messages sequentially with corresponding step highlights
+      // Add messages sequentially with corresponding JSON spans
       for (let i = 0; i < data.messages.length; i++) {
         await new Promise(resolve => setTimeout(resolve, 1500));
         setChatMessages(prev => [...prev, data.messages[i]]);
         setActiveStep(data.steps[i]);
+        
+        // Add corresponding span to JSON
+        const message = data.messages[i];
+        const spanId = `span_${String(i + 1).padStart(3, '0')}`;
+        const newSpan = {
+          id: spanId,
+          parent_id: i === 0 ? null : `span_${String(i).padStart(3, '0')}`,
+          name: message.type === 'user' ? 'USER_INPUT' : 
+                message.type === 'system' ? message.text.includes('Analyserar') ? 'INTENT_RESOLUTION' :
+                                            message.text.includes('Väljer') ? 'AGENT_SELECTION' :
+                                            message.text.includes('Skapar') ? 'PLANNING' :
+                                            message.text.includes('Säkerhet') ? 'SAFETY_CHECK' :
+                                            message.text.includes('Validerar') ? 'VALIDATION' : 'SYSTEM' :
+                message.type === 'api' ? 'API_CALL_SCB' :
+                message.type === 'thinking' ? 'POST_PROCESSING' :
+                message.type === 'assistant' ? 'SYNTHESIS' :
+                message.type === 'sources' ? 'FINALIZATION' : 'UNKNOWN',
+          status: "completed" as const,
+          sequence: i,
+          start_time: new Date(Date.now() - (data.messages.length - i) * 1500).toISOString(),
+          end_time: new Date(Date.now() - (data.messages.length - i - 1) * 1500).toISOString(),
+          duration_ms: Math.floor(Math.random() * 500) + 100,
+          input: { query: message.text },
+          output: message.type === 'api' ? { data: "SCB response data..." } : 
+                  message.type === 'assistant' ? { response: message.text } : null,
+          meta: {
+            tokens: message.type === 'assistant' ? Math.floor(Math.random() * 200) + 50 : null,
+            model: message.type === 'assistant' ? "gpt-4o" : null
+          },
+          error: null
+        };
+        
+        setJsonData(prev => ({
+          ...prev,
+          metadata: {
+            ...prev.metadata,
+            completedSpans: prev.metadata.completedSpans + 1
+          },
+          spans: [...prev.spans, newSpan]
+        }));
       }
 
       // Pause before next scenario
@@ -1732,7 +1809,7 @@ const RadicalTransparencySection = () => {
             </div>
           </motion.div>
 
-          {/* Right: LangGraph Pipeline */}
+          {/* Right: JSON Code Preview */}
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             whileInView={{ opacity: 1, x: 0 }}
@@ -1740,64 +1817,145 @@ const RadicalTransparencySection = () => {
             transition={{ duration: 0.6 }}
             className="lg:w-[500px]"
           >
-            <div className="bg-white/40 dark:bg-neutral-900/40 backdrop-blur-md rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 sticky top-24 max-h-[800px] overflow-y-auto">
-              <h3 className="text-lg font-semibold mb-2 text-neutral-900 dark:text-white">
-                LangGraph Pipeline
-              </h3>
-              <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-4">
-                {pipelineSteps.length} detaljerade steg
-              </p>
-              
-              <div className="space-y-2">{/* Reduced spacing for 54 steps */}
-                {pipelineSteps.map((step, idx) => {
-                  const isActive = activeStep === step.id;
-                  const isCompleted = activeStep !== null && activeStep > step.id;
-                  const isPending = activeStep === null || activeStep < step.id;
+            <div className="bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden sticky top-24 max-h-[700px] flex flex-col">
+              {/* Code header */}
+              <div className="flex items-center justify-between px-4 py-3 bg-neutral-800/50 border-b border-neutral-700">
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1.5">
+                    <div className="size-3 rounded-full bg-red-500/80" />
+                    <div className="size-3 rounded-full bg-yellow-500/80" />
+                    <div className="size-3 rounded-full bg-emerald-500/80" />
+                  </div>
+                  <span className="text-xs font-mono text-neutral-400 ml-2">
+                    langgraph-flow.json
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-emerald-400">
+                  <div className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Streaming</span>
+                </div>
+              </div>
 
-                  return (
+              {/* JSON Content */}
+              <div className="flex-1 overflow-y-auto p-4 font-mono text-xs leading-relaxed">
+                <pre className="text-neutral-300">
+                  <span className="text-neutral-500">{'{'}</span>{'\n'}
+                  <span className="text-neutral-500">  </span>
+                  <span className="text-blue-400">"metadata"</span>
+                  <span className="text-neutral-500">: {'{'}</span>{'\n'}
+                  <span className="text-neutral-500">    </span>
+                  <span className="text-blue-400">"exportedAt"</span>
+                  <span className="text-neutral-500">: </span>
+                  <span className="text-emerald-400">"{jsonData.metadata.exportedAt}"</span>
+                  <span className="text-neutral-500">,</span>{'\n'}
+                  <span className="text-neutral-500">    </span>
+                  <span className="text-blue-400">"messageId"</span>
+                  <span className="text-neutral-500">: </span>
+                  <span className="text-emerald-400">"{jsonData.metadata.messageId}"</span>
+                  <span className="text-neutral-500">,</span>{'\n'}
+                  <span className="text-neutral-500">    </span>
+                  <span className="text-blue-400">"sessionId"</span>
+                  <span className="text-neutral-500">: </span>
+                  <span className="text-emerald-400">"{jsonData.metadata.sessionId}"</span>
+                  <span className="text-neutral-500">,</span>{'\n'}
+                  <span className="text-neutral-500">    </span>
+                  <span className="text-blue-400">"totalSpans"</span>
+                  <span className="text-neutral-500">: </span>
+                  <span className="text-purple-400">{jsonData.metadata.totalSpans}</span>
+                  <span className="text-neutral-500">,</span>{'\n'}
+                  <span className="text-neutral-500">    </span>
+                  <span className="text-blue-400">"completedSpans"</span>
+                  <span className="text-neutral-500">: </span>
+                  <motion.span 
+                    key={jsonData.metadata.completedSpans}
+                    initial={{ color: '#10b981' }}
+                    animate={{ color: '#a78bfa' }}
+                    transition={{ duration: 0.3 }}
+                    className="text-purple-400 font-bold"
+                  >
+                    {jsonData.metadata.completedSpans}
+                  </motion.span>
+                  <span className="text-neutral-500">,</span>{'\n'}
+                  <span className="text-neutral-500">    </span>
+                  <span className="text-blue-400">"runningSpans"</span>
+                  <span className="text-neutral-500">: </span>
+                  <span className="text-purple-400">{jsonData.metadata.runningSpans}</span>
+                  <span className="text-neutral-500">,</span>{'\n'}
+                  <span className="text-neutral-500">    </span>
+                  <span className="text-blue-400">"errorSpans"</span>
+                  <span className="text-neutral-500">: </span>
+                  <span className="text-purple-400">{jsonData.metadata.errorSpans}</span>{'\n'}
+                  <span className="text-neutral-500">  {'}'},</span>{'\n'}
+                  <span className="text-neutral-500">  </span>
+                  <span className="text-blue-400">"spans"</span>
+                  <span className="text-neutral-500">: [</span>{'\n'}
+                  
+                  {/* Render spans */}
+                  {jsonData.spans.map((span, idx) => (
                     <motion.div
-                      key={step.id}
-                      initial={{ opacity: 0, x: 20 }}
+                      key={span.id}
+                      initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: idx * 0.05 }}
-                      className="relative"
+                      transition={{ duration: 0.3 }}
                     >
-                      {/* Connection line */}
-                      {idx < pipelineSteps.length - 1 && (
-                        <div className={cn(
-                          "absolute left-4 top-10 w-0.5 h-4 transition-colors duration-300",
-                          isCompleted ? "bg-emerald-500" : "bg-neutral-300 dark:bg-neutral-700"
-                        )} />
+                      <span className="text-neutral-500">    {'{'}</span>{'\n'}
+                      <span className="text-neutral-500">      </span>
+                      <span className="text-blue-400">"id"</span>
+                      <span className="text-neutral-500">: </span>
+                      <span className="text-emerald-400">"{span.id}"</span>
+                      <span className="text-neutral-500">,</span>{'\n'}
+                      <span className="text-neutral-500">      </span>
+                      <span className="text-blue-400">"parent_id"</span>
+                      <span className="text-neutral-500">: </span>
+                      {span.parent_id ? (
+                        <span className="text-emerald-400">"{span.parent_id}"</span>
+                      ) : (
+                        <span className="text-orange-400">null</span>
                       )}
-
-                      {/* Step card */}
-                      <div className={cn(
-                        "flex items-center gap-2 p-2 rounded-lg transition-all duration-300",
-                        isActive && "bg-gradient-to-r scale-105 shadow-lg",
-                        isActive && step.color,
-                        !isActive && isCompleted && "bg-emerald-50 dark:bg-emerald-900/20",
-                        !isActive && isPending && "bg-neutral-50 dark:bg-neutral-800/50"
-                      )}>
-                        {/* Status icon */}
-                        <div className={cn(
-                          "flex-shrink-0 size-8 rounded-full flex items-center justify-center transition-all duration-300 text-base",
-                          isActive && "bg-white/20 backdrop-blur-sm scale-110",
-                          isCompleted && "bg-emerald-500",
-                          isPending && "bg-neutral-200 dark:bg-neutral-700"
-                        )}>
-                          {isActive && step.icon}
-                          {isCompleted && <span className="text-white">✓</span>}
-                          {isPending && (
-                            <span className="text-neutral-400 text-xs font-medium">{step.id}</span>
-                          )}
-                        </div>
-
-                        {/* Step label */}
-                        <div className="flex-1 min-w-0">{/* min-w-0 for text truncation */}
-                          <p className={cn(
-                            "text-xs font-medium truncate transition-colors duration-300",
-                            isActive && "text-white",
-                            !isActive && isCompleted && "text-emerald-700 dark:text-emerald-300",
+                      <span className="text-neutral-500">,</span>{'\n'}
+                      <span className="text-neutral-500">      </span>
+                      <span className="text-blue-400">"name"</span>
+                      <span className="text-neutral-500">: </span>
+                      <span className="text-emerald-400">"{span.name}"</span>
+                      <span className="text-neutral-500">,</span>{'\n'}
+                      <span className="text-neutral-500">      </span>
+                      <span className="text-blue-400">"status"</span>
+                      <span className="text-neutral-500">: </span>
+                      <span className="text-emerald-400">"{span.status}"</span>
+                      <span className="text-neutral-500">,</span>{'\n'}
+                      <span className="text-neutral-500">      </span>
+                      <span className="text-blue-400">"sequence"</span>
+                      <span className="text-neutral-500">: </span>
+                      <span className="text-purple-400">{span.sequence}</span>
+                      <span className="text-neutral-500">,</span>{'\n'}
+                      <span className="text-neutral-500">      </span>
+                      <span className="text-blue-400">"duration_ms"</span>
+                      <span className="text-neutral-500">: </span>
+                      <span className="text-purple-400">{span.duration_ms}</span>
+                      <span className="text-neutral-500">,</span>{'\n'}
+                      <span className="text-neutral-500">      </span>
+                      <span className="text-blue-400">"meta"</span>
+                      <span className="text-neutral-500">: {'{'}</span>
+                      {span.meta.tokens && (
+                        <>
+                          <span className="text-blue-400">"tokens"</span>
+                          <span className="text-neutral-500">: </span>
+                          <span className="text-purple-400">{span.meta.tokens}</span>
+                        </>
+                      )}
+                      <span className="text-neutral-500">{'}'}</span>{'\n'}
+                      <span className="text-neutral-500">    {'}'}</span>
+                      {idx < jsonData.spans.length - 1 && <span className="text-neutral-500">,</span>}
+                      {'\n'}
+                    </motion.div>
+                  ))}
+                  
+                  <span className="text-neutral-500">  ]</span>{'\n'}
+                  <span className="text-neutral-500">{'}'}</span>
+                </pre>
+              </div>
+            </div>
+          </motion.div>
                             !isActive && isPending && "text-neutral-600 dark:text-neutral-400"
                           )}>
                             {step.label}
