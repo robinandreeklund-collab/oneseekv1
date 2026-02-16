@@ -976,6 +976,18 @@ const APIReasoningDemo = () => {
 const CompareShowcase = () => {
   // Map performanceScore to 'progress' for animation compatibility with Framer Motion
   const models = MODEL_DATA.map(m => ({ ...m, progress: m.performanceScore }));
+  
+  // State for cycling evaluation metrics
+  const [currentMetric, setCurrentMetric] = React.useState(0);
+  
+  // Auto-cycle through evaluation metrics every 3 seconds
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentMetric((prev) => (prev + 1) % EVALUATION_METRICS.length);
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <section id="compare" className="py-24 md:py-32 relative overflow-hidden">
@@ -1073,6 +1085,34 @@ const CompareShowcase = () => {
               </p>
             </motion.div>
           ))}
+        </motion.div>
+
+        {/* Evaluation Metrics Display */}
+        <motion.div
+          className="max-w-3xl mx-auto mb-12 rounded-2xl border border-orange-200 dark:border-orange-800 bg-gradient-to-br from-orange-50/50 to-amber-50/50 dark:from-orange-950/20 dark:to-amber-950/20 backdrop-blur-md shadow-lg p-6"
+          initial={{ opacity: 0, scale: 0.95 }}
+          whileInView={{ opacity: 1, scale: 1 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5 }}
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-2xl">{EVALUATION_METRICS[currentMetric % EVALUATION_METRICS.length].icon}</span>
+            <div>
+              <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">VÅR UTVÄRDERING</p>
+              <h3 className="text-lg font-bold text-neutral-900 dark:text-white">
+                {EVALUATION_METRICS[currentMetric % EVALUATION_METRICS.length].category}
+              </h3>
+            </div>
+          </div>
+          <p className="text-sm text-neutral-700 dark:text-neutral-300 mb-3">
+            {EVALUATION_METRICS[currentMetric % EVALUATION_METRICS.length].description}
+          </p>
+          <p className="text-xs text-orange-600 dark:text-orange-400 font-semibold mb-2">
+            Varför det är viktigt för OneSeek:
+          </p>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {EVALUATION_METRICS[currentMetric % EVALUATION_METRICS.length].whyImportant}
+          </p>
         </motion.div>
 
         {/* Synthesis Bar */}
