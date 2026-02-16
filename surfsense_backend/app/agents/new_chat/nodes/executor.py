@@ -58,6 +58,7 @@ def build_executor_nodes(
     format_plan_context_fn: Callable[[dict[str, Any]], str | None],
     format_recent_calls_fn: Callable[[dict[str, Any]], str | None],
     format_route_hint_fn: Callable[[dict[str, Any]], str | None],
+    format_execution_strategy_fn: Callable[[dict[str, Any]], str | None],
     format_intent_context_fn: Callable[[dict[str, Any]], str | None],
     format_selected_agents_context_fn: Callable[[dict[str, Any]], str | None],
     format_resolved_tools_context_fn: Callable[[dict[str, Any]], str | None],
@@ -72,6 +73,9 @@ def build_executor_nodes(
         plan_context = None if new_user_turn else format_plan_context_fn(state)
         recent_context = None if new_user_turn else format_recent_calls_fn(state)
         route_context = format_route_hint_fn(state)
+        execution_strategy_context = (
+            None if new_user_turn else format_execution_strategy_fn(state)
+        )
         intent_context = None if new_user_turn else format_intent_context_fn(state)
         selected_agents_context = (
             None if new_user_turn else format_selected_agents_context_fn(state)
@@ -85,6 +89,7 @@ def build_executor_nodes(
                 plan_context,
                 recent_context,
                 route_context,
+                execution_strategy_context,
                 intent_context,
                 selected_agents_context,
                 resolved_tools_context,
@@ -124,6 +129,7 @@ def build_executor_nodes(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),
             agent_hops=int(state.get("agent_hops") or 0),
+            execution_strategy=str(state.get("execution_strategy") or ""),
             allow_multiple=bool(compare_mode),
         )
         updates: dict[str, Any] = {"messages": [response]}
@@ -164,6 +170,7 @@ def build_executor_nodes(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),
             agent_hops=int(state.get("agent_hops") or 0),
+            execution_strategy=str(state.get("execution_strategy") or ""),
             allow_multiple=bool(compare_mode),
         )
         updates: dict[str, Any] = {"messages": [response]}

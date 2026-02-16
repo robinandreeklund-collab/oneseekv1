@@ -23,6 +23,7 @@ from app.agents.new_chat.bigtool_workers import WorkerConfig
 from app.agents.new_chat.nodes import (
     build_agent_resolver_node,
     build_critic_node,
+    build_execution_router_node,
     build_executor_nodes,
     build_execution_hitl_gate_node,
     build_intent_resolver_node,
@@ -33,6 +34,7 @@ from app.agents.new_chat.nodes import (
     build_synthesizer_node,
     build_tool_resolver_node,
 )
+from app.agents.new_chat.nodes.execution_router import get_execution_timeout_seconds
 from app.agents.new_chat.hybrid_state import (
     build_speculative_candidates,
     build_trivial_response,
@@ -1051,6 +1053,13 @@ def _format_route_hint(state: dict[str, Any]) -> str | None:
     return f"<route_hint>{hint}</route_hint>"
 
 
+def _format_execution_strategy(state: dict[str, Any]) -> str | None:
+    strategy = str(state.get("execution_strategy") or "").strip().lower()
+    if not strategy:
+        return None
+    return f"<execution_strategy>{strategy}</execution_strategy>"
+
+
 def _format_intent_context(state: dict[str, Any]) -> str | None:
     intent = state.get("resolved_intent")
     if not isinstance(intent, dict):
@@ -1239,9 +1248,22 @@ def _tool_call_priority(
     *,
     orchestration_phase: str,
     agent_hops: int,
+    execution_strategy: str = "",
 ) -> int:
     normalized_tool = str(tool_name or "").strip()
     phase = str(orchestration_phase or "").strip().lower()
+    strategy = str(execution_strategy or "").strip().lower()
+    if strategy in {"parallel", "subagent"}:
+        preferred = {
+            "call_agents_parallel": 0,
+            "call_agent": 1,
+            "retrieve_agents": 2,
+            "write_todos": 3,
+            "reflect_on_progress": 4,
+        }
+        if normalized_tool in _EXTERNAL_MODEL_TOOL_NAMES:
+            return 5
+        return preferred.get(normalized_tool, 99)
     if phase == "select_agent" or agent_hops <= 0:
         ordering = {
             "retrieve_agents": 0,
@@ -1268,6 +1290,7 @@ def _coerce_supervisor_tool_calls(
     *,
     orchestration_phase: str,
     agent_hops: int,
+    execution_strategy: str,
     allow_multiple: bool,
 ) -> Any:
     if allow_multiple or not isinstance(message, AIMessage):
@@ -1286,6 +1309,7 @@ def _coerce_supervisor_tool_calls(
                 str(item[1].get("name") or ""),
                 orchestration_phase=orchestration_phase,
                 agent_hops=agent_hops,
+                execution_strategy=execution_strategy,
             ),
             item[0],
         ),
@@ -3300,6 +3324,8 @@ async def create_supervisor_agent(
         current_turn_id = str(
             injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
         ).strip()
+        execution_strategy = str(injected_state.get("execution_strategy") or "").strip().lower()
+        execution_timeout_seconds = get_execution_timeout_seconds(execution_strategy)
         worker = await worker_pool.get(name)
         if not worker:
             error_message = f"Agent '{agent_name}' not available."
@@ -3318,6 +3344,7 @@ async def create_supervisor_agent(
                         final_requested=bool(final),
                     ),
                     "turn_id": current_turn_id,
+                    "execution_strategy": execution_strategy or "inline",
                 },
                 ensure_ascii=True,
             )
@@ -3375,7 +3402,61 @@ async def create_supervisor_agent(
             "configurable": worker_configurable,
             "recursion_limit": 60,
         }
-        result = await worker.ainvoke(worker_state, config=config)
+        try:
+            result = await asyncio.wait_for(
+                worker.ainvoke(worker_state, config=config),
+                timeout=float(execution_timeout_seconds),
+            )
+        except asyncio.TimeoutError:
+            error_message = (
+                f"Agent '{name}' timed out after {int(execution_timeout_seconds)}s."
+            )
+            return json.dumps(
+                {
+                    "agent": name,
+                    "requested_agent": requested_name,
+                    "agent_resolution": resolution_reason,
+                    "task": task,
+                    "error": error_message,
+                    "error_type": "TimeoutError",
+                    "result_contract": _build_agent_result_contract(
+                        agent_name=name,
+                        task=task,
+                        response_text="",
+                        error_text=error_message,
+                        used_tools=[],
+                        final_requested=bool(final),
+                    ),
+                    "final": bool(final),
+                    "turn_id": current_turn_id,
+                    "execution_strategy": execution_strategy or "inline",
+                },
+                ensure_ascii=True,
+            )
+        except Exception as exc:
+            error_message = str(exc)
+            return json.dumps(
+                {
+                    "agent": name,
+                    "requested_agent": requested_name,
+                    "agent_resolution": resolution_reason,
+                    "task": task,
+                    "error": error_message,
+                    "error_type": type(exc).__name__,
+                    "result_contract": _build_agent_result_contract(
+                        agent_name=name,
+                        task=task,
+                        response_text="",
+                        error_text=error_message,
+                        used_tools=[],
+                        final_requested=bool(final),
+                    ),
+                    "final": bool(final),
+                    "turn_id": current_turn_id,
+                    "execution_strategy": execution_strategy or "inline",
+                },
+                ensure_ascii=True,
+            )
         response_text = ""
         messages_out: list[Any] = []
         if isinstance(result, dict):
@@ -3399,7 +3480,10 @@ async def create_supervisor_agent(
                         "messages": enforced_messages,
                         "selected_tool_ids": selected_tool_ids,
                     }
-                    result = await worker.ainvoke(retry_state, config=config)
+                    result = await asyncio.wait_for(
+                        worker.ainvoke(retry_state, config=config),
+                        timeout=float(execution_timeout_seconds),
+                    )
                     if isinstance(result, dict):
                         messages_out = result.get("messages") or []
                         if messages_out:
@@ -3451,6 +3535,7 @@ async def create_supervisor_agent(
                 "critic": critic_payload,
                 "final": bool(final),
                 "turn_id": current_turn_id,
+                "execution_strategy": execution_strategy or "inline",
             },
             ensure_ascii=True,
         )
@@ -3468,7 +3553,10 @@ async def create_supervisor_agent(
         current_turn_id = str(
             injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
         ).strip()
-        serialized_mode = not compare_mode
+        requested_strategy = str(injected_state.get("execution_strategy") or "").strip().lower()
+        allow_parallel = compare_mode or requested_strategy in {"parallel", "subagent"}
+        serialized_mode = not allow_parallel
+        execution_timeout_seconds = get_execution_timeout_seconds(requested_strategy)
         dropped_calls = 0
         if serialized_mode and isinstance(calls, list) and len(calls) > 1:
             dropped_calls = len(calls) - 1
@@ -3567,7 +3655,10 @@ async def create_supervisor_agent(
                     "configurable": worker_configurable,
                     "recursion_limit": 60,
                 }
-                result = await worker.ainvoke(worker_state, config=config)
+                result = await asyncio.wait_for(
+                    worker.ainvoke(worker_state, config=config),
+                    timeout=float(execution_timeout_seconds),
+                )
                 response_text = ""
                 messages_out: list[Any] = []
                 if isinstance(result, dict):
@@ -3595,6 +3686,7 @@ async def create_supervisor_agent(
                     "used_tools": used_tool_names,
                     "result_contract": result_contract,
                     "turn_id": current_turn_id,
+                    "execution_strategy": requested_strategy or "inline",
                 }
             except Exception as exc:
                 error_message = str(exc)
@@ -3614,6 +3706,7 @@ async def create_supervisor_agent(
                         final_requested=False,
                     ),
                     "turn_id": current_turn_id,
+                    "execution_strategy": requested_strategy or "inline",
                 }
         
         results = await asyncio.gather(
@@ -3633,6 +3726,7 @@ async def create_supervisor_agent(
                 "results": processed,
                 "serialized_mode": serialized_mode,
                 "dropped_calls": dropped_calls,
+                "execution_strategy": requested_strategy or "inline",
             },
             ensure_ascii=True,
         )
@@ -3710,6 +3804,10 @@ async def create_supervisor_agent(
         weather_tool_ids=weather_tool_ids,
         trafik_tool_ids=trafik_tool_ids,
     )
+    execution_router_node = build_execution_router_node(
+        latest_user_query_fn=_latest_user_query,
+        next_plan_step_fn=_next_plan_step,
+    )
 
     execution_hitl_gate_node = build_execution_hitl_gate_node(
         hitl_enabled_fn=_hitl_enabled,
@@ -3763,6 +3861,7 @@ async def create_supervisor_agent(
         format_plan_context_fn=_format_plan_context,
         format_recent_calls_fn=_format_recent_calls,
         format_route_hint_fn=_format_route_hint,
+        format_execution_strategy_fn=_format_execution_strategy,
         format_intent_context_fn=_format_intent_context,
         format_selected_agents_context_fn=_format_selected_agents_context,
         format_resolved_tools_context_fn=_format_resolved_tools_context,
@@ -4252,6 +4351,11 @@ async def create_supervisor_agent(
             RunnableCallable(None, planner_hitl_gate_node),
         )
         graph_builder.add_node("tool_resolver", RunnableCallable(None, tool_resolver_node))
+        if hybrid_mode and not compare_mode:
+            graph_builder.add_node(
+                "execution_router",
+                RunnableCallable(None, execution_router_node),
+            )
         graph_builder.add_node(
             "execution_hitl_gate",
             RunnableCallable(None, execution_hitl_gate_node),
@@ -4292,7 +4396,11 @@ async def create_supervisor_agent(
             planner_hitl_should_continue,
             path_map=["tool_resolver", END],
         )
-        graph_builder.add_edge("tool_resolver", "execution_hitl_gate")
+        if hybrid_mode and not compare_mode:
+            graph_builder.add_edge("tool_resolver", "execution_router")
+            graph_builder.add_edge("execution_router", "execution_hitl_gate")
+        else:
+            graph_builder.add_edge("tool_resolver", "execution_hitl_gate")
         graph_builder.add_conditional_edges(
             "execution_hitl_gate",
             execution_hitl_should_continue,

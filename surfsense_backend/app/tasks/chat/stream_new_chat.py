@@ -696,7 +696,7 @@ _REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _STREAM_JSON_DECODER = json.JSONDecoder()
 _CRITIC_JSON_START_RE = re.compile(r"\{\s*[\"']status[\"']\s*:", re.IGNORECASE)
 _PIPELINE_JSON_START_RE = re.compile(
-    r"\{\s*[\"'](?:intent_id|selected_agents|status|decision|steps)\b",
+    r"\{\s*[\"'](?:intent_id|selected_agents|status|decision|steps|execution_strategy)\b",
     re.IGNORECASE,
 )
 _PIPELINE_JSON_PARTIAL_KEY_RE = re.compile(
@@ -709,6 +709,8 @@ _PIPELINE_JSON_KEYS = (
     "status",
     "decision",
     "steps",
+    "execution_strategy",
+    "execution_reason",
     "reason",
     "confidence",
 )
@@ -718,6 +720,7 @@ _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "agent_resolver",
     "planner",
     "tool_resolver",
+    "execution_router",
     "critic",
     "synthesizer",
 )
@@ -893,6 +896,9 @@ def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
         and isinstance(payload.get("reason"), str)
     ):
         return "critic"
+    execution_strategy = str(payload.get("execution_strategy") or "").strip().lower()
+    if execution_strategy in {"inline", "parallel", "subagent"}:
+        return "execution_router"
     return None
 
 
@@ -1800,6 +1806,14 @@ async def stream_new_chat(
                     reason = str(payload.get("reason") or "").strip()
                     if decision:
                         items.append(f"Decision: {decision}")
+                    if reason:
+                        items.append(f"Orsak: {reason[:180]}")
+                elif kind == "execution_router":
+                    title = format_step_title("Routing execution strategy")
+                    strategy = str(payload.get("execution_strategy") or "").strip()
+                    reason = str(payload.get("execution_reason") or payload.get("reason") or "").strip()
+                    if strategy:
+                        items.append(f"Strategi: {strategy}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 if source_chain and _is_internal_pipeline_chain_name(source_chain):
