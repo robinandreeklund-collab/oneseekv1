@@ -1600,20 +1600,8 @@ const RadicalTransparencySection = () => {
   ];
 
   // LangGraph pipeline steps
-  const pipelineSteps = [
-    { id: 0, label: "START", phase: "intent", color: "from-purple-500 to-pink-500" },
-    { id: 1, label: "Intent Router", phase: "intent", color: "from-purple-500 to-pink-500" },
-    { id: 2, label: "Agent Resolver", phase: "planning", color: "from-blue-500 to-cyan-500" },
-    { id: 3, label: "Planner", phase: "planning", color: "from-blue-500 to-cyan-500" },
-    { id: 4, label: "Tool Resolver", phase: "execution", color: "from-emerald-500 to-teal-500" },
-    { id: 5, label: "Executor", phase: "execution", color: "from-emerald-500 to-teal-500" },
-    { id: 6, label: "External APIs", phase: "execution", color: "from-emerald-500 to-teal-500" },
-    { id: 7, label: "Post-Tools", phase: "execution", color: "from-emerald-500 to-teal-500" },
-    { id: 8, label: "Safety Guard", phase: "validation", color: "from-amber-500 to-orange-500" },
-    { id: 9, label: "Critic", phase: "validation", color: "from-amber-500 to-orange-500" },
-    { id: 10, label: "Synthesizer", phase: "output", color: "from-orange-500 to-red-500" },
-    { id: 11, label: "END", phase: "output", color: "from-orange-500 to-red-500" },
-  ];
+  // Use detailed 54-step LangGraph pipeline instead of 12 high-level steps
+  const pipelineSteps = DETAILED_LANGGRAPH_STEPS;
 
   // Animation sequence
   useEffect(() => {
@@ -1752,12 +1740,15 @@ const RadicalTransparencySection = () => {
             transition={{ duration: 0.6 }}
             className="lg:w-[500px]"
           >
-            <div className="bg-white/40 dark:bg-neutral-900/40 backdrop-blur-md rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 sticky top-24">
-              <h3 className="text-lg font-semibold mb-6 text-neutral-900 dark:text-white">
+            <div className="bg-white/40 dark:bg-neutral-900/40 backdrop-blur-md rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 sticky top-24 max-h-[800px] overflow-y-auto">
+              <h3 className="text-lg font-semibold mb-2 text-neutral-900 dark:text-white">
                 LangGraph Pipeline
               </h3>
+              <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-4">
+                {pipelineSteps.length} detaljerade steg
+              </p>
               
-              <div className="space-y-3">
+              <div className="space-y-2">{/* Reduced spacing for 54 steps */}
                 {pipelineSteps.map((step, idx) => {
                   const isActive = activeStep === step.id;
                   const isCompleted = activeStep !== null && activeStep > step.id;
@@ -1774,14 +1765,14 @@ const RadicalTransparencySection = () => {
                       {/* Connection line */}
                       {idx < pipelineSteps.length - 1 && (
                         <div className={cn(
-                          "absolute left-5 top-12 w-0.5 h-6 transition-colors duration-300",
+                          "absolute left-4 top-10 w-0.5 h-4 transition-colors duration-300",
                           isCompleted ? "bg-emerald-500" : "bg-neutral-300 dark:bg-neutral-700"
                         )} />
                       )}
 
                       {/* Step card */}
                       <div className={cn(
-                        "flex items-center gap-3 p-3 rounded-xl transition-all duration-300",
+                        "flex items-center gap-2 p-2 rounded-lg transition-all duration-300",
                         isActive && "bg-gradient-to-r scale-105 shadow-lg",
                         isActive && step.color,
                         !isActive && isCompleted && "bg-emerald-50 dark:bg-emerald-900/20",
@@ -1789,26 +1780,22 @@ const RadicalTransparencySection = () => {
                       )}>
                         {/* Status icon */}
                         <div className={cn(
-                          "flex-shrink-0 size-10 rounded-full flex items-center justify-center transition-all duration-300",
+                          "flex-shrink-0 size-8 rounded-full flex items-center justify-center transition-all duration-300 text-base",
                           isActive && "bg-white/20 backdrop-blur-sm scale-110",
                           isCompleted && "bg-emerald-500",
                           isPending && "bg-neutral-200 dark:bg-neutral-700"
                         )}>
-                          {isActive && (
-                            <span className="text-white text-lg">⚡</span>
-                          )}
-                          {isCompleted && (
-                            <span className="text-white text-lg">✓</span>
-                          )}
+                          {isActive && step.icon}
+                          {isCompleted && <span className="text-white">✓</span>}
                           {isPending && (
-                            <span className="text-neutral-400 text-sm font-medium">{step.id}</span>
+                            <span className="text-neutral-400 text-xs font-medium">{step.id}</span>
                           )}
                         </div>
 
                         {/* Step label */}
-                        <div className="flex-1">
+                        <div className="flex-1 min-w-0">{/* min-w-0 for text truncation */}
                           <p className={cn(
-                            "text-sm font-medium transition-colors duration-300",
+                            "text-xs font-medium truncate transition-colors duration-300",
                             isActive && "text-white",
                             !isActive && isCompleted && "text-emerald-700 dark:text-emerald-300",
                             !isActive && isPending && "text-neutral-600 dark:text-neutral-400"
@@ -1822,7 +1809,7 @@ const RadicalTransparencySection = () => {
                           <motion.div
                             animate={{ scale: [1, 1.2, 1] }}
                             transition={{ repeat: Infinity, duration: 1.5 }}
-                            className="size-2 rounded-full bg-white"
+                            className="size-1.5 rounded-full bg-white flex-shrink-0"
                           />
                         )}
                       </div>
