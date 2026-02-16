@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.tools import tool
 
@@ -19,6 +20,50 @@ from app.agents.new_chat.sandbox_runtime import (
 )
 
 
+async def _trace_start(
+    *,
+    trace_recorder: Any | None,
+    parent_span_id: str | None,
+    name: str,
+    input_data: Any | None = None,
+    meta: dict[str, Any] | None = None,
+) -> str | None:
+    if trace_recorder is None:
+        return None
+    span_id = f"{name.replace('.', '-')}-{uuid4().hex[:8]}"
+    try:
+        await trace_recorder.start_span(
+            span_id=span_id,
+            name=name,
+            kind="tool",
+            parent_id=parent_span_id,
+            input_data=input_data,
+            meta=meta or {},
+        )
+        return span_id
+    except Exception:
+        return None
+
+
+async def _trace_end(
+    *,
+    trace_recorder: Any | None,
+    span_id: str | None,
+    output_data: Any | None = None,
+    status: str = "completed",
+) -> None:
+    if trace_recorder is None or not span_id:
+        return
+    try:
+        await trace_recorder.end_span(
+            span_id=span_id,
+            output_data=output_data,
+            status=status,
+        )
+    except Exception:
+        return
+
+
 def _sandbox_preview(
     *,
     thread_id: int | None,
@@ -28,6 +73,8 @@ def _sandbox_preview(
     preview: dict[str, Any] = {
         "sandbox_enabled": bool(config.enabled),
         "mode": config.mode,
+        "state_store": config.state_store,
+        "idle_timeout_seconds": int(config.idle_timeout_seconds),
     }
     if config.mode == SANDBOX_MODE_DOCKER:
         preview["container_name"] = build_sandbox_container_name(
@@ -43,6 +90,8 @@ def create_sandbox_ls_tool(
     *,
     thread_id: int | None,
     runtime_hitl: dict[str, Any] | None = None,
+    trace_recorder: Any | None = None,
+    trace_parent_span_id: str | None = None,
 ):
     @tool
     async def sandbox_ls(
@@ -61,6 +110,23 @@ def create_sandbox_ls_tool(
         """
         _ = str(description or "").strip()
         try:
+            acquire_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.acquire",
+                input_data={"thread_id": thread_id, "tool": "sandbox_ls"},
+            )
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=acquire_span_id,
+                output_data={"mode": _sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl).get("mode")},
+            )
+            execute_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.execute",
+                input_data={"tool": "sandbox_ls", "path": path},
+            )
             entries = await asyncio.to_thread(
                 sandbox_list_directory,
                 thread_id=thread_id,
@@ -76,18 +142,35 @@ def create_sandbox_ls_tool(
                 "max_depth": int(max_depth),
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=execute_span_id,
+                output_data={"count": len(entries)},
+            )
         except SandboxExecutionError as exc:
             payload = {
                 "error": str(exc),
                 "error_type": "SandboxExecutionError",
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
         except Exception as exc:
             payload = {
                 "error": str(exc),
                 "error_type": type(exc).__name__,
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
         return json.dumps(payload, ensure_ascii=True)
 
     return sandbox_ls
@@ -97,6 +180,8 @@ def create_sandbox_read_file_tool(
     *,
     thread_id: int | None,
     runtime_hitl: dict[str, Any] | None = None,
+    trace_recorder: Any | None = None,
+    trace_parent_span_id: str | None = None,
 ):
     @tool
     async def sandbox_read_file(
@@ -117,6 +202,23 @@ def create_sandbox_read_file_tool(
         """
         _ = str(description or "").strip()
         try:
+            acquire_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.acquire",
+                input_data={"thread_id": thread_id, "tool": "sandbox_read_file"},
+            )
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=acquire_span_id,
+                output_data={"mode": _sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl).get("mode")},
+            )
+            execute_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.execute",
+                input_data={"tool": "sandbox_read_file", "path": path},
+            )
             content = await asyncio.to_thread(
                 sandbox_read_text_file,
                 thread_id=thread_id,
@@ -132,18 +234,35 @@ def create_sandbox_read_file_tool(
                 "line_count": 0 if content == "(empty)" else len(content.splitlines()),
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=execute_span_id,
+                output_data={"line_count": payload["line_count"]},
+            )
         except SandboxExecutionError as exc:
             payload = {
                 "error": str(exc),
                 "error_type": "SandboxExecutionError",
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
         except Exception as exc:
             payload = {
                 "error": str(exc),
                 "error_type": type(exc).__name__,
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
         return json.dumps(payload, ensure_ascii=True)
 
     return sandbox_read_file
@@ -153,6 +272,8 @@ def create_sandbox_write_file_tool(
     *,
     thread_id: int | None,
     runtime_hitl: dict[str, Any] | None = None,
+    trace_recorder: Any | None = None,
+    trace_parent_span_id: str | None = None,
 ):
     @tool
     async def sandbox_write_file(
@@ -172,6 +293,23 @@ def create_sandbox_write_file_tool(
         _ = str(description or "").strip()
         text = str(content or "")
         try:
+            acquire_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.acquire",
+                input_data={"thread_id": thread_id, "tool": "sandbox_write_file"},
+            )
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=acquire_span_id,
+                output_data={"mode": _sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl).get("mode")},
+            )
+            execute_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.execute",
+                input_data={"tool": "sandbox_write_file", "path": path, "append": bool(append)},
+            )
             written_path = await asyncio.to_thread(
                 sandbox_write_text_file,
                 thread_id=thread_id,
@@ -187,18 +325,35 @@ def create_sandbox_write_file_tool(
                 "append": bool(append),
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=execute_span_id,
+                output_data={"written_bytes": payload["written_bytes"]},
+            )
         except SandboxExecutionError as exc:
             payload = {
                 "error": str(exc),
                 "error_type": "SandboxExecutionError",
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
         except Exception as exc:
             payload = {
                 "error": str(exc),
                 "error_type": type(exc).__name__,
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
         return json.dumps(payload, ensure_ascii=True)
 
     return sandbox_write_file
@@ -208,6 +363,8 @@ def create_sandbox_replace_tool(
     *,
     thread_id: int | None,
     runtime_hitl: dict[str, Any] | None = None,
+    trace_recorder: Any | None = None,
+    trace_parent_span_id: str | None = None,
 ):
     @tool
     async def sandbox_replace(
@@ -228,6 +385,27 @@ def create_sandbox_replace_tool(
         """
         _ = str(description or "").strip()
         try:
+            acquire_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.acquire",
+                input_data={"thread_id": thread_id, "tool": "sandbox_replace"},
+            )
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=acquire_span_id,
+                output_data={"mode": _sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl).get("mode")},
+            )
+            execute_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.execute",
+                input_data={
+                    "tool": "sandbox_replace",
+                    "path": path,
+                    "replace_all": bool(replace_all),
+                },
+            )
             updated_path, replaced = await asyncio.to_thread(
                 sandbox_replace_text_file,
                 thread_id=thread_id,
@@ -243,18 +421,35 @@ def create_sandbox_replace_tool(
                 "replace_all": bool(replace_all),
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=execute_span_id,
+                output_data={"replaced": int(replaced)},
+            )
         except SandboxExecutionError as exc:
             payload = {
                 "error": str(exc),
                 "error_type": "SandboxExecutionError",
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
         except Exception as exc:
             payload = {
                 "error": str(exc),
                 "error_type": type(exc).__name__,
                 **_sandbox_preview(thread_id=thread_id, runtime_hitl=runtime_hitl),
             }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
         return json.dumps(payload, ensure_ascii=True)
 
     return sandbox_replace

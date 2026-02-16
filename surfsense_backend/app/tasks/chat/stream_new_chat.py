@@ -1134,6 +1134,8 @@ async def stream_new_chat(
             - sandbox_enabled (bool): enables sandbox execution tools for code tasks.
             - sandbox_mode (str): sandbox runtime mode ("docker", "local", or "provisioner").
             - sandbox_provisioner_url (str): provisioner base URL when mode=provisioner.
+            - sandbox_state_store (str): "file", "redis", or "auto" for lease/state storage.
+            - sandbox_idle_timeout_seconds (int): idle timeout before sandbox lease cleanup.
         checkpoint_ns_override:
             Optional explicit checkpoint namespace. When provided, bypasses automatic
             namespace resolution and uses this value ("" means legacy namespace).
@@ -1475,6 +1477,15 @@ async def stream_new_chat(
             or runtime_flags.get("sandbox_service_url")
             or ""
         ).strip()
+        sandbox_state_store = str(
+            runtime_flags.get("sandbox_state_store") or "file"
+        ).strip().lower()
+        try:
+            sandbox_idle_timeout_seconds = int(
+                runtime_flags.get("sandbox_idle_timeout_seconds") or 15 * 60
+            )
+        except (TypeError, ValueError):
+            sandbox_idle_timeout_seconds = 15 * 60
         if not hybrid_mode:
             speculative_enabled = False
 
@@ -1500,6 +1511,8 @@ async def stream_new_chat(
                 "sandbox_enabled": sandbox_enabled,
                 "sandbox_mode": sandbox_mode,
                 "sandbox_provisioner_url": sandbox_provisioner_url,
+                "sandbox_state_store": sandbox_state_store,
+                "sandbox_idle_timeout_seconds": sandbox_idle_timeout_seconds,
             }
             route_start = await trace_recorder.start_span(
                 span_id=route_span_id,
@@ -1558,7 +1571,9 @@ async def stream_new_chat(
                 f"speculative_enabled={speculative_enabled}, "
                 f"sandbox_enabled={sandbox_enabled}, "
                 f"sandbox_mode={sandbox_mode}, "
-                f"sandbox_provisioner_url={sandbox_provisioner_url or '<none>'}"
+                f"sandbox_provisioner_url={sandbox_provisioner_url or '<none>'}, "
+                f"sandbox_state_store={sandbox_state_store}, "
+                f"sandbox_idle_timeout_seconds={sandbox_idle_timeout_seconds}"
             )
             agent = await build_complete_graph(
                 llm=llm,
@@ -1571,6 +1586,10 @@ async def stream_new_chat(
                     "thread_id": chat_id,
                     "checkpoint_ns": checkpoint_ns,
                     "runtime_hitl": dict(runtime_hitl or {}),
+                    "trace_recorder": trace_recorder,
+                    "trace_parent_span_id": (
+                        trace_recorder.root_span_id if trace_recorder else None
+                    ),
                 },
                 checkpointer=checkpointer,
                 knowledge_prompt=knowledge_worker_prompt,

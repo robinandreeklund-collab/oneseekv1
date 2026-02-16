@@ -70,6 +70,7 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "sandbox_read_file": ("tools", "code", "sandbox"),
     "sandbox_write_file": ("tools", "code", "sandbox"),
     "sandbox_replace": ("tools", "code", "sandbox"),
+    "sandbox_release": ("tools", "code", "sandbox"),
     "smhi_weather": ("tools", "weather", "smhi"),
     "trafiklab_route": ("tools", "action", "travel"),
     "libris_search": ("tools", "action", "data"),
@@ -196,6 +197,14 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "patch",
         "string",
         "update",
+    ],
+    "sandbox_release": [
+        "sandbox",
+        "release",
+        "cleanup",
+        "stop",
+        "provisioner",
+        "docker",
     ],
     "smhi_weather": [
         "weather",
@@ -1131,6 +1140,7 @@ async def build_global_tool_registry(
             "sandbox_read_file",
             "sandbox_write_file",
             "sandbox_replace",
+            "sandbox_release",
         ):
             if sandbox_tool_id not in enabled_tools:
                 enabled_tools.append(sandbox_tool_id)

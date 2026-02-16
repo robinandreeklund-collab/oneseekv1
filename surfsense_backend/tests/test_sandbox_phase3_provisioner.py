@@ -126,6 +126,14 @@ def test_sandbox_filesystem_calls_provisioner_endpoints(
         url = str(request.full_url)
         payload = _decode_request_payload(request)
         calls.append((url, payload))
+        if url.endswith("/v1/sandbox/acquire"):
+            return _FakeHTTPResponse(
+                {
+                    "sandbox_id": "thread-456",
+                    "workspace_path": "/workspace",
+                    "pod_name": "sandbox-pod-456",
+                }
+            )
         if url.endswith("/v1/sandbox/ls"):
             return _FakeHTTPResponse({"entries": ["/workspace/src/", "/workspace/src/main.py"]})
         if url.endswith("/v1/sandbox/write_file"):
@@ -177,6 +185,7 @@ def test_sandbox_filesystem_calls_provisioner_endpoints(
     assert replaced == 1
 
     called_urls = [url for url, _payload in calls]
+    assert any(url.endswith("/v1/sandbox/acquire") for url in called_urls)
     assert any(url.endswith("/v1/sandbox/ls") for url in called_urls)
     assert any(url.endswith("/v1/sandbox/write_file") for url in called_urls)
     assert any(url.endswith("/v1/sandbox/read_file") for url in called_urls)
@@ -214,3 +223,67 @@ def test_sandbox_provisioner_request_error_surfaces(
                 "sandbox_provisioner_url": "http://sandbox.local:8002",
             },
         )
+
+
+def test_sandbox_provisioner_idle_timeout_triggers_release(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    now_ref = {"value": 1_000}
+
+    monkeypatch.setattr(
+        sandbox_runtime.time,
+        "time",
+        lambda: float(now_ref["value"]),
+    )
+
+    def _fake_urlopen(request, timeout=0):
+        _ = timeout
+        url = str(request.full_url)
+        calls.append(url)
+        if url.endswith("/v1/sandbox/acquire"):
+            return _FakeHTTPResponse(
+                {
+                    "sandbox_id": "thread-idle",
+                    "workspace_path": "/workspace/thread-idle",
+                    "pod_name": "sandbox-pod-idle",
+                }
+            )
+        if url.endswith("/v1/sandbox/release"):
+            return _FakeHTTPResponse({"released": True})
+        if url.endswith("/v1/sandbox/execute"):
+            return _FakeHTTPResponse(
+                {
+                    "output": "ok",
+                    "exit_code": 0,
+                    "workspace_path": "/workspace/thread-idle",
+                    "container_name": "sandbox-pod-idle",
+                }
+            )
+        raise AssertionError(f"Unexpected endpoint: {url}")
+
+    monkeypatch.setattr(sandbox_runtime.urllib_request, "urlopen", _fake_urlopen)
+
+    runtime_hitl = {
+        "sandbox_enabled": True,
+        "sandbox_mode": "provisioner",
+        "sandbox_provisioner_url": "http://sandbox.local:8002",
+        "sandbox_idle_timeout_seconds": 5,
+        "sandbox_state_store": "file",
+        "sandbox_state_file_path": str(tmp_path / "sandbox_state.json"),
+    }
+    first = sandbox_runtime.run_sandbox_command(
+        command="echo first",
+        thread_id="thread-idle",
+        runtime_hitl=runtime_hitl,
+    )
+    assert first.exit_code == 0
+    now_ref["value"] = 1_010
+    second = sandbox_runtime.run_sandbox_command(
+        command="echo second",
+        thread_id="thread-idle",
+        runtime_hitl=runtime_hitl,
+    )
+    assert second.exit_code == 0
+    assert any(url.endswith("/v1/sandbox/release") for url in calls)

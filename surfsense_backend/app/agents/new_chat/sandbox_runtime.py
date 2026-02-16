@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import hashlib
 import json
 import os
@@ -8,9 +10,11 @@ from pathlib import Path
 import re
 import subprocess
 import threading
+import time
 from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from uuid import uuid4
 
 SANDBOX_MODE_LOCAL = "local"
 SANDBOX_MODE_DOCKER = "docker"
@@ -28,6 +32,11 @@ DEFAULT_SANDBOX_CONTAINER_PREFIX = "oneseek-sandbox"
 DEFAULT_SANDBOX_PROVISIONER_URL = "http://localhost:8002"
 DEFAULT_SANDBOX_TIMEOUT_SECONDS = 30
 DEFAULT_SANDBOX_MAX_OUTPUT_BYTES = 100_000
+DEFAULT_SANDBOX_IDLE_TIMEOUT_SECONDS = 15 * 60
+DEFAULT_SANDBOX_LOCK_TIMEOUT_SECONDS = 15
+DEFAULT_SANDBOX_STATE_STORE = "file"
+DEFAULT_SANDBOX_STATE_FILE_NAME = ".sandbox_state.json"
+DEFAULT_SANDBOX_STATE_REDIS_PREFIX = "oneseek:sandbox"
 SANDBOX_VIRTUAL_WORKSPACE_PREFIX = "/workspace"
 
 _LONG_LIVED_PATTERNS = (
@@ -112,6 +121,12 @@ class SandboxRuntimeConfig:
     docker_container_prefix: str = DEFAULT_SANDBOX_CONTAINER_PREFIX
     provisioner_url: str = DEFAULT_SANDBOX_PROVISIONER_URL
     provisioner_api_key: str | None = None
+    idle_timeout_seconds: int = DEFAULT_SANDBOX_IDLE_TIMEOUT_SECONDS
+    lock_timeout_seconds: int = DEFAULT_SANDBOX_LOCK_TIMEOUT_SECONDS
+    state_store: str = DEFAULT_SANDBOX_STATE_STORE
+    state_file_path: str | None = None
+    state_redis_url: str | None = None
+    state_redis_prefix: str = DEFAULT_SANDBOX_STATE_REDIS_PREFIX
     timeout_seconds: int = DEFAULT_SANDBOX_TIMEOUT_SECONDS
     max_output_bytes: int = DEFAULT_SANDBOX_MAX_OUTPUT_BYTES
 
@@ -144,6 +159,38 @@ def sandbox_config_from_runtime_flags(
         or payload.get("sandbox_service_api_key")
         or ""
     ).strip() or None
+    idle_timeout_seconds = _coerce_int(
+        payload.get("sandbox_idle_timeout_seconds"),
+        default=DEFAULT_SANDBOX_IDLE_TIMEOUT_SECONDS,
+        min_value=5,
+        max_value=86_400,
+    )
+    lock_timeout_seconds = _coerce_int(
+        payload.get("sandbox_lock_timeout_seconds"),
+        default=DEFAULT_SANDBOX_LOCK_TIMEOUT_SECONDS,
+        min_value=2,
+        max_value=120,
+    )
+    requested_state_store = str(
+        payload.get("sandbox_state_store") or DEFAULT_SANDBOX_STATE_STORE
+    ).strip().lower()
+    state_store = requested_state_store if requested_state_store in {
+        "file",
+        "redis",
+        "auto",
+    } else DEFAULT_SANDBOX_STATE_STORE
+    state_file_path = str(payload.get("sandbox_state_file_path") or "").strip() or None
+    if not state_file_path:
+        state_file_path = str((Path(workspace_root) / DEFAULT_SANDBOX_STATE_FILE_NAME).resolve())
+    state_redis_url = str(
+        payload.get("sandbox_state_redis_url")
+        or payload.get("redis_url")
+        or os.getenv("REDIS_URL")
+        or ""
+    ).strip() or None
+    state_redis_prefix = str(
+        payload.get("sandbox_state_redis_prefix") or DEFAULT_SANDBOX_STATE_REDIS_PREFIX
+    ).strip() or DEFAULT_SANDBOX_STATE_REDIS_PREFIX
     timeout_seconds = _coerce_int(
         payload.get("sandbox_timeout_seconds"),
         default=DEFAULT_SANDBOX_TIMEOUT_SECONDS,
@@ -164,6 +211,12 @@ def sandbox_config_from_runtime_flags(
         docker_container_prefix=docker_container_prefix,
         provisioner_url=provisioner_url,
         provisioner_api_key=provisioner_api_key,
+        idle_timeout_seconds=idle_timeout_seconds,
+        lock_timeout_seconds=lock_timeout_seconds,
+        state_store=state_store,
+        state_file_path=state_file_path,
+        state_redis_url=state_redis_url,
+        state_redis_prefix=state_redis_prefix,
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
     )
@@ -177,6 +230,25 @@ class SandboxCommandResult:
     exit_code: int
     truncated: bool = False
     container_name: str | None = None
+    sandbox_id: str | None = None
+    lease_id: str | None = None
+    reused: bool = False
+    state_backend: str = "file"
+    idle_releases: list[str] | None = None
+
+
+@dataclass(frozen=True)
+class SandboxLease:
+    thread_id: str
+    thread_key: str
+    lease_id: str
+    mode: str
+    workspace_path: str
+    container_name: str | None
+    sandbox_id: str | None
+    reused: bool
+    state_backend: str
+    idle_releases: list[str]
 
 
 class SandboxExecutionError(RuntimeError):
@@ -253,6 +325,357 @@ class _DockerSandboxPool:
 
 
 _DOCKER_POOL = _DockerSandboxPool()
+
+_STATE_BACKEND_FILE = "file"
+_STATE_BACKEND_REDIS = "redis"
+_REDIS_CLIENT_CACHE: dict[str, Any] = {}
+_REDIS_CACHE_LOCK = threading.RLock()
+
+
+def _now_ts() -> int:
+    return int(time.time())
+
+
+def _thread_key(thread_id: Any) -> str:
+    return _sanitize_segment(thread_id, fallback="thread-default").lower()
+
+
+def _default_state_file_path(config: SandboxRuntimeConfig) -> Path:
+    configured = str(config.state_file_path or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return (Path(config.workspace_root).expanduser() / DEFAULT_SANDBOX_STATE_FILE_NAME).resolve()
+
+
+def _blank_state_payload() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "threads": {},
+        "updated_at": _now_ts(),
+    }
+
+
+def _normalize_state_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return _blank_state_payload()
+    threads = payload.get("threads")
+    if not isinstance(threads, dict):
+        threads = {}
+    return {
+        "version": int(payload.get("version") or 1),
+        "threads": threads,
+        "updated_at": int(payload.get("updated_at") or _now_ts()),
+    }
+
+
+def _new_lease_id() -> str:
+    return f"lease-{uuid4().hex[:12]}"
+
+
+def _redis_hash_key(config: SandboxRuntimeConfig) -> str:
+    prefix = str(config.state_redis_prefix or DEFAULT_SANDBOX_STATE_REDIS_PREFIX).strip(":")
+    return f"{prefix}:state"
+
+
+def _redis_lock_key(config: SandboxRuntimeConfig, thread_key: str) -> str:
+    prefix = str(config.state_redis_prefix or DEFAULT_SANDBOX_STATE_REDIS_PREFIX).strip(":")
+    return f"{prefix}:lock:{thread_key}"
+
+
+def _load_json_payload(raw_value: str | bytes | None) -> dict[str, Any]:
+    if raw_value is None:
+        return {}
+    text = raw_value.decode("utf-8", errors="replace") if isinstance(raw_value, bytes) else str(raw_value)
+    text = text.strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _get_redis_client(config: SandboxRuntimeConfig):
+    redis_url = str(config.state_redis_url or "").strip()
+    if not redis_url:
+        return None
+    with _REDIS_CACHE_LOCK:
+        cached = _REDIS_CLIENT_CACHE.get(redis_url)
+        if cached is not None:
+            return cached
+        try:
+            import redis  # type: ignore[import-not-found]
+        except Exception:
+            return None
+        try:
+            client = redis.Redis.from_url(redis_url, decode_responses=True)
+            client.ping()
+        except Exception:
+            return None
+        _REDIS_CLIENT_CACHE[redis_url] = client
+        return client
+
+
+def _resolve_state_backend(config: SandboxRuntimeConfig) -> tuple[str, Any | None]:
+    requested = str(config.state_store or DEFAULT_SANDBOX_STATE_STORE).strip().lower()
+    if requested in {"redis", "auto"}:
+        client = _get_redis_client(config)
+        if client is not None:
+            return _STATE_BACKEND_REDIS, client
+        if requested == "redis":
+            raise SandboxExecutionError(
+                "sandbox_state_store=redis requested but Redis is unavailable."
+            )
+    return _STATE_BACKEND_FILE, None
+
+
+@contextmanager
+def _locked_state_file(path: Path, *, timeout_seconds: int):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as handle:
+        deadline = time.monotonic() + max(1, int(timeout_seconds))
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise SandboxExecutionError(
+                        f"Timed out acquiring sandbox state lock: {path}"
+                    )
+                time.sleep(0.05)
+        try:
+            handle.seek(0)
+            payload = _normalize_state_payload(_load_json_payload(handle.read()))
+            yield payload
+            payload["updated_at"] = _now_ts()
+            handle.seek(0)
+            handle.truncate()
+            handle.write(json.dumps(payload, ensure_ascii=True))
+            handle.flush()
+            os.fsync(handle.fileno())
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _locked_redis_thread_state(
+    *,
+    config: SandboxRuntimeConfig,
+    redis_client,
+    thread_key: str,
+):
+    lock_timeout = max(1, int(config.lock_timeout_seconds))
+    lock = redis_client.lock(
+        _redis_lock_key(config, thread_key),
+        timeout=max(5, lock_timeout + 5),
+        blocking_timeout=lock_timeout,
+    )
+    acquired = False
+    try:
+        acquired = bool(lock.acquire(blocking=True))
+    except Exception as exc:
+        raise SandboxExecutionError(f"Failed to acquire Redis sandbox lock: {exc}") from exc
+    if not acquired:
+        raise SandboxExecutionError(
+            f"Timed out acquiring Redis sandbox lock for thread '{thread_key}'."
+        )
+    try:
+        yield
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
+
+
+def _record_is_expired(
+    record: dict[str, Any],
+    *,
+    now_ts: int,
+    idle_timeout_seconds: int,
+) -> bool:
+    if idle_timeout_seconds <= 0:
+        return False
+    last_used = int(record.get("last_used_at") or record.get("created_at") or 0)
+    if last_used <= 0:
+        return False
+    return (now_ts - last_used) > int(idle_timeout_seconds)
+
+
+def _remove_docker_container(container_name: str) -> None:
+    normalized = str(container_name or "").strip()
+    if not normalized:
+        return
+    try:
+        subprocess.run(
+            ["docker", "rm", "-f", normalized],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except Exception:
+        return
+
+
+def _post_to_provisioner_allow_404(
+    *,
+    config: SandboxRuntimeConfig,
+    endpoint: str,
+    payload: dict[str, Any],
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    try:
+        return _post_to_provisioner(
+            config=config,
+            endpoint=endpoint,
+            payload=payload,
+            timeout_seconds=timeout_seconds,
+        )
+    except SandboxExecutionError as exc:
+        message = str(exc)
+        if " (404) " in message or " 404 " in message:
+            return {}
+        raise
+
+
+def _release_record(
+    *,
+    config: SandboxRuntimeConfig,
+    thread_key: str,
+    record: dict[str, Any],
+    reason: str,
+) -> None:
+    mode = str(record.get("mode") or "").strip().lower()
+    if mode == SANDBOX_MODE_DOCKER:
+        _remove_docker_container(str(record.get("container_name") or ""))
+        return
+    if mode == SANDBOX_MODE_PROVISIONER:
+        sandbox_id = str(record.get("sandbox_id") or "").strip()
+        if not sandbox_id:
+            return
+        try:
+            _post_to_provisioner_allow_404(
+                config=config,
+                endpoint="/v1/sandbox/release",
+                payload={
+                    "thread_id": str(record.get("thread_id") or thread_key),
+                    "thread_key": thread_key,
+                    "sandbox_id": sandbox_id,
+                    "reason": reason,
+                },
+                timeout_seconds=max(5, min(60, int(config.timeout_seconds))),
+            )
+        except SandboxExecutionError:
+            return
+
+
+def _build_new_record(
+    *,
+    config: SandboxRuntimeConfig,
+    thread_id: Any,
+    thread_key: str,
+) -> dict[str, Any]:
+    now_ts = _now_ts()
+    workspace_path = str(_workspace_path(config, thread_id))
+    record: dict[str, Any] = {
+        "thread_id": str(thread_id or ""),
+        "thread_key": thread_key,
+        "mode": config.mode,
+        "workspace_path": workspace_path,
+        "container_name": None,
+        "sandbox_id": None,
+        "lease_id": _new_lease_id(),
+        "created_at": now_ts,
+        "last_used_at": now_ts,
+        "state_backend": _STATE_BACKEND_FILE,
+    }
+    if config.mode == SANDBOX_MODE_DOCKER:
+        record["container_name"] = build_sandbox_container_name(
+            thread_id=thread_id,
+            container_prefix=config.docker_container_prefix,
+        )
+    if config.mode == SANDBOX_MODE_PROVISIONER:
+        record["sandbox_id"] = str(thread_key)
+    return record
+
+
+def _finalize_record_for_mode(
+    *,
+    config: SandboxRuntimeConfig,
+    thread_id: Any,
+    thread_key: str,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    updated = dict(record)
+    updated["thread_id"] = str(updated.get("thread_id") or str(thread_id or ""))
+    updated["thread_key"] = thread_key
+    updated["mode"] = config.mode
+    updated["workspace_path"] = str(updated.get("workspace_path") or _workspace_path(config, thread_id))
+    if config.mode == SANDBOX_MODE_DOCKER:
+        container_name = str(updated.get("container_name") or "").strip()
+        if not container_name:
+            container_name = build_sandbox_container_name(
+                thread_id=thread_id,
+                container_prefix=config.docker_container_prefix,
+            )
+        _DOCKER_POOL.ensure(
+            container_name=container_name,
+            workspace_path=Path(updated["workspace_path"]),
+            docker_image=config.docker_image,
+        )
+        updated["container_name"] = container_name
+    elif config.mode == SANDBOX_MODE_PROVISIONER:
+        existing_sandbox_id = str(updated.get("sandbox_id") or "").strip() or thread_key
+        response = _post_to_provisioner_allow_404(
+            config=config,
+            endpoint="/v1/sandbox/acquire",
+            payload={
+                "thread_id": str(thread_id or ""),
+                "thread_key": thread_key,
+                "sandbox_id": existing_sandbox_id,
+            },
+            timeout_seconds=max(5, min(60, int(config.timeout_seconds))),
+        )
+        sandbox_id = str(response.get("sandbox_id") or existing_sandbox_id).strip() or thread_key
+        container_name = str(
+            response.get("container_name")
+            or response.get("pod_name")
+            or response.get("pod")
+            or ""
+        ).strip() or None
+        workspace_path = str(response.get("workspace_path") or SANDBOX_VIRTUAL_WORKSPACE_PREFIX).strip()
+        updated["sandbox_id"] = sandbox_id
+        updated["container_name"] = container_name
+        updated["workspace_path"] = workspace_path or SANDBOX_VIRTUAL_WORKSPACE_PREFIX
+    else:
+        updated["container_name"] = None
+    return updated
+
+
+def _lease_from_record(
+    *,
+    thread_id: Any,
+    thread_key: str,
+    record: dict[str, Any],
+    reused: bool,
+    state_backend: str,
+    idle_releases: list[str],
+) -> SandboxLease:
+    return SandboxLease(
+        thread_id=str(thread_id or ""),
+        thread_key=thread_key,
+        lease_id=str(record.get("lease_id") or _new_lease_id()),
+        mode=str(record.get("mode") or ""),
+        workspace_path=str(record.get("workspace_path") or SANDBOX_VIRTUAL_WORKSPACE_PREFIX),
+        container_name=str(record.get("container_name") or "").strip() or None,
+        sandbox_id=str(record.get("sandbox_id") or "").strip() or None,
+        reused=bool(reused),
+        state_backend=state_backend,
+        idle_releases=list(idle_releases),
+    )
 
 
 def _provisioner_headers(config: SandboxRuntimeConfig) -> dict[str, str]:
@@ -334,6 +757,199 @@ def _ensure_sandbox_enabled(config: SandboxRuntimeConfig) -> None:
         raise SandboxExecutionError(
             "Sandbox execution is disabled. Enable runtime_hitl.sandbox_enabled."
         )
+
+
+def acquire_sandbox_lease(
+    *,
+    thread_id: Any,
+    runtime_hitl: dict[str, Any] | None,
+) -> SandboxLease:
+    config = sandbox_config_from_runtime_flags(runtime_hitl)
+    _ensure_sandbox_enabled(config)
+    thread_key = _thread_key(thread_id)
+    now_ts = _now_ts()
+    state_backend, redis_client = _resolve_state_backend(config)
+    idle_releases: list[str] = []
+
+    if state_backend == _STATE_BACKEND_REDIS and redis_client is not None:
+        with _locked_redis_thread_state(
+            config=config,
+            redis_client=redis_client,
+            thread_key=thread_key,
+        ):
+            hash_key = _redis_hash_key(config)
+            raw_record = redis_client.hget(hash_key, thread_key)
+            record = _load_json_payload(raw_record)
+            if _record_is_expired(
+                record,
+                now_ts=now_ts,
+                idle_timeout_seconds=int(config.idle_timeout_seconds),
+            ):
+                _release_record(
+                    config=config,
+                    thread_key=thread_key,
+                    record=record,
+                    reason="idle-timeout",
+                )
+                redis_client.hdel(hash_key, thread_key)
+                idle_releases.append(thread_key)
+                record = {}
+            reused = bool(record)
+            if reused and str(record.get("mode") or "").strip().lower() != config.mode:
+                _release_record(
+                    config=config,
+                    thread_key=thread_key,
+                    record=record,
+                    reason="mode-changed",
+                )
+                redis_client.hdel(hash_key, thread_key)
+                reused = False
+                record = {}
+            if not reused:
+                record = _build_new_record(
+                    config=config,
+                    thread_id=thread_id,
+                    thread_key=thread_key,
+                )
+            record = _finalize_record_for_mode(
+                config=config,
+                thread_id=thread_id,
+                thread_key=thread_key,
+                record=record,
+            )
+            record["state_backend"] = _STATE_BACKEND_REDIS
+            record["last_used_at"] = now_ts
+            if not record.get("created_at"):
+                record["created_at"] = now_ts
+            redis_client.hset(hash_key, thread_key, json.dumps(record, ensure_ascii=True))
+            return _lease_from_record(
+                thread_id=thread_id,
+                thread_key=thread_key,
+                record=record,
+                reused=reused,
+                state_backend=_STATE_BACKEND_REDIS,
+                idle_releases=idle_releases,
+            )
+
+    state_file = _default_state_file_path(config)
+    with _locked_state_file(
+        state_file,
+        timeout_seconds=int(config.lock_timeout_seconds),
+    ) as state_payload:
+        threads = state_payload.setdefault("threads", {})
+        if not isinstance(threads, dict):
+            threads = {}
+            state_payload["threads"] = threads
+
+        for existing_key, existing_record in list(threads.items()):
+            if not isinstance(existing_record, dict):
+                threads.pop(existing_key, None)
+                continue
+            if not _record_is_expired(
+                existing_record,
+                now_ts=now_ts,
+                idle_timeout_seconds=int(config.idle_timeout_seconds),
+            ):
+                continue
+            _release_record(
+                config=config,
+                thread_key=existing_key,
+                record=existing_record,
+                reason="idle-timeout",
+            )
+            threads.pop(existing_key, None)
+            idle_releases.append(existing_key)
+
+        record = threads.get(thread_key)
+        reused = isinstance(record, dict) and bool(record)
+        if reused and str(record.get("mode") or "").strip().lower() != config.mode:
+            _release_record(
+                config=config,
+                thread_key=thread_key,
+                record=record,
+                reason="mode-changed",
+            )
+            threads.pop(thread_key, None)
+            reused = False
+            record = None
+        if not isinstance(record, dict):
+            record = _build_new_record(
+                config=config,
+                thread_id=thread_id,
+                thread_key=thread_key,
+            )
+            reused = False
+        record = _finalize_record_for_mode(
+            config=config,
+            thread_id=thread_id,
+            thread_key=thread_key,
+            record=record,
+        )
+        record["state_backend"] = _STATE_BACKEND_FILE
+        record["last_used_at"] = now_ts
+        if not record.get("created_at"):
+            record["created_at"] = now_ts
+        threads[thread_key] = record
+
+        return _lease_from_record(
+            thread_id=thread_id,
+            thread_key=thread_key,
+            record=record,
+            reused=reused,
+            state_backend=_STATE_BACKEND_FILE,
+            idle_releases=idle_releases,
+        )
+
+
+def release_sandbox_lease(
+    *,
+    thread_id: Any,
+    runtime_hitl: dict[str, Any] | None,
+    reason: str = "manual-release",
+) -> bool:
+    config = sandbox_config_from_runtime_flags(runtime_hitl)
+    _ensure_sandbox_enabled(config)
+    thread_key = _thread_key(thread_id)
+    state_backend, redis_client = _resolve_state_backend(config)
+
+    if state_backend == _STATE_BACKEND_REDIS and redis_client is not None:
+        with _locked_redis_thread_state(
+            config=config,
+            redis_client=redis_client,
+            thread_key=thread_key,
+        ):
+            hash_key = _redis_hash_key(config)
+            record = _load_json_payload(redis_client.hget(hash_key, thread_key))
+            if not record:
+                return False
+            _release_record(
+                config=config,
+                thread_key=thread_key,
+                record=record,
+                reason=reason,
+            )
+            redis_client.hdel(hash_key, thread_key)
+            return True
+
+    state_file = _default_state_file_path(config)
+    with _locked_state_file(
+        state_file,
+        timeout_seconds=int(config.lock_timeout_seconds),
+    ) as state_payload:
+        threads = state_payload.setdefault("threads", {})
+        if not isinstance(threads, dict):
+            return False
+        record = threads.get(thread_key)
+        if not isinstance(record, dict):
+            return False
+        _release_record(
+            config=config,
+            thread_key=thread_key,
+            record=record,
+            reason=reason,
+        )
+        threads.pop(thread_key, None)
+        return True
 
 
 def _coerce_remote_path(path: str) -> str:
@@ -454,15 +1070,19 @@ def _prepare_workspace_and_path(
     thread_id: Any,
     runtime_hitl: dict[str, Any] | None,
     path: str,
-) -> tuple[SandboxRuntimeConfig, Path, Path, str]:
+) -> tuple[SandboxRuntimeConfig, SandboxLease, Path, str]:
     config = sandbox_config_from_runtime_flags(runtime_hitl)
     _ensure_sandbox_enabled(config)
-    workspace_path = _workspace_path(config, thread_id)
+    lease = acquire_sandbox_lease(
+        thread_id=thread_id,
+        runtime_hitl=runtime_hitl,
+    )
+    workspace_path = Path(str(lease.workspace_path)).expanduser()
     host_path, display_path = _resolve_workspace_file_path(
         workspace_path=workspace_path,
         path=path,
     )
-    return config, workspace_path, host_path, display_path
+    return config, lease, host_path, display_path
 
 
 def sandbox_list_directory(
@@ -479,11 +1099,17 @@ def sandbox_list_directory(
     safe_depth = max(0, min(int(max_depth), 6))
     safe_max_entries = max(1, min(int(max_entries), 5000))
     if config.mode == SANDBOX_MODE_PROVISIONER:
+        lease = acquire_sandbox_lease(
+            thread_id=thread_id,
+            runtime_hitl=runtime_hitl,
+        )
         response = _post_to_provisioner(
             config=config,
             endpoint="/v1/sandbox/ls",
             payload={
                 "thread_id": str(thread_id or ""),
+                "thread_key": lease.thread_key,
+                "sandbox_id": lease.sandbox_id,
                 "path": normalized_path,
                 "max_depth": safe_depth,
                 "max_entries": safe_max_entries,
@@ -492,7 +1118,7 @@ def sandbox_list_directory(
         )
         return _coerce_remote_list(response.get("entries"))
 
-    _config, workspace_path, host_path, _display_path = _prepare_workspace_and_path(
+    _config, lease, host_path, _display_path = _prepare_workspace_and_path(
         thread_id=thread_id,
         runtime_hitl=runtime_hitl,
         path=normalized_path,
@@ -513,7 +1139,7 @@ def sandbox_list_directory(
         dirs.sort()
         files.sort()
         try:
-            relative_root = current.resolve().relative_to(workspace_path)
+            relative_root = current.resolve().relative_to(Path(str(lease.workspace_path)))
         except ValueError:
             continue
         if str(relative_root) == ".":
@@ -551,11 +1177,17 @@ def sandbox_read_text_file(
     if safe_end is not None and safe_start is not None and safe_end < safe_start:
         raise SandboxExecutionError("end_line cannot be less than start_line.")
     if config.mode == SANDBOX_MODE_PROVISIONER:
+        lease = acquire_sandbox_lease(
+            thread_id=thread_id,
+            runtime_hitl=runtime_hitl,
+        )
         response = _post_to_provisioner(
             config=config,
             endpoint="/v1/sandbox/read_file",
             payload={
                 "thread_id": str(thread_id or ""),
+                "thread_key": lease.thread_key,
+                "sandbox_id": lease.sandbox_id,
                 "path": normalized_path,
                 "start_line": safe_start,
                 "end_line": safe_end,
@@ -565,7 +1197,7 @@ def sandbox_read_text_file(
         )
         return str(response.get("content") or "(empty)")
 
-    _config, _workspace_path, host_path, _display_path = _prepare_workspace_and_path(
+    _config, _lease, host_path, _display_path = _prepare_workspace_and_path(
         thread_id=thread_id,
         runtime_hitl=runtime_hitl,
         path=normalized_path,
@@ -619,11 +1251,17 @@ def sandbox_write_text_file(
     normalized_path = _coerce_remote_path(path)
     text = str(content or "")
     if config.mode == SANDBOX_MODE_PROVISIONER:
+        lease = acquire_sandbox_lease(
+            thread_id=thread_id,
+            runtime_hitl=runtime_hitl,
+        )
         response = _post_to_provisioner(
             config=config,
             endpoint="/v1/sandbox/write_file",
             payload={
                 "thread_id": str(thread_id or ""),
+                "thread_key": lease.thread_key,
+                "sandbox_id": lease.sandbox_id,
                 "path": normalized_path,
                 "content": text,
                 "append": bool(append),
@@ -633,7 +1271,7 @@ def sandbox_write_text_file(
         response_path = str(response.get("path") or "").strip()
         return response_path or normalized_path
 
-    _config, _workspace_path, host_path, display_path = _prepare_workspace_and_path(
+    _config, _lease, host_path, display_path = _prepare_workspace_and_path(
         thread_id=thread_id,
         runtime_hitl=runtime_hitl,
         path=normalized_path,
@@ -662,11 +1300,17 @@ def sandbox_replace_text_file(
         raise SandboxExecutionError("old_text cannot be empty.")
     new_value = str(new_text or "")
     if config.mode == SANDBOX_MODE_PROVISIONER:
+        lease = acquire_sandbox_lease(
+            thread_id=thread_id,
+            runtime_hitl=runtime_hitl,
+        )
         response = _post_to_provisioner(
             config=config,
             endpoint="/v1/sandbox/replace",
             payload={
                 "thread_id": str(thread_id or ""),
+                "thread_key": lease.thread_key,
+                "sandbox_id": lease.sandbox_id,
                 "path": normalized_path,
                 "old_text": old_value,
                 "new_text": new_value,
@@ -682,7 +1326,7 @@ def sandbox_replace_text_file(
         response_path = str(response.get("path") or "").strip() or normalized_path
         return response_path, max(0, replaced_count)
 
-    _config, _workspace_path, host_path, display_path = _prepare_workspace_and_path(
+    _config, _lease, host_path, display_path = _prepare_workspace_and_path(
         thread_id=thread_id,
         runtime_hitl=runtime_hitl,
         path=normalized_path,
@@ -740,15 +1384,23 @@ def run_sandbox_command(
         if timeout_seconds is not None
         else int(config.timeout_seconds)
     )
-    if config.mode == SANDBOX_MODE_PROVISIONER:
+    lease = acquire_sandbox_lease(
+        thread_id=thread_id,
+        runtime_hitl=runtime_hitl,
+    )
+    max_output_bytes = int(config.max_output_bytes)
+
+    if lease.mode == SANDBOX_MODE_PROVISIONER:
         response = _post_to_provisioner(
             config=config,
             endpoint="/v1/sandbox/execute",
             payload={
                 "thread_id": str(thread_id or ""),
+                "thread_key": lease.thread_key,
+                "sandbox_id": lease.sandbox_id,
                 "command": normalized_command,
                 "timeout_seconds": int(effective_timeout),
-                "max_output_bytes": int(config.max_output_bytes),
+                "max_output_bytes": max_output_bytes,
             },
             timeout_seconds=max(5, min(600, int(effective_timeout) + 5)),
         )
@@ -757,9 +1409,17 @@ def run_sandbox_command(
             exit_code = int(response.get("exit_code", 1))
         except (TypeError, ValueError):
             exit_code = 1
-        container_name_raw = str(response.get("container_name") or "").strip()
+        container_name_raw = str(
+            response.get("container_name")
+            or response.get("pod_name")
+            or lease.container_name
+            or ""
+        ).strip()
+        sandbox_id_raw = str(response.get("sandbox_id") or lease.sandbox_id or "").strip()
         workspace_path = str(
-            response.get("workspace_path") or SANDBOX_VIRTUAL_WORKSPACE_PREFIX
+            response.get("workspace_path")
+            or lease.workspace_path
+            or SANDBOX_VIRTUAL_WORKSPACE_PREFIX
         ).strip() or SANDBOX_VIRTUAL_WORKSPACE_PREFIX
         return SandboxCommandResult(
             mode=SANDBOX_MODE_PROVISIONER,
@@ -768,21 +1428,19 @@ def run_sandbox_command(
             exit_code=exit_code,
             truncated=bool(response.get("truncated", False)),
             container_name=container_name_raw or None,
+            sandbox_id=sandbox_id_raw or None,
+            lease_id=lease.lease_id,
+            reused=bool(lease.reused),
+            state_backend=lease.state_backend,
+            idle_releases=list(lease.idle_releases),
         )
 
-    workspace_path = _workspace_path(config, thread_id)
-    max_output_bytes = int(config.max_output_bytes)
+    workspace_path = Path(str(lease.workspace_path)).expanduser()
 
-    if config.mode == SANDBOX_MODE_DOCKER:
-        container_name = build_sandbox_container_name(
-            thread_id=thread_id,
-            container_prefix=config.docker_container_prefix,
-        )
-        _DOCKER_POOL.ensure(
-            container_name=container_name,
-            workspace_path=workspace_path,
-            docker_image=config.docker_image,
-        )
+    if lease.mode == SANDBOX_MODE_DOCKER:
+        container_name = str(lease.container_name or "").strip()
+        if not container_name:
+            raise SandboxExecutionError("Missing docker container name for sandbox lease.")
         output, exit_code, truncated = _run_subprocess(
             command=["docker", "exec", container_name, "sh", "-lc", normalized_command],
             timeout_seconds=effective_timeout,
@@ -795,6 +1453,11 @@ def run_sandbox_command(
             exit_code=exit_code,
             truncated=truncated,
             container_name=container_name,
+            sandbox_id=lease.sandbox_id,
+            lease_id=lease.lease_id,
+            reused=bool(lease.reused),
+            state_backend=lease.state_backend,
+            idle_releases=list(lease.idle_releases),
         )
 
     output, exit_code, truncated = _run_subprocess(
@@ -810,4 +1473,9 @@ def run_sandbox_command(
         exit_code=exit_code,
         truncated=truncated,
         container_name=None,
+        sandbox_id=lease.sandbox_id,
+        lease_id=lease.lease_id,
+        reused=bool(lease.reused),
+        state_backend=lease.state_backend,
+        idle_releases=list(lease.idle_releases),
     )

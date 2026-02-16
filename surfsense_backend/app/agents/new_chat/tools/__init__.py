@@ -46,6 +46,7 @@ from .sandbox_filesystem import (
     create_sandbox_replace_tool,
     create_sandbox_write_file_tool,
 )
+from .sandbox_release import create_sandbox_release_tool
 from .registry import (
     BUILTIN_TOOLS,
     ToolDefinition,
@@ -84,6 +85,7 @@ __all__ = [
     "create_sandbox_ls_tool",
     "create_sandbox_read_file_tool",
     "create_sandbox_replace_tool",
+    "create_sandbox_release_tool",
     "create_sandbox_write_file_tool",
     "create_scrape_webpage_tool",
     "create_search_knowledge_base_tool",

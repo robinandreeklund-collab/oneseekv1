@@ -87,6 +87,7 @@ from .sandbox_filesystem import (
     create_sandbox_replace_tool,
     create_sandbox_write_file_tool,
 )
+from .sandbox_release import create_sandbox_release_tool
 from .smhi_weather import create_smhi_weather_tool
 from .tavily_search import create_tavily_search_tool
 from .trafiklab_route import create_trafiklab_route_tool
@@ -232,6 +233,8 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         factory=lambda deps: create_sandbox_execute_tool(
             thread_id=deps.get("thread_id"),
             runtime_hitl=deps.get("runtime_hitl"),
+            trace_recorder=deps.get("trace_recorder"),
+            trace_parent_span_id=deps.get("trace_parent_span_id"),
         ),
         requires=[],
         enabled_by_default=False,
@@ -242,6 +245,8 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         factory=lambda deps: create_sandbox_ls_tool(
             thread_id=deps.get("thread_id"),
             runtime_hitl=deps.get("runtime_hitl"),
+            trace_recorder=deps.get("trace_recorder"),
+            trace_parent_span_id=deps.get("trace_parent_span_id"),
         ),
         requires=[],
         enabled_by_default=False,
@@ -252,6 +257,8 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         factory=lambda deps: create_sandbox_read_file_tool(
             thread_id=deps.get("thread_id"),
             runtime_hitl=deps.get("runtime_hitl"),
+            trace_recorder=deps.get("trace_recorder"),
+            trace_parent_span_id=deps.get("trace_parent_span_id"),
         ),
         requires=[],
         enabled_by_default=False,
@@ -262,6 +269,8 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         factory=lambda deps: create_sandbox_write_file_tool(
             thread_id=deps.get("thread_id"),
             runtime_hitl=deps.get("runtime_hitl"),
+            trace_recorder=deps.get("trace_recorder"),
+            trace_parent_span_id=deps.get("trace_parent_span_id"),
         ),
         requires=[],
         enabled_by_default=False,
@@ -272,6 +281,20 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         factory=lambda deps: create_sandbox_replace_tool(
             thread_id=deps.get("thread_id"),
             runtime_hitl=deps.get("runtime_hitl"),
+            trace_recorder=deps.get("trace_recorder"),
+            trace_parent_span_id=deps.get("trace_parent_span_id"),
+        ),
+        requires=[],
+        enabled_by_default=False,
+    ),
+    ToolDefinition(
+        name="sandbox_release",
+        description="Release and cleanup the current thread sandbox lease",
+        factory=lambda deps: create_sandbox_release_tool(
+            thread_id=deps.get("thread_id"),
+            runtime_hitl=deps.get("runtime_hitl"),
+            trace_recorder=deps.get("trace_recorder"),
+            trace_parent_span_id=deps.get("trace_parent_span_id"),
         ),
         requires=[],
         enabled_by_default=False,
