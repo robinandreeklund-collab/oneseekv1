@@ -190,6 +190,8 @@ class BlocketTraderaService:
         if not normalized:
             return None, None
         direct = _BLOCKET_LOCATION_ALIAS_MAP.get(normalized)
+        if not direct and normalized.endswith("s"):
+            direct = _BLOCKET_LOCATION_ALIAS_MAP.get(normalized[:-1].strip())
         if direct:
             return [direct], None
         for alias, code in _BLOCKET_LOCATION_ALIAS_MAP.items():
