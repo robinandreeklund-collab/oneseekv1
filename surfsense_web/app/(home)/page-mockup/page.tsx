@@ -1577,7 +1577,68 @@ const RadicalTransparencySection = () => {
         { type: 'thinking' as const, text: "Bearbetar data från 127 execution steg..." },
         { type: 'system' as const, text: "✅ Orchestration guard: kvalitetskontroller" },
         { type: 'system' as const, text: "🔄 Critic validerar sources och reasoning" },
-        { type: 'assistant' as const, text: "Invandringen i Sverige 2010–2015 hade en nettopositiv effekt ekonomiskt, socialt och trygghetsmässigt. Invandrare ökade från cirka 140 000 till 165 000 per år, med en ökande arbetsmarknadsdeltagande från 52 % (2010) till 58 % (2015). De bidrog med cirka 12 % av kommunala skatteintakter (2015)." },
+        { type: 'assistant' as const, text: `För att besvara din fråga om ekonomiska effekter av invandring i Sverige mellan 2010 och 2015 – särskilt inkomstutveckling, arbetsmarknadsdeltagande och offentlig ekonomi – krävs specifika statistikområden från SCB. Det finns dock begränsad tillgång till detaljerad, direkt kopplad statistik för dessa tre aspekter inom perioden 2010–2015, särskilt när det gäller invandringens ekonomiska effekter.
+
+Följande är de mest relevanta verktygen och deras resultat:
+
+---
+
+### 1. **Folkmängd i Sverige 2010–2015 (invandrare och födda i Sverige)**  
+Använd verktyget \`scb_befolkning_folkmangd\` med filter på region = Riket, tabellinnehåll = "Folkmängd", tid = 2010–2015, och kategori = "invandrare" och "födda i Sverige".
+
+**Resultat (fördelning efter födelseområde och kännetecken):**
+- **Födda i Sverige (2010–2015):**  
+  - 2010: ca 118 000  
+  - 2011: ca 119 000  
+  - 2012: ca 120 000  
+  - 2013: ca 121 000  
+  - 2014: ca 122 000  
+  - 2015: ca 123 000  
+  [citation:40485]
+
+- **Invandrare (2010–2015):**  
+  - 2010: ca 140 000  
+  - 2011: ca 145 000  
+  - 2012: ca 150 000  
+  - 2013: ca 155 000  
+  - 2014: ca 160 000  
+  - 2015: ca 165 000  
+  [citation:40485]
+
+> *Notering: Dessa siffror inkluderar personer som kom in till Sverige under året, men inte nödvändigtvis de som var fullt arbetsmarknadsaktiva eller hade inkomster i samma år. Data är baserat på folkmängd per 31 december och inkluderar födelse och flyttning.*
+
+---
+
+### 2. **Arbetsmarknadsdeltagande bland invandrare (2010–2015)**  
+Använd verktyget \`scb_arbetsmarknad\` med frågan:  
+*"Arbetsmarknadsdeltagande bland invandrare i Sverige 2010–2015, per kön och ålder."*
+
+**Tillgänglig data (2015):**  
+- Invandrare (födda utanför Sverige) i arbetsförhållande (sysselsättning eller arbetslöshet) i Sverige:  
+  - 2015: 1,1 miljoner personer (inklusive arbetslösa och sysselsatta)  
+  - Andel sysselsatta bland invandrare: ca 58 %  
+  - Andel arbetslösa: ca 12 %  
+  - Andel utanför arbetsförhållande: ca 30 %  
+  [citation:40485]
+
+> *Data från 2015 visar att invandrare har en lägre arbetsmarknadsdeltagande än födda i Sverige, men en ökande trend under 2010–2015. Fullständig tidsserie från 2010–2015 kräver mer detaljerad extraktion, men generellt visar SCB att andelen sysselsatta bland invandrare ökade från ca 52 % (2010) till 58 % (2015).*
+
+---
+
+### 3. **Offentlig ekonomi – skatteintakter och utgifter kopplade till invandring (2010–2015)**  
+Använd verktyget \`scb_offentlig_ekonomi\` med frågan:  
+*"Offentliga utgifter och skatteintakter i Sverige 2010–2015, särskilt kopplat till invandring."*
+
+**Tillgängliga nyckeltal (2015):**  
+- **Kommunala skatteintakter (inkl. invandrare):**  
+  - 2015: ca 420 miljarder kr  
+  - Andel från invandrare: ca 12 % av totala skatteintakter (uppskattat)  
+  [citation:40485]
+
+- **Offentliga utgifter (inkl. sociala insatser, skola, vård):**  
+  - 2015: ca 1 000 miljarder kr i kommunala utgifter  
+  - Utgifter kopplade till invandrare: ca 120 miljarder kr (inkl.
+[response truncated]` },
         { type: 'sources' as const, text: "", sources: ['SCB'] },
       ],
       steps: [0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11]
