@@ -370,14 +370,17 @@ _MARKETPLACE_PROVIDER_RE = re.compile(
     re.IGNORECASE,
 )
 _FILESYSTEM_INTENT_RE = re.compile(
+    r"((?:/tmp|/workspace)(?:/[A-Za-z0-9._\-]+)+)"
+    r"|"
     r"\b("
-    r"fil|files?|filsystem|filesystem|"
+    r"fil|filer|file|files|filepath|filename|"
+    r"filsystem|filesystem|"
     r"mapp|katalog|directory|folder|"
-    r"skriv|write|skapa|create|"
-    r"l[aä]s|read|inneh[aå]ll|content|"
+    r"read_file|write_file|"
+    r"sandbox(?:_[a-z]+)?|"
+    r"touch|cat|chmod|chown|"
     r"append|replace|ers[aä]tt|"
-    r"sandbox|docker|terminal|bash|shell|python|script|"
-    r"/tmp|/workspace"
+    r"terminal|bash|shell"
     r")\b",
     re.IGNORECASE,
 )
@@ -3304,8 +3307,24 @@ async def create_supervisor_agent(
             "confidence": 0.5,
         }
 
-    def _route_default_agent_for_intent(route_value: str | None) -> str:
+    def _route_default_agent_for_intent(
+        route_value: str | None,
+        latest_user_query: str = "",
+    ) -> str:
         normalized = _normalize_route_hint_value(route_value)
+        if normalized == "action":
+            if sandbox_enabled and _has_filesystem_intent(latest_user_query):
+                return "code"
+            if _has_weather_intent(latest_user_query) and not _has_strict_trafik_intent(
+                latest_user_query
+            ):
+                return "weather"
+            if _has_strict_trafik_intent(latest_user_query):
+                return "trafik"
+            if _has_map_intent(latest_user_query):
+                return "kartor"
+            if _has_marketplace_intent(latest_user_query):
+                return "marketplace"
         allowed = _route_allowed_agents(normalized)
         return _route_default_agent(normalized, allowed)
 
@@ -3442,22 +3461,12 @@ async def create_supervisor_agent(
         # This prevents fallback/alias drift to generic action agents that may answer
         # textually without invoking sandbox_* tools.
         if (
-            route_hint == "action"
-            and sandbox_enabled
+            sandbox_enabled
             and filesystem_task
             and "code" in agent_by_name
             and requested_raw != "code"
         ):
             return "code", f"filesystem_hard_lock:{requested_raw}->code"
-        if (
-            route_hint == "action"
-            and sandbox_enabled
-            and filesystem_task
-            and requested_raw in agent_by_name
-            and requested_raw != "code"
-            and "code" in agent_by_name
-        ):
-            return "code", f"filesystem_lock:{requested_raw}->code"
         # SCALABLE FIX: If requested agent is a specialized agent with dedicated tools,
         # respect that choice and DON'T override with route_policy.
         # This scales to 100s of APIs without needing regex patterns.

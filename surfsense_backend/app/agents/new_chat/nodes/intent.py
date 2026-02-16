@@ -22,7 +22,7 @@ def build_intent_resolver_node(
     classify_graph_complexity_fn: Callable[[dict[str, Any], str], str],
     build_speculative_candidates_fn: Callable[[dict[str, Any], str], list[dict[str, Any]]],
     build_trivial_response_fn: Callable[[str], str | None],
-    route_default_agent_fn: Callable[[str | None], str],
+    route_default_agent_fn: Callable[..., str],
 ):
     async def resolve_intent_node(
         state: dict[str, Any],
@@ -157,7 +157,13 @@ def build_intent_resolver_node(
 
         selected_agents_for_simple: list[dict[str, Any]] = []
         if graph_complexity == "simple":
-            default_agent_name = route_default_agent_fn(resolved.get("route"))
+            try:
+                default_agent_name = route_default_agent_fn(
+                    resolved.get("route"),
+                    latest_user_query,
+                )
+            except TypeError:
+                default_agent_name = route_default_agent_fn(resolved.get("route"))
             if default_agent_name:
                 selected_agents_for_simple = [
                     {
