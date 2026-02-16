@@ -6,6 +6,8 @@ import Link from "next/link";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Balancer from "react-wrap-balancer";
 import { cn } from "@/lib/utils";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // ==================== DESIGN TOKENS ====================
 // Color gradients, spacing, typography, and animation timings
@@ -292,6 +294,95 @@ const TypingText = ({ text, speed = 30, onComplete }: { text: string; speed?: nu
         </span>
       )}
     </span>
+  );
+};
+
+// ==================== STREAMING MARKDOWN COMPONENT ====================
+const StreamingMarkdown = ({ 
+  content, 
+  chunkSize = 150, 
+  chunkDelay = 80,
+  onComplete 
+}: { 
+  content: string; 
+  chunkSize?: number; 
+  chunkDelay?: number;
+  onComplete?: () => void;
+}) => {
+  const [displayedContent, setDisplayedContent] = useState("");
+  const [currentChunk, setCurrentChunk] = useState(0);
+  const [isComplete, setIsComplete] = useState(false);
+
+  // Reset when content changes
+  useEffect(() => {
+    setDisplayedContent("");
+    setCurrentChunk(0);
+    setIsComplete(false);
+  }, [content]);
+
+  // Stream chunks
+  useEffect(() => {
+    if (currentChunk * chunkSize < content.length && !isComplete) {
+      const timeout = setTimeout(() => {
+        const nextChunk = content.slice(0, (currentChunk + 1) * chunkSize);
+        setDisplayedContent(nextChunk);
+        setCurrentChunk(prev => prev + 1);
+        
+        // Check if complete
+        if (nextChunk.length >= content.length) {
+          setDisplayedContent(content);
+          setIsComplete(true);
+          if (onComplete) {
+            onComplete();
+          }
+        }
+      }, chunkDelay);
+      
+      return () => clearTimeout(timeout);
+    }
+  }, [currentChunk, content, chunkSize, chunkDelay, isComplete, onComplete]);
+
+  return (
+    <div className="prose prose-sm dark:prose-invert max-w-none">
+      <ReactMarkdown 
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h3: ({node, ...props}) => <h3 className="text-base font-bold mt-4 mb-2 text-neutral-900 dark:text-neutral-100" {...props} />,
+          p: ({node, ...props}) => <p className="my-2 text-sm text-neutral-700 dark:text-neutral-300" {...props} />,
+          ul: ({node, ...props}) => <ul className="my-2 ml-4 list-disc text-sm text-neutral-700 dark:text-neutral-300" {...props} />,
+          ol: ({node, ...props}) => <ol className="my-2 ml-4 list-decimal text-sm text-neutral-700 dark:text-neutral-300" {...props} />,
+          li: ({node, ...props}) => <li className="my-1" {...props} />,
+          strong: ({node, ...props}) => <strong className="font-semibold text-neutral-900 dark:text-neutral-100" {...props} />,
+          em: ({node, ...props}) => <em className="italic" {...props} />,
+          blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-orange-500 pl-4 my-2 italic text-neutral-600 dark:text-neutral-400" {...props} />,
+          table: ({node, ...props}) => (
+            <div className="overflow-x-auto my-4">
+              <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700 text-xs" {...props} />
+            </div>
+          ),
+          thead: ({node, ...props}) => <thead className="bg-neutral-50 dark:bg-neutral-800" {...props} />,
+          tbody: ({node, ...props}) => <tbody className="divide-y divide-neutral-200 dark:divide-neutral-700" {...props} />,
+          tr: ({node, ...props}) => <tr {...props} />,
+          th: ({node, ...props}) => <th className="px-3 py-2 text-left text-xs font-semibold text-neutral-900 dark:text-neutral-100" {...props} />,
+          td: ({node, ...props}) => <td className="px-3 py-2 text-xs text-neutral-700 dark:text-neutral-300" {...props} />,
+          code: ({node, inline, ...props}) => 
+            inline ? (
+              <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-xs font-mono text-orange-600 dark:text-orange-400" {...props} />
+            ) : (
+              <code className="block p-2 rounded bg-neutral-100 dark:bg-neutral-800 text-xs font-mono overflow-x-auto" {...props} />
+            ),
+        }}
+      >
+        {displayedContent}
+      </ReactMarkdown>
+      {!isComplete && (
+        <motion.span 
+          animate={{ opacity: [0.4, 1, 0.4] }}
+          transition={{ duration: 1, repeat: Infinity }}
+          className="inline-block w-1 h-4 ml-1 bg-orange-500 dark:bg-orange-400"
+        />
+      )}
+    </div>
   );
 };
 
@@ -1857,7 +1948,11 @@ Använd verktyget \`scb_offentlig_ekonomi\` med frågan:
                     
                     {message.type === 'assistant' && (
                       <div className="max-w-[80%] bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-                        <TypingText text={message.text} speed={25} />
+                        <StreamingMarkdown 
+                          content={message.text} 
+                          chunkSize={150} 
+                          chunkDelay={80} 
+                        />
                       </div>
                     )}
                     
