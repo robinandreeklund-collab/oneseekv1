@@ -743,6 +743,12 @@ const APIReasoningDemo = () => {
     { id: 'trafikverket', name: 'Trafikverket', category: 'Transport', logo: '/api-logos/trafikverket-logo.png', description: 'Trafikinfo och störningar' },
     { id: 'riksdagen', name: 'Riksdagen', category: 'Politik', logo: '/api-logos/riksdagen-logo.png', description: 'Propositioner och debatter' },
     { id: 'bolagsverket', name: 'Bolagsverket', category: 'Företag', logo: '/api-logos/bolagsverket-logo.png', description: 'Företagsinformation' },
+    { id: 'blocket', name: 'Blocket', category: 'Marknad', logo: '/api-logos/blocket-logo.png', description: 'Köp och sälj annonser' },
+    { id: 'tradera', name: 'Tradera', category: 'Marknad', logo: '/api-logos/tradera-logo.png', description: 'Auktioner och handel' },
+    { id: 'arbetsformedlingen', name: 'Arbetsförmedlingen', category: 'Arbetsmarknad', logo: '/api-logos/arbetsformedlingen-logo.png', description: 'Lediga jobb och platsannonser' },
+    { id: 'libris', name: 'Libris', category: 'Bibliotek', logo: '/api-logos/libris-logo.png', description: 'Svensk nationalbibliografi' },
+    { id: 'skolverket', name: 'Skolverket', category: 'Utbildning', logo: '/api-logos/skolverket-logo.png', description: 'Skoldata och statistik' },
+    { id: 'trafiklab', name: 'Trafiklab', category: 'Transport', logo: '/api-logos/trafiklab-logo.png', description: 'Kollektivtrafik och tidtabeller' },
     { id: 'tavily', name: 'Tavily', category: 'Verifiering', logo: '/api-logos/tavily-logo.png', description: 'Faktakontroll och källor' },
   ];
 
