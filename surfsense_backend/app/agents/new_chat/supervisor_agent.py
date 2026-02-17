@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any, Annotated, TypedDict
 from uuid import UUID
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.graph.message import add_messages
@@ -1150,7 +1156,8 @@ def _format_compare_outputs_for_prompt(compare_outputs: list[dict[str, Any]] | N
 
 
 class SupervisorState(TypedDict, total=False):
-    messages: Annotated[list[Any], add_messages]
+    # Keep a typed message channel so LangGraph Studio enables Chat mode.
+    messages: Annotated[list[AnyMessage], add_messages]
     turn_id: Annotated[str | None, _replace]
     active_turn_id: Annotated[str | None, _replace]
     resolved_intent: Annotated[dict[str, Any] | None, _replace]
