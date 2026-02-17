@@ -74,6 +74,20 @@ Det scriptet:
 - installerar backend-dependencies + `langgraph-cli`
 - startar Studio med rätt Python-miljö
 
+WSL/Linux (rekommenderat om du redan kör backend där):
+
+```bash
+./scripts/run-langgraph-studio.sh
+```
+
+Exempel:
+
+```bash
+./scripts/run-langgraph-studio.sh --skip-install
+./scripts/run-langgraph-studio.sh --allow-blocking
+./scripts/run-langgraph-studio.sh --host 0.0.0.0 --port 8123
+```
+
 Öppna sedan URL:en som CLI visar (Studio UI).
 
 ## 5) Kör ett test i Studio
@@ -178,3 +192,9 @@ Lösning:
 ```
 
 Om du fortfarande vill köra med strikt blocker-detektering avstängd i lokal dev kan du även testa `--allow-blocking` för `langgraph dev`.
+
+I WSL-scriptet finns samma flagga:
+
+```bash
+./scripts/run-langgraph-studio.sh --allow-blocking
+```
