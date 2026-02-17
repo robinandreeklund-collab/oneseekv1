@@ -70,8 +70,14 @@ def _infer_rule_based_route(text: str) -> Route | None:
         return Route.COMPARE
     if _MARKETPLACE_ROUTE_RE.search(value):
         return Route.ACTION
-    if _GREETING_REGEX.match(value) and len(value) <= 20:
-        return Route.SMALLTALK
+    greeting_match = _GREETING_REGEX.match(value)
+    if greeting_match:
+        # Only hard-lock to smalltalk when the message is effectively a pure greeting.
+        # Queries like "hej vädret i stockholm?" should continue to intent retrieval
+        # so tool routes (e.g. action/weather) are still reachable.
+        trailing_text = value[greeting_match.end() :].strip(" \t\r\n,.;:!?-")
+        if not trailing_text:
+            return Route.SMALLTALK
     return None
 
 
