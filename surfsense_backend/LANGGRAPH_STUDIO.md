@@ -88,6 +88,13 @@ Exempel:
 ./scripts/run-langgraph-studio.sh --host 0.0.0.0 --port 8123
 ```
 
+WSL-scriptet väljer automatiskt host:
+
+- WSL: `0.0.0.0`
+- Övrigt Linux: `127.0.0.1`
+
+och skriver ut rekommenderad Studio-URL med `localhost`.
+
 Öppna sedan URL:en som CLI visar (Studio UI).
 
 ## 5) Kör ett test i Studio

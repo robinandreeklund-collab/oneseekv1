@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-HOST="127.0.0.1"
+HOST=""
+HOST_EXPLICIT="false"
 PORT="8123"
 SKIP_INSTALL="false"
 ALLOW_BLOCKING="false"
@@ -12,7 +13,7 @@ usage() {
 Usage: ./scripts/run-langgraph-studio.sh [options]
 
 Options:
-  --host <host>         Bind host (default: 127.0.0.1)
+  --host <host>         Bind host (default: auto; 0.0.0.0 on WSL, else 127.0.0.1)
   --port <port>         Bind port (default: 8123)
   --skip-install        Skip dependency installation steps
   --allow-blocking      Pass --allow-blocking to langgraph dev
@@ -24,6 +25,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --host)
       HOST="${2:-}"
+      HOST_EXPLICIT="true"
       shift 2
       ;;
     --port)
@@ -49,6 +51,14 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${HOST_EXPLICIT}" != "true" ]]; then
+  if [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qiE "(microsoft|wsl)" /proc/version 2>/dev/null; then
+    HOST="0.0.0.0"
+  else
+    HOST="127.0.0.1"
+  fi
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -86,6 +96,14 @@ if [[ ! -x "${LANGGRAPH_EXE}" ]]; then
   exit 1
 fi
 
+if command -v ss >/dev/null 2>&1; then
+  if ss -ltn | rg -q ":${PORT}\\b"; then
+    echo "Port ${PORT} appears to already be in use." >&2
+    echo "Try: fuser -k ${PORT}/tcp  (or choose --port <other>)" >&2
+    exit 1
+  fi
+fi
+
 CMD=(
   "${LANGGRAPH_EXE}"
   dev
@@ -98,4 +116,5 @@ if [[ "${ALLOW_BLOCKING}" == "true" ]]; then
 fi
 
 echo "Starting LangGraph Studio on http://${HOST}:${PORT} ..."
+echo "Recommended Studio URL: https://smith.langchain.com/studio/?baseUrl=http://localhost:${PORT}"
 exec "${CMD[@]}"

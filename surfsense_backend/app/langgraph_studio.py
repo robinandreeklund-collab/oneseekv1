@@ -510,10 +510,19 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
         config_id=llm_config_id,
         search_space_id=search_space_id,
     )
+    if not agent_config and llm_config_id >= 0:
+        # Studio should stay usable even when DB-backed config lookup fails.
+        # Fallback to YAML/global default profile for local debugging sessions.
+        agent_config = await load_agent_config(
+            session=session,
+            config_id=-1,
+            search_space_id=search_space_id,
+        )
     if not agent_config:
         raise RuntimeError(
             "Could not load LLM config for Studio. "
-            "Set STUDIO_LLM_CONFIG_ID (or configurable.llm_config_id) to a valid config."
+            "Set STUDIO_LLM_CONFIG_ID (or configurable.llm_config_id) to a valid config, "
+            "or ensure global YAML config id -1 exists."
         )
     llm = create_chat_litellm_from_agent_config(agent_config)
     if not llm:
