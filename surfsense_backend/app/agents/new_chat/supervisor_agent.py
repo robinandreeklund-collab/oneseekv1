@@ -2340,6 +2340,63 @@ def _looks_actionable_agent_answer(text: str) -> bool:
     return not any(marker in lowered for marker in rejection_markers)
 
 
+def _query_requests_capability_overview(query: str) -> bool:
+    lowered = str(query or "").strip().lower()
+    if not lowered:
+        return False
+    markers = (
+        "vad kan du",
+        "vad kan ni",
+        "what can you do",
+        "what are your capabilities",
+        "vilka verktyg har du",
+        "vad hjälper du med",
+        "vad kan oneseek",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _is_generic_capability_answer(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    markers = (
+        "jag kan hjälpa dig med olika uppgifter",
+        "här är några exempel på vad jag kan göra",
+        "vill du ha hjälp med något specifikt",
+        "i can help you with different tasks",
+        "here are some examples of what i can do",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _latest_actionable_ai_response(
+    messages: list[Any],
+    *,
+    latest_user_query: str,
+) -> str | None:
+    allow_capability_response = _query_requests_capability_overview(latest_user_query)
+    for message in reversed(messages or []):
+        if isinstance(message, HumanMessage):
+            break
+        if not isinstance(message, AIMessage):
+            continue
+        tool_calls = getattr(message, "tool_calls", None) or []
+        if tool_calls:
+            continue
+        response = _strip_critic_json(str(getattr(message, "content", "") or "").strip())
+        if not response:
+            continue
+        lowered = response.lower()
+        if "jag fastnade i en planeringsloop" in lowered:
+            continue
+        if _is_generic_capability_answer(response) and not allow_capability_response:
+            continue
+        if _looks_actionable_agent_answer(response) or allow_capability_response:
+            return response
+    return None
+
+
 def _best_actionable_entry(entries: list[dict[str, Any]]) -> tuple[str, str] | None:
     best: tuple[tuple[int, int, float, int], tuple[str, str]] | None = None
     status_rank = {"success": 3, "partial": 2, "blocked": 1, "error": 0}
@@ -6730,6 +6787,21 @@ async def create_supervisor_agent(
                 updates["final_agent_name"] = (
                     str(last_entry.get("agent") or "").strip() or "agent"
                 )
+                updates["orchestration_phase"] = "finalize"
+
+        if (
+            "final_agent_response" not in updates
+            and route_hint != "compare"
+            and not pending_followup_steps
+        ):
+            ai_fallback = _latest_actionable_ai_response(
+                messages,
+                latest_user_query=latest_user_query,
+            )
+            if ai_fallback:
+                updates["final_agent_response"] = ai_fallback
+                updates["final_response"] = ai_fallback
+                updates["final_agent_name"] = "assistant"
                 updates["orchestration_phase"] = "finalize"
 
         if (
