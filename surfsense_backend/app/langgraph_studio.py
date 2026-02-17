@@ -142,7 +142,10 @@ class StudioGraphConfigurationBase(BaseModel):
     search_space_id: int = Field(default=1, description="Search space id")
     llm_config_id: int = Field(default=-1, description="LLM config id")
     compare_mode: bool = Field(default=False, description="Enable compare mode graph")
-    thread_id: int = Field(default=900000001, description="Thread id used in Studio")
+    thread_id: str | int = Field(
+        default=900000001,
+        description="Thread id used in Studio (int or UUID string).",
+    )
     user_id: str | None = Field(default=None, description="Optional forced user id")
     checkpointer_mode: str = Field(default="memory", description="memory or postgres")
     checkpoint_ns: str | None = Field(default=None, description="Checkpoint namespace")
@@ -260,6 +263,24 @@ def _parse_int(value: Any, *, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return int(default)
+
+
+def _parse_thread_id(value: Any, *, default: str | int) -> str | int:
+    if value is None:
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    normalized = str(value).strip()
+    if not normalized:
+        return default
+    if re.fullmatch(r"-?\d+", normalized):
+        try:
+            return int(normalized)
+        except Exception:
+            return default
+    return normalized
 
 
 def _first_value(
@@ -423,7 +444,7 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
         ),
         default=False,
     )
-    thread_id = _parse_int(
+    thread_id = _parse_thread_id(
         _first_value(
             configurable,
             "thread_id",

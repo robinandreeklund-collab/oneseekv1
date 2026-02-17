@@ -244,3 +244,10 @@ Lösning:
 ```bash
 bash scripts/run-langgraph-studio.sh --skip-install --allow-blocking
 ```
+
+### `thread_id ... Input should be a valid integer`
+
+Nyare Studio-runner kan skicka `thread_id` som UUID-sträng.
+Graph-config accepterar nu både `int` och `string` för `thread_id`.
+
+Om du ser felet: `git pull` och starta om `langgraph dev`.
