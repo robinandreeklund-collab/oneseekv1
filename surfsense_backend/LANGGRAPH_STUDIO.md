@@ -85,15 +85,11 @@ Exempel:
 ```bash
 ./scripts/run-langgraph-studio.sh --skip-install
 ./scripts/run-langgraph-studio.sh --allow-blocking
-./scripts/run-langgraph-studio.sh --host 0.0.0.0 --port 8123
+./scripts/run-langgraph-studio.sh --bind-all --port 8123
 ```
 
-WSL-scriptet väljer automatiskt host:
-
-- WSL: `0.0.0.0`
-- Övrigt Linux: `127.0.0.1`
-
-och skriver ut rekommenderad Studio-URL med `localhost`.
+WSL/Linux script defaultar till `127.0.0.1` och skriver ut rekommenderad Studio-URL med `localhost`.
+Om du kör `--bind-all`, använd ändå `baseUrl=http://localhost:<port>` i browsern.
 
 Öppna sedan URL:en som CLI visar (Studio UI).
 

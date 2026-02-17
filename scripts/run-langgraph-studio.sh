@@ -4,6 +4,7 @@ set -euo pipefail
 
 HOST=""
 HOST_EXPLICIT="false"
+FORCE_BIND_ALL="false"
 PORT="8123"
 SKIP_INSTALL="false"
 ALLOW_BLOCKING="false"
@@ -13,7 +14,8 @@ usage() {
 Usage: ./scripts/run-langgraph-studio.sh [options]
 
 Options:
-  --host <host>         Bind host (default: auto; 0.0.0.0 on WSL, else 127.0.0.1)
+  --host <host>         Bind host (default: 127.0.0.1)
+  --bind-all            Bind to 0.0.0.0
   --port <port>         Bind port (default: 8123)
   --skip-install        Skip dependency installation steps
   --allow-blocking      Pass --allow-blocking to langgraph dev
@@ -31,6 +33,12 @@ while [[ $# -gt 0 ]]; do
     --port)
       PORT="${2:-}"
       shift 2
+      ;;
+    --bind-all)
+      FORCE_BIND_ALL="true"
+      HOST_EXPLICIT="true"
+      HOST="0.0.0.0"
+      shift
       ;;
     --skip-install)
       SKIP_INSTALL="true"
@@ -53,11 +61,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${HOST_EXPLICIT}" != "true" ]]; then
-  if [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qiE "(microsoft|wsl)" /proc/version 2>/dev/null; then
-    HOST="0.0.0.0"
-  else
-    HOST="127.0.0.1"
-  fi
+  HOST="127.0.0.1"
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -117,4 +121,7 @@ fi
 
 echo "Starting LangGraph Studio on http://${HOST}:${PORT} ..."
 echo "Recommended Studio URL: https://smith.langchain.com/studio/?baseUrl=http://localhost:${PORT}"
+if [[ "${HOST}" == "0.0.0.0" ]]; then
+  echo "Tip: In browser, always use baseUrl=http://localhost:${PORT} (not 0.0.0.0)." >&2
+fi
 exec "${CMD[@]}"
