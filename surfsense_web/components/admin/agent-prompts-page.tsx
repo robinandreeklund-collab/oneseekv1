@@ -3,21 +3,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { diffLines } from "diff";
 import { useAtomValue } from "jotai";
+import { ArrowRightIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
-import type { AgentPromptItem } from "@/contracts/types/agent-prompts.types";
-import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
-import { adminCacheApiService } from "@/lib/apis/admin-cache-api.service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
 	Select,
@@ -29,10 +21,42 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import type { AgentPromptItem } from "@/contracts/types/agent-prompts.types";
+import { adminCacheApiService } from "@/lib/apis/admin-cache-api.service";
+import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
 import { cn } from "@/lib/utils";
-import { ArrowRightIcon } from "lucide-react";
 
-type PromptViewMode = "all" | "agent" | "system";
+type PromptViewMode = "all" | "agent" | "system" | "node";
+type PromptNodeGroup = "router" | "supervisor" | "subagent" | "compare" | "system" | "other";
+
+const NODE_GROUP_ORDER: PromptNodeGroup[] = [
+	"router",
+	"supervisor",
+	"subagent",
+	"compare",
+	"system",
+	"other",
+];
+const NODE_GROUP_LABELS: Record<PromptNodeGroup, string> = {
+	router: "Router",
+	supervisor: "Supervisor",
+	subagent: "Subagent/Worker",
+	compare: "Compare",
+	system: "System",
+	other: "Övrigt",
+};
+
+function inferNodeGroupFromKey(key: string): PromptNodeGroup {
+	const normalized = (key ?? "").trim().toLowerCase();
+	if (normalized.startsWith("router.")) return "router";
+	if (normalized.startsWith("compare.")) return "compare";
+	if (normalized === "agent.supervisor.system" || normalized.startsWith("supervisor.")) {
+		return "supervisor";
+	}
+	if (normalized.startsWith("agent.")) return "subagent";
+	if (normalized.startsWith("system.") || normalized.startsWith("citation.")) return "system";
+	return "other";
+}
 
 const AGENT_ORDER = [
 	"knowledge",
@@ -73,11 +97,7 @@ const SYSTEM_SECTION_LABELS: Record<string, string> = {
 	other: "Övrigt",
 };
 
-const ROUTER_NODES = [
-	{ label: "Top-level router", key: "router.top_level" },
-	{ label: "Knowledge router", key: "router.knowledge" },
-	{ label: "Action router", key: "router.action" },
-];
+const ROUTER_NODES = [{ label: "Top-level router", key: "router.top_level" }];
 
 const SYSTEM_NODES = [
 	{ label: "Core system prompt", key: "system.default.instructions" },
@@ -89,9 +109,26 @@ const SYSTEM_NODES = [
 		label: "Supervisor · Trafik enforcement",
 		key: "supervisor.trafik.enforcement.message",
 	},
+	{
+		label: "Supervisor · Sandbox enforcement",
+		key: "supervisor.code.sandbox.enforcement.message",
+	},
+	{
+		label: "Supervisor · Read-file enforcement",
+		key: "supervisor.code.read_file.enforcement.message",
+	},
+	{
+		label: "Supervisor · Scoped tool template",
+		key: "supervisor.scoped_tool_prompt.template",
+	},
+	{
+		label: "Supervisor · Subagent context template",
+		key: "supervisor.subagent.context.template",
+	},
 	{ label: "Worker · Knowledge", key: "agent.worker.knowledge" },
 	{ label: "Worker · Action", key: "agent.worker.action" },
 	{ label: "Compare · Analysis", key: "compare.analysis.system" },
+	{ label: "Compare · Supervisor", key: "compare.supervisor.instructions" },
 	{ label: "Compare · External", key: "compare.external.system" },
 	{ label: "Citation instructions", key: "citation.instructions" },
 ];
@@ -161,6 +198,7 @@ export function AdminPromptsPage() {
 	const [isClearingCache, setIsClearingCache] = useState(false);
 	const [viewMode, setViewMode] = useState<PromptViewMode>("all");
 	const [selectedAgent, setSelectedAgent] = useState<string>("action");
+	const [selectedNodeGroup, setSelectedNodeGroup] = useState<PromptNodeGroup>("router");
 	const [searchTerm, setSearchTerm] = useState("");
 	const [pendingScrollKey, setPendingScrollKey] = useState<string | null>(null);
 	const [highlightKey, setHighlightKey] = useState<string | null>(null);
@@ -199,12 +237,27 @@ export function AdminPromptsPage() {
 	const items = data?.items ?? [];
 	const promptMeta = useMemo(() => {
 		return items.map((item) => {
+			const requestedNodeGroup = String(
+				(item as AgentPromptItem & { node_group?: string }).node_group || ""
+			)
+				.trim()
+				.toLowerCase();
+			const nodeGroup = (
+				NODE_GROUP_ORDER.includes(requestedNodeGroup as PromptNodeGroup)
+					? (requestedNodeGroup as PromptNodeGroup)
+					: inferNodeGroupFromKey(item.key)
+			) as PromptNodeGroup;
+			const nodeGroupLabel =
+				(item as AgentPromptItem & { node_group_label?: string }).node_group_label ||
+				NODE_GROUP_LABELS[nodeGroup];
 			const key = item.key;
 			if (key.startsWith("agent.worker.")) {
 				return {
 					item,
 					group: "system" as const,
 					section: "worker",
+					nodeGroup,
+					nodeGroupLabel,
 				};
 			}
 			if (key.startsWith("agent.supervisor.")) {
@@ -212,6 +265,8 @@ export function AdminPromptsPage() {
 					item,
 					group: "system" as const,
 					section: "supervisor",
+					nodeGroup,
+					nodeGroupLabel,
 				};
 			}
 			if (key.startsWith("router.")) {
@@ -219,6 +274,8 @@ export function AdminPromptsPage() {
 					item,
 					group: "system" as const,
 					section: "router",
+					nodeGroup,
+					nodeGroupLabel,
 				};
 			}
 			if (key.startsWith("system.")) {
@@ -226,6 +283,8 @@ export function AdminPromptsPage() {
 					item,
 					group: "system" as const,
 					section: "core",
+					nodeGroup,
+					nodeGroupLabel,
 				};
 			}
 			if (key.startsWith("supervisor.")) {
@@ -233,6 +292,8 @@ export function AdminPromptsPage() {
 					item,
 					group: "system" as const,
 					section: "supervisor",
+					nodeGroup,
+					nodeGroupLabel,
 				};
 			}
 			if (key.startsWith("compare.")) {
@@ -240,6 +301,8 @@ export function AdminPromptsPage() {
 					item,
 					group: "system" as const,
 					section: "compare",
+					nodeGroup,
+					nodeGroupLabel,
 				};
 			}
 			if (key.startsWith("citation.")) {
@@ -247,6 +310,8 @@ export function AdminPromptsPage() {
 					item,
 					group: "system" as const,
 					section: "citations",
+					nodeGroup,
+					nodeGroupLabel,
 				};
 			}
 			if (key.startsWith("agent.")) {
@@ -258,9 +323,17 @@ export function AdminPromptsPage() {
 					group: "agent" as const,
 					agent,
 					variant,
+					nodeGroup,
+					nodeGroupLabel,
 				};
 			}
-			return { item, group: "system" as const, section: "other" };
+			return {
+				item,
+				group: "system" as const,
+				section: "other",
+				nodeGroup,
+				nodeGroupLabel,
+			};
 		});
 	}, [items]);
 
@@ -276,12 +349,29 @@ export function AdminPromptsPage() {
 		return [...ordered, ...remaining.sort()];
 	}, [promptMeta]);
 
+	const availableNodeGroups = useMemo(() => {
+		const discovered = new Set<PromptNodeGroup>();
+		promptMeta.forEach((meta) => {
+			discovered.add(meta.nodeGroup);
+		});
+		const ordered = NODE_GROUP_ORDER.filter((group) => discovered.has(group));
+		const remaining = Array.from(discovered).filter((group) => !ordered.includes(group));
+		return [...ordered, ...remaining];
+	}, [promptMeta]);
+
 	useEffect(() => {
 		if (!availableAgents.length) return;
 		if (!availableAgents.includes(selectedAgent)) {
 			setSelectedAgent(availableAgents[0]);
 		}
 	}, [availableAgents, selectedAgent]);
+
+	useEffect(() => {
+		if (!availableNodeGroups.length) return;
+		if (!availableNodeGroups.includes(selectedNodeGroup)) {
+			setSelectedNodeGroup(availableNodeGroups[0]);
+		}
+	}, [availableNodeGroups, selectedNodeGroup]);
 
 	const filteredMeta = useMemo(() => {
 		const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -294,10 +384,13 @@ export function AdminPromptsPage() {
 			);
 		};
 
-		let results = promptMeta.filter(({ item, group, agent }) => {
+		let results = promptMeta.filter(({ item, group, agent, nodeGroup }) => {
 			if (!applySearch(item)) return false;
 			if (viewMode === "agent") {
 				return group === "agent" && agent === selectedAgent;
+			}
+			if (viewMode === "node") {
+				return nodeGroup === selectedNodeGroup;
 			}
 			if (viewMode === "system") {
 				return group === "system";
@@ -329,12 +422,9 @@ export function AdminPromptsPage() {
 		}
 
 		return results;
-	}, [promptMeta, viewMode, selectedAgent, searchTerm]);
+	}, [promptMeta, viewMode, selectedAgent, selectedNodeGroup, searchTerm]);
 
-	const filteredItems = useMemo(
-		() => filteredMeta.map((meta) => meta.item),
-		[filteredMeta]
-	);
+	const filteredItems = useMemo(() => filteredMeta.map((meta) => meta.item), [filteredMeta]);
 
 	const systemSections = useMemo(() => {
 		if (viewMode !== "system") return [];
@@ -350,6 +440,37 @@ export function AdminPromptsPage() {
 		}).filter((group) => group.items.length > 0);
 	}, [filteredMeta, viewMode]);
 
+	const nodeGroupSections = useMemo(() => {
+		if (viewMode !== "node") return [];
+		return availableNodeGroups
+			.map((group) => {
+				const sectionItems = filteredMeta
+					.filter((meta) => meta.nodeGroup === group)
+					.map((meta) => meta.item);
+				return {
+					group,
+					label: NODE_GROUP_LABELS[group],
+					items: sectionItems,
+				};
+			})
+			.filter((section) => section.items.length > 0);
+	}, [availableNodeGroups, filteredMeta, viewMode]);
+
+	const nodeGroupStats = useMemo(() => {
+		return availableNodeGroups.map((group) => {
+			const groupItems = promptMeta
+				.filter((meta) => meta.nodeGroup === group)
+				.map((meta) => meta.item);
+			const activeCount = groupItems.filter((item) => item.override_prompt?.trim()).length;
+			return {
+				group,
+				label: NODE_GROUP_LABELS[group],
+				total: groupItems.length,
+				active: activeCount,
+			};
+		});
+	}, [availableNodeGroups, promptMeta]);
+
 	useEffect(() => {
 		if (!pendingScrollKey) return;
 		const node = promptRefs.get(pendingScrollKey);
@@ -359,7 +480,7 @@ export function AdminPromptsPage() {
 		setPendingScrollKey(null);
 		const timer = window.setTimeout(() => setHighlightKey(null), 1800);
 		return () => window.clearTimeout(timer);
-	}, [pendingScrollKey, promptRefs, filteredItems, viewMode]);
+	}, [pendingScrollKey, promptRefs]);
 
 	const hasChanges = useMemo(() => {
 		return items.some((item) => (overrides[item.key] ?? "") !== (item.override_prompt ?? ""));
@@ -377,11 +498,7 @@ export function AdminPromptsPage() {
 
 	const isNodeActive = (keys: string[]) => keys.some((key) => activeKeys.has(key));
 
-	const handleNodeClick = (target: {
-		mode: PromptViewMode;
-		key?: string;
-		agent?: string;
-	}) => {
+	const handleNodeClick = (target: { mode: PromptViewMode; key?: string; agent?: string }) => {
 		setSearchTerm("");
 		if (target.mode === "agent" && target.agent) {
 			setViewMode("agent");
@@ -443,12 +560,7 @@ export function AdminPromptsPage() {
 							Nyckel: <span className="font-mono">{item.key}</span>
 						</p>
 					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => handleReset(item)}
-						disabled={isSaving}
-					>
+					<Button variant="ghost" size="sm" onClick={() => handleReset(item)} disabled={isSaving}>
 						Återställ
 					</Button>
 				</div>
@@ -566,7 +678,7 @@ export function AdminPromptsPage() {
 			await adminCacheApiService.updateCacheState({ disabled });
 			toast.success(disabled ? "Cache inaktiverad" : "Cache aktiverad");
 			await refetchCacheState();
-		} catch (err) {
+		} catch (_err) {
 			toast.error("Kunde inte uppdatera cache‑status");
 		} finally {
 			setIsUpdatingCache(false);
@@ -578,7 +690,7 @@ export function AdminPromptsPage() {
 		try {
 			await adminCacheApiService.clearCaches();
 			toast.success("Cache tömd");
-		} catch (err) {
+		} catch (_err) {
 			toast.error("Kunde inte tömma cache");
 		} finally {
 			setIsClearingCache(false);
@@ -593,7 +705,7 @@ export function AdminPromptsPage() {
 			await adminCacheApiService.clearCaches();
 			toast.success("Dev‑läge aktivt: cache avstängd och tömd");
 			await refetchCacheState();
-		} catch (err) {
+		} catch (_err) {
 			toast.error("Kunde inte aktivera dev‑läge");
 		} finally {
 			setIsUpdatingCache(false);
@@ -638,11 +750,7 @@ export function AdminPromptsPage() {
 							/>
 							<span className="text-sm">Inaktivera cache (dev)</span>
 						</div>
-						<Button
-							variant="outline"
-							onClick={handleClearCache}
-							disabled={isClearingCache}
-						>
+						<Button variant="outline" onClick={handleClearCache} disabled={isClearingCache}>
 							{isClearingCache ? "Tömmer cache..." : "Töm cache"}
 						</Button>
 						<Button
@@ -678,6 +786,7 @@ export function AdminPromptsPage() {
 							<TabsTrigger value="all">Alla</TabsTrigger>
 							<TabsTrigger value="agent">Agent</TabsTrigger>
 							<TabsTrigger value="system">System</TabsTrigger>
+							<TabsTrigger value="node">Nod</TabsTrigger>
 						</TabsList>
 					</Tabs>
 
@@ -690,6 +799,24 @@ export function AdminPromptsPage() {
 								{availableAgents.map((agent) => (
 									<SelectItem key={agent} value={agent}>
 										{agent}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					)}
+
+					{viewMode === "node" && (
+						<Select
+							value={selectedNodeGroup}
+							onValueChange={(value) => setSelectedNodeGroup(value as PromptNodeGroup)}
+						>
+							<SelectTrigger className="min-w-[220px]">
+								<SelectValue placeholder="Välj nodgrupp" />
+							</SelectTrigger>
+							<SelectContent>
+								{availableNodeGroups.map((group) => (
+									<SelectItem key={group} value={group}>
+										{NODE_GROUP_LABELS[group]}
 									</SelectItem>
 								))}
 							</SelectContent>
@@ -709,14 +836,60 @@ export function AdminPromptsPage() {
 				</p>
 			</div>
 
+			<div className="mt-4 rounded-lg border border-border/40 bg-card/50 p-4">
+				<div className="flex items-center justify-between gap-2">
+					<h3 className="text-sm font-semibold">LangGraph-noder</h3>
+					<span className="text-xs text-muted-foreground">
+						Router / Supervisor / Subagent / Compare
+					</span>
+				</div>
+				<div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+					{nodeGroupStats.map((stat) => (
+						<button
+							key={stat.group}
+							type="button"
+							onClick={() => {
+								setViewMode("node");
+								setSelectedNodeGroup(stat.group);
+							}}
+							className={cn(
+								"rounded-md border border-border/60 bg-background px-3 py-2 text-left transition hover:border-primary/40",
+								viewMode === "node" &&
+									selectedNodeGroup === stat.group &&
+									"border-primary/50 ring-1 ring-primary/30"
+							)}
+						>
+							<div className="flex items-center justify-between gap-2">
+								<span className="text-xs font-medium">{stat.label}</span>
+								{stat.active > 0 ? (
+									<Badge
+										variant="secondary"
+										className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-200"
+									>
+										{stat.active} aktiv
+									</Badge>
+								) : (
+									<span className="text-[11px] text-muted-foreground">0 aktiv</span>
+								)}
+							</div>
+							<p className="mt-1 text-[11px] text-muted-foreground">{stat.total} prompts</p>
+						</button>
+					))}
+				</div>
+			</div>
+
 			<div
 				ref={graphRef}
 				className="mt-6 rounded-xl border border-border/40 bg-muted/20 p-4 relative overflow-hidden"
 			>
-				<svg className="pointer-events-none absolute inset-0 h-full w-full z-0">
-					{graphLines.map((line, index) => (
+				<svg
+					className="pointer-events-none absolute inset-0 h-full w-full z-0"
+					aria-hidden="true"
+					focusable="false"
+				>
+					{graphLines.map((line) => (
 						<line
-							key={`line-${index}`}
+							key={`line-${line.x1}-${line.y1}-${line.x2}-${line.y2}`}
 							x1={line.x1}
 							y1={line.y1}
 							x2={line.x2}
@@ -746,9 +919,7 @@ export function AdminPromptsPage() {
 							<button
 								key={node.key}
 								type="button"
-								onClick={() =>
-									handleNodeClick({ mode: "system", key: node.key })
-								}
+								onClick={() => handleNodeClick({ mode: "system", key: node.key })}
 								ref={registerNode(`prompt:${node.key}`)}
 								className={cn(
 									"w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
@@ -772,9 +943,7 @@ export function AdminPromptsPage() {
 						<p className="text-xs font-semibold uppercase text-muted-foreground">Supervisor</p>
 						<button
 							type="button"
-							onClick={() =>
-								handleNodeClick({ mode: "system", key: "agent.supervisor.system" })
-							}
+							onClick={() => handleNodeClick({ mode: "system", key: "agent.supervisor.system" })}
 							ref={registerNode("prompt:agent.supervisor.system")}
 							className={cn(
 								"w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
@@ -833,9 +1002,7 @@ export function AdminPromptsPage() {
 							<button
 								key={node.key}
 								type="button"
-								onClick={() =>
-									handleNodeClick({ mode: "system", key: node.key })
-								}
+								onClick={() => handleNodeClick({ mode: "system", key: node.key })}
 								ref={registerNode(`prompt:${node.key}`)}
 								className={cn(
 									"w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-xs transition hover:border-primary/40 hover:bg-background/90"
@@ -853,9 +1020,7 @@ export function AdminPromptsPage() {
 				</div>
 			</div>
 
-			{isLoading && (
-				<p className="mt-6 text-sm text-muted-foreground">Laddar promtar...</p>
-			)}
+			{isLoading && <p className="mt-6 text-sm text-muted-foreground">Laddar promtar...</p>}
 			{error && (
 				<p className="mt-6 text-sm text-destructive">
 					Kunde inte ladda promtar. Kontrollera behörigheter.
@@ -866,6 +1031,20 @@ export function AdminPromptsPage() {
 				{viewMode === "system" ? (
 					systemSections.map((group) => (
 						<div key={group.section} className="space-y-4">
+							<div className="flex items-center justify-between">
+								<h3 className="text-xs font-semibold uppercase text-muted-foreground">
+									{group.label}
+								</h3>
+								<span className="text-[11px] text-muted-foreground">
+									{group.items.length} promtar
+								</span>
+							</div>
+							{group.items.map(renderPromptCard)}
+						</div>
+					))
+				) : viewMode === "node" ? (
+					nodeGroupSections.map((group) => (
+						<div key={group.group} className="space-y-4">
 							<div className="flex items-center justify-between">
 								<h3 className="text-xs font-semibold uppercase text-muted-foreground">
 									{group.label}
@@ -918,9 +1097,7 @@ function PromptHistory({ promptKey, isSaving }: { promptKey: string; isSaving: b
 						</p>
 						{entry.previous_prompt ? (
 							<>
-								<p className="mt-2 text-[11px] uppercase text-muted-foreground">
-									Föregående
-								</p>
+								<p className="mt-2 text-[11px] uppercase text-muted-foreground">Föregående</p>
 								<pre className="mt-1 whitespace-pre-wrap rounded bg-background/70 p-2 text-[11px] text-foreground/80">
 									{entry.previous_prompt}
 								</pre>
@@ -934,10 +1111,7 @@ function PromptHistory({ promptKey, isSaving }: { promptKey: string; isSaving: b
 							<summary className="cursor-pointer text-[11px] text-muted-foreground">
 								Visa diff
 							</summary>
-							<DiffBlock
-								previousPrompt={entry.previous_prompt}
-								newPrompt={entry.new_prompt}
-							/>
+							<DiffBlock previousPrompt={entry.previous_prompt} newPrompt={entry.new_prompt} />
 						</details>
 					</div>
 				))}
@@ -965,10 +1139,8 @@ function DiffBlock({
 					key={`${part.added ? "add" : part.removed ? "del" : "same"}-${index}`}
 					className={cn(
 						"block px-1",
-						part.added &&
-							"bg-emerald-500/20 text-emerald-800 dark:text-emerald-200",
-						part.removed &&
-							"bg-rose-500/20 text-rose-800 line-through dark:text-rose-200",
+						part.added && "bg-emerald-500/20 text-emerald-800 dark:text-emerald-200",
+						part.removed && "bg-rose-500/20 text-rose-800 line-through dark:text-rose-200",
 						!part.added && !part.removed && "text-muted-foreground"
 					)}
 				>

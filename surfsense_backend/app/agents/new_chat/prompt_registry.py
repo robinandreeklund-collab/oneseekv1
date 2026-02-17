@@ -62,6 +62,33 @@ class PromptDefinition:
     default_prompt: str
     active_in_admin: bool = True
 
+    @property
+    def node_group(self) -> str:
+        group, _label = infer_prompt_node_group(self.key)
+        return group
+
+    @property
+    def node_group_label(self) -> str:
+        _group, label = infer_prompt_node_group(self.key)
+        return label
+
+
+def infer_prompt_node_group(key: str) -> tuple[str, str]:
+    normalized_key = str(key or "").strip().lower()
+    if normalized_key.startswith("router."):
+        return ("router", "Router")
+    if normalized_key.startswith("compare."):
+        return ("compare", "Compare")
+    if normalized_key == "agent.supervisor.system" or normalized_key.startswith(
+        "supervisor."
+    ):
+        return ("supervisor", "Supervisor")
+    if normalized_key.startswith("agent.") and normalized_key != "agent.supervisor.system":
+        return ("subagent", "Subagent/Worker")
+    if normalized_key.startswith("system.") or normalized_key.startswith("citation."):
+        return ("system", "System")
+    return ("other", "Övrigt")
+
 
 PROMPT_DEFINITIONS: list[PromptDefinition] = [
     PromptDefinition(

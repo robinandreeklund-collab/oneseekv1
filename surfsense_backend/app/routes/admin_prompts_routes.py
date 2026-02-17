@@ -63,6 +63,8 @@ async def get_agent_prompts(
                 "key": definition.key,
                 "label": definition.label,
                 "description": definition.description,
+                "node_group": definition.node_group,
+                "node_group_label": definition.node_group_label,
                 "default_prompt": definition.default_prompt,
                 "override_prompt": overrides.get(definition.key),
             }
@@ -110,6 +112,8 @@ async def update_agent_prompts(
                 "key": definition.key,
                 "label": definition.label,
                 "description": definition.description,
+                "node_group": definition.node_group,
+                "node_group_label": definition.node_group_label,
                 "default_prompt": definition.default_prompt,
                 "override_prompt": overrides.get(definition.key),
             }
