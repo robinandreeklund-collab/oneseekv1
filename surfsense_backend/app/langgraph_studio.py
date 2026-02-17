@@ -313,7 +313,12 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
         ).strip(),
     )
     session = await _get_session()
-    prompt_overrides = await get_global_prompt_overrides(session)
+    try:
+        prompt_overrides = await get_global_prompt_overrides(session)
+    except Exception:
+        # Local Studio should stay usable even when DB access is unavailable
+        # (e.g. Windows blocker detects a sync call inside the DB driver path).
+        prompt_overrides = {}
 
     agent_config = await load_agent_config(
         session=session,

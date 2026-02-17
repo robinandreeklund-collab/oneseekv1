@@ -163,3 +163,18 @@ Lösning:
 ```powershell
 .\scripts\run-langgraph-studio.ps1 -SkipInstall
 ```
+
+### `blockbuster.blockbuster.BlockingError: Blocking call to os.getcwd`
+
+Detta kan triggas lokalt när DB-drivern (`asyncpg`) försöker läsa PostgreSQL SSL-paths under Studio-request.
+
+Lösning:
+
+1. `git pull` till senaste branch (Studio fallback för DB prompt-overrides är inkluderad).
+2. Starta om:
+
+```powershell
+.\scripts\run-langgraph-studio.ps1 -SkipInstall
+```
+
+Om du fortfarande vill köra med strikt blocker-detektering avstängd i lokal dev kan du även testa `--allow-blocking` för `langgraph dev`.
