@@ -62,6 +62,18 @@ cd surfsense_backend
 langgraph dev --config langgraph.json --host 127.0.0.1 --port 8123
 ```
 
+Windows PowerShell (rekommenderat helper-script från repo-roten):
+
+```powershell
+.\scripts\run-langgraph-studio.ps1
+```
+
+Det scriptet:
+
+- skapar `.venv` om den saknas
+- installerar backend-dependencies + `langgraph-cli`
+- startar Studio med rätt Python-miljö
+
 Öppna sedan URL:en som CLI visar (Studio UI).
 
 ## 5) Kör ett test i Studio
@@ -99,3 +111,27 @@ Tips: börja med dessa tre för cross-workflow-debug:
 - `STUDIO_CHECKPOINTER_MODE=memory` är enklast för snabb lokal debug.
 - Sätt `STUDIO_CHECKPOINTER_MODE=postgres` om du vill debugga med samma checkpoint-beteende som produktion.
 - Graph-fabriken bygger samma supervisor-graph som chatflödet använder (`build_complete_graph`), med prompt-overrides från databasen.
+
+## Troubleshooting
+
+### `ModuleNotFoundError: No module named 'sqlalchemy'`
+
+Du kör `langgraph` i en Python-miljö utan backend-dependencies.
+
+Lösning (Windows PowerShell):
+
+```powershell
+cd C:\Users\robin\Documents\GitHub\oneseekv1
+.\scripts\run-langgraph-studio.ps1
+```
+
+Alternativ manuell setup:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip setuptools wheel
+python -m pip install -e .\surfsense_backend
+python -m pip install "langgraph-cli[inmem]"
+langgraph dev --config langgraph.json --host 127.0.0.1 --port 8123
+```
