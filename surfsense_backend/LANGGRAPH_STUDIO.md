@@ -27,6 +27,7 @@ STUDIO_SEARCH_SPACE_ID=2
 STUDIO_LLM_CONFIG_ID=-1
 STUDIO_THREAD_ID=900000001
 STUDIO_CHECKPOINTER_MODE=memory
+STUDIO_RECURSION_LIMIT=120
 STUDIO_COMPARE_MODE=false
 STUDIO_RUNTIME_HITL_JSON={"enabled":true,"hybrid_mode":true,"speculative_enabled":true}
 ```
@@ -155,6 +156,7 @@ Notera: Studio-overrides gäller för Studio-körningen och har högre prioritet
 ## Notes
 
 - `STUDIO_CHECKPOINTER_MODE=memory` är enklast för snabb lokal debug.
+- Höj `STUDIO_RECURSION_LIMIT` om du testar långa flöden med många steg.
 - Sätt `STUDIO_CHECKPOINTER_MODE=postgres` om du vill debugga med samma checkpoint-beteende som produktion.
 - Graph-fabriken bygger samma supervisor-graph som chatflödet använder (`build_complete_graph`), med prompt-overrides från databasen.
 

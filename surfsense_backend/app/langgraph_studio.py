@@ -149,6 +149,10 @@ class StudioGraphConfigurationBase(BaseModel):
     user_id: str | None = Field(default=None, description="Optional forced user id")
     checkpointer_mode: str = Field(default="memory", description="memory or postgres")
     checkpoint_ns: str | None = Field(default=None, description="Checkpoint namespace")
+    recursion_limit: int = Field(
+        default=120,
+        description="Graph recursion limit for Studio runs (default 120).",
+    )
     citation_instructions: bool | str | None = Field(
         default=False,
         description="true/false or explicit citation instruction block",
@@ -453,6 +457,21 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
         ),
         default=900000001,
     )
+    recursion_limit = max(
+        25,
+        min(
+            2000,
+            _parse_int(
+                _first_value(
+                    configurable,
+                    "recursion_limit",
+                    env_name="STUDIO_RECURSION_LIMIT",
+                    default=120,
+                ),
+                default=120,
+            ),
+        ),
+    )
     user_id = await _resolve_user_id(
         session=await _get_session(),
         search_space_id=search_space_id,
@@ -732,7 +751,7 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
         if not checkpoint_ns:
             checkpoint_ns = "langgraph_studio_local"
 
-    return await build_complete_graph(
+    graph = await build_complete_graph(
         llm=llm,
         dependencies={
             "search_space_id": search_space_id,
@@ -782,6 +801,7 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
         marketplace_prompt=marketplace_worker_prompt,
         tool_prompt_overrides=prompt_overrides,
     )
+    return graph.with_config({"recursion_limit": recursion_limit})
 
 
 async def make_studio_graph_async(config: dict[str, Any] | None = None):
@@ -796,6 +816,10 @@ async def make_studio_graph_async(config: dict[str, Any] | None = None):
             "search_space_id": configurable.get("search_space_id", os.getenv("STUDIO_SEARCH_SPACE_ID", 1)),
             "llm_config_id": configurable.get("llm_config_id", os.getenv("STUDIO_LLM_CONFIG_ID", -1)),
             "thread_id": configurable.get("thread_id", os.getenv("STUDIO_THREAD_ID", 900000001)),
+            "recursion_limit": configurable.get(
+                "recursion_limit",
+                os.getenv("STUDIO_RECURSION_LIMIT", 120),
+            ),
             "compare_mode": configurable.get("compare_mode", os.getenv("STUDIO_COMPARE_MODE", False)),
             "checkpointer_mode": configurable.get("checkpointer_mode", os.getenv("STUDIO_CHECKPOINTER_MODE", "memory")),
             "checkpoint_ns": configurable.get("checkpoint_ns", os.getenv("STUDIO_CHECKPOINT_NS", "")),
