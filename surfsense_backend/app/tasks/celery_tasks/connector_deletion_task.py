@@ -21,7 +21,8 @@ from sqlalchemy.pool import NullPool
 
 from app.celery_app import celery_app
 from app.config import config
-from app.db import Document, Notification, SearchSourceConnector
+from app.db import Document, SearchSourceConnector
+from app.services.notification_service import NotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -162,12 +163,13 @@ async def _delete_connector_async(
 
             # Step 4: Create success notification
             doc_text = "document" if total_deleted == 1 else "documents"
-            notification = Notification(
+            await NotificationService.create_notification(
+                session=session,
                 user_id=UUID(user_id),
-                search_space_id=search_space_id,
-                type="connector_deletion",
+                notification_type="connector_deletion",
                 title=f"{connector_name} removed",
                 message=f"Cleanup complete. {total_deleted} {doc_text} removed.",
+                search_space_id=search_space_id,
                 notification_metadata={
                     "connector_id": connector_id,
                     "connector_name": connector_name,
@@ -176,8 +178,6 @@ async def _delete_connector_async(
                     "status": "completed",
                 },
             )
-            session.add(notification)
-            await session.commit()
 
             logger.info(
                 f"Connector {connector_id} ({connector_name}) deleted successfully. "
@@ -200,12 +200,13 @@ async def _delete_connector_async(
         # Create failure notification
         try:
             async with session_maker() as session:
-                notification = Notification(
+                await NotificationService.create_notification(
+                    session=session,
                     user_id=UUID(user_id),
-                    search_space_id=search_space_id,
-                    type="connector_deletion",
+                    notification_type="connector_deletion",
                     title=f"Failed to Remove {connector_name}",
                     message="Something went wrong while removing this connector. Please try again.",
+                    search_space_id=search_space_id,
                     notification_metadata={
                         "connector_id": connector_id,
                         "connector_name": connector_name,
@@ -215,8 +216,6 @@ async def _delete_connector_async(
                         "error": str(e),
                     },
                 )
-                session.add(notification)
-                await session.commit()
         except Exception as notify_error:
             logger.error(
                 f"Failed to create failure notification: {notify_error!s}",
