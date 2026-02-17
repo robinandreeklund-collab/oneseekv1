@@ -19,10 +19,10 @@ from typing import Any
 from uuid import UUID
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableLambda
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.agents.new_chat.chat_deepagent import create_surfsense_deep_agent
 from app.agents.new_chat.checkpointer import (
     build_checkpoint_namespace,
     get_checkpointer,
@@ -55,10 +55,11 @@ from app.agents.new_chat.dispatcher import (
     dispatch_route_with_trace,
 )
 from app.agents.new_chat.prompt_registry import resolve_prompt
-from app.agents.new_chat.routing import Route, ROUTE_TOOL_SETS
+from app.agents.new_chat.routing import Route
 from app.agents.new_chat.system_prompt import (
     SURFSENSE_CITATION_INSTRUCTIONS,
     SURFSENSE_SYSTEM_INSTRUCTIONS,
+    append_datetime_context,
 )
 from app.agents.new_chat.complete_graph import build_complete_graph
 from app.agents.new_chat.supervisor_prompts import (
@@ -76,7 +77,6 @@ from app.agents.new_chat.marketplace_prompts import (
 )
 from app.agents.new_chat.subagent_utils import (
     SMALLTALK_INSTRUCTIONS,
-    build_subagent_config,
 )
 from app.agents.new_chat.trafik_prompts import (
     DEFAULT_TRAFFIC_SYSTEM_PROMPT,
@@ -1597,12 +1597,6 @@ async def stream_new_chat(
         if not hybrid_mode:
             speculative_enabled = False
 
-        effective_agent_config = agent_config
-        if route == Route.SMALLTALK and smalltalk_prompt:
-            effective_agent_config = build_subagent_config(
-                agent_config, smalltalk_prompt
-            )
-
         if trace_recorder:
             route_span_id = f"route-{uuid.uuid4().hex[:8]}"
             route_meta = {
@@ -1757,21 +1751,38 @@ async def stream_new_chat(
                 tool_prompt_overrides=prompt_overrides,
             )
         else:
-            # Fallback to deep agent for smalltalk
-            agent = await create_surfsense_deep_agent(
-                llm=llm,
-                search_space_id=search_space_id,
-                db_session=session,
-                connector_service=connector_service,
-                checkpointer=checkpointer,
-                user_id=user_id,  # Pass user ID for memory tools
-                thread_id=chat_id,  # Pass chat ID for podcast association
-                agent_config=effective_agent_config,  # Pass prompt configuration
-                firecrawl_api_key=firecrawl_api_key,  # Pass Firecrawl API key if configured
-                enabled_tools=ROUTE_TOOL_SETS.get(route, []),
-                tool_names_for_prompt=[],
-                force_citations_enabled=citations_enabled,
-                citation_instructions=citation_instructions_block,
+            smalltalk_system_prompt = append_datetime_context(
+                str(smalltalk_prompt or SMALLTALK_INSTRUCTIONS).strip()
+            )
+
+            async def _run_smalltalk_fast_path(state: dict[str, Any]) -> dict[str, Any]:
+                incoming = list(state.get("messages") or [])
+                latest_query = ""
+                for message in reversed(incoming):
+                    if isinstance(message, HumanMessage):
+                        latest_query = str(message.content or "").strip()
+                        if latest_query:
+                            break
+                if not latest_query and incoming:
+                    latest_query = str(getattr(incoming[-1], "content", "") or "").strip()
+                if not latest_query:
+                    latest_query = str(raw_user_query or "").strip()
+                response = await llm.ainvoke(
+                    [
+                        SystemMessage(content=smalltalk_system_prompt),
+                        HumanMessage(content=latest_query),
+                    ]
+                )
+                if isinstance(response, AIMessage):
+                    assistant_message = response
+                else:
+                    assistant_message = AIMessage(
+                        content=str(getattr(response, "content", "") or response or "")
+                    )
+                return {"messages": [assistant_message]}
+
+            agent = RunnableLambda(_run_smalltalk_fast_path).with_config(
+                {"run_name": "SmalltalkFastPath"}
             )
 
         # Build input with message history
