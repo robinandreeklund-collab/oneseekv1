@@ -96,7 +96,12 @@ def build_intent_resolver_node(
         }
 
         resolved = intent_from_route_fn(route_hint)
-        if latest_user_query:
+        should_resolve_with_llm = bool(latest_user_query)
+        if route_hint and route_hint in route_to_intent_id:
+            # Route has already been resolved upstream; skip an extra control-plane
+            # LLM pass and trust route_hint unless we have no candidates at all.
+            should_resolve_with_llm = False
+        if latest_user_query and should_resolve_with_llm:
             prompt = append_datetime_context_fn(intent_resolver_prompt_template)
             resolver_input = json.dumps(
                 {
@@ -111,7 +116,8 @@ def build_intent_resolver_node(
                     [
                         SystemMessage(content=prompt),
                         HumanMessage(content=resolver_input),
-                    ]
+                    ],
+                    max_tokens=140,
                 )
                 parsed = extract_first_json_object_fn(
                     str(getattr(message, "content", "") or "")

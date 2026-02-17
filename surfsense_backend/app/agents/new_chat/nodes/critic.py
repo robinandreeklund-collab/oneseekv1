@@ -55,6 +55,14 @@ def build_critic_node(
             }
 
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
+        graph_complexity = str(state.get("graph_complexity") or "").strip().lower()
+        if graph_complexity == "simple":
+            # Keep simple-path latency low by skipping an additional critic pass.
+            return {
+                "critic_decision": "ok",
+                "final_response": final_response,
+                "orchestration_phase": "finalize",
+            }
         prompt = append_datetime_context_fn(critic_gate_prompt_template)
         critic_input = json.dumps(
             {
@@ -69,7 +77,8 @@ def build_critic_node(
         decision = "ok"
         try:
             message = await llm.ainvoke(
-                [SystemMessage(content=prompt), HumanMessage(content=critic_input)]
+                [SystemMessage(content=prompt), HumanMessage(content=critic_input)],
+                max_tokens=90,
             )
             parsed = extract_first_json_object_fn(str(getattr(message, "content", "") or ""))
             parsed_decision = str(parsed.get("decision") or "").strip().lower()

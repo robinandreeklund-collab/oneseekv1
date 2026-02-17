@@ -70,6 +70,14 @@ def build_agent_resolver_node(
         if not selected_payload and default_for_route in agent_by_name:
             selected_payload = [agent_payload_fn(agent_by_name[default_for_route])]
 
+        graph_complexity = str(state.get("graph_complexity") or "").strip().lower()
+        if graph_complexity == "simple" and selected_payload:
+            # For simple turns, avoid an extra resolver LLM call.
+            return {
+                "selected_agents": selected_payload[:1],
+                "orchestration_phase": "plan",
+            }
+
         prompt = append_datetime_context_fn(agent_resolver_prompt_template)
         resolver_input = json.dumps(
             {
@@ -84,7 +92,8 @@ def build_agent_resolver_node(
                 [
                     SystemMessage(content=prompt),
                     HumanMessage(content=resolver_input),
-                ]
+                ],
+                max_tokens=180,
             )
             parsed = extract_first_json_object_fn(str(getattr(message, "content", "") or ""))
             requested = parsed.get("selected_agents")

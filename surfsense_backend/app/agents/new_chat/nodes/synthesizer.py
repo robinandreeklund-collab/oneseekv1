@@ -80,6 +80,31 @@ def build_synthesizer_node(
         if not source_response:
             return {}
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
+        graph_complexity = str(state.get("graph_complexity") or "").strip().lower()
+        if graph_complexity == "simple":
+            # Simple flows should avoid an extra synthesis rewrite call.
+            refined_response = source_response
+            messages = list(state.get("messages") or [])
+            last_message = messages[-1] if messages else None
+            if isinstance(last_message, AIMessage):
+                if str(getattr(last_message, "content", "") or "").strip() == refined_response:
+                    return {
+                        "final_response": refined_response,
+                        "final_agent_response": refined_response,
+                        "plan_complete": True,
+                        "awaiting_confirmation": False,
+                        "pending_hitl_stage": None,
+                        "pending_hitl_payload": None,
+                    }
+            return {
+                "messages": [AIMessage(content=refined_response)],
+                "final_response": refined_response,
+                "final_agent_response": refined_response,
+                "plan_complete": True,
+                "awaiting_confirmation": False,
+                "pending_hitl_stage": None,
+                "pending_hitl_payload": None,
+            }
 
         if _should_passthrough_synthesizer(
             state=state,
@@ -128,7 +153,8 @@ def build_synthesizer_node(
         refined_response = source_response
         try:
             message = await llm.ainvoke(
-                [SystemMessage(content=prompt), HumanMessage(content=synth_input)]
+                [SystemMessage(content=prompt), HumanMessage(content=synth_input)],
+                max_tokens=220,
             )
             parsed = extract_first_json_object_fn(str(getattr(message, "content", "") or ""))
             candidate = str(parsed.get("response") or "").strip()
