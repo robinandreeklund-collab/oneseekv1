@@ -83,6 +83,7 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
 from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
 from app.agents.new_chat.system_prompt import append_datetime_context
+from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.external_models import (
@@ -251,6 +252,10 @@ TOOL_MSG_THRESHOLD = 8  # Trigger aggressive pruning when tool messages exceed t
 KEEP_TOOL_MSG_COUNT = 6  # Number of recent tool message exchanges to preserve
 TOOL_CONTEXT_MAX_CHARS = 1200
 TOOL_CONTEXT_MAX_ITEMS = 5
+_CONTEXT_COMPACTION_MIN_MESSAGES = 16
+_CONTEXT_COMPACTION_DEFAULT_TRIGGER_RATIO = 0.65
+_CONTEXT_COMPACTION_DEFAULT_SUMMARY_MAX_CHARS = 1600
+_CONTEXT_COMPACTION_DEFAULT_STEP_KEEP = 8
 TOOL_CONTEXT_DROP_KEYS = {
     "raw",
     "data",
@@ -1104,6 +1109,7 @@ class SupervisorState(TypedDict, total=False):
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
     subagent_handoffs: Annotated[list[dict[str, Any]], _append_subagent_handoffs]
     artifact_manifest: Annotated[list[dict[str, Any]], _append_artifact_manifest]
+    rolling_context_summary: Annotated[str | None, _replace]
     final_agent_response: Annotated[str | None, _replace]
     final_response: Annotated[str | None, _replace]
     critic_decision: Annotated[str | None, _replace]
@@ -1302,6 +1308,16 @@ def _format_artifact_manifest_context(state: dict[str, Any]) -> str | None:
     if not lines:
         return None
     return "<artifact_manifest>\n" + "\n".join(lines) + "\n</artifact_manifest>"
+
+
+def _format_rolling_context_summary_context(state: dict[str, Any]) -> str | None:
+    summary = _truncate_for_prompt(
+        str(state.get("rolling_context_summary") or "").strip(),
+        _CONTEXT_COMPACTION_DEFAULT_SUMMARY_MAX_CHARS,
+    )
+    if not summary:
+        return None
+    return "<rolling_context_summary>\n" + summary + "\n</rolling_context_summary>"
 
 
 _HITL_APPROVE_RE = re.compile(r"\b(ja|yes|ok|okej|kor|kör|go|fortsatt|fortsätt)\b", re.IGNORECASE)
@@ -2175,6 +2191,20 @@ def _coerce_int_range(
     return max(min_value, min(max_value, parsed))
 
 
+def _coerce_float_range(
+    value: Any,
+    *,
+    default: float,
+    min_value: float,
+    max_value: float,
+) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(min_value, min(max_value, parsed))
+
+
 def _build_subagent_id(
     *,
     base_thread_id: str,
@@ -2317,6 +2347,104 @@ def _summarize_parallel_results(results: Any) -> str:
     if snippets:
         summary += "; outputs=" + " | ".join(snippets)
     return _truncate_for_prompt(summary)
+
+
+def _build_rolling_context_summary(
+    *,
+    latest_user_query: str,
+    active_plan: list[dict[str, Any]] | None,
+    step_results: list[dict[str, Any]] | None,
+    subagent_handoffs: list[dict[str, Any]] | None,
+    artifact_manifest: list[dict[str, Any]] | None,
+    targeted_missing_info: list[str] | None,
+    max_chars: int,
+) -> str:
+    lines: list[str] = []
+    user_query = str(latest_user_query or "").strip()
+    if user_query:
+        lines.append(f"User goal: {_truncate_for_prompt(user_query, 260)}")
+
+    plan_items = [item for item in (active_plan or []) if isinstance(item, dict)]
+    if plan_items:
+        pending = [
+            str(item.get("content") or "").strip()
+            for item in plan_items
+            if str(item.get("status") or "").strip().lower() in {"pending", "in_progress"}
+            and str(item.get("content") or "").strip()
+        ][:3]
+        completed_count = sum(
+            1
+            for item in plan_items
+            if str(item.get("status") or "").strip().lower() == "completed"
+        )
+        lines.append(
+            f"Plan status: completed={completed_count}/{len(plan_items)}"
+        )
+        if pending:
+            lines.append("Next steps: " + " | ".join(pending))
+
+    compact_steps: list[str] = []
+    for item in (step_results or [])[-_CONTEXT_COMPACTION_DEFAULT_STEP_KEEP:]:
+        if not isinstance(item, dict):
+            continue
+        agent = str(item.get("agent") or "agent").strip() or "agent"
+        task = _truncate_for_prompt(str(item.get("task") or "").strip(), 100)
+        response = _truncate_for_prompt(
+            _strip_critic_json(str(item.get("response") or "").strip()),
+            180,
+        )
+        contract = item.get("result_contract")
+        status = (
+            _normalize_result_status(contract.get("status"))
+            if isinstance(contract, dict)
+            else "partial"
+        )
+        if response:
+            compact_steps.append(f"- {agent} [{status}] {task} -> {response}")
+    if compact_steps:
+        lines.append("Recent execution:")
+        lines.extend(compact_steps[:6])
+
+    handoff_lines: list[str] = []
+    for handoff in (subagent_handoffs or [])[-4:]:
+        if not isinstance(handoff, dict):
+            continue
+        agent = str(handoff.get("agent") or "agent").strip() or "agent"
+        summary = _truncate_for_prompt(str(handoff.get("summary") or "").strip(), 160)
+        refs = handoff.get("artifact_refs")
+        ref_text = ""
+        if isinstance(refs, list):
+            normalized = [str(item).strip() for item in refs if str(item).strip()][:2]
+            if normalized:
+                ref_text = f" refs={','.join(normalized)}"
+        if summary:
+            handoff_lines.append(f"- {agent}: {summary}{ref_text}")
+    if handoff_lines:
+        lines.append("Subagent handoffs:")
+        lines.extend(handoff_lines)
+
+    artifact_lines: list[str] = []
+    for item in (artifact_manifest or [])[-4:]:
+        if not isinstance(item, dict):
+            continue
+        ref = str(item.get("artifact_uri") or item.get("artifact_path") or "").strip()
+        if not ref:
+            continue
+        summary = _truncate_for_prompt(str(item.get("summary") or "").strip(), 140)
+        if summary:
+            artifact_lines.append(f"- {ref}: {summary}")
+        else:
+            artifact_lines.append(f"- {ref}")
+    if artifact_lines:
+        lines.append("Artifacts:")
+        lines.extend(artifact_lines)
+
+    missing = [str(item).strip() for item in (targeted_missing_info or []) if str(item).strip()]
+    if missing:
+        lines.append("Open gaps: " + " | ".join(missing[:4]))
+
+    rendered = "\n".join(lines).strip()
+    return _truncate_for_prompt(rendered, max(320, int(max_chars)))
 
 
 def _count_consecutive_loop_tools(messages: list[Any], *, turn_id: str | None = None) -> int:
@@ -3209,6 +3337,22 @@ async def create_supervisor_agent(
         default=_ARTIFACT_DEFAULT_MAX_ENTRIES,
         min_value=8,
         max_value=120,
+    )
+    context_compaction_enabled = _coerce_bool(
+        runtime_hitl_cfg.get("context_compaction_enabled"),
+        default=True,
+    )
+    context_compaction_trigger_ratio = _coerce_float_range(
+        runtime_hitl_cfg.get("context_compaction_trigger_ratio"),
+        default=_CONTEXT_COMPACTION_DEFAULT_TRIGGER_RATIO,
+        min_value=0.35,
+        max_value=0.95,
+    )
+    context_compaction_summary_max_chars = _coerce_int_range(
+        runtime_hitl_cfg.get("context_compaction_summary_max_chars"),
+        default=_CONTEXT_COMPACTION_DEFAULT_SUMMARY_MAX_CHARS,
+        min_value=320,
+        max_value=8_000,
     )
 
     async def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
@@ -5569,6 +5713,7 @@ async def create_supervisor_agent(
         format_resolved_tools_context_fn=_format_resolved_tools_context,
         format_subagent_handoffs_context_fn=_format_subagent_handoffs_context,
         format_artifact_manifest_context_fn=_format_artifact_manifest_context,
+        format_rolling_context_summary_context_fn=_format_rolling_context_summary_context,
         coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
     )
 
@@ -5843,6 +5988,80 @@ async def create_supervisor_agent(
             "artifact_manifest": new_entries,
         }
 
+    async def context_compactor(
+        state: SupervisorState,
+        config: RunnableConfig | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        if not context_compaction_enabled:
+            return {}
+        messages = list(state.get("messages") or [])
+        if len(messages) < _CONTEXT_COMPACTION_MIN_MESSAGES:
+            return {}
+
+        usage_ratio = 0.0
+        model_name = (
+            getattr(llm, "model_name", None)
+            or getattr(llm, "model", None)
+            or ""
+        )
+        if model_name:
+            try:
+                budget = TokenBudget(model_name=str(model_name))
+                used_tokens = budget.estimate_messages_tokens(messages)
+                available_tokens = max(1, int(budget.available_for_messages))
+                usage_ratio = float(used_tokens) / float(available_tokens)
+            except Exception:
+                usage_ratio = 0.0
+        if usage_ratio < float(context_compaction_trigger_ratio) and len(messages) < MESSAGE_PRUNING_THRESHOLD:
+            return {}
+
+        summary = _build_rolling_context_summary(
+            latest_user_query=_latest_user_query(messages),
+            active_plan=[
+                item for item in (state.get("active_plan") or []) if isinstance(item, dict)
+            ],
+            step_results=[
+                item for item in (state.get("step_results") or []) if isinstance(item, dict)
+            ],
+            subagent_handoffs=[
+                item for item in (state.get("subagent_handoffs") or []) if isinstance(item, dict)
+            ],
+            artifact_manifest=[
+                item for item in (state.get("artifact_manifest") or []) if isinstance(item, dict)
+            ],
+            targeted_missing_info=[
+                str(item).strip()
+                for item in (state.get("targeted_missing_info") or [])
+                if str(item).strip()
+            ],
+            max_chars=int(context_compaction_summary_max_chars),
+        )
+        if not summary:
+            return {}
+
+        updates: dict[str, Any] = {
+            "rolling_context_summary": summary,
+        }
+        compacted_steps = [
+            item for item in (state.get("step_results") or []) if isinstance(item, dict)
+        ]
+        if len(compacted_steps) > _CONTEXT_COMPACTION_DEFAULT_STEP_KEEP:
+            updates["step_results"] = compacted_steps[-_CONTEXT_COMPACTION_DEFAULT_STEP_KEEP:]
+        compacted_handoffs = [
+            item for item in (state.get("subagent_handoffs") or []) if isinstance(item, dict)
+        ]
+        if len(compacted_handoffs) > _SUBAGENT_MAX_HANDOFFS_IN_PROMPT:
+            updates["subagent_handoffs"] = compacted_handoffs[-_SUBAGENT_MAX_HANDOFFS_IN_PROMPT:]
+        compacted_artifacts = [
+            item for item in (state.get("artifact_manifest") or []) if isinstance(item, dict)
+        ]
+        if len(compacted_artifacts) > int(artifact_offload_max_entries):
+            updates["artifact_manifest"] = compacted_artifacts[-int(artifact_offload_max_entries):]
+        return updates
+
     async def orchestration_guard(
         state: SupervisorState,
         config: RunnableConfig | None = None,
@@ -6044,8 +6263,19 @@ async def create_supervisor_agent(
                 dropped_count = keep_start
                 if dropped_count > 0:
                     pruned = messages[keep_start:]
+                    rolling_summary = str(state.get("rolling_context_summary") or "").strip()
+                    summary_content = (
+                        "<rolling_context_summary>\n"
+                        + _truncate_for_prompt(
+                            rolling_summary,
+                            int(context_compaction_summary_max_chars),
+                        )
+                        + "\n</rolling_context_summary>"
+                        if rolling_summary
+                        else f"[{dropped_count} earlier messages (including tool calls) condensed. Recent context retained.]"
+                    )
                     summary_msg = SystemMessage(
-                        content=f"[{dropped_count} earlier messages (including tool calls) condensed. Recent context retained.]"
+                        content=summary_content
                     )
                     leading_system = [m for m in messages[:keep_start] if isinstance(m, SystemMessage)]
                     updates["messages"] = leading_system + [summary_msg] + pruned
@@ -6198,6 +6428,10 @@ async def create_supervisor_agent(
             RunnableCallable(None, artifact_indexer),
         )
         graph_builder.add_node(
+            "context_compactor",
+            RunnableCallable(None, context_compactor),
+        )
+        graph_builder.add_node(
             "orchestration_guard",
             RunnableCallable(None, orchestration_guard),
         )
@@ -6261,7 +6495,8 @@ async def create_supervisor_agent(
         )
         graph_builder.add_edge("tools", "post_tools")
         graph_builder.add_edge("post_tools", "artifact_indexer")
-        graph_builder.add_edge("artifact_indexer", "orchestration_guard")
+        graph_builder.add_edge("artifact_indexer", "context_compactor")
+        graph_builder.add_edge("context_compactor", "orchestration_guard")
         graph_builder.add_edge("orchestration_guard", "critic")
         graph_builder.add_conditional_edges(
             "critic",

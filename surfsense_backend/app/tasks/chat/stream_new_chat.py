@@ -1526,6 +1526,20 @@ async def stream_new_chat(
             or runtime_flags.get("sandbox_scope")
             or "thread"
         ).strip().lower()
+        artifact_offload_enabled = _coerce_runtime_flag(
+            runtime_flags.get("artifact_offload_enabled"),
+            default=False,
+        )
+        context_compaction_enabled = _coerce_runtime_flag(
+            runtime_flags.get("context_compaction_enabled"),
+            default=True,
+        )
+        try:
+            context_compaction_trigger_ratio = float(
+                runtime_flags.get("context_compaction_trigger_ratio") or 0.65
+            )
+        except (TypeError, ValueError):
+            context_compaction_trigger_ratio = 0.65
         if not hybrid_mode:
             speculative_enabled = False
 
@@ -1554,6 +1568,9 @@ async def stream_new_chat(
                 "subagent_context_max_chars": subagent_context_max_chars,
                 "subagent_result_max_chars": subagent_result_max_chars,
                 "subagent_sandbox_scope": subagent_sandbox_scope,
+                "artifact_offload_enabled": artifact_offload_enabled,
+                "context_compaction_enabled": context_compaction_enabled,
+                "context_compaction_trigger_ratio": context_compaction_trigger_ratio,
                 "sandbox_enabled": sandbox_enabled,
                 "sandbox_mode": sandbox_mode,
                 "sandbox_provisioner_url": sandbox_provisioner_url,
@@ -1619,6 +1636,9 @@ async def stream_new_chat(
                 f"subagent_isolation_enabled={subagent_isolation_enabled}, "
                 f"subagent_max_concurrency={subagent_max_concurrency}, "
                 f"subagent_sandbox_scope={subagent_sandbox_scope}, "
+                f"artifact_offload_enabled={artifact_offload_enabled}, "
+                f"context_compaction_enabled={context_compaction_enabled}, "
+                f"context_compaction_trigger_ratio={context_compaction_trigger_ratio:.2f}, "
                 f"sandbox_enabled={sandbox_enabled}, "
                 f"sandbox_mode={sandbox_mode}, "
                 f"sandbox_provisioner_url={sandbox_provisioner_url or '<none>'}, "
