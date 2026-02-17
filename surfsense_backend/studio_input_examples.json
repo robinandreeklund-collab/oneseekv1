@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "description": "Ready-to-run LangGraph Studio input examples for supervisor flow debugging.",
+  "examples": [
+    {
+      "id": "weather_hjo_direct",
+      "title": "Direct weather query (Hjo)",
+      "goal": "Verify action/weather routing and weather tool selection.",
+      "input_state": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Kan du kolla hur vadret ar i Hjo?"
+          }
+        ],
+        "turn_id": "studio-weather-1"
+      },
+      "expected_signals": [
+        "route_hint should resolve to action",
+        "selected_agents should include weather",
+        "call_agent requested_agent should remain weather (no selected_agents_lock->knowledge)",
+        "weather tool family should be selected (e.g. smhi_weather)"
+      ]
+    },
+    {
+      "id": "traffic_e4_goteborg_direct",
+      "title": "Direct traffic disruption query (E4, Goteborg)",
+      "goal": "Verify action/trafik routing and trafik tool family.",
+      "input_state": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Kan du kolla om det finns nagra trafikstorningar pa E4 i Goteborg?"
+          }
+        ],
+        "turn_id": "studio-trafik-1"
+      },
+      "expected_signals": [
+        "route_hint should resolve to action",
+        "selected_agents should include trafik (or action with trafik tools)",
+        "trafik tool family should be selected"
+      ]
+    },
+    {
+      "id": "compare_followup_weather_shift",
+      "title": "Compare followup that shifts to weather task",
+      "goal": "Verify cross-workflow behavior after compare: fresh task should not be forced to knowledge.",
+      "input_state": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "/compare openai och anthropic for kodgenerering"
+          },
+          {
+            "role": "assistant",
+            "content": "Kort jamforelse: bada ar starka men har olika styrkor."
+          },
+          {
+            "role": "user",
+            "content": "Kan du kolla hur vadret ar i Hjo?"
+          }
+        ],
+        "turn_id": "studio-compare-followup-1"
+      },
+      "expected_signals": [
+        "route_reason should not be followup_after_compare_routes_to_knowledge",
+        "selected_agents_lock should not force weather->knowledge",
+        "weather tool family should be reachable"
+      ]
+    },
+    {
+      "id": "statistics_to_marketplace_topic_shift",
+      "title": "Topic shift from statistics to marketplace",
+      "goal": "Verify that retrieval pivots when user intent changes across workflow boundaries.",
+      "input_state": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Visa arbetsloshetsstatistik for Malmo kommun."
+          },
+          {
+            "role": "assistant",
+            "content": "Arbetslosheten i Malmo ligger pa X procent."
+          },
+          {
+            "role": "user",
+            "content": "Byter amne: kan du hitta en begagnad elcykel pa Blocket i Malmo?"
+          }
+        ],
+        "turn_id": "studio-topic-shift-1"
+      },
+      "expected_signals": [
+        "route_hint should move to action",
+        "selected_agents should prioritize marketplace",
+        "marketplace tool family should be selected"
+      ]
+    },
+    {
+      "id": "filesystem_sandbox_task",
+      "title": "Filesystem task in sandbox",
+      "goal": "Verify code/sandbox hard lock and sandbox tool priority.",
+      "configurable_overrides": {
+        "runtime_hitl": {
+          "enabled": true,
+          "hybrid_mode": true,
+          "speculative_enabled": true,
+          "sandbox_enabled": true
+        }
+      },
+      "input_state": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Lista filer i /workspace/.artifacts och lasa senaste json-filen."
+          }
+        ],
+        "turn_id": "studio-sandbox-1"
+      },
+      "expected_signals": [
+        "selected_agents should include code",
+        "filesystem_hard_lock should keep execution on code agent",
+        "sandbox_* tools should be prioritized"
+      ]
+    }
+  ]
+}

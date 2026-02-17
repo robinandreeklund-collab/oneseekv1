@@ -70,6 +70,22 @@ Exempel-input till grafen:
 }
 ```
 
+Fler färdiga testfall finns i:
+
+- `surfsense_backend/studio_input_examples.json`
+
+Varje exempel innehåller:
+
+- `input_state`: payload att köra i Studio
+- `expected_signals`: vad du bör verifiera i traces
+- `configurable_overrides` (valfritt): runtime-flaggor per scenario
+
+Tips: börja med dessa tre för cross-workflow-debug:
+
+1. `weather_hjo_direct`
+2. `compare_followup_weather_shift`
+3. `traffic_e4_goteborg_direct`
+
 ## Notes
 
 - `STUDIO_CHECKPOINTER_MODE=memory` är enklast för snabb lokal debug.
