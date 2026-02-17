@@ -69,6 +69,11 @@ from app.agents.new_chat.statistics_prompts import (
     DEFAULT_STATISTICS_SYSTEM_PROMPT,
     build_statistics_system_prompt,
 )
+from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
+from app.agents.new_chat.marketplace_prompts import (
+    DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+    build_marketplace_prompt,
+)
 from app.agents.new_chat.subagent_utils import (
     SMALLTALK_INSTRUCTIONS,
     build_subagent_config,
@@ -1363,8 +1368,13 @@ async def stream_new_chat(
             citation_instructions=citation_instructions_block,
         )
         if route == Route.COMPARE:
+            compare_supervisor_instructions = resolve_prompt(
+                prompt_overrides,
+                "compare.supervisor.instructions",
+                COMPARE_SUPERVISOR_INSTRUCTIONS,
+            )
             supervisor_system_prompt = (
-                supervisor_system_prompt + "\n\n" + COMPARE_SUPERVISOR_INSTRUCTIONS
+                supervisor_system_prompt + "\n\n" + compare_supervisor_instructions
             )
 
         knowledge_prompt = resolve_prompt(
@@ -1445,6 +1455,25 @@ async def stream_new_chat(
         )
         trafik_worker_prompt = build_trafik_prompt(
             trafik_prompt,
+            citation_instructions=citation_instructions_block,
+        )
+        riksdagen_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.riksdagen.system",
+            DEFAULT_RIKSDAGEN_SYSTEM_PROMPT,
+        )
+        riksdagen_worker_prompt = build_worker_prompt(
+            riksdagen_prompt,
+            citations_enabled=citations_enabled,
+            citation_instructions=citation_instructions_block,
+        )
+        marketplace_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.marketplace.system",
+            DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+        )
+        marketplace_worker_prompt = build_marketplace_prompt(
+            marketplace_prompt,
             citation_instructions=citation_instructions_block,
         )
         compare_analysis_prompt = resolve_prompt(
@@ -1723,6 +1752,8 @@ async def stream_new_chat(
                     citations_enabled=citations_enabled,
                     citation_instructions=citation_instructions_block,
                 ),
+                riksdagen_prompt=riksdagen_worker_prompt,
+                marketplace_prompt=marketplace_worker_prompt,
                 tool_prompt_overrides=prompt_overrides,
             )
         else:

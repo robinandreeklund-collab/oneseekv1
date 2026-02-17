@@ -64,9 +64,13 @@ from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
 from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
     DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
     DEFAULT_SUPERVISOR_CRITIC_PROMPT,
     DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
+    DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE,
+    DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
     DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
     DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
 )
@@ -631,54 +635,91 @@ def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -
     return [profile.tool_id for profile in focused if profile.tool_id]
 
 
-def _build_scoped_prompt_for_agent(agent_name: str, task: str) -> str | None:
+def _format_prompt_template(
+    template: str,
+    variables: dict[str, Any],
+) -> str | None:
+    normalized_template = str(template or "").strip()
+    if not normalized_template:
+        return None
+    try:
+        rendered = normalized_template.format(**variables)
+    except Exception:
+        return None
+    rendered_text = str(rendered or "").strip()
+    return rendered_text or None
+
+
+def _build_scoped_prompt_for_agent(
+    agent_name: str,
+    task: str,
+    *,
+    prompt_template: str = DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
+) -> str | None:
     focused = _select_focused_tool_profiles(agent_name, task, limit=3)
     if not focused:
         return None
-    lines = [
-        "[SCOPED TOOL PROMPT]",
-        "Fokusera pa dessa mest relevanta verktyg/kategorier for uppgiften:",
-    ]
+    tool_lines: list[str] = []
     for profile in focused:
         keywords = ", ".join(profile.keywords[:4]) if profile.keywords else ""
         snippet = profile.description.strip()
         if len(snippet) > 140:
             snippet = snippet[:137].rstrip() + "..."
-        lines.append(
+        tool_lines.append(
             f"- {profile.tool_id} ({profile.category})"
             + (f": {snippet}" if snippet else "")
             + (f" [nyckelord: {keywords}]" if keywords else "")
         )
-    lines.append(
-        "Anvand i forsta hand ett av ovanstaende verktyg och hall argumenten strikt till valt verktygs schema."
+    rendered = _format_prompt_template(
+        prompt_template,
+        {
+            "tool_lines": "\n".join(tool_lines),
+            "agent_name": str(agent_name or "").strip(),
+            "task": str(task or "").strip(),
+        },
     )
-    lines.append(
-        "Om inget av dessa verktyg passar uppgiften: kor retrieve_tools igen med forfinad intent innan fortsattning."
+    if rendered:
+        return rendered
+    return DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE.format(
+        tool_lines="\n".join(tool_lines)
     )
-    return "\n".join(lines)
 
 
-def _default_prompt_for_tool_id(tool_id: str) -> str | None:
+def _default_prompt_for_tool_id(
+    tool_id: str,
+    *,
+    prompt_template: str = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
+) -> str | None:
     profile = _AGENT_TOOL_PROFILE_BY_ID.get(str(tool_id or "").strip())
     if not profile:
         return None
     keywords = ", ".join(profile.keywords[:8]) if profile.keywords else "-"
     description = profile.description.strip() or "-"
-    return "\n".join(
-        [
-            f"[TOOL-SPECIFIC PROMPT: {profile.tool_id}]",
-            f"Kategori: {profile.category}",
-            f"Beskrivning: {description}",
-            f"Nyckelord: {keywords}",
-            "Anvand endast detta verktyg om uppgiften matchar dess doman.",
-            "Matcha argument strikt mot verktygets schema och undvik overflodiga falt.",
-            "Vid saknade kravfalt: stall en kort, exakt forfragan om komplettering.",
-            "Om uppgiften byter amne eller inte matchar domanen: gor ny retrieve_tools innan nasta verktygsval.",
-        ]
+    rendered = _format_prompt_template(
+        prompt_template,
+        {
+            "tool_id": profile.tool_id,
+            "category": profile.category,
+            "description": description,
+            "keywords": keywords,
+        },
+    )
+    if rendered:
+        return rendered
+    return DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE.format(
+        tool_id=profile.tool_id,
+        category=profile.category,
+        description=description,
+        keywords=keywords,
     )
 
 
-def _tool_prompt_for_id(tool_id: str, tool_prompt_overrides: dict[str, str]) -> str | None:
+def _tool_prompt_for_id(
+    tool_id: str,
+    tool_prompt_overrides: dict[str, str],
+    *,
+    default_prompt_template: str = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
+) -> str | None:
     normalized_tool_id = str(tool_id or "").strip()
     if not normalized_tool_id:
         return None
@@ -686,7 +727,10 @@ def _tool_prompt_for_id(tool_id: str, tool_prompt_overrides: dict[str, str]) -> 
     override = str(tool_prompt_overrides.get(override_key) or "").strip()
     if override:
         return override
-    return _default_prompt_for_tool_id(normalized_tool_id)
+    return _default_prompt_for_tool_id(
+        normalized_tool_id,
+        prompt_template=default_prompt_template,
+    )
 
 
 def _build_tool_prompt_block(
@@ -694,6 +738,7 @@ def _build_tool_prompt_block(
     tool_prompt_overrides: dict[str, str],
     *,
     max_tools: int = 2,
+    default_prompt_template: str = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
 ) -> str | None:
     blocks: list[str] = []
     seen: set[str] = set()
@@ -702,7 +747,11 @@ def _build_tool_prompt_block(
         if not normalized_tool_id or normalized_tool_id in seen:
             continue
         seen.add(normalized_tool_id)
-        prompt_text = _tool_prompt_for_id(normalized_tool_id, tool_prompt_overrides)
+        prompt_text = _tool_prompt_for_id(
+            normalized_tool_id,
+            tool_prompt_overrides,
+            default_prompt_template=default_prompt_template,
+        )
         if prompt_text:
             blocks.append(prompt_text)
         if len(blocks) >= max(1, int(max_tools)):
@@ -2897,6 +2946,26 @@ async def create_supervisor_agent(
         "supervisor.code.sandbox.enforcement.message",
         DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
     )
+    code_read_file_enforcement_message = resolve_prompt(
+        prompt_overrides,
+        "supervisor.code.read_file.enforcement.message",
+        DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
+    )
+    scoped_tool_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.scoped_tool_prompt.template",
+        DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
+    )
+    tool_default_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.tool_default_prompt.template",
+        DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
+    )
+    subagent_context_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.subagent.context.template",
+        DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE,
+    )
     intent_resolver_prompt_template = resolve_prompt(
         prompt_overrides,
         "supervisor.intent_resolver.system",
@@ -3748,6 +3817,7 @@ async def create_supervisor_agent(
         scoped_prompt = _build_scoped_prompt_for_agent(
             selected_agent_name,
             latest_user_query,
+            prompt_template=scoped_tool_prompt_template,
         )
         if scoped_prompt:
             prompt = (
@@ -3759,6 +3829,7 @@ async def create_supervisor_agent(
             [tool_id],
             tool_prompt_overrides,
             max_tools=1,
+            default_prompt_template=tool_default_prompt_template,
         )
         if tool_prompt_block:
             prompt = (
@@ -4533,12 +4604,23 @@ async def create_supervisor_agent(
             context_lines.append(f"parent_query={latest_query}")
         if focused_tools_text:
             context_lines.append(f"preferred_tools={focused_tools_text}")
-        return (
-            "<subagent_context>\n"
-            + "\n".join(context_lines)
-            + "\n"
-            + "</subagent_context>\n\n"
-            + task_body
+        context_block = "\n".join(context_lines)
+        rendered = _format_prompt_template(
+            subagent_context_prompt_template,
+            {
+                "subagent_context_lines": context_block,
+                "subagent_id": subagent_id,
+                "route_hint": route_hint,
+                "parent_query": latest_query,
+                "preferred_tools": focused_tools_text,
+                "task": task_body,
+            },
+        )
+        if rendered:
+            return rendered
+        return DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE.format(
+            subagent_context_lines=context_block,
+            task=task_body,
         ).strip()
 
     def _build_subagent_worker_state(
@@ -5014,13 +5096,18 @@ async def create_supervisor_agent(
                     ensure_ascii=True,
                 )
         prompt = worker_prompts.get(name, "")
-        scoped_prompt = _build_scoped_prompt_for_agent(name, task)
+        scoped_prompt = _build_scoped_prompt_for_agent(
+            name,
+            task,
+            prompt_template=scoped_tool_prompt_template,
+        )
         if scoped_prompt:
             prompt = f"{prompt.rstrip()}\n\n{scoped_prompt}".strip() if prompt else scoped_prompt
         tool_prompt_block = _build_tool_prompt_block(
             selected_tool_ids,
             tool_prompt_overrides,
             max_tools=2,
+            default_prompt_template=tool_default_prompt_template,
         )
         if tool_prompt_block:
             prompt = (
@@ -5175,8 +5262,7 @@ async def create_supervisor_agent(
             ):
                 enforcement_message = (
                     f"{code_sandbox_enforcement_message}\n\n"
-                    "Du maste anvanda sandbox_read_file for att lasa filinnehall "
-                    "innan du sammanfattar resultatet."
+                    f"{code_read_file_enforcement_message}"
                 )
             if enforcement_message:
                 enforced_prompt = (
@@ -5717,7 +5803,11 @@ async def create_supervisor_agent(
                             ),
                         }
                 prompt = worker_prompts.get(agent_name, "")
-                scoped_prompt = _build_scoped_prompt_for_agent(agent_name, task)
+                scoped_prompt = _build_scoped_prompt_for_agent(
+                    agent_name,
+                    task,
+                    prompt_template=scoped_tool_prompt_template,
+                )
                 if scoped_prompt:
                     prompt = (
                         f"{prompt.rstrip()}\n\n{scoped_prompt}".strip()
@@ -5728,6 +5818,7 @@ async def create_supervisor_agent(
                     selected_tool_ids,
                     tool_prompt_overrides,
                     max_tools=2,
+                    default_prompt_template=tool_default_prompt_template,
                 )
                 if tool_prompt_block:
                     prompt = (

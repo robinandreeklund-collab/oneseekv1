@@ -6,7 +6,10 @@ from app.agents.new_chat.bigtool_prompts import (
     DEFAULT_WORKER_ACTION_PROMPT,
     DEFAULT_WORKER_KNOWLEDGE_PROMPT,
 )
-from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
+from app.agents.new_chat.compare_prompts import (
+    COMPARE_SUPERVISOR_INSTRUCTIONS,
+    DEFAULT_COMPARE_ANALYSIS_PROMPT,
+)
 from app.agents.new_chat.dispatcher import DEFAULT_ROUTE_SYSTEM_PROMPT
 from app.agents.new_chat.knowledge_router import DEFAULT_KNOWLEDGE_ROUTE_PROMPT
 from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
@@ -24,9 +27,13 @@ from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PRO
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
 from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
 from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
     DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
     DEFAULT_SUPERVISOR_CRITIC_PROMPT,
     DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
+    DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE,
+    DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
     DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
     DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
 )
@@ -53,6 +60,7 @@ class PromptDefinition:
     label: str
     description: str
     default_prompt: str
+    active_in_admin: bool = True
 
 
 PROMPT_DEFINITIONS: list[PromptDefinition] = [
@@ -67,54 +75,63 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         label="Knowledge router prompt",
         description="Routes knowledge requests to docs/internal/external.",
         default_prompt=DEFAULT_KNOWLEDGE_ROUTE_PROMPT,
+        active_in_admin=False,
     ),
     PromptDefinition(
         key="router.action",
         label="Action router prompt",
         description="Routes action requests to web/media/travel/data.",
         default_prompt=DEFAULT_ACTION_ROUTE_PROMPT,
+        active_in_admin=False,
     ),
     PromptDefinition(
         key="agent.knowledge.docs",
         label="Knowledge · Docs instructions",
         description="Sub-agent instructions for SurfSense docs.",
         default_prompt=KNOWLEDGE_DOCS_INSTRUCTIONS,
+        active_in_admin=False,
     ),
     PromptDefinition(
         key="agent.knowledge.internal",
         label="Knowledge · Internal instructions",
         description="Sub-agent instructions for internal knowledge base.",
         default_prompt=KNOWLEDGE_INTERNAL_INSTRUCTIONS,
+        active_in_admin=False,
     ),
     PromptDefinition(
         key="agent.knowledge.external",
         label="Knowledge · External instructions",
         description="Sub-agent instructions for external (Tavily) search.",
         default_prompt=KNOWLEDGE_EXTERNAL_INSTRUCTIONS,
+        active_in_admin=False,
     ),
     PromptDefinition(
         key="agent.action.web",
         label="Action · Web instructions",
         description="Sub-agent instructions for web tasks (scrape/preview/image).",
         default_prompt=ACTION_WEB_INSTRUCTIONS,
+        active_in_admin=False,
     ),
     PromptDefinition(
         key="agent.action.media",
         label="Action · Media instructions",
         description="Sub-agent instructions for podcast/audio tasks.",
         default_prompt=ACTION_MEDIA_INSTRUCTIONS,
+        active_in_admin=False,
     ),
     PromptDefinition(
         key="agent.action.travel",
         label="Action · Travel instructions",
         description="Sub-agent instructions for weather/routes.",
         default_prompt=ACTION_TRAVEL_INSTRUCTIONS,
+        active_in_admin=False,
     ),
     PromptDefinition(
         key="agent.action.data",
         label="Action · Data instructions",
         description="Sub-agent instructions for Libris/job search.",
         default_prompt=ACTION_DATA_INSTRUCTIONS,
+        active_in_admin=False,
     ),
     PromptDefinition(
         key="agent.smalltalk.system",
@@ -167,6 +184,41 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
             "Extra instruction injected when code agent must retry with mandatory sandbox tool usage."
         ),
         default_prompt=DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.code.read_file.enforcement.message",
+        label="Supervisor Code read-file enforcement prompt",
+        description=(
+            "Extra instruction injected when filesystem tasks explicitly require reading file contents."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
+    ),
+    PromptDefinition(
+        key="supervisor.scoped_tool_prompt.template",
+        label="Supervisor scoped tool prompt template",
+        description=(
+            "Template injected to focus a worker on top-ranked tools. "
+            "Placeholders: {tool_lines}, {agent_name}, {task}."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
+    ),
+    PromptDefinition(
+        key="supervisor.tool_default_prompt.template",
+        label="Supervisor tool default prompt template",
+        description=(
+            "Template used when no tool.{tool_id}.system override exists. "
+            "Placeholders: {tool_id}, {category}, {description}, {keywords}."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
+    ),
+    PromptDefinition(
+        key="supervisor.subagent.context.template",
+        label="Supervisor subagent context template",
+        description=(
+            "Template wrapped around delegated subagent tasks in strict isolation mode. "
+            "Placeholders: {subagent_context_lines}, {subagent_id}, {route_hint}, {parent_query}, {preferred_tools}, {task}."
+        ),
+        default_prompt=DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE,
     ),
     PromptDefinition(
         key="supervisor.intent_resolver.system",
@@ -307,6 +359,14 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
         default_prompt=DEFAULT_COMPARE_ANALYSIS_PROMPT,
     ),
     PromptDefinition(
+        key="compare.supervisor.instructions",
+        label="Compare supervisor mode instructions",
+        description=(
+            "Instruction block appended to supervisor prompt when compare route is active."
+        ),
+        default_prompt=COMPARE_SUPERVISOR_INSTRUCTIONS,
+    ),
+    PromptDefinition(
         key="compare.external.system",
         label="Compare external model prompt",
         description="System prompt sent to external models in compare.",
@@ -336,9 +396,20 @@ PROMPT_DEFINITIONS: list[PromptDefinition] = [
 
 
 PROMPT_DEFINITION_MAP = {definition.key: definition for definition in PROMPT_DEFINITIONS}
+ACTIVE_PROMPT_DEFINITION_MAP = {
+    definition.key: definition
+    for definition in PROMPT_DEFINITIONS
+    if definition.active_in_admin
+}
 
 
-def get_prompt_definitions() -> list[PromptDefinition]:
+def get_prompt_definitions(*, active_only: bool = False) -> list[PromptDefinition]:
+    if active_only:
+        return [
+            definition
+            for definition in PROMPT_DEFINITIONS
+            if definition.active_in_admin
+        ]
     return list(PROMPT_DEFINITIONS)
 
 

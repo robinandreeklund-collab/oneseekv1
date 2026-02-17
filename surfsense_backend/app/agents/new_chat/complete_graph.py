@@ -34,6 +34,7 @@ async def build_complete_graph(
     code_prompt: str | None = None,
     kartor_prompt: str | None = None,
     riksdagen_prompt: str | None = None,
+    marketplace_prompt: str | None = None,
     tool_prompt_overrides: dict[str, str] | None = None,
 ):
     """Build and compile the complete supervisor graph."""
@@ -56,5 +57,6 @@ async def build_complete_graph(
         code_prompt=code_prompt,
         kartor_prompt=kartor_prompt,
         riksdagen_prompt=riksdagen_prompt,
+        marketplace_prompt=marketplace_prompt,
         tool_prompt_overrides=tool_prompt_overrides,
     )

@@ -27,3 +27,34 @@ DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE = (
     "Du maste anvanda sandbox_* verktyg for filsystemsuppgifter innan du svarar. "
     "Verifiera resultat med ett efterfoljande read/list-steg nar det ar relevant."
 )
+
+
+DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE = (
+    "Du maste anvanda sandbox_read_file for att lasa filinnehall innan du sammanfattar resultatet."
+)
+
+
+DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE = (
+    "[SCOPED TOOL PROMPT]\n"
+    "Fokusera pa dessa mest relevanta verktyg/kategorier for uppgiften:\n"
+    "{tool_lines}\n"
+    "Anvand i forsta hand ett av ovanstaende verktyg och hall argumenten strikt till valt verktygs schema.\n"
+    "Om inget av dessa verktyg passar uppgiften: kor retrieve_tools igen med forfinad intent innan fortsattning."
+)
+
+
+DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE = (
+    "[TOOL-SPECIFIC PROMPT: {tool_id}]\n"
+    "Kategori: {category}\n"
+    "Beskrivning: {description}\n"
+    "Nyckelord: {keywords}\n"
+    "Anvand endast detta verktyg om uppgiften matchar dess doman.\n"
+    "Matcha argument strikt mot verktygets schema och undvik overflodiga falt.\n"
+    "Vid saknade kravfalt: stall en kort, exakt forfragan om komplettering.\n"
+    "Om uppgiften byter amne eller inte matchar domanen: gor ny retrieve_tools innan nasta verktygsval."
+)
+
+
+DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE = (
+    "<subagent_context>\n{subagent_context_lines}\n</subagent_context>\n\n{task}"
+)
