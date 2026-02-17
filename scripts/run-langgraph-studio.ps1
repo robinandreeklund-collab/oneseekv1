@@ -1,5 +1,5 @@
 param(
-    [string]$Host = "127.0.0.1",
+    [string]$BindHost = "127.0.0.1",
     [int]$Port = 8123,
     [switch]$SkipInstall
 )
@@ -32,5 +32,5 @@ if (!(Test-Path $LanggraphExe)) {
     throw "Could not find langgraph.exe in .venv. Run again without -SkipInstall."
 }
 
-Write-Host "Starting LangGraph Studio on http://$Host`:$Port ..."
-& $LanggraphExe dev --config "langgraph.json" --host $Host --port $Port
+Write-Host "Starting LangGraph Studio on http://$BindHost`:$Port ..."
+& $LanggraphExe dev --config "langgraph.json" --host $BindHost --port $Port
