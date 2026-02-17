@@ -9,8 +9,8 @@ Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalo
 
 1. [Plattformsoversikt](#plattformsoversikt)
 2. [Karnfunktioner](#karnfunktioner)
-3. [LangGraph-flode (Fas 1-4 + subagent A/B/C)](#langgraph-flode-fas-1-4--subagent-abc)
-4. [Strict subagent isolation (A/B/C)](#strict-subagent-isolation-abc)
+3. [LangGraph-flode (Fas 1-4 + subagent A-F)](#langgraph-flode-fas-1-4--subagent-a-f)
+4. [Strict subagent isolation + DeerFlow-style context (A-F)](#strict-subagent-isolation--deerflow-style-context-a-f)
 5. [Intent + Bigtool + Namespace + Rerank](#intent--bigtool--namespace--rerank)
 6. [Realtidsdata och API-integrationer](#realtidsdata-och-api-integrationer)
 7. [Compare-lage](#compare-lage)
@@ -54,7 +54,7 @@ Tekniskt anvands:
   - execution strategy-router (`inline`, `parallel`, `subagent`)
   - speculative branch + merge
   - progressive synthesizer med draft-streaming
-  - strict subagent isolation (A/B/C) med handoff contracts + sandbox scope
+  - strict subagent isolation + DeerFlow-style context management (A-F)
 - **Deterministiskt compare-lage**
   - parallella externa modellanrop
   - separat compare-subgraf
@@ -70,7 +70,7 @@ Tekniskt anvands:
 
 ---
 
-## LangGraph-flode (Fas 1-4 + subagent A/B/C)
+## LangGraph-flode (Fas 1-4 + subagent A-F)
 
 ### Huvudflode (normal mode)
 
@@ -79,14 +79,16 @@ flowchart TD
     U[User query] --> RI[resolve_intent]
 
     RI -->|compare_mode| CF[compare_fan_out]
-    CF --> CC[compare_collect]
-    CC --> CT[compare_tavily]
+    CF --> CLC[compare_collect]
+    CLC --> CT[compare_tavily]
     CT --> CS[compare_synthesizer]
     CS --> END1([END])
 
-    RI -->|hybrid complex + speculative_enabled| SP[speculative]
-    RI -->|hybrid simple| TR[tool_resolver]
-    RI -->|default/trivial| AR[agent_resolver]
+    RI --> MC[memory_context]
+
+    MC -->|hybrid complex + speculative_enabled| SP[speculative]
+    MC -->|hybrid simple| TR[tool_resolver]
+    MC -->|default/trivial| AR[agent_resolver]
 
     SP --> AR
     AR --> PL[planner]
@@ -105,7 +107,9 @@ flowchart TD
     EX -->|tool_calls| TOOLS[tools]
     EX -->|no more tools| CR[critic]
     TOOLS --> PT[post_tools]
-    PT --> OG[orchestration_guard]
+    PT --> AI[artifact_indexer]
+    AI --> CMP[context_compactor]
+    CMP --> OG[orchestration_guard]
     OG --> CR
 
     CR -->|ok/finalize| SH[synthesis_hitl]
@@ -118,7 +122,7 @@ flowchart TD
     SY --> END4([END])
 ```
 
-### Nodlogik som tillkommit i Fas 1-4
+### Nodlogik som tillkommit i Fas 1-4 + A-F
 
 - **Fas 1**
   - `resolve_intent`: klassar `graph_complexity`
@@ -134,10 +138,19 @@ flowchart TD
   - `speculative` + `speculative_merge`
   - ateranvandning av speculative resultat i `call_agent` och `call_agents_parallel`
   - `progressive_synthesizer` + `data-synthesis-draft` i stream
+- **Fas D**
+  - `artifact_indexer`: offload av stora payloads till artifacts
+  - `artifact_manifest` injiceras i prompt som kompakta refs
+- **Fas E**
+  - `context_compactor`: bygger `rolling_context_summary` nar contextbudget blir hog
+  - pruning anvander semantisk sammanfattning i stallet for generisk marker
+- **Fas F**
+  - `memory_context`: selektiv cross-session memory-injektion fran `user_memories`
+  - tydlig separering mellan aktiv session-kontekst och persistent minneskontekst
 
 ---
 
-## Strict subagent isolation (A/B/C)
+## Strict subagent isolation + DeerFlow-style context (A-F)
 
 OneSeek har nu ett strict isolation-spor som kan slas pa med runtime-flaggor.
 
@@ -449,6 +462,15 @@ Runtime-flaggor i chatflodet:
     "subagent_context_max_chars": 1400,
     "subagent_result_max_chars": 1000,
     "subagent_sandbox_scope": "subagent",
+    "artifact_offload_enabled": true,
+    "artifact_offload_threshold_chars": 4000,
+    "artifact_offload_max_entries": 36,
+    "context_compaction_enabled": true,
+    "context_compaction_trigger_ratio": 0.65,
+    "context_compaction_summary_max_chars": 1600,
+    "cross_session_memory_enabled": true,
+    "cross_session_memory_max_items": 6,
+    "cross_session_memory_max_chars": 1000,
     "sandbox_enabled": true,
     "sandbox_mode": "provisioner",
     "sandbox_provisioner_url": "http://sandbox-provisioner.oneseek-sandbox.svc.cluster.local:8002",
@@ -468,6 +490,15 @@ Runtime-flaggor i chatflodet:
 - `subagent_context_max_chars`: max parent-context in i subagent prompt
 - `subagent_result_max_chars`: max compact resultat tillbaka till parent
 - `subagent_sandbox_scope=subagent`: rekommenderat for strict sandbox-isolering
+- `artifact_offload_enabled=true`: flyttar stora tool-payloads till artifact-filer
+- `artifact_offload_threshold_chars`: storleksgrans for offload
+- `artifact_offload_max_entries`: max artifact-referenser i state
+- `context_compaction_enabled=true`: aktiverar semantisk compaction-node
+- `context_compaction_trigger_ratio`: token-budget ratio som triggar compaction
+- `context_compaction_summary_max_chars`: max langd for rolling summary
+- `cross_session_memory_enabled=true`: selektiv injektion av persistent minne
+- `cross_session_memory_max_items`: max antal minnesposter per turn
+- `cross_session_memory_max_chars`: max tecken for minnesblock i prompt
 - `sandbox_enabled=true`: aktiverar sandbox-tools for code-agent
 - `sandbox_mode=provisioner`: kor via extern sandbox-provisioner (Kubernetes)
 - `sandbox_state_store=redis`: rekommenderat vid flera backend-replikor
@@ -502,6 +533,12 @@ Use this runtime payload:
     "subagent_enabled": true,
     "subagent_isolation_enabled": true,
     "subagent_sandbox_scope": "subagent",
+    "artifact_offload_enabled": true,
+    "artifact_offload_threshold_chars": 4000,
+    "context_compaction_enabled": true,
+    "context_compaction_trigger_ratio": 0.65,
+    "cross_session_memory_enabled": true,
+    "cross_session_memory_max_items": 6,
     "sandbox_enabled": true,
     "sandbox_mode": "docker",
     "sandbox_docker_image": "python:3.12-slim",
@@ -549,6 +586,12 @@ Use this runtime payload:
     "subagent_context_max_chars": 1400,
     "subagent_result_max_chars": 1000,
     "subagent_sandbox_scope": "subagent",
+    "artifact_offload_enabled": true,
+    "artifact_offload_threshold_chars": 4000,
+    "context_compaction_enabled": true,
+    "context_compaction_trigger_ratio": 0.65,
+    "cross_session_memory_enabled": true,
+    "cross_session_memory_max_items": 6,
     "sandbox_enabled": true,
     "sandbox_mode": "provisioner",
     "sandbox_provisioner_url": "http://127.0.0.1:8002",
@@ -599,7 +642,10 @@ python3 -m pytest -q \
 OneSeek ar nu en hybrid, transparent och eval-driven agentplattform med:
 
 - adaptiv LangGraph-orkestrering (Fas 1-4)
-- strict subagent isolation (A/B/C) med kontext- och sandbox-scope-kontroll
+- strict subagent isolation + DeerFlow-style context management (A-F)
+- artifact-first offload + `artifact_manifest` for stora payloads
+- semantisk context compaction med `rolling_context_summary`
+- selektiv cross-session memory-injektion separerad fran aktiv session-kontekst
 - dynamiskt agent- och verktygsval med Bigtool namespaces + rerank
 - realtidsdata och compare-subgraf
 - LangSmith + intern trace for full observability
