@@ -9,6 +9,7 @@ import {
 	ChevronRight,
 	CircleDot,
 	Copy,
+	Download,
 } from "lucide-react";
 import { Drawer, DrawerContent, DrawerHandle, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -54,6 +55,15 @@ function formatPayload(payload: unknown, mode: "json" | "yaml" | "raw") {
 	} catch (error) {
 		return typeof payload === "string" ? payload : String(payload);
 	}
+}
+
+function toSafeFilenameSegment(value: string | null | undefined) {
+	if (!value) return "";
+	return value
+		.replace(/[^a-zA-Z0-9_-]+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "")
+		.slice(0, 48);
 }
 
 function extractAttribution(span: TraceSpan | null) {
@@ -113,9 +123,11 @@ export function TraceSheet({
 	const [panelWidth, setPanelWidth] = useState(720);
 	const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 	const [followLive, setFollowLive] = useState(true);
+	const [isJustExported, setIsJustExported] = useState(false);
 	const [isDragging, setIsDragging] = useState(false);
 	const startXRef = useRef(0);
 	const startWidthRef = useRef(0);
+	const exportFeedbackTimerRef = useRef<number | null>(null);
 
 	const sortedSpans = useMemo(() => {
 		const next = [...spans];
@@ -166,12 +178,22 @@ export function TraceSheet({
 		if (open) return;
 		setSelectedSpanId(null);
 		setFollowLive(true);
+		setIsJustExported(false);
 	}, [open]);
 
 	useEffect(() => {
 		setSelectedSpanId(null);
 		setFollowLive(true);
+		setIsJustExported(false);
 	}, [messageId]);
+
+	useEffect(() => {
+		return () => {
+			if (exportFeedbackTimerRef.current) {
+				window.clearTimeout(exportFeedbackTimerRef.current);
+			}
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!isDragging) return;
@@ -205,6 +227,61 @@ export function TraceSheet({
 
 	const attributionEntries = extractAttribution(selectedSpan);
 	const selectedTokenInfo = getTokenInfo(selectedSpan);
+	const canExportTrace = sortedSpans.length > 0 || Boolean(sessionId);
+
+	const handleExportJson = () => {
+		if (!canExportTrace) return;
+		const runningSpans = sortedSpans.filter((span) => span.status === "running").length;
+		const errorSpans = sortedSpans.filter((span) => span.status === "error").length;
+		const maxDepth = sortedSpans.reduce((currentMax, span) => {
+			return Math.max(currentMax, depthMap.get(span.id) ?? 0);
+		}, 0);
+		const payload = {
+			export_type: "oneseek-live-trace",
+			export_version: 1,
+			exported_at: new Date().toISOString(),
+			message_id: messageId,
+			session_id: sessionId,
+			ui_state: {
+				follow_live: followLive,
+				active_span_id: activeSpan?.id ?? null,
+				selected_span_id: selectedSpan?.id ?? null,
+			},
+			summary: {
+				total_spans: sortedSpans.length,
+				running_spans: runningSpans,
+				error_spans: errorSpans,
+				completed_spans: Math.max(0, sortedSpans.length - runningSpans - errorSpans),
+				max_depth: maxDepth,
+			},
+			spans: sortedSpans.map((span) => ({
+				...span,
+				tree_depth: depthMap.get(span.id) ?? 0,
+			})),
+		};
+		const json = JSON.stringify(payload, null, 2);
+		const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+		const sessionSegment = toSafeFilenameSegment(sessionId);
+		const messageSegment = toSafeFilenameSegment(messageId);
+		const targetSegment = sessionSegment || messageSegment || "trace";
+		const fileName = `oneseek-live-trace-${targetSegment}-${timestamp}.json`;
+		const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+		const objectUrl = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		anchor.href = objectUrl;
+		anchor.download = fileName;
+		document.body.appendChild(anchor);
+		anchor.click();
+		anchor.remove();
+		URL.revokeObjectURL(objectUrl);
+		setIsJustExported(true);
+		if (exportFeedbackTimerRef.current) {
+			window.clearTimeout(exportFeedbackTimerRef.current);
+		}
+		exportFeedbackTimerRef.current = window.setTimeout(() => {
+			setIsJustExported(false);
+		}, 1500);
+	};
 
 	const headerContent = (
 		<div className="flex items-center justify-between gap-3">
@@ -219,14 +296,30 @@ export function TraceSheet({
 					</div>
 				</div>
 			</div>
-			<Button
-				variant="ghost"
-				size="sm"
-				onClick={() => setFollowLive((prev) => !prev)}
-				className={cn("text-xs", followLive && "text-primary")}
-			>
-				{followLive ? "Följer live" : "Pausa följning"}
-			</Button>
+			<div className="flex items-center gap-2">
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={() => setFollowLive((prev) => !prev)}
+					className={cn("text-xs", followLive && "text-primary")}
+				>
+					{followLive ? "Följer live" : "Pausa följning"}
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={handleExportJson}
+					disabled={!canExportTrace}
+					className="gap-1.5 text-xs"
+				>
+					{isJustExported ? (
+						<CheckCircle2 className="size-3.5 text-emerald-500" />
+					) : (
+						<Download className="size-3.5" />
+					)}
+					{isJustExported ? "Exporterad" : "Exportera JSON"}
+				</Button>
+			</div>
 		</div>
 	);
 
