@@ -82,6 +82,7 @@ from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
 from .sandbox_execute import create_sandbox_execute_tool
 from .sandbox_filesystem import (
+    create_list_directory_alias_tool,
     create_sandbox_ls_tool,
     create_sandbox_read_file_tool,
     create_sandbox_replace_tool,
@@ -279,6 +280,18 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         name="sandbox_replace",
         description="Replace text within UTF-8 files in a thread-isolated sandbox workspace",
         factory=lambda deps: create_sandbox_replace_tool(
+            thread_id=deps.get("thread_id"),
+            runtime_hitl=deps.get("runtime_hitl"),
+            trace_recorder=deps.get("trace_recorder"),
+            trace_parent_span_id=deps.get("trace_parent_span_id"),
+        ),
+        requires=[],
+        enabled_by_default=False,
+    ),
+    ToolDefinition(
+        name="list_directory",
+        description="Compatibility alias to list files in the sandbox workspace",
+        factory=lambda deps: create_list_directory_alias_tool(
             thread_id=deps.get("thread_id"),
             runtime_hitl=deps.get("runtime_hitl"),
             trace_recorder=deps.get("trace_recorder"),

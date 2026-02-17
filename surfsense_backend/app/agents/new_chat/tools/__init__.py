@@ -41,6 +41,7 @@ from .public_web_search import create_public_web_search_tool
 from .reflect_on_progress import create_reflect_on_progress_tool
 from .sandbox_execute import create_sandbox_execute_tool
 from .sandbox_filesystem import (
+    create_list_directory_alias_tool,
     create_sandbox_ls_tool,
     create_sandbox_read_file_tool,
     create_sandbox_replace_tool,
@@ -82,6 +83,7 @@ __all__ = [
     "create_recall_memory_tool",
     "create_save_memory_tool",
     "create_sandbox_execute_tool",
+    "create_list_directory_alias_tool",
     "create_sandbox_ls_tool",
     "create_sandbox_read_file_tool",
     "create_sandbox_replace_tool",

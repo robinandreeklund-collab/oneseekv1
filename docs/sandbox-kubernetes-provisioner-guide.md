@@ -171,6 +171,7 @@ All flags are passed in `runtime_hitl`.
 | Flag | Type | Default | Purpose |
 |---|---|---|---|
 | `artifact_offload_enabled` | bool | `false` | Offload large tool payloads to artifact files |
+| `artifact_offload_storage_mode` | str | `auto` | `auto`, `sandbox`, `local` for artifact storage backend |
 | `artifact_offload_threshold_chars` | int | `4000` | Minimum payload size before offload |
 | `artifact_offload_max_entries` | int | `36` | Max artifact manifest entries kept in state |
 | `context_compaction_enabled` | bool | `true` | Enable semantic context compaction node |

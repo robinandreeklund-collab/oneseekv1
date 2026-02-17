@@ -460,8 +460,10 @@ _SUBAGENT_DEFAULT_MAX_CONCURRENCY = 3
 _SUBAGENT_MAX_HANDOFFS_IN_PROMPT = 6
 _ARTIFACT_DEFAULT_OFFLOAD_THRESHOLD_CHARS = 4_000
 _ARTIFACT_DEFAULT_MAX_ENTRIES = 36
+_ARTIFACT_OFFLOAD_PER_PASS_LIMIT = 2
 _ARTIFACT_CONTEXT_MAX_ITEMS = 6
 _ARTIFACT_LOCAL_ROOT = "/tmp/oneseek-artifacts"
+_ARTIFACT_DEFAULT_STORAGE_MODE = "auto"
 _ARTIFACT_INTERNAL_TOOL_NAMES = {
     "call_agent",
     "call_agents_parallel",
@@ -469,6 +471,7 @@ _ARTIFACT_INTERNAL_TOOL_NAMES = {
     "write_todos",
     "reflect_on_progress",
 }
+_SANDBOX_ALIAS_TOOL_IDS = {"list_directory"}
 
 
 def _has_trafik_intent(text: str) -> bool:
@@ -1396,12 +1399,23 @@ def _persist_artifact_content(
     thread_id: Any,
     turn_key: str,
     sandbox_enabled: bool,
+    artifact_storage_mode: str,
     runtime_hitl_cfg: dict[str, Any],
 ) -> tuple[str, str, str]:
     artifact_uri = f"artifact://{artifact_id}"
     normalized_turn = _safe_id_segment(turn_key, fallback="turn")
     normalized_thread = _safe_id_segment(thread_id, fallback="thread")
-    if sandbox_enabled:
+    requested_mode = str(artifact_storage_mode or _ARTIFACT_DEFAULT_STORAGE_MODE).strip().lower()
+    if requested_mode not in {"auto", "sandbox", "local"}:
+        requested_mode = _ARTIFACT_DEFAULT_STORAGE_MODE
+    effective_mode = requested_mode
+    if requested_mode == "auto":
+        sandbox_mode = str(runtime_hitl_cfg.get("sandbox_mode") or "").strip().lower()
+        if sandbox_mode in {"provisioner", "remote"}:
+            effective_mode = "local"
+        else:
+            effective_mode = "sandbox"
+    if effective_mode == "sandbox" and sandbox_enabled:
         artifact_path = f"/workspace/.artifacts/{normalized_turn}/{artifact_id}.json"
         try:
             written_path = sandbox_write_text_file(
@@ -3423,6 +3437,12 @@ async def create_supervisor_agent(
         min_value=8,
         max_value=120,
     )
+    artifact_offload_storage_mode = str(
+        runtime_hitl_cfg.get("artifact_offload_storage_mode")
+        or _ARTIFACT_DEFAULT_STORAGE_MODE
+    ).strip().lower()
+    if artifact_offload_storage_mode not in {"auto", "sandbox", "local"}:
+        artifact_offload_storage_mode = _ARTIFACT_DEFAULT_STORAGE_MODE
     context_compaction_enabled = _coerce_bool(
         runtime_hitl_cfg.get("context_compaction_enabled"),
         default=True,
@@ -3491,6 +3511,20 @@ async def create_supervisor_agent(
                 )
         except Exception:
             cross_session_memory_entries = []
+    context_token_budget: TokenBudget | None = None
+    context_budget_available_tokens = 0
+    model_name_for_compaction = (
+        getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
+    )
+    if model_name_for_compaction:
+        try:
+            context_token_budget = TokenBudget(model_name=str(model_name_for_compaction))
+            context_budget_available_tokens = max(
+                1, int(context_token_budget.available_for_messages)
+            )
+        except Exception:
+            context_token_budget = None
+            context_budget_available_tokens = 0
 
     async def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
         normalized_tool_id = str(tool_id or "").strip()
@@ -4512,7 +4546,10 @@ async def create_supervisor_agent(
 
     def _uses_sandbox_tool(tool_names: list[str] | None) -> bool:
         return any(
-            str(name or "").strip().lower().startswith("sandbox_")
+            (
+                str(name or "").strip().lower().startswith("sandbox_")
+                or str(name or "").strip().lower() in _SANDBOX_ALIAS_TOOL_IDS
+            )
             for name in (tool_names or [])
         )
 
@@ -6123,6 +6160,7 @@ async def create_supervisor_agent(
                 thread_id=thread_id,
                 turn_key=turn_key,
                 sandbox_enabled=bool(sandbox_enabled),
+                artifact_storage_mode=artifact_offload_storage_mode,
                 runtime_hitl_cfg=runtime_hitl_cfg,
             )
             summary = _summarize_tool_payload(normalized_tool_name, payload)
@@ -6142,7 +6180,11 @@ async def create_supervisor_agent(
             new_entries.append(entry)
             existing_source_ids.add(source_id)
             existing_digests.add(content_sha1)
-            if len(new_entries) >= max(1, int(artifact_offload_max_entries)):
+            per_pass_limit = min(
+                max(1, int(artifact_offload_max_entries)),
+                _ARTIFACT_OFFLOAD_PER_PASS_LIMIT,
+            )
+            if len(new_entries) >= per_pass_limit:
                 break
 
         if not new_entries:
@@ -6163,21 +6205,27 @@ async def create_supervisor_agent(
         messages = list(state.get("messages") or [])
         if len(messages) < _CONTEXT_COMPACTION_MIN_MESSAGES:
             return {}
+        if not (
+            state.get("step_results")
+            or state.get("artifact_manifest")
+            or state.get("subagent_handoffs")
+        ):
+            return {}
 
         usage_ratio = 0.0
-        model_name = (
-            getattr(llm, "model_name", None)
-            or getattr(llm, "model", None)
-            or ""
-        )
-        if model_name:
+        if context_token_budget is not None and context_budget_available_tokens > 0:
             try:
-                budget = TokenBudget(model_name=str(model_name))
-                used_tokens = budget.estimate_messages_tokens(messages)
-                available_tokens = max(1, int(budget.available_for_messages))
-                usage_ratio = float(used_tokens) / float(available_tokens)
+                used_tokens = context_token_budget.estimate_messages_tokens(messages)
+                usage_ratio = float(used_tokens) / float(context_budget_available_tokens)
             except Exception:
                 usage_ratio = 0.0
+        else:
+            # Conservative fallback when model context metadata is unavailable.
+            approx_chars = sum(
+                len(str(getattr(message, "content", "") or ""))
+                for message in messages
+            )
+            usage_ratio = min(1.0, float(max(0, approx_chars)) / 24_000.0)
         if usage_ratio < float(context_compaction_trigger_ratio) and len(messages) < MESSAGE_PRUNING_THRESHOLD:
             return {}
 

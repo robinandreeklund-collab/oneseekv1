@@ -507,3 +507,100 @@ def create_sandbox_replace_tool(
         return json.dumps(payload, ensure_ascii=True)
 
     return sandbox_replace
+
+
+def create_list_directory_alias_tool(
+    *,
+    thread_id: int | None,
+    runtime_hitl: dict[str, Any] | None = None,
+    trace_recorder: Any | None = None,
+    trace_parent_span_id: str | None = None,
+):
+    @tool
+    async def list_directory(
+        path: str = "/workspace",
+        recursive: bool = False,
+        max_entries: int = 200,
+        state: Annotated[dict[str, Any], InjectedState] | None = None,
+    ) -> str:
+        """Compatibility alias for listing sandbox directories."""
+        scoped_runtime_hitl = _runtime_hitl_with_scope(
+            runtime_hitl=runtime_hitl,
+            state=state,
+        )
+        depth = 6 if bool(recursive) else 2
+        safe_max_entries = max(1, min(1000, int(max_entries)))
+        try:
+            acquire_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.acquire",
+                input_data={"thread_id": thread_id, "tool": "list_directory"},
+            )
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=acquire_span_id,
+                output_data={
+                    "mode": _sandbox_preview(
+                        thread_id=thread_id,
+                        runtime_hitl=scoped_runtime_hitl,
+                    ).get("mode")
+                },
+            )
+            execute_span_id = await _trace_start(
+                trace_recorder=trace_recorder,
+                parent_span_id=trace_parent_span_id,
+                name="sandbox.execute",
+                input_data={
+                    "tool": "list_directory",
+                    "path": path,
+                    "recursive": bool(recursive),
+                },
+            )
+            entries = await asyncio.to_thread(
+                sandbox_list_directory,
+                thread_id=thread_id,
+                runtime_hitl=scoped_runtime_hitl,
+                path=str(path or "/workspace"),
+                max_depth=depth,
+                max_entries=safe_max_entries,
+            )
+            payload: dict[str, Any] = {
+                "path": str(path or "/workspace"),
+                "recursive": bool(recursive),
+                "entries": entries,
+                "count": len(entries),
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=scoped_runtime_hitl),
+            }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=execute_span_id,
+                output_data={"count": len(entries)},
+            )
+        except SandboxExecutionError as exc:
+            payload = {
+                "error": str(exc),
+                "error_type": "SandboxExecutionError",
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=scoped_runtime_hitl),
+            }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
+        except Exception as exc:
+            payload = {
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                **_sandbox_preview(thread_id=thread_id, runtime_hitl=scoped_runtime_hitl),
+            }
+            await _trace_end(
+                trace_recorder=trace_recorder,
+                span_id=locals().get("execute_span_id"),
+                output_data=payload,
+                status="failed",
+            )
+        return json.dumps(payload, ensure_ascii=True)
+
+    return list_directory

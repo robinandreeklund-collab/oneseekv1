@@ -463,6 +463,7 @@ Runtime-flaggor i chatflodet:
     "subagent_result_max_chars": 1000,
     "subagent_sandbox_scope": "subagent",
     "artifact_offload_enabled": true,
+    "artifact_offload_storage_mode": "auto",
     "artifact_offload_threshold_chars": 4000,
     "artifact_offload_max_entries": 36,
     "context_compaction_enabled": true,
@@ -491,6 +492,7 @@ Runtime-flaggor i chatflodet:
 - `subagent_result_max_chars`: max compact resultat tillbaka till parent
 - `subagent_sandbox_scope=subagent`: rekommenderat for strict sandbox-isolering
 - `artifact_offload_enabled=true`: flyttar stora tool-payloads till artifact-filer
+- `artifact_offload_storage_mode=auto`: snabb default (lokal i provisioner-lage, sandbox annars)
 - `artifact_offload_threshold_chars`: storleksgrans for offload
 - `artifact_offload_max_entries`: max artifact-referenser i state
 - `context_compaction_enabled=true`: aktiverar semantisk compaction-node
@@ -534,6 +536,7 @@ Use this runtime payload:
     "subagent_isolation_enabled": true,
     "subagent_sandbox_scope": "subagent",
     "artifact_offload_enabled": true,
+    "artifact_offload_storage_mode": "auto",
     "artifact_offload_threshold_chars": 4000,
     "context_compaction_enabled": true,
     "context_compaction_trigger_ratio": 0.65,
@@ -587,6 +590,7 @@ Use this runtime payload:
     "subagent_result_max_chars": 1000,
     "subagent_sandbox_scope": "subagent",
     "artifact_offload_enabled": true,
+    "artifact_offload_storage_mode": "auto",
     "artifact_offload_threshold_chars": 4000,
     "context_compaction_enabled": true,
     "context_compaction_trigger_ratio": 0.65,

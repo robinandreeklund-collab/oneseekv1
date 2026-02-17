@@ -1140,6 +1140,7 @@ async def stream_new_chat(
             - artifact_offload_enabled (bool): offload large tool payloads to artifacts.
             - artifact_offload_threshold_chars (int): offload threshold for payload size.
             - artifact_offload_max_entries (int): max artifact entries kept in state.
+            - artifact_offload_storage_mode (str): "auto", "sandbox", or "local" artifact storage backend.
             - context_compaction_enabled (bool): enables semantic context compactor.
             - context_compaction_trigger_ratio (float): token-budget ratio that triggers compaction.
             - context_compaction_summary_max_chars (int): max chars in rolling summary.
@@ -1539,6 +1540,11 @@ async def stream_new_chat(
             runtime_flags.get("artifact_offload_enabled"),
             default=False,
         )
+        artifact_offload_storage_mode = str(
+            runtime_flags.get("artifact_offload_storage_mode") or "auto"
+        ).strip().lower()
+        if artifact_offload_storage_mode not in {"auto", "sandbox", "local"}:
+            artifact_offload_storage_mode = "auto"
         context_compaction_enabled = _coerce_runtime_flag(
             runtime_flags.get("context_compaction_enabled"),
             default=True,
@@ -1588,6 +1594,7 @@ async def stream_new_chat(
                 "subagent_result_max_chars": subagent_result_max_chars,
                 "subagent_sandbox_scope": subagent_sandbox_scope,
                 "artifact_offload_enabled": artifact_offload_enabled,
+                "artifact_offload_storage_mode": artifact_offload_storage_mode,
                 "context_compaction_enabled": context_compaction_enabled,
                 "context_compaction_trigger_ratio": context_compaction_trigger_ratio,
                 "cross_session_memory_enabled": cross_session_memory_enabled,
@@ -1658,6 +1665,7 @@ async def stream_new_chat(
                 f"subagent_max_concurrency={subagent_max_concurrency}, "
                 f"subagent_sandbox_scope={subagent_sandbox_scope}, "
                 f"artifact_offload_enabled={artifact_offload_enabled}, "
+                f"artifact_offload_storage_mode={artifact_offload_storage_mode}, "
                 f"context_compaction_enabled={context_compaction_enabled}, "
                 f"context_compaction_trigger_ratio={context_compaction_trigger_ratio:.2f}, "
                 f"cross_session_memory_enabled={cross_session_memory_enabled}, "
