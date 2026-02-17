@@ -1397,6 +1397,30 @@ def _tool_call_priority(
     return ordering.get(normalized_tool, 99)
 
 
+def _has_followup_plan_steps(state: dict[str, Any] | None) -> bool:
+    if not isinstance(state, dict):
+        return False
+    if bool(state.get("plan_complete")):
+        return False
+    plan_items = state.get("active_plan") or []
+    if not isinstance(plan_items, list) or not plan_items:
+        return False
+    try:
+        step_index = int(state.get("plan_step_index") or 0)
+    except (TypeError, ValueError):
+        step_index = 0
+    step_index = max(0, step_index)
+    if step_index < (len(plan_items) - 1):
+        return True
+    for idx, item in enumerate(plan_items):
+        if idx <= step_index or not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status not in {"completed", "cancelled", "done"}:
+            return True
+    return False
+
+
 def _coerce_supervisor_tool_calls(
     message: Any,
     *,
@@ -1404,6 +1428,7 @@ def _coerce_supervisor_tool_calls(
     agent_hops: int,
     execution_strategy: str,
     allow_multiple: bool,
+    state: dict[str, Any] | None = None,
 ) -> Any:
     if allow_multiple or not isinstance(message, AIMessage):
         return message
@@ -1412,8 +1437,39 @@ def _coerce_supervisor_tool_calls(
         for tool_call in (getattr(message, "tool_calls", None) or [])
         if isinstance(tool_call, dict)
     ]
+    coerce_final = _has_followup_plan_steps(state)
+    changed = False
+    if coerce_final and tool_calls:
+        coerced_tool_calls: list[dict[str, Any]] = []
+        for tool_call in tool_calls:
+            if str(tool_call.get("name") or "").strip() != "call_agent":
+                coerced_tool_calls.append(tool_call)
+                continue
+            raw_args = tool_call.get("args")
+            if not isinstance(raw_args, dict) or not bool(raw_args.get("final")):
+                coerced_tool_calls.append(tool_call)
+                continue
+            coerced_args = dict(raw_args)
+            coerced_args["final"] = False
+            coerced_call = dict(tool_call)
+            coerced_call["args"] = coerced_args
+            coerced_tool_calls.append(coerced_call)
+            changed = True
+        if changed:
+            tool_calls = coerced_tool_calls
     if len(tool_calls) <= _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP:
-        return message
+        if not changed:
+            return message
+        try:
+            return message.model_copy(update={"tool_calls": tool_calls})
+        except Exception:
+            return AIMessage(
+                content=str(getattr(message, "content", "") or ""),
+                tool_calls=tool_calls,
+                additional_kwargs=dict(getattr(message, "additional_kwargs", {}) or {}),
+                response_metadata=dict(getattr(message, "response_metadata", {}) or {}),
+                id=getattr(message, "id", None),
+            )
     ranked = sorted(
         enumerate(tool_calls),
         key=lambda item: (

@@ -138,6 +138,7 @@ def build_executor_nodes(
             agent_hops=int(state.get("agent_hops") or 0),
             execution_strategy=str(state.get("execution_strategy") or ""),
             allow_multiple=bool(compare_mode),
+            state=state,
         )
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:
@@ -179,6 +180,7 @@ def build_executor_nodes(
             agent_hops=int(state.get("agent_hops") or 0),
             execution_strategy=str(state.get("execution_strategy") or ""),
             allow_multiple=bool(compare_mode),
+            state=state,
         )
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:
