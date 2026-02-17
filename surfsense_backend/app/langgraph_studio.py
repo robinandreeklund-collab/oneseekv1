@@ -10,12 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import threading
 from dataclasses import replace
 from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, create_model
 from sqlalchemy.future import select
 
 from app.agents.new_chat.bigtool_prompts import (
@@ -41,7 +42,7 @@ from app.agents.new_chat.marketplace_prompts import (
     DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
     build_marketplace_prompt,
 )
-from app.agents.new_chat.prompt_registry import resolve_prompt
+from app.agents.new_chat.prompt_registry import get_prompt_definitions, resolve_prompt
 from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
 from app.agents.new_chat.statistics_prompts import (
     DEFAULT_STATISTICS_SYSTEM_PROMPT,
@@ -96,52 +97,50 @@ _FACTORY_LOOP_THREAD: threading.Thread | None = None
 _FACTORY_LOOP_GUARD = threading.Lock()
 _FACTORY_LOOP_READY = threading.Event()
 
-_STUDIO_PROMPT_CONFIG_FIELDS: dict[str, tuple[str, str]] = {
-    "prompt_supervisor_system": (
-        "agent.supervisor.system",
-        "STUDIO_PROMPT_SUPERVISOR_SYSTEM",
-    ),
-    "prompt_knowledge_system": (
-        "agent.knowledge.system",
-        "STUDIO_PROMPT_KNOWLEDGE_SYSTEM",
-    ),
-    "prompt_action_system": (
-        "agent.action.system",
-        "STUDIO_PROMPT_ACTION_SYSTEM",
-    ),
-    "prompt_statistics_system": (
-        "agent.statistics.system",
-        "STUDIO_PROMPT_STATISTICS_SYSTEM",
-    ),
-    "prompt_bolag_system": (
-        "agent.bolag.system",
-        "STUDIO_PROMPT_BOLAG_SYSTEM",
-    ),
-    "prompt_trafik_system": (
-        "agent.trafik.system",
-        "STUDIO_PROMPT_TRAFIK_SYSTEM",
-    ),
-    "prompt_riksdagen_system": (
-        "agent.riksdagen.system",
-        "STUDIO_PROMPT_RIKSDAGEN_SYSTEM",
-    ),
-    "prompt_marketplace_system": (
-        "agent.marketplace.system",
-        "STUDIO_PROMPT_MARKETPLACE_SYSTEM",
-    ),
-    "prompt_compare_analysis_system": (
-        "compare.analysis.system",
-        "STUDIO_PROMPT_COMPARE_ANALYSIS_SYSTEM",
-    ),
-    "prompt_compare_external_system": (
-        "compare.external.system",
-        "STUDIO_PROMPT_COMPARE_EXTERNAL_SYSTEM",
-    ),
+_PROMPT_NODE_GROUP_TO_GRAPH_NODES: dict[str, list[str]] = {
+    "router": ["resolve_intent"],
+    "supervisor": [
+        "resolve_intent",
+        "agent_resolver",
+        "planner",
+        "tool_resolver",
+        "critic",
+        "synthesizer",
+    ],
+    "subagent": ["executor"],
+    "compare": ["compare_fan_out", "compare_synthesizer"],
+    "system": ["executor"],
+    "other": ["executor"],
+}
+_GRAPH_RELEVANT_PROMPT_GROUPS = {"router", "supervisor", "subagent", "compare", "system"}
+_PROMPT_KEY_FIELD_NAME_OVERRIDES: dict[str, str] = {
+    "agent.supervisor.system": "prompt_supervisor_system",
+    "agent.knowledge.system": "prompt_knowledge_system",
+    "agent.action.system": "prompt_action_system",
+    "agent.statistics.system": "prompt_statistics_system",
+    "agent.bolag.system": "prompt_bolag_system",
+    "agent.trafik.system": "prompt_trafik_system",
+    "agent.riksdagen.system": "prompt_riksdagen_system",
+    "agent.marketplace.system": "prompt_marketplace_system",
+    "compare.analysis.system": "prompt_compare_analysis_system",
+    "compare.external.system": "prompt_compare_external_system",
+}
+_PROMPT_KEY_ENV_NAME_OVERRIDES: dict[str, str] = {
+    "agent.supervisor.system": "STUDIO_PROMPT_SUPERVISOR_SYSTEM",
+    "agent.knowledge.system": "STUDIO_PROMPT_KNOWLEDGE_SYSTEM",
+    "agent.action.system": "STUDIO_PROMPT_ACTION_SYSTEM",
+    "agent.statistics.system": "STUDIO_PROMPT_STATISTICS_SYSTEM",
+    "agent.bolag.system": "STUDIO_PROMPT_BOLAG_SYSTEM",
+    "agent.trafik.system": "STUDIO_PROMPT_TRAFIK_SYSTEM",
+    "agent.riksdagen.system": "STUDIO_PROMPT_RIKSDAGEN_SYSTEM",
+    "agent.marketplace.system": "STUDIO_PROMPT_MARKETPLACE_SYSTEM",
+    "compare.analysis.system": "STUDIO_PROMPT_COMPARE_ANALYSIS_SYSTEM",
+    "compare.external.system": "STUDIO_PROMPT_COMPARE_EXTERNAL_SYSTEM",
 }
 
 
-class StudioGraphConfiguration(BaseModel):
-    """Configurable values exposed in LangGraph Studio."""
+class StudioGraphConfigurationBase(BaseModel):
+    """Base configurable values exposed in LangGraph Studio."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -174,62 +173,78 @@ class StudioGraphConfiguration(BaseModel):
         },
     )
 
-    prompt_supervisor_system: str | None = Field(
-        default=DEFAULT_SUPERVISOR_PROMPT,
-        description="Supervisor system prompt",
-        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
-    )
-    prompt_knowledge_system: str | None = Field(
-        default=DEFAULT_WORKER_KNOWLEDGE_PROMPT,
-        description="Knowledge worker system prompt",
-        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
-    )
-    prompt_action_system: str | None = Field(
-        default=DEFAULT_WORKER_ACTION_PROMPT,
-        description="Action worker system prompt",
-        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
-    )
-    prompt_statistics_system: str | None = Field(
-        default=DEFAULT_STATISTICS_SYSTEM_PROMPT,
-        description="Statistics worker system prompt",
-        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
-    )
-    prompt_bolag_system: str | None = Field(
-        default=DEFAULT_BOLAG_SYSTEM_PROMPT,
-        description="Bolag worker system prompt",
-        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
-    )
-    prompt_trafik_system: str | None = Field(
-        default=DEFAULT_TRAFFIC_SYSTEM_PROMPT,
-        description="Trafik worker system prompt",
-        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
-    )
-    prompt_riksdagen_system: str | None = Field(
-        default=DEFAULT_RIKSDAGEN_SYSTEM_PROMPT,
-        description="Riksdagen worker system prompt",
-        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
-    )
-    prompt_marketplace_system: str | None = Field(
-        default=DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
-        description="Marketplace worker system prompt",
-        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
-    )
-    prompt_compare_analysis_system: str | None = Field(
-        default=DEFAULT_COMPARE_ANALYSIS_PROMPT,
-        description="Compare analysis prompt",
-        json_schema_extra={
-            "langgraph_nodes": ["compare_fan_out", "compare_synthesizer"],
-            "langgraph_type": "prompt",
-        },
-    )
-    prompt_compare_external_system: str | None = Field(
-        default=DEFAULT_EXTERNAL_SYSTEM_PROMPT,
-        description="Compare external model prompt",
-        json_schema_extra={
-            "langgraph_nodes": ["compare_fan_out"],
-            "langgraph_type": "prompt",
-        },
-    )
+
+def _sanitize_prompt_key_for_field(prompt_key: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(prompt_key or "").strip().lower())
+    normalized = normalized.strip("_")
+    return normalized or "prompt"
+
+
+def _prompt_field_name_for_key(prompt_key: str, *, used_names: set[str]) -> str:
+    requested = _PROMPT_KEY_FIELD_NAME_OVERRIDES.get(prompt_key)
+    if requested:
+        candidate = requested
+    else:
+        candidate = f"prompt_{_sanitize_prompt_key_for_field(prompt_key)}"
+    if candidate not in used_names:
+        return candidate
+    # Resolve rare collisions from sanitized keys.
+    index = 2
+    base_candidate = candidate
+    while f"{base_candidate}_{index}" in used_names:
+        index += 1
+    return f"{base_candidate}_{index}"
+
+
+def _prompt_env_name_for_field(prompt_key: str, field_name: str) -> str:
+    requested = _PROMPT_KEY_ENV_NAME_OVERRIDES.get(prompt_key)
+    if requested:
+        return requested
+    return f"STUDIO_{field_name.upper()}"
+
+
+def _build_studio_prompt_field_specs() -> tuple[dict[str, tuple[str, str]], dict[str, Any]]:
+    config_fields: dict[str, tuple[str, str]] = {}
+    model_fields: dict[str, Any] = {}
+    used_field_names: set[str] = set()
+    prompt_definitions = get_prompt_definitions(active_only=False)
+    for definition in prompt_definitions:
+        if definition.node_group not in _GRAPH_RELEVANT_PROMPT_GROUPS:
+            continue
+        prompt_key = str(definition.key).strip()
+        if not prompt_key:
+            continue
+        field_name = _prompt_field_name_for_key(prompt_key, used_names=used_field_names)
+        used_field_names.add(field_name)
+        env_name = _prompt_env_name_for_field(prompt_key, field_name)
+        config_fields[field_name] = (prompt_key, env_name)
+        graph_nodes = _PROMPT_NODE_GROUP_TO_GRAPH_NODES.get(
+            definition.node_group,
+            ["executor"],
+        )
+        model_fields[field_name] = (
+            str | None,
+            Field(
+                default=definition.default_prompt,
+                description=f"{definition.label} ({prompt_key})",
+                json_schema_extra={
+                    "langgraph_type": "prompt",
+                    "langgraph_nodes": graph_nodes,
+                    "prompt_key": prompt_key,
+                    "prompt_node_group": definition.node_group,
+                },
+            ),
+        )
+    return config_fields, model_fields
+
+
+_STUDIO_PROMPT_CONFIG_FIELDS, _STUDIO_PROMPT_MODEL_FIELDS = _build_studio_prompt_field_specs()
+
+StudioGraphConfiguration = create_model(
+    "StudioGraphConfiguration",
+    __base__=StudioGraphConfigurationBase,
+    **_STUDIO_PROMPT_MODEL_FIELDS,
+)
 
 
 def _parse_bool(value: Any, *, default: bool) -> bool:

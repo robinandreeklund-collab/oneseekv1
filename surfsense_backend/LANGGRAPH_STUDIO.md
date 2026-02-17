@@ -128,13 +128,10 @@ I Studio:
 
 1. Öppna **Manage Assistants**.
 2. Välj din assistant.
-3. Under configurable/properties finns prompt-fält som:
-   - `prompt_supervisor_system`
-   - `prompt_knowledge_system`
-   - `prompt_action_system`
-   - `prompt_statistics_system`
-   - `prompt_compare_analysis_system`
-   - `prompt_compare_external_system`
+3. Under configurable/properties finns nu prompt-fält för **alla graph-relevanta promptar**
+   (router/supervisor/subagent/compare/system).
+   - Exempel: `prompt_supervisor_system`, `prompt_router_top_level`,
+     `prompt_supervisor_planner_system`, `prompt_marketplace_system`
 4. Spara assistant-konfigurationen och kör en ny run.
 
 För många ändringar samtidigt kan du använda:
