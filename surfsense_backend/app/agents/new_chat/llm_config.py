@@ -68,6 +68,19 @@ def _sanitize_config_value(value: object | None) -> str | None:
     return str(value).strip()
 
 
+def _ensure_auto_mode_router_initialized() -> bool:
+    if LLMRouterService.is_initialized():
+        return True
+    try:
+        from app.config import initialize_llm_router_force
+
+        initialize_llm_router_force()
+    except Exception as exc:
+        print(f"Error: Failed lazy initialization of LLM Router: {exc}")
+        return False
+    return LLMRouterService.is_initialized()
+
+
 @dataclass
 class AgentConfig:
     """
@@ -323,7 +336,7 @@ async def load_agent_config(
     """
     # Auto mode (ID 0) - use LiteLLM Router
     if is_auto_mode(config_id):
-        if not LLMRouterService.is_initialized():
+        if not _ensure_auto_mode_router_initialized():
             print("Error: Auto mode requested but LLM Router not initialized")
             return None
         return AgentConfig.from_auto_mode()
@@ -393,7 +406,7 @@ def create_chat_litellm_from_agent_config(
     """
     # Handle Auto mode - return ChatLiteLLMRouter
     if agent_config.is_auto_mode:
-        if not LLMRouterService.is_initialized():
+        if not _ensure_auto_mode_router_initialized():
             print("Error: Auto mode requested but LLM Router not initialized")
             return None
         try:

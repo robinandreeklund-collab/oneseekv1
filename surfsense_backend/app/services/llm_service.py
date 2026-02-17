@@ -6,7 +6,7 @@ from langchain_litellm import ChatLiteLLM
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.config import config
+from app.config import config, initialize_llm_router_force
 from app.db import NewLLMConfig, SearchSpace
 from app.services.llm_router_service import (
     AUTO_MODE_ID,
@@ -19,6 +19,17 @@ from app.services.llm_router_service import (
 litellm.drop_params = True
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_auto_mode_router_initialized() -> bool:
+    if LLMRouterService.is_initialized():
+        return True
+    try:
+        initialize_llm_router_force()
+    except Exception as exc:
+        logger.error(f"Failed lazy initialization of LLM Router: {exc}")
+        return False
+    return LLMRouterService.is_initialized()
 
 
 class LLMRole:
@@ -206,7 +217,7 @@ async def get_search_space_llm_instance(
 
         # Check for Auto mode (ID 0) - use router for load balancing
         if is_auto_mode(llm_config_id):
-            if not LLMRouterService.is_initialized():
+            if not _ensure_auto_mode_router_initialized():
                 logger.error(
                     "Auto mode requested but LLM Router not initialized. "
                     "Ensure global_llm_config.yaml exists with valid configs."
