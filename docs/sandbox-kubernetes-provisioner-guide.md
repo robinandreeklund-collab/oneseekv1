@@ -166,6 +166,20 @@ All flags are passed in `runtime_hitl`.
 | `subagent_result_max_chars` | int | `1000` | Max compacted subagent result chars |
 | `subagent_sandbox_scope` | str | `thread` | Preferred sandbox scope policy for subagents |
 
+### Context management flags (DeerFlow-style)
+
+| Flag | Type | Default | Purpose |
+|---|---|---|---|
+| `artifact_offload_enabled` | bool | `false` | Offload large tool payloads to artifact files |
+| `artifact_offload_threshold_chars` | int | `4000` | Minimum payload size before offload |
+| `artifact_offload_max_entries` | int | `36` | Max artifact manifest entries kept in state |
+| `context_compaction_enabled` | bool | `true` | Enable semantic context compaction node |
+| `context_compaction_trigger_ratio` | float | `0.65` | Token-budget usage ratio that triggers compaction |
+| `context_compaction_summary_max_chars` | int | `1600` | Max chars for rolling context summary |
+| `cross_session_memory_enabled` | bool | `true` | Enable selective injection from persistent user memory |
+| `cross_session_memory_max_items` | int | `6` | Max memory items injected per turn |
+| `cross_session_memory_max_chars` | int | `1000` | Max chars for injected memory context |
+
 ### Sandbox flags
 
 | Flag | Type | Default | Purpose |

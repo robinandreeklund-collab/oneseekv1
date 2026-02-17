@@ -170,6 +170,37 @@ flowchart LR
   X -->|scope=thread or subagent| L[lease/pod isolation]
 ```
 
+### DeerFlow-style context management (D/E/F)
+
+OneSeek innehaller nu en context-pipeline inspirerad av DeerFlow:
+
+- **Fas D - Artifact-first offload**
+  - stora tool-payloads offloadas automatiskt till artifact-filer
+  - supervisor sparar endast kompakt metadata i `artifact_manifest`
+  - prompten far `<artifact_manifest>` med refs i stallet for full raw payload
+
+- **Fas E - Semantic compaction**
+  - `context_compactor` bygger `rolling_context_summary` nar context blir stor
+  - gamla steg komprimeras till semantisk sammanfattning
+  - message-pruning anvander sammanfattningen i stallet for en generisk markor
+
+- **Fas F - Session vs cross-session memory**
+  - cross-session minne hamtas selektivt fran `user_memories`
+  - endast relevanta minnesposter injiceras via `<cross_session_memory>`
+  - aktiv session-kontekst (plan, handoffs, artifacts) hanteras separat
+
+Nya runtime-flaggor:
+
+- `artifact_offload_enabled` (bool)
+- `artifact_offload_threshold_chars` (int)
+- `artifact_offload_max_entries` (int)
+- `context_compaction_enabled` (bool)
+- `context_compaction_trigger_ratio` (float 0-1)
+- `context_compaction_summary_max_chars` (int)
+- `cross_session_memory_enabled` (bool)
+- `cross_session_memory_max_items` (int)
+- `cross_session_memory_max_chars` (int)
+
 ---
 
 ## Intent + Bigtool + Namespace + Rerank

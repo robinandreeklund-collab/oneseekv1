@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Annotated, TypedDict
+from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
@@ -93,7 +94,7 @@ from app.agents.new_chat.tools.external_models import (
 )
 from app.agents.new_chat.tools.reflect_on_progress import create_reflect_on_progress_tool
 from app.agents.new_chat.tools.write_todos import create_write_todos_tool
-from app.db import AgentComboCache
+from app.db import AgentComboCache, UserMemory
 from app.services.cache_control import is_cache_disabled
 from app.services.reranker_service import RerankerService
 from app.services.retrieval_feedback_persistence_service import (
@@ -1109,6 +1110,7 @@ class SupervisorState(TypedDict, total=False):
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
     subagent_handoffs: Annotated[list[dict[str, Any]], _append_subagent_handoffs]
     artifact_manifest: Annotated[list[dict[str, Any]], _append_artifact_manifest]
+    cross_session_memory_context: Annotated[str | None, _replace]
     rolling_context_summary: Annotated[str | None, _replace]
     final_agent_response: Annotated[str | None, _replace]
     final_response: Annotated[str | None, _replace]
@@ -1310,6 +1312,16 @@ def _format_artifact_manifest_context(state: dict[str, Any]) -> str | None:
     return "<artifact_manifest>\n" + "\n".join(lines) + "\n</artifact_manifest>"
 
 
+def _format_cross_session_memory_context(state: dict[str, Any]) -> str | None:
+    memory_context = _truncate_for_prompt(
+        str(state.get("cross_session_memory_context") or "").strip(),
+        1400,
+    )
+    if not memory_context:
+        return None
+    return "<cross_session_memory>\n" + memory_context + "\n</cross_session_memory>"
+
+
 def _format_rolling_context_summary_context(state: dict[str, Any]) -> str | None:
     summary = _truncate_for_prompt(
         str(state.get("rolling_context_summary") or "").strip(),
@@ -1408,6 +1420,79 @@ def _persist_artifact_content(
     local_path = local_root / f"{artifact_id}.json"
     local_path.write_text(str(content or ""), encoding="utf-8")
     return artifact_uri, str(local_path), "local"
+
+
+def _tokenize_for_memory_relevance(text: str) -> set[str]:
+    tokens = _tokenize(_normalize_text(str(text or "")))
+    return {
+        token
+        for token in tokens
+        if len(token) >= 3 and token not in _AGENT_STOPWORDS
+    }
+
+
+def _select_cross_session_memory_entries(
+    *,
+    entries: list[dict[str, Any]],
+    query: str,
+    max_items: int,
+) -> list[dict[str, Any]]:
+    if not entries:
+        return []
+    query_tokens = _tokenize_for_memory_relevance(query)
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        text = str(entry.get("memory_text") or "").strip()
+        if not text:
+            continue
+        category = str(entry.get("category") or "fact").strip().lower()
+        entry_tokens = _tokenize_for_memory_relevance(text)
+        overlap = len(query_tokens.intersection(entry_tokens))
+        score = overlap * 10 + max(0, len(entries) - index)
+        if category in {"instruction", "preference"}:
+            score += 2
+        if overlap == 0 and category not in {"instruction", "preference"}:
+            continue
+        scored.append((score, index, entry))
+    if not scored:
+        return [item for item in entries[: max(1, min(max_items, 2))] if isinstance(item, dict)]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for _score, _index, entry in scored:
+        key = str(entry.get("id") or "").strip() or hashlib.sha1(
+            str(entry.get("memory_text") or "").encode("utf-8", errors="ignore")
+        ).hexdigest()[:12]
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(entry)
+        if len(selected) >= max(1, int(max_items)):
+            break
+    return selected
+
+
+def _render_cross_session_memory_context(
+    *,
+    entries: list[dict[str, Any]],
+    max_chars: int,
+) -> str:
+    if not entries:
+        return ""
+    lines: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        category = str(entry.get("category") or "fact").strip().lower()
+        memory_text = _truncate_for_prompt(str(entry.get("memory_text") or "").strip(), 220)
+        if not memory_text:
+            continue
+        lines.append(f"- [{category}] {memory_text}")
+    if not lines:
+        return ""
+    return _truncate_for_prompt("\n".join(lines), max(220, int(max_chars)))
 
 
 def _extract_first_json_object(text: str) -> dict[str, Any]:
@@ -3354,6 +3439,58 @@ async def create_supervisor_agent(
         min_value=320,
         max_value=8_000,
     )
+    cross_session_memory_enabled = _coerce_bool(
+        runtime_hitl_cfg.get("cross_session_memory_enabled"),
+        default=True,
+    )
+    cross_session_memory_max_items = _coerce_int_range(
+        runtime_hitl_cfg.get("cross_session_memory_max_items"),
+        default=6,
+        min_value=1,
+        max_value=16,
+    )
+    cross_session_memory_max_chars = _coerce_int_range(
+        runtime_hitl_cfg.get("cross_session_memory_max_chars"),
+        default=1_000,
+        min_value=220,
+        max_value=4_000,
+    )
+    cross_session_memory_entries: list[dict[str, Any]] = []
+    if cross_session_memory_enabled and isinstance(db_session, AsyncSession) and user_id:
+        try:
+            user_uuid = UUID(str(user_id))
+            stmt = (
+                select(UserMemory)
+                .where(UserMemory.user_id == user_uuid)
+                .order_by(UserMemory.updated_at.desc())
+                .limit(max(4, int(cross_session_memory_max_items) * 3))
+            )
+            if search_space_id is not None:
+                stmt = stmt.where(
+                    (UserMemory.search_space_id == search_space_id)
+                    | (UserMemory.search_space_id.is_(None))
+                )
+            rows = (await db_session.execute(stmt)).scalars().all()
+            for row in rows:
+                raw_category = getattr(row, "category", None)
+                category = (
+                    str(raw_category.value)
+                    if hasattr(raw_category, "value")
+                    else str(raw_category or "fact")
+                )
+                memory_text = str(getattr(row, "memory_text", "") or "").strip()
+                if not memory_text:
+                    continue
+                cross_session_memory_entries.append(
+                    {
+                        "id": str(getattr(row, "id", "") or ""),
+                        "category": category.lower(),
+                        "memory_text": memory_text,
+                        "updated_at": str(getattr(row, "updated_at", "") or ""),
+                    }
+                )
+        except Exception:
+            cross_session_memory_entries = []
 
     async def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
         normalized_tool_id = str(tool_id or "").strip()
@@ -5713,9 +5850,35 @@ async def create_supervisor_agent(
         format_resolved_tools_context_fn=_format_resolved_tools_context,
         format_subagent_handoffs_context_fn=_format_subagent_handoffs_context,
         format_artifact_manifest_context_fn=_format_artifact_manifest_context,
+        format_cross_session_memory_context_fn=_format_cross_session_memory_context,
         format_rolling_context_summary_context_fn=_format_rolling_context_summary_context,
         coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
     )
+
+    async def memory_context_node(
+        state: SupervisorState,
+        config: RunnableConfig | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        if not cross_session_memory_enabled:
+            return {"cross_session_memory_context": None}
+        if not cross_session_memory_entries:
+            return {"cross_session_memory_context": None}
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        selected_entries = _select_cross_session_memory_entries(
+            entries=cross_session_memory_entries,
+            query=latest_user_query,
+            max_items=int(cross_session_memory_max_items),
+        )
+        rendered = _render_cross_session_memory_context(
+            entries=selected_entries,
+            max_chars=int(cross_session_memory_max_chars),
+        )
+        if not rendered:
+            return {"cross_session_memory_context": None}
+        return {"cross_session_memory_context": rendered}
 
     async def post_tools(
         state: SupervisorState,
@@ -6399,6 +6562,7 @@ async def create_supervisor_agent(
         # Normal mode: use standard supervisor pipeline
         if hybrid_mode and not compare_mode and speculative_enabled:
             graph_builder.add_node("speculative", RunnableCallable(None, speculative_node))
+        graph_builder.add_node("memory_context", RunnableCallable(None, memory_context_node))
         graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
         graph_builder.add_node("planner", RunnableCallable(None, planner_node))
         graph_builder.add_node(
@@ -6460,8 +6624,9 @@ async def create_supervisor_agent(
         ]
         if hybrid_mode and not compare_mode and speculative_enabled:
             resolve_intent_paths.append("speculative")
+        graph_builder.add_edge("resolve_intent", "memory_context")
         graph_builder.add_conditional_edges(
-            "resolve_intent",
+            "memory_context",
             route_after_intent,
             path_map=resolve_intent_paths,
         )

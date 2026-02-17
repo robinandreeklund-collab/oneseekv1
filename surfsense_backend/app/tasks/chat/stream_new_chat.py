@@ -1137,6 +1137,15 @@ async def stream_new_chat(
             - subagent_context_max_chars (int): max parent context chars injected to subagent.
             - subagent_result_max_chars (int): max compacted subagent result chars.
             - subagent_sandbox_scope (str): sandbox scope policy ("thread" or "subagent").
+            - artifact_offload_enabled (bool): offload large tool payloads to artifacts.
+            - artifact_offload_threshold_chars (int): offload threshold for payload size.
+            - artifact_offload_max_entries (int): max artifact entries kept in state.
+            - context_compaction_enabled (bool): enables semantic context compactor.
+            - context_compaction_trigger_ratio (float): token-budget ratio that triggers compaction.
+            - context_compaction_summary_max_chars (int): max chars in rolling summary.
+            - cross_session_memory_enabled (bool): enables selective persistent memory injection.
+            - cross_session_memory_max_items (int): max persistent memory items injected.
+            - cross_session_memory_max_chars (int): max chars for injected memory context.
             - sandbox_enabled (bool): enables sandbox execution tools for code tasks.
             - sandbox_mode (str): sandbox runtime mode ("docker", "local", or "provisioner").
             - sandbox_provisioner_url (str): provisioner base URL when mode=provisioner.
@@ -1540,6 +1549,16 @@ async def stream_new_chat(
             )
         except (TypeError, ValueError):
             context_compaction_trigger_ratio = 0.65
+        cross_session_memory_enabled = _coerce_runtime_flag(
+            runtime_flags.get("cross_session_memory_enabled"),
+            default=True,
+        )
+        try:
+            cross_session_memory_max_items = int(
+                runtime_flags.get("cross_session_memory_max_items") or 6
+            )
+        except (TypeError, ValueError):
+            cross_session_memory_max_items = 6
         if not hybrid_mode:
             speculative_enabled = False
 
@@ -1571,6 +1590,8 @@ async def stream_new_chat(
                 "artifact_offload_enabled": artifact_offload_enabled,
                 "context_compaction_enabled": context_compaction_enabled,
                 "context_compaction_trigger_ratio": context_compaction_trigger_ratio,
+                "cross_session_memory_enabled": cross_session_memory_enabled,
+                "cross_session_memory_max_items": cross_session_memory_max_items,
                 "sandbox_enabled": sandbox_enabled,
                 "sandbox_mode": sandbox_mode,
                 "sandbox_provisioner_url": sandbox_provisioner_url,
@@ -1639,6 +1660,8 @@ async def stream_new_chat(
                 f"artifact_offload_enabled={artifact_offload_enabled}, "
                 f"context_compaction_enabled={context_compaction_enabled}, "
                 f"context_compaction_trigger_ratio={context_compaction_trigger_ratio:.2f}, "
+                f"cross_session_memory_enabled={cross_session_memory_enabled}, "
+                f"cross_session_memory_max_items={cross_session_memory_max_items}, "
                 f"sandbox_enabled={sandbox_enabled}, "
                 f"sandbox_mode={sandbox_mode}, "
                 f"sandbox_provisioner_url={sandbox_provisioner_url or '<none>'}, "
