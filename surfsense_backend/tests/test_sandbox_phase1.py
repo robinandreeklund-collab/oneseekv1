@@ -73,6 +73,21 @@ def test_command_looks_long_lived_detection() -> None:
     assert sandbox_runtime.command_looks_long_lived("python3 -c \"print(1)\"") is False
 
 
+def test_locked_state_file_fallback_without_fcntl(tmp_path: Path, monkeypatch) -> None:
+    state_file = tmp_path / "sandbox_state.json"
+    monkeypatch.setattr(sandbox_runtime, "_fcntl", None)
+
+    with sandbox_runtime._locked_state_file(state_file, timeout_seconds=2) as payload:
+        threads = payload.setdefault("threads", {})
+        assert isinstance(threads, dict)
+        threads["thread-a"] = {"lease_id": "lease-1"}
+
+    with sandbox_runtime._locked_state_file(state_file, timeout_seconds=2) as payload:
+        threads = payload.get("threads")
+        assert isinstance(threads, dict)
+        assert "thread-a" in threads
+
+
 def test_run_sandbox_command_local_mode(tmp_path: Path) -> None:
     result = sandbox_runtime.run_sandbox_command(
         command="python3 -c \"print(40+2)\"",

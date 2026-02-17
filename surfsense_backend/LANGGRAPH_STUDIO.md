@@ -135,3 +135,18 @@ python -m pip install -e .\surfsense_backend
 python -m pip install "langgraph-cli[inmem]"
 langgraph dev --config langgraph.json --host 127.0.0.1 --port 8123
 ```
+
+### `ModuleNotFoundError: No module named 'fcntl'` (Windows)
+
+`fcntl` finns inte på Windows. Nyare kod använder en Windows-kompatibel fallback för sandbox state-locking.
+
+Lösning:
+
+1. `git pull` så att du har senaste ändringarna.
+2. Kör scriptet igen:
+
+```powershell
+.\scripts\run-langgraph-studio.ps1
+```
+
+Om du fortfarande får samma fel kör du sannolikt mot en äldre checkout eller annan katalog.

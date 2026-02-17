@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-import fcntl
 import hashlib
 import json
 import os
@@ -15,6 +14,11 @@ from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from uuid import uuid4
+
+try:
+    import fcntl as _fcntl  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - exercised on non-POSIX platforms
+    _fcntl = None
 
 SANDBOX_MODE_LOCAL = "local"
 SANDBOX_MODE_DOCKER = "docker"
@@ -358,10 +362,23 @@ _STATE_BACKEND_FILE = "file"
 _STATE_BACKEND_REDIS = "redis"
 _REDIS_CLIENT_CACHE: dict[str, Any] = {}
 _REDIS_CACHE_LOCK = threading.RLock()
+_PROCESS_LOCAL_STATE_LOCKS: dict[str, threading.Lock] = {}
+_PROCESS_LOCAL_STATE_LOCKS_GUARD = threading.RLock()
 
 
 def _now_ts() -> int:
     return int(time.time())
+
+
+def _get_process_local_state_lock(path: Path) -> threading.Lock:
+    """Best-effort fallback lock for platforms without fcntl (e.g. Windows)."""
+    key = str(path.resolve())
+    with _PROCESS_LOCAL_STATE_LOCKS_GUARD:
+        lock = _PROCESS_LOCAL_STATE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PROCESS_LOCAL_STATE_LOCKS[key] = lock
+        return lock
 
 
 def _thread_key(thread_id: Any) -> str:
@@ -477,11 +494,36 @@ def _resolve_state_backend(config: SandboxRuntimeConfig) -> tuple[str, Any | Non
 @contextmanager
 def _locked_state_file(path: Path, *, timeout_seconds: int):
     path.parent.mkdir(parents=True, exist_ok=True)
+    lock_timeout = max(1, int(timeout_seconds))
+
+    if _fcntl is None:
+        # Windows fallback: process-local lock so import/loading stays functional.
+        fallback_lock = _get_process_local_state_lock(path)
+        acquired = fallback_lock.acquire(timeout=float(lock_timeout))
+        if not acquired:
+            raise SandboxExecutionError(
+                f"Timed out acquiring sandbox state lock: {path}"
+            )
+        try:
+            with path.open("a+", encoding="utf-8") as handle:
+                handle.seek(0)
+                payload = _normalize_state_payload(_load_json_payload(handle.read()))
+                yield payload
+                payload["updated_at"] = _now_ts()
+                handle.seek(0)
+                handle.truncate()
+                handle.write(json.dumps(payload, ensure_ascii=True))
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            fallback_lock.release()
+        return
+
     with path.open("a+", encoding="utf-8") as handle:
-        deadline = time.monotonic() + max(1, int(timeout_seconds))
+        deadline = time.monotonic() + lock_timeout
         while True:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _fcntl.flock(handle.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
@@ -500,7 +542,7 @@ def _locked_state_file(path: Path, *, timeout_seconds: int):
             handle.flush()
             os.fsync(handle.fileno())
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            _fcntl.flock(handle.fileno(), _fcntl.LOCK_UN)
 
 
 @contextmanager
