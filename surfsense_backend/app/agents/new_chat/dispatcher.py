@@ -180,21 +180,19 @@ async def dispatch_route_with_trace(
         and previous_route
         and previous_route not in {Route.SMALLTALK}
     ):
-        # Special handling for compare followups
+        # Compare followups often start with short polite phrases ("kan du ...")
+        # while still introducing a new actionable task (weather/traffic/etc.).
+        # Do not hard-lock them to knowledge before intent retrieval runs.
         if previous_route == Route.COMPARE:
-            return Route.KNOWLEDGE, {
-                "source": "compare_followup",
-                "confidence": 0.92,
-                "reason": "followup_after_compare_routes_to_knowledge",
+            previous_route = None
+        # Global continuity rule: preserve prior route for context-dependent follow-ups.
+        if previous_route:
+            return previous_route, {
+                "source": "followup_continuity",
+                "confidence": 0.94,
+                "reason": f"followup_preserve:{previous_route.value}",
                 "candidates": [],
             }
-        # Global continuity rule: preserve prior route for context-dependent follow-ups.
-        return previous_route, {
-            "source": "followup_continuity",
-            "confidence": 0.94,
-            "reason": f"followup_preserve:{previous_route.value}",
-            "candidates": [],
-        }
 
     normalized_intents = [
         item
@@ -306,12 +304,13 @@ async def dispatch_route_with_trace(
                 and previous_route not in {Route.SMALLTALK}
                 and guarded_llm_route in {Route.KNOWLEDGE, Route.ACTION}
             ):
-                # Special handling for compare followups
+                # Do not force compare followups into knowledge; retrieval/LLM route
+                # should decide when the user asks a fresh actionable task.
                 if previous_route == Route.COMPARE:
-                    return Route.KNOWLEDGE, {
-                        "source": "followup_override_compare",
-                        "confidence": 0.85,
-                        "reason": "followup_after_compare_routes_to_knowledge",
+                    return guarded_llm_route, {
+                        "source": "followup_override_compare_passthrough",
+                        "confidence": 0.82,
+                        "reason": "compare_followup_allows_fresh_task_route",
                         "candidates": retrieval_decision.candidates
                         if retrieval_decision
                         else [],
