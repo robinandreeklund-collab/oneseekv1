@@ -1646,38 +1646,39 @@ async def stream_new_chat(
             if route_end:
                 yield route_end
 
-        # Create connector service
-        connector_service = ConnectorService(
-            session, search_space_id=search_space_id, user_id=user_id
-        )
-
-        # Get Firecrawl API key from webcrawler connector if configured
-        from app.db import SearchSourceConnectorType
-
-        firecrawl_api_key = None
-        webcrawler_connector = await connector_service.get_connector_by_type(
-            SearchSourceConnectorType.WEBCRAWLER_CONNECTOR, search_space_id
-        )
-        if webcrawler_connector and webcrawler_connector.config:
-            firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
-
-        preferred_checkpoint_ns = build_checkpoint_namespace(
-            user_id=user_id,
-            flow="new_chat_v2",
-        )
-
-        # Get the PostgreSQL checkpointer for persistent conversation memory
-        checkpointer = await get_checkpointer()
-        if checkpoint_ns_override is not None:
-            checkpoint_ns = str(checkpoint_ns_override).strip()
-        else:
-            checkpoint_ns = await resolve_checkpoint_namespace_for_thread(
-                checkpointer=checkpointer,
-                thread_id=chat_id,
-                preferred_namespace=preferred_checkpoint_ns,
+        checkpoint_ns = ""
+        if route != Route.SMALLTALK:
+            # Create connector service
+            connector_service = ConnectorService(
+                session, search_space_id=search_space_id, user_id=user_id
             )
 
-        if route != Route.SMALLTALK:
+            # Get Firecrawl API key from webcrawler connector if configured
+            from app.db import SearchSourceConnectorType
+
+            firecrawl_api_key = None
+            webcrawler_connector = await connector_service.get_connector_by_type(
+                SearchSourceConnectorType.WEBCRAWLER_CONNECTOR, search_space_id
+            )
+            if webcrawler_connector and webcrawler_connector.config:
+                firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
+
+            preferred_checkpoint_ns = build_checkpoint_namespace(
+                user_id=user_id,
+                flow="new_chat_v2",
+            )
+
+            # Get the PostgreSQL checkpointer for persistent conversation memory
+            checkpointer = await get_checkpointer()
+            if checkpoint_ns_override is not None:
+                checkpoint_ns = str(checkpoint_ns_override).strip()
+            else:
+                checkpoint_ns = await resolve_checkpoint_namespace_for_thread(
+                    checkpointer=checkpointer,
+                    thread_id=chat_id,
+                    preferred_namespace=preferred_checkpoint_ns,
+                )
+
             print(
                 "[DEBUG] Building graph with "
                 f"compare_mode={compare_mode}, "
