@@ -49,6 +49,14 @@ LANGSMITH_API_KEY=<din_langsmith_api_key>
 
 ## 4) Starta Studio
 
+Från repo-roten:
+
+```bash
+langgraph dev --config langgraph.json --host 127.0.0.1 --port 8123
+```
+
+eller från backend-katalogen:
+
 ```bash
 cd surfsense_backend
 langgraph dev --config langgraph.json --host 127.0.0.1 --port 8123
