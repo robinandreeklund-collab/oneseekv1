@@ -65,6 +65,7 @@ def build_executor_nodes(
     format_selected_agents_context_fn: Callable[[dict[str, Any]], str | None],
     format_resolved_tools_context_fn: Callable[[dict[str, Any]], str | None],
     format_subagent_handoffs_context_fn: Callable[[dict[str, Any]], str | None],
+    format_artifact_manifest_context_fn: Callable[[dict[str, Any]], str | None],
     coerce_supervisor_tool_calls_fn: Callable[..., Any],
 ):
     def _build_context_messages(
@@ -89,6 +90,9 @@ def build_executor_nodes(
         subagent_handoffs_context = (
             None if new_user_turn else format_subagent_handoffs_context_fn(state)
         )
+        artifact_manifest_context = (
+            None if new_user_turn else format_artifact_manifest_context_fn(state)
+        )
         system_bits = [
             item
             for item in (
@@ -100,6 +104,7 @@ def build_executor_nodes(
                 selected_agents_context,
                 resolved_tools_context,
                 subagent_handoffs_context,
+                artifact_manifest_context,
             )
             if item
         ]

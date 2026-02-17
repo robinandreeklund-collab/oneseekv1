@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Annotated, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
@@ -53,6 +54,7 @@ from app.agents.new_chat.retrieval_feedback import (
     get_global_retrieval_feedback_store,
     hydrate_global_retrieval_feedback_store,
 )
+from app.agents.new_chat.sandbox_runtime import sandbox_write_text_file
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
@@ -443,13 +445,24 @@ _COMPARE_FOLLOWUP_RE = re.compile(
     re.IGNORECASE,
 )
 _SUBAGENT_ARTIFACT_RE = re.compile(
-    r"(/workspace/[A-Za-z0-9._/\-]+)",
+    r"(artifact://[A-Za-z0-9._/\-]+|/workspace/[A-Za-z0-9._/\-]+)",
     re.IGNORECASE,
 )
 _SUBAGENT_DEFAULT_CONTEXT_MAX_CHARS = 1400
 _SUBAGENT_DEFAULT_RESULT_MAX_CHARS = 1000
 _SUBAGENT_DEFAULT_MAX_CONCURRENCY = 3
 _SUBAGENT_MAX_HANDOFFS_IN_PROMPT = 6
+_ARTIFACT_DEFAULT_OFFLOAD_THRESHOLD_CHARS = 4_000
+_ARTIFACT_DEFAULT_MAX_ENTRIES = 36
+_ARTIFACT_CONTEXT_MAX_ITEMS = 6
+_ARTIFACT_LOCAL_ROOT = "/tmp/oneseek-artifacts"
+_ARTIFACT_INTERNAL_TOOL_NAMES = {
+    "call_agent",
+    "call_agents_parallel",
+    "retrieve_agents",
+    "write_todos",
+    "reflect_on_progress",
+}
 
 
 def _has_trafik_intent(text: str) -> bool:
@@ -1007,6 +1020,35 @@ def _append_subagent_handoffs(
     return list(merged.values())[-12:]
 
 
+def _append_artifact_manifest(
+    left: list[dict[str, Any]] | None,
+    right: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if right == []:
+        return []
+    merged: dict[str, dict[str, Any]] = {}
+    for item in left or []:
+        if not isinstance(item, dict):
+            continue
+        artifact_id = str(item.get("id") or "").strip()
+        source_id = str(item.get("source_id") or "").strip()
+        key = artifact_id or source_id
+        if not key:
+            continue
+        merged[key] = item
+    for item in right or []:
+        if not isinstance(item, dict):
+            continue
+        artifact_id = str(item.get("id") or "").strip()
+        source_id = str(item.get("source_id") or "").strip()
+        key = artifact_id or source_id
+        if not key:
+            continue
+        merged[key] = item
+    limit = max(8, int(_ARTIFACT_DEFAULT_MAX_ENTRIES))
+    return list(merged.values())[-limit:]
+
+
 def _format_compare_outputs_for_prompt(compare_outputs: list[dict[str, Any]] | None) -> str:
     if not compare_outputs:
         return ""
@@ -1061,6 +1103,7 @@ class SupervisorState(TypedDict, total=False):
     route_hint: Annotated[str | None, _replace]
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
     subagent_handoffs: Annotated[list[dict[str, Any]], _append_subagent_handoffs]
+    artifact_manifest: Annotated[list[dict[str, Any]], _append_artifact_manifest]
     final_agent_response: Annotated[str | None, _replace]
     final_response: Annotated[str | None, _replace]
     critic_decision: Annotated[str | None, _replace]
@@ -1230,6 +1273,37 @@ def _format_subagent_handoffs_context(state: dict[str, Any]) -> str | None:
     return "<subagent_handoffs>\n" + "\n".join(lines) + "\n</subagent_handoffs>"
 
 
+def _format_artifact_manifest_context(state: dict[str, Any]) -> str | None:
+    artifacts = state.get("artifact_manifest")
+    if not isinstance(artifacts, list) or not artifacts:
+        return None
+    lines: list[str] = []
+    for item in artifacts[-_ARTIFACT_CONTEXT_MAX_ITEMS:]:
+        if not isinstance(item, dict):
+            continue
+        artifact_id = str(item.get("id") or "").strip()
+        tool_name = str(item.get("tool") or "").strip() or "tool"
+        summary = _truncate_for_prompt(str(item.get("summary") or "").strip(), 180)
+        artifact_uri = str(item.get("artifact_uri") or "").strip()
+        artifact_path = str(item.get("artifact_path") or "").strip()
+        size_bytes = int(item.get("size_bytes") or 0)
+        ref = artifact_uri or artifact_path
+        if not ref:
+            continue
+        label = f"- {tool_name}"
+        if artifact_id:
+            label += f" ({artifact_id})"
+        suffix: list[str] = [f"ref={ref}"]
+        if size_bytes > 0:
+            suffix.append(f"bytes={size_bytes}")
+        if summary:
+            suffix.append(f"summary={summary}")
+        lines.append(f"{label}: " + "; ".join(suffix))
+    if not lines:
+        return None
+    return "<artifact_manifest>\n" + "\n".join(lines) + "\n</artifact_manifest>"
+
+
 _HITL_APPROVE_RE = re.compile(r"\b(ja|yes|ok|okej|kor|kör|go|fortsatt|fortsätt)\b", re.IGNORECASE)
 _HITL_REJECT_RE = re.compile(r"\b(nej|no|stopp|avbryt|stop|inte)\b", re.IGNORECASE)
 
@@ -1265,6 +1339,59 @@ def _safe_json(payload: Any) -> dict[str, Any]:
         return json.loads(payload)
     except (TypeError, ValueError):
         return {}
+
+
+def _safe_id_segment(value: Any, *, fallback: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(value or "")).strip("-")
+    return normalized or fallback
+
+
+def _serialize_artifact_payload(payload: dict[str, Any]) -> str:
+    try:
+        return json.dumps(payload, ensure_ascii=True, sort_keys=True)
+    except Exception:
+        return str(payload)
+
+
+def _artifact_runtime_hitl_thread_scope(runtime_hitl: dict[str, Any] | None) -> dict[str, Any]:
+    scoped = dict(runtime_hitl or {})
+    scoped["sandbox_scope"] = "thread"
+    scoped.pop("sandbox_scope_id", None)
+    scoped.pop("subagent_scope_id", None)
+    return scoped
+
+
+def _persist_artifact_content(
+    *,
+    artifact_id: str,
+    content: str,
+    thread_id: Any,
+    turn_key: str,
+    sandbox_enabled: bool,
+    runtime_hitl_cfg: dict[str, Any],
+) -> tuple[str, str, str]:
+    artifact_uri = f"artifact://{artifact_id}"
+    normalized_turn = _safe_id_segment(turn_key, fallback="turn")
+    normalized_thread = _safe_id_segment(thread_id, fallback="thread")
+    if sandbox_enabled:
+        artifact_path = f"/workspace/.artifacts/{normalized_turn}/{artifact_id}.json"
+        try:
+            written_path = sandbox_write_text_file(
+                thread_id=thread_id,
+                runtime_hitl=_artifact_runtime_hitl_thread_scope(runtime_hitl_cfg),
+                path=artifact_path,
+                content=content,
+                append=False,
+            )
+            return artifact_uri, str(written_path or artifact_path), "sandbox"
+        except Exception:
+            pass
+
+    local_root = Path(_ARTIFACT_LOCAL_ROOT).expanduser() / normalized_thread / normalized_turn
+    local_root.mkdir(parents=True, exist_ok=True)
+    local_path = local_root / f"{artifact_id}.json"
+    local_path.write_text(str(content or ""), encoding="utf-8")
+    return artifact_uri, str(local_path), "local"
 
 
 def _extract_first_json_object(text: str) -> dict[str, Any]:
@@ -3066,6 +3193,22 @@ async def create_supervisor_agent(
     sandbox_enabled = _coerce_bool(
         runtime_hitl_cfg.get("sandbox_enabled"),
         default=False,
+    )
+    artifact_offload_enabled = _coerce_bool(
+        runtime_hitl_cfg.get("artifact_offload_enabled"),
+        default=False,
+    )
+    artifact_offload_threshold_chars = _coerce_int_range(
+        runtime_hitl_cfg.get("artifact_offload_threshold_chars"),
+        default=_ARTIFACT_DEFAULT_OFFLOAD_THRESHOLD_CHARS,
+        min_value=800,
+        max_value=200_000,
+    )
+    artifact_offload_max_entries = _coerce_int_range(
+        runtime_hitl_cfg.get("artifact_offload_max_entries"),
+        default=_ARTIFACT_DEFAULT_MAX_ENTRIES,
+        min_value=8,
+        max_value=120,
     )
 
     async def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
@@ -5425,6 +5568,7 @@ async def create_supervisor_agent(
         format_selected_agents_context_fn=_format_selected_agents_context,
         format_resolved_tools_context_fn=_format_resolved_tools_context,
         format_subagent_handoffs_context_fn=_format_subagent_handoffs_context,
+        format_artifact_manifest_context_fn=_format_artifact_manifest_context,
         coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
     )
 
@@ -5592,6 +5736,112 @@ async def create_supervisor_agent(
             updates["subagent_handoffs"] = subagent_handoff_updates
         updates["guard_parallel_preview"] = parallel_preview[:3]
         return updates
+
+    async def artifact_indexer(
+        state: SupervisorState,
+        config: RunnableConfig | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        if not artifact_offload_enabled:
+            return {}
+        messages = list(state.get("messages") or [])
+        if not messages:
+            return {}
+        turn_key = _current_turn_key(state)
+        tool_call_index = _tool_call_name_index(messages)
+        existing_manifest = [
+            item
+            for item in (state.get("artifact_manifest") or [])
+            if isinstance(item, dict)
+        ]
+        existing_source_ids = {
+            str(item.get("source_id") or "").strip()
+            for item in existing_manifest
+            if str(item.get("source_id") or "").strip()
+        }
+        existing_digests = {
+            str(item.get("content_sha1") or "").strip()
+            for item in existing_manifest
+            if str(item.get("content_sha1") or "").strip()
+        }
+        current_turn_id = str(
+            state.get("active_turn_id") or state.get("turn_id") or ""
+        ).strip()
+        new_entries: list[dict[str, Any]] = []
+
+        for message in reversed(messages):
+            if isinstance(message, HumanMessage):
+                break
+            if not isinstance(message, ToolMessage):
+                continue
+            tool_name = _resolve_tool_message_name(
+                message,
+                tool_call_index=tool_call_index,
+            )
+            normalized_tool_name = str(tool_name or "").strip().lower()
+            if not normalized_tool_name or normalized_tool_name in _ARTIFACT_INTERNAL_TOOL_NAMES:
+                continue
+            payload = _safe_json(getattr(message, "content", ""))
+            if not payload:
+                continue
+            serialized_payload = _serialize_artifact_payload(payload)
+            if len(serialized_payload) < int(artifact_offload_threshold_chars):
+                continue
+            content_sha1 = hashlib.sha1(
+                serialized_payload.encode("utf-8", errors="ignore")
+            ).hexdigest()
+            source_id = str(getattr(message, "tool_call_id", "") or "").strip()
+            if not source_id:
+                source_id = f"{normalized_tool_name}:{content_sha1[:14]}"
+            if source_id in existing_source_ids or content_sha1 in existing_digests:
+                continue
+
+            artifact_seed = "|".join(
+                [
+                    str(thread_id or "thread"),
+                    current_turn_id or "turn",
+                    source_id,
+                    content_sha1[:16],
+                ]
+            )
+            artifact_id = "art-" + hashlib.sha1(
+                artifact_seed.encode("utf-8", errors="ignore")
+            ).hexdigest()[:16]
+            artifact_uri, artifact_path, storage_backend = _persist_artifact_content(
+                artifact_id=artifact_id,
+                content=serialized_payload,
+                thread_id=thread_id,
+                turn_key=turn_key,
+                sandbox_enabled=bool(sandbox_enabled),
+                runtime_hitl_cfg=runtime_hitl_cfg,
+            )
+            summary = _summarize_tool_payload(normalized_tool_name, payload)
+            entry = {
+                "id": artifact_id,
+                "artifact_uri": artifact_uri,
+                "artifact_path": artifact_path,
+                "storage_backend": storage_backend,
+                "tool": normalized_tool_name,
+                "source_id": source_id,
+                "turn_id": current_turn_id or None,
+                "summary": _truncate_for_prompt(summary, 220),
+                "size_bytes": len(serialized_payload.encode("utf-8")),
+                "content_sha1": content_sha1,
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+            new_entries.append(entry)
+            existing_source_ids.add(source_id)
+            existing_digests.add(content_sha1)
+            if len(new_entries) >= max(1, int(artifact_offload_max_entries)):
+                break
+
+        if not new_entries:
+            return {}
+        return {
+            "artifact_manifest": new_entries,
+        }
 
     async def orchestration_guard(
         state: SupervisorState,
@@ -5944,6 +6194,10 @@ async def create_supervisor_agent(
         graph_builder.add_node("tools", tool_node)
         graph_builder.add_node("post_tools", RunnableCallable(None, post_tools))
         graph_builder.add_node(
+            "artifact_indexer",
+            RunnableCallable(None, artifact_indexer),
+        )
+        graph_builder.add_node(
             "orchestration_guard",
             RunnableCallable(None, orchestration_guard),
         )
@@ -6006,7 +6260,8 @@ async def create_supervisor_agent(
             path_map=["tools", "critic"],
         )
         graph_builder.add_edge("tools", "post_tools")
-        graph_builder.add_edge("post_tools", "orchestration_guard")
+        graph_builder.add_edge("post_tools", "artifact_indexer")
+        graph_builder.add_edge("artifact_indexer", "orchestration_guard")
         graph_builder.add_edge("orchestration_guard", "critic")
         graph_builder.add_conditional_edges(
             "critic",
