@@ -230,3 +230,17 @@ I WSL-scriptet finns samma flagga:
 ```bash
 ./scripts/run-langgraph-studio.sh --allow-blocking
 ```
+
+### `got Future ... attached to a different loop`
+
+Detta uppstår när graph-factory och run-exekvering sker i olika event loops.
+
+Lösning:
+
+1. `git pull` till senaste branch.
+2. Stoppa tidigare `langgraph dev` process.
+3. Starta om Studio:
+
+```bash
+bash scripts/run-langgraph-studio.sh --skip-install --allow-blocking
+```
