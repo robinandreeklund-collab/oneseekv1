@@ -392,6 +392,10 @@ _FILESYSTEM_INTENT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_EXPLICIT_FILE_READ_RE = re.compile(
+    r"(l[aä]s|read).*(hela|whole).*(fil|file)",
+    re.IGNORECASE,
+)
 _MISSING_SIGNAL_RE = re.compile(
     r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
     re.IGNORECASE,
@@ -4522,6 +4526,16 @@ async def create_supervisor_agent(
     def _is_filesystem_sandbox_task(agent_name: str, task: str) -> bool:
         return bool(sandbox_enabled) and _is_filesystem_task(agent_name, task)
 
+    def _requires_explicit_file_read(task: str) -> bool:
+        task_text = str(task or "").strip()
+        if not task_text:
+            return False
+        if not _EXPLICIT_FILE_READ_RE.search(task_text):
+            return False
+        if _has_filesystem_intent(task_text):
+            return True
+        return "/workspace/" in task_text or "/tmp/" in task_text
+
     def _prioritize_sandbox_code_tools(
         tool_ids: list[str],
         *,
@@ -4552,6 +4566,97 @@ async def create_supervisor_agent(
             )
             for name in (tool_names or [])
         )
+
+    def _collect_subagent_artifacts_from_messages(
+        *,
+        messages_out: list[Any],
+        injected_state: dict[str, Any],
+        force_sandbox_for_auto: bool = False,
+    ) -> list[dict[str, Any]]:
+        if not artifact_offload_enabled:
+            return []
+        if not isinstance(messages_out, list) or not messages_out:
+            return []
+
+        storage_mode = artifact_offload_storage_mode
+        if force_sandbox_for_auto and storage_mode == "auto":
+            storage_mode = "sandbox"
+
+        turn_key = _current_turn_key(injected_state)
+        current_turn_id = str(
+            injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
+        ).strip()
+        tool_call_index = _tool_call_name_index(messages_out)
+        seen_source_ids: set[str] = set()
+        seen_digests: set[str] = set()
+        new_entries: list[dict[str, Any]] = []
+
+        for message in reversed(messages_out):
+            if not isinstance(message, ToolMessage):
+                continue
+            tool_name = _resolve_tool_message_name(
+                message,
+                tool_call_index=tool_call_index,
+            )
+            normalized_tool_name = str(tool_name or "").strip().lower()
+            if not normalized_tool_name or normalized_tool_name in _ARTIFACT_INTERNAL_TOOL_NAMES:
+                continue
+            payload = _safe_json(getattr(message, "content", ""))
+            if not payload:
+                continue
+            serialized_payload = _serialize_artifact_payload(payload)
+            if len(serialized_payload) < int(artifact_offload_threshold_chars):
+                continue
+            content_sha1 = hashlib.sha1(
+                serialized_payload.encode("utf-8", errors="ignore")
+            ).hexdigest()
+            source_id = str(getattr(message, "tool_call_id", "") or "").strip()
+            if not source_id:
+                source_id = f"{normalized_tool_name}:{content_sha1[:14]}"
+            if source_id in seen_source_ids or content_sha1 in seen_digests:
+                continue
+
+            artifact_seed = "|".join(
+                [
+                    str(thread_id or "thread"),
+                    current_turn_id or turn_key or "turn",
+                    source_id,
+                    content_sha1[:16],
+                ]
+            )
+            artifact_id = "art-" + hashlib.sha1(
+                artifact_seed.encode("utf-8", errors="ignore")
+            ).hexdigest()[:16]
+            artifact_uri, artifact_path, storage_backend = _persist_artifact_content(
+                artifact_id=artifact_id,
+                content=serialized_payload,
+                thread_id=thread_id,
+                turn_key=turn_key,
+                sandbox_enabled=bool(sandbox_enabled),
+                artifact_storage_mode=storage_mode,
+                runtime_hitl_cfg=runtime_hitl_cfg,
+            )
+            summary = _summarize_tool_payload(normalized_tool_name, payload)
+            new_entries.append(
+                {
+                    "id": artifact_id,
+                    "artifact_uri": artifact_uri,
+                    "artifact_path": artifact_path,
+                    "storage_backend": storage_backend,
+                    "tool": normalized_tool_name,
+                    "source_id": source_id,
+                    "turn_id": current_turn_id or None,
+                    "summary": _truncate_for_prompt(summary, 220),
+                    "size_bytes": len(serialized_payload.encode("utf-8")),
+                    "content_sha1": content_sha1,
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+            )
+            seen_source_ids.add(source_id)
+            seen_digests.add(content_sha1)
+            if len(new_entries) >= _ARTIFACT_OFFLOAD_PER_PASS_LIMIT:
+                break
+        return new_entries
 
     @tool
     async def call_agent(
@@ -5008,6 +5113,16 @@ async def create_supervisor_agent(
                     enforcement_message = trafik_enforcement_message
             elif filesystem_sandbox_task and not _uses_sandbox_tool(initial_tool_names):
                 enforcement_message = code_sandbox_enforcement_message
+            elif (
+                filesystem_sandbox_task
+                and _requires_explicit_file_read(task)
+                and "sandbox_read_file" not in initial_tool_names
+            ):
+                enforcement_message = (
+                    f"{code_sandbox_enforcement_message}\n\n"
+                    "Du maste anvanda sandbox_read_file for att lasa filinnehall "
+                    "innan du sammanfattar resultatet."
+                )
             if enforcement_message:
                 enforced_prompt = (
                     f"{prompt.rstrip()}\n\n{enforcement_message}".strip()
@@ -5086,10 +5201,24 @@ async def create_supervisor_agent(
         if not response_text:
             response_text = str(result)
         used_tool_names = _tool_names_from_messages(messages_out)
+        explicit_file_read_required = (
+            filesystem_sandbox_task and _requires_explicit_file_read(task)
+        )
+        used_explicit_read_tool = "sandbox_read_file" in used_tool_names
+        subagent_artifacts = _collect_subagent_artifacts_from_messages(
+            messages_out=messages_out,
+            injected_state=injected_state,
+            force_sandbox_for_auto=filesystem_sandbox_task,
+        )
         if filesystem_sandbox_task and not _uses_sandbox_tool(used_tool_names):
             response_text = (
                 "Kunde inte verifiera filsystemsandringen eftersom inga sandbox-verktyg anropades. "
                 "Forsok igen med sandbox_write_file/sandbox_read_file aktiverade."
+            )
+        elif explicit_file_read_required and not used_explicit_read_tool:
+            response_text = (
+                "Uppgiften kraver explicit fillasning men sandbox_read_file anropades inte. "
+                "Forsok igen och las filen innan slutsvaret."
             )
 
         critic_prompt = append_datetime_context(critic_prompt_template)
@@ -5132,6 +5261,22 @@ async def create_supervisor_agent(
                     ),
                 }
             )
+        elif explicit_file_read_required and not used_explicit_read_tool:
+            result_contract.update(
+                {
+                    "status": "partial",
+                    "actionable": False,
+                    "retry_recommended": True,
+                    "confidence": min(
+                        float(result_contract.get("confidence") or 0.45),
+                        0.45,
+                    ),
+                    "reason": (
+                        "Uppgiften kraver explicit fillasning med sandbox_read_file "
+                        "innan svaret kan godkannas."
+                    ),
+                }
+            )
         if (
             not filesystem_sandbox_task
             and str(result_contract.get("status") or "").strip().lower() in {
@@ -5154,6 +5299,33 @@ async def create_supervisor_agent(
                     agent_name=name,
                 ),
             )
+
+        if subagent_artifacts:
+            artifact_refs: list[str] = []
+            for item in subagent_artifacts:
+                if not isinstance(item, dict):
+                    continue
+                artifact_uri = str(item.get("artifact_uri") or "").strip()
+                artifact_path = str(item.get("artifact_path") or "").strip()
+                if artifact_uri:
+                    artifact_refs.append(artifact_uri)
+                if artifact_path.startswith("/workspace/"):
+                    artifact_refs.append(artifact_path)
+            deduped_refs: list[str] = []
+            seen_refs: set[str] = set()
+            for ref in artifact_refs:
+                if not ref or ref in seen_refs:
+                    continue
+                seen_refs.add(ref)
+                deduped_refs.append(ref)
+                if len(deduped_refs) >= 4:
+                    break
+            if deduped_refs:
+                reference_text = ", ".join(deduped_refs)
+                response_text = (
+                    f"{str(response_text or '').rstrip()}\n\n"
+                    f"[artifact_offload] Full tool output saved: {reference_text}"
+                ).strip()
 
         raw_response_text = response_text
         subagent_handoff = (
@@ -5191,6 +5363,7 @@ async def create_supervisor_agent(
                 "subagent_isolated": bool(subagent_isolated),
                 "subagent_id": subagent_id,
                 "subagent_handoff": subagent_handoff,
+                "artifacts": subagent_artifacts,
             },
             ensure_ascii=True,
         )
@@ -5928,6 +6101,7 @@ async def create_supervisor_agent(
         recent_updates: list[dict[str, Any]] = []
         compare_updates: list[dict[str, Any]] = []
         subagent_handoff_updates: list[dict[str, Any]] = []
+        artifact_updates: list[dict[str, Any]] = []
         parallel_preview: list[str] = []
         plan_update: list[dict[str, Any]] | None = None
         plan_complete: bool | None = None
@@ -5979,6 +6153,13 @@ async def create_supervisor_agent(
                     handoff = payload.get("subagent_handoff")
                     if isinstance(handoff, dict):
                         subagent_handoff_updates.append(handoff)
+                    payload_artifacts = payload.get("artifacts")
+                    if isinstance(payload_artifacts, list):
+                        artifact_updates.extend(
+                            item
+                            for item in payload_artifacts
+                            if isinstance(item, dict)
+                        )
                     if payload.get("final") and payload.get("response"):
                         cleaned_response = _strip_critic_json(
                             str(payload.get("response") or "").strip()
@@ -6042,6 +6223,13 @@ async def create_supervisor_agent(
                         handoff = item.get("subagent_handoff")
                         if isinstance(handoff, dict):
                             subagent_handoff_updates.append(handoff)
+                        item_artifacts = item.get("artifacts")
+                        if isinstance(item_artifacts, list):
+                            artifact_updates.extend(
+                                entry
+                                for entry in item_artifacts
+                                if isinstance(entry, dict)
+                            )
             elif tool_name in _EXTERNAL_MODEL_TOOL_NAMES:
                 if payload and payload.get("status") == "success":
                     compare_updates.append(
@@ -6079,6 +6267,8 @@ async def create_supervisor_agent(
             updates["compare_outputs"] = compare_updates
         if subagent_handoff_updates:
             updates["subagent_handoffs"] = subagent_handoff_updates
+        if artifact_updates:
+            updates["artifact_manifest"] = artifact_updates
         updates["guard_parallel_preview"] = parallel_preview[:3]
         return updates
 
