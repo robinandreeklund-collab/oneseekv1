@@ -32,6 +32,7 @@ from app.services.cache_control import is_cache_disabled
 from app.agents.new_chat.retrieval_feedback import get_global_retrieval_feedback_store
 from app.agents.new_chat.sandbox_runtime import sandbox_config_from_runtime_flags
 from app.agents.new_chat.tools.registry import (
+    build_tools,
     build_tools_async,
     get_default_enabled_tools,
 )
@@ -1155,18 +1156,19 @@ async def build_global_tool_registry(
 ) -> dict[str, BaseTool]:
     enabled_tools = list(get_default_enabled_tools())
     runtime_hitl = dependencies.get("runtime_hitl")
+    sandbox_tool_ids = (
+        "sandbox_execute",
+        "sandbox_ls",
+        "sandbox_read_file",
+        "sandbox_write_file",
+        "sandbox_replace",
+        "sandbox_release",
+    )
     sandbox_config = sandbox_config_from_runtime_flags(
         runtime_hitl if isinstance(runtime_hitl, dict) else None
     )
     if sandbox_config.enabled:
-        for sandbox_tool_id in (
-            "sandbox_execute",
-            "sandbox_ls",
-            "sandbox_read_file",
-            "sandbox_write_file",
-            "sandbox_replace",
-            "sandbox_release",
-        ):
+        for sandbox_tool_id in sandbox_tool_ids:
             if sandbox_tool_id not in enabled_tools:
                 enabled_tools.append(sandbox_tool_id)
     for extra in ("write_todos", "reflect_on_progress"):
@@ -1178,6 +1180,19 @@ async def build_global_tool_registry(
         include_mcp_tools=include_mcp_tools,
     )
     registry: dict[str, BaseTool] = {tool.name: tool for tool in tools}
+    if sandbox_config.enabled:
+        missing_sandbox_tool_ids = [
+            tool_id for tool_id in sandbox_tool_ids if tool_id not in registry
+        ]
+        if missing_sandbox_tool_ids:
+            # Lifecycle filtering can hide built-ins that are required for runtime sandbox
+            # execution; force-load missing sandbox tools to keep routing and execution in sync.
+            fallback_tools = build_tools(
+                dependencies,
+                enabled_tools=missing_sandbox_tool_ids,
+            )
+            for tool in fallback_tools:
+                registry[str(tool.name)] = tool
     scb_registry = build_scb_tool_registry(
         connector_service=dependencies["connector_service"],
         search_space_id=dependencies["search_space_id"],
