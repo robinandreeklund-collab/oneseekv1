@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
-import YAML from "yaml";
 import {
 	Activity,
 	AlertCircle,
@@ -11,14 +9,22 @@ import {
 	Copy,
 	Download,
 } from "lucide-react";
-import { Drawer, DrawerContent, DrawerHandle, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
+import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import YAML from "yaml";
+import { Button } from "@/components/ui/button";
+import {
+	Drawer,
+	DrawerContent,
+	DrawerHandle,
+	DrawerHeader,
+	DrawerTitle,
+} from "@/components/ui/drawer";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
+import type { TraceSpan } from "@/contracts/types/chat-trace.types";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
-import type { TraceSpan } from "@/contracts/types/chat-trace.types";
 
 interface TraceSheetProps {
 	open: boolean;
@@ -52,7 +58,7 @@ function formatPayload(payload: unknown, mode: "json" | "yaml" | "raw") {
 			return YAML.stringify(payload, { indent: 2 });
 		}
 		return JSON.stringify(payload, null, 2);
-	} catch (error) {
+	} catch (_error) {
 		return typeof payload === "string" ? payload : String(payload);
 	}
 }
@@ -97,9 +103,7 @@ function getTokenInfo(span: TraceSpan | null) {
 	const outputTokens = Number(meta.output_tokens ?? 0);
 	const totalTokens = Number(meta.total_tokens ?? 0);
 	const resolvedTotal =
-		Number.isFinite(totalTokens) && totalTokens > 0
-			? totalTokens
-			: inputTokens + outputTokens;
+		Number.isFinite(totalTokens) && totalTokens > 0 ? totalTokens : inputTokens + outputTokens;
 	if (!resolvedTotal) return null;
 	return {
 		total: resolvedTotal,
@@ -128,6 +132,7 @@ export function TraceSheet({
 	const startXRef = useRef(0);
 	const startWidthRef = useRef(0);
 	const exportFeedbackTimerRef = useRef<number | null>(null);
+	const previousMessageIdRef = useRef<string | null>(null);
 
 	const sortedSpans = useMemo(() => {
 		const next = [...spans];
@@ -152,7 +157,9 @@ export function TraceSheet({
 			memo.set(span.id, depth);
 			return depth;
 		};
-		sortedSpans.forEach((span) => getDepth(span));
+		sortedSpans.forEach((span) => {
+			getDepth(span);
+		});
 		return memo;
 	}, [sortedSpans, spanMap]);
 
@@ -182,6 +189,8 @@ export function TraceSheet({
 	}, [open]);
 
 	useEffect(() => {
+		if (previousMessageIdRef.current === messageId) return;
+		previousMessageIdRef.current = messageId;
 		setSelectedSpanId(null);
 		setFollowLive(true);
 		setIsJustExported(false);
@@ -199,9 +208,7 @@ export function TraceSheet({
 		if (!isDragging) return;
 		const handlePointerMove = (event: PointerEvent) => {
 			const delta =
-				dock === "right"
-					? startXRef.current - event.clientX
-					: event.clientX - startXRef.current;
+				dock === "right" ? startXRef.current - event.clientX : event.clientX - startXRef.current;
 			const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidthRef.current + delta));
 			setPanelWidth(nextWidth);
 		};
@@ -215,7 +222,7 @@ export function TraceSheet({
 			window.removeEventListener("pointermove", handlePointerMove);
 			window.removeEventListener("pointerup", handlePointerUp);
 		};
-	}, [isDragging]);
+	}, [dock, isDragging, maxWidth, minWidth]);
 
 	const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
 		event.preventDefault();
@@ -404,7 +411,8 @@ export function TraceSheet({
 											"group relative flex w-full flex-col gap-1 rounded-lg border border-border/40 bg-card/50 px-3 py-2 text-left text-sm transition-all",
 											"hover:border-primary/40 hover:bg-primary/5",
 											isSelected && "border-primary/60 bg-primary/10 shadow-md",
-											isActive && "animate-pulse border-primary/80 shadow-[0_0_0_1px_rgba(59,130,246,0.4)]"
+											isActive &&
+												"animate-pulse border-primary/80 shadow-[0_0_0_1px_rgba(59,130,246,0.4)]"
 										)}
 										style={{ paddingLeft }}
 									>
@@ -422,10 +430,7 @@ export function TraceSheet({
 													</div>
 												))}
 												{depth > 0 && (
-													<div
-														className="relative"
-														style={{ width: gutterWidth }}
-													>
+													<div className="relative" style={{ width: gutterWidth }}>
 														<div
 															className={cn(
 																"absolute left-1/2 w-px bg-border/60",
@@ -494,9 +499,7 @@ export function TraceSheet({
 							{selectedSpan && (
 								<>
 									<div className="space-y-1">
-										<div className="text-sm font-semibold text-foreground">
-											{selectedSpan.name}
-										</div>
+										<div className="text-sm font-semibold text-foreground">{selectedSpan.name}</div>
 										<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 											<span className="rounded-full border border-border/60 px-2 py-0.5">
 												{selectedSpan.kind}
@@ -638,7 +641,11 @@ function TracePayloadSection({ title, payload }: { title: string; payload: unkno
 							setTimeout(() => setCopied(false), 1200);
 						}}
 					>
-						{copied ? <CheckCircle2 className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
+						{copied ? (
+							<CheckCircle2 className="size-4 text-emerald-500" />
+						) : (
+							<Copy className="size-4" />
+						)}
 					</Button>
 				</div>
 			</div>
