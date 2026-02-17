@@ -396,6 +396,14 @@ _EXPLICIT_FILE_READ_RE = re.compile(
     r"(l[aä]s|read).*(hela|whole).*(fil|file)",
     re.IGNORECASE,
 )
+_FILESYSTEM_NOT_FOUND_MARKERS = (
+    "does not exist",
+    "directory not found",
+    "no such file",
+    "finns inte",
+    "saknas",
+    "hittades inte",
+)
 _MISSING_SIGNAL_RE = re.compile(
     r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
     re.IGNORECASE,
@@ -4600,6 +4608,12 @@ async def create_supervisor_agent(
             for name in (tool_names or [])
         )
 
+    def _looks_filesystem_not_found_response(text: str) -> bool:
+        lowered = str(text or "").strip().lower()
+        if not lowered:
+            return False
+        return any(marker in lowered for marker in _FILESYSTEM_NOT_FOUND_MARKERS)
+
     def _collect_subagent_artifacts_from_messages(
         *,
         messages_out: list[Any],
@@ -4700,6 +4714,7 @@ async def create_supervisor_agent(
     ) -> str:
         """Call a specialized agent with a task."""
         injected_state = state or {}
+        latest_turn_query = _latest_user_query(injected_state.get("messages") or [])
         requested_name = (agent_name or "").strip().lower()
         resolved_name, resolution_reason = _resolve_agent_name(
             requested_name,
@@ -4852,6 +4867,13 @@ async def create_supervisor_agent(
             limit=8,
         )
         filesystem_sandbox_task = _is_filesystem_sandbox_task(name, task)
+        explicit_file_read_requested = (
+            filesystem_sandbox_task
+            and (
+                _requires_explicit_file_read(task)
+                or _requires_explicit_file_read(latest_turn_query)
+            )
+        )
         speculative_response, speculative_tools, speculative_payloads = (
             ("", [], [])
             if filesystem_sandbox_task
@@ -5148,7 +5170,7 @@ async def create_supervisor_agent(
                 enforcement_message = code_sandbox_enforcement_message
             elif (
                 filesystem_sandbox_task
-                and _requires_explicit_file_read(task)
+                and explicit_file_read_requested
                 and "sandbox_read_file" not in initial_tool_names
             ):
                 enforcement_message = (
@@ -5234,10 +5256,16 @@ async def create_supervisor_agent(
         if not response_text:
             response_text = str(result)
         used_tool_names = _tool_names_from_messages(messages_out)
-        explicit_file_read_required = (
-            filesystem_sandbox_task and _requires_explicit_file_read(task)
-        )
+        explicit_file_read_required = bool(explicit_file_read_requested)
         used_explicit_read_tool = "sandbox_read_file" in used_tool_names
+        if (
+            explicit_file_read_required
+            and not used_explicit_read_tool
+            and _looks_filesystem_not_found_response(response_text)
+            and _uses_sandbox_tool(used_tool_names)
+        ):
+            # Reading may be impossible when the target path genuinely does not exist.
+            explicit_file_read_required = False
         subagent_artifacts = _collect_subagent_artifacts_from_messages(
             messages_out=messages_out,
             injected_state=injected_state,
