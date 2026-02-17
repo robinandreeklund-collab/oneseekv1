@@ -2908,6 +2908,7 @@ async def create_supervisor_agent(
     llm,
     dependencies: dict[str, Any],
     checkpointer: Checkpointer | None,
+    config_schema: type[Any] | None = None,
     knowledge_prompt: str,
     action_prompt: str,
     statistics_prompt: str,
@@ -6933,7 +6934,13 @@ async def create_supervisor_agent(
             return "progressive_synthesizer"
         return "synthesizer"
 
-    graph_builder = StateGraph(SupervisorState)
+    if config_schema is not None:
+        try:
+            graph_builder = StateGraph(SupervisorState, config_schema=config_schema)
+        except TypeError:
+            graph_builder = StateGraph(SupervisorState)
+    else:
+        graph_builder = StateGraph(SupervisorState)
     graph_builder.add_node("resolve_intent", RunnableCallable(None, resolve_intent_node))
     
     # Conditional graph structure based on compare_mode

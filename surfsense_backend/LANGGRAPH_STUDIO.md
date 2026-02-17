@@ -120,6 +120,38 @@ Tips: börja med dessa tre för cross-workflow-debug:
 2. `compare_followup_weather_shift`
 3. `traffic_e4_goteborg_direct`
 
+## Prompt-test direkt i Studio
+
+Du kan nu testa prompt-ändringar direkt i LangGraph Studio utan att gå via `/admin`.
+
+I Studio:
+
+1. Öppna **Manage Assistants**.
+2. Välj din assistant.
+3. Under configurable/properties finns prompt-fält som:
+   - `prompt_supervisor_system`
+   - `prompt_knowledge_system`
+   - `prompt_action_system`
+   - `prompt_statistics_system`
+   - `prompt_compare_analysis_system`
+   - `prompt_compare_external_system`
+4. Spara assistant-konfigurationen och kör en ny run.
+
+För många ändringar samtidigt kan du använda:
+
+- `prompt_overrides_json`
+
+Exempel:
+
+```json
+{
+  "agent.supervisor.system": "Ny supervisor-prompt...",
+  "agent.action.system": "Ny action-prompt..."
+}
+```
+
+Notera: Studio-overrides gäller för Studio-körningen och har högre prioritet än DB-overrides.
+
 ## Notes
 
 - `STUDIO_CHECKPOINTER_MODE=memory` är enklast för snabb lokal debug.

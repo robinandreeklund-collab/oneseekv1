@@ -15,6 +15,7 @@ from dataclasses import replace
 from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.future import select
 
 from app.agents.new_chat.bigtool_prompts import (
@@ -95,6 +96,141 @@ _FACTORY_LOOP_THREAD: threading.Thread | None = None
 _FACTORY_LOOP_GUARD = threading.Lock()
 _FACTORY_LOOP_READY = threading.Event()
 
+_STUDIO_PROMPT_CONFIG_FIELDS: dict[str, tuple[str, str]] = {
+    "prompt_supervisor_system": (
+        "agent.supervisor.system",
+        "STUDIO_PROMPT_SUPERVISOR_SYSTEM",
+    ),
+    "prompt_knowledge_system": (
+        "agent.knowledge.system",
+        "STUDIO_PROMPT_KNOWLEDGE_SYSTEM",
+    ),
+    "prompt_action_system": (
+        "agent.action.system",
+        "STUDIO_PROMPT_ACTION_SYSTEM",
+    ),
+    "prompt_statistics_system": (
+        "agent.statistics.system",
+        "STUDIO_PROMPT_STATISTICS_SYSTEM",
+    ),
+    "prompt_bolag_system": (
+        "agent.bolag.system",
+        "STUDIO_PROMPT_BOLAG_SYSTEM",
+    ),
+    "prompt_trafik_system": (
+        "agent.trafik.system",
+        "STUDIO_PROMPT_TRAFIK_SYSTEM",
+    ),
+    "prompt_riksdagen_system": (
+        "agent.riksdagen.system",
+        "STUDIO_PROMPT_RIKSDAGEN_SYSTEM",
+    ),
+    "prompt_marketplace_system": (
+        "agent.marketplace.system",
+        "STUDIO_PROMPT_MARKETPLACE_SYSTEM",
+    ),
+    "prompt_compare_analysis_system": (
+        "compare.analysis.system",
+        "STUDIO_PROMPT_COMPARE_ANALYSIS_SYSTEM",
+    ),
+    "prompt_compare_external_system": (
+        "compare.external.system",
+        "STUDIO_PROMPT_COMPARE_EXTERNAL_SYSTEM",
+    ),
+}
+
+
+class StudioGraphConfiguration(BaseModel):
+    """Configurable values exposed in LangGraph Studio."""
+
+    model_config = ConfigDict(extra="allow")
+
+    search_space_id: int = Field(default=1, description="Search space id")
+    llm_config_id: int = Field(default=-1, description="LLM config id")
+    compare_mode: bool = Field(default=False, description="Enable compare mode graph")
+    thread_id: int = Field(default=900000001, description="Thread id used in Studio")
+    user_id: str | None = Field(default=None, description="Optional forced user id")
+    checkpointer_mode: str = Field(default="memory", description="memory or postgres")
+    checkpoint_ns: str | None = Field(default=None, description="Checkpoint namespace")
+    citation_instructions: bool | str | None = Field(
+        default=False,
+        description="true/false or explicit citation instruction block",
+    )
+    hybrid_mode: bool | None = Field(default=None, description="Override hybrid_mode")
+    speculative_enabled: bool | None = Field(
+        default=None,
+        description="Override speculative_enabled",
+    )
+    runtime_hitl: dict[str, Any] | str | None = Field(
+        default=None,
+        description="Runtime HITL overrides (dict or JSON string)",
+    )
+    prompt_overrides_json: str | None = Field(
+        default=None,
+        description="JSON object with prompt-key -> prompt-text overrides.",
+        json_schema_extra={
+            "langgraph_nodes": ["executor"],
+            "langgraph_type": "prompt",
+        },
+    )
+
+    prompt_supervisor_system: str | None = Field(
+        default=DEFAULT_SUPERVISOR_PROMPT,
+        description="Supervisor system prompt",
+        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
+    )
+    prompt_knowledge_system: str | None = Field(
+        default=DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+        description="Knowledge worker system prompt",
+        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
+    )
+    prompt_action_system: str | None = Field(
+        default=DEFAULT_WORKER_ACTION_PROMPT,
+        description="Action worker system prompt",
+        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
+    )
+    prompt_statistics_system: str | None = Field(
+        default=DEFAULT_STATISTICS_SYSTEM_PROMPT,
+        description="Statistics worker system prompt",
+        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
+    )
+    prompt_bolag_system: str | None = Field(
+        default=DEFAULT_BOLAG_SYSTEM_PROMPT,
+        description="Bolag worker system prompt",
+        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
+    )
+    prompt_trafik_system: str | None = Field(
+        default=DEFAULT_TRAFFIC_SYSTEM_PROMPT,
+        description="Trafik worker system prompt",
+        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
+    )
+    prompt_riksdagen_system: str | None = Field(
+        default=DEFAULT_RIKSDAGEN_SYSTEM_PROMPT,
+        description="Riksdagen worker system prompt",
+        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
+    )
+    prompt_marketplace_system: str | None = Field(
+        default=DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+        description="Marketplace worker system prompt",
+        json_schema_extra={"langgraph_nodes": ["executor"], "langgraph_type": "prompt"},
+    )
+    prompt_compare_analysis_system: str | None = Field(
+        default=DEFAULT_COMPARE_ANALYSIS_PROMPT,
+        description="Compare analysis prompt",
+        json_schema_extra={
+            "langgraph_nodes": ["compare_fan_out", "compare_synthesizer"],
+            "langgraph_type": "prompt",
+        },
+    )
+    prompt_compare_external_system: str | None = Field(
+        default=DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+        description="Compare external model prompt",
+        json_schema_extra={
+            "langgraph_nodes": ["compare_fan_out"],
+            "langgraph_type": "prompt",
+        },
+    )
+
 
 def _parse_bool(value: Any, *, default: bool) -> bool:
     if value is None:
@@ -151,6 +287,36 @@ def _json_override(
     if isinstance(parsed, dict):
         return dict(parsed)
     return {}
+
+
+def _collect_studio_prompt_overrides(configurable: dict[str, Any]) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    # Allow arbitrary prompt key overrides via JSON.
+    json_payload = _json_override(
+        configurable,
+        key="prompt_overrides_json",
+        env_name="STUDIO_PROMPT_OVERRIDES_JSON",
+    )
+    for prompt_key, prompt_text in json_payload.items():
+        normalized_key = str(prompt_key or "").strip()
+        normalized_text = str(prompt_text or "").strip()
+        if normalized_key and normalized_text:
+            overrides[normalized_key] = normalized_text
+
+    # And provide direct Studio fields for the most common prompts.
+    for field_name, (prompt_key, env_name) in _STUDIO_PROMPT_CONFIG_FIELDS.items():
+        raw_value = _first_value(
+            configurable,
+            field_name,
+            env_name=env_name,
+            default=None,
+        )
+        if raw_value is None:
+            continue
+        normalized_text = str(raw_value).strip()
+        if normalized_text:
+            overrides[prompt_key] = normalized_text
+    return overrides
 
 
 async def _get_session():
@@ -319,6 +485,10 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
         # Local Studio should stay usable even when DB access is unavailable
         # (e.g. Windows blocker detects a sync call inside the DB driver path).
         prompt_overrides = {}
+    runtime_prompt_overrides = _collect_studio_prompt_overrides(configurable)
+    if runtime_prompt_overrides:
+        # Studio-configurable prompt overrides should always win over DB defaults.
+        prompt_overrides = {**prompt_overrides, **runtime_prompt_overrides}
 
     agent_config = await load_agent_config(
         session=session,
@@ -580,6 +750,7 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
             "trace_parent_span_id": None,
         },
         checkpointer=checkpointer,
+        config_schema=StudioGraphConfiguration,
         knowledge_prompt=knowledge_worker_prompt,
         action_prompt=action_worker_prompt,
         statistics_prompt=statistics_worker_prompt,
@@ -632,6 +803,13 @@ async def make_studio_graph_async(config: dict[str, Any] | None = None):
             "checkpointer_mode": configurable.get("checkpointer_mode", os.getenv("STUDIO_CHECKPOINTER_MODE", "memory")),
             "checkpoint_ns": configurable.get("checkpoint_ns", os.getenv("STUDIO_CHECKPOINT_NS", "")),
             "runtime_hitl": configurable.get("runtime_hitl", os.getenv("STUDIO_RUNTIME_HITL_JSON", "")),
+            "prompt_overrides_json": configurable.get(
+                "prompt_overrides_json", os.getenv("STUDIO_PROMPT_OVERRIDES_JSON", "")
+            ),
+            "prompt_field_overrides": {
+                field_name: configurable.get(field_name, os.getenv(env_name, ""))
+                for field_name, (_prompt_key, env_name) in _STUDIO_PROMPT_CONFIG_FIELDS.items()
+            },
         },
         sort_keys=True,
         default=str,
