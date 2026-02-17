@@ -1656,15 +1656,48 @@ def _has_followup_plan_steps(state: dict[str, Any] | None) -> bool:
     except (TypeError, ValueError):
         step_index = 0
     step_index = max(0, step_index)
-    if step_index < (len(plan_items) - 1):
-        return True
     for idx, item in enumerate(plan_items):
-        if idx <= step_index or not isinstance(item, dict):
+        if idx < step_index:
             continue
+        if not isinstance(item, dict):
+            return True
         status = str(item.get("status") or "").strip().lower()
         if status not in {"completed", "cancelled", "done"}:
             return True
+    if step_index < len(plan_items):
+        # Defensive fallback when plan statuses are missing or stale.
+        return True
     return False
+
+
+def _projected_followup_plan_steps(
+    *,
+    state: dict[str, Any],
+    active_plan: list[dict[str, Any]] | None,
+    plan_complete: bool | None,
+    completed_steps_count: int,
+) -> bool:
+    projected_plan = (
+        [item for item in (active_plan or []) if isinstance(item, dict)]
+        if isinstance(active_plan, list)
+        else [item for item in (state.get("active_plan") or []) if isinstance(item, dict)]
+    )
+    projected_complete = (
+        bool(plan_complete)
+        if plan_complete is not None
+        else bool(state.get("plan_complete"))
+    )
+    projected_step_index = min(
+        max(0, int(completed_steps_count)),
+        len(projected_plan),
+    )
+    return _has_followup_plan_steps(
+        {
+            "active_plan": projected_plan,
+            "plan_complete": projected_complete,
+            "plan_step_index": projected_step_index,
+        }
+    )
 
 
 def _coerce_supervisor_tool_calls(
@@ -6109,6 +6142,9 @@ async def create_supervisor_agent(
         route_hint = _normalize_route_hint_value(state.get("route_hint"))
         latest_user_query = _latest_user_query(state.get("messages") or [])
         messages = list(state.get("messages") or [])
+        existing_steps = [
+            item for item in (state.get("step_results") or []) if isinstance(item, dict)
+        ]
         tool_call_index = _tool_call_name_index(messages)
 
         for message in reversed(messages):
@@ -6160,6 +6196,12 @@ async def create_supervisor_agent(
                             for item in payload_artifacts
                             if isinstance(item, dict)
                         )
+                    pending_followup_steps = _projected_followup_plan_steps(
+                        state=state,
+                        active_plan=plan_update,
+                        plan_complete=plan_complete,
+                        completed_steps_count=len(existing_steps) + len(recent_updates),
+                    )
                     if payload.get("final") and payload.get("response"):
                         cleaned_response = _strip_critic_json(
                             str(payload.get("response") or "").strip()
@@ -6171,7 +6213,7 @@ async def create_supervisor_agent(
                             agent_name=str(payload.get("agent") or ""),
                             latest_user_query=latest_user_query,
                             agent_hops=int(state.get("agent_hops") or 0),
-                        ):
+                        ) and not pending_followup_steps:
                             updates["final_agent_response"] = cleaned_response
                             updates["final_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
@@ -6188,7 +6230,7 @@ async def create_supervisor_agent(
                             agent_name=selected_agent,
                             latest_user_query=latest_user_query,
                             agent_hops=int(state.get("agent_hops") or 0),
-                        ):
+                        ) and not pending_followup_steps:
                             updates["final_agent_response"] = cleaned_response
                             updates["final_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
@@ -6252,11 +6294,6 @@ async def create_supervisor_agent(
             updates["plan_complete"] = plan_complete
         if recent_updates:
             updates["recent_agent_calls"] = recent_updates
-            existing_steps = [
-                item
-                for item in (state.get("step_results") or [])
-                if isinstance(item, dict)
-            ]
             merged_steps = (existing_steps + recent_updates)[-12:]
             updates["step_results"] = merged_steps
             updates["plan_step_index"] = min(
@@ -6516,6 +6553,7 @@ async def create_supervisor_agent(
         updates["orchestration_phase"] = (
             "validate_agent_output" if agent_hops > 0 else "select_agent"
         )
+        pending_followup_steps = _has_followup_plan_steps(state)
 
         no_progress_runs = int(state.get("no_progress_runs") or 0)
         if call_entries:
@@ -6541,7 +6579,12 @@ async def create_supervisor_agent(
             no_progress_runs = 0
         updates["no_progress_runs"] = no_progress_runs
 
-        if "final_agent_response" not in updates and call_entries and route_hint != "compare":
+        if (
+            "final_agent_response" not in updates
+            and call_entries
+            and route_hint != "compare"
+            and not pending_followup_steps
+        ):
             last_entry = call_entries[-1]
             last_response = _strip_critic_json(
                 str(last_entry.get("response") or "").strip()
