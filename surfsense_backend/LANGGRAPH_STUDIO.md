@@ -150,3 +150,16 @@ Lösning:
 ```
 
 Om du fortfarande får samma fel kör du sannolikt mot en äldre checkout eller annan katalog.
+
+### `RuntimeError: asyncio.run() cannot be called from a running event loop`
+
+Detta händer när en äldre Studio-factory kör `asyncio.run(...)` inifrån LangGraphs egen event loop.
+
+Lösning:
+
+1. `git pull` till senaste branch.
+2. Starta om Studio:
+
+```powershell
+.\scripts\run-langgraph-studio.ps1 -SkipInstall
+```

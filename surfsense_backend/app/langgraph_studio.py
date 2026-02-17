@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 from dataclasses import replace
 from typing import Any
 
@@ -86,8 +87,13 @@ _DEFAULT_RUNTIME_HITL: dict[str, Any] = {
 }
 
 _GRAPH_CACHE: dict[str, Any] = {}
-_BUILD_LOCK = asyncio.Lock()
+_BUILD_LOCK: asyncio.Lock | None = None
+_BUILD_LOCK_LOOP_ID: int | None = None
 _SESSION = None
+_FACTORY_LOOP: asyncio.AbstractEventLoop | None = None
+_FACTORY_LOOP_THREAD: threading.Thread | None = None
+_FACTORY_LOOP_GUARD = threading.Lock()
+_FACTORY_LOOP_READY = threading.Event()
 
 
 def _parse_bool(value: Any, *, default: bool) -> bool:
@@ -156,6 +162,60 @@ async def _get_session():
     except Exception:
         pass
     return _SESSION
+
+
+def _get_build_lock() -> asyncio.Lock:
+    """Return a loop-local build lock for async graph construction."""
+    global _BUILD_LOCK, _BUILD_LOCK_LOOP_ID
+    running_loop = asyncio.get_running_loop()
+    running_loop_id = id(running_loop)
+    if _BUILD_LOCK is None or _BUILD_LOCK_LOOP_ID != running_loop_id:
+        _BUILD_LOCK = asyncio.Lock()
+        _BUILD_LOCK_LOOP_ID = running_loop_id
+    return _BUILD_LOCK
+
+
+def _factory_loop_worker() -> None:
+    """Run a dedicated event loop for sync factory invocations."""
+    global _FACTORY_LOOP
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    _FACTORY_LOOP = loop
+    _FACTORY_LOOP_READY.set()
+    loop.run_forever()
+
+
+def _ensure_factory_loop() -> asyncio.AbstractEventLoop:
+    global _FACTORY_LOOP_THREAD
+    existing = _FACTORY_LOOP
+    if existing is not None and existing.is_running():
+        return existing
+    with _FACTORY_LOOP_GUARD:
+        existing = _FACTORY_LOOP
+        if existing is not None and existing.is_running():
+            return existing
+        _FACTORY_LOOP_READY.clear()
+        _FACTORY_LOOP_THREAD = threading.Thread(
+            target=_factory_loop_worker,
+            name="langgraph-studio-factory-loop",
+            daemon=True,
+        )
+        _FACTORY_LOOP_THREAD.start()
+    if not _FACTORY_LOOP_READY.wait(timeout=10):
+        raise RuntimeError("Timed out initializing LangGraph Studio factory event loop.")
+    initialized_loop = _FACTORY_LOOP
+    if initialized_loop is None or not initialized_loop.is_running():
+        raise RuntimeError("Failed to initialize LangGraph Studio factory event loop.")
+    return initialized_loop
+
+
+def _run_async_factory_sync(config: dict[str, Any] | None = None):
+    loop = _ensure_factory_loop()
+    future = asyncio.run_coroutine_threadsafe(
+        make_studio_graph_async(config),
+        loop,
+    )
+    return future.result()
 
 
 async def _resolve_user_id(
@@ -573,7 +633,7 @@ async def make_studio_graph_async(config: dict[str, Any] | None = None):
     )
     if cache_key in _GRAPH_CACHE:
         return _GRAPH_CACHE[cache_key]
-    async with _BUILD_LOCK:
+    async with _get_build_lock():
         if cache_key in _GRAPH_CACHE:
             return _GRAPH_CACHE[cache_key]
         graph = await _build_studio_graph(config)
@@ -582,5 +642,5 @@ async def make_studio_graph_async(config: dict[str, Any] | None = None):
 
 
 def make_studio_graph(config: dict[str, Any] | None = None):
-    """LangGraph Studio factory (sync wrapper)."""
-    return asyncio.run(make_studio_graph_async(config))
+    """LangGraph Studio factory for runtimes that expect a sync callable."""
+    return _run_async_factory_sync(config)
