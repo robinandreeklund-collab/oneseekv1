@@ -7,7 +7,13 @@ import json
 import pytest
 from langchain_core.messages import HumanMessage
 
-from app.agents.new_chat.nodes.synthesizer import build_synthesizer_node
+try:
+    from app.agents.new_chat.nodes.synthesizer import build_synthesizer_node
+except ModuleNotFoundError as exc:  # pragma: no cover - optional local deps
+    pytest.skip(
+        f"Skipping synthesizer regression tests because optional dependency is missing: {exc}",
+        allow_module_level=True,
+    )
 
 
 class _DummyLLM:
