@@ -212,6 +212,29 @@ function toolIdPrefixForScope(scope: string): string | undefined {
 	}
 }
 
+const DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD = 0.3;
+
+function defaultAuditAnnotationForProbe(
+	probe: MetadataCatalogAuditRunResponse["probes"][number]
+): AuditAnnotationDraft {
+	const intentExpected = probe.intent.expected_label ?? null;
+	const agentExpected = probe.agent.expected_label ?? null;
+	const toolExpected = probe.tool.expected_label ?? probe.target_tool_id ?? null;
+	return {
+		intent_is_correct: intentExpected ? probe.intent.predicted_label === intentExpected : true,
+		corrected_intent_id: intentExpected,
+		agent_is_correct: agentExpected ? probe.agent.predicted_label === agentExpected : true,
+		corrected_agent_id: agentExpected,
+		tool_is_correct: toolExpected ? probe.tool.predicted_label === toolExpected : true,
+		corrected_tool_id: toolExpected,
+	};
+}
+
+function isLowMargin(margin: number | null | undefined, threshold: number): boolean {
+	if (typeof margin !== "number" || Number.isNaN(margin)) return false;
+	return margin < threshold;
+}
+
 export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }) {
 	const queryClient = useQueryClient();
 	const [sectionTab, setSectionTab] = useState<"agents" | "intents" | "tools">("agents");
@@ -225,6 +248,12 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [includeLlmGenerated, setIncludeLlmGenerated] = useState(true);
 	const [llmQueriesPerTool, setLlmQueriesPerTool] = useState(3);
 	const [maxQueriesPerTool, setMaxQueriesPerTool] = useState(6);
+	const [auditLowMarginThreshold, setAuditLowMarginThreshold] = useState(
+		DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD
+	);
+	const [showOnlyAuditIssues, setShowOnlyAuditIssues] = useState(false);
+	const [showOnlyLowMargin, setShowOnlyLowMargin] = useState(false);
+	const [sortAuditIssuesFirst, setSortAuditIssuesFirst] = useState(true);
 	const [isRunningAudit, setIsRunningAudit] = useState(false);
 	const [auditResult, setAuditResult] = useState<MetadataCatalogAuditRunResponse | null>(null);
 	const [auditAnnotations, setAuditAnnotations] = useState<Record<string, AuditAnnotationDraft>>(
@@ -372,6 +401,92 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		const list = auditSuggestions?.agent_suggestions ?? [];
 		return list.filter((item) => selectedAuditSuggestionAgentIds.has(item.agent_id));
 	}, [auditSuggestions?.agent_suggestions, selectedAuditSuggestionAgentIds]);
+	const auditProbeRows = useMemo(() => {
+		if (!auditResult) return [];
+		return auditResult.probes.map((probe) => {
+			const annotation = auditAnnotations[probe.probe_id] ?? defaultAuditAnnotationForProbe(probe);
+			const intentExpected = probe.intent.expected_label ?? null;
+			const agentExpected = probe.agent.expected_label ?? null;
+			const toolExpected = probe.tool.expected_label ?? probe.target_tool_id ?? null;
+			const intentCorrect = intentExpected
+				? probe.intent.predicted_label === intentExpected
+				: true;
+			const agentCorrect = agentExpected ? probe.agent.predicted_label === agentExpected : true;
+			const toolCorrect = toolExpected ? probe.tool.predicted_label === toolExpected : true;
+			const intentLowMargin = isLowMargin(probe.intent.margin, auditLowMarginThreshold);
+			const agentLowMargin = isLowMargin(probe.agent.margin, auditLowMarginThreshold);
+			const toolLowMargin = isLowMargin(probe.tool.margin, auditLowMarginThreshold);
+			const hasAnyError = !intentCorrect || !agentCorrect || !toolCorrect;
+			const hasAnyLowMargin = intentLowMargin || agentLowMargin || toolLowMargin;
+			const severityScore =
+				(toolCorrect ? 0 : 120) +
+				(agentCorrect ? 0 : 80) +
+				(intentCorrect ? 0 : 60) +
+				(toolLowMargin ? 20 : 0) +
+				(agentLowMargin ? 14 : 0) +
+				(intentLowMargin ? 10 : 0);
+			return {
+				probe,
+				annotation,
+				intentCorrect,
+				agentCorrect,
+				toolCorrect,
+				intentLowMargin,
+				agentLowMargin,
+				toolLowMargin,
+				hasAnyError,
+				hasAnyLowMargin,
+				severityScore,
+			};
+		});
+	}, [auditResult, auditAnnotations, auditLowMarginThreshold]);
+	const auditIssueSummary = useMemo(() => {
+		let intentErrors = 0;
+		let agentErrors = 0;
+		let toolErrors = 0;
+		let intentLowMargins = 0;
+		let agentLowMargins = 0;
+		let toolLowMargins = 0;
+		let probesWithAnyError = 0;
+		for (const row of auditProbeRows) {
+			if (!row.intentCorrect) intentErrors += 1;
+			if (!row.agentCorrect) agentErrors += 1;
+			if (!row.toolCorrect) toolErrors += 1;
+			if (row.intentLowMargin) intentLowMargins += 1;
+			if (row.agentLowMargin) agentLowMargins += 1;
+			if (row.toolLowMargin) toolLowMargins += 1;
+			if (row.hasAnyError) probesWithAnyError += 1;
+		}
+		return {
+			totalProbes: auditProbeRows.length,
+			probesWithAnyError,
+			intentErrors,
+			agentErrors,
+			toolErrors,
+			intentLowMargins,
+			agentLowMargins,
+			toolLowMargins,
+		};
+	}, [auditProbeRows]);
+	const visibleAuditProbeRows = useMemo(() => {
+		let rows = auditProbeRows;
+		if (showOnlyAuditIssues) {
+			rows = rows.filter((row) => row.hasAnyError);
+		}
+		if (showOnlyLowMargin) {
+			rows = rows.filter((row) => row.hasAnyLowMargin);
+		}
+		const sorted = [...rows];
+		if (sortAuditIssuesFirst) {
+			sorted.sort((left, right) => {
+				if (left.severityScore !== right.severityScore) {
+					return right.severityScore - left.severityScore;
+				}
+				return left.probe.query.localeCompare(right.probe.query, "sv");
+			});
+		}
+		return sorted;
+	}, [auditProbeRows, showOnlyAuditIssues, showOnlyLowMargin, sortAuditIssuesFirst]);
 
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((previous) => {
@@ -471,26 +586,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			setAuditResult(result);
 			const nextAnnotations: Record<string, AuditAnnotationDraft> = {};
 			for (const probe of result.probes) {
-				const intentExpected = probe.intent.expected_label ?? null;
-				const agentExpected = probe.agent.expected_label ?? null;
-				const toolExpected = probe.tool.expected_label ?? probe.target_tool_id;
-				const intentCorrect = intentExpected
-					? probe.intent.predicted_label === intentExpected
-					: true;
-				const agentCorrect = agentExpected
-					? probe.agent.predicted_label === agentExpected
-					: true;
-				const toolCorrect = toolExpected
-					? probe.tool.predicted_label === toolExpected
-					: true;
-				nextAnnotations[probe.probe_id] = {
-					intent_is_correct: intentCorrect,
-					corrected_intent_id: intentExpected,
-					agent_is_correct: agentCorrect,
-					corrected_agent_id: agentExpected,
-					tool_is_correct: toolCorrect,
-					corrected_tool_id: toolExpected,
-				};
+				nextAnnotations[probe.probe_id] = defaultAuditAnnotationForProbe(probe);
 			}
 			setAuditAnnotations(nextAnnotations);
 			setAuditSuggestions(null);
@@ -570,14 +666,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const generateAuditSuggestions = async () => {
 		if (!data?.search_space_id || !auditResult) return;
 		const annotations = auditResult.probes.map((probe) => {
-			const draft = auditAnnotations[probe.probe_id] ?? {
-				intent_is_correct: probe.intent.predicted_label === probe.intent.expected_label,
-				corrected_intent_id: probe.intent.expected_label ?? null,
-				agent_is_correct: probe.agent.predicted_label === probe.agent.expected_label,
-				corrected_agent_id: probe.agent.expected_label ?? null,
-				tool_is_correct: probe.tool.predicted_label === probe.tool.expected_label,
-				corrected_tool_id: probe.tool.expected_label ?? probe.target_tool_id,
-			};
+			const draft = auditAnnotations[probe.probe_id] ?? defaultAuditAnnotationForProbe(probe);
 			return {
 				probe_id: probe.probe_id,
 				query: probe.query,
@@ -1002,6 +1091,25 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									).toFixed(1)}
 									%)
 								</Badge>
+								<Badge
+									variant={
+										auditIssueSummary.probesWithAnyError > 0 ? "destructive" : "outline"
+									}
+								>
+									Probes med fel: {auditIssueSummary.probesWithAnyError}/
+									{auditIssueSummary.totalProbes}
+								</Badge>
+								<Badge variant="outline">
+									Intent/Agent/Tool fel: {auditIssueSummary.intentErrors}/
+									{auditIssueSummary.agentErrors}/{auditIssueSummary.toolErrors}
+								</Badge>
+								<Badge variant="outline">
+									Lag marginal (I/A/T): {auditIssueSummary.intentLowMargins}/
+									{auditIssueSummary.agentLowMargins}/{auditIssueSummary.toolLowMargins}
+								</Badge>
+								<Badge variant="outline">
+									Visar: {visibleAuditProbeRows.length}/{auditIssueSummary.totalProbes}
+								</Badge>
 							</div>
 							<div className="rounded border p-3 space-y-2">
 								<p className="text-sm font-medium">Tool-aware embedding context</p>
@@ -1018,6 +1126,73 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 											{field}
 										</Badge>
 									))}
+								</div>
+							</div>
+							<div className="rounded border p-3 space-y-2">
+								<p className="text-sm font-medium">Snabbfilter: hitta fel snabbt</p>
+								<div className="flex flex-wrap items-center gap-3 text-xs">
+									<label className="flex items-center gap-2">
+										<input
+											type="checkbox"
+											checked={showOnlyAuditIssues}
+											onChange={(event) => setShowOnlyAuditIssues(event.target.checked)}
+										/>
+										Visa bara probes med fel
+									</label>
+									<label className="flex items-center gap-2">
+										<input
+											type="checkbox"
+											checked={showOnlyLowMargin}
+											onChange={(event) => setShowOnlyLowMargin(event.target.checked)}
+										/>
+										Visa bara lag marginal
+									</label>
+									<label className="flex items-center gap-2">
+										<input
+											type="checkbox"
+											checked={sortAuditIssuesFirst}
+											onChange={(event) => setSortAuditIssuesFirst(event.target.checked)}
+										/>
+										Sortera riskfall forst
+									</label>
+									<div className="flex items-center gap-2">
+										<span className="text-muted-foreground">Lag margin-tröskel</span>
+										<Input
+											type="number"
+											step={0.05}
+											min={0}
+											max={5}
+											value={auditLowMarginThreshold}
+											onChange={(event) =>
+												setAuditLowMarginThreshold(
+													Math.max(
+														0,
+														Math.min(
+															5,
+															Number.parseFloat(
+																event.target.value ||
+																	`${DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD}`
+															)
+														)
+													)
+												)
+											}
+											className="h-8 w-24"
+										/>
+									</div>
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={() => {
+											setShowOnlyAuditIssues(false);
+											setShowOnlyLowMargin(false);
+											setSortAuditIssuesFirst(true);
+											setAuditLowMarginThreshold(DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD);
+										}}
+									>
+										Reset filter
+									</Button>
 								</div>
 							</div>
 							<div className="grid gap-3 lg:grid-cols-2">
@@ -1075,26 +1250,47 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								</div>
 							</div>
 							<div className="max-h-[28rem] overflow-auto space-y-2 rounded border p-3">
-								{auditResult.probes.map((probe) => {
-									const annotation = auditAnnotations[probe.probe_id] ?? {
-										intent_is_correct:
-											probe.intent.predicted_label === probe.intent.expected_label,
-										corrected_intent_id: probe.intent.expected_label ?? null,
-										agent_is_correct:
-											probe.agent.predicted_label === probe.agent.expected_label,
-										corrected_agent_id: probe.agent.expected_label ?? null,
-										tool_is_correct: probe.tool.predicted_label === probe.tool.expected_label,
-										corrected_tool_id:
-											probe.tool.expected_label ?? probe.target_tool_id ?? null,
-									};
+								{visibleAuditProbeRows.map((probeRow) => {
+									const {
+										probe,
+										annotation,
+										intentCorrect,
+										agentCorrect,
+										toolCorrect,
+										intentLowMargin,
+										agentLowMargin,
+										toolLowMargin,
+										hasAnyError,
+										hasAnyLowMargin,
+									} = probeRow;
 									const vectorDiagnostics = probe.tool_vector_diagnostics;
+									const cardClassName = hasAnyError
+										? "rounded border border-destructive/60 bg-destructive/5 p-3 space-y-2"
+										: hasAnyLowMargin
+											? "rounded border border-amber-500/60 bg-amber-500/5 p-3 space-y-2"
+											: "rounded border border-emerald-500/35 bg-emerald-500/5 p-3 space-y-2";
 									return (
-										<div key={probe.probe_id} className="rounded border p-3 space-y-2">
+										<div key={probe.probe_id} className={cardClassName}>
 											<p className="text-sm font-medium">{probe.query}</p>
 											<div className="flex flex-wrap gap-2 text-xs">
 												<Badge variant="outline">Expected path: {probe.expected_path}</Badge>
 												<Badge variant="outline">Predicted path: {probe.predicted_path}</Badge>
 												<Badge variant="secondary">{probe.source}</Badge>
+												{hasAnyError ? (
+													<Badge variant="destructive">Fel</Badge>
+												) : (
+													<Badge variant="secondary">OK</Badge>
+												)}
+												{!intentCorrect ? <Badge variant="destructive">Intent fel</Badge> : null}
+												{!agentCorrect ? <Badge variant="destructive">Agent fel</Badge> : null}
+												{!toolCorrect ? <Badge variant="destructive">Tool fel</Badge> : null}
+												{intentLowMargin ? (
+													<Badge variant="outline">Intent lag marginal</Badge>
+												) : null}
+												{agentLowMargin ? (
+													<Badge variant="outline">Agent lag marginal</Badge>
+												) : null}
+												{toolLowMargin ? <Badge variant="outline">Tool lag marginal</Badge> : null}
 											</div>
 											<div className="grid gap-3 lg:grid-cols-3">
 												<div className="rounded border p-2 space-y-2">
@@ -1277,6 +1473,11 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										</div>
 									);
 								})}
+								{visibleAuditProbeRows.length === 0 ? (
+									<div className="rounded border border-dashed p-4 text-xs text-muted-foreground">
+										Inga probes matchar valda filter.
+									</div>
+								) : null}
 							</div>
 						</div>
 					) : null}
