@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 import json
 import re
@@ -2642,6 +2643,7 @@ async def generate_tool_metadata_suggestions(
     retrieval_tuning: dict[str, Any] | None = None,
     retrieval_context: dict[str, Any] | None = None,
     max_suggestions: int = 20,
+    parallelism: int = 1,
 ) -> list[dict[str, Any]]:
     index_by_id = {entry.tool_id: entry for entry in tool_index}
     effective_retrieval_context = dict(retrieval_context or {})
@@ -2690,10 +2692,18 @@ async def generate_tool_metadata_suggestions(
             }
         )
 
-    suggestions: list[dict[str, Any]] = []
-    for tool_id, failure_data in grouped.items():
-        if len(suggestions) >= max_suggestions:
-            break
+    normalized_max_suggestions = max(1, int(max_suggestions))
+    try:
+        normalized_parallelism = int(parallelism or 1)
+    except Exception:
+        normalized_parallelism = 1
+    normalized_parallelism = max(1, min(normalized_parallelism, 32))
+    grouped_items = list(grouped.items())
+
+    async def _suggest_for_tool(
+        tool_id: str,
+        failure_data: dict[str, Any],
+    ) -> dict[str, Any] | None:
         entry = index_by_id[tool_id]
         current = _serialize_tool(entry)
         current["base_path"] = entry.base_path
@@ -2728,18 +2738,39 @@ async def generate_tool_metadata_suggestions(
         else:
             proposed, rationale = fallback_proposed, fallback_rationale
         if _metadata_equal(current, proposed):
-            continue
-        suggestions.append(
-            {
-                "tool_id": tool_id,
-                "failed_test_ids": list(failure_data["failed_test_ids"]),
-                "rationale": rationale,
-                "current_metadata": current,
-                "proposed_metadata": proposed,
-            }
+            return None
+        return {
+            "tool_id": tool_id,
+            "failed_test_ids": list(failure_data["failed_test_ids"]),
+            "rationale": rationale,
+            "current_metadata": current,
+            "proposed_metadata": proposed,
+        }
+
+    results: list[dict[str, Any] | None] = []
+    if normalized_parallelism <= 1:
+        for tool_id, failure_data in grouped_items:
+            suggestion = await _suggest_for_tool(tool_id, failure_data)
+            if suggestion is not None:
+                results.append(suggestion)
+            if len(results) >= normalized_max_suggestions:
+                break
+    else:
+        semaphore = asyncio.Semaphore(normalized_parallelism)
+
+        async def _run_with_limit(
+            tool_id: str,
+            failure_data: dict[str, Any],
+        ) -> dict[str, Any] | None:
+            async with semaphore:
+                return await _suggest_for_tool(tool_id, failure_data)
+
+        results = await asyncio.gather(
+            *[_run_with_limit(tool_id, failure_data) for tool_id, failure_data in grouped_items]
         )
 
-    return suggestions
+    suggestions = [item for item in results if item is not None]
+    return suggestions[:normalized_max_suggestions]
 
 
 async def suggest_intent_definition_improvements(

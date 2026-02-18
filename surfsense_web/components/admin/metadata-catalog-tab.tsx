@@ -360,6 +360,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [llmQueriesPerTool, setLlmQueriesPerTool] = useState(3);
 	const [maxQueriesPerTool, setMaxQueriesPerTool] = useState(6);
 	const [hardNegativesPerTool, setHardNegativesPerTool] = useState(1);
+	const [probeGenerationParallelism, setProbeGenerationParallelism] = useState(1);
+	const [suggestionParallelism, setSuggestionParallelism] = useState(1);
 	const [auditLowMarginThreshold, setAuditLowMarginThreshold] = useState(
 		DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD
 	);
@@ -887,6 +889,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				llm_queries_per_tool: llmQueriesPerTool,
 				max_queries_per_tool: maxQueriesPerTool,
 				hard_negatives_per_tool: hardNegativesPerTool,
+				probe_generation_parallelism: probeGenerationParallelism,
 			});
 			setAuditResult(result);
 			const nextAnnotations: Record<string, AuditAnnotationDraft> = {};
@@ -1018,6 +1021,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				agent_metadata_patch: agentMetadataPatchForDraft,
 				annotations,
 				max_suggestions: 30,
+				llm_parallelism: suggestionParallelism,
 			});
 			setAuditSuggestions(response);
 			setSelectedAuditSuggestionToolIds(
@@ -1186,6 +1190,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					llm_queries_per_tool: llmQueriesPerTool,
 					max_queries_per_tool: maxQueriesPerTool,
 					hard_negatives_per_tool: hardNegativesPerTool,
+					probe_generation_parallelism: probeGenerationParallelism,
 					probe_round: round,
 					exclude_probe_queries: Array.from(usedProbeQueryKeys).slice(-2500),
 				});
@@ -1299,6 +1304,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						agent_metadata_patch: Object.values(agentPatchMap),
 						annotations,
 						max_suggestions: 30,
+						llm_parallelism: suggestionParallelism,
 					});
 				const toolSuggestionCount = suggestions.tool_suggestions.length;
 				const intentSuggestionCount = suggestions.intent_suggestions.length;
@@ -1650,6 +1656,34 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								}
 							/>
 						</div>
+						<div className="space-y-1">
+							<Label>Steg A parallelism</Label>
+							<Input
+								type="number"
+								min={1}
+								max={32}
+								value={probeGenerationParallelism}
+								onChange={(event) =>
+									setProbeGenerationParallelism(
+										Math.max(1, Math.min(32, Number.parseInt(event.target.value || "1", 10)))
+									)
+								}
+							/>
+						</div>
+						<div className="space-y-1">
+							<Label>Steg B parallelism</Label>
+							<Input
+								type="number"
+								min={1}
+								max={32}
+								value={suggestionParallelism}
+								onChange={(event) =>
+									setSuggestionParallelism(
+										Math.max(1, Math.min(32, Number.parseInt(event.target.value || "1", 10)))
+									)
+								}
+							/>
+						</div>
 						<div className="space-y-1 lg:col-span-2">
 							<Label className="block">Kallor</Label>
 							<label className="flex items-center gap-2 text-sm">
@@ -1681,6 +1715,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								{customAuditToolIds.length > 0 ? (
 									<Badge variant="outline">Extra manuella: {customAuditToolIds.length}</Badge>
 								) : null}
+								<Badge variant="outline">A parallel: {probeGenerationParallelism}</Badge>
+								<Badge variant="outline">B parallel: {suggestionParallelism}</Badge>
 							</div>
 						</div>
 						<div className="flex items-end">

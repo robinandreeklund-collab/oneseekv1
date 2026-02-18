@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -820,6 +821,14 @@ def _matrix_rows_from_counts(
     return rows
 
 
+def _normalize_parallelism(value: int | None, *, default: int = 1) -> int:
+    try:
+        parsed = int(value or default)
+    except Exception:
+        parsed = default
+    return max(1, min(parsed, 32))
+
+
 async def run_layered_metadata_audit(
     *,
     tool_index: list[ToolIndexEntry],
@@ -838,6 +847,7 @@ async def run_layered_metadata_audit(
     hard_negatives_per_tool: int = 1,
     retrieval_limit: int = 5,
     max_tools: int = 25,
+    probe_generation_parallelism: int = 1,
     probe_round: int = 1,
     exclude_probe_queries: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -895,12 +905,49 @@ async def run_layered_metadata_audit(
     max_probe_queries = max(1, min(int(max_queries_per_tool or 6), 20))
     llm_query_count = max(1, min(int(llm_queries_per_tool or 3), 12))
     hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
+    normalized_probe_parallelism = _normalize_parallelism(probe_generation_parallelism)
     normalized_probe_round = max(1, min(int(probe_round or 1), 1000))
     excluded_query_keys = {
         _normalize_text(query).casefold()
         for query in list(exclude_probe_queries or [])
         if _normalize_text(query)
     }
+    generated_queries_by_tool: dict[str, list[str]] = {}
+    if include_llm_generated:
+        async def _generate_for_entry(entry: ToolIndexEntry) -> tuple[str, list[str]]:
+            seed_examples = [
+                query
+                for query in entry.example_queries[:max_probe_queries]
+                if _normalize_text(query)
+            ]
+            avoid_for_generation = [*list(excluded_query_keys)[:160], *seed_examples[:40]]
+            generated = await _generate_probe_queries_for_tool(
+                llm=llm,
+                entry=entry,
+                neighbors=neighbors_by_tool.get(entry.tool_id, []),
+                query_count=llm_query_count,
+                hard_negatives_per_tool=hard_negative_count,
+                avoid_queries=avoid_for_generation,
+                round_index=normalized_probe_round,
+            )
+            return entry.tool_id, list(generated)
+
+        if normalized_probe_parallelism <= 1:
+            for entry in selected_entries:
+                tool_id, generated = await _generate_for_entry(entry)
+                generated_queries_by_tool[tool_id] = generated
+        else:
+            semaphore = asyncio.Semaphore(normalized_probe_parallelism)
+
+            async def _run_with_limit(entry: ToolIndexEntry) -> tuple[str, list[str]]:
+                async with semaphore:
+                    return await _generate_for_entry(entry)
+
+            generated_results = await asyncio.gather(
+                *[_run_with_limit(entry) for entry in selected_entries]
+            )
+            for tool_id, generated in generated_results:
+                generated_queries_by_tool[tool_id] = list(generated)
 
     for entry in selected_entries:
         expected_tool_id = entry.tool_id
@@ -913,19 +960,7 @@ async def run_layered_metadata_audit(
                 for query in entry.example_queries[:max_probe_queries]
             )
         if include_llm_generated:
-            avoid_for_generation = [
-                *list(excluded_query_keys)[:160],
-                *[query for query, _source in queries][:40],
-            ]
-            generated = await _generate_probe_queries_for_tool(
-                llm=llm,
-                entry=entry,
-                neighbors=neighbors_by_tool.get(entry.tool_id, []),
-                query_count=llm_query_count,
-                hard_negatives_per_tool=hard_negative_count,
-                avoid_queries=avoid_for_generation,
-                round_index=normalized_probe_round,
-            )
+            generated = list(generated_queries_by_tool.get(entry.tool_id) or [])
             queries.extend((query, "llm_generated") for query in generated)
         queries = _dedupe_queries(queries)
 
@@ -1508,6 +1543,7 @@ async def generate_intent_metadata_suggestions_from_annotations(
     intent_failures: list[dict[str, Any]],
     llm: Any,
     max_suggestions: int = 20,
+    parallelism: int = 1,
 ) -> list[dict[str, Any]]:
     definitions_by_id = {
         _normalize_text(item.get("intent_id")).lower(): normalize_intent_definition_payload(
@@ -1523,10 +1559,14 @@ async def generate_intent_metadata_suggestions_from_annotations(
         if not expected_intent_id:
             continue
         grouped.setdefault(expected_intent_id, []).append(failure)
-    suggestions: list[dict[str, Any]] = []
-    for intent_id, failures in grouped.items():
-        if len(suggestions) >= max(1, int(max_suggestions)):
-            break
+    normalized_max_suggestions = max(1, int(max_suggestions))
+    normalized_parallelism = _normalize_parallelism(parallelism)
+    candidate_items = list(grouped.items())
+
+    async def _suggest_for_intent(
+        intent_id: str,
+        failures: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
         current = definitions_by_id.get(intent_id) or normalize_intent_definition_payload(
             {"intent_id": intent_id},
             intent_id=intent_id,
@@ -1550,37 +1590,59 @@ async def generate_intent_metadata_suggestions_from_annotations(
             intent_id=intent_id,
         )
         if _intent_metadata_equal(current, proposed):
-            continue
-        suggestions.append(
-            {
+            return None
+        return {
+            "intent_id": intent_id,
+            "failed_probe_ids": [
+                _normalize_text(item.get("probe_id"))
+                for item in failures
+                if _normalize_text(item.get("probe_id"))
+            ],
+            "rationale": rationale,
+            "current_metadata": {
                 "intent_id": intent_id,
-                "failed_probe_ids": [
-                    _normalize_text(item.get("probe_id"))
-                    for item in failures
-                    if _normalize_text(item.get("probe_id"))
-                ],
-                "rationale": rationale,
-                "current_metadata": {
-                    "intent_id": intent_id,
-                    "label": current.get("label"),
-                    "route": current.get("route"),
-                    "description": current.get("description"),
-                    "keywords": list(current.get("keywords") or []),
-                    "priority": int(current.get("priority") or 500),
-                    "enabled": bool(current.get("enabled", True)),
-                },
-                "proposed_metadata": {
-                    "intent_id": intent_id,
-                    "label": proposed.get("label"),
-                    "route": proposed.get("route"),
-                    "description": proposed.get("description"),
-                    "keywords": list(proposed.get("keywords") or []),
-                    "priority": int(proposed.get("priority") or 500),
-                    "enabled": bool(proposed.get("enabled", True)),
-                },
-            }
+                "label": current.get("label"),
+                "route": current.get("route"),
+                "description": current.get("description"),
+                "keywords": list(current.get("keywords") or []),
+                "priority": int(current.get("priority") or 500),
+                "enabled": bool(current.get("enabled", True)),
+            },
+            "proposed_metadata": {
+                "intent_id": intent_id,
+                "label": proposed.get("label"),
+                "route": proposed.get("route"),
+                "description": proposed.get("description"),
+                "keywords": list(proposed.get("keywords") or []),
+                "priority": int(proposed.get("priority") or 500),
+                "enabled": bool(proposed.get("enabled", True)),
+            },
+        }
+
+    results: list[dict[str, Any] | None] = []
+    if normalized_parallelism <= 1:
+        for intent_id, failures in candidate_items:
+            suggestion = await _suggest_for_intent(intent_id, failures)
+            if suggestion is not None:
+                results.append(suggestion)
+            if len(results) >= normalized_max_suggestions:
+                break
+    else:
+        semaphore = asyncio.Semaphore(normalized_parallelism)
+
+        async def _run_with_limit(
+            intent_id: str,
+            failures: list[dict[str, Any]],
+        ) -> dict[str, Any] | None:
+            async with semaphore:
+                return await _suggest_for_intent(intent_id, failures)
+
+        results = await asyncio.gather(
+            *[_run_with_limit(intent_id, failures) for intent_id, failures in candidate_items]
         )
-    return suggestions
+
+    suggestions = [item for item in results if item is not None]
+    return suggestions[:normalized_max_suggestions]
 
 
 async def generate_agent_metadata_suggestions_from_annotations(
@@ -1589,6 +1651,7 @@ async def generate_agent_metadata_suggestions_from_annotations(
     agent_failures: list[dict[str, Any]],
     llm: Any,
     max_suggestions: int = 20,
+    parallelism: int = 1,
 ) -> list[dict[str, Any]]:
     metadata_by_id = {
         _normalize_text(item.get("agent_id")).lower(): normalize_agent_metadata_payload(
@@ -1604,10 +1667,14 @@ async def generate_agent_metadata_suggestions_from_annotations(
         if not expected_agent_id:
             continue
         grouped.setdefault(expected_agent_id, []).append(failure)
-    suggestions: list[dict[str, Any]] = []
-    for agent_id, failures in grouped.items():
-        if len(suggestions) >= max(1, int(max_suggestions)):
-            break
+    normalized_max_suggestions = max(1, int(max_suggestions))
+    normalized_parallelism = _normalize_parallelism(parallelism)
+    candidate_items = list(grouped.items())
+
+    async def _suggest_for_agent(
+        agent_id: str,
+        failures: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
         current = metadata_by_id.get(agent_id) or normalize_agent_metadata_payload(
             {"agent_id": agent_id},
             agent_id=agent_id,
@@ -1631,32 +1698,54 @@ async def generate_agent_metadata_suggestions_from_annotations(
             agent_id=agent_id,
         )
         if _agent_metadata_equal(current, proposed):
-            continue
-        suggestions.append(
-            {
+            return None
+        return {
+            "agent_id": agent_id,
+            "failed_probe_ids": [
+                _normalize_text(item.get("probe_id"))
+                for item in failures
+                if _normalize_text(item.get("probe_id"))
+            ],
+            "rationale": rationale,
+            "current_metadata": {
                 "agent_id": agent_id,
-                "failed_probe_ids": [
-                    _normalize_text(item.get("probe_id"))
-                    for item in failures
-                    if _normalize_text(item.get("probe_id"))
-                ],
-                "rationale": rationale,
-                "current_metadata": {
-                    "agent_id": agent_id,
-                    "label": current.get("label"),
-                    "description": current.get("description"),
-                    "keywords": list(current.get("keywords") or []),
-                    "prompt_key": current.get("prompt_key"),
-                    "namespace": list(current.get("namespace") or []),
-                },
-                "proposed_metadata": {
-                    "agent_id": agent_id,
-                    "label": proposed.get("label"),
-                    "description": proposed.get("description"),
-                    "keywords": list(proposed.get("keywords") or []),
-                    "prompt_key": proposed.get("prompt_key"),
-                    "namespace": list(proposed.get("namespace") or []),
-                },
-            }
+                "label": current.get("label"),
+                "description": current.get("description"),
+                "keywords": list(current.get("keywords") or []),
+                "prompt_key": current.get("prompt_key"),
+                "namespace": list(current.get("namespace") or []),
+            },
+            "proposed_metadata": {
+                "agent_id": agent_id,
+                "label": proposed.get("label"),
+                "description": proposed.get("description"),
+                "keywords": list(proposed.get("keywords") or []),
+                "prompt_key": proposed.get("prompt_key"),
+                "namespace": list(proposed.get("namespace") or []),
+            },
+        }
+
+    results: list[dict[str, Any] | None] = []
+    if normalized_parallelism <= 1:
+        for agent_id, failures in candidate_items:
+            suggestion = await _suggest_for_agent(agent_id, failures)
+            if suggestion is not None:
+                results.append(suggestion)
+            if len(results) >= normalized_max_suggestions:
+                break
+    else:
+        semaphore = asyncio.Semaphore(normalized_parallelism)
+
+        async def _run_with_limit(
+            agent_id: str,
+            failures: list[dict[str, Any]],
+        ) -> dict[str, Any] | None:
+            async with semaphore:
+                return await _suggest_for_agent(agent_id, failures)
+
+        results = await asyncio.gather(
+            *[_run_with_limit(agent_id, failures) for agent_id, failures in candidate_items]
         )
-    return suggestions
+
+    suggestions = [item for item in results if item is not None]
+    return suggestions[:normalized_max_suggestions]

@@ -344,6 +344,7 @@ export const metadataCatalogAuditRunRequest = z.object({
 	hard_negatives_per_tool: z.number().int().optional().default(1),
 	retrieval_limit: z.number().int().optional().default(5),
 	max_tools: z.number().int().optional().default(25),
+	probe_generation_parallelism: z.number().int().optional().default(1),
 	probe_round: z.number().int().optional().default(1),
 	exclude_probe_queries: z.array(z.string()).optional().default([]),
 });
@@ -387,6 +388,7 @@ export const metadataCatalogAuditSuggestionRequest = z.object({
 	agent_metadata_patch: z.array(agentMetadataUpdateItem).optional().default([]),
 	annotations: z.array(metadataCatalogAuditAnnotationItem).optional().default([]),
 	max_suggestions: z.number().int().optional().default(20),
+	llm_parallelism: z.number().int().optional().default(1),
 });
 
 export const metadataCatalogAuditSuggestionResponse = z.object({

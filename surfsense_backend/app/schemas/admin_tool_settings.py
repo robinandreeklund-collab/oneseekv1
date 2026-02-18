@@ -743,6 +743,7 @@ class MetadataCatalogAuditRunRequest(BaseModel):
     hard_negatives_per_tool: int = 1
     retrieval_limit: int = 5
     max_tools: int = 25
+    probe_generation_parallelism: int = 1
     probe_round: int = 1
     exclude_probe_queries: list[str] = Field(default_factory=list)
 
@@ -802,6 +803,7 @@ class MetadataCatalogAuditSuggestionRequest(BaseModel):
     agent_metadata_patch: list[AgentMetadataUpdateItem] = Field(default_factory=list)
     annotations: list[MetadataCatalogAuditAnnotationItem] = Field(default_factory=list)
     max_suggestions: int = 20
+    llm_parallelism: int = 1
 
 
 class MetadataCatalogAuditSuggestionResponse(BaseModel):

@@ -3924,6 +3924,7 @@ async def run_metadata_catalog_audit(
         hard_negatives_per_tool=int(payload.hard_negatives_per_tool),
         retrieval_limit=int(payload.retrieval_limit),
         max_tools=int(payload.max_tools),
+        probe_generation_parallelism=int(payload.probe_generation_parallelism),
         probe_round=int(payload.probe_round),
         exclude_probe_queries=list(payload.exclude_probe_queries),
     )
@@ -3981,28 +3982,33 @@ async def generate_metadata_catalog_audit_suggestions(
     suggestion_inputs = build_layered_suggestion_inputs_from_annotations(
         annotations=[item.model_dump() for item in payload.annotations]
     )
+    normalized_max_suggestions = max(1, min(int(payload.max_suggestions or 20), 100))
+    normalized_parallelism = max(1, min(int(payload.llm_parallelism or 1), 32))
     tool_suggestions = await generate_tool_metadata_suggestions(
         evaluation_results=list(suggestion_inputs.get("tool_results") or []),
         tool_index=tool_index,
         llm=llm,
-        max_suggestions=max(1, min(int(payload.max_suggestions or 20), 100)),
+        max_suggestions=normalized_max_suggestions,
         retrieval_tuning=retrieval_tuning,
         retrieval_context={
             "audit_mode": "metadata_catalog",
             "pipeline": "intent->agent->tool",
         },
+        parallelism=normalized_parallelism,
     )
     intent_suggestions = await generate_intent_metadata_suggestions_from_annotations(
         intent_definitions=intent_definitions,
         intent_failures=list(suggestion_inputs.get("intent_failures") or []),
         llm=llm,
-        max_suggestions=max(1, min(int(payload.max_suggestions or 20), 100)),
+        max_suggestions=normalized_max_suggestions,
+        parallelism=normalized_parallelism,
     )
     agent_suggestions = await generate_agent_metadata_suggestions_from_annotations(
         agent_metadata=agent_metadata,
         agent_failures=list(suggestion_inputs.get("agent_failures") or []),
         llm=llm,
-        max_suggestions=max(1, min(int(payload.max_suggestions or 20), 100)),
+        max_suggestions=normalized_max_suggestions,
+        parallelism=normalized_parallelism,
     )
     return {
         "tool_suggestions": tool_suggestions,
