@@ -130,6 +130,34 @@ _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
     "action": "General action/data tasks not covered by a specialist agent.",
     "synthesis": "Cross-source compare/synthesis tasks.",
 }
+_EVAL_AGENT_METADATA_KEYWORDS: dict[str, list[str]] = {
+    "statistics": ["scb", "statistik", "kommun", "län", "befolkning", "kpi"],
+    "riksdagen": ["riksdagen", "motion", "interpellation", "utskott", "proposition"],
+    "weather": ["väder", "smhi", "prognos", "temperatur", "nederbörd", "vind"],
+    "trafik": ["trafik", "trafikverket", "väg", "framkomlighet", "incident", "resa"],
+    "bolag": ["bolag", "företag", "organisationsnummer", "styrelse", "registrering"],
+    "marketplace": ["blocket", "tradera", "annons", "pris", "marknadsplats"],
+    "kartor": ["karta", "geokodning", "koordinat", "plats", "rutt"],
+    "media": ["podcast", "bild", "media", "ljud", "rendering"],
+    "browser": ["webb", "url", "sök", "skrapa", "länk"],
+    "knowledge": ["kunskap", "docs", "intern", "sökning", "dokument"],
+    "action": ["verktyg", "action", "exekvering", "parameter", "api"],
+    "synthesis": ["compare", "jämför", "syntes", "sammanfatta"],
+}
+_EVAL_AGENT_METADATA_EXAMPLES: dict[str, list[str]] = {
+    "statistics": ["Hur har befolkningen utvecklats i Malmö de senaste fem åren?"],
+    "riksdagen": ["Vilka motioner om energi har lagts fram i riksdagen i år?"],
+    "weather": ["Hur blir vädret i Hjo i morgon enligt SMHI?"],
+    "trafik": ["Hur ser trafikläget ut på E4 mellan Gävle och Uppsala?"],
+    "bolag": ["Hämta bolagsinformation för ett svenskt företag i Göteborg."],
+    "marketplace": ["Hitta prisnivåer för begagnade elcyklar på Blocket och Tradera."],
+    "kartor": ["Ge koordinater för Stortorget i Malmö."],
+    "media": ["Skapa en kort podcast av dagens trafikläge i Stockholm."],
+    "browser": ["Sammanfatta innehållet på en svensk nyhetssida om inflation."],
+    "knowledge": ["Vad säger våra interna docs om onboarding-flödet?"],
+    "action": ["Kör rätt verktyg för att hämta aktuell svensk realtidsdata."],
+    "synthesis": ["Jämför två källor och ge en kort syntes med skillnader."],
+}
 _DIFFICULTY_ORDER = ("lätt", "medel", "svår")
 _GRAPH_COMPLEXITY_VALUES = {
     GRAPH_COMPLEXITY_TRIVIAL,
@@ -340,6 +368,17 @@ def _has_retrieval_refresh_rule(text: str) -> bool:
     )
 
 
+def _has_static_tool_or_keyword_listing(text: str) -> bool:
+    lowered = str(text or "").casefold()
+    if not lowered:
+        return False
+    if re.search(r"(?m)^\s*(tools?|verktyg|keywords?|nyckelord)\s*[:\-]", lowered):
+        return True
+    if len(re.findall(r"\btool\.[a-z0-9_-]+\b", lowered)) >= 2:
+        return True
+    return False
+
+
 def _apply_prompt_architecture_guard(
     *,
     prompt_key: str,
@@ -396,6 +435,12 @@ def _apply_prompt_architecture_guard(
             _append_once(
                 "- Om tillgängliga verktyg inte kan lösa uppgiften eller frågan byter ämne: kör retrieve_tools igen med omformulerad intent."
             )
+
+    if not prompt_key.startswith("tool.") and _has_static_tool_or_keyword_listing(cleaned):
+        violations.append(
+            "Huvudprompt listar verktyg/nyckelord statiskt istället för retrieval-baserat urval."
+        )
+        severe = True
 
     return cleaned, violations, severe
 
@@ -549,7 +594,7 @@ def _normalize_agent_name(value: Any) -> str | None:
 def _is_weather_domain_tool(tool_id: str | None, category: str | None = None) -> bool:
     tool = str(tool_id or "").strip().lower()
     cat = str(category or "").strip().lower()
-    if tool == "smhi_weather":
+    if tool == "smhi_weather" or tool.startswith("smhi_"):
         return True
     if tool.startswith("trafikverket_vader_"):
         return True
@@ -1109,7 +1154,7 @@ def _route_requirement_matches(
         if expected == "weather":
             return (
                 selected_agent == "weather"
-                or selected_tool == "smhi_weather"
+                or selected_tool.startswith("smhi_")
                 or selected_tool.startswith("trafikverket_vader_")
             )
         return True
@@ -2720,7 +2765,7 @@ async def suggest_intent_definition_improvements(
     intent_definitions: list[dict[str, Any]] | None,
     current_prompts: dict[str, str],
     llm=None,
-    max_suggestions: int = 8,
+    max_suggestions: int = 12,
 ) -> list[dict[str, Any]]:
     definitions_by_id: dict[str, dict[str, Any]] = {}
     for definition in intent_definitions or []:
@@ -2735,6 +2780,7 @@ async def suggest_intent_definition_improvements(
             "label": str(definition.get("label") or intent_id).strip(),
             "description": str(definition.get("description") or "").strip(),
             "keywords": _safe_string_list(definition.get("keywords")),
+            "example_questions": _safe_string_list(definition.get("example_questions")),
             "priority": int(definition.get("priority") or 500),
             "enabled": bool(definition.get("enabled", True)),
         }
@@ -2780,6 +2826,7 @@ async def suggest_intent_definition_improvements(
             "label": intent_id.replace("_", " ").title(),
             "description": "",
             "keywords": [],
+            "example_questions": [],
             "priority": 500,
             "enabled": True,
         }
@@ -2800,6 +2847,16 @@ async def suggest_intent_definition_improvements(
             existing_set.add(token.casefold())
             if len(proposed_keywords) >= 20:
                 break
+        proposed_example_questions = _dedupe_strings(
+            [
+                *_safe_string_list(current_definition.get("example_questions")),
+                *[
+                    str(question).strip()
+                    for question in list(bucket.get("questions") or [])
+                    if str(question).strip()
+                ],
+            ]
+        )[:12]
         proposed_description = str(current_definition.get("description") or "").strip()
         if sorted_tokens:
             hint = ", ".join(sorted_tokens[:3])
@@ -2810,10 +2867,11 @@ async def suggest_intent_definition_improvements(
             **current_definition,
             "keywords": proposed_keywords,
             "description": proposed_description,
+            "example_questions": proposed_example_questions,
         }
         fallback_rationale = (
             "Fallback-forslag for intent-metadata baserat pa misslyckade intent-fall: "
-            "utokade nyckelord och tydligare beskrivning."
+            "utokade nyckelord, exempelfragor och tydligare beskrivning for retrieval."
         )
         fallback_prompt = current_prompt
         if current_prompt and "intent" not in current_prompt.casefold():
@@ -2851,6 +2909,8 @@ async def suggest_intent_definition_improvements(
                 "Du optimerar intent-definitioner for route/eval i SurfSense.\n"
                 "ALL text maste vara pa svenska.\n"
                 "Forbattra intentets metadata sa intent-val blir mer korrekt.\n"
+                "STRIKT: Lista inte verktyg eller keyword-block i huvudprompten.\n"
+                "Fokusera pa retrieval-metadata (description, keywords, example_questions).\n"
                 "Om promptforbattring behovs, foresla en uppdaterad prompt for supervisor.intent_resolver.system.\n"
                 "Returnera strikt JSON:\n"
                 "{\n"
@@ -2860,6 +2920,7 @@ async def suggest_intent_definition_improvements(
                 '    "label": "string",\n'
                 '    "description": "string pa svenska",\n'
                 '    "keywords": ["svenska nyckelord"],\n'
+                '    "example_questions": ["svenska exempel-fragor"],\n'
                 '    "priority": 100,\n'
                 '    "enabled": true\n'
                 "  },\n"
@@ -2914,6 +2975,10 @@ async def suggest_intent_definition_improvements(
                             ),
                             "keywords": _safe_string_list(candidate_definition.get("keywords"))
                             or list(fallback_definition.get("keywords") or []),
+                            "example_questions": _safe_string_list(
+                                candidate_definition.get("example_questions")
+                            )
+                            or list(fallback_definition.get("example_questions") or []),
                             "priority": int(
                                 candidate_definition.get("priority")
                                 or current_definition.get("priority")
@@ -2951,12 +3016,267 @@ async def suggest_intent_definition_improvements(
                 "rationale": rationale,
                 "current_definition": current_definition,
                 "proposed_definition": proposed_definition,
+                "current_retrieval_metadata": {
+                    "description": str(current_definition.get("description") or "").strip(),
+                    "keywords": _safe_string_list(current_definition.get("keywords")),
+                    "example_questions": _safe_string_list(
+                        current_definition.get("example_questions")
+                    ),
+                },
+                "proposed_retrieval_metadata": {
+                    "description": str(proposed_definition.get("description") or "").strip(),
+                    "keywords": _safe_string_list(proposed_definition.get("keywords")),
+                    "example_questions": _safe_string_list(
+                        proposed_definition.get("example_questions")
+                    ),
+                },
                 "prompt_key": prompt_key,
                 "current_prompt": current_prompt or None,
                 "proposed_prompt": proposed_prompt,
             }
         )
 
+    return suggestions
+
+
+def _default_agent_retrieval_metadata(agent_id: str) -> dict[str, Any]:
+    normalized = _normalize_agent_name(agent_id) or str(agent_id or "").strip().lower()
+    label = normalized.replace("_", " ").title() if normalized else "Agent"
+    return {
+        "agent_id": normalized or "agent",
+        "label": label,
+        "description": str(
+            _EVAL_AGENT_DESCRIPTIONS.get(normalized or "", "Agent for metadata-driven retrieval.")
+        ).strip(),
+        "keywords": list(_EVAL_AGENT_METADATA_KEYWORDS.get(normalized or "", [])),
+        "example_questions": list(_EVAL_AGENT_METADATA_EXAMPLES.get(normalized or "", [])),
+    }
+
+
+async def suggest_agent_metadata_improvements(
+    *,
+    evaluation_results: list[dict[str, Any]],
+    current_prompts: dict[str, str],
+    llm=None,
+    max_suggestions: int = 12,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for result in evaluation_results:
+        if result.get("passed_agent") is not False:
+            continue
+        expected_agent = _normalize_agent_name(result.get("expected_agent"))
+        selected_agent = _normalize_agent_name(result.get("selected_agent"))
+        agent_id = expected_agent or selected_agent
+        if not agent_id:
+            continue
+        bucket = grouped.setdefault(
+            agent_id,
+            {
+                "failed_test_ids": [],
+                "questions": [],
+                "selected_agents": [],
+                "expected_routes": [],
+                "expected_intents": [],
+            },
+        )
+        test_id = str(result.get("test_id") or "").strip()
+        if test_id:
+            bucket["failed_test_ids"].append(test_id)
+        question = str(result.get("question") or "").strip()
+        if question:
+            bucket["questions"].append(question)
+        if selected_agent and selected_agent != agent_id:
+            bucket["selected_agents"].append(selected_agent)
+        expected_route = _normalize_route_value(result.get("expected_route"))
+        if expected_route:
+            bucket["expected_routes"].append(expected_route)
+        expected_intent = _normalize_intent_id(result.get("expected_intent"))
+        if expected_intent:
+            bucket["expected_intents"].append(expected_intent)
+
+    if not grouped:
+        return []
+
+    suggestions: list[dict[str, Any]] = []
+    for agent_id, bucket in grouped.items():
+        if len(suggestions) >= max_suggestions:
+            break
+        current_metadata = _default_agent_retrieval_metadata(agent_id)
+        token_counts: dict[str, int] = {}
+        for question in list(bucket.get("questions") or []):
+            for token in _tokenize_for_suggestions(question):
+                token_counts[token] = token_counts.get(token, 0) + 1
+        sorted_tokens = [
+            token
+            for token, _count in sorted(
+                token_counts.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        ]
+        proposed_keywords = _dedupe_strings(
+            [*list(current_metadata.get("keywords") or []), *sorted_tokens]
+        )[:25]
+        proposed_examples = _dedupe_strings(
+            [
+                *list(current_metadata.get("example_questions") or []),
+                *[str(item).strip() for item in list(bucket.get("questions") or []) if str(item).strip()],
+            ]
+        )[:12]
+        proposed_description = str(current_metadata.get("description") or "").strip()
+        if sorted_tokens:
+            marker = ", ".join(sorted_tokens[:4])
+            hint_text = f" Vanliga retrieval-signaler: {marker}."
+            if hint_text.strip() not in proposed_description:
+                proposed_description = f"{proposed_description}{hint_text}".strip()
+        proposed_metadata = {
+            **current_metadata,
+            "description": proposed_description,
+            "keywords": proposed_keywords,
+            "example_questions": proposed_examples,
+            "route_hints": _dedupe_strings(
+                [str(item) for item in list(bucket.get("expected_routes") or [])]
+            ),
+            "intent_hints": _dedupe_strings(
+                [str(item) for item in list(bucket.get("expected_intents") or [])]
+            ),
+        }
+        fallback_rationale = (
+            "Fallback-förslag för agent-metadata baserat på misslyckad agent-routing: "
+            "utökade keywords, exempelfrågor och retrieval-signaler."
+        )
+
+        runtime_prompt_key = _prompt_key_for_agent(agent_id)
+        resolver_prompt_key = _prompt_key_for_agent_resolver(agent_id)
+        candidate_prompt_keys = [
+            key
+            for key in [runtime_prompt_key, resolver_prompt_key]
+            if key and key in current_prompts
+        ]
+        prompt_key = candidate_prompt_keys[0] if candidate_prompt_keys else None
+        current_prompt = str(current_prompts.get(prompt_key or "") or "").strip() if prompt_key else ""
+        proposed_prompt = current_prompt or None
+        if current_prompt:
+            fallback_prompt = (
+                f"{current_prompt.rstrip()}\n"
+                "- Lita på retrieve_agents metadata (description/keywords/example_questions) "
+                "för agentval; undvik statisk agent- eller verktygslistning."
+            ).strip()
+            fallback_prompt, violations, severe = _apply_prompt_architecture_guard(
+                prompt_key=prompt_key or "supervisor.agent_resolver.system",
+                prompt_text=fallback_prompt,
+            )
+            if not severe:
+                proposed_prompt = fallback_prompt
+                if violations:
+                    fallback_rationale = (
+                        f"{fallback_rationale} Arkitektur-guard justerade prompt-förslaget: "
+                        + "; ".join(violations[:3])
+                        + "."
+                    )
+
+        rationale = fallback_rationale
+        if llm is not None:
+            model = llm
+            try:
+                if hasattr(llm, "bind"):
+                    model = llm.bind(temperature=0)
+            except Exception:
+                model = llm
+            llm_prompt = (
+                "Du optimerar agentmetadata för retrieve_agents i SurfSense.\n"
+                "ALL text ska vara på svenska.\n"
+                "Fokusera på metadata (description, keywords, example_questions), inte statiska tool-listor.\n"
+                "Om promptförbättring behövs får du föreslå uppdaterad prompt för agent-resolver/agentprompt.\n"
+                "Returnera strikt JSON:\n"
+                "{\n"
+                '  "proposed_metadata": {\n'
+                '    "description": "string på svenska",\n'
+                '    "keywords": ["svenska nyckelord"],\n'
+                '    "example_questions": ["svenska exempel-frågor"]\n'
+                "  },\n"
+                '  "proposed_prompt": "string eller tom",\n'
+                '  "rationale": "kort motivering på svenska"\n'
+                "}\n"
+                "Ingen markdown."
+            )
+            llm_payload = {
+                "agent_id": agent_id,
+                "current_metadata": current_metadata,
+                "failed_test_ids": list(bucket.get("failed_test_ids") or []),
+                "failed_questions": list(bucket.get("questions") or [])[:20],
+                "wrong_selected_agents": list(bucket.get("selected_agents") or [])[:10],
+                "expected_routes": list(bucket.get("expected_routes") or [])[:10],
+                "expected_intents": list(bucket.get("expected_intents") or [])[:10],
+                "current_prompt": current_prompt or None,
+            }
+            try:
+                response = await model.ainvoke(
+                    [
+                        SystemMessage(content=llm_prompt),
+                        HumanMessage(content=json.dumps(llm_payload, ensure_ascii=True)),
+                    ]
+                )
+                parsed = _extract_json_object(
+                    _response_content_to_text(getattr(response, "content", ""))
+                )
+                if isinstance(parsed, dict):
+                    candidate_metadata = parsed.get("proposed_metadata")
+                    if isinstance(candidate_metadata, dict):
+                        proposed_metadata["description"] = _prefer_swedish_text(
+                            str(
+                                candidate_metadata.get("description")
+                                or proposed_metadata.get("description")
+                                or ""
+                            ).strip(),
+                            str(proposed_metadata.get("description") or ""),
+                        )
+                        parsed_keywords = _safe_string_list(
+                            candidate_metadata.get("keywords")
+                        )
+                        if parsed_keywords:
+                            proposed_metadata["keywords"] = _dedupe_strings(
+                                [*proposed_keywords, *parsed_keywords]
+                            )[:25]
+                        parsed_examples = _safe_string_list(
+                            candidate_metadata.get("example_questions")
+                        )
+                        if parsed_examples:
+                            proposed_metadata["example_questions"] = _dedupe_strings(
+                                [*proposed_examples, *parsed_examples]
+                            )[:12]
+                    candidate_prompt = str(parsed.get("proposed_prompt") or "").strip()
+                    if candidate_prompt and prompt_key:
+                        (
+                            candidate_prompt,
+                            _violations,
+                            candidate_severe,
+                        ) = _apply_prompt_architecture_guard(
+                            prompt_key=prompt_key,
+                            prompt_text=candidate_prompt,
+                        )
+                        if not candidate_severe:
+                            proposed_prompt = candidate_prompt
+                    rationale = _prefer_swedish_text(
+                        str(parsed.get("rationale") or "").strip(),
+                        fallback_rationale,
+                    )
+            except Exception:
+                pass
+
+        suggestions.append(
+            {
+                "agent_id": agent_id,
+                "failed_test_ids": list(bucket.get("failed_test_ids") or []),
+                "rationale": rationale,
+                "current_metadata": current_metadata,
+                "proposed_metadata": proposed_metadata,
+                "prompt_key": prompt_key,
+                "current_prompt": current_prompt or None,
+                "proposed_prompt": proposed_prompt,
+                "related_prompt_keys": candidate_prompt_keys,
+            }
+        )
     return suggestions
 
 
@@ -3193,35 +3513,72 @@ def _value_matches_expected(actual: Any, expected: Any) -> bool:
     return expected_text in actual_text or actual_text in expected_text
 
 
-def _prompt_key_for_tool(tool_id: str | None, category: str | None = None) -> str:
-    tool_id = str(tool_id or "").strip().lower()
-    category = str(category or "").strip().lower()
-    if tool_id:
-        return f"tool.{tool_id}.system"
-    if tool_id.startswith("scb_") or category in {"statistics", "scb_statistics"}:
+def _prompt_key_for_tool(
+    tool_id: str | None,
+    category: str | None = None,
+    *,
+    prefer_input_prompt: bool = False,
+) -> str:
+    normalized_tool_id = str(tool_id or "").strip().lower()
+    normalized_category = str(category or "").strip().lower()
+    if normalized_tool_id:
+        suffix = "input" if prefer_input_prompt else "system"
+        return f"tool.{normalized_tool_id}.{suffix}"
+    if normalized_tool_id.startswith("scb_") or normalized_category in {
+        "statistics",
+        "scb_statistics",
+    }:
         return "agent.statistics.system"
-    if tool_id.startswith("riksdag_") or category.startswith("riksdag"):
+    if normalized_tool_id.startswith("riksdag_") or normalized_category.startswith("riksdag"):
         return "agent.riksdagen.system"
-    if tool_id.startswith("trafikverket_"):
+    if normalized_tool_id.startswith("trafikverket_"):
         return "agent.trafik.system"
-    if tool_id.startswith("bolagsverket_"):
+    if normalized_tool_id.startswith("bolagsverket_"):
         return "agent.bolag.system"
-    if tool_id.startswith("geoapify_"):
+    if normalized_tool_id.startswith("geoapify_"):
         return "agent.kartor.system"
-    if tool_id.startswith("marketplace_"):
+    if normalized_tool_id.startswith("marketplace_"):
         return "agent.marketplace.system"
-    if tool_id in {"trafiklab_route", "smhi_weather"}:
-        return "agent.action.travel"
-    if tool_id in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
-        return "agent.action.web"
-    if tool_id in {"libris_search", "jobad_links_search"}:
-        return "agent.action.data"
-    if tool_id in {"generate_podcast", "display_image"}:
-        return "agent.action.media"
+    if normalized_tool_id in {"trafiklab_route", "smhi_weather"} or normalized_tool_id.startswith(
+        "smhi_"
+    ):
+        return "agent.action.system"
+    if normalized_tool_id in {
+        "search_web",
+        "search_tavily",
+        "scrape_webpage",
+        "link_preview",
+    }:
+        return "agent.browser.system"
+    if normalized_tool_id in {"libris_search", "jobad_links_search"}:
+        return "agent.action.system"
+    if normalized_tool_id in {"generate_podcast", "display_image"}:
+        return "agent.media.system"
     return "agent.action.system"
 
 
 def _prompt_key_for_agent(agent_name: str | None) -> str | None:
+    normalized = _normalize_agent_name(agent_name)
+    if not normalized:
+        return None
+    mapping = {
+        "statistics": "agent.statistics.system",
+        "riksdagen": "agent.riksdagen.system",
+        "weather": "agent.action.system",
+        "trafik": "agent.trafik.system",
+        "bolag": "agent.bolag.system",
+        "marketplace": "agent.marketplace.system",
+        "kartor": "agent.kartor.system",
+        "media": "agent.media.system",
+        "browser": "agent.browser.system",
+        "knowledge": "agent.knowledge.system",
+        "action": "agent.action.system",
+        "synthesis": "agent.synthesis.system",
+    }
+    return mapping.get(normalized, "agent.action.system")
+
+
+def _prompt_key_for_agent_resolver(agent_name: str | None) -> str | None:
     normalized = _normalize_agent_name(agent_name)
     if not normalized:
         return None
@@ -4229,6 +4586,12 @@ def _build_fallback_prompt_suggestion(
             "- Om frågan tydligt gäller officiell statistik, prioritera statistics-route.",
             "- Om frågan gäller verktygsåtgärd, prioritera action-route över knowledge.",
         ]
+        if prompt_key == "router.top_level":
+            lines = [
+                "- Returnera exakt en av: knowledge, action, statistics, compare, smalltalk.",
+                "- Avgör route från semantisk intention och aktuell kontext i senaste användarfrågan.",
+                "- Om frågan byter karaktär mellan turer: välj ny route utifrån senaste fråga, inte historiskt bias.",
+            ]
         if prompt_key == "router.action":
             lines = [
                 "- Returnera exakt en av: web, media, travel, data.",
@@ -4243,6 +4606,24 @@ def _build_fallback_prompt_suggestion(
                 "- Använd internal för användardata/anteckningar/kalender/search space-innehåll.",
                 "- Använd external endast för explicita realtids-/webbfrågor.",
             ]
+    elif prompt_key in {"system.default.instructions", "citation.instructions"}:
+        lines = [
+            "- Håll huvudprompten generell och retrieval-först; undvik verktygs- eller keyword-listor.",
+            "- Delegera verktygsval till retrieve_agents/retrieve_tools med metadata-kandidater.",
+            "- Behåll instruktionerna korta, stabila och utan endpoint-specifika detaljer.",
+        ]
+    elif prompt_key in {"compare.supervisor.instructions", "compare.analysis.system", "compare.external.system"}:
+        lines = [
+            "- Håll compare-instruktioner fokuserade på jämförelse/syntes, inte verktygslisting.",
+            "- Säkerställ att jämförelserna bygger på verifierade delresultat och tydlig motivering.",
+            "- Undvik att bädda in tool-id, endpointlistor eller keyworddump i compare-prompter.",
+        ]
+    elif prompt_key == "agent.smalltalk.system":
+        lines = [
+            "- Svara kort och konversationsmässigt vid smalltalk.",
+            "- Om senaste fråga tydligt är fakta/verktygsbehov: tillåt återgång till ordinarie intent-routing.",
+            "- Undvik policy som låser kvar användaren i smalltalk när intentionen byter riktning.",
+        ]
     elif prompt_key == "agent.supervisor.system":
         lines = [
             "- Håll denna prompt minimal: koordinera endast route, agentanrop och slutsammanfattning.",
@@ -4283,6 +4664,14 @@ def _build_fallback_prompt_suggestion(
             "- Om obligatoriska argument saknas eller är tvetydiga: ställ en kort fråga först.",
             "- Använd exakta argumentnamn från målschemat och undvik okända fält.",
         ]
+    if not prompt_key.startswith("tool."):
+        lines.extend(
+            [
+                "- Optimera inte denna huvudprompt genom att lista verktyg eller nyckelord statiskt.",
+                "- Förlita dig på retrieve_intents/retrieve_agents/retrieve_tools där metadata (description/keywords/example_queries) styr urvalet.",
+                "- När träffkvaliteten är låg: prioritera metadataförbättringar framför större huvudprompt-listor.",
+            ]
+        )
     if common_missing:
         lines.insert(
             0,
@@ -4343,6 +4732,9 @@ async def _build_llm_prompt_suggestion(
             "Behåll stil och syfte, men lägg till precisa instruktioner för route, planering och argumentextraktion.\n"
             "All text ska vara på svenska.\n"
             "Undvik statiska listor över alla agenter eller endpoints. Förlita dig på retrieve_agents/retrieve_tools.\n"
+            "STRIKT REGEL: Optimera inte huvudprompter genom att lista verktyg, endpoint-id eller keyword-block.\n"
+            "Retrieval ska styras av metadata (description/keywords/example_queries) i retrieve_intents/retrieve_agents/retrieve_tools.\n"
+            "Om du behöver förbättra träffsäkerhet ska du föreslå metadataförbättringar, inte större verktygslistor i huvudprompten.\n"
             "När valda agenter/verktyg inte räcker eller frågan byter riktning ska prompten instruera ny retrieval (retrieve_agents/retrieve_tools).\n"
             "Förslag får inte bryta arkitekturen: ingen statisk agentlista i supervisor, inga tunga endpoint-listor, och tydlig regel för ny retrieval vid mismatch/ämnesbyte.\n"
             "Om supervisor_trace finns i failed_cases ska du använda den för att förbättra kvaliteten i route -> agent -> tool -> plan.\n"
@@ -4405,7 +4797,7 @@ async def suggest_agent_prompt_improvements_for_api_input(
     evaluation_results: list[dict[str, Any]],
     current_prompts: dict[str, str],
     llm=None,
-    max_suggestions: int = 8,
+    max_suggestions: int = 40,
     suggestion_scope: str = "full",
 ) -> list[dict[str, Any]]:
     normalized_scope = str(suggestion_scope or "full").strip().lower()
@@ -4542,7 +4934,13 @@ async def suggest_agent_prompt_improvements_for_api_input(
                 continue
             tool_id = expected_tool or selected_tool
             category = expected_category or selected_category
-            prompt_key = _prompt_key_for_tool(tool_id, category)
+            prompt_key = _prompt_key_for_tool(
+                tool_id,
+                category,
+                prefer_input_prompt=True,
+            )
+            if prompt_key not in current_prompts:
+                prompt_key = _prompt_key_for_tool(tool_id, category)
             if not prompt_key.startswith("tool.") or prompt_key not in current_prompts:
                 continue
             _append_failure(
@@ -4554,17 +4952,37 @@ async def suggest_agent_prompt_improvements_for_api_input(
             continue
 
         if failed_route:
-            _append_failure(
-                "supervisor.intent_resolver.system",
-                result=result,
-                expected_tool=expected_tool,
-                selected_tool=selected_tool,
-            )
+            route_prompt_keys = ["router.top_level", "supervisor.intent_resolver.system"]
+            routed = expected_route or selected_route
+            if routed == Route.SMALLTALK.value:
+                route_prompt_keys.append("agent.smalltalk.system")
+            if routed == Route.COMPARE.value:
+                route_prompt_keys.extend(
+                    [
+                        "compare.supervisor.instructions",
+                        "compare.analysis.system",
+                        "compare.external.system",
+                    ]
+                )
+            for route_prompt_key in _dedupe_strings(route_prompt_keys):
+                _append_failure(
+                    route_prompt_key,
+                    result=result,
+                    expected_tool=expected_tool,
+                    selected_tool=selected_tool,
+                )
         if failed_intent:
             intent_prompt_key = _prompt_key_for_intent(expected_intent or selected_intent)
             if intent_prompt_key:
                 _append_failure(
                     intent_prompt_key,
+                    result=result,
+                    expected_tool=expected_tool,
+                    selected_tool=selected_tool,
+                )
+            if "router.top_level" in current_prompts:
+                _append_failure(
+                    "router.top_level",
                     result=result,
                     expected_tool=expected_tool,
                     selected_tool=selected_tool,
@@ -4580,15 +4998,34 @@ async def suggest_agent_prompt_improvements_for_api_input(
                 )
 
         if failed_agent:
-            agent_prompt_key = _prompt_key_for_agent(expected_agent or selected_agent)
-            if agent_prompt_key:
+            resolver_prompt_key = _prompt_key_for_agent_resolver(
+                expected_agent or selected_agent
+            )
+            if resolver_prompt_key:
                 _append_failure(
-                    agent_prompt_key,
+                    resolver_prompt_key,
+                    result=result,
+                    expected_tool=expected_tool,
+                    selected_tool=selected_tool,
+                )
+            runtime_agent_prompt_key = _prompt_key_for_agent(
+                expected_agent or selected_agent
+            )
+            if runtime_agent_prompt_key:
+                _append_failure(
+                    runtime_agent_prompt_key,
                     result=result,
                     expected_tool=expected_tool,
                     selected_tool=selected_tool,
                 )
 
+        if "system.default.instructions" in current_prompts and not passed:
+            _append_failure(
+                "system.default.instructions",
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
         if "supervisor.planner.system" in current_prompts and (
             failed_plan or failed_supervisor_review or not passed
         ):
@@ -4604,6 +5041,42 @@ async def suggest_agent_prompt_improvements_for_api_input(
         ):
             _append_failure(
                 "supervisor.tool_resolver.system",
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
+        if "agent.supervisor.system" in current_prompts and (
+            failed_plan or failed_supervisor_review or not passed
+        ):
+            _append_failure(
+                "agent.supervisor.system",
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
+        if "supervisor.critic_gate.system" in current_prompts and (
+            failed_supervisor_review or not passed
+        ):
+            _append_failure(
+                "supervisor.critic_gate.system",
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
+        if "supervisor.synthesizer.system" in current_prompts and (
+            failed_supervisor_review or not passed
+        ):
+            _append_failure(
+                "supervisor.synthesizer.system",
+                result=result,
+                expected_tool=expected_tool,
+                selected_tool=selected_tool,
+            )
+        if "supervisor.critic.system" in current_prompts and (
+            failed_supervisor_review or not passed
+        ):
+            _append_failure(
+                "supervisor.critic.system",
                 result=result,
                 expected_tool=expected_tool,
                 selected_tool=selected_tool,
@@ -4632,8 +5105,28 @@ async def suggest_agent_prompt_improvements_for_api_input(
                         ),
                     )
                 )
-                if fallback_agent_key and fallback_agent_key in current_prompts:
+                if (
+                    fallback_agent_key
+                    and fallback_agent_key in current_prompts
+                ):
                     prompt_key = fallback_agent_key
+                else:
+                    fallback_resolver_key = _prompt_key_for_agent_resolver(
+                        _agent_for_tool(
+                            tool_id,
+                            category,
+                            expected_route or selected_route,
+                            _normalize_sub_route_value(
+                                result.get("expected_sub_route")
+                                or result.get("selected_sub_route")
+                            ),
+                        )
+                    )
+                    if (
+                        fallback_resolver_key
+                        and fallback_resolver_key in current_prompts
+                    ):
+                        prompt_key = fallback_resolver_key
             _append_failure(
                 prompt_key,
                 result=result,

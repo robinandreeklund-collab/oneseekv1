@@ -69,6 +69,7 @@ from app.schemas.admin_tool_settings import (
     ToolSettingsResponse,
 )
 from app.agents.new_chat.prompt_registry import (
+    ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS,
     PROMPT_DEFINITION_MAP,
     resolve_prompt,
 )
@@ -83,6 +84,7 @@ from app.services.tool_evaluation_service import (
     generate_tool_metadata_suggestions,
     run_tool_api_input_evaluation,
     run_tool_evaluation,
+    suggest_agent_metadata_improvements,
     suggest_agent_prompt_improvements_for_api_input,
     suggest_intent_definition_improvements,
     suggest_retrieval_tuning,
@@ -511,7 +513,7 @@ def _provider_for_tool_id(tool_id: str) -> str:
 def _is_weather_domain_tool(tool_id: str, category: str | None = None) -> bool:
     normalized_tool = str(tool_id or "").strip().lower()
     normalized_category = str(category or "").strip().lower()
-    if normalized_tool == "smhi_weather":
+    if normalized_tool == "smhi_weather" or normalized_tool.startswith("smhi_"):
         return True
     if normalized_tool.startswith("trafikverket_vader_"):
         return True
@@ -623,14 +625,7 @@ def _infer_intent_for_route(route: str | None) -> str | None:
     return mapping.get(normalized_route)
 
 
-_EVAL_SUGGESTION_PROMPT_KEYS: set[str] = {
-    "supervisor.intent_resolver.system",
-    "supervisor.agent_resolver.system",
-    "supervisor.planner.system",
-    "supervisor.tool_resolver.system",
-    "supervisor.critic_gate.system",
-    "supervisor.synthesizer.system",
-}
+_EVAL_SUGGESTION_PROMPT_KEYS: set[str] = set(ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS)
 
 
 def _resolve_expected_route_and_intent(
@@ -1936,7 +1931,7 @@ def _select_generation_entries(
             filtered = [
                 entry
                 for entry in entries
-                if str(getattr(entry, "tool_id", "")).strip().lower() == "smhi_weather"
+                if str(getattr(entry, "tool_id", "")).strip().lower().startswith("smhi_")
             ]
             if filtered:
                 return filtered
@@ -2852,6 +2847,32 @@ def _default_tool_system_prompt(entry: Any) -> str:
     )
 
 
+def _default_tool_input_prompt(entry: Any) -> str:
+    tool_id = str(getattr(entry, "tool_id", "")).strip()
+    name = str(getattr(entry, "name", "")).strip()
+    category = str(getattr(entry, "category", "")).strip()
+    description = str(getattr(entry, "description", "")).strip()
+    keywords = [
+        str(item).strip()
+        for item in list(getattr(entry, "keywords", []) or [])
+        if str(item).strip()
+    ][:10]
+    return "\n".join(
+        [
+            f"Du optimerar API-input för verktyget {tool_id}.",
+            f"Tool: {name or tool_id}",
+            f"Kategori: {category or 'okänd'}",
+            f"Beskrivning: {description or '-'}",
+            f"Nyckelord: {', '.join(keywords) if keywords else '-'}",
+            "Regler:",
+            "- Extrahera endast fält som finns i verktygets schema.",
+            "- Använd exakta fältnamn och undvik antaganden om saknad information.",
+            "- Om obligatoriska fält saknas: föreslå en kort förtydligande fråga.",
+            "- Om frågan inte matchar verktygets domän: återgå till retrieve_tools.",
+        ]
+    )
+
+
 def _build_current_eval_prompts(
     *,
     prompt_overrides: dict[str, str],
@@ -2873,6 +2894,12 @@ def _build_current_eval_prompts(
             prompt_overrides,
             tool_prompt_key,
             _default_tool_system_prompt(entry),
+        )
+        tool_input_prompt_key = f"tool.{tool_id}.input"
+        current_prompts[tool_input_prompt_key] = resolve_prompt(
+            prompt_overrides,
+            tool_input_prompt_key,
+            _default_tool_input_prompt(entry),
         )
     return current_prompts
 
@@ -3161,6 +3188,11 @@ async def _execute_tool_evaluation(
         current_prompts=suggestion_prompts,
         llm=llm,
     )
+    agent_suggestions = await suggest_agent_metadata_improvements(
+        evaluation_results=evaluation["results"],
+        current_prompts=suggestion_prompts,
+        llm=llm,
+    )
     return {
         "eval_name": payload.eval_name,
         "target_success_rate": payload.target_success_rate,
@@ -3169,6 +3201,7 @@ async def _execute_tool_evaluation(
         "suggestions": suggestions,
         "prompt_suggestions": prompt_suggestions,
         "intent_suggestions": intent_suggestions,
+        "agent_suggestions": agent_suggestions,
         "retrieval_tuning": effective_tuning,
         "retrieval_tuning_suggestion": retrieval_tuning_suggestion,
         "consistency_summary": consistency_summary,
@@ -3336,6 +3369,11 @@ async def _execute_api_input_evaluation(
         current_prompts=suggestion_prompts,
         llm=llm,
     )
+    agent_suggestions = await suggest_agent_metadata_improvements(
+        evaluation_results=evaluation["results"],
+        current_prompts=suggestion_prompts,
+        llm=llm,
+    )
     return {
         "eval_name": payload.eval_name,
         "target_success_rate": payload.target_success_rate,
@@ -3349,6 +3387,7 @@ async def _execute_api_input_evaluation(
         ),
         "prompt_suggestions": prompt_suggestions,
         "intent_suggestions": intent_suggestions,
+        "agent_suggestions": agent_suggestions,
         "retrieval_tuning": effective_tuning,
         "consistency_summary": consistency_summary,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),

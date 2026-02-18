@@ -351,9 +351,23 @@ class ToolIntentDefinitionSuggestion(BaseModel):
     rationale: str
     current_definition: dict[str, Any] = Field(default_factory=dict)
     proposed_definition: dict[str, Any] = Field(default_factory=dict)
+    current_retrieval_metadata: dict[str, Any] = Field(default_factory=dict)
+    proposed_retrieval_metadata: dict[str, Any] = Field(default_factory=dict)
     prompt_key: str | None = None
     current_prompt: str | None = None
     proposed_prompt: str | None = None
+
+
+class ToolAgentMetadataSuggestion(BaseModel):
+    agent_id: str
+    failed_test_ids: list[str] = Field(default_factory=list)
+    rationale: str
+    current_metadata: dict[str, Any] = Field(default_factory=dict)
+    proposed_metadata: dict[str, Any] = Field(default_factory=dict)
+    prompt_key: str | None = None
+    current_prompt: str | None = None
+    proposed_prompt: str | None = None
+    related_prompt_keys: list[str] = Field(default_factory=list)
 
 
 class ToolEvaluationMetricDeltaItem(BaseModel):
@@ -390,6 +404,7 @@ class ToolEvaluationResponse(BaseModel):
     suggestions: list[ToolMetadataSuggestion]
     prompt_suggestions: list[ToolPromptSuggestion] = Field(default_factory=list)
     intent_suggestions: list[ToolIntentDefinitionSuggestion] = Field(default_factory=list)
+    agent_suggestions: list[ToolAgentMetadataSuggestion] = Field(default_factory=list)
     retrieval_tuning: ToolRetrievalTuning
     retrieval_tuning_suggestion: ToolRetrievalTuningSuggestion | None = None
     consistency_summary: dict[str, int] = Field(default_factory=dict)
@@ -407,6 +422,7 @@ class ToolApiInputEvaluationResponse(BaseModel):
     holdout_results: list[ToolApiInputEvaluationCaseResult] = Field(default_factory=list)
     prompt_suggestions: list[ToolPromptSuggestion] = Field(default_factory=list)
     intent_suggestions: list[ToolIntentDefinitionSuggestion] = Field(default_factory=list)
+    agent_suggestions: list[ToolAgentMetadataSuggestion] = Field(default_factory=list)
     retrieval_tuning: ToolRetrievalTuning
     consistency_summary: dict[str, int] = Field(default_factory=dict)
     comparison: ToolEvaluationRunComparison | None = None

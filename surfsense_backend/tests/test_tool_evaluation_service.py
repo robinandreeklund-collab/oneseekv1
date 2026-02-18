@@ -78,6 +78,7 @@ from app.services.tool_evaluation_service import (
     generate_tool_metadata_suggestions,
     run_tool_api_input_evaluation,
     run_tool_evaluation,
+    suggest_agent_metadata_improvements,
     suggest_agent_prompt_improvements_for_api_input,
     suggest_retrieval_tuning,
 )
@@ -778,6 +779,66 @@ def test_suggest_agent_prompt_improvements_includes_supervisor_prompt_on_review_
     assert "retrieve_tools" in suggestions[0]["proposed_prompt"]
 
 
+def test_suggest_agent_prompt_improvements_api_tool_only_prefers_input_prompt():
+    suggestions = asyncio.run(
+        suggest_agent_prompt_improvements_for_api_input(
+            evaluation_results=[
+                {
+                    "test_id": "case-api-input-1",
+                    "question": "Hur många fordon passerade E4 i går?",
+                    "expected_tool": "trafikverket_vag_status",
+                    "selected_tool": "trafikverket_vag_status",
+                    "selected_category": "trafikverket_vag",
+                    "missing_required_fields": ["road", "date"],
+                    "passed_api_input": False,
+                    "passed": False,
+                }
+            ],
+            current_prompts={
+                "tool.trafikverket_vag_status.input": "Du extraherar API-input.",
+                "tool.trafikverket_vag_status.system": "Du planerar tool-val.",
+            },
+            llm=None,
+            suggestion_scope="api_tool_only",
+        )
+    )
+    assert len(suggestions) == 1
+    assert suggestions[0]["prompt_key"] == "tool.trafikverket_vag_status.input"
+
+
+def test_suggest_agent_metadata_improvements_fallback():
+    suggestions = asyncio.run(
+        suggest_agent_metadata_improvements(
+            evaluation_results=[
+                {
+                    "test_id": "agent-meta-1",
+                    "question": "Vad blir vädret i Hjo i morgon?",
+                    "expected_agent": "weather",
+                    "selected_agent": "action",
+                    "expected_route": "action",
+                    "expected_intent": "action",
+                    "passed_agent": False,
+                    "passed": False,
+                }
+            ],
+            current_prompts={
+                "agent.action.system": "Du är actionagent.",
+                "supervisor.agent_resolver.system": "Välj agent baserat på retrieve_agents.",
+            },
+            llm=None,
+        )
+    )
+    assert len(suggestions) == 1
+    suggestion = suggestions[0]
+    assert suggestion["agent_id"] == "weather"
+    assert suggestion["prompt_key"] in {
+        "agent.action.system",
+        "supervisor.agent_resolver.system",
+    }
+    assert suggestion["proposed_metadata"]["keywords"]
+    assert suggestion["proposed_metadata"]["example_questions"]
+
+
 def test_prompt_architecture_guard_rejects_static_supervisor_agent_list():
     prompt = (
         "Tillgängliga agenter:\n"
@@ -839,6 +900,17 @@ def test_repair_expected_routing_fixes_wrong_action_sub_route_for_tool():
         expected_sub_route="web",
         expected_tool="trafikverket_trafikinfo_vagarbeten",
         expected_category="trafikverket_trafikinfo",
+    )
+    assert route == "action"
+    assert sub_route == "travel"
+
+
+def test_repair_expected_routing_handles_new_smhi_prefix_tool():
+    route, sub_route = _repair_expected_routing(
+        expected_route="knowledge",
+        expected_sub_route="internal",
+        expected_tool="smhi_forecast_hourly",
+        expected_category="weather",
     )
     assert route == "action"
     assert sub_route == "travel"

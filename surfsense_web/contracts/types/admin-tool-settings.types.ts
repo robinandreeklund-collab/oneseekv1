@@ -450,9 +450,23 @@ export const toolIntentDefinitionSuggestion = z.object({
 	rationale: z.string(),
 	current_definition: z.record(z.string(), z.unknown()).default({}),
 	proposed_definition: z.record(z.string(), z.unknown()).default({}),
+	current_retrieval_metadata: z.record(z.string(), z.unknown()).default({}),
+	proposed_retrieval_metadata: z.record(z.string(), z.unknown()).default({}),
 	prompt_key: z.string().nullable().optional(),
 	current_prompt: z.string().nullable().optional(),
 	proposed_prompt: z.string().nullable().optional(),
+});
+
+export const toolAgentMetadataSuggestion = z.object({
+	agent_id: z.string(),
+	failed_test_ids: z.array(z.string()).default([]),
+	rationale: z.string(),
+	current_metadata: z.record(z.string(), z.unknown()).default({}),
+	proposed_metadata: z.record(z.string(), z.unknown()).default({}),
+	prompt_key: z.string().nullable().optional(),
+	current_prompt: z.string().nullable().optional(),
+	proposed_prompt: z.string().nullable().optional(),
+	related_prompt_keys: z.array(z.string()).default([]),
 });
 
 export const toolEvaluationMetricDeltaItem = z.object({
@@ -489,6 +503,7 @@ export const toolEvaluationResponse = z.object({
 	suggestions: z.array(toolMetadataSuggestion),
 	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
 	intent_suggestions: z.array(toolIntentDefinitionSuggestion).default([]),
+	agent_suggestions: z.array(toolAgentMetadataSuggestion).default([]),
 	retrieval_tuning: toolRetrievalTuning,
 	retrieval_tuning_suggestion: toolRetrievalTuningSuggestion.nullable().optional(),
 	consistency_summary: z
@@ -512,6 +527,7 @@ export const toolApiInputEvaluationResponse = z.object({
 	holdout_results: z.array(toolApiInputEvaluationCaseResult).default([]),
 	prompt_suggestions: z.array(toolApiInputPromptSuggestion).default([]),
 	intent_suggestions: z.array(toolIntentDefinitionSuggestion).default([]),
+	agent_suggestions: z.array(toolAgentMetadataSuggestion).default([]),
 	retrieval_tuning: toolRetrievalTuning,
 	consistency_summary: z
 		.object({
@@ -776,6 +792,7 @@ export type ToolApiInputEvaluationMetrics = z.infer<
 	typeof toolApiInputEvaluationMetrics
 >;
 export type ToolMetadataSuggestion = z.infer<typeof toolMetadataSuggestion>;
+export type ToolAgentMetadataSuggestion = z.infer<typeof toolAgentMetadataSuggestion>;
 export type ToolIntentDefinitionSuggestion = z.infer<
 	typeof toolIntentDefinitionSuggestion
 >;

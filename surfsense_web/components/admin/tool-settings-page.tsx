@@ -4183,6 +4183,72 @@ export function ToolSettingsPage() {
 									)}
 								</CardContent>
 							</Card>
+
+							<Card>
+								<CardHeader>
+									<CardTitle>Steg 2H: Agent metadata-förslag</CardTitle>
+									<CardDescription>
+										Förslag för retrieve_agents metadata (beskrivning, keywords och
+										exempelfrågor) samt ev. promptjustering.
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-3">
+									{evaluationResult.agent_suggestions.length === 0 ? (
+										<p className="text-sm text-muted-foreground">
+											Inga agent metadata-förslag för denna run.
+										</p>
+									) : (
+										evaluationResult.agent_suggestions.map((suggestion) => (
+											<div
+												key={`agent-suggestion-${suggestion.agent_id}`}
+												className="rounded border p-3 space-y-2"
+											>
+												<div className="flex items-center gap-2">
+													<Badge variant="secondary">{suggestion.agent_id}</Badge>
+													<Badge variant="outline">
+														{suggestion.failed_test_ids.length} fail-case(s)
+													</Badge>
+												</div>
+												<p className="text-xs text-muted-foreground">
+													{suggestion.rationale}
+												</p>
+												<div className="grid gap-3 md:grid-cols-2">
+													<div className="rounded bg-muted/50 p-2">
+														<p className="text-xs font-medium mb-1">Nuvarande metadata</p>
+														<pre className="text-[11px] whitespace-pre-wrap break-words">
+															{JSON.stringify(suggestion.current_metadata, null, 2)}
+														</pre>
+													</div>
+													<div className="rounded bg-muted/50 p-2">
+														<p className="text-xs font-medium mb-1">Föreslagen metadata</p>
+														<pre className="text-[11px] whitespace-pre-wrap break-words">
+															{JSON.stringify(suggestion.proposed_metadata, null, 2)}
+														</pre>
+													</div>
+												</div>
+												{suggestion.prompt_key && (
+													<div className="grid gap-3 md:grid-cols-2">
+														<div className="rounded bg-muted/50 p-2">
+															<p className="text-xs font-medium mb-1">
+																Nuvarande prompt ({suggestion.prompt_key})
+															</p>
+															<pre className="text-[11px] whitespace-pre-wrap break-words">
+																{suggestion.current_prompt ?? "-"}
+															</pre>
+														</div>
+														<div className="rounded bg-muted/50 p-2">
+															<p className="text-xs font-medium mb-1">Föreslagen prompt</p>
+															<pre className="text-[11px] whitespace-pre-wrap break-words">
+																{suggestion.proposed_prompt ?? "-"}
+															</pre>
+														</div>
+													</div>
+												)}
+											</div>
+										))
+									)}
+								</CardContent>
+							</Card>
 						</>
 					)}
 
@@ -4897,6 +4963,72 @@ export function ToolSettingsPage() {
 															<p className="text-xs font-medium mb-1">
 																Föreslagen prompt
 															</p>
+															<pre className="text-[11px] whitespace-pre-wrap break-words">
+																{suggestion.proposed_prompt ?? "-"}
+															</pre>
+														</div>
+													</div>
+												)}
+											</div>
+										))
+									)}
+								</CardContent>
+							</Card>
+
+							<Card>
+								<CardHeader>
+									<CardTitle>Steg 3F: Agent metadata-förslag</CardTitle>
+									<CardDescription>
+										Förslag från API input-körningen för retrieve_agents metadata och
+										relaterad promptstyrning.
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-3">
+									{apiInputEvaluationResult.agent_suggestions.length === 0 ? (
+										<p className="text-sm text-muted-foreground">
+											Inga agent metadata-förslag för denna run.
+										</p>
+									) : (
+										apiInputEvaluationResult.agent_suggestions.map((suggestion) => (
+											<div
+												key={`api-agent-suggestion-${suggestion.agent_id}`}
+												className="rounded border p-3 space-y-2"
+											>
+												<div className="flex items-center gap-2">
+													<Badge variant="secondary">{suggestion.agent_id}</Badge>
+													<Badge variant="outline">
+														{suggestion.failed_test_ids.length} fail-case(s)
+													</Badge>
+												</div>
+												<p className="text-xs text-muted-foreground">
+													{suggestion.rationale}
+												</p>
+												<div className="grid gap-3 md:grid-cols-2">
+													<div className="rounded bg-muted/50 p-2">
+														<p className="text-xs font-medium mb-1">Nuvarande metadata</p>
+														<pre className="text-[11px] whitespace-pre-wrap break-words">
+															{JSON.stringify(suggestion.current_metadata, null, 2)}
+														</pre>
+													</div>
+													<div className="rounded bg-muted/50 p-2">
+														<p className="text-xs font-medium mb-1">Föreslagen metadata</p>
+														<pre className="text-[11px] whitespace-pre-wrap break-words">
+															{JSON.stringify(suggestion.proposed_metadata, null, 2)}
+														</pre>
+													</div>
+												</div>
+												{suggestion.prompt_key && (
+													<div className="grid gap-3 md:grid-cols-2">
+														<div className="rounded bg-muted/50 p-2">
+															<p className="text-xs font-medium mb-1">
+																Nuvarande prompt ({suggestion.prompt_key})
+															</p>
+															<pre className="text-[11px] whitespace-pre-wrap break-words">
+																{suggestion.current_prompt ?? "-"}
+															</pre>
+														</div>
+														<div className="rounded bg-muted/50 p-2">
+															<p className="text-xs font-medium mb-1">Föreslagen prompt</p>
 															<pre className="text-[11px] whitespace-pre-wrap break-words">
 																{suggestion.proposed_prompt ?? "-"}
 															</pre>
