@@ -295,47 +295,102 @@ def _fallback_probe_queries(
     neighbors: list[str],
     query_count: int,
     hard_negatives_per_tool: int = 1,
+    avoid_queries: list[str] | None = None,
+    round_index: int = 1,
 ) -> list[str]:
     hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
-    hints = list(entry.keywords[: max(2, query_count * 2)])
+    normalized_round = max(1, min(int(round_index or 1), 1000))
+    hints = list(entry.keywords[: max(2, query_count * 4)])
     if not hints:
-        hints = _tokenize(entry.description)[: max(2, query_count * 2)]
+        hints = _tokenize(entry.description)[: max(2, query_count * 4)]
+    if not hints:
+        hints = _tokenize(entry.name)[: max(2, query_count * 2)] or ["data"]
+
+    locations = [
+        "Stockholm",
+        "Goteborg",
+        "Malmo",
+        "Uppsala",
+        "Sundsvall",
+        "Lulea",
+        "Ostersund",
+        "Visby",
+        "Karlstad",
+        "Gavle",
+        "Vasteras",
+        "Jonkoping",
+    ]
+    time_windows = [
+        "idag",
+        "imorgon",
+        "kommande dygnet",
+        "kommande veckan",
+        "just nu",
+        "denna helg",
+        "nasta manad",
+        "under vintern",
+        "under sommaren",
+        "de senaste 24 timmarna",
+    ]
+
+    avoid_keys = {
+        _normalize_text(query).casefold()
+        for query in list(avoid_queries or [])
+        if _normalize_text(query)
+    }
     prompts: list[str] = []
+    seen: set[str] = set()
+    rotation_seed = sum(ord(ch) for ch in str(entry.tool_id)) + normalized_round
+    location_offset = rotation_seed % len(locations)
+    time_offset = (rotation_seed * 3) % len(time_windows)
+
+    def _append(prompt: str) -> None:
+        normalized = _normalize_text(prompt)
+        if not normalized:
+            return
+        key = normalized.casefold()
+        if key in seen or key in avoid_keys:
+            return
+        seen.add(key)
+        prompts.append(normalized)
+
     if neighbors and hard_negative_count > 0:
-        for idx in range(hard_negative_count):
+        for idx in range(max(hard_negative_count * 2, hard_negative_count)):
             neighbor_id = neighbors[idx % len(neighbors)]
             if not neighbor_id:
                 continue
+            location = locations[(location_offset + idx) % len(locations)]
             if idx % 2 == 0:
-                prompts.append(
-                    f"Nar ar {entry.name} ratt val i stallet for {neighbor_id}?"
+                _append(
+                    f"Nar ar {entry.name} ratt val i stallet for {neighbor_id} i {location}?"
                 )
             else:
-                prompts.append(
-                    f"Jamfor {entry.name} och {neighbor_id} for samma fraga."
+                _append(
+                    f"Jamfor {entry.name} och {neighbor_id} for samma fraga i {location}."
                 )
             if len(prompts) >= query_count:
-                break
-    for hint in hints:
-        prompts.append(f"Visa {hint} for Stockholm idag")
+                return prompts[:query_count]
+
+    candidate_limit = max(query_count * 8, 24)
+    for idx in range(candidate_limit):
+        hint = hints[idx % len(hints)]
+        location = locations[(location_offset + idx) % len(locations)]
+        time_window = time_windows[(time_offset + idx) % len(time_windows)]
+        if idx % 3 == 0:
+            _append(f"Visa {hint} i {location} {time_window}")
+        elif idx % 3 == 1:
+            _append(f"Hjalp mig med {entry.name} i {location} {time_window}")
+        else:
+            _append(f"Vad betyder {hint} for {location} {time_window}?")
         if len(prompts) >= query_count:
-            break
-    if len(prompts) < query_count:
-        prompts.append(f"Hjalp mig med {entry.name} for Sverige")
-    if neighbors and len(prompts) < query_count:
-        prompts.append(
-            f"Nar ska jag anvanda {entry.name} i stallet for {neighbors[0]}?"
-        )
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for prompt in prompts:
-        normalized = prompt.strip()
-        key = normalized.casefold()
-        if not normalized or key in seen:
-            continue
-        seen.add(key)
-        deduped.append(normalized)
-    return deduped[:query_count]
+            return prompts[:query_count]
+
+    if neighbors:
+        _append(f"Nar ska jag anvanda {entry.name} i stallet for {neighbors[0]}?")
+    _append(f"Hjalp mig med {entry.name} for Sverige")
+    _append(f"Data fran {entry.name} for ar {2020 + (normalized_round % 7)}")
+
+    return prompts[:query_count]
 
 
 async def _generate_probe_queries_for_tool(
@@ -345,14 +400,23 @@ async def _generate_probe_queries_for_tool(
     neighbors: list[str],
     query_count: int,
     hard_negatives_per_tool: int = 1,
+    avoid_queries: list[str] | None = None,
+    round_index: int = 1,
 ) -> list[str]:
     hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
+    avoid_keys = {
+        _normalize_text(query).casefold()
+        for query in list(avoid_queries or [])
+        if _normalize_text(query)
+    }
     if llm is None:
         return _fallback_probe_queries(
             entry=entry,
             neighbors=neighbors,
             query_count=query_count,
             hard_negatives_per_tool=hard_negative_count,
+            avoid_queries=list(avoid_keys),
+            round_index=round_index,
         )
     model = llm
     try:
@@ -373,6 +437,8 @@ async def _generate_probe_queries_for_tool(
         "- No markdown.\n"
         "- Keep each query short and realistic.\n"
         "- Include borderline/ambiguous hard negatives when requested.\n"
+        "- Do not repeat any query listed in avoid_queries.\n"
+        "- Prioritize novel phrasings for the provided round_index.\n"
     )
     payload = {
         "tool_id": entry.tool_id,
@@ -383,6 +449,8 @@ async def _generate_probe_queries_for_tool(
         "nearby_tools": neighbors,
         "query_count": max(1, int(query_count)),
         "hard_negatives_per_tool": hard_negative_count,
+        "round_index": max(1, int(round_index or 1)),
+        "avoid_queries": list(avoid_keys)[:80],
     }
     try:
         response = await model.ainvoke(
@@ -400,6 +468,8 @@ async def _generate_probe_queries_for_tool(
                 neighbors=neighbors,
                 query_count=query_count,
                 hard_negatives_per_tool=hard_negative_count,
+                avoid_queries=list(avoid_keys),
+                round_index=round_index,
             )
         generated = _safe_string_list(parsed.get("queries"))
         if not generated:
@@ -408,6 +478,8 @@ async def _generate_probe_queries_for_tool(
                 neighbors=neighbors,
                 query_count=query_count,
                 hard_negatives_per_tool=hard_negative_count,
+                avoid_queries=list(avoid_keys),
+                round_index=round_index,
             )
         hard_negative_queries = (
             _fallback_probe_queries(
@@ -415,17 +487,41 @@ async def _generate_probe_queries_for_tool(
                 neighbors=neighbors,
                 query_count=min(hard_negative_count, max(1, int(query_count))),
                 hard_negatives_per_tool=hard_negative_count,
+                avoid_queries=[*list(avoid_keys), *generated],
+                round_index=round_index,
             )
             if hard_negative_count > 0
             else []
         )
-        return _safe_string_list([*generated, *hard_negative_queries])[:query_count]
+        merged: list[str] = []
+        seen: set[str] = set()
+        for query in [*generated, *hard_negative_queries]:
+            normalized = _normalize_text(query)
+            key = normalized.casefold()
+            if not normalized or key in seen or key in avoid_keys:
+                continue
+            seen.add(key)
+            merged.append(normalized)
+            if len(merged) >= query_count:
+                break
+        if merged:
+            return merged[:query_count]
+        return _fallback_probe_queries(
+            entry=entry,
+            neighbors=neighbors,
+            query_count=query_count,
+            hard_negatives_per_tool=hard_negative_count,
+            avoid_queries=list(avoid_keys),
+            round_index=round_index,
+        )
     except Exception:
         return _fallback_probe_queries(
             entry=entry,
             neighbors=neighbors,
             query_count=query_count,
             hard_negatives_per_tool=hard_negative_count,
+            avoid_queries=list(avoid_keys),
+            round_index=round_index,
         )
 
 
@@ -742,6 +838,8 @@ async def run_layered_metadata_audit(
     hard_negatives_per_tool: int = 1,
     retrieval_limit: int = 5,
     max_tools: int = 25,
+    probe_round: int = 1,
+    exclude_probe_queries: list[str] | None = None,
 ) -> dict[str, Any]:
     selected_entries = _select_audit_entries(
         tool_index=tool_index,
@@ -797,6 +895,12 @@ async def run_layered_metadata_audit(
     max_probe_queries = max(1, min(int(max_queries_per_tool or 6), 20))
     llm_query_count = max(1, min(int(llm_queries_per_tool or 3), 12))
     hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
+    normalized_probe_round = max(1, min(int(probe_round or 1), 1000))
+    excluded_query_keys = {
+        _normalize_text(query).casefold()
+        for query in list(exclude_probe_queries or [])
+        if _normalize_text(query)
+    }
 
     for entry in selected_entries:
         expected_tool_id = entry.tool_id
@@ -809,15 +913,54 @@ async def run_layered_metadata_audit(
                 for query in entry.example_queries[:max_probe_queries]
             )
         if include_llm_generated:
+            avoid_for_generation = [
+                *list(excluded_query_keys)[:160],
+                *[query for query, _source in queries][:40],
+            ]
             generated = await _generate_probe_queries_for_tool(
                 llm=llm,
                 entry=entry,
                 neighbors=neighbors_by_tool.get(entry.tool_id, []),
                 query_count=llm_query_count,
                 hard_negatives_per_tool=hard_negative_count,
+                avoid_queries=avoid_for_generation,
+                round_index=normalized_probe_round,
             )
             queries.extend((query, "llm_generated") for query in generated)
-        queries = _dedupe_queries(queries)[:max_probe_queries]
+        queries = _dedupe_queries(queries)
+
+        filtered_queries: list[tuple[str, str]] = []
+        seen_query_keys: set[str] = set()
+        for query, source in queries:
+            normalized_query = _normalize_text(query)
+            key = normalized_query.casefold()
+            if not normalized_query or key in seen_query_keys or key in excluded_query_keys:
+                continue
+            seen_query_keys.add(key)
+            filtered_queries.append((normalized_query, source))
+            if len(filtered_queries) >= max_probe_queries:
+                break
+
+        if len(filtered_queries) < max_probe_queries:
+            fallback_queries = _fallback_probe_queries(
+                entry=entry,
+                neighbors=neighbors_by_tool.get(entry.tool_id, []),
+                query_count=max_probe_queries * 3,
+                hard_negatives_per_tool=hard_negative_count,
+                avoid_queries=[*list(excluded_query_keys), *list(seen_query_keys)],
+                round_index=normalized_probe_round,
+            )
+            for query in fallback_queries:
+                normalized_query = _normalize_text(query)
+                key = normalized_query.casefold()
+                if not normalized_query or key in seen_query_keys or key in excluded_query_keys:
+                    continue
+                seen_query_keys.add(key)
+                filtered_queries.append((normalized_query, "round_refresh"))
+                if len(filtered_queries) >= max_probe_queries:
+                    break
+
+        queries = filtered_queries[:max_probe_queries]
 
         for query, source in queries:
             intent_ranked = _rank_metadata_candidates(
@@ -1066,9 +1209,15 @@ def build_layered_suggestion_inputs_from_annotations(
         corrected_agent = _normalize_text(item.get("corrected_agent_id")).lower() or None
         corrected_tool = _normalize_text(item.get("corrected_tool_id")) or None
 
-        resolved_expected_intent = corrected_intent if not intent_is_correct else expected_intent
-        resolved_expected_agent = corrected_agent if not agent_is_correct else expected_agent
-        resolved_expected_tool = corrected_tool if not tool_is_correct else expected_tool
+        resolved_expected_intent = (
+            (corrected_intent or expected_intent) if not intent_is_correct else expected_intent
+        )
+        resolved_expected_agent = (
+            (corrected_agent or expected_agent) if not agent_is_correct else expected_agent
+        )
+        resolved_expected_tool = (
+            (corrected_tool or expected_tool) if not tool_is_correct else expected_tool
+        )
 
         if not intent_is_correct and resolved_expected_intent:
             reviewed_intent_failures += 1

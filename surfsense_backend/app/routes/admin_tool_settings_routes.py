@@ -3924,6 +3924,8 @@ async def run_metadata_catalog_audit(
         hard_negatives_per_tool=int(payload.hard_negatives_per_tool),
         retrieval_limit=int(payload.retrieval_limit),
         max_tools=int(payload.max_tools),
+        probe_round=int(payload.probe_round),
+        exclude_probe_queries=list(payload.exclude_probe_queries),
     )
     return {
         "search_space_id": resolved_search_space_id,

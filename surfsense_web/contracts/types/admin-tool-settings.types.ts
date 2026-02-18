@@ -344,6 +344,8 @@ export const metadataCatalogAuditRunRequest = z.object({
 	hard_negatives_per_tool: z.number().int().optional().default(1),
 	retrieval_limit: z.number().int().optional().default(5),
 	max_tools: z.number().int().optional().default(25),
+	probe_round: z.number().int().optional().default(1),
+	exclude_probe_queries: z.array(z.string()).optional().default([]),
 });
 
 export const metadataCatalogAuditRunResponse = z.object({

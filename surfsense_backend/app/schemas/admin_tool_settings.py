@@ -743,6 +743,8 @@ class MetadataCatalogAuditRunRequest(BaseModel):
     hard_negatives_per_tool: int = 1
     retrieval_limit: int = 5
     max_tools: int = 25
+    probe_round: int = 1
+    exclude_probe_queries: list[str] = Field(default_factory=list)
 
 
 class MetadataCatalogAuditRunResponse(BaseModel):

@@ -993,11 +993,19 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					predicted_agent_id: probe.agent.predicted_label ?? null,
 					predicted_tool_id: probe.tool.predicted_label ?? null,
 					intent_is_correct: draft.intent_is_correct,
-					corrected_intent_id: null,
+					corrected_intent_id: draft.intent_is_correct
+						? null
+						: (draft.corrected_intent_id ?? probe.intent.expected_label ?? null),
 					agent_is_correct: draft.agent_is_correct,
-					corrected_agent_id: null,
+					corrected_agent_id: draft.agent_is_correct
+						? null
+						: (draft.corrected_agent_id ?? probe.agent.expected_label ?? null),
 					tool_is_correct: draft.tool_is_correct,
-					corrected_tool_id: null,
+					corrected_tool_id: draft.tool_is_correct
+						? null
+						: (draft.corrected_tool_id ??
+							probe.tool.expected_label ??
+							probe.target_tool_id),
 					intent_score_breakdown: probe.intent.score_breakdown ?? [],
 					agent_score_breakdown: probe.agent.score_breakdown ?? [],
 					tool_score_breakdown: probe.tool.score_breakdown ?? [],
@@ -1007,6 +1015,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		};
 
 		try {
+			const usedProbeQueryKeys = new Set<string>();
 			let toolPatchMap: Record<string, ToolMetadataUpdateItem> = Object.fromEntries(
 				metadataPatchForDraft.map((item) => [item.tool_id, { ...item }])
 			);
@@ -1041,7 +1050,13 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					llm_queries_per_tool: llmQueriesPerTool,
 					max_queries_per_tool: maxQueriesPerTool,
 					hard_negatives_per_tool: hardNegativesPerTool,
+					probe_round: round,
+					exclude_probe_queries: Array.from(usedProbeQueryKeys).slice(-2500),
 				});
+				for (const probe of result.probes) {
+					const key = String(probe.query ?? "").trim().toLocaleLowerCase();
+					if (key) usedProbeQueryKeys.add(key);
+				}
 				const currentAnnotations = buildDefaultAnnotations(result);
 				setAuditResult(result);
 				setAuditAnnotations(currentAnnotations);
