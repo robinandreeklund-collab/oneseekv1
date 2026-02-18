@@ -31,6 +31,10 @@ from app.db import (
 from app.schemas.admin_tool_settings import (
     AgentMetadataItem,
     IntentMetadataItem,
+    MetadataCatalogAuditRunRequest,
+    MetadataCatalogAuditRunResponse,
+    MetadataCatalogAuditSuggestionRequest,
+    MetadataCatalogAuditSuggestionResponse,
     MetadataCatalogResponse,
     MetadataCatalogUpdateRequest,
     ToolAutoLoopJobStatusResponse,
@@ -97,6 +101,10 @@ from app.services.tool_metadata_service import (
     normalize_tool_metadata_payload,
     tool_metadata_payload_equal,
     upsert_global_tool_metadata_overrides,
+)
+from app.services.metadata_audit_service import (
+    build_suggestion_inputs_from_audit_annotations,
+    run_tool_metadata_audit,
 )
 from app.services.agent_metadata_service import (
     agent_metadata_payload_equal,
@@ -3283,6 +3291,7 @@ async def _execute_tool_evaluation(
         evaluation_results=evaluation["results"],
         tool_index=tool_index,
         llm=llm,
+        retrieval_tuning=effective_tuning,
     )
     retrieval_tuning_suggestion = await suggest_retrieval_tuning(
         evaluation_results=evaluation["results"],
@@ -3756,6 +3765,102 @@ async def update_tool_settings_metadata_catalog(
         user,
         search_space_id=resolved_search_space_id,
     )
+
+
+@router.post(
+    "/tool-settings/metadata-audit/run",
+    response_model=MetadataCatalogAuditRunResponse,
+)
+async def run_metadata_catalog_audit(
+    payload: MetadataCatalogAuditRunRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    patch_map = _patch_map_from_updates(payload.metadata_patch)
+    tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=patch_map,
+        )
+    )
+    retrieval_tuning = await get_global_tool_retrieval_tuning(session)
+    llm = None
+    if payload.include_llm_generated:
+        llm = await get_agent_llm(session, resolved_search_space_id)
+    audit_result = await run_tool_metadata_audit(
+        tool_index=tool_index,
+        llm=llm,
+        retrieval_tuning=retrieval_tuning,
+        tool_ids=list(payload.tool_ids),
+        tool_id_prefix=payload.tool_id_prefix,
+        include_existing_examples=bool(payload.include_existing_examples),
+        include_llm_generated=bool(payload.include_llm_generated),
+        llm_queries_per_tool=int(payload.llm_queries_per_tool),
+        max_queries_per_tool=int(payload.max_queries_per_tool),
+        retrieval_limit=int(payload.retrieval_limit),
+        max_tools=int(payload.max_tools),
+    )
+    return {
+        "search_space_id": resolved_search_space_id,
+        "metadata_version_hash": compute_metadata_version_hash(tool_index),
+        "retrieval_tuning": ToolRetrievalTuning(**retrieval_tuning),
+        "probes": list(audit_result.get("probes") or []),
+        "summary": dict(audit_result.get("summary") or {}),
+    }
+
+
+@router.post(
+    "/tool-settings/metadata-audit/suggestions",
+    response_model=MetadataCatalogAuditSuggestionResponse,
+)
+async def generate_metadata_catalog_audit_suggestions(
+    payload: MetadataCatalogAuditSuggestionRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    if not payload.annotations:
+        raise HTTPException(status_code=400, detail="No audit annotations provided")
+    patch_map = _patch_map_from_updates(payload.metadata_patch)
+    tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=patch_map,
+        )
+    )
+    retrieval_tuning = await get_global_tool_retrieval_tuning(session)
+    llm = await get_agent_llm(session, resolved_search_space_id)
+    evaluation_results, confusion_pairs, reviewed_failures = (
+        build_suggestion_inputs_from_audit_annotations(
+            annotations=[item.model_dump() for item in payload.annotations]
+        )
+    )
+    suggestions = await generate_tool_metadata_suggestions(
+        evaluation_results=evaluation_results,
+        tool_index=tool_index,
+        llm=llm,
+        max_suggestions=max(1, min(int(payload.max_suggestions or 20), 100)),
+        retrieval_tuning=retrieval_tuning,
+    )
+    return {
+        "suggestions": suggestions,
+        "total_annotations": len(payload.annotations),
+        "reviewed_failures": reviewed_failures,
+        "confusion_pairs": confusion_pairs,
+    }
 
 
 @router.get(
@@ -5454,6 +5559,7 @@ async def generate_tool_suggestions(
         )
     )
     llm = await get_agent_llm(session, resolved_search_space_id)
+    retrieval_tuning = await get_global_tool_retrieval_tuning(session)
     failed_case_dicts = [
         {
             "test_id": case.test_id,
@@ -5472,6 +5578,7 @@ async def generate_tool_suggestions(
         evaluation_results=failed_case_dicts,
         tool_index=tool_index,
         llm=llm,
+        retrieval_tuning=retrieval_tuning,
     )
     return {"suggestions": suggestions}
 

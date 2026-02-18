@@ -1810,6 +1810,7 @@ async def _build_llm_suggestion(
     llm,
     current: dict[str, Any],
     failures: list[dict[str, Any]],
+    retrieval_tuning: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str] | None:
     if llm is None:
         return None
@@ -1823,6 +1824,7 @@ async def _build_llm_suggestion(
     prompt = (
         "Du optimerar verktygsmetadata för retrieval.\n"
         "Givet nuvarande metadata och misslyckade eval-fall ska du föreslå förbättrad metadata.\n"
+        "Använd retrieval-vikter och score-breakdown från fallen när du prioriterar ändringar.\n"
         "Behåll kategori om det inte finns starka skäl att ändra.\n"
         "ALL text måste vara på svenska.\n"
         "Returnera strikt JSON:\n"
@@ -1839,6 +1841,7 @@ async def _build_llm_suggestion(
     payload = {
         "current_metadata": current,
         "failed_cases": failures,
+        "retrieval_tuning": retrieval_tuning or {},
     }
     try:
         failure_questions = [
@@ -2631,6 +2634,7 @@ async def generate_tool_metadata_suggestions(
     evaluation_results: list[dict[str, Any]],
     tool_index: list[ToolIndexEntry],
     llm=None,
+    retrieval_tuning: dict[str, Any] | None = None,
     max_suggestions: int = 20,
 ) -> list[dict[str, Any]]:
     index_by_id = {entry.tool_id: entry for entry in tool_index}
@@ -2644,7 +2648,7 @@ async def generate_tool_metadata_suggestions(
             continue
         bucket = grouped.setdefault(
             expected_tool,
-            {"questions": [], "failed_test_ids": [], "wrong_tools": []},
+            {"questions": [], "failed_test_ids": [], "wrong_tools": [], "failures": []},
         )
         question = str(result.get("question") or "").strip()
         if question:
@@ -2655,6 +2659,18 @@ async def generate_tool_metadata_suggestions(
         wrong_tool = str(result.get("selected_tool") or "").strip()
         if wrong_tool and wrong_tool != expected_tool:
             bucket["wrong_tools"].append(wrong_tool)
+        retrieval_breakdown = (
+            list(result.get("retrieval_breakdown"))
+            if isinstance(result.get("retrieval_breakdown"), list)
+            else []
+        )
+        bucket["failures"].append(
+            {
+                "question": question,
+                "selected_wrong_tool": wrong_tool if wrong_tool and wrong_tool != expected_tool else None,
+                "retrieval_breakdown": retrieval_breakdown[:5],
+            }
+        )
 
     suggestions: list[dict[str, Any]] = []
     for tool_id, failure_data in grouped.items():
@@ -2663,21 +2679,14 @@ async def generate_tool_metadata_suggestions(
         entry = index_by_id[tool_id]
         current = _serialize_tool(entry)
         current["base_path"] = entry.base_path
-        failures = [
-            {
-                "question": question,
-                "selected_wrong_tool": failure_data["wrong_tools"][idx]
-                if idx < len(failure_data["wrong_tools"])
-                else None,
-            }
-            for idx, question in enumerate(failure_data["questions"])
-        ]
+        failures = list(failure_data.get("failures") or [])
 
         llm_suggestion = await _build_llm_suggestion(
             tool_id=tool_id,
             llm=llm,
             current=current,
             failures=failures,
+            retrieval_tuning=retrieval_tuning,
         )
         fallback_proposed, fallback_rationale = _build_fallback_suggestion(
             tool_id=tool_id,

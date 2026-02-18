@@ -634,6 +634,79 @@ class ToolApiInputApplyPromptSuggestionsResponse(BaseModel):
     applied_prompt_keys: list[str]
 
 
+class MetadataCatalogAuditConfusionPair(BaseModel):
+    expected_tool_id: str
+    predicted_tool_id: str
+    count: int
+
+
+class MetadataCatalogAuditProbeItem(BaseModel):
+    probe_id: str
+    query: str
+    source: str
+    target_tool_id: str
+    predicted_tool_id: str | None = None
+    predicted_tool_ids: list[str] = Field(default_factory=list)
+    target_rank: int | None = None
+    is_correct: bool = False
+    confidence_margin: float | None = None
+    retrieval_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class MetadataCatalogAuditSummary(BaseModel):
+    total_probes: int = 0
+    correct_top1: int = 0
+    incorrect_top1: int = 0
+    top1_accuracy: float = 0.0
+    ambiguous_count: int = 0
+    confusion_pairs: list[MetadataCatalogAuditConfusionPair] = Field(default_factory=list)
+
+
+class MetadataCatalogAuditRunRequest(BaseModel):
+    search_space_id: int | None = None
+    metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    tool_ids: list[str] = Field(default_factory=list)
+    tool_id_prefix: str | None = None
+    include_existing_examples: bool = True
+    include_llm_generated: bool = True
+    llm_queries_per_tool: int = 3
+    max_queries_per_tool: int = 6
+    retrieval_limit: int = 5
+    max_tools: int = 25
+
+
+class MetadataCatalogAuditRunResponse(BaseModel):
+    search_space_id: int
+    metadata_version_hash: str
+    retrieval_tuning: ToolRetrievalTuning
+    probes: list[MetadataCatalogAuditProbeItem] = Field(default_factory=list)
+    summary: MetadataCatalogAuditSummary = Field(default_factory=MetadataCatalogAuditSummary)
+
+
+class MetadataCatalogAuditAnnotationItem(BaseModel):
+    probe_id: str
+    query: str
+    target_tool_id: str
+    predicted_tool_id: str | None = None
+    is_correct: bool = True
+    corrected_tool_id: str | None = None
+    retrieval_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class MetadataCatalogAuditSuggestionRequest(BaseModel):
+    search_space_id: int | None = None
+    metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    annotations: list[MetadataCatalogAuditAnnotationItem] = Field(default_factory=list)
+    max_suggestions: int = 20
+
+
+class MetadataCatalogAuditSuggestionResponse(BaseModel):
+    suggestions: list[ToolMetadataSuggestion] = Field(default_factory=list)
+    total_annotations: int = 0
+    reviewed_failures: int = 0
+    confusion_pairs: list[MetadataCatalogAuditConfusionPair] = Field(default_factory=list)
+
+
 class ToolSuggestionRequest(BaseModel):
     search_space_id: int | None = None
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)

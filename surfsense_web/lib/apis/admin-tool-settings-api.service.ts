@@ -1,4 +1,6 @@
 import {
+	type MetadataCatalogAuditRunRequest,
+	type MetadataCatalogAuditSuggestionRequest,
 	type MetadataCatalogUpdateRequest,
 	type ToolApplySuggestionsRequest,
 	type ToolAutoLoopRequest,
@@ -9,6 +11,10 @@ import {
 	type ToolRetrievalTuning,
 	type ToolSettingsUpdateRequest,
 	type ToolSuggestionRequest,
+	metadataCatalogAuditRunRequest,
+	metadataCatalogAuditRunResponse,
+	metadataCatalogAuditSuggestionRequest,
+	metadataCatalogAuditSuggestionResponse,
 	metadataCatalogResponse,
 	metadataCatalogUpdateRequest,
 	toolAutoLoopJobStatusResponse,
@@ -129,6 +135,36 @@ class AdminToolSettingsApiService {
 		return baseApiService.put(
 			`/api/v1/admin/tool-settings/metadata-catalog${query}`,
 			metadataCatalogResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async runMetadataCatalogAudit(request: MetadataCatalogAuditRunRequest) {
+		const parsed = metadataCatalogAuditRunRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/metadata-audit/run",
+			metadataCatalogAuditRunResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async generateMetadataCatalogAuditSuggestions(request: MetadataCatalogAuditSuggestionRequest) {
+		const parsed = metadataCatalogAuditSuggestionRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/metadata-audit/suggestions",
+			metadataCatalogAuditSuggestionResponse,
 			{
 				body: parsed.data,
 			}
