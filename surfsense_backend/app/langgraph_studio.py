@@ -288,6 +288,31 @@ def _parse_thread_id(value: Any, *, default: str | int) -> str | int:
     return normalized
 
 
+def _resolve_studio_recursion_limit(configurable: dict[str, Any]) -> int:
+    configured_value = configurable.get("recursion_limit")
+    configured_limit: int | None = None
+    if configured_value is not None and str(configured_value).strip() != "":
+        configured_limit = _parse_int(configured_value, default=120)
+
+    env_value = os.getenv("STUDIO_RECURSION_LIMIT")
+    env_limit: int | None = None
+    if env_value is not None and str(env_value).strip() != "":
+        env_limit = _parse_int(env_value, default=120)
+
+    if configured_limit is None and env_limit is None:
+        chosen_limit = 120
+    elif configured_limit is None:
+        chosen_limit = int(env_limit or 120)
+    elif env_limit is None:
+        chosen_limit = int(configured_limit)
+    else:
+        # In Studio, environment recursion limit acts as a safety floor so
+        # stale UI-configured low values cannot silently cap complex runs.
+        chosen_limit = max(int(configured_limit), int(env_limit))
+
+    return max(25, min(2000, int(chosen_limit)))
+
+
 def _first_value(
     configurable: dict[str, Any],
     key: str,
@@ -458,21 +483,7 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
         ),
         default=900000001,
     )
-    recursion_limit = max(
-        25,
-        min(
-            2000,
-            _parse_int(
-                _first_value(
-                    configurable,
-                    "recursion_limit",
-                    env_name="STUDIO_RECURSION_LIMIT",
-                    default=120,
-                ),
-                default=120,
-            ),
-        ),
-    )
+    recursion_limit = _resolve_studio_recursion_limit(configurable)
     user_id = await _resolve_user_id(
         session=await _get_session(),
         search_space_id=search_space_id,
@@ -817,10 +828,7 @@ async def make_studio_graph_async(config: dict[str, Any] | None = None):
             "search_space_id": configurable.get("search_space_id", os.getenv("STUDIO_SEARCH_SPACE_ID", 1)),
             "llm_config_id": configurable.get("llm_config_id", os.getenv("STUDIO_LLM_CONFIG_ID", -1)),
             "thread_id": configurable.get("thread_id", os.getenv("STUDIO_THREAD_ID", 900000001)),
-            "recursion_limit": configurable.get(
-                "recursion_limit",
-                os.getenv("STUDIO_RECURSION_LIMIT", 120),
-            ),
+            "recursion_limit": _resolve_studio_recursion_limit(configurable),
             "compare_mode": configurable.get("compare_mode", os.getenv("STUDIO_COMPARE_MODE", False)),
             "checkpointer_mode": configurable.get("checkpointer_mode", os.getenv("STUDIO_CHECKPOINTER_MODE", "memory")),
             "checkpoint_ns": configurable.get("checkpoint_ns", os.getenv("STUDIO_CHECKPOINT_NS", "")),
