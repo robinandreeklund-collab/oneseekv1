@@ -1619,13 +1619,14 @@ async def generate_intent_metadata_suggestions_from_annotations(
             },
         }
 
-    results: list[dict[str, Any] | None] = []
+    suggestions: list[dict[str, Any]] = []
     if normalized_parallelism <= 1:
         for intent_id, failures in candidate_items:
             suggestion = await _suggest_for_intent(intent_id, failures)
-            if suggestion is not None:
-                results.append(suggestion)
-            if len(results) >= normalized_max_suggestions:
+            if suggestion is None:
+                continue
+            suggestions.append(suggestion)
+            if len(suggestions) >= normalized_max_suggestions:
                 break
     else:
         semaphore = asyncio.Semaphore(normalized_parallelism)
@@ -1637,11 +1638,20 @@ async def generate_intent_metadata_suggestions_from_annotations(
             async with semaphore:
                 return await _suggest_for_intent(intent_id, failures)
 
-        results = await asyncio.gather(
-            *[_run_with_limit(intent_id, failures) for intent_id, failures in candidate_items]
-        )
+        for start in range(0, len(candidate_items), normalized_parallelism):
+            chunk = candidate_items[start : start + normalized_parallelism]
+            chunk_results = await asyncio.gather(
+                *[_run_with_limit(intent_id, failures) for intent_id, failures in chunk]
+            )
+            for item in chunk_results:
+                if item is None:
+                    continue
+                suggestions.append(item)
+                if len(suggestions) >= normalized_max_suggestions:
+                    break
+            if len(suggestions) >= normalized_max_suggestions:
+                break
 
-    suggestions = [item for item in results if item is not None]
     return suggestions[:normalized_max_suggestions]
 
 
@@ -1725,13 +1735,14 @@ async def generate_agent_metadata_suggestions_from_annotations(
             },
         }
 
-    results: list[dict[str, Any] | None] = []
+    suggestions: list[dict[str, Any]] = []
     if normalized_parallelism <= 1:
         for agent_id, failures in candidate_items:
             suggestion = await _suggest_for_agent(agent_id, failures)
-            if suggestion is not None:
-                results.append(suggestion)
-            if len(results) >= normalized_max_suggestions:
+            if suggestion is None:
+                continue
+            suggestions.append(suggestion)
+            if len(suggestions) >= normalized_max_suggestions:
                 break
     else:
         semaphore = asyncio.Semaphore(normalized_parallelism)
@@ -1743,9 +1754,18 @@ async def generate_agent_metadata_suggestions_from_annotations(
             async with semaphore:
                 return await _suggest_for_agent(agent_id, failures)
 
-        results = await asyncio.gather(
-            *[_run_with_limit(agent_id, failures) for agent_id, failures in candidate_items]
-        )
+        for start in range(0, len(candidate_items), normalized_parallelism):
+            chunk = candidate_items[start : start + normalized_parallelism]
+            chunk_results = await asyncio.gather(
+                *[_run_with_limit(agent_id, failures) for agent_id, failures in chunk]
+            )
+            for item in chunk_results:
+                if item is None:
+                    continue
+                suggestions.append(item)
+                if len(suggestions) >= normalized_max_suggestions:
+                    break
+            if len(suggestions) >= normalized_max_suggestions:
+                break
 
-    suggestions = [item for item in results if item is not None]
     return suggestions[:normalized_max_suggestions]
