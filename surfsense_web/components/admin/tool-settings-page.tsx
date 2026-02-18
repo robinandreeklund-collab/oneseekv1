@@ -44,6 +44,7 @@ import { AlertCircle, Save, RotateCcw, Plus, X, Loader2, Download } from "lucide
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { MetadataCatalogTab } from "@/components/admin/metadata-catalog-tab";
 
 type EvalExportFormat = "json" | "yaml";
 type ExportableEvalJobStatus =
@@ -1875,6 +1876,7 @@ export function ToolSettingsPage() {
 			<Tabs value={activeTab} onValueChange={setActiveTab}>
 				<TabsList>
 					<TabsTrigger value="metadata">Metadata</TabsTrigger>
+					<TabsTrigger value="metadata-catalog">Metadata Katalog</TabsTrigger>
 					<TabsTrigger value="evaluation">Eval Workflow</TabsTrigger>
 					<TabsTrigger value="stats-agent">Statistik · Agentval</TabsTrigger>
 					<TabsTrigger value="stats-tool">Statistik · Toolval</TabsTrigger>
@@ -2268,6 +2270,10 @@ export function ToolSettingsPage() {
 							</CardContent>
 						</Card>
 					)}
+				</TabsContent>
+
+				<TabsContent value="metadata-catalog" className="space-y-6 mt-6">
+					<MetadataCatalogTab searchSpaceId={data?.search_space_id} />
 				</TabsContent>
 
 				<TabsContent value="evaluation" className="space-y-6 mt-6">

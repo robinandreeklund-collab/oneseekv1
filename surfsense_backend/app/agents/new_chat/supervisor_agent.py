@@ -113,6 +113,7 @@ from app.services.retrieval_feedback_persistence_service import (
     load_retrieval_feedback_snapshot,
     persist_retrieval_feedback_signal,
 )
+from app.services.agent_metadata_service import get_effective_agent_metadata
 from app.services.tool_retrieval_tuning_service import get_global_tool_retrieval_tuning
 
 
@@ -3697,8 +3698,45 @@ async def create_supervisor_agent(
         ),
     ]
 
-    agent_by_name = {definition.name: definition for definition in agent_definitions}
     db_session = dependencies.get("db_session")
+    if isinstance(db_session, AsyncSession):
+        try:
+            effective_agent_metadata = await get_effective_agent_metadata(db_session)
+        except Exception:
+            effective_agent_metadata = []
+            logger.exception("Failed to load effective agent metadata overrides")
+        if effective_agent_metadata:
+            metadata_by_agent_id: dict[str, dict[str, Any]] = {}
+            for payload in effective_agent_metadata:
+                agent_id = str(payload.get("agent_id") or "").strip().lower()
+                if agent_id:
+                    metadata_by_agent_id[agent_id] = payload
+            if metadata_by_agent_id:
+                merged_agent_definitions: list[AgentDefinition] = []
+                for definition in agent_definitions:
+                    metadata = metadata_by_agent_id.get(definition.name)
+                    if not metadata:
+                        merged_agent_definitions.append(definition)
+                        continue
+                    merged_agent_definitions.append(
+                        AgentDefinition(
+                            name=definition.name,
+                            description=str(
+                                metadata.get("description") or definition.description
+                            ),
+                            keywords=[
+                                str(keyword)
+                                for keyword in (
+                                    metadata.get("keywords") or definition.keywords
+                                )
+                                if str(keyword).strip()
+                            ],
+                            namespace=definition.namespace,
+                            prompt_key=definition.prompt_key,
+                        )
+                    )
+                agent_definitions = merged_agent_definitions
+    agent_by_name = {definition.name: definition for definition in agent_definitions}
     connector_service = dependencies.get("connector_service")
     search_space_id = dependencies.get("search_space_id")
     user_id = dependencies.get("user_id")

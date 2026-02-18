@@ -61,6 +61,60 @@ class ToolSettingsUpdateRequest(BaseModel):
     tools: list[ToolMetadataUpdateItem]
 
 
+class AgentMetadataItem(BaseModel):
+    agent_id: str
+    label: str
+    description: str
+    keywords: list[str]
+    prompt_key: str | None = None
+    namespace: list[str] = Field(default_factory=list)
+    has_override: bool = False
+
+
+class AgentMetadataUpdateItem(BaseModel):
+    agent_id: str
+    label: str
+    description: str
+    keywords: list[str]
+    prompt_key: str | None = None
+    namespace: list[str] = Field(default_factory=list)
+
+
+class IntentMetadataItem(BaseModel):
+    intent_id: str
+    label: str
+    route: str
+    description: str
+    keywords: list[str]
+    priority: int = 500
+    enabled: bool = True
+    has_override: bool = False
+
+
+class IntentMetadataUpdateItem(BaseModel):
+    intent_id: str
+    label: str
+    route: str
+    description: str
+    keywords: list[str]
+    priority: int = 500
+    enabled: bool = True
+
+
+class MetadataCatalogResponse(BaseModel):
+    search_space_id: int
+    metadata_version_hash: str
+    tool_categories: list[ToolCategoryResponse] = Field(default_factory=list)
+    agents: list[AgentMetadataItem] = Field(default_factory=list)
+    intents: list[IntentMetadataItem] = Field(default_factory=list)
+
+
+class MetadataCatalogUpdateRequest(BaseModel):
+    tools: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    agents: list[AgentMetadataUpdateItem] = Field(default_factory=list)
+    intents: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+
+
 class ToolRetrievalTuningResponse(BaseModel):
     tuning: ToolRetrievalTuning
 

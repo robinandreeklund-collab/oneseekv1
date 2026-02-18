@@ -29,6 +29,10 @@ from app.db import (
     get_async_session,
 )
 from app.schemas.admin_tool_settings import (
+    AgentMetadataItem,
+    IntentMetadataItem,
+    MetadataCatalogResponse,
+    MetadataCatalogUpdateRequest,
     ToolAutoLoopJobStatusResponse,
     ToolAutoLoopRequest,
     ToolAutoLoopResult,
@@ -94,7 +98,21 @@ from app.services.tool_metadata_service import (
     tool_metadata_payload_equal,
     upsert_global_tool_metadata_overrides,
 )
-from app.services.intent_definition_service import get_effective_intent_definitions
+from app.services.agent_metadata_service import (
+    agent_metadata_payload_equal,
+    get_default_agent_metadata,
+    get_effective_agent_metadata,
+    get_global_agent_metadata_overrides,
+    normalize_agent_metadata_payload,
+    upsert_global_agent_metadata_overrides,
+)
+from app.services.intent_definition_service import (
+    get_default_intent_definitions,
+    get_effective_intent_definitions,
+    get_global_intent_definition_overrides,
+    normalize_intent_definition_payload,
+    upsert_global_intent_definition_overrides,
+)
 from app.services.tool_retrieval_tuning_service import (
     get_global_tool_retrieval_tuning,
     normalize_tool_retrieval_tuning,
@@ -3040,6 +3058,122 @@ async def _build_tool_settings_response(
     )
 
 
+def _intent_metadata_item_from_payload(
+    payload: dict[str, Any],
+    *,
+    has_override: bool = False,
+) -> IntentMetadataItem:
+    normalized = normalize_intent_definition_payload(
+        payload,
+        intent_id=payload.get("intent_id"),
+    )
+    return IntentMetadataItem(
+        intent_id=str(normalized.get("intent_id") or ""),
+        label=str(normalized.get("label") or ""),
+        route=str(normalized.get("route") or ""),
+        description=str(normalized.get("description") or ""),
+        keywords=list(normalized.get("keywords") or []),
+        priority=int(normalized.get("priority") or 500),
+        enabled=bool(normalized.get("enabled", True)),
+        has_override=has_override,
+    )
+
+
+def _agent_metadata_item_from_payload(
+    payload: dict[str, Any],
+    *,
+    default_payload: dict[str, Any] | None = None,
+    has_override: bool = False,
+) -> AgentMetadataItem:
+    normalized = normalize_agent_metadata_payload(
+        payload,
+        agent_id=payload.get("agent_id"),
+        default_payload=default_payload,
+    )
+    return AgentMetadataItem(
+        agent_id=str(normalized.get("agent_id") or ""),
+        label=str(normalized.get("label") or ""),
+        description=str(normalized.get("description") or ""),
+        keywords=list(normalized.get("keywords") or []),
+        prompt_key=(
+            str(normalized.get("prompt_key") or "").strip() or None
+        ),
+        namespace=[str(value) for value in (normalized.get("namespace") or []) if value],
+        has_override=has_override,
+    )
+
+
+async def _build_metadata_catalog_response(
+    session: AsyncSession,
+    user: User,
+    *,
+    search_space_id: int,
+) -> MetadataCatalogResponse:
+    tool_index, persisted_tool_overrides, _effective_overrides = (
+        await _build_tool_index_for_search_space(
+            session,
+            user,
+            search_space_id=search_space_id,
+            metadata_patch=None,
+        )
+    )
+    tool_categories = _group_tool_index_by_category(
+        tool_index,
+        persisted_overrides=persisted_tool_overrides,
+    )
+
+    default_intent_definitions = get_default_intent_definitions()
+    intent_overrides = await get_global_intent_definition_overrides(session)
+    merged_intent_payloads: dict[str, dict[str, Any]] = {}
+    for intent_id, payload in default_intent_definitions.items():
+        merged_intent_payloads[intent_id] = normalize_intent_definition_payload(
+            payload,
+            intent_id=intent_id,
+        )
+    for intent_id, payload in intent_overrides.items():
+        merged_intent_payloads[intent_id] = normalize_intent_definition_payload(
+            payload,
+            intent_id=intent_id,
+        )
+    ordered_intent_ids = sorted(
+        merged_intent_payloads.keys(),
+        key=lambda intent_id: (
+            int(merged_intent_payloads[intent_id].get("priority") or 500),
+            intent_id,
+        ),
+    )
+    intent_items = [
+        _intent_metadata_item_from_payload(
+            merged_intent_payloads[intent_id],
+            has_override=intent_id in intent_overrides,
+        )
+        for intent_id in ordered_intent_ids
+    ]
+
+    default_agent_metadata = get_default_agent_metadata()
+    agent_overrides = await get_global_agent_metadata_overrides(session)
+    effective_agent_metadata = await get_effective_agent_metadata(session)
+    agent_items = []
+    for payload in effective_agent_metadata:
+        agent_id = str(payload.get("agent_id") or "").strip().lower()
+        if not agent_id:
+            continue
+        agent_items.append(
+            _agent_metadata_item_from_payload(
+                payload,
+                default_payload=default_agent_metadata.get(agent_id),
+                has_override=agent_id in agent_overrides,
+            )
+        )
+    return MetadataCatalogResponse(
+        search_space_id=search_space_id,
+        metadata_version_hash=compute_metadata_version_hash(tool_index),
+        tool_categories=tool_categories,
+        agents=agent_items,
+        intents=intent_items,
+    )
+
+
 async def _execute_tool_evaluation(
     session: AsyncSession,
     user: User,
@@ -3440,6 +3574,173 @@ async def get_tool_settings(
         requested_search_space_id=search_space_id,
     )
     return await _build_tool_settings_response(
+        session,
+        user,
+        search_space_id=resolved_search_space_id,
+    )
+
+
+@router.get(
+    "/tool-settings/metadata-catalog",
+    response_model=MetadataCatalogResponse,
+)
+async def get_tool_settings_metadata_catalog(
+    search_space_id: int | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=search_space_id,
+    )
+    return await _build_metadata_catalog_response(
+        session,
+        user,
+        search_space_id=resolved_search_space_id,
+    )
+
+
+@router.put(
+    "/tool-settings/metadata-catalog",
+    response_model=MetadataCatalogResponse,
+)
+async def update_tool_settings_metadata_catalog(
+    payload: MetadataCatalogUpdateRequest,
+    search_space_id: int | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=search_space_id,
+    )
+    tool_update_rows: list[tuple[str, dict[str, Any] | None]] = []
+    if payload.tools:
+        connector_service = ConnectorService(
+            session,
+            search_space_id=resolved_search_space_id,
+            user_id=str(user.id),
+        )
+        dependencies = {
+            "search_space_id": resolved_search_space_id,
+            "db_session": session,
+            "connector_service": connector_service,
+            "user_id": str(user.id),
+            "thread_id": 0,
+        }
+        tool_registry = await build_global_tool_registry(
+            dependencies=dependencies,
+            include_mcp_tools=False,
+        )
+        default_tool_index = build_tool_index(tool_registry)
+        defaults_by_tool = {
+            entry.tool_id: _metadata_payload_from_entry(entry) for entry in default_tool_index
+        }
+        for item in payload.tools:
+            if item.tool_id not in defaults_by_tool:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown tool_id in payload: {item.tool_id}",
+                )
+            normalized_payload = _metadata_payload_from_item(item)
+            default_payload = defaults_by_tool[item.tool_id]
+            override_payload = (
+                None
+                if tool_metadata_payload_equal(normalized_payload, default_payload)
+                else normalized_payload
+            )
+            tool_update_rows.append((item.tool_id, override_payload))
+
+    intent_update_rows: list[tuple[str, dict[str, Any] | None]] = []
+    if payload.intents:
+        default_intent_definitions = get_default_intent_definitions()
+        for item in payload.intents:
+            intent_id = str(item.intent_id or "").strip().lower()
+            if intent_id not in default_intent_definitions:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown intent_id in payload: {item.intent_id}",
+                )
+            normalized_payload = normalize_intent_definition_payload(
+                item.model_dump(),
+                intent_id=intent_id,
+            )
+            default_payload = default_intent_definitions[intent_id]
+            override_payload = (
+                None if normalized_payload == default_payload else normalized_payload
+            )
+            intent_update_rows.append((intent_id, override_payload))
+
+    agent_update_rows: list[tuple[str, dict[str, Any] | None]] = []
+    if payload.agents:
+        default_agent_metadata = get_default_agent_metadata()
+        for item in payload.agents:
+            agent_id = str(item.agent_id or "").strip().lower()
+            if agent_id not in default_agent_metadata:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown agent_id in payload: {item.agent_id}",
+                )
+            normalized_payload = normalize_agent_metadata_payload(
+                item.model_dump(),
+                agent_id=agent_id,
+                default_payload=default_agent_metadata[agent_id],
+            )
+            default_payload = default_agent_metadata[agent_id]
+            override_payload = (
+                None
+                if agent_metadata_payload_equal(normalized_payload, default_payload)
+                else normalized_payload
+            )
+            agent_update_rows.append((agent_id, override_payload))
+
+    if not tool_update_rows and not intent_update_rows and not agent_update_rows:
+        return await _build_metadata_catalog_response(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+        )
+
+    try:
+        if tool_update_rows:
+            await upsert_global_tool_metadata_overrides(
+                session,
+                tool_update_rows,
+                updated_by_id=user.id,
+            )
+        if intent_update_rows:
+            await upsert_global_intent_definition_overrides(
+                session,
+                intent_update_rows,
+                updated_by_id=user.id,
+            )
+        if agent_update_rows:
+            await upsert_global_agent_metadata_overrides(
+                session,
+                agent_update_rows,
+                updated_by_id=user.id,
+            )
+        await session.commit()
+        clear_tool_caches()
+        if agent_update_rows:
+            try:
+                from app.agents.new_chat.supervisor_agent import clear_agent_combo_cache
+
+                clear_agent_combo_cache()
+            except Exception:
+                logger.exception("Failed to clear agent combo cache after metadata update")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to update metadata catalog")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update metadata catalog: {exc!s}",
+        ) from exc
+    return await _build_metadata_catalog_response(
         session,
         user,
         search_space_id=resolved_search_space_id,

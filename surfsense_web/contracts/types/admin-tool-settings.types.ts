@@ -169,6 +169,60 @@ export const toolSettingsUpdateRequest = z.object({
 	tools: z.array(toolMetadataUpdateItem),
 });
 
+export const agentMetadataItem = z.object({
+	agent_id: z.string(),
+	label: z.string(),
+	description: z.string(),
+	keywords: z.array(z.string()),
+	prompt_key: z.string().nullable().optional(),
+	namespace: z.array(z.string()).optional().default([]),
+	has_override: z.boolean().optional().default(false),
+});
+
+export const agentMetadataUpdateItem = z.object({
+	agent_id: z.string(),
+	label: z.string(),
+	description: z.string(),
+	keywords: z.array(z.string()),
+	prompt_key: z.string().nullable().optional(),
+	namespace: z.array(z.string()).optional().default([]),
+});
+
+export const intentMetadataItem = z.object({
+	intent_id: z.string(),
+	label: z.string(),
+	route: z.string(),
+	description: z.string(),
+	keywords: z.array(z.string()),
+	priority: z.number().int().optional().default(500),
+	enabled: z.boolean().optional().default(true),
+	has_override: z.boolean().optional().default(false),
+});
+
+export const intentMetadataUpdateItem = z.object({
+	intent_id: z.string(),
+	label: z.string(),
+	route: z.string(),
+	description: z.string(),
+	keywords: z.array(z.string()),
+	priority: z.number().int().optional().default(500),
+	enabled: z.boolean().optional().default(true),
+});
+
+export const metadataCatalogResponse = z.object({
+	search_space_id: z.number(),
+	metadata_version_hash: z.string(),
+	tool_categories: z.array(toolCategoryResponse).default([]),
+	agents: z.array(agentMetadataItem).default([]),
+	intents: z.array(intentMetadataItem).default([]),
+});
+
+export const metadataCatalogUpdateRequest = z.object({
+	tools: z.array(toolMetadataUpdateItem).optional().default([]),
+	agents: z.array(agentMetadataUpdateItem).optional().default([]),
+	intents: z.array(intentMetadataUpdateItem).optional().default([]),
+});
+
 export const toolEvaluationExpected = z.object({
 	category: z.string().nullable().optional(),
 	tool: z.string().nullable().optional(),
@@ -750,6 +804,12 @@ export type ToolEvaluationStageHistoryResponse = z.infer<
 >;
 export type ToolSettingsResponse = z.infer<typeof toolSettingsResponse>;
 export type ToolSettingsUpdateRequest = z.infer<typeof toolSettingsUpdateRequest>;
+export type AgentMetadataItem = z.infer<typeof agentMetadataItem>;
+export type AgentMetadataUpdateItem = z.infer<typeof agentMetadataUpdateItem>;
+export type IntentMetadataItem = z.infer<typeof intentMetadataItem>;
+export type IntentMetadataUpdateItem = z.infer<typeof intentMetadataUpdateItem>;
+export type MetadataCatalogResponse = z.infer<typeof metadataCatalogResponse>;
+export type MetadataCatalogUpdateRequest = z.infer<typeof metadataCatalogUpdateRequest>;
 export type ToolEvaluationExpected = z.infer<typeof toolEvaluationExpected>;
 export type ToolApiInputEvaluationExpected = z.infer<
 	typeof toolApiInputEvaluationExpected

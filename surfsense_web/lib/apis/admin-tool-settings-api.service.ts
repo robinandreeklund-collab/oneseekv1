@@ -1,4 +1,5 @@
 import {
+	type MetadataCatalogUpdateRequest,
 	type ToolApplySuggestionsRequest,
 	type ToolAutoLoopRequest,
 	type ToolApiInputApplyPromptSuggestionsRequest,
@@ -8,6 +9,8 @@ import {
 	type ToolRetrievalTuning,
 	type ToolSettingsUpdateRequest,
 	type ToolSuggestionRequest,
+	metadataCatalogResponse,
+	metadataCatalogUpdateRequest,
 	toolAutoLoopJobStatusResponse,
 	toolAutoLoopRequest,
 	toolAutoLoopStartResponse,
@@ -105,6 +108,30 @@ class AdminToolSettingsApiService {
 		return baseApiService.get(
 			`/api/v1/admin/tool-settings${query}`,
 			toolSettingsResponse
+		);
+	}
+
+	async getMetadataCatalog(searchSpaceId?: number) {
+		const query = typeof searchSpaceId === "number" ? `?search_space_id=${searchSpaceId}` : "";
+		return baseApiService.get(
+			`/api/v1/admin/tool-settings/metadata-catalog${query}`,
+			metadataCatalogResponse
+		);
+	}
+
+	async updateMetadataCatalog(request: MetadataCatalogUpdateRequest, searchSpaceId?: number) {
+		const parsed = metadataCatalogUpdateRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		const query = typeof searchSpaceId === "number" ? `?search_space_id=${searchSpaceId}` : "";
+		return baseApiService.put(
+			`/api/v1/admin/tool-settings/metadata-catalog${query}`,
+			metadataCatalogResponse,
+			{
+				body: parsed.data,
+			}
 		);
 	}
 
