@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_smhi_live_metfcst_smoke():
     service = SmhiService(timeout=20.0)
     payload, _, _, _, _ = await service.fetch_grid_point_data(
@@ -35,7 +35,7 @@ async def test_smhi_live_metfcst_smoke():
     assert payload.get("approvedTime")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_smhi_live_metobs_smoke():
     service = SmhiService(timeout=20.0)
     result = await service.fetch_observation_series(
@@ -50,7 +50,7 @@ async def test_smhi_live_metobs_smoke():
     assert isinstance(result["values"], list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_smhi_live_pthbv_smoke():
     service = SmhiService(timeout=20.0)
     payload, source_url = await service.fetch_pthbv_data(
@@ -67,7 +67,7 @@ async def test_smhi_live_pthbv_smoke():
     assert isinstance(payload.get("point_values"), list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_smhi_live_fwia_smoke():
     service = SmhiService(timeout=20.0)
     payload, _, _, _, _ = await service.fetch_grid_point_data(

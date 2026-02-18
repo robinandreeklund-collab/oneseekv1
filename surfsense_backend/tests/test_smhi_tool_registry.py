@@ -1,6 +1,17 @@
 """Tests for SMHI tool registry construction."""
 
-from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS, build_smhi_tool_registry
+import pytest
+
+try:
+    from app.agents.new_chat.tools.smhi import (
+        SMHI_TOOL_DEFINITIONS,
+        build_smhi_tool_registry,
+    )
+except ModuleNotFoundError as exc:  # pragma: no cover - optional local deps
+    pytest.skip(
+        f"Skipping SMHI tool registry tests because optional dependency is missing: {exc}",
+        allow_module_level=True,
+    )
 
 
 def test_smhi_tool_registry_contains_all_definitions():
