@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Callable
 
@@ -28,6 +29,45 @@ def build_intent_resolver_node(
     ]
     | None = None,
 ):
+    def _latest_human_turn_id(messages: list[Any] | None) -> str:
+        human_count = 0
+        latest_human: Any | None = None
+        for message in messages or []:
+            if isinstance(message, HumanMessage):
+                human_count += 1
+                latest_human = message
+            elif isinstance(message, dict) and str(message.get("type") or "").strip().lower() in {
+                "human",
+                "user",
+            }:
+                human_count += 1
+                latest_human = message
+        if human_count <= 0 or latest_human is None:
+            return ""
+        if isinstance(latest_human, dict):
+            message_id = str(latest_human.get("id") or "").strip()
+            content = latest_human.get("content")
+        else:
+            message_id = str(getattr(latest_human, "id", "") or "").strip()
+            content = getattr(latest_human, "content", "")
+        if isinstance(content, list):
+            content_text = "".join(
+                str(item.get("text") or "")
+                for item in content
+                if isinstance(item, dict)
+            ).strip()
+        else:
+            content_text = str(content or "").strip()
+        if message_id:
+            signature = message_id
+        elif content_text:
+            signature = hashlib.sha1(
+                content_text.encode("utf-8", errors="ignore")
+            ).hexdigest()[:16]
+        else:
+            signature = "empty"
+        return f"implicit_turn:{human_count}:{signature}"
+
     async def resolve_intent_node(
         state: dict[str, Any],
         config: RunnableConfig | None = None,
@@ -35,10 +75,13 @@ def build_intent_resolver_node(
         store=None,
         **kwargs,
     ) -> dict[str, Any]:
+        state_messages = list(state.get("messages") or [])
         incoming_turn_id = str(state.get("turn_id") or "").strip()
+        if not incoming_turn_id:
+            incoming_turn_id = _latest_human_turn_id(state_messages)
         active_turn_id = str(state.get("active_turn_id") or "").strip()
         new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
-        latest_user_query = latest_user_query_fn(state.get("messages") or [])
+        latest_user_query = latest_user_query_fn(state_messages)
 
         if new_user_turn and bool(state.get("awaiting_confirmation")):
             pending_stage = str(state.get("pending_hitl_stage") or "").strip().lower()

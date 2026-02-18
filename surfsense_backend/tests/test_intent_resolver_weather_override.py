@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from langchain_core.messages import AIMessage, HumanMessage
+
 
 def _load_module(module_name: str, relative_path: str):
     project_root = Path(__file__).resolve().parents[1]
@@ -170,4 +172,84 @@ def test_intent_resolver_propagates_route_hint_without_llm_roundtrip() -> None:
     assert result.get("resolved_intent", {}).get("route") == "statistics"
     assert result.get("route_hint") == "statistics"
     assert llm.called is False
+
+
+def test_intent_resolver_reclassifies_when_turn_id_missing_but_new_human_message() -> None:
+    llm = _FakeLLM(
+        {
+            "intent_id": "smalltalk",
+            "route": "smalltalk",
+            "reason": "stale",
+            "confidence": 0.85,
+        }
+    )
+
+    def _coerce_intent(
+        resolved: dict[str, Any],
+        latest_user_query: str,
+        route_hint: str | None,
+    ) -> dict[str, Any]:
+        if "vader" in latest_user_query.lower():
+            return {
+                "intent_id": "action",
+                "route": "action",
+                "reason": "weather override",
+                "confidence": 0.95,
+            }
+        return resolved
+
+    resolver = intent_module.build_intent_resolver_node(
+        llm=llm,
+        route_to_intent_id={
+            "knowledge": "knowledge",
+            "action": "action",
+            "statistics": "statistics",
+            "compare": "compare",
+            "smalltalk": "smalltalk",
+        },
+        intent_resolver_prompt_template="prompt",
+        latest_user_query_fn=lambda messages: str(
+            getattr((messages or [])[-1], "content", "") or ""
+        ).strip(),
+        parse_hitl_confirmation_fn=lambda _query: None,
+        normalize_route_hint_fn=lambda value: str(value or "").strip().lower(),
+        intent_from_route_fn=lambda route: {
+            "intent_id": str(route or "knowledge"),
+            "route": str(route or "knowledge"),
+            "reason": "fallback",
+            "confidence": 0.5,
+        },
+        append_datetime_context_fn=lambda prompt: prompt,
+        extract_first_json_object_fn=_extract_first_json_object,
+        coerce_confidence_fn=_coerce_confidence,
+        classify_graph_complexity_fn=lambda _intent, _query: "simple",
+        build_speculative_candidates_fn=lambda _intent, _query: [],
+        build_trivial_response_fn=lambda _query: None,
+        route_default_agent_fn=lambda route, _query="": (
+            "weather" if str(route or "").strip().lower() == "action" else "knowledge"
+        ),
+        coerce_resolved_intent_fn=_coerce_intent,
+    )
+
+    state = {
+        "messages": [
+            HumanMessage(content="hej"),
+            AIMessage(content="Hej!"),
+            HumanMessage(content="kan du kolla vader i hjo?"),
+        ],
+        "resolved_intent": {
+            "intent_id": "smalltalk",
+            "route": "smalltalk",
+            "reason": "stale smalltalk",
+            "confidence": 0.95,
+        },
+        "graph_complexity": "trivial",
+        "orchestration_phase": "finalize",
+    }
+
+    result = asyncio.run(resolver(state))
+    assert result.get("resolved_intent", {}).get("route") == "action"
+    assert result.get("route_hint") == "action"
+    assert str(result.get("active_turn_id") or "").startswith("implicit_turn:")
+    assert llm.called is True
 
