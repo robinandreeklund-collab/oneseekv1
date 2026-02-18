@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -436,6 +437,7 @@ class ToolRetrievalTuning:
 DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
 _TOOL_EMBED_CACHE: dict[str, tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
+_VECTOR_RECALL_TOP_K = 5
 
 
 def _normalize_text(text: str) -> str:
@@ -891,6 +893,161 @@ def _build_rerank_text(entry: ToolIndexEntry) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _tool_input_schema(tool: BaseTool) -> dict[str, Any]:
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+        try:
+            schema = args_schema.model_json_schema()
+            if isinstance(schema, dict):
+                return schema
+        except Exception:
+            pass
+    get_input_schema = getattr(tool, "get_input_schema", None)
+    if callable(get_input_schema):
+        try:
+            model = get_input_schema()
+            if model is not None and hasattr(model, "model_json_schema"):
+                schema = model.model_json_schema()
+                if isinstance(schema, dict):
+                    return schema
+        except Exception:
+            pass
+    return {}
+
+
+def _sample_value_for_schema(
+    field_name: str,
+    field_schema: dict[str, Any],
+    *,
+    depth: int = 0,
+) -> Any:
+    if depth > 2:
+        return "value"
+    field_type = str(field_schema.get("type") or "").strip().lower()
+    enum_values = field_schema.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        return enum_values[0]
+    lowered = str(field_name or "").strip().lower()
+    if "lat" in lowered:
+        return 59.33
+    if "lon" in lowered or "lng" in lowered:
+        return 18.06
+    if "date" in lowered:
+        return "2026-02-18"
+    if "time" in lowered:
+        return "12:00"
+    if "city" in lowered or "stad" in lowered:
+        return "Stockholm"
+    if "region" in lowered or "lan" in lowered:
+        return "Stockholms lan"
+    if field_type == "boolean":
+        return True
+    if field_type == "integer":
+        return 1
+    if field_type == "number":
+        return 1.0
+    if field_type == "array":
+        items = field_schema.get("items")
+        if isinstance(items, dict):
+            return [
+                _sample_value_for_schema(
+                    f"{field_name}_item",
+                    items,
+                    depth=depth + 1,
+                )
+            ]
+        return []
+    if field_type == "object":
+        properties = field_schema.get("properties")
+        if isinstance(properties, dict):
+            payload: dict[str, Any] = {}
+            for idx, (nested_name, nested_schema) in enumerate(properties.items()):
+                if idx >= 4:
+                    break
+                if isinstance(nested_schema, dict):
+                    payload[str(nested_name)] = _sample_value_for_schema(
+                        str(nested_name),
+                        nested_schema,
+                        depth=depth + 1,
+                    )
+            return payload
+        return {}
+    return "value"
+
+
+def _tool_aware_output_hint(entry: ToolIndexEntry) -> str:
+    category = str(entry.category or "").strip().lower()
+    if "weather" in category or category.startswith("smhi") or category.startswith("trafikverket_vader"):
+        return "Structured weather data by location and time."
+    if "trafik" in category:
+        return "Realtime traffic status, incidents and transport context."
+    if "statistics" in category or category.startswith("scb") or category.startswith("kolada"):
+        return "Tabular statistical indicators with dimensions and values."
+    if "politik" in category or "riksdag" in category:
+        return "Parliament documents, votes or speeches with metadata."
+    if "marketplace" in category:
+        return "Listings with title, price, location and source."
+    if "kartor" in category or "geo" in category:
+        return "Map artifact or geospatial payload."
+    if "bolag" in category:
+        return "Company profile details and registry fields."
+    return "Structured result relevant to requested tool operation."
+
+
+def _build_tool_embedding_text(
+    entry: ToolIndexEntry,
+    *,
+    tool_schema: dict[str, Any],
+) -> str:
+    parts: list[str] = []
+    base_text = _build_rerank_text(entry)
+    if base_text:
+        parts.append(base_text)
+
+    properties = tool_schema.get("properties")
+    required = tool_schema.get("required")
+    if isinstance(required, list) and required:
+        required_fields = [str(field).strip() for field in required if str(field).strip()]
+        if required_fields:
+            parts.append("Required input fields: " + ", ".join(required_fields))
+
+    if isinstance(properties, dict) and properties:
+        field_descriptions: list[str] = []
+        example_input: dict[str, Any] = {}
+        for idx, (field_name, field_schema) in enumerate(properties.items()):
+            if idx >= 8:
+                break
+            if not isinstance(field_schema, dict):
+                continue
+            normalized_name = str(field_name).strip()
+            if not normalized_name:
+                continue
+            field_type = str(field_schema.get("type") or "string").strip().lower()
+            field_descriptions.append(f"{normalized_name}:{field_type}")
+            example_input[normalized_name] = _sample_value_for_schema(
+                normalized_name,
+                field_schema,
+            )
+        if field_descriptions:
+            parts.append("Input schema fields: " + ", ".join(field_descriptions))
+        if example_input:
+            try:
+                parts.append(
+                    "Example input JSON: "
+                    + json.dumps(
+                        example_input,
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                )
+            except Exception:
+                pass
+
+    parts.append("Expected output: " + _tool_aware_output_hint(entry))
+    return "\n".join(part for part in parts if part)
+
+
 def _normalize_vector(vector: Any) -> list[float] | None:
     if vector is None:
         return None
@@ -1052,6 +1209,8 @@ def _run_smart_retrieval(
 
     primary_scored: list[tuple[str, float]] = []
     fallback_scored: list[tuple[str, float]] = []
+    primary_vector_scored: list[tuple[str, float]] = []
+    fallback_vector_scored: list[tuple[str, float]] = []
     breakdown_by_id: dict[str, dict[str, Any]] = {}
 
     for entry in tool_index:
@@ -1097,14 +1256,20 @@ def _run_smart_retrieval(
             "retrieval_feedback_boost": float(retrieval_feedback_boost),
             "pre_rerank_score": float(pre_rerank_score),
             "namespace_scope": "primary" if is_primary else ("fallback" if is_fallback else "none"),
+            "vector_recall_selected": False,
+            "vector_recall_rank": None,
         }
         if is_primary:
             primary_scored.append((entry.tool_id, pre_rerank_score))
+            primary_vector_scored.append((entry.tool_id, float(semantic_score)))
         elif is_fallback:
             fallback_scored.append((entry.tool_id, pre_rerank_score))
+            fallback_vector_scored.append((entry.tool_id, float(semantic_score)))
 
     primary_scored.sort(key=lambda item: item[1], reverse=True)
     fallback_scored.sort(key=lambda item: item[1], reverse=True)
+    primary_vector_scored.sort(key=lambda item: item[1], reverse=True)
+    fallback_vector_scored.sort(key=lambda item: item[1], reverse=True)
 
     tool_index_by_id = {entry.tool_id: entry for entry in tool_index}
     scores_by_id = {tool_id: score for tool_id, score in primary_scored}
@@ -1131,6 +1296,28 @@ def _run_smart_retrieval(
             tool_id
             for tool_id, _ in fallback_scored[: normalized_tuning.rerank_candidates]
         ]
+
+    vector_candidate_ids: list[str] = []
+    if query_embedding:
+        vector_source = [*primary_vector_scored, *fallback_vector_scored]
+        vector_source.sort(key=lambda item: item[1], reverse=True)
+        vector_candidate_ids = [
+            tool_id
+            for tool_id, semantic_score in vector_source
+        ][: max(1, int(_VECTOR_RECALL_TOP_K))]
+        for vector_rank, tool_id in enumerate(vector_candidate_ids):
+            if tool_id in breakdown_by_id:
+                breakdown_by_id[tool_id]["vector_recall_selected"] = True
+                breakdown_by_id[tool_id]["vector_recall_rank"] = vector_rank + 1
+    if vector_candidate_ids:
+        deduped_candidates: list[str] = []
+        seen_candidate_ids: set[str] = set()
+        for tool_id in [*candidate_ids, *vector_candidate_ids]:
+            if tool_id in seen_candidate_ids:
+                continue
+            seen_candidate_ids.add(tool_id)
+            deduped_candidates.append(tool_id)
+        candidate_ids = deduped_candidates
 
     reranked_ids, rerank_scores = _rerank_tool_candidates(
         query,
@@ -1172,6 +1359,10 @@ def _run_smart_retrieval(
                     breakdown.get("retrieval_feedback_boost", 0.0)
                 ),
                 "namespace_scope": breakdown.get("namespace_scope"),
+                "vector_recall_selected": bool(
+                    breakdown.get("vector_recall_selected", False)
+                ),
+                "vector_recall_rank": breakdown.get("vector_recall_rank"),
             }
         )
 
@@ -1491,7 +1682,11 @@ def build_tool_index(
             example_queries=example_queries,
             category=category,
         )
-        embedding_text = _build_rerank_text(entry)
+        tool_schema = _tool_input_schema(tool)
+        embedding_text = _build_tool_embedding_text(
+            entry,
+            tool_schema=tool_schema,
+        )
         embedding = _get_embedding_for_tool(tool_id, embedding_text)
         entries.append(
             ToolIndexEntry(
