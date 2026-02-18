@@ -20,6 +20,7 @@ import type {
 	ToolMetadataUpdateItem,
 	ToolRetrievalTuning,
 } from "@/contracts/types/admin-tool-settings.types";
+import { knownAgentPromptKeys } from "@/contracts/types/agent-prompts.types";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,6 +50,7 @@ type EvalExportFormat = "json" | "yaml";
 type ExportableEvalJobStatus =
 	| ToolEvaluationJobStatusResponse
 	| ToolApiInputEvaluationJobStatusResponse;
+const ONESEEK_TEMPLATE_PROMPT_KEY_SET = new Set<string>(knownAgentPromptKeys);
 
 function downloadTextFile(content: string, fileName: string, mimeType: string) {
 	const blob = new Blob([content], { type: mimeType });
@@ -104,6 +106,23 @@ function formatSignedPercent(value: number | null | undefined) {
 	if (value == null || Number.isNaN(value)) return "-";
 	const sign = value > 0 ? "+" : "";
 	return `${sign}${(value * 100).toFixed(1)}%`;
+}
+
+function filterTemplatePromptSuggestions<
+	T extends {
+		prompt_key: string;
+		proposed_prompt: string;
+	}
+>(suggestions: T[]): T[] {
+	const dedupedByKey = new Map<string, T>();
+	for (const suggestion of suggestions) {
+		const promptKey = String(suggestion.prompt_key || "").trim();
+		const proposedPrompt = String(suggestion.proposed_prompt || "").trim();
+		if (!promptKey || !proposedPrompt) continue;
+		if (!ONESEEK_TEMPLATE_PROMPT_KEY_SET.has(promptKey)) continue;
+		dedupedByKey.set(promptKey, suggestion);
+	}
+	return Array.from(dedupedByKey.values());
 }
 
 function formatDifficultyLabel(value: string | null | undefined) {
@@ -1588,6 +1607,40 @@ export function ToolSettingsPage() {
 		}
 	};
 
+	const saveAllApiTemplatePromptSuggestions = async () => {
+		if (!apiInputEvaluationResult) return;
+		const selected = filterTemplatePromptSuggestions(
+			apiInputEvaluationResult.prompt_suggestions
+		);
+		if (!selected.length) {
+			toast.info(
+				"Inga promptförslag matchar ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS i denna API-input-run"
+			);
+			return;
+		}
+		setIsSavingPromptSuggestions(true);
+		try {
+			await adminToolSettingsApiService.applyApiInputPromptSuggestions({
+				suggestions: selected.map((suggestion) => ({
+					prompt_key: suggestion.prompt_key,
+					proposed_prompt: suggestion.proposed_prompt,
+				})),
+			});
+			setSelectedPromptSuggestionKeys(new Set());
+			const skippedCount =
+				apiInputEvaluationResult.prompt_suggestions.length - selected.length;
+			toast.success(
+				`Sparade ${selected.length} template-promptförslag${
+					skippedCount > 0 ? ` (${skippedCount} ej-template nycklar hoppades över)` : ""
+				}`
+			);
+		} catch (_error) {
+			toast.error("Kunde inte spara alla template-promptförslag");
+		} finally {
+			setIsSavingPromptSuggestions(false);
+		}
+	};
+
 	const toggleToolPromptSuggestion = (promptKey: string) => {
 		setSelectedToolPromptSuggestionKeys((prev) => {
 			const next = new Set(prev);
@@ -1621,6 +1674,37 @@ export function ToolSettingsPage() {
 			toast.success(`Sparade ${selected.length} promptförslag`);
 		} catch (_error) {
 			toast.error("Kunde inte spara valda promptförslag");
+		} finally {
+			setIsSavingToolPromptSuggestions(false);
+		}
+	};
+
+	const saveAllToolTemplatePromptSuggestions = async () => {
+		if (!evaluationResult) return;
+		const selected = filterTemplatePromptSuggestions(evaluationResult.prompt_suggestions);
+		if (!selected.length) {
+			toast.info(
+				"Inga promptförslag matchar ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS i denna run"
+			);
+			return;
+		}
+		setIsSavingToolPromptSuggestions(true);
+		try {
+			await adminToolSettingsApiService.applyApiInputPromptSuggestions({
+				suggestions: selected.map((suggestion) => ({
+					prompt_key: suggestion.prompt_key,
+					proposed_prompt: suggestion.proposed_prompt,
+				})),
+			});
+			setSelectedToolPromptSuggestionKeys(new Set());
+			const skippedCount = evaluationResult.prompt_suggestions.length - selected.length;
+			toast.success(
+				`Sparade ${selected.length} template-promptförslag${
+					skippedCount > 0 ? ` (${skippedCount} ej-template nycklar hoppades över)` : ""
+				}`
+			);
+		} catch (_error) {
+			toast.error("Kunde inte spara alla template-promptförslag");
 		} finally {
 			setIsSavingToolPromptSuggestions(false);
 		}
@@ -4053,6 +4137,16 @@ export function ToolSettingsPage() {
 										>
 											Spara valda promptförslag
 										</Button>
+										<Button
+											variant="outline"
+											onClick={saveAllToolTemplatePromptSuggestions}
+											disabled={
+												!evaluationResult.prompt_suggestions.length ||
+												isSavingToolPromptSuggestions
+											}
+										>
+											Spara alla template-promptförslag
+										</Button>
 										<Badge variant="outline">
 											{selectedToolPromptSuggestions.length} valda
 										</Badge>
@@ -4832,6 +4926,16 @@ export function ToolSettingsPage() {
 											}
 										>
 											Spara valda promptförslag
+										</Button>
+										<Button
+											variant="outline"
+											onClick={saveAllApiTemplatePromptSuggestions}
+											disabled={
+												!apiInputEvaluationResult.prompt_suggestions.length ||
+												isSavingPromptSuggestions
+											}
+										>
+											Spara alla template-promptförslag
 										</Button>
 										<Button
 											variant="outline"
