@@ -5,6 +5,8 @@ Uppgift:
 - Valt intent MASTE vara ett av kandidaterna.
 - Route ska vara konsistent med valt intent och route_hint om mojligt.
 - Prioritera semantiskt bast matchande intent.
+- Fraga om aktuellt vader/prognos for plats/tid ska routas till `action`
+  (for weather-verktyg), inte `knowledge`.
 - Hall motivering kort och pa svenska.
 
 Returnera strikt JSON:

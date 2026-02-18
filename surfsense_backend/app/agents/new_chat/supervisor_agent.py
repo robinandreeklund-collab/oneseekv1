@@ -1844,7 +1844,10 @@ def _coerce_redundant_retrieve_call(
     selected_agents = _selected_agent_names_from_state(state)
     if len(selected_agents) != 1:
         return tool_calls, False
-    if not _has_followup_plan_steps(state):
+    has_pending_plan_steps = _has_followup_plan_steps(state)
+    graph_complexity = str(state.get("graph_complexity") or "").strip().lower()
+    simple_single_agent_turn = graph_complexity == "simple"
+    if not has_pending_plan_steps and not simple_single_agent_turn:
         return tool_calls, False
     call_args = only_call.get("args")
     retrieve_query = (
@@ -4135,6 +4138,68 @@ async def create_supervisor_agent(
         allowed = _route_allowed_agents(normalized)
         return _route_default_agent(normalized, allowed)
 
+    def _coerce_resolved_intent_for_query(
+        resolved_intent_payload: dict[str, Any],
+        latest_user_query: str,
+        route_hint: str | None = None,
+    ) -> dict[str, Any]:
+        resolved = (
+            dict(resolved_intent_payload)
+            if isinstance(resolved_intent_payload, dict)
+            else {}
+        )
+        query = str(latest_user_query or "").strip()
+        if not query:
+            return resolved
+        normalized_route = _normalize_route_hint_value(
+            resolved.get("route") or route_hint
+        )
+        if normalized_route in {"compare", "statistics"}:
+            return resolved
+
+        override_route: str | None = None
+        override_reason = ""
+        if _has_weather_intent(query) and not _has_strict_trafik_intent(query):
+            override_route = "action"
+            override_reason = (
+                "Heuristisk override: vaderfraga ska routas till action/weather."
+            )
+        elif _has_strict_trafik_intent(query):
+            override_route = "action"
+            override_reason = (
+                "Heuristisk override: trafikfraga ska routas till action/trafik."
+            )
+        elif sandbox_enabled and _has_filesystem_intent(query):
+            override_route = "action"
+            override_reason = (
+                "Heuristisk override: filsystem/sandbox-fraga ska routas till action/code."
+            )
+        elif _has_marketplace_intent(query):
+            override_route = "action"
+            override_reason = (
+                "Heuristisk override: marknadsplatsfraga ska routas till action/marketplace."
+            )
+        elif _has_map_intent(query):
+            override_route = "action"
+            override_reason = (
+                "Heuristisk override: kart/rutt-fraga ska routas till action."
+            )
+        if not override_route:
+            return resolved
+        if normalized_route == override_route and str(
+            resolved.get("intent_id") or ""
+        ).strip():
+            return resolved
+
+        resolved["intent_id"] = route_to_intent_id.get(override_route, override_route)
+        resolved["route"] = override_route
+        resolved["reason"] = override_reason
+        resolved["confidence"] = max(
+            _coerce_confidence(resolved.get("confidence"), 0.5),
+            0.9,
+        )
+        return resolved
+
     def _classify_graph_complexity(
         resolved_intent_payload: dict[str, Any],
         latest_user_query: str,
@@ -6273,6 +6338,7 @@ async def create_supervisor_agent(
         build_speculative_candidates_fn=_build_speculative_candidates_for_intent,
         build_trivial_response_fn=_build_trivial_response_for_intent,
         route_default_agent_fn=_route_default_agent_for_intent,
+        coerce_resolved_intent_fn=_coerce_resolved_intent_for_query,
     )
 
     resolve_agents_node = build_agent_resolver_node(

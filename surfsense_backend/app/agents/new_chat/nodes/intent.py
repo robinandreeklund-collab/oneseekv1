@@ -23,6 +23,10 @@ def build_intent_resolver_node(
     build_speculative_candidates_fn: Callable[[dict[str, Any], str], list[dict[str, Any]]],
     build_trivial_response_fn: Callable[[str], str | None],
     route_default_agent_fn: Callable[..., str],
+    coerce_resolved_intent_fn: Callable[
+        [dict[str, Any], str, str | None], dict[str, Any]
+    ]
+    | None = None,
 ):
     async def resolve_intent_node(
         state: dict[str, Any],
@@ -146,6 +150,18 @@ def build_intent_resolver_node(
             except Exception:
                 pass
 
+        if coerce_resolved_intent_fn is not None:
+            try:
+                coerced_resolved = coerce_resolved_intent_fn(
+                    resolved if isinstance(resolved, dict) else {},
+                    latest_user_query,
+                    route_hint or None,
+                )
+                if isinstance(coerced_resolved, dict) and coerced_resolved:
+                    resolved = coerced_resolved
+            except Exception:
+                pass
+
         graph_complexity = str(
             classify_graph_complexity_fn(resolved, latest_user_query)
         ).strip().lower()
@@ -186,6 +202,7 @@ def build_intent_resolver_node(
 
         updates: dict[str, Any] = {
             "resolved_intent": resolved,
+            "route_hint": normalize_route_hint_fn(resolved.get("route")),
             "graph_complexity": graph_complexity,
             "speculative_candidates": speculative_candidates,
             "speculative_results": {},
