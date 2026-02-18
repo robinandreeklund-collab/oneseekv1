@@ -333,6 +333,8 @@ export const metadataCatalogAuditSummary = z.object({
 export const metadataCatalogAuditRunRequest = z.object({
 	search_space_id: z.number().nullable().optional(),
 	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
+	intent_metadata_patch: z.array(intentMetadataUpdateItem).optional().default([]),
+	agent_metadata_patch: z.array(agentMetadataUpdateItem).optional().default([]),
 	tool_ids: z.array(z.string()).optional().default([]),
 	tool_id_prefix: z.string().nullable().optional(),
 	include_existing_examples: z.boolean().optional().default(true),
@@ -379,6 +381,8 @@ export const metadataCatalogAuditAnnotationItem = z.object({
 export const metadataCatalogAuditSuggestionRequest = z.object({
 	search_space_id: z.number().nullable().optional(),
 	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
+	intent_metadata_patch: z.array(intentMetadataUpdateItem).optional().default([]),
+	agent_metadata_patch: z.array(agentMetadataUpdateItem).optional().default([]),
 	annotations: z.array(metadataCatalogAuditAnnotationItem).optional().default([]),
 	max_suggestions: z.number().int().optional().default(20),
 });

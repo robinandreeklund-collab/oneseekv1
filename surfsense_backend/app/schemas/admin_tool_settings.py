@@ -732,6 +732,8 @@ class MetadataCatalogAuditSummary(BaseModel):
 class MetadataCatalogAuditRunRequest(BaseModel):
     search_space_id: int | None = None
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    intent_metadata_patch: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+    agent_metadata_patch: list[AgentMetadataUpdateItem] = Field(default_factory=list)
     tool_ids: list[str] = Field(default_factory=list)
     tool_id_prefix: str | None = None
     include_existing_examples: bool = True
@@ -794,6 +796,8 @@ class MetadataCatalogAgentSuggestion(BaseModel):
 class MetadataCatalogAuditSuggestionRequest(BaseModel):
     search_space_id: int | None = None
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    intent_metadata_patch: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+    agent_metadata_patch: list[AgentMetadataUpdateItem] = Field(default_factory=list)
     annotations: list[MetadataCatalogAuditAnnotationItem] = Field(default_factory=list)
     max_suggestions: int = 20
 

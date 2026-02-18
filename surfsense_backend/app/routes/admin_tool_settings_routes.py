@@ -3113,6 +3113,82 @@ def _agent_metadata_item_from_payload(
     )
 
 
+def _merge_effective_intent_definitions_with_patch(
+    *,
+    effective_definitions: list[dict[str, Any]],
+    patch_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not patch_items:
+        return list(effective_definitions)
+    defaults = get_default_intent_definitions()
+    by_id: dict[str, dict[str, Any]] = {}
+    for payload in effective_definitions:
+        intent_id = str(payload.get("intent_id") or "").strip().lower()
+        if not intent_id:
+            continue
+        by_id[intent_id] = normalize_intent_definition_payload(
+            payload,
+            intent_id=intent_id,
+        )
+    allowed_ids = set(defaults.keys()) | set(by_id.keys())
+    for patch in patch_items:
+        intent_id = str(patch.get("intent_id") or "").strip().lower()
+        if not intent_id:
+            continue
+        if intent_id not in allowed_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown intent_id in metadata audit patch: {intent_id}",
+            )
+        by_id[intent_id] = normalize_intent_definition_payload(
+            patch,
+            intent_id=intent_id,
+        )
+    return sorted(
+        [payload for payload in by_id.values() if payload.get("enabled", True)],
+        key=lambda item: (
+            int(item.get("priority") or 500),
+            str(item.get("intent_id") or ""),
+        ),
+    )
+
+
+def _merge_effective_agent_metadata_with_patch(
+    *,
+    effective_metadata: list[dict[str, Any]],
+    patch_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not patch_items:
+        return list(effective_metadata)
+    default_agent_metadata = get_default_agent_metadata()
+    by_id: dict[str, dict[str, Any]] = {}
+    for payload in effective_metadata:
+        agent_id = str(payload.get("agent_id") or "").strip().lower()
+        if not agent_id:
+            continue
+        by_id[agent_id] = normalize_agent_metadata_payload(
+            payload,
+            agent_id=agent_id,
+            default_payload=default_agent_metadata.get(agent_id),
+        )
+    allowed_ids = set(default_agent_metadata.keys()) | set(by_id.keys())
+    for patch in patch_items:
+        agent_id = str(patch.get("agent_id") or "").strip().lower()
+        if not agent_id:
+            continue
+        if agent_id not in allowed_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown agent_id in metadata audit patch: {agent_id}",
+            )
+        by_id[agent_id] = normalize_agent_metadata_payload(
+            patch,
+            agent_id=agent_id,
+            default_payload=default_agent_metadata.get(agent_id),
+        )
+    return [by_id[agent_id] for agent_id in sorted(by_id.keys())]
+
+
 async def _build_metadata_catalog_response(
     session: AsyncSession,
     user: User,
@@ -3797,7 +3873,17 @@ async def run_metadata_catalog_audit(
     if payload.include_llm_generated:
         llm = await get_agent_llm(session, resolved_search_space_id)
     intent_definitions = await get_effective_intent_definitions(session)
+    if payload.intent_metadata_patch:
+        intent_definitions = _merge_effective_intent_definitions_with_patch(
+            effective_definitions=intent_definitions,
+            patch_items=[item.model_dump() for item in payload.intent_metadata_patch],
+        )
     agent_metadata = await get_effective_agent_metadata(session)
+    if payload.agent_metadata_patch:
+        agent_metadata = _merge_effective_agent_metadata_with_patch(
+            effective_metadata=agent_metadata,
+            patch_items=[item.model_dump() for item in payload.agent_metadata_patch],
+        )
     expected_intent_by_tool: dict[str, str] = {}
     expected_agent_by_tool: dict[str, str] = {}
     for entry in tool_index:
@@ -3876,7 +3962,17 @@ async def generate_metadata_catalog_audit_suggestions(
     retrieval_tuning = await get_global_tool_retrieval_tuning(session)
     llm = await get_agent_llm(session, resolved_search_space_id)
     intent_definitions = await get_effective_intent_definitions(session)
+    if payload.intent_metadata_patch:
+        intent_definitions = _merge_effective_intent_definitions_with_patch(
+            effective_definitions=intent_definitions,
+            patch_items=[item.model_dump() for item in payload.intent_metadata_patch],
+        )
     agent_metadata = await get_effective_agent_metadata(session)
+    if payload.agent_metadata_patch:
+        agent_metadata = _merge_effective_agent_metadata_with_patch(
+            effective_metadata=agent_metadata,
+            patch_items=[item.model_dump() for item in payload.agent_metadata_patch],
+        )
     suggestion_inputs = build_layered_suggestion_inputs_from_annotations(
         annotations=[item.model_dump() for item in payload.annotations]
     )

@@ -224,6 +224,28 @@ function parseToolIdsInput(raw: string): string[] {
 }
 
 const DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD = 0.3;
+const DEFAULT_AUTO_TARGET_TOOL = 80;
+const DEFAULT_AUTO_TARGET_INTENT = 90;
+const DEFAULT_AUTO_TARGET_AGENT = 85;
+const DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT = 90;
+const DEFAULT_AUTO_TARGET_TOOL_GIVEN_INTENT_AGENT = 90;
+
+type AutoAuditTargetMode = "tool_only" | "layered";
+
+type AutoAuditRoundEntry = {
+	round: number;
+	intentAccuracy: number;
+	agentAccuracy: number;
+	toolAccuracy: number;
+	agentGivenIntentAccuracy: number | null;
+	toolGivenIntentAgentAccuracy: number | null;
+	monitorScore: number;
+	toolSuggestions: number;
+	intentSuggestions: number;
+	agentSuggestions: number;
+	meetsTarget: boolean;
+	note: string | null;
+};
 
 function defaultAuditAnnotationForProbe(
 	probe: MetadataCatalogAuditRunResponse["probes"][number]
@@ -244,6 +266,31 @@ function defaultAuditAnnotationForProbe(
 function isLowMargin(margin: number | null | undefined, threshold: number): boolean {
 	if (typeof margin !== "number" || Number.isNaN(margin)) return false;
 	return margin < threshold;
+}
+
+function clampPercentage(value: number, fallback: number): number {
+	if (!Number.isFinite(value)) return fallback;
+	return Math.max(0, Math.min(100, value));
+}
+
+function layeredMonitorScore(summary: MetadataCatalogAuditRunResponse["summary"]): number {
+	const values = [summary.intent_accuracy, summary.agent_accuracy, summary.tool_accuracy];
+	if (typeof summary.agent_accuracy_given_intent_correct === "number") {
+		values.push(summary.agent_accuracy_given_intent_correct);
+	}
+	if (typeof summary.tool_accuracy_given_intent_agent_correct === "number") {
+		values.push(summary.tool_accuracy_given_intent_agent_correct);
+	}
+	if (!values.length) return 0;
+	return values.reduce((acc, value) => acc + value, 0) / values.length;
+}
+
+function monitorScoreForMode(
+	summary: MetadataCatalogAuditRunResponse["summary"],
+	mode: AutoAuditTargetMode
+): number {
+	if (mode === "tool_only") return summary.tool_accuracy;
+	return layeredMonitorScore(summary);
 }
 
 export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }) {
@@ -267,6 +314,22 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [showOnlyAuditIssues, setShowOnlyAuditIssues] = useState(false);
 	const [showOnlyLowMargin, setShowOnlyLowMargin] = useState(false);
 	const [sortAuditIssuesFirst, setSortAuditIssuesFirst] = useState(true);
+	const [autoTargetMode, setAutoTargetMode] = useState<AutoAuditTargetMode>("layered");
+	const [autoTargetToolPct, setAutoTargetToolPct] = useState(DEFAULT_AUTO_TARGET_TOOL);
+	const [autoTargetIntentPct, setAutoTargetIntentPct] = useState(DEFAULT_AUTO_TARGET_INTENT);
+	const [autoTargetAgentPct, setAutoTargetAgentPct] = useState(DEFAULT_AUTO_TARGET_AGENT);
+	const [autoTargetAgentGivenIntentPct, setAutoTargetAgentGivenIntentPct] = useState(
+		DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT
+	);
+	const [autoTargetToolGivenIntentAgentPct, setAutoTargetToolGivenIntentAgentPct] = useState(
+		DEFAULT_AUTO_TARGET_TOOL_GIVEN_INTENT_AGENT
+	);
+	const [autoMaxRounds, setAutoMaxRounds] = useState(6);
+	const [autoPatienceRounds, setAutoPatienceRounds] = useState(2);
+	const [autoAbortDropPp, setAutoAbortDropPp] = useState(8);
+	const [isAutoRunning, setIsAutoRunning] = useState(false);
+	const [autoRoundHistory, setAutoRoundHistory] = useState<AutoAuditRoundEntry[]>([]);
+	const [autoRunStatusText, setAutoRunStatusText] = useState<string | null>(null);
 	const [isRunningAudit, setIsRunningAudit] = useState(false);
 	const [auditResult, setAuditResult] = useState<MetadataCatalogAuditRunResponse | null>(null);
 	const [auditAnnotations, setAuditAnnotations] = useState<Record<string, AuditAnnotationDraft>>(
@@ -369,6 +432,16 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const metadataPatchForDraft = useMemo(() => {
 		return changedToolIds.map((toolId) => draftTools[toolId]).filter(Boolean);
 	}, [changedToolIds, draftTools]);
+	const intentMetadataPatchForDraft = useMemo(() => {
+		return changedIntentIds
+			.map((intentId) => draftIntents[intentId])
+			.filter((item): item is IntentMetadataUpdateItem => Boolean(item));
+	}, [changedIntentIds, draftIntents]);
+	const agentMetadataPatchForDraft = useMemo(() => {
+		return changedAgentIds
+			.map((agentId) => draftAgents[agentId])
+			.filter((item): item is AgentMetadataUpdateItem => Boolean(item));
+	}, [changedAgentIds, draftAgents]);
 	const allToolOptions = useMemo(() => {
 		const options: string[] = [];
 		for (const category of data?.tool_categories ?? []) {
@@ -533,6 +606,34 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		}
 		return sorted;
 	}, [auditProbeRows, showOnlyAuditIssues, showOnlyLowMargin, sortAuditIssuesFirst]);
+	const autoTargets = useMemo(
+		() => ({
+			tool: clampPercentage(autoTargetToolPct, DEFAULT_AUTO_TARGET_TOOL) / 100,
+			intent: clampPercentage(autoTargetIntentPct, DEFAULT_AUTO_TARGET_INTENT) / 100,
+			agent: clampPercentage(autoTargetAgentPct, DEFAULT_AUTO_TARGET_AGENT) / 100,
+			agentGivenIntent:
+				clampPercentage(
+					autoTargetAgentGivenIntentPct,
+					DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT
+				) / 100,
+			toolGivenIntentAgent:
+				clampPercentage(
+					autoTargetToolGivenIntentAgentPct,
+					DEFAULT_AUTO_TARGET_TOOL_GIVEN_INTENT_AGENT
+				) / 100,
+		}),
+		[
+			autoTargetToolPct,
+			autoTargetIntentPct,
+			autoTargetAgentPct,
+			autoTargetAgentGivenIntentPct,
+			autoTargetToolGivenIntentAgentPct,
+		]
+	);
+	const currentAutoMonitorScore = useMemo(() => {
+		if (!auditResult) return 0;
+		return monitorScoreForMode(auditResult.summary, autoTargetMode);
+	}, [auditResult, autoTargetMode]);
 
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((previous) => {
@@ -642,6 +743,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			const result = await adminToolSettingsApiService.runMetadataCatalogAudit({
 				search_space_id: data.search_space_id,
 				metadata_patch: metadataPatchForDraft,
+				intent_metadata_patch: intentMetadataPatchForDraft,
+				agent_metadata_patch: agentMetadataPatchForDraft,
 				tool_ids: requestedAuditToolIds,
 				include_existing_examples: includeExistingExamples,
 				include_llm_generated: includeLlmGenerated,
@@ -775,6 +878,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			const response = await adminToolSettingsApiService.generateMetadataCatalogAuditSuggestions({
 				search_space_id: data.search_space_id,
 				metadata_patch: metadataPatchForDraft,
+				intent_metadata_patch: intentMetadataPatchForDraft,
+				agent_metadata_patch: agentMetadataPatchForDraft,
 				annotations,
 				max_suggestions: 30,
 			});
@@ -795,6 +900,296 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			toast.error("Kunde inte generera metadataforslag.");
 		} finally {
 			setIsGeneratingAuditSuggestions(false);
+		}
+	};
+
+	const runAutoAuditLoop = async () => {
+		if (!data?.search_space_id) return;
+		setIsAutoRunning(true);
+		setAutoRoundHistory([]);
+		setAutoRunStatusText("Startar autonom metadata-loop...");
+		setAuditSuggestions(null);
+		setSelectedAuditSuggestionToolIds(new Set());
+		setSelectedAuditSuggestionIntentIds(new Set());
+		setSelectedAuditSuggestionAgentIds(new Set());
+		const maxRounds = Math.max(1, Math.min(20, Number.parseInt(`${autoMaxRounds}`, 10) || 1));
+		const patienceRounds = Math.max(
+			0,
+			Math.min(10, Number.parseInt(`${autoPatienceRounds}`, 10) || 0)
+		);
+		const dropThreshold = Math.max(0, Math.min(50, Number.parseFloat(`${autoAbortDropPp}`) || 0)) / 100;
+		const targetMode: AutoAuditTargetMode = autoTargetMode;
+
+		const summaryMeetsTargets = (summary: MetadataCatalogAuditRunResponse["summary"]) => {
+			if (targetMode === "tool_only") {
+				return summary.tool_accuracy >= autoTargets.tool;
+			}
+			const conditionalAgentOk =
+				typeof summary.agent_accuracy_given_intent_correct === "number"
+					? summary.agent_accuracy_given_intent_correct >= autoTargets.agentGivenIntent
+					: true;
+			const conditionalToolOk =
+				typeof summary.tool_accuracy_given_intent_agent_correct === "number"
+					? summary.tool_accuracy_given_intent_agent_correct >= autoTargets.toolGivenIntentAgent
+					: true;
+			return (
+				summary.intent_accuracy >= autoTargets.intent &&
+				summary.agent_accuracy >= autoTargets.agent &&
+				summary.tool_accuracy >= autoTargets.tool &&
+				conditionalAgentOk &&
+				conditionalToolOk
+			);
+		};
+
+		const cloneToolPatchMap = (source: Record<string, ToolMetadataUpdateItem>) => {
+			const next: Record<string, ToolMetadataUpdateItem> = {};
+			for (const [toolId, item] of Object.entries(source)) {
+				next[toolId] = {
+					...item,
+					keywords: [...item.keywords],
+					example_queries: [...item.example_queries],
+				};
+			}
+			return next;
+		};
+		const cloneAgentPatchMap = (source: Record<string, AgentMetadataUpdateItem>) => {
+			const next: Record<string, AgentMetadataUpdateItem> = {};
+			for (const [agentId, item] of Object.entries(source)) {
+				next[agentId] = {
+					...item,
+					keywords: [...item.keywords],
+					namespace: [...(item.namespace ?? [])],
+				};
+			}
+			return next;
+		};
+		const cloneIntentPatchMap = (source: Record<string, IntentMetadataUpdateItem>) => {
+			const next: Record<string, IntentMetadataUpdateItem> = {};
+			for (const [intentId, item] of Object.entries(source)) {
+				next[intentId] = {
+					...item,
+					keywords: [...item.keywords],
+				};
+			}
+			return next;
+		};
+		const buildDefaultAnnotations = (result: MetadataCatalogAuditRunResponse) => {
+			const nextAnnotations: Record<string, AuditAnnotationDraft> = {};
+			for (const probe of result.probes) {
+				nextAnnotations[probe.probe_id] = defaultAuditAnnotationForProbe(probe);
+			}
+			return nextAnnotations;
+		};
+		const buildAutoSuggestionAnnotations = (result: MetadataCatalogAuditRunResponse) => {
+			return result.probes.map((probe) => {
+				const draft = defaultAuditAnnotationForProbe(probe);
+				return {
+					probe_id: probe.probe_id,
+					query: probe.query,
+					expected_intent_id: probe.intent.expected_label ?? null,
+					expected_agent_id: probe.agent.expected_label ?? null,
+					expected_tool_id: probe.tool.expected_label ?? probe.target_tool_id,
+					predicted_intent_id: probe.intent.predicted_label ?? null,
+					predicted_agent_id: probe.agent.predicted_label ?? null,
+					predicted_tool_id: probe.tool.predicted_label ?? null,
+					intent_is_correct: draft.intent_is_correct,
+					corrected_intent_id: null,
+					agent_is_correct: draft.agent_is_correct,
+					corrected_agent_id: null,
+					tool_is_correct: draft.tool_is_correct,
+					corrected_tool_id: null,
+					intent_score_breakdown: probe.intent.score_breakdown ?? [],
+					agent_score_breakdown: probe.agent.score_breakdown ?? [],
+					tool_score_breakdown: probe.tool.score_breakdown ?? [],
+					tool_vector_diagnostics: probe.tool_vector_diagnostics ?? null,
+				};
+			});
+		};
+
+		try {
+			let toolPatchMap: Record<string, ToolMetadataUpdateItem> = Object.fromEntries(
+				metadataPatchForDraft.map((item) => [item.tool_id, { ...item }])
+			);
+			let intentPatchMap: Record<string, IntentMetadataUpdateItem> = Object.fromEntries(
+				intentMetadataPatchForDraft.map((item) => [item.intent_id, { ...item }])
+			);
+			let agentPatchMap: Record<string, AgentMetadataUpdateItem> = Object.fromEntries(
+				agentMetadataPatchForDraft.map((item) => [item.agent_id, { ...item }])
+			);
+
+			let bestToolPatchMap = cloneToolPatchMap(toolPatchMap);
+			let bestIntentPatchMap = cloneIntentPatchMap(intentPatchMap);
+			let bestAgentPatchMap = cloneAgentPatchMap(agentPatchMap);
+			let bestMonitor = -1;
+			let previousMonitor: number | null = null;
+			let roundsWithoutImprovement = 0;
+			let bestAuditResult: MetadataCatalogAuditRunResponse | null = null;
+			let bestAuditAnnotations: Record<string, AuditAnnotationDraft> = {};
+			const roundEntries: AutoAuditRoundEntry[] = [];
+			let stopReason = "Nådde max antal rundor.";
+
+			for (let round = 1; round <= maxRounds; round += 1) {
+				setAutoRunStatusText(`Autonom loop: kör runda ${round}/${maxRounds}...`);
+				const result = await adminToolSettingsApiService.runMetadataCatalogAudit({
+					search_space_id: data.search_space_id,
+					metadata_patch: Object.values(toolPatchMap),
+					intent_metadata_patch: Object.values(intentPatchMap),
+					agent_metadata_patch: Object.values(agentPatchMap),
+					tool_ids: requestedAuditToolIds,
+					include_existing_examples: includeExistingExamples,
+					include_llm_generated: includeLlmGenerated,
+					llm_queries_per_tool: llmQueriesPerTool,
+					max_queries_per_tool: maxQueriesPerTool,
+					hard_negatives_per_tool: hardNegativesPerTool,
+				});
+				const currentAnnotations = buildDefaultAnnotations(result);
+				setAuditResult(result);
+				setAuditAnnotations(currentAnnotations);
+				const monitorScore = monitorScoreForMode(result.summary, targetMode);
+				const meetsTarget = summaryMeetsTargets(result.summary);
+				const improved = monitorScore > bestMonitor + 0.0001;
+				if (improved) {
+					bestMonitor = monitorScore;
+					roundsWithoutImprovement = 0;
+					bestToolPatchMap = cloneToolPatchMap(toolPatchMap);
+					bestIntentPatchMap = cloneIntentPatchMap(intentPatchMap);
+					bestAgentPatchMap = cloneAgentPatchMap(agentPatchMap);
+					bestAuditResult = result;
+					bestAuditAnnotations = currentAnnotations;
+				} else {
+					roundsWithoutImprovement += 1;
+				}
+				const dropTriggered =
+					previousMonitor != null && monitorScore < previousMonitor - dropThreshold;
+				previousMonitor = monitorScore;
+
+				const baseEntry: AutoAuditRoundEntry = {
+					round,
+					intentAccuracy: result.summary.intent_accuracy,
+					agentAccuracy: result.summary.agent_accuracy,
+					toolAccuracy: result.summary.tool_accuracy,
+					agentGivenIntentAccuracy: result.summary.agent_accuracy_given_intent_correct ?? null,
+					toolGivenIntentAgentAccuracy:
+						result.summary.tool_accuracy_given_intent_agent_correct ?? null,
+					monitorScore,
+					toolSuggestions: 0,
+					intentSuggestions: 0,
+					agentSuggestions: 0,
+					meetsTarget,
+					note: null,
+				};
+
+				if (meetsTarget) {
+					stopReason = `Mål uppnått i runda ${round}.`;
+					roundEntries.push({
+						...baseEntry,
+						note: "Mål uppnått",
+					});
+					setAutoRoundHistory([...roundEntries]);
+					break;
+				}
+				if (dropTriggered) {
+					stopReason = `Avbruten i runda ${round}: tappade mer än ${(
+						dropThreshold * 100
+					).toFixed(1)} pp mot föregående.`;
+					roundEntries.push({
+						...baseEntry,
+						note: `Tapp > ${(dropThreshold * 100).toFixed(1)} pp`,
+					});
+					setAutoRoundHistory([...roundEntries]);
+					break;
+				}
+				if (roundsWithoutImprovement > patienceRounds) {
+					stopReason = `Avbruten i runda ${round}: ingen förbättring på ${patienceRounds} rundor.`;
+					roundEntries.push({
+						...baseEntry,
+						note: "Ingen förbättring",
+					});
+					setAutoRoundHistory([...roundEntries]);
+					break;
+				}
+
+				const annotations = buildAutoSuggestionAnnotations(result);
+				const reviewedFailures = annotations.filter(
+					(item) =>
+						!item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
+				).length;
+				if (!reviewedFailures) {
+					stopReason = `Stopp i runda ${round}: inga fel kvar att optimera.`;
+					roundEntries.push({
+						...baseEntry,
+						note: "Inga fel kvar",
+					});
+					setAutoRoundHistory([...roundEntries]);
+					break;
+				}
+
+				setAutoRunStatusText(`Autonom loop: genererar metadataförslag för runda ${round}...`);
+				const suggestions =
+					await adminToolSettingsApiService.generateMetadataCatalogAuditSuggestions({
+						search_space_id: data.search_space_id,
+						metadata_patch: Object.values(toolPatchMap),
+						intent_metadata_patch: Object.values(intentPatchMap),
+						agent_metadata_patch: Object.values(agentPatchMap),
+						annotations,
+						max_suggestions: 30,
+					});
+				const toolSuggestionCount = suggestions.tool_suggestions.length;
+				const intentSuggestionCount = suggestions.intent_suggestions.length;
+				const agentSuggestionCount = suggestions.agent_suggestions.length;
+				const totalSuggestionCount =
+					toolSuggestionCount + intentSuggestionCount + agentSuggestionCount;
+				roundEntries.push({
+					...baseEntry,
+					toolSuggestions: toolSuggestionCount,
+					intentSuggestions: intentSuggestionCount,
+					agentSuggestions: agentSuggestionCount,
+					note:
+						totalSuggestionCount === 0
+							? "Inga fler förslag"
+							: `${totalSuggestionCount} förslag applicerade`,
+				});
+				setAutoRoundHistory([...roundEntries]);
+
+				if (totalSuggestionCount === 0) {
+					stopReason = `Stopp i runda ${round}: modellen gav inga fler metadataförslag.`;
+					break;
+				}
+
+				for (const suggestion of suggestions.tool_suggestions) {
+					toolPatchMap[suggestion.tool_id] = {
+						...suggestion.proposed_metadata,
+					};
+				}
+				for (const suggestion of suggestions.intent_suggestions) {
+					intentPatchMap[suggestion.intent_id] = {
+						...suggestion.proposed_metadata,
+					};
+				}
+				for (const suggestion of suggestions.agent_suggestions) {
+					agentPatchMap[suggestion.agent_id] = {
+						...suggestion.proposed_metadata,
+					};
+				}
+				if (round === maxRounds) {
+					stopReason = `Stopp efter ${maxRounds} rundor (max).`;
+				}
+			}
+
+			setDraftTools((previous) => ({ ...previous, ...bestToolPatchMap }));
+			setDraftIntents((previous) => ({ ...previous, ...bestIntentPatchMap }));
+			setDraftAgents((previous) => ({ ...previous, ...bestAgentPatchMap }));
+			if (bestAuditResult) {
+				setAuditResult(bestAuditResult);
+				setAuditAnnotations(bestAuditAnnotations);
+			}
+			setAutoRunStatusText(stopReason);
+			toast.success(stopReason);
+		} catch (_error) {
+			setAutoRunStatusText("Autonom loop misslyckades.");
+			toast.error("Kunde inte köra autonom metadata-loop.");
+		} finally {
+			setIsAutoRunning(false);
 		}
 	};
 
@@ -1145,6 +1540,195 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									: "Kor Steg B Forslag"}
 							</Button>
 						</div>
+					</div>
+					<div className="rounded border p-3 space-y-3">
+						<div className="flex flex-wrap items-center gap-2">
+							<p className="text-sm font-medium">Autonom optimering (målstyrd loop)</p>
+							<Badge variant="outline">Nuvarande monitor: {(currentAutoMonitorScore * 100).toFixed(1)}%</Badge>
+							{autoRunStatusText ? <Badge variant="secondary">{autoRunStatusText}</Badge> : null}
+						</div>
+						<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
+							<div className="space-y-1 lg:col-span-2">
+								<Label>Mållägen</Label>
+								<select
+									value={autoTargetMode}
+									onChange={(event) =>
+										setAutoTargetMode(event.target.value as AutoAuditTargetMode)
+									}
+									className="h-9 rounded-md border bg-transparent px-3 text-sm w-full"
+								>
+									<option value="layered">Layer gates + total (rekommenderad)</option>
+									<option value="tool_only">Bara tool-accuracy</option>
+								</select>
+							</div>
+							<div className="space-y-1">
+								<Label>Max rounds</Label>
+								<Input
+									type="number"
+									min={1}
+									max={20}
+									value={autoMaxRounds}
+									onChange={(event) =>
+										setAutoMaxRounds(
+											Math.max(1, Math.min(20, Number.parseInt(event.target.value || "1", 10)))
+										)
+									}
+								/>
+							</div>
+							<div className="space-y-1">
+								<Label>Patience</Label>
+								<Input
+									type="number"
+									min={0}
+									max={10}
+									value={autoPatienceRounds}
+									onChange={(event) =>
+										setAutoPatienceRounds(
+											Math.max(0, Math.min(10, Number.parseInt(event.target.value || "0", 10)))
+										)
+									}
+								/>
+							</div>
+							<div className="space-y-1">
+								<Label>Abort drop (pp)</Label>
+								<Input
+									type="number"
+									step={0.5}
+									min={0}
+									max={50}
+									value={autoAbortDropPp}
+									onChange={(event) =>
+										setAutoAbortDropPp(
+											Math.max(0, Math.min(50, Number.parseFloat(event.target.value || "0")))
+										)
+									}
+								/>
+							</div>
+							<div className="flex items-end">
+								<Button
+									type="button"
+									onClick={runAutoAuditLoop}
+									disabled={isAutoRunning || isRunningAudit || isGeneratingAuditSuggestions}
+									className="w-full"
+								>
+									{isAutoRunning ? "Autoloop kör..." : "Kör autonom loop"}
+								</Button>
+							</div>
+						</div>
+						<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+							<div className="space-y-1">
+								<Label>Tool mål %</Label>
+								<Input
+									type="number"
+									min={0}
+									max={100}
+									value={autoTargetToolPct}
+									onChange={(event) =>
+										setAutoTargetToolPct(
+											clampPercentage(
+												Number.parseFloat(event.target.value || `${DEFAULT_AUTO_TARGET_TOOL}`),
+												DEFAULT_AUTO_TARGET_TOOL
+											)
+										)
+									}
+								/>
+							</div>
+							<div className="space-y-1">
+								<Label>Intent mål %</Label>
+								<Input
+									type="number"
+									min={0}
+									max={100}
+									value={autoTargetIntentPct}
+									onChange={(event) =>
+										setAutoTargetIntentPct(
+											clampPercentage(
+												Number.parseFloat(event.target.value || `${DEFAULT_AUTO_TARGET_INTENT}`),
+												DEFAULT_AUTO_TARGET_INTENT
+											)
+										)
+									}
+									disabled={autoTargetMode !== "layered"}
+								/>
+							</div>
+							<div className="space-y-1">
+								<Label>Agent mål %</Label>
+								<Input
+									type="number"
+									min={0}
+									max={100}
+									value={autoTargetAgentPct}
+									onChange={(event) =>
+										setAutoTargetAgentPct(
+											clampPercentage(
+												Number.parseFloat(event.target.value || `${DEFAULT_AUTO_TARGET_AGENT}`),
+												DEFAULT_AUTO_TARGET_AGENT
+											)
+										)
+									}
+									disabled={autoTargetMode !== "layered"}
+								/>
+							</div>
+							<div className="space-y-1">
+								<Label>Agent | Intent OK mål %</Label>
+								<Input
+									type="number"
+									min={0}
+									max={100}
+									value={autoTargetAgentGivenIntentPct}
+									onChange={(event) =>
+										setAutoTargetAgentGivenIntentPct(
+											clampPercentage(
+												Number.parseFloat(
+													event.target.value ||
+														`${DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT}`
+												),
+												DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT
+											)
+										)
+									}
+									disabled={autoTargetMode !== "layered"}
+								/>
+							</div>
+							<div className="space-y-1">
+								<Label>Tool | Intent+Agent OK mål %</Label>
+								<Input
+									type="number"
+									min={0}
+									max={100}
+									value={autoTargetToolGivenIntentAgentPct}
+									onChange={(event) =>
+										setAutoTargetToolGivenIntentAgentPct(
+											clampPercentage(
+												Number.parseFloat(
+													event.target.value ||
+														`${DEFAULT_AUTO_TARGET_TOOL_GIVEN_INTENT_AGENT}`
+												),
+												DEFAULT_AUTO_TARGET_TOOL_GIVEN_INTENT_AGENT
+											)
+										)
+									}
+									disabled={autoTargetMode !== "layered"}
+								/>
+							</div>
+						</div>
+						{autoRoundHistory.length > 0 ? (
+							<div className="max-h-44 overflow-auto rounded border p-2 text-xs space-y-1">
+								{autoRoundHistory.map((item) => (
+									<div
+										key={`auto-round-${item.round}`}
+										className="rounded bg-muted/40 px-2 py-1"
+									>
+										Runda {item.round}: I {(item.intentAccuracy * 100).toFixed(1)}% · A{" "}
+										{(item.agentAccuracy * 100).toFixed(1)}% · T{" "}
+										{(item.toolAccuracy * 100).toFixed(1)}% · Monitor{" "}
+										{(item.monitorScore * 100).toFixed(1)}% · Förslag{" "}
+										{item.toolSuggestions}/{item.intentSuggestions}/{item.agentSuggestions}
+										{item.note ? ` · ${item.note}` : ""}
+									</div>
+								))}
+							</div>
+						) : null}
 					</div>
 
 					{auditResult ? (
