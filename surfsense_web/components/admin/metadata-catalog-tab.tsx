@@ -239,6 +239,10 @@ type AutoAuditRoundEntry = {
 	toolAccuracy: number;
 	agentGivenIntentAccuracy: number | null;
 	toolGivenIntentAgentAccuracy: number | null;
+	vectorRecallTop5: number | null;
+	vectorTop1FromVector: number | null;
+	vectorExpectedInTopK: number | null;
+	totalProbes: number;
 	monitorScore: number;
 	toolSuggestions: number;
 	intentSuggestions: number;
@@ -246,6 +250,54 @@ type AutoAuditRoundEntry = {
 	meetsTarget: boolean;
 	note: string | null;
 };
+
+type AutoEvolutionRow = {
+	key: string;
+	metric: string;
+	older: number | null;
+	newer: number | null;
+	deltaPp: number | null;
+	comment: string;
+};
+
+function normalizeRate(value: number | null | undefined): number | null {
+	if (typeof value !== "number" || Number.isNaN(value)) return null;
+	return Math.max(0, Math.min(1, value));
+}
+
+function formatRate(value: number | null): string {
+	if (value == null) return "-";
+	return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatDeltaPp(deltaPp: number | null): string {
+	if (deltaPp == null || Number.isNaN(deltaPp)) return "--";
+	const arrow = deltaPp > 0.05 ? "↑" : deltaPp < -0.05 ? "↓" : "→";
+	const sign = deltaPp > 0 ? "+" : "";
+	return `${arrow} ${sign}${deltaPp.toFixed(1)} pp`;
+}
+
+function summarizeDeltaComment(
+	metric: string,
+	older: number | null,
+	newer: number | null,
+	deltaPp: number | null,
+	baselineOnly: boolean
+): string {
+	if (baselineOnly) return "Baslinje - vantar pa nasta runda.";
+	if (older == null || newer == null || deltaPp == null) return "Saknar jamforbar data.";
+	if (metric === "Vector recall top-5" && newer >= 0.99 && Math.abs(deltaPp) < 0.5) {
+		return "Top-5 recall ar stabilt hog.";
+	}
+	const abs = Math.abs(deltaPp);
+	if (abs < 0.3) return "Stabilt mellan rundorna.";
+	if (deltaPp >= 20) return "Stark forbattring.";
+	if (deltaPp >= 8) return "Tydlig forbattring.";
+	if (deltaPp > 0) return "Liten forbattring.";
+	if (deltaPp <= -20) return "Kraftig tillbakagang - granska senaste forslag.";
+	if (deltaPp <= -8) return "Markbar tillbakagang - kontrollera senaste patch.";
+	return "Liten tillbakagang.";
+}
 
 function defaultAuditAnnotationForProbe(
 	probe: MetadataCatalogAuditRunResponse["probes"][number]
@@ -634,6 +686,90 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		if (!auditResult) return 0;
 		return monitorScoreForMode(auditResult.summary, autoTargetMode);
 	}, [auditResult, autoTargetMode]);
+	const autoEvolutionSummary = useMemo(() => {
+		if (!autoRoundHistory.length) {
+			return null;
+		}
+		const olderRound = autoRoundHistory[0];
+		const newerRound = autoRoundHistory[autoRoundHistory.length - 1];
+		const baselineOnly = olderRound.round === newerRound.round;
+		const rowsSeed: Array<{
+			key: string;
+			metric: string;
+			older: number | null | undefined;
+			newer: number | null | undefined;
+		}> = [
+			{
+				key: "intent",
+				metric: "Intent accuracy",
+				older: olderRound.intentAccuracy,
+				newer: newerRound.intentAccuracy,
+			},
+			{
+				key: "agent",
+				metric: "Agent accuracy",
+				older: olderRound.agentAccuracy,
+				newer: newerRound.agentAccuracy,
+			},
+			{
+				key: "tool",
+				metric: "Tool accuracy",
+				older: olderRound.toolAccuracy,
+				newer: newerRound.toolAccuracy,
+			},
+			{
+				key: "agent_given_intent",
+				metric: "Agent | Intent OK",
+				older: olderRound.agentGivenIntentAccuracy,
+				newer: newerRound.agentGivenIntentAccuracy,
+			},
+			{
+				key: "tool_given_intent_agent",
+				metric: "Tool | Intent+Agent OK",
+				older: olderRound.toolGivenIntentAgentAccuracy,
+				newer: newerRound.toolGivenIntentAgentAccuracy,
+			},
+			{
+				key: "vector_recall_top5",
+				metric: "Vector recall top-5",
+				older: olderRound.vectorRecallTop5,
+				newer: newerRound.vectorRecallTop5,
+			},
+			{
+				key: "vector_top1_from_vector",
+				metric: "Top-1 fran vector",
+				older: olderRound.vectorTop1FromVector,
+				newer: newerRound.vectorTop1FromVector,
+			},
+			{
+				key: "vector_expected_top_k",
+				metric: "Expected i vector@K",
+				older: olderRound.vectorExpectedInTopK,
+				newer: newerRound.vectorExpectedInTopK,
+			},
+		];
+		const rows: AutoEvolutionRow[] = rowsSeed.map((seed) => {
+			const older = normalizeRate(seed.older);
+			const newer = normalizeRate(seed.newer);
+			const deltaPp =
+				!baselineOnly && older != null && newer != null ? (newer - older) * 100 : null;
+			return {
+				key: seed.key,
+				metric: seed.metric,
+				older,
+				newer,
+				deltaPp,
+				comment: summarizeDeltaComment(seed.metric, older, newer, deltaPp, baselineOnly),
+			};
+		});
+		return {
+			olderRound: olderRound.round,
+			newerRound: newerRound.round,
+			olderProbes: olderRound.totalProbes,
+			newerProbes: newerRound.totalProbes,
+			rows,
+		};
+	}, [autoRoundHistory]);
 
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((previous) => {
@@ -1077,6 +1213,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				const dropTriggered =
 					previousMonitor != null && monitorScore < previousMonitor - dropThreshold;
 				previousMonitor = monitorScore;
+				const vectorSummary = result.summary.vector_recall_summary;
+				const totalProbes = Math.max(0, Number(result.summary.total_probes || 0));
 
 				const baseEntry: AutoAuditRoundEntry = {
 					round,
@@ -1086,6 +1224,19 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					agentGivenIntentAccuracy: result.summary.agent_accuracy_given_intent_correct ?? null,
 					toolGivenIntentAgentAccuracy:
 						result.summary.tool_accuracy_given_intent_agent_correct ?? null,
+					vectorRecallTop5:
+						typeof vectorSummary?.share_probes_with_vector_candidates === "number"
+							? vectorSummary.share_probes_with_vector_candidates
+							: null,
+					vectorTop1FromVector:
+						typeof vectorSummary?.share_top1_from_vector === "number"
+							? vectorSummary.share_top1_from_vector
+							: null,
+					vectorExpectedInTopK:
+						typeof vectorSummary?.share_expected_tool_in_vector_top_k === "number"
+							? vectorSummary.share_expected_tool_in_vector_top_k
+							: null,
+					totalProbes,
 					monitorScore,
 					toolSuggestions: 0,
 					intentSuggestions: 0,
@@ -1742,6 +1893,59 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										{item.note ? ` · ${item.note}` : ""}
 									</div>
 								))}
+							</div>
+						) : null}
+						{autoEvolutionSummary ? (
+							<div className="rounded border">
+								<div className="border-b bg-muted/30 px-3 py-2">
+									<p className="text-sm font-medium">Sammanfattning av utvecklingen</p>
+									<p className="text-xs text-muted-foreground">
+										Jämför runda {autoEvolutionSummary.olderRound} mot runda{" "}
+										{autoEvolutionSummary.newerRound}. Uppdateras live under autoloop.
+										{" "}Probes: {autoEvolutionSummary.olderProbes} →{" "}
+										{autoEvolutionSummary.newerProbes}
+									</p>
+								</div>
+								<div className="overflow-auto">
+									<table className="w-full text-xs">
+										<thead>
+											<tr className="border-b bg-muted/20">
+												<th className="px-3 py-2 text-left font-medium">Mått</th>
+												<th className="px-3 py-2 text-left font-medium">
+													Äldre audit (R{autoEvolutionSummary.olderRound})
+												</th>
+												<th className="px-3 py-2 text-left font-medium">
+													Nyare audit (R{autoEvolutionSummary.newerRound})
+												</th>
+												<th className="px-3 py-2 text-left font-medium">Förändring</th>
+												<th className="px-3 py-2 text-left font-medium">Kommentar</th>
+											</tr>
+										</thead>
+										<tbody>
+											{autoEvolutionSummary.rows.map((row) => (
+												<tr key={`auto-evolution-${row.key}`} className="border-b last:border-b-0">
+													<td className="px-3 py-2 font-medium">{row.metric}</td>
+													<td className="px-3 py-2">{formatRate(row.older)}</td>
+													<td className="px-3 py-2">{formatRate(row.newer)}</td>
+													<td
+														className={`px-3 py-2 ${
+															row.deltaPp == null
+																? "text-muted-foreground"
+																: row.deltaPp > 0.05
+																	? "text-emerald-700"
+																	: row.deltaPp < -0.05
+																		? "text-red-700"
+																		: "text-amber-700"
+														}`}
+													>
+														{formatDeltaPp(row.deltaPp)}
+													</td>
+													<td className="px-3 py-2 text-muted-foreground">{row.comment}</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
 							</div>
 						) : null}
 					</div>
