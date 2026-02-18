@@ -49,6 +49,29 @@ def _collect_recent_contracts(
     return contracts
 
 
+def _latest_successful_step_payload(
+    *,
+    state: dict[str, Any],
+    contract_from_payload_fn: Callable[[dict[str, Any] | None], dict[str, Any]],
+) -> tuple[str, str] | None:
+    step_results = state.get("step_results") or []
+    for item in reversed(step_results):
+        if not isinstance(item, dict):
+            continue
+        contract = contract_from_payload_fn(item)
+        if not isinstance(contract, dict) or not contract:
+            continue
+        status = _normalize_status(contract.get("status"))
+        if status != "success":
+            continue
+        response_text = str(item.get("response") or "").strip()
+        if not response_text:
+            continue
+        agent_name = str(item.get("agent") or contract.get("agent") or "agent").strip()
+        return response_text, agent_name or "agent"
+    return None
+
+
 def build_smart_critic_node(
     *,
     fallback_critic_node: Callable[..., Awaitable[dict[str, Any]]],
@@ -153,13 +176,27 @@ def build_smart_critic_node(
             }
 
         if has_success and avg_confidence >= float(min_mechanical_confidence):
-            if final_response:
+            resolved_response = final_response
+            resolved_agent_name = str(state.get("final_agent_name") or "").strip()
+            if not resolved_response:
+                successful_payload = _latest_successful_step_payload(
+                    state=state,
+                    contract_from_payload_fn=contract_from_payload_fn,
+                )
+                if successful_payload:
+                    resolved_response, resolved_agent_name = successful_payload
+            if resolved_response:
                 await _record_feedback(True)
-                return {
+                updates: dict[str, Any] = {
                     "critic_decision": "ok",
                     "targeted_missing_info": [],
                     "orchestration_phase": "finalize",
                 }
+                if not final_response:
+                    updates["final_response"] = resolved_response
+                    updates["final_agent_response"] = resolved_response
+                    updates["final_agent_name"] = resolved_agent_name or "agent"
+                return updates
             if replan_count < max_replan_attempts:
                 await _record_feedback(False)
                 return {
