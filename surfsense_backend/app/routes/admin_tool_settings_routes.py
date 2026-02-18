@@ -3656,9 +3656,13 @@ async def update_tool_settings_metadata_catalog(
     intent_update_rows: list[tuple[str, dict[str, Any] | None]] = []
     if payload.intents:
         default_intent_definitions = get_default_intent_definitions()
+        existing_intent_overrides = await get_global_intent_definition_overrides(session)
+        allowed_intent_ids = set(default_intent_definitions.keys()) | set(
+            existing_intent_overrides.keys()
+        )
         for item in payload.intents:
             intent_id = str(item.intent_id or "").strip().lower()
-            if intent_id not in default_intent_definitions:
+            if intent_id not in allowed_intent_ids:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Unknown intent_id in payload: {item.intent_id}",
@@ -3667,18 +3671,24 @@ async def update_tool_settings_metadata_catalog(
                 item.model_dump(),
                 intent_id=intent_id,
             )
-            default_payload = default_intent_definitions[intent_id]
+            default_payload = default_intent_definitions.get(intent_id)
             override_payload = (
-                None if normalized_payload == default_payload else normalized_payload
+                None
+                if default_payload is not None and normalized_payload == default_payload
+                else normalized_payload
             )
             intent_update_rows.append((intent_id, override_payload))
 
     agent_update_rows: list[tuple[str, dict[str, Any] | None]] = []
     if payload.agents:
         default_agent_metadata = get_default_agent_metadata()
+        existing_agent_overrides = await get_global_agent_metadata_overrides(session)
+        allowed_agent_ids = set(default_agent_metadata.keys()) | set(
+            existing_agent_overrides.keys()
+        )
         for item in payload.agents:
             agent_id = str(item.agent_id or "").strip().lower()
-            if agent_id not in default_agent_metadata:
+            if agent_id not in allowed_agent_ids:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Unknown agent_id in payload: {item.agent_id}",
@@ -3686,12 +3696,13 @@ async def update_tool_settings_metadata_catalog(
             normalized_payload = normalize_agent_metadata_payload(
                 item.model_dump(),
                 agent_id=agent_id,
-                default_payload=default_agent_metadata[agent_id],
+                default_payload=default_agent_metadata.get(agent_id),
             )
-            default_payload = default_agent_metadata[agent_id]
+            default_payload = default_agent_metadata.get(agent_id)
             override_payload = (
                 None
-                if agent_metadata_payload_equal(normalized_payload, default_payload)
+                if default_payload is not None
+                and agent_metadata_payload_equal(normalized_payload, default_payload)
                 else normalized_payload
             )
             agent_update_rows.append((agent_id, override_payload))
