@@ -438,6 +438,21 @@ DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
 _TOOL_EMBED_CACHE: dict[str, tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
 _VECTOR_RECALL_TOP_K = 5
+_TOOL_AWARE_EMBEDDING_CONTEXT_FIELDS: tuple[str, ...] = (
+    "name_description_keywords_examples",
+    "required_input_fields",
+    "input_field_types",
+    "example_input_json",
+    "expected_output_hint",
+)
+
+
+def get_vector_recall_top_k() -> int:
+    return int(_VECTOR_RECALL_TOP_K)
+
+
+def get_tool_embedding_context_fields() -> list[str]:
+    return list(_TOOL_AWARE_EMBEDDING_CONTEXT_FIELDS)
 
 
 def _normalize_text(text: str) -> str:
@@ -1256,8 +1271,10 @@ def _run_smart_retrieval(
             "retrieval_feedback_boost": float(retrieval_feedback_boost),
             "pre_rerank_score": float(pre_rerank_score),
             "namespace_scope": "primary" if is_primary else ("fallback" if is_fallback else "none"),
+            "lexical_candidate_selected": False,
             "vector_recall_selected": False,
             "vector_recall_rank": None,
+            "vector_only_candidate": False,
         }
         if is_primary:
             primary_scored.append((entry.tool_id, pre_rerank_score))
@@ -1297,6 +1314,12 @@ def _run_smart_retrieval(
             for tool_id, _ in fallback_scored[: normalized_tuning.rerank_candidates]
         ]
 
+    lexical_candidate_ids = list(candidate_ids)
+    lexical_candidate_set = set(lexical_candidate_ids)
+    for tool_id in lexical_candidate_ids:
+        if tool_id in breakdown_by_id:
+            breakdown_by_id[tool_id]["lexical_candidate_selected"] = True
+
     vector_candidate_ids: list[str] = []
     if query_embedding:
         vector_source = [*primary_vector_scored, *fallback_vector_scored]
@@ -1309,6 +1332,9 @@ def _run_smart_retrieval(
             if tool_id in breakdown_by_id:
                 breakdown_by_id[tool_id]["vector_recall_selected"] = True
                 breakdown_by_id[tool_id]["vector_recall_rank"] = vector_rank + 1
+                breakdown_by_id[tool_id]["vector_only_candidate"] = (
+                    tool_id not in lexical_candidate_set
+                )
     if vector_candidate_ids:
         deduped_candidates: list[str] = []
         seen_candidate_ids: set[str] = set()
@@ -1359,10 +1385,16 @@ def _run_smart_retrieval(
                     breakdown.get("retrieval_feedback_boost", 0.0)
                 ),
                 "namespace_scope": breakdown.get("namespace_scope"),
+                "lexical_candidate_selected": bool(
+                    breakdown.get("lexical_candidate_selected", False)
+                ),
                 "vector_recall_selected": bool(
                     breakdown.get("vector_recall_selected", False)
                 ),
                 "vector_recall_rank": breakdown.get("vector_recall_rank"),
+                "vector_only_candidate": bool(
+                    breakdown.get("vector_only_candidate", False)
+                ),
             }
         )
 

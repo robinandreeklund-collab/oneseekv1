@@ -655,6 +655,38 @@ class MetadataCatalogAuditLayerResult(BaseModel):
     score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class MetadataCatalogAuditToolVectorDiagnostics(BaseModel):
+    vector_top_k: int = 5
+    vector_selected_ids: list[str] = Field(default_factory=list)
+    predicted_tool_vector_selected: bool = False
+    predicted_tool_vector_rank: int | None = None
+    predicted_tool_vector_only: bool = False
+    predicted_tool_lexical_candidate: bool = False
+    expected_tool_vector_selected: bool = False
+    expected_tool_vector_rank: int | None = None
+    expected_tool_vector_only: bool = False
+    expected_tool_lexical_candidate: bool = False
+
+
+class MetadataCatalogAuditVectorRecallSummary(BaseModel):
+    top_k: int = 5
+    probes_with_vector_candidates: int = 0
+    probes_with_top1_from_vector: int = 0
+    probes_with_top1_vector_only: int = 0
+    probes_with_expected_tool_in_vector_top_k: int = 0
+    probes_with_expected_tool_vector_only: int = 0
+    probes_with_correct_tool_and_vector_support: int = 0
+    share_probes_with_vector_candidates: float = 0.0
+    share_top1_from_vector: float = 0.0
+    share_expected_tool_in_vector_top_k: float = 0.0
+
+
+class MetadataCatalogAuditToolEmbeddingContext(BaseModel):
+    enabled: bool = True
+    context_fields: list[str] = Field(default_factory=list)
+    description: str | None = None
+
+
 class MetadataCatalogAuditProbeItem(BaseModel):
     probe_id: str
     query: str
@@ -665,6 +697,9 @@ class MetadataCatalogAuditProbeItem(BaseModel):
     intent: MetadataCatalogAuditLayerResult
     agent: MetadataCatalogAuditLayerResult
     tool: MetadataCatalogAuditLayerResult
+    tool_vector_diagnostics: MetadataCatalogAuditToolVectorDiagnostics = Field(
+        default_factory=MetadataCatalogAuditToolVectorDiagnostics
+    )
 
 
 class MetadataCatalogAuditSummary(BaseModel):
@@ -685,6 +720,12 @@ class MetadataCatalogAuditSummary(BaseModel):
     )
     path_confusion_matrix: list[MetadataCatalogAuditPathConfusionPair] = Field(
         default_factory=list
+    )
+    vector_recall_summary: MetadataCatalogAuditVectorRecallSummary = Field(
+        default_factory=MetadataCatalogAuditVectorRecallSummary
+    )
+    tool_embedding_context: MetadataCatalogAuditToolEmbeddingContext = Field(
+        default_factory=MetadataCatalogAuditToolEmbeddingContext
     )
 
 
@@ -730,6 +771,7 @@ class MetadataCatalogAuditAnnotationItem(BaseModel):
     intent_score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
     agent_score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
     tool_score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    tool_vector_diagnostics: MetadataCatalogAuditToolVectorDiagnostics | None = None
 
 
 class MetadataCatalogIntentSuggestion(BaseModel):

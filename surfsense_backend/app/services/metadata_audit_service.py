@@ -9,6 +9,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.new_chat.bigtool_store import (
     ToolIndexEntry,
+    get_tool_embedding_context_fields,
+    get_vector_recall_top_k,
     normalize_retrieval_tuning,
     smart_retrieve_tools_with_breakdown,
 )
@@ -574,6 +576,84 @@ def _tool_layer_result(
     }
 
 
+def _to_positive_int_or_none(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except Exception:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _tool_vector_diagnostics(
+    *,
+    expected_label: str | None,
+    predicted_label: str | None,
+    retrieval_breakdown: list[dict[str, Any]],
+) -> dict[str, Any]:
+    vector_top_k = get_vector_recall_top_k()
+    by_tool_id: dict[str, dict[str, Any]] = {}
+    vector_selected: list[tuple[int, str]] = []
+
+    for row in retrieval_breakdown:
+        tool_id = _normalize_text(row.get("tool_id"))
+        if not tool_id:
+            continue
+        vector_selected_flag = bool(row.get("vector_recall_selected", False))
+        vector_rank = _to_positive_int_or_none(row.get("vector_recall_rank"))
+        lexical_selected_flag = bool(row.get("lexical_candidate_selected", False))
+        vector_only_flag = bool(row.get("vector_only_candidate", False))
+        by_tool_id[tool_id] = {
+            "vector_recall_selected": vector_selected_flag,
+            "vector_recall_rank": vector_rank,
+            "lexical_candidate_selected": lexical_selected_flag,
+            "vector_only_candidate": vector_only_flag,
+        }
+        if vector_selected_flag:
+            vector_selected.append(
+                (
+                    vector_rank if vector_rank is not None else 1_000_000,
+                    tool_id,
+                )
+            )
+
+    vector_selected.sort(key=lambda item: item[0])
+    vector_selected_ids = [tool_id for _rank, tool_id in vector_selected]
+    predicted = by_tool_id.get(_normalize_text(predicted_label))
+    expected = by_tool_id.get(_normalize_text(expected_label))
+    return {
+        "vector_top_k": vector_top_k,
+        "vector_selected_ids": vector_selected_ids[: max(1, int(vector_top_k))],
+        "predicted_tool_vector_selected": bool(
+            predicted and predicted.get("vector_recall_selected")
+        ),
+        "predicted_tool_vector_rank": (
+            int(predicted.get("vector_recall_rank"))
+            if predicted and predicted.get("vector_recall_rank") is not None
+            else None
+        ),
+        "predicted_tool_vector_only": bool(
+            predicted and predicted.get("vector_only_candidate")
+        ),
+        "predicted_tool_lexical_candidate": bool(
+            predicted and predicted.get("lexical_candidate_selected")
+        ),
+        "expected_tool_vector_selected": bool(
+            expected and expected.get("vector_recall_selected")
+        ),
+        "expected_tool_vector_rank": (
+            int(expected.get("vector_recall_rank"))
+            if expected and expected.get("vector_recall_rank") is not None
+            else None
+        ),
+        "expected_tool_vector_only": bool(
+            expected and expected.get("vector_only_candidate")
+        ),
+        "expected_tool_lexical_candidate": bool(
+            expected and expected.get("lexical_candidate_selected")
+        ),
+    }
+
+
 def _tool_namespaces_for_agent(
     agent_id: str | None,
 ) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
@@ -671,6 +751,12 @@ async def run_layered_metadata_audit(
     agent_conditional_total = 0
     tool_conditional_correct = 0
     tool_conditional_total = 0
+    vector_probes_with_candidates = 0
+    vector_probes_with_top1_from_vector = 0
+    vector_probes_with_top1_vector_only = 0
+    vector_probes_with_expected_tool_in_top_k = 0
+    vector_probes_with_expected_tool_vector_only = 0
+    vector_probes_correct_tool_with_vector_support = 0
 
     internal_retrieval_limit = max(2, min(int(retrieval_limit or 5), 20))
     max_probe_queries = max(1, min(int(max_queries_per_tool or 6), 20))
@@ -741,6 +827,11 @@ async def run_layered_metadata_audit(
                 retrieval_breakdown=list(retrieval_breakdown),
             )
             predicted_tool_id = _normalize_text(tool_layer.get("predicted_label")) or None
+            tool_vector_diagnostics = _tool_vector_diagnostics(
+                expected_label=expected_tool_id,
+                predicted_label=predicted_tool_id,
+                retrieval_breakdown=list(retrieval_breakdown),
+            )
 
             expected_path = _path_label(
                 expected_intent_id,
@@ -767,6 +858,7 @@ async def run_layered_metadata_audit(
                     "intent": intent_layer,
                     "agent": agent_layer,
                     "tool": tool_layer,
+                    "tool_vector_diagnostics": tool_vector_diagnostics,
                 }
             )
 
@@ -779,6 +871,20 @@ async def run_layered_metadata_audit(
                 agent_correct_count += 1
             if tool_correct:
                 tool_correct_count += 1
+            if tool_vector_diagnostics.get("vector_selected_ids"):
+                vector_probes_with_candidates += 1
+            if bool(tool_vector_diagnostics.get("predicted_tool_vector_selected")):
+                vector_probes_with_top1_from_vector += 1
+            if bool(tool_vector_diagnostics.get("predicted_tool_vector_only")):
+                vector_probes_with_top1_vector_only += 1
+            if bool(tool_vector_diagnostics.get("expected_tool_vector_selected")):
+                vector_probes_with_expected_tool_in_top_k += 1
+            if bool(tool_vector_diagnostics.get("expected_tool_vector_only")):
+                vector_probes_with_expected_tool_vector_only += 1
+            if tool_correct and bool(
+                tool_vector_diagnostics.get("predicted_tool_vector_selected")
+            ):
+                vector_probes_correct_tool_with_vector_support += 1
             if expected_intent_id:
                 key = (expected_intent_id, predicted_intent_id or "-")
                 intent_confusions[key] = intent_confusions.get(key, 0) + 1
@@ -835,6 +941,37 @@ async def run_layered_metadata_audit(
             expected_key="expected_path",
             predicted_key="predicted_path",
         ),
+        "vector_recall_summary": {
+            "top_k": get_vector_recall_top_k(),
+            "probes_with_vector_candidates": vector_probes_with_candidates,
+            "probes_with_top1_from_vector": vector_probes_with_top1_from_vector,
+            "probes_with_top1_vector_only": vector_probes_with_top1_vector_only,
+            "probes_with_expected_tool_in_vector_top_k": (
+                vector_probes_with_expected_tool_in_top_k
+            ),
+            "probes_with_expected_tool_vector_only": (
+                vector_probes_with_expected_tool_vector_only
+            ),
+            "probes_with_correct_tool_and_vector_support": (
+                vector_probes_correct_tool_with_vector_support
+            ),
+            "share_probes_with_vector_candidates": (
+                (vector_probes_with_candidates / total) if total else 0.0
+            ),
+            "share_top1_from_vector": (
+                (vector_probes_with_top1_from_vector / total) if total else 0.0
+            ),
+            "share_expected_tool_in_vector_top_k": (
+                (vector_probes_with_expected_tool_in_top_k / total) if total else 0.0
+            ),
+        },
+        "tool_embedding_context": {
+            "enabled": True,
+            "context_fields": get_tool_embedding_context_fields(),
+            "description": (
+                "Embeddings bygger pa tool metadata, indata-schema, example input JSON och expected output-hint."
+            ),
+        },
     }
     return {
         "probes": probes,
@@ -930,6 +1067,9 @@ def build_layered_suggestion_inputs_from_annotations(
                     "passed_tool": bool(tool_is_correct),
                     "passed": bool(tool_is_correct),
                     "retrieval_breakdown": list(item.get("tool_score_breakdown") or []),
+                    "tool_vector_diagnostics": dict(
+                        item.get("tool_vector_diagnostics") or {}
+                    ),
                 }
             )
     return {

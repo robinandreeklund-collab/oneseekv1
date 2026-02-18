@@ -244,6 +244,38 @@ export const metadataCatalogAuditLayerResult = z.object({
 	score_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
 });
 
+export const metadataCatalogAuditToolVectorDiagnostics = z.object({
+	vector_top_k: z.number().int().optional().default(5),
+	vector_selected_ids: z.array(z.string()).optional().default([]),
+	predicted_tool_vector_selected: z.boolean().optional().default(false),
+	predicted_tool_vector_rank: z.number().int().nullable().optional(),
+	predicted_tool_vector_only: z.boolean().optional().default(false),
+	predicted_tool_lexical_candidate: z.boolean().optional().default(false),
+	expected_tool_vector_selected: z.boolean().optional().default(false),
+	expected_tool_vector_rank: z.number().int().nullable().optional(),
+	expected_tool_vector_only: z.boolean().optional().default(false),
+	expected_tool_lexical_candidate: z.boolean().optional().default(false),
+});
+
+export const metadataCatalogAuditVectorRecallSummary = z.object({
+	top_k: z.number().int().optional().default(5),
+	probes_with_vector_candidates: z.number().int().optional().default(0),
+	probes_with_top1_from_vector: z.number().int().optional().default(0),
+	probes_with_top1_vector_only: z.number().int().optional().default(0),
+	probes_with_expected_tool_in_vector_top_k: z.number().int().optional().default(0),
+	probes_with_expected_tool_vector_only: z.number().int().optional().default(0),
+	probes_with_correct_tool_and_vector_support: z.number().int().optional().default(0),
+	share_probes_with_vector_candidates: z.number().optional().default(0),
+	share_top1_from_vector: z.number().optional().default(0),
+	share_expected_tool_in_vector_top_k: z.number().optional().default(0),
+});
+
+export const metadataCatalogAuditToolEmbeddingContext = z.object({
+	enabled: z.boolean().optional().default(true),
+	context_fields: z.array(z.string()).optional().default([]),
+	description: z.string().nullable().optional(),
+});
+
 export const metadataCatalogAuditProbeItem = z.object({
 	probe_id: z.string(),
 	query: z.string(),
@@ -254,6 +286,18 @@ export const metadataCatalogAuditProbeItem = z.object({
 	intent: metadataCatalogAuditLayerResult,
 	agent: metadataCatalogAuditLayerResult,
 	tool: metadataCatalogAuditLayerResult,
+	tool_vector_diagnostics: metadataCatalogAuditToolVectorDiagnostics.optional().default({
+		vector_top_k: 5,
+		vector_selected_ids: [],
+		predicted_tool_vector_selected: false,
+		predicted_tool_vector_rank: null,
+		predicted_tool_vector_only: false,
+		predicted_tool_lexical_candidate: false,
+		expected_tool_vector_selected: false,
+		expected_tool_vector_rank: null,
+		expected_tool_vector_only: false,
+		expected_tool_lexical_candidate: false,
+	}),
 });
 
 export const metadataCatalogAuditSummary = z.object({
@@ -267,6 +311,23 @@ export const metadataCatalogAuditSummary = z.object({
 	agent_confusion_matrix: z.array(metadataCatalogAuditConfusionPair).optional().default([]),
 	tool_confusion_matrix: z.array(metadataCatalogAuditConfusionPair).optional().default([]),
 	path_confusion_matrix: z.array(metadataCatalogAuditPathConfusionPair).optional().default([]),
+	vector_recall_summary: metadataCatalogAuditVectorRecallSummary
+		.optional()
+		.default({
+			top_k: 5,
+			probes_with_vector_candidates: 0,
+			probes_with_top1_from_vector: 0,
+			probes_with_top1_vector_only: 0,
+			probes_with_expected_tool_in_vector_top_k: 0,
+			probes_with_expected_tool_vector_only: 0,
+			probes_with_correct_tool_and_vector_support: 0,
+			share_probes_with_vector_candidates: 0,
+			share_top1_from_vector: 0,
+			share_expected_tool_in_vector_top_k: 0,
+		}),
+	tool_embedding_context: metadataCatalogAuditToolEmbeddingContext
+		.optional()
+		.default({ enabled: true, context_fields: [], description: null }),
 });
 
 export const metadataCatalogAuditRunRequest = z.object({
@@ -311,6 +372,7 @@ export const metadataCatalogAuditAnnotationItem = z.object({
 	intent_score_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
 	agent_score_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
 	tool_score_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
+	tool_vector_diagnostics: metadataCatalogAuditToolVectorDiagnostics.nullable().optional(),
 });
 
 export const metadataCatalogAuditSuggestionRequest = z.object({
@@ -958,6 +1020,15 @@ export type MetadataCatalogAuditPathConfusionPair = z.infer<
 >;
 export type MetadataCatalogAuditLayerResult = z.infer<
 	typeof metadataCatalogAuditLayerResult
+>;
+export type MetadataCatalogAuditToolVectorDiagnostics = z.infer<
+	typeof metadataCatalogAuditToolVectorDiagnostics
+>;
+export type MetadataCatalogAuditVectorRecallSummary = z.infer<
+	typeof metadataCatalogAuditVectorRecallSummary
+>;
+export type MetadataCatalogAuditToolEmbeddingContext = z.infer<
+	typeof metadataCatalogAuditToolEmbeddingContext
 >;
 export type MetadataCatalogAuditProbeItem = z.infer<typeof metadataCatalogAuditProbeItem>;
 export type MetadataCatalogAuditSummary = z.infer<typeof metadataCatalogAuditSummary>;

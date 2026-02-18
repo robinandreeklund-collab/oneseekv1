@@ -12,6 +12,8 @@ from langchain_core.tools import BaseTool
 from app.agents.new_chat.action_router import ActionRoute, dispatch_action_route
 from app.agents.new_chat.bigtool_store import (
     ToolIndexEntry,
+    get_tool_embedding_context_fields,
+    get_vector_recall_top_k,
     normalize_retrieval_tuning,
     smart_retrieve_tools_with_breakdown,
 )
@@ -1811,6 +1813,7 @@ async def _build_llm_suggestion(
     current: dict[str, Any],
     failures: list[dict[str, Any]],
     retrieval_tuning: dict[str, Any] | None = None,
+    retrieval_context: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str] | None:
     if llm is None:
         return None
@@ -1825,6 +1828,7 @@ async def _build_llm_suggestion(
         "Du optimerar verktygsmetadata för retrieval.\n"
         "Givet nuvarande metadata och misslyckade eval-fall ska du föreslå förbättrad metadata.\n"
         "Använd retrieval-vikter och score-breakdown från fallen när du prioriterar ändringar.\n"
+        "Om vector recall och embedding-context finns i underlaget ska de vägas in i motiveringen.\n"
         "Behåll kategori om det inte finns starka skäl att ändra.\n"
         "ALL text måste vara på svenska.\n"
         "Returnera strikt JSON:\n"
@@ -1842,6 +1846,7 @@ async def _build_llm_suggestion(
         "current_metadata": current,
         "failed_cases": failures,
         "retrieval_tuning": retrieval_tuning or {},
+        "retrieval_context": retrieval_context or {},
     }
     try:
         failure_questions = [
@@ -2635,9 +2640,16 @@ async def generate_tool_metadata_suggestions(
     tool_index: list[ToolIndexEntry],
     llm=None,
     retrieval_tuning: dict[str, Any] | None = None,
+    retrieval_context: dict[str, Any] | None = None,
     max_suggestions: int = 20,
 ) -> list[dict[str, Any]]:
     index_by_id = {entry.tool_id: entry for entry in tool_index}
+    effective_retrieval_context = dict(retrieval_context or {})
+    effective_retrieval_context.setdefault("vector_recall_top_k", get_vector_recall_top_k())
+    effective_retrieval_context.setdefault(
+        "tool_embedding_context_fields",
+        get_tool_embedding_context_fields(),
+    )
     grouped: dict[str, dict[str, Any]] = {}
 
     for result in evaluation_results:
@@ -2664,11 +2676,17 @@ async def generate_tool_metadata_suggestions(
             if isinstance(result.get("retrieval_breakdown"), list)
             else []
         )
+        tool_vector_diagnostics = (
+            dict(result.get("tool_vector_diagnostics"))
+            if isinstance(result.get("tool_vector_diagnostics"), dict)
+            else {}
+        )
         bucket["failures"].append(
             {
                 "question": question,
                 "selected_wrong_tool": wrong_tool if wrong_tool and wrong_tool != expected_tool else None,
                 "retrieval_breakdown": retrieval_breakdown[:5],
+                "tool_vector_diagnostics": tool_vector_diagnostics,
             }
         )
 
@@ -2687,6 +2705,7 @@ async def generate_tool_metadata_suggestions(
             current=current,
             failures=failures,
             retrieval_tuning=retrieval_tuning,
+            retrieval_context=effective_retrieval_context,
         )
         fallback_proposed, fallback_rationale = _build_fallback_suggestion(
             tool_id=tool_id,

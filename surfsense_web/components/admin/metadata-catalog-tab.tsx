@@ -604,6 +604,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				intent_score_breakdown: probe.intent.score_breakdown ?? [],
 				agent_score_breakdown: probe.agent.score_breakdown ?? [],
 				tool_score_breakdown: probe.tool.score_breakdown ?? [],
+				tool_vector_diagnostics: probe.tool_vector_diagnostics ?? null,
 			};
 		});
 		const reviewedFailures = annotations.filter(
@@ -968,6 +969,56 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										%
 									</Badge>
 								) : null}
+								<Badge variant="outline">
+									Vector candidates:{" "}
+									{auditResult.summary.vector_recall_summary.probes_with_vector_candidates}/
+									{auditResult.summary.total_probes} (
+									{(
+										auditResult.summary.vector_recall_summary
+											.share_probes_with_vector_candidates * 100
+									).toFixed(1)}
+									%)
+								</Badge>
+								<Badge variant="outline">
+									Top1 fran vector:{" "}
+									{auditResult.summary.vector_recall_summary.probes_with_top1_from_vector}/
+									{auditResult.summary.total_probes} (
+									{(
+										auditResult.summary.vector_recall_summary.share_top1_from_vector * 100
+									).toFixed(1)}
+									%)
+								</Badge>
+								<Badge variant="outline">
+									Expected i vector@
+									{auditResult.summary.vector_recall_summary.top_k}:{" "}
+									{
+										auditResult.summary.vector_recall_summary
+											.probes_with_expected_tool_in_vector_top_k
+									}
+									/{auditResult.summary.total_probes} (
+									{(
+										auditResult.summary.vector_recall_summary
+											.share_expected_tool_in_vector_top_k * 100
+									).toFixed(1)}
+									%)
+								</Badge>
+							</div>
+							<div className="rounded border p-3 space-y-2">
+								<p className="text-sm font-medium">Tool-aware embedding context</p>
+								<p className="text-xs text-muted-foreground">
+									{auditResult.summary.tool_embedding_context.description ??
+										"Embeddings använder tool-aware kontext för bättre disambiguering."}
+								</p>
+								<div className="flex flex-wrap gap-2">
+									<Badge variant="secondary">
+										Vector recall top-k: {auditResult.summary.vector_recall_summary.top_k}
+									</Badge>
+									{auditResult.summary.tool_embedding_context.context_fields.map((field) => (
+										<Badge key={`embedding-context-${field}`} variant="outline">
+											{field}
+										</Badge>
+									))}
+								</div>
 							</div>
 							<div className="grid gap-3 lg:grid-cols-2">
 								<div className="space-y-2">
@@ -1036,6 +1087,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										corrected_tool_id:
 											probe.tool.expected_label ?? probe.target_tool_id ?? null,
 									};
+									const vectorDiagnostics = probe.tool_vector_diagnostics;
 									return (
 										<div key={probe.probe_id} className="rounded border p-3 space-y-2">
 											<p className="text-sm font-medium">{probe.query}</p>
@@ -1161,6 +1213,22 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 														{probe.tool.margin != null
 															? probe.tool.margin.toFixed(2)
 															: "-"}
+													</p>
+													<p className="text-[11px] text-muted-foreground">
+														Vector top-{vectorDiagnostics.vector_top_k}:{" "}
+														{vectorDiagnostics.vector_selected_ids.length
+															? vectorDiagnostics.vector_selected_ids.join(", ")
+															: "-"}
+													</p>
+													<p className="text-[11px] text-muted-foreground">
+														Top1 via vector:{" "}
+														{vectorDiagnostics.predicted_tool_vector_selected
+															? `ja (rank ${vectorDiagnostics.predicted_tool_vector_rank ?? "-"})`
+															: "nej"}{" "}
+														· expected i vector:{" "}
+														{vectorDiagnostics.expected_tool_vector_selected
+															? `ja (rank ${vectorDiagnostics.expected_tool_vector_rank ?? "-"})`
+															: "nej"}
 													</p>
 													<label className="flex items-center gap-2 text-xs">
 														<input

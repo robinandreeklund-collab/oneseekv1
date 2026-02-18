@@ -3885,6 +3885,10 @@ async def generate_metadata_catalog_audit_suggestions(
         llm=llm,
         max_suggestions=max(1, min(int(payload.max_suggestions or 20), 100)),
         retrieval_tuning=retrieval_tuning,
+        retrieval_context={
+            "audit_mode": "metadata_catalog",
+            "pipeline": "intent->agent->tool",
+        },
     )
     intent_suggestions = await generate_intent_metadata_suggestions_from_annotations(
         intent_definitions=intent_definitions,
