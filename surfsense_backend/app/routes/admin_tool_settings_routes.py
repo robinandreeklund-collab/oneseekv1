@@ -319,6 +319,12 @@ def _category_name(category_id: str) -> str:
     aliases = {
         "weather": "Väder",
         "trafikverket_vader": "Väder",
+        "smhi_vaderprognoser": "SMHI Väderprognoser",
+        "smhi_vaderobservationer": "SMHI Väderobservationer",
+        "smhi_vaderanalyser": "SMHI Väderanalyser",
+        "smhi_hydrologi": "SMHI Hydrologi",
+        "smhi_oceanografi": "SMHI Oceanografi",
+        "smhi_brandrisk": "SMHI Brandrisk",
     }
     if normalized in aliases:
         return aliases[normalized]
@@ -491,7 +497,7 @@ def _provider_for_tool_id(tool_id: str) -> str:
         return "geoapify"
     if normalized.startswith("marketplace_"):
         return "marketplace"
-    if normalized.startswith("smhi_") or normalized == "smhi_weather":
+    if normalized.startswith("smhi_"):
         return "smhi"
     if normalized.startswith("trafiklab_") or normalized == "trafiklab_route":
         return "trafiklab"
@@ -511,11 +517,11 @@ def _provider_for_tool_id(tool_id: str) -> str:
 def _is_weather_domain_tool(tool_id: str, category: str | None = None) -> bool:
     normalized_tool = str(tool_id or "").strip().lower()
     normalized_category = str(category or "").strip().lower()
-    if normalized_tool == "smhi_weather":
+    if normalized_tool.startswith("smhi_"):
         return True
     if normalized_tool.startswith("trafikverket_vader_"):
         return True
-    if normalized_category in {"weather", "trafikverket_vader"}:
+    if normalized_category in {"weather", "trafikverket_vader"} or normalized_category.startswith("smhi_"):
         return True
     return False
 
@@ -1936,7 +1942,7 @@ def _select_generation_entries(
             filtered = [
                 entry
                 for entry in entries
-                if str(getattr(entry, "tool_id", "")).strip().lower() == "smhi_weather"
+                if str(getattr(entry, "tool_id", "")).strip().lower().startswith("smhi_")
             ]
             if filtered:
                 return filtered

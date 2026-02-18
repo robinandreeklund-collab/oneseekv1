@@ -48,7 +48,7 @@ import { JobAdLinksToolUI } from "@/components/tool-ui/jobad-links";
 import { LinkPreviewToolUI } from "@/components/tool-ui/link-preview";
 import { LibrisSearchToolUI } from "@/components/tool-ui/libris-search";
 import { ScrapeWebpageToolUI } from "@/components/tool-ui/scrape-webpage";
-import { SmhiWeatherToolUI } from "@/components/tool-ui/smhi-weather";
+import { SmhiMetfcstToolUI, SmhiWeatherToolUI } from "@/components/tool-ui/smhi-weather";
 import { TrafiklabRouteToolUI } from "@/components/tool-ui/trafiklab-route";
 import { RecallMemoryToolUI, SaveMemoryToolUI } from "@/components/tool-ui/user-memory";
 import {
@@ -254,6 +254,7 @@ const TOOLS_WITH_UI = new Set([
 	"geoapify_static_map",
 	"scrape_webpage",
 	"smhi_weather",
+	"smhi_vaderprognoser_metfcst",
 	"trafiklab_route",
 	"libris_search",
 	"jobad_links_search",
@@ -2158,6 +2159,7 @@ export default function NewChatPage() {
 			<GeoapifyStaticMapToolUI />
 			<ScrapeWebpageToolUI />
 			<SmhiWeatherToolUI />
+			<SmhiMetfcstToolUI />
 			<TrafiklabRouteToolUI />
 			<LibrisSearchToolUI />
 			<JobAdLinksToolUI />

@@ -12,7 +12,7 @@ Available tools:
 - display_image: Display images in chat
 - geoapify_static_map: Generate static map images via Geoapify
 - scrape_webpage: Extract content from webpages
-- smhi_weather: Fetch weather data from SMHI
+- smhi_weather / smhi_*: Fetch categorized weather and hydro data from SMHI
 - trafiklab_route: Find departures using Trafiklab realtime APIs
 - libris_search: Search the Libris XL catalog
 - jobad_links_search: Search job ads via Arbetsformedlingen
@@ -58,7 +58,7 @@ from .registry import (
 )
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
-from .smhi_weather import create_smhi_weather_tool
+from .smhi import create_smhi_weather_tool
 from .trafiklab_route import create_trafiklab_route_tool
 from .user_memory import create_recall_memory_tool, create_save_memory_tool
 

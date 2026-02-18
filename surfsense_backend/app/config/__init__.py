@@ -193,6 +193,10 @@ class Config:
         "ANON_CHAT_ENABLED_TOOLS",
         (
             "link_preview,display_image,scrape_webpage,search_web,smhi_weather,"
+            "smhi_vaderprognoser_metfcst,smhi_vaderprognoser_snow1g,"
+            "smhi_vaderanalyser_mesan2g,smhi_vaderobservationer_metobs,"
+            "smhi_hydrologi_hydroobs,smhi_hydrologi_pthbv,smhi_oceanografi_ocobs,"
+            "smhi_brandrisk_fwif,smhi_brandrisk_fwia,"
             "trafiklab_route,libris_search,jobad_links_search"
         ),
     )

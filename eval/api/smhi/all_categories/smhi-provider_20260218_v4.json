@@ -1,0 +1,208 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "smhi-provider-categories-v4",
+  "tests": [
+    {
+      "id": "smhi-metfcst-1",
+      "question": "Ge mig SMHI väderprognos för Uppsala kommande 24 timmar.",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_vaderprognoser_metfcst",
+        "category": "smhi_vaderprognoser",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_vaderprognoser_metfcst"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_vaderprognoser_metfcst",
+        "smhi_weather"
+      ]
+    },
+    {
+      "id": "smhi-snow1g-1",
+      "question": "Hur mycket snö väntas enligt SMHI i Östersund i helgen?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_vaderprognoser_snow1g",
+        "category": "smhi_vaderprognoser",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_vaderprognoser_snow1g"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_vaderprognoser_snow1g"
+      ]
+    },
+    {
+      "id": "smhi-mesan-1",
+      "question": "Visa SMHI väderanalys (MESAN) för Malmö senaste dygnet.",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_vaderanalyser_mesan2g",
+        "category": "smhi_vaderanalyser",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_vaderanalyser_mesan2g"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_vaderanalyser_mesan2g"
+      ]
+    },
+    {
+      "id": "smhi-metobs-1",
+      "question": "Hämta senaste SMHI väderobservationer för temperatur vid närmaste station i Göteborg.",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_vaderobservationer_metobs",
+        "category": "smhi_vaderobservationer",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_vaderobservationer_metobs"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_vaderobservationer_metobs"
+      ]
+    },
+    {
+      "id": "smhi-hydroobs-1",
+      "question": "Visa hydrologiska observationer från SMHI för vattenstånd i närmaste station vid Vänern.",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_hydrologi_hydroobs",
+        "category": "smhi_hydrologi",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_hydrologi_hydroobs"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_hydrologi_hydroobs"
+      ]
+    },
+    {
+      "id": "smhi-pthbv-1",
+      "question": "Gör en SMHI PTHBV-analys av nederbörd och temperatur för en punkt i Dalarna 2020 till 2025.",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_hydrologi_pthbv",
+        "category": "smhi_hydrologi",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_hydrologi_pthbv"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_hydrologi_pthbv"
+      ]
+    },
+    {
+      "id": "smhi-ocobs-1",
+      "question": "Hämta oceanografiska SMHI-observationer för havsvattenstånd vid närmaste kuststation i Bohuslän.",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_oceanografi_ocobs",
+        "category": "smhi_oceanografi",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_oceanografi_ocobs"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_oceanografi_ocobs"
+      ]
+    },
+    {
+      "id": "smhi-fwif-1",
+      "question": "Visa SMHI brandriskprognos (FWIF) för ett skogsområde nära Umea.",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "smhi_brandrisk_fwif",
+        "category": "smhi_brandrisk",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_brandrisk_fwif"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_brandrisk_fwif"
+      ]
+    },
+    {
+      "id": "smhi-fwia-1",
+      "question": "Visa SMHI brandriskanalys (FWIA) för samma område de senaste dygnen.",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "smhi_brandrisk_fwia",
+        "category": "smhi_brandrisk",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_brandrisk_fwia"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_brandrisk_fwia"
+      ]
+    },
+    {
+      "id": "smhi-legacy-1",
+      "question": "Vad blir vädret i Stockholm ikväll enligt SMHI?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "smhi_weather",
+        "category": "smhi_vaderprognoser",
+        "intent": "weather",
+        "route": "weather",
+        "agent": "weather",
+        "plan_requirements": [
+          "route:weather",
+          "agent:weather",
+          "tool:smhi_weather"
+        ]
+      },
+      "allowed_tools": [
+        "smhi_weather",
+        "smhi_vaderprognoser_metfcst"
+      ]
+    }
+  ]
+}

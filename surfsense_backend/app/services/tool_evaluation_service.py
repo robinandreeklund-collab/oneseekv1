@@ -549,11 +549,11 @@ def _normalize_agent_name(value: Any) -> str | None:
 def _is_weather_domain_tool(tool_id: str | None, category: str | None = None) -> bool:
     tool = str(tool_id or "").strip().lower()
     cat = str(category or "").strip().lower()
-    if tool == "smhi_weather":
+    if tool.startswith("smhi_"):
         return True
     if tool.startswith("trafikverket_vader_"):
         return True
-    if cat in {"weather", "trafikverket_vader"}:
+    if cat in {"weather", "trafikverket_vader"} or cat.startswith("smhi_"):
         return True
     return False
 
@@ -1109,7 +1109,7 @@ def _route_requirement_matches(
         if expected == "weather":
             return (
                 selected_agent == "weather"
-                or selected_tool == "smhi_weather"
+                or selected_tool.startswith("smhi_")
                 or selected_tool.startswith("trafikverket_vader_")
             )
         return True
@@ -3210,7 +3210,7 @@ def _prompt_key_for_tool(tool_id: str | None, category: str | None = None) -> st
         return "agent.kartor.system"
     if tool_id.startswith("marketplace_"):
         return "agent.marketplace.system"
-    if tool_id in {"trafiklab_route", "smhi_weather"}:
+    if tool_id == "trafiklab_route" or tool_id.startswith("smhi_"):
         return "agent.action.travel"
     if tool_id in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
         return "agent.action.web"

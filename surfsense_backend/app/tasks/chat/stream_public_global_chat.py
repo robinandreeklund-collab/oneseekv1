@@ -129,7 +129,7 @@ async def stream_public_global_chat(
                     )
                     title = "Analyzing the image"
                     items = [f"Image: {truncate(str(src), 100)}"]
-                elif tool_name == "smhi_weather":
+                elif tool_name.startswith("smhi_"):
                     location = ""
                     if isinstance(tool_input, dict):
                         location = tool_input.get("location") or ""
@@ -139,7 +139,7 @@ async def stream_public_global_chat(
                             location = f"{lat}, {lon}"
                     else:
                         location = str(tool_input)
-                    title = "Fetching weather (SMHI)"
+                    title = "Fetching SMHI data"
                     items = [f"Location: {truncate(str(location), 100)}"]
                 elif tool_name == "trafiklab_route":
                     origin = ""

@@ -97,6 +97,7 @@ from app.agents.new_chat.statistics_prompts import build_statistics_system_promp
 from app.agents.new_chat.system_prompt import append_datetime_context
 from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
@@ -532,7 +533,7 @@ def _is_weather_tool_id(tool_id: str) -> bool:
     normalized = str(tool_id or "").strip().lower()
     if not normalized:
         return False
-    if normalized == "smhi_weather":
+    if normalized.startswith("smhi_"):
         return True
     if normalized.startswith("trafikverket_vader_"):
         return True
@@ -2933,7 +2934,7 @@ def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
             parts.append(f"entries={len(entries)}")
         return _truncate_for_prompt("; ".join(parts))
 
-    if name == "smhi_weather":
+    if name.startswith("smhi_"):
         location = payload.get("location") or {}
         location_name = ""
         if isinstance(location, dict):
@@ -2947,6 +2948,8 @@ def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
             if temperature is not None:
                 parts.append(f"temperature_c={temperature}")
             wind = summary.get("wind_speed_mps")
+            if wind is None:
+                wind = summary.get("wind_speed_m_s")
             if wind is not None:
                 parts.append(f"wind_mps={wind}")
         return _truncate_for_prompt("; ".join(parts))
@@ -3842,7 +3845,7 @@ async def create_supervisor_agent(
             success=bool(success),
         )
 
-    weather_tool_ids = ["smhi_weather"]
+    weather_tool_ids = [definition.tool_id for definition in SMHI_TOOL_DEFINITIONS]
     weather_tool_ids.extend(
         definition.tool_id
         for definition in TRAFIKVERKET_TOOL_DEFINITIONS

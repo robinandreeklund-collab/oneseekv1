@@ -80,7 +80,8 @@ ACTION_MEDIA_INSTRUCTIONS = (
     f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )
 ACTION_TRAVEL_INSTRUCTIONS = (
-    "The user needs travel or weather info. Use smhi_weather for weather "
+    "The user needs travel or weather info. Use smhi_weather/smhi_* for weather, "
+    "hydrology and ocean observations, "
     "and trafiklab_route for public transport. Ask for missing details. "
     f"{PLANNING_REFLECTION_INSTRUCTIONS}"
 )

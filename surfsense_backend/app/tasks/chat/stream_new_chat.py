@@ -2676,7 +2676,7 @@ async def stream_new_chat(
                         status="in_progress",
                         items=last_active_step_items,
                     )
-                elif tool_name == "smhi_weather":
+                elif tool_name.startswith("smhi_"):
                     location = ""
                     if isinstance(tool_input, dict):
                         location = tool_input.get("location") or ""
@@ -2687,7 +2687,7 @@ async def stream_new_chat(
                     else:
                         location = str(tool_input)
                     last_active_step_title = format_step_title(
-                        "Fetching weather (SMHI)"
+                        "Fetching SMHI data"
                     )
                     last_active_step_items = [
                         f"Location: {location[:80]}{'...' if len(location) > 80 else ''}"
@@ -3041,21 +3041,25 @@ async def stream_new_chat(
                             },
                         )
 
-                if tool_name in {"smhi_weather", "trafiklab_route"}:
+                if tool_name.startswith("smhi_") or tool_name == "trafiklab_route":
                     try:
                         tool_title = None
                         tool_metadata: dict[str, object] = {}
                         if isinstance(tool_output, dict):
-                            if tool_name == "smhi_weather":
+                            if tool_name.startswith("smhi_"):
                                 location = tool_output.get("location", {}) or {}
                                 location_name = (
                                     location.get("name")
                                     or location.get("display_name")
                                     or "location"
                                 )
-                                tool_title = f"SMHI weather: {location_name}"
+                                category = str(tool_output.get("category") or "").strip()
+                                category_label = category.replace("_", " ") if category else "data"
+                                tool_title = f"SMHI {category_label}: {location_name}"
                                 tool_metadata = {
                                     "provider": "SMHI",
+                                    "tool_id": tool_name,
+                                    "category": category,
                                     "location": location,
                                     "source": tool_output.get("source", {}),
                                 }
@@ -3290,7 +3294,7 @@ async def stream_new_chat(
                         status="completed",
                         items=completed_items,
                     )
-                elif tool_name == "smhi_weather":
+                elif tool_name.startswith("smhi_"):
                     if isinstance(tool_output, dict):
                         location = tool_output.get("location", {}) or {}
                         location_name = (
@@ -3303,13 +3307,17 @@ async def stream_new_chat(
                         )
                         temperature = summary.get("temperature_c")
                         completed_items = [*last_active_step_items]
+                        if location_name:
+                            completed_items.append(
+                                f"Location: {location_name[:60]}{'...' if len(location_name) > 60 else ''}"
+                            )
                         if temperature is not None:
                             completed_items.append(f"Temperature: {temperature} C")
                     else:
-                        completed_items = [*last_active_step_items, "Weather data retrieved"]
+                        completed_items = [*last_active_step_items, "SMHI data retrieved"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Fetching weather (SMHI)"),
+                        title=format_step_title("Fetching SMHI data"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3664,7 +3672,7 @@ async def stream_new_chat(
                             f"Scrape failed: {error_msg}",
                             "error",
                         )
-                elif tool_name == "smhi_weather":
+                elif tool_name.startswith("smhi_"):
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
                         tool_output if isinstance(tool_output, dict) else {"result": tool_output},
@@ -3677,17 +3685,17 @@ async def stream_new_chat(
                             or "location"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Weather data loaded for {location_name[:40]}",
+                            f"SMHI data loaded for {location_name[:40]}",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Failed to fetch weather")
+                            tool_output.get("error", "Failed to fetch SMHI data")
                             if isinstance(tool_output, dict)
-                            else "Failed to fetch weather"
+                            else "Failed to fetch SMHI data"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Weather lookup failed: {error_msg}",
+                            f"SMHI lookup failed: {error_msg}",
                             "error",
                         )
                 elif tool_name == "trafiklab_route":

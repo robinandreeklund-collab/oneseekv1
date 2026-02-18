@@ -26,6 +26,7 @@ from app.agents.new_chat.marketplace_tools import (
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.services.reranker_service import RerankerService
 from app.services.cache_control import is_cache_disabled
@@ -256,6 +257,94 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "smhi",
         "temperatur",
     ],
+    "smhi_vaderprognoser_metfcst": [
+        "smhi",
+        "weather",
+        "vader",
+        "prognos",
+        "metfcst",
+        "pmp3g",
+        "temperatur",
+        "vind",
+        "nederbord",
+        "nederbörd",
+    ],
+    "smhi_vaderprognoser_snow1g": [
+        "smhi",
+        "weather",
+        "vader",
+        "snow",
+        "snö",
+        "sno",
+        "snow1g",
+        "snodjup",
+        "snödjup",
+    ],
+    "smhi_vaderanalyser_mesan2g": [
+        "smhi",
+        "weather",
+        "analys",
+        "mesan",
+        "mesan2g",
+        "metanalys",
+        "vind",
+        "moln",
+    ],
+    "smhi_vaderobservationer_metobs": [
+        "smhi",
+        "weather",
+        "observation",
+        "station",
+        "metobs",
+        "temperatur",
+        "lufttryck",
+    ],
+    "smhi_hydrologi_hydroobs": [
+        "smhi",
+        "hydrologi",
+        "hydroobs",
+        "vattenstånd",
+        "vattenstand",
+        "vattenforing",
+        "vattenföring",
+    ],
+    "smhi_hydrologi_pthbv": [
+        "smhi",
+        "hydrologi",
+        "pthbv",
+        "nederbord",
+        "nederbörd",
+        "temperatur",
+        "analys",
+    ],
+    "smhi_oceanografi_ocobs": [
+        "smhi",
+        "oceanografi",
+        "ocobs",
+        "hav",
+        "våghöjd",
+        "vaghojd",
+        "havsniva",
+        "havsnivå",
+    ],
+    "smhi_brandrisk_fwif": [
+        "smhi",
+        "brandrisk",
+        "fwif",
+        "fwi",
+        "isi",
+        "ffmc",
+        "prognos",
+    ],
+    "smhi_brandrisk_fwia": [
+        "smhi",
+        "brandrisk",
+        "fwia",
+        "fwi",
+        "isi",
+        "ffmc",
+        "analys",
+    ],
     "trafiklab_route": [
         "trafik",
         "resa",
@@ -441,7 +530,7 @@ def _is_weather_tool(tool_id: str) -> bool:
     normalized = str(tool_id or "").strip().lower()
     if not normalized:
         return False
-    if normalized == "smhi_weather":
+    if normalized.startswith("smhi_"):
         return True
     if normalized.startswith("trafikverket_vader_"):
         return True
@@ -450,7 +539,7 @@ def _is_weather_tool(tool_id: str) -> bool:
 
 def _namespace_for_weather_tool(tool_id: str) -> tuple[str, ...]:
     normalized = str(tool_id or "").strip().lower()
-    if normalized == "smhi_weather":
+    if normalized.startswith("smhi_"):
         return ("tools", "weather", "smhi")
     if normalized.startswith("trafikverket_vader_"):
         return ("tools", "weather", "trafikverket_vader")
@@ -1254,6 +1343,7 @@ def build_tool_index(
     trafikverket_by_id = {
         definition.tool_id: definition for definition in TRAFIKVERKET_TOOL_DEFINITIONS
     }
+    smhi_by_id = {definition.tool_id: definition for definition in SMHI_TOOL_DEFINITIONS}
     geoapify_by_id = {
         definition.tool_id: definition for definition in GEOAPIFY_TOOL_DEFINITIONS
     }
@@ -1310,6 +1400,13 @@ def build_tool_index(
             example_queries = list(definition.example_queries)
             category = definition.category
             base_path = definition.base_path
+        if tool_id in smhi_by_id:
+            definition = smhi_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = definition.category
+            base_path = definition.base_path
         if tool_id in geoapify_by_id:
             definition = geoapify_by_id[tool_id]
             description = definition.description
@@ -1331,7 +1428,7 @@ def build_tool_index(
             example_queries = list(definition.example_queries)
             category = definition.category
             base_path = None  # Marketplace tools don't use base_path
-        if _is_weather_tool(tool_id):
+        if _is_weather_tool(tool_id) and not tool_id.startswith("smhi_"):
             # Keep weather tools grouped together across providers.
             category = "weather"
         if metadata_overrides and tool_id in metadata_overrides:
