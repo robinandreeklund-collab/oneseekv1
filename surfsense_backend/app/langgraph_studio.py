@@ -209,7 +209,8 @@ def _build_studio_prompt_field_specs() -> tuple[dict[str, tuple[str, str]], dict
     config_fields: dict[str, tuple[str, str]] = {}
     model_fields: dict[str, Any] = {}
     used_field_names: set[str] = set()
-    prompt_definitions = get_prompt_definitions(active_only=False)
+    # Keep Studio/LangSmith prompt exposure aligned with the active OneSeek template.
+    prompt_definitions = get_prompt_definitions(active_only=True)
     for definition in prompt_definitions:
         if definition.node_group not in _GRAPH_RELEVANT_PROMPT_GROUPS:
             continue

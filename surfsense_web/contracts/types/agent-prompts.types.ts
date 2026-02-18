@@ -1,9 +1,18 @@
 import { z } from "zod";
 
 export const knownAgentPromptKeys = [
+	"system.default.instructions",
+	"citation.instructions",
 	"router.top_level",
 	"agent.smalltalk.system",
 	"agent.supervisor.system",
+	"compare.supervisor.instructions",
+	"supervisor.intent_resolver.system",
+	"supervisor.agent_resolver.system",
+	"supervisor.planner.system",
+	"supervisor.tool_resolver.system",
+	"supervisor.critic_gate.system",
+	"supervisor.synthesizer.system",
 	"supervisor.critic.system",
 	"supervisor.loop_guard.message",
 	"supervisor.tool_limit_guard.message",
@@ -13,12 +22,6 @@ export const knownAgentPromptKeys = [
 	"supervisor.scoped_tool_prompt.template",
 	"supervisor.tool_default_prompt.template",
 	"supervisor.subagent.context.template",
-	"supervisor.intent_resolver.system",
-	"supervisor.agent_resolver.system",
-	"supervisor.planner.system",
-	"supervisor.tool_resolver.system",
-	"supervisor.critic_gate.system",
-	"supervisor.synthesizer.system",
 	"supervisor.hitl.planner.message",
 	"supervisor.hitl.execution.message",
 	"supervisor.hitl.synthesis.message",
@@ -37,10 +40,7 @@ export const knownAgentPromptKeys = [
 	"agent.riksdagen.system",
 	"agent.marketplace.system",
 	"compare.analysis.system",
-	"compare.supervisor.instructions",
 	"compare.external.system",
-	"system.default.instructions",
-	"citation.instructions",
 ] as const;
 
 /**

@@ -74,8 +74,8 @@ const AGENT_ORDER = [
 ];
 
 const AGENT_PROMPT_ORDER: Record<string, string[]> = {
-	knowledge: ["system", "docs", "internal", "external"],
-	action: ["system", "web", "media", "travel", "data"],
+	knowledge: ["system"],
+	action: ["system"],
 };
 
 const SYSTEM_SECTION_ORDER = [
@@ -102,6 +102,12 @@ const ROUTER_NODES = [{ label: "Top-level router", key: "router.top_level" }];
 const SYSTEM_NODES = [
 	{ label: "Core system prompt", key: "system.default.instructions" },
 	{ label: "Supervisor", key: "agent.supervisor.system" },
+	{ label: "Supervisor · Intent resolver", key: "supervisor.intent_resolver.system" },
+	{ label: "Supervisor · Agent resolver", key: "supervisor.agent_resolver.system" },
+	{ label: "Supervisor · Planner", key: "supervisor.planner.system" },
+	{ label: "Supervisor · Tool resolver", key: "supervisor.tool_resolver.system" },
+	{ label: "Supervisor · Critic gate", key: "supervisor.critic_gate.system" },
+	{ label: "Supervisor · Synthesizer", key: "supervisor.synthesizer.system" },
 	{ label: "Supervisor · Critic", key: "supervisor.critic.system" },
 	{ label: "Supervisor · Loop guard", key: "supervisor.loop_guard.message" },
 	{ label: "Supervisor · Tool-limit guard", key: "supervisor.tool_limit_guard.message" },
@@ -125,6 +131,18 @@ const SYSTEM_NODES = [
 		label: "Supervisor · Subagent context template",
 		key: "supervisor.subagent.context.template",
 	},
+	{
+		label: "Supervisor · HITL planner message",
+		key: "supervisor.hitl.planner.message",
+	},
+	{
+		label: "Supervisor · HITL execution message",
+		key: "supervisor.hitl.execution.message",
+	},
+	{
+		label: "Supervisor · HITL synthesis message",
+		key: "supervisor.hitl.synthesis.message",
+	},
 	{ label: "Worker · Knowledge", key: "agent.worker.knowledge" },
 	{ label: "Worker · Action", key: "agent.worker.action" },
 	{ label: "Compare · Analysis", key: "compare.analysis.system" },
@@ -137,23 +155,12 @@ const AGENT_NODES = [
 	{
 		label: "Knowledge",
 		agent: "knowledge",
-		keys: [
-			"agent.knowledge.system",
-			"agent.knowledge.docs",
-			"agent.knowledge.internal",
-			"agent.knowledge.external",
-		],
+		keys: ["agent.knowledge.system"],
 	},
 	{
 		label: "Action",
 		agent: "action",
-		keys: [
-			"agent.action.system",
-			"agent.action.web",
-			"agent.action.media",
-			"agent.action.travel",
-			"agent.action.data",
-		],
+		keys: ["agent.action.system"],
 	},
 	{ label: "Media", agent: "media", keys: ["agent.media.system"] },
 	{ label: "Browser", agent: "browser", keys: ["agent.browser.system"] },
