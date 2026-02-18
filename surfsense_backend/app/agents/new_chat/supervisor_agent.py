@@ -65,6 +65,7 @@ from app.agents.new_chat.sandbox_runtime import sandbox_write_text_file
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.response_compressor import compress_response
+from app.agents.new_chat.subagent_utils import SMALLTALK_INSTRUCTIONS
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
@@ -3195,6 +3196,11 @@ async def create_supervisor_agent(
         prompt_overrides,
         "supervisor.hitl.synthesis.message",
         DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
+    )
+    smalltalk_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "agent.smalltalk.system",
+        SMALLTALK_INSTRUCTIONS,
     )
     worker_configs: dict[str, WorkerConfig] = {
         "knowledge": WorkerConfig(
@@ -6489,6 +6495,55 @@ async def create_supervisor_agent(
             return {"cross_session_memory_context": None}
         return {"cross_session_memory_context": rendered}
 
+    async def smalltalk_node(
+        state: SupervisorState,
+        config: RunnableConfig | None = None,
+        *,
+        store=None,
+        **kwargs,
+    ) -> SupervisorState:
+        latest_user_query = _latest_user_query(state.get("messages") or [])
+        if not latest_user_query:
+            fallback = "Hej! Hur kan jag hjalpa dig idag?"
+            return {
+                "messages": [AIMessage(content=fallback)],
+                "final_agent_response": fallback,
+                "final_response": fallback,
+                "final_agent_name": "smalltalk",
+                "critic_decision": "ok",
+                "plan_complete": True,
+                "orchestration_phase": "finalize",
+            }
+
+        prompt = append_datetime_context(str(smalltalk_prompt_template or "").strip())
+        if not prompt:
+            prompt = append_datetime_context(SMALLTALK_INSTRUCTIONS)
+        response_text = ""
+        try:
+            message = await llm.ainvoke(
+                [
+                    SystemMessage(content=prompt),
+                    HumanMessage(content=latest_user_query),
+                ],
+                max_tokens=180,
+            )
+            response_text = _strip_critic_json(
+                str(getattr(message, "content", "") or "")
+            ).strip()
+        except Exception:
+            response_text = ""
+        if not response_text:
+            response_text = "Hej! Jag ar OneSeek. Hur kan jag hjalpa dig idag?"
+        return {
+            "messages": [AIMessage(content=response_text)],
+            "final_agent_response": response_text,
+            "final_response": response_text,
+            "final_agent_name": "smalltalk",
+            "critic_decision": "ok",
+            "plan_complete": True,
+            "orchestration_phase": "finalize",
+        }
+
     async def post_tools(
         state: SupervisorState,
         config: RunnableConfig | None = None,
@@ -7117,6 +7172,13 @@ async def create_supervisor_agent(
                 return "execution_hitl_gate"
             if stage == "synthesis":
                 return "synthesis_hitl"
+        resolved_intent = state.get("resolved_intent") or {}
+        resolved_route = _normalize_route_hint_value(
+            (resolved_intent.get("route") if isinstance(resolved_intent, dict) else None)
+            or state.get("route_hint")
+        )
+        if resolved_route == "smalltalk":
+            return "smalltalk"
         phase = str(state.get("orchestration_phase") or "").strip().lower()
         has_final = bool(
             str(state.get("final_response") or state.get("final_agent_response") or "").strip()
@@ -7231,6 +7293,7 @@ async def create_supervisor_agent(
         if hybrid_mode and not compare_mode and speculative_enabled:
             graph_builder.add_node("speculative", RunnableCallable(None, speculative_node))
         graph_builder.add_node("memory_context", RunnableCallable(None, memory_context_node))
+        graph_builder.add_node("smalltalk", RunnableCallable(None, smalltalk_node))
         graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
         graph_builder.add_node("planner", RunnableCallable(None, planner_node))
         graph_builder.add_node(
@@ -7283,6 +7346,7 @@ async def create_supervisor_agent(
         graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
         graph_builder.set_entry_point("resolve_intent")
         resolve_intent_paths = [
+            "smalltalk",
             "agent_resolver",
             "planner",
             "planner_hitl_gate",
@@ -7298,6 +7362,7 @@ async def create_supervisor_agent(
             route_after_intent,
             path_map=resolve_intent_paths,
         )
+        graph_builder.add_edge("smalltalk", END)
         if hybrid_mode and not compare_mode and speculative_enabled:
             graph_builder.add_edge("speculative", "agent_resolver")
         graph_builder.add_edge("agent_resolver", "planner")

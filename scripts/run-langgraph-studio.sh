@@ -68,6 +68,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
+# Load local .env values for Studio defaults (e.g. STUDIO_RECURSION_LIMIT)
+# without requiring manual `export`.
+if [[ -f "${REPO_ROOT}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT}/.env"
+  set +a
+elif [[ -f "${REPO_ROOT}/surfsense_backend/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT}/surfsense_backend/.env"
+  set +a
+fi
+
 VENV_DIR="${REPO_ROOT}/.venv"
 VENV_PYTHON="${VENV_DIR}/bin/python"
 LANGGRAPH_EXE="${VENV_DIR}/bin/langgraph"
@@ -121,6 +135,9 @@ fi
 
 echo "Starting LangGraph Studio on http://${HOST}:${PORT} ..."
 echo "Recommended Studio URL: https://smith.langchain.com/studio/?baseUrl=http://localhost:${PORT}"
+if [[ -n "${STUDIO_RECURSION_LIMIT:-}" ]]; then
+  echo "STUDIO_RECURSION_LIMIT=${STUDIO_RECURSION_LIMIT}"
+fi
 if [[ "${HOST}" == "0.0.0.0" ]]; then
   echo "Tip: In browser, always use baseUrl=http://localhost:${PORT} (not 0.0.0.0)." >&2
 fi
