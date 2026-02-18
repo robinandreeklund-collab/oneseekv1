@@ -642,6 +642,73 @@ def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -
     return [profile.tool_id for profile in focused if profile.tool_id]
 
 
+def _worker_available_tool_ids(worker: Any) -> list[str]:
+    raw_ids = getattr(worker, "available_tool_ids", None)
+    if not isinstance(raw_ids, (list, tuple, set)):
+        return []
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for tool_id in raw_ids:
+        normalized = str(tool_id or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+def _normalize_tool_id_list(
+    tool_ids: list[str] | tuple[str, ...] | set[str] | None,
+    *,
+    limit: int = 8,
+) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for tool_id in list(tool_ids or []):
+        normalized = str(tool_id or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+        if len(ordered) >= max(1, int(limit)):
+            break
+    return ordered
+
+
+def _fallback_tool_ids_for_tool(tool_id: str) -> list[str]:
+    normalized = str(tool_id or "").strip().lower()
+    if normalized.startswith("smhi_") and normalized != "smhi_weather":
+        return ["smhi_weather"]
+    return []
+
+
+def _sanitize_selected_tool_ids_for_worker(
+    worker: Any,
+    selected_tool_ids: list[str],
+    *,
+    fallback_tool_ids: list[str] | None = None,
+    limit: int = 8,
+) -> list[str]:
+    normalized_selected = _normalize_tool_id_list(selected_tool_ids, limit=limit)
+    available_ids = _worker_available_tool_ids(worker)
+    if not available_ids:
+        return normalized_selected
+
+    available_set = set(available_ids)
+    filtered = [tool_id for tool_id in normalized_selected if tool_id in available_set]
+    if filtered:
+        return filtered[: max(1, int(limit))]
+
+    fallback_candidates = _normalize_tool_id_list(fallback_tool_ids, limit=limit)
+    fallback_filtered = [
+        tool_id for tool_id in fallback_candidates if tool_id in available_set
+    ]
+    if fallback_filtered:
+        return fallback_filtered[: max(1, int(limit))]
+
+    return []
+
+
 def _format_prompt_template(
     template: str,
     variables: dict[str, Any],
@@ -3963,6 +4030,20 @@ async def create_supervisor_agent(
                 "tool_id": tool_id,
                 "agent": selected_agent_name,
             }
+        selected_tool_ids_for_worker = _sanitize_selected_tool_ids_for_worker(
+            worker,
+            [tool_id],
+            fallback_tool_ids=_fallback_tool_ids_for_tool(tool_id),
+            limit=1,
+        )
+        if not selected_tool_ids_for_worker:
+            return {
+                "status": "failed",
+                "reason": "tool_unavailable",
+                "tool_id": tool_id,
+                "agent": selected_agent_name,
+                "probability": probability,
+            }
 
         cached_payload = episodic_store.get(tool_id=tool_id, query=latest_user_query)
         if isinstance(cached_payload, dict):
@@ -4030,7 +4111,10 @@ async def create_supervisor_agent(
         if prompt:
             worker_messages.append(SystemMessage(content=prompt))
         worker_messages.append(HumanMessage(content=latest_user_query))
-        worker_state = {"messages": worker_messages, "selected_tool_ids": [tool_id]}
+        worker_state = {
+            "messages": worker_messages,
+            "selected_tool_ids": selected_tool_ids_for_worker,
+        }
         turn_key = _current_turn_key(state)
         base_thread_id = str(dependencies.get("thread_id") or "thread")
         worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
@@ -5203,6 +5287,17 @@ async def create_supervisor_agent(
             task=task,
             limit=8,
         )
+        fallback_tool_ids: list[str] = []
+        if name == "weather":
+            fallback_tool_ids = list(weather_tool_ids)
+        elif name == "trafik":
+            fallback_tool_ids = list(trafik_tool_ids)
+        selected_tool_ids = _sanitize_selected_tool_ids_for_worker(
+            worker,
+            selected_tool_ids,
+            fallback_tool_ids=fallback_tool_ids,
+            limit=8,
+        )
         filesystem_sandbox_task = _is_filesystem_sandbox_task(name, task)
         explicit_file_read_requested = (
             filesystem_sandbox_task
@@ -5930,6 +6025,17 @@ async def create_supervisor_agent(
                     selected_tool_ids,
                     agent_name=agent_name,
                     task=task,
+                    limit=8,
+                )
+                fallback_tool_ids: list[str] = []
+                if agent_name == "weather":
+                    fallback_tool_ids = list(weather_tool_ids)
+                elif agent_name == "trafik":
+                    fallback_tool_ids = list(trafik_tool_ids)
+                selected_tool_ids = _sanitize_selected_tool_ids_for_worker(
+                    worker,
+                    selected_tool_ids,
+                    fallback_tool_ids=fallback_tool_ids,
                     limit=8,
                 )
                 filesystem_sandbox_task = _is_filesystem_sandbox_task(
