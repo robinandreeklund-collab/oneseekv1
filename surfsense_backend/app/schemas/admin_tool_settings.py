@@ -738,6 +738,7 @@ class MetadataCatalogAuditRunRequest(BaseModel):
     include_llm_generated: bool = True
     llm_queries_per_tool: int = 3
     max_queries_per_tool: int = 6
+    hard_negatives_per_tool: int = 1
     retrieval_limit: int = 5
     max_tools: int = 25
 

@@ -339,6 +339,7 @@ export const metadataCatalogAuditRunRequest = z.object({
 	include_llm_generated: z.boolean().optional().default(true),
 	llm_queries_per_tool: z.number().int().optional().default(3),
 	max_queries_per_tool: z.number().int().optional().default(6),
+	hard_negatives_per_tool: z.number().int().optional().default(1),
 	retrieval_limit: z.number().int().optional().default(5),
 	max_tools: z.number().int().optional().default(25),
 });

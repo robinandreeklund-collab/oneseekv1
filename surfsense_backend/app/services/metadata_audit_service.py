@@ -294,11 +294,28 @@ def _fallback_probe_queries(
     entry: ToolIndexEntry,
     neighbors: list[str],
     query_count: int,
+    hard_negatives_per_tool: int = 1,
 ) -> list[str]:
+    hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
     hints = list(entry.keywords[: max(2, query_count * 2)])
     if not hints:
         hints = _tokenize(entry.description)[: max(2, query_count * 2)]
     prompts: list[str] = []
+    if neighbors and hard_negative_count > 0:
+        for idx in range(hard_negative_count):
+            neighbor_id = neighbors[idx % len(neighbors)]
+            if not neighbor_id:
+                continue
+            if idx % 2 == 0:
+                prompts.append(
+                    f"Nar ar {entry.name} ratt val i stallet for {neighbor_id}?"
+                )
+            else:
+                prompts.append(
+                    f"Jamfor {entry.name} och {neighbor_id} for samma fraga."
+                )
+            if len(prompts) >= query_count:
+                break
     for hint in hints:
         prompts.append(f"Visa {hint} for Stockholm idag")
         if len(prompts) >= query_count:
@@ -327,12 +344,15 @@ async def _generate_probe_queries_for_tool(
     entry: ToolIndexEntry,
     neighbors: list[str],
     query_count: int,
+    hard_negatives_per_tool: int = 1,
 ) -> list[str]:
+    hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
     if llm is None:
         return _fallback_probe_queries(
             entry=entry,
             neighbors=neighbors,
             query_count=query_count,
+            hard_negatives_per_tool=hard_negative_count,
         )
     model = llm
     try:
@@ -352,7 +372,7 @@ async def _generate_probe_queries_for_tool(
         "- Swedish language.\n"
         "- No markdown.\n"
         "- Keep each query short and realistic.\n"
-        "- Include at least one borderline/ambiguous query.\n"
+        "- Include borderline/ambiguous hard negatives when requested.\n"
     )
     payload = {
         "tool_id": entry.tool_id,
@@ -362,6 +382,7 @@ async def _generate_probe_queries_for_tool(
         "example_queries": entry.example_queries[:8],
         "nearby_tools": neighbors,
         "query_count": max(1, int(query_count)),
+        "hard_negatives_per_tool": hard_negative_count,
     }
     try:
         response = await model.ainvoke(
@@ -378,6 +399,7 @@ async def _generate_probe_queries_for_tool(
                 entry=entry,
                 neighbors=neighbors,
                 query_count=query_count,
+                hard_negatives_per_tool=hard_negative_count,
             )
         generated = _safe_string_list(parsed.get("queries"))
         if not generated:
@@ -385,13 +407,25 @@ async def _generate_probe_queries_for_tool(
                 entry=entry,
                 neighbors=neighbors,
                 query_count=query_count,
+                hard_negatives_per_tool=hard_negative_count,
             )
-        return generated[:query_count]
+        hard_negative_queries = (
+            _fallback_probe_queries(
+                entry=entry,
+                neighbors=neighbors,
+                query_count=min(hard_negative_count, max(1, int(query_count))),
+                hard_negatives_per_tool=hard_negative_count,
+            )
+            if hard_negative_count > 0
+            else []
+        )
+        return _safe_string_list([*generated, *hard_negative_queries])[:query_count]
     except Exception:
         return _fallback_probe_queries(
             entry=entry,
             neighbors=neighbors,
             query_count=query_count,
+            hard_negatives_per_tool=hard_negative_count,
         )
 
 
@@ -705,6 +739,7 @@ async def run_layered_metadata_audit(
     include_llm_generated: bool = True,
     llm_queries_per_tool: int = 3,
     max_queries_per_tool: int = 6,
+    hard_negatives_per_tool: int = 1,
     retrieval_limit: int = 5,
     max_tools: int = 25,
 ) -> dict[str, Any]:
@@ -761,6 +796,7 @@ async def run_layered_metadata_audit(
     internal_retrieval_limit = max(2, min(int(retrieval_limit or 5), 20))
     max_probe_queries = max(1, min(int(max_queries_per_tool or 6), 20))
     llm_query_count = max(1, min(int(llm_queries_per_tool or 3), 12))
+    hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
 
     for entry in selected_entries:
         expected_tool_id = entry.tool_id
@@ -778,6 +814,7 @@ async def run_layered_metadata_audit(
                 entry=entry,
                 neighbors=neighbors_by_tool.get(entry.tool_id, []),
                 query_count=llm_query_count,
+                hard_negatives_per_tool=hard_negative_count,
             )
             queries.extend((query, "llm_generated") for query in generated)
         queries = _dedupe_queries(queries)[:max_probe_queries]

@@ -191,25 +191,36 @@ type AuditAnnotationDraft = {
 	corrected_tool_id: string | null;
 };
 
-function toolIdPrefixForScope(scope: string): string | undefined {
-	switch (scope) {
-		case "smhi":
-			return "smhi_";
-		case "trafikverket":
-			return "trafikverket_";
-		case "scb":
-			return "scb_";
-		case "kolada":
-			return "kolada_";
-		case "riksdag":
-			return "riksdag_";
-		case "marketplace":
-			return "marketplace_";
-		case "bolagsverket":
-			return "bolagsverket_";
-		default:
-			return undefined;
+const AUDIT_SCOPE_OPTIONS: Array<{
+	id: string;
+	label: string;
+	prefix?: string;
+}> = [
+	{ id: "smhi", label: "SMHI", prefix: "smhi_" },
+	{ id: "trafikverket_weather", label: "Trafikverket-vader", prefix: "trafikverket_vader_" },
+	{ id: "trafikverket", label: "Trafikverket (alla)", prefix: "trafikverket_" },
+	{ id: "scb", label: "SCB", prefix: "scb_" },
+	{ id: "kolada", label: "Kolada", prefix: "kolada_" },
+	{ id: "riksdag", label: "Riksdag", prefix: "riksdag_" },
+	{ id: "marketplace", label: "Marketplace", prefix: "marketplace_" },
+	{ id: "bolagsverket", label: "Bolagsverket", prefix: "bolagsverket_" },
+	{ id: "all", label: "Alla tools" },
+];
+
+function parseToolIdsInput(raw: string): string[] {
+	const values = raw
+		.split(/[\n,; ]+/)
+		.map((value) => value.trim())
+		.filter(Boolean);
+	const seen = new Set<string>();
+	const result: string[] = [];
+	for (const value of values) {
+		const key = value.toLocaleLowerCase();
+		if (seen.has(key)) continue;
+		seen.add(key);
+		result.push(value);
 	}
+	return result;
 }
 
 const DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD = 0.3;
@@ -243,11 +254,13 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [draftTools, setDraftTools] = useState<Record<string, ToolMetadataUpdateItem>>({});
 	const [draftAgents, setDraftAgents] = useState<Record<string, AgentMetadataUpdateItem>>({});
 	const [draftIntents, setDraftIntents] = useState<Record<string, IntentMetadataUpdateItem>>({});
-	const [auditScope, setAuditScope] = useState("smhi");
+	const [selectedAuditScopes, setSelectedAuditScopes] = useState<string[]>(["smhi"]);
+	const [customAuditToolIdsInput, setCustomAuditToolIdsInput] = useState("");
 	const [includeExistingExamples, setIncludeExistingExamples] = useState(true);
 	const [includeLlmGenerated, setIncludeLlmGenerated] = useState(true);
 	const [llmQueriesPerTool, setLlmQueriesPerTool] = useState(3);
 	const [maxQueriesPerTool, setMaxQueriesPerTool] = useState(6);
+	const [hardNegativesPerTool, setHardNegativesPerTool] = useState(1);
 	const [auditLowMarginThreshold, setAuditLowMarginThreshold] = useState(
 		DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD
 	);
@@ -365,6 +378,39 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		}
 		return options.sort((left, right) => left.localeCompare(right, "sv"));
 	}, [data?.tool_categories]);
+	const customAuditToolIds = useMemo(
+		() => parseToolIdsInput(customAuditToolIdsInput),
+		[customAuditToolIdsInput]
+	);
+	const hasAllScopeSelected = useMemo(
+		() => selectedAuditScopes.includes("all"),
+		[selectedAuditScopes]
+	);
+	const scopeDerivedAuditToolIds = useMemo(() => {
+		if (hasAllScopeSelected) return [];
+		const scopePrefixes = AUDIT_SCOPE_OPTIONS.filter((option) =>
+			selectedAuditScopes.includes(option.id)
+		)
+			.map((option) => option.prefix)
+			.filter((value): value is string => typeof value === "string" && value.length > 0);
+		if (!scopePrefixes.length) return [];
+		return allToolOptions.filter((toolId) => {
+			const normalizedToolId = toolId.toLocaleLowerCase();
+			return scopePrefixes.some((prefix) => normalizedToolId.startsWith(prefix));
+		});
+	}, [hasAllScopeSelected, selectedAuditScopes, allToolOptions]);
+	const requestedAuditToolIds = useMemo(() => {
+		if (hasAllScopeSelected && customAuditToolIds.length === 0) return [];
+		const ordered: string[] = [];
+		const seen = new Set<string>();
+		for (const toolId of [...scopeDerivedAuditToolIds, ...customAuditToolIds]) {
+			const normalized = toolId.toLocaleLowerCase();
+			if (seen.has(normalized)) continue;
+			seen.add(normalized);
+			ordered.push(toolId);
+		}
+		return ordered.sort((left, right) => left.localeCompare(right, "sv"));
+	}, [hasAllScopeSelected, scopeDerivedAuditToolIds, customAuditToolIds]);
 	const auditToolOptions = useMemo(
 		() =>
 			(auditResult?.available_tool_ids?.length
@@ -530,6 +576,25 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		});
 	};
 
+	const toggleAuditScopeSelection = (scopeId: string, selected: boolean) => {
+		setSelectedAuditScopes((previous) => {
+			const next = new Set(previous);
+			if (selected) {
+				if (scopeId === "all") {
+					return ["all"];
+				}
+				next.delete("all");
+				next.add(scopeId);
+				return Array.from(next);
+			}
+			next.delete(scopeId);
+			if (next.size === 0) {
+				return ["smhi"];
+			}
+			return Array.from(next);
+		});
+	};
+
 	const resetDrafts = () => {
 		void refetch();
 	};
@@ -577,11 +642,12 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			const result = await adminToolSettingsApiService.runMetadataCatalogAudit({
 				search_space_id: data.search_space_id,
 				metadata_patch: metadataPatchForDraft,
-				tool_id_prefix: toolIdPrefixForScope(auditScope),
+				tool_ids: requestedAuditToolIds,
 				include_existing_examples: includeExistingExamples,
 				include_llm_generated: includeLlmGenerated,
 				llm_queries_per_tool: llmQueriesPerTool,
 				max_queries_per_tool: maxQueriesPerTool,
+				hard_negatives_per_tool: hardNegativesPerTool,
 			});
 			setAuditResult(result);
 			const nextAnnotations: Record<string, AuditAnnotationDraft> = {};
@@ -940,23 +1006,46 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
-					<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
-						<div className="space-y-1">
-							<Label>Scope</Label>
-							<select
-								value={auditScope}
-								onChange={(event) => setAuditScope(event.target.value)}
-								className="h-9 rounded-md border bg-transparent px-3 text-sm w-full"
-							>
-								<option value="smhi">SMHI</option>
-								<option value="trafikverket">Trafikverket</option>
-								<option value="scb">SCB</option>
-								<option value="kolada">Kolada</option>
-								<option value="riksdag">Riksdag</option>
-								<option value="marketplace">Marketplace</option>
-								<option value="bolagsverket">Bolagsverket</option>
-								<option value="all">Alla tools</option>
-							</select>
+					<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-7">
+						<div className="space-y-1 lg:col-span-2">
+							<Label>Scope (flera val)</Label>
+							<div className="rounded border p-2 space-y-1 max-h-32 overflow-auto text-xs">
+								{AUDIT_SCOPE_OPTIONS.map((scopeOption) => {
+									const checked = selectedAuditScopes.includes(scopeOption.id);
+									const disabled =
+										selectedAuditScopes.includes("all") && scopeOption.id !== "all";
+									return (
+										<label
+											key={`audit-scope-${scopeOption.id}`}
+											className={`flex items-center gap-2 ${
+												disabled ? "opacity-50" : ""
+											}`}
+										>
+											<input
+												type="checkbox"
+												checked={checked}
+												disabled={disabled}
+												onChange={(event) =>
+													toggleAuditScopeSelection(scopeOption.id, event.target.checked)
+												}
+											/>
+											{scopeOption.label}
+										</label>
+									);
+								})}
+							</div>
+						</div>
+						<div className="space-y-1 lg:col-span-2">
+							<Label htmlFor="audit-tool-ids-input">
+								Extra tool IDs (komma eller radbrytning)
+							</Label>
+							<Textarea
+								id="audit-tool-ids-input"
+								rows={4}
+								value={customAuditToolIdsInput}
+								onChange={(event) => setCustomAuditToolIdsInput(event.target.value)}
+								placeholder={"smhi_weather\ntrafikverket_vader_halka"}
+							/>
 						</div>
 						<div className="space-y-1">
 							<Label>LLM queries/tool</Label>
@@ -987,6 +1076,20 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							/>
 						</div>
 						<div className="space-y-1">
+							<Label>Hard negatives/tool</Label>
+							<Input
+								type="number"
+								min={0}
+								max={10}
+								value={hardNegativesPerTool}
+								onChange={(event) =>
+									setHardNegativesPerTool(
+										Math.max(0, Math.min(10, Number.parseInt(event.target.value || "0", 10)))
+									)
+								}
+							/>
+						</div>
+						<div className="space-y-1 lg:col-span-2">
 							<Label className="block">Kallor</Label>
 							<label className="flex items-center gap-2 text-sm">
 								<input
@@ -1004,6 +1107,20 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								/>
 								LLM generated
 							</label>
+							<div className="flex flex-wrap gap-2 pt-1">
+								<Badge variant="outline">
+									Scope-val: {selectedAuditScopes.length}
+								</Badge>
+								<Badge variant="outline">
+									Valda tool IDs:{" "}
+									{hasAllScopeSelected && customAuditToolIds.length === 0
+										? "alla"
+										: requestedAuditToolIds.length}
+								</Badge>
+								{customAuditToolIds.length > 0 ? (
+									<Badge variant="outline">Extra manuella: {customAuditToolIds.length}</Badge>
+								) : null}
+							</div>
 						</div>
 						<div className="flex items-end">
 							<Button

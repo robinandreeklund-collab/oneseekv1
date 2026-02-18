@@ -3832,6 +3832,7 @@ async def run_metadata_catalog_audit(
         include_llm_generated=bool(payload.include_llm_generated),
         llm_queries_per_tool=int(payload.llm_queries_per_tool),
         max_queries_per_tool=int(payload.max_queries_per_tool),
+        hard_negatives_per_tool=int(payload.hard_negatives_per_tool),
         retrieval_limit=int(payload.retrieval_limit),
         max_tools=int(payload.max_tools),
     )
