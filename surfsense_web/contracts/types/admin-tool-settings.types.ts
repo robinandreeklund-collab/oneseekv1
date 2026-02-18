@@ -224,9 +224,24 @@ export const metadataCatalogUpdateRequest = z.object({
 });
 
 export const metadataCatalogAuditConfusionPair = z.object({
-	expected_tool_id: z.string(),
-	predicted_tool_id: z.string(),
+	expected_label: z.string(),
+	predicted_label: z.string(),
 	count: z.number().int(),
+});
+
+export const metadataCatalogAuditPathConfusionPair = z.object({
+	expected_path: z.string(),
+	predicted_path: z.string(),
+	count: z.number().int(),
+});
+
+export const metadataCatalogAuditLayerResult = z.object({
+	expected_label: z.string().nullable().optional(),
+	predicted_label: z.string().nullable().optional(),
+	top1: z.string().nullable().optional(),
+	top2: z.string().nullable().optional(),
+	margin: z.number().nullable().optional(),
+	score_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
 });
 
 export const metadataCatalogAuditProbeItem = z.object({
@@ -234,21 +249,24 @@ export const metadataCatalogAuditProbeItem = z.object({
 	query: z.string(),
 	source: z.string(),
 	target_tool_id: z.string(),
-	predicted_tool_id: z.string().nullable().optional(),
-	predicted_tool_ids: z.array(z.string()).optional().default([]),
-	target_rank: z.number().int().nullable().optional(),
-	is_correct: z.boolean().optional().default(false),
-	confidence_margin: z.number().nullable().optional(),
-	retrieval_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
+	expected_path: z.string(),
+	predicted_path: z.string(),
+	intent: metadataCatalogAuditLayerResult,
+	agent: metadataCatalogAuditLayerResult,
+	tool: metadataCatalogAuditLayerResult,
 });
 
 export const metadataCatalogAuditSummary = z.object({
 	total_probes: z.number().int().optional().default(0),
-	correct_top1: z.number().int().optional().default(0),
-	incorrect_top1: z.number().int().optional().default(0),
-	top1_accuracy: z.number().optional().default(0),
-	ambiguous_count: z.number().int().optional().default(0),
-	confusion_pairs: z.array(metadataCatalogAuditConfusionPair).optional().default([]),
+	intent_accuracy: z.number().optional().default(0),
+	agent_accuracy: z.number().optional().default(0),
+	tool_accuracy: z.number().optional().default(0),
+	agent_accuracy_given_intent_correct: z.number().nullable().optional(),
+	tool_accuracy_given_intent_agent_correct: z.number().nullable().optional(),
+	intent_confusion_matrix: z.array(metadataCatalogAuditConfusionPair).optional().default([]),
+	agent_confusion_matrix: z.array(metadataCatalogAuditConfusionPair).optional().default([]),
+	tool_confusion_matrix: z.array(metadataCatalogAuditConfusionPair).optional().default([]),
+	path_confusion_matrix: z.array(metadataCatalogAuditPathConfusionPair).optional().default([]),
 });
 
 export const metadataCatalogAuditRunRequest = z.object({
@@ -270,16 +288,29 @@ export const metadataCatalogAuditRunResponse = z.object({
 	retrieval_tuning: toolRetrievalTuning,
 	probes: z.array(metadataCatalogAuditProbeItem).optional().default([]),
 	summary: metadataCatalogAuditSummary,
+	available_intent_ids: z.array(z.string()).optional().default([]),
+	available_agent_ids: z.array(z.string()).optional().default([]),
+	available_tool_ids: z.array(z.string()).optional().default([]),
 });
 
 export const metadataCatalogAuditAnnotationItem = z.object({
 	probe_id: z.string(),
 	query: z.string(),
-	target_tool_id: z.string(),
+	expected_intent_id: z.string().nullable().optional(),
+	expected_agent_id: z.string().nullable().optional(),
+	expected_tool_id: z.string().nullable().optional(),
+	predicted_intent_id: z.string().nullable().optional(),
+	predicted_agent_id: z.string().nullable().optional(),
 	predicted_tool_id: z.string().nullable().optional(),
-	is_correct: z.boolean().optional().default(true),
+	intent_is_correct: z.boolean().optional().default(true),
+	corrected_intent_id: z.string().nullable().optional(),
+	agent_is_correct: z.boolean().optional().default(true),
+	corrected_agent_id: z.string().nullable().optional(),
+	tool_is_correct: z.boolean().optional().default(true),
 	corrected_tool_id: z.string().nullable().optional(),
-	retrieval_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
+	intent_score_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
+	agent_score_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
+	tool_score_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
 });
 
 export const metadataCatalogAuditSuggestionRequest = z.object({
@@ -290,7 +321,7 @@ export const metadataCatalogAuditSuggestionRequest = z.object({
 });
 
 export const metadataCatalogAuditSuggestionResponse = z.object({
-	suggestions: z
+	tool_suggestions: z
 		.array(
 			z.object({
 				tool_id: z.string(),
@@ -302,9 +333,34 @@ export const metadataCatalogAuditSuggestionResponse = z.object({
 		)
 		.optional()
 		.default([]),
+	intent_suggestions: z
+		.array(
+			z.object({
+				intent_id: z.string(),
+				failed_probe_ids: z.array(z.string()).optional().default([]),
+				rationale: z.string(),
+				current_metadata: intentMetadataUpdateItem,
+				proposed_metadata: intentMetadataUpdateItem,
+			})
+		)
+		.optional()
+		.default([]),
+	agent_suggestions: z
+		.array(
+			z.object({
+				agent_id: z.string(),
+				failed_probe_ids: z.array(z.string()).optional().default([]),
+				rationale: z.string(),
+				current_metadata: agentMetadataUpdateItem,
+				proposed_metadata: agentMetadataUpdateItem,
+			})
+		)
+		.optional()
+		.default([]),
 	total_annotations: z.number().int().optional().default(0),
-	reviewed_failures: z.number().int().optional().default(0),
-	confusion_pairs: z.array(metadataCatalogAuditConfusionPair).optional().default([]),
+	reviewed_intent_failures: z.number().int().optional().default(0),
+	reviewed_agent_failures: z.number().int().optional().default(0),
+	reviewed_tool_failures: z.number().int().optional().default(0),
 });
 
 export const toolEvaluationExpected = z.object({
@@ -896,6 +952,12 @@ export type MetadataCatalogResponse = z.infer<typeof metadataCatalogResponse>;
 export type MetadataCatalogUpdateRequest = z.infer<typeof metadataCatalogUpdateRequest>;
 export type MetadataCatalogAuditConfusionPair = z.infer<
 	typeof metadataCatalogAuditConfusionPair
+>;
+export type MetadataCatalogAuditPathConfusionPair = z.infer<
+	typeof metadataCatalogAuditPathConfusionPair
+>;
+export type MetadataCatalogAuditLayerResult = z.infer<
+	typeof metadataCatalogAuditLayerResult
 >;
 export type MetadataCatalogAuditProbeItem = z.infer<typeof metadataCatalogAuditProbeItem>;
 export type MetadataCatalogAuditSummary = z.infer<typeof metadataCatalogAuditSummary>;

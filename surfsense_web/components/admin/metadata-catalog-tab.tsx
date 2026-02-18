@@ -183,11 +183,13 @@ function KeywordEditor({
 }
 
 type AuditAnnotationDraft = {
-	is_correct: boolean;
+	intent_is_correct: boolean;
+	corrected_intent_id: string | null;
+	agent_is_correct: boolean;
+	corrected_agent_id: string | null;
+	tool_is_correct: boolean;
 	corrected_tool_id: string | null;
 };
-
-type AuditSuggestionItem = MetadataCatalogAuditSuggestionResponse["suggestions"][number];
 
 function toolIdPrefixForScope(scope: string): string | undefined {
 	switch (scope) {
@@ -229,8 +231,15 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		{}
 	);
 	const [isGeneratingAuditSuggestions, setIsGeneratingAuditSuggestions] = useState(false);
-	const [auditSuggestions, setAuditSuggestions] = useState<AuditSuggestionItem[]>([]);
+	const [auditSuggestions, setAuditSuggestions] =
+		useState<MetadataCatalogAuditSuggestionResponse | null>(null);
 	const [selectedAuditSuggestionToolIds, setSelectedAuditSuggestionToolIds] = useState<
+		Set<string>
+	>(new Set());
+	const [selectedAuditSuggestionIntentIds, setSelectedAuditSuggestionIntentIds] = useState<
+		Set<string>
+	>(new Set());
+	const [selectedAuditSuggestionAgentIds, setSelectedAuditSuggestionAgentIds] = useState<
 		Set<string>
 	>(new Set());
 
@@ -318,7 +327,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const metadataPatchForDraft = useMemo(() => {
 		return changedToolIds.map((toolId) => draftTools[toolId]).filter(Boolean);
 	}, [changedToolIds, draftTools]);
-	const auditToolOptions = useMemo(() => {
+	const allToolOptions = useMemo(() => {
 		const options: string[] = [];
 		for (const category of data?.tool_categories ?? []) {
 			for (const tool of category.tools) {
@@ -327,11 +336,42 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		}
 		return options.sort((left, right) => left.localeCompare(right, "sv"));
 	}, [data?.tool_categories]);
-	const selectedAuditSuggestions = useMemo(() => {
-		return auditSuggestions.filter((item) =>
-			selectedAuditSuggestionToolIds.has(item.tool_id)
-		);
-	}, [auditSuggestions, selectedAuditSuggestionToolIds]);
+	const auditToolOptions = useMemo(
+		() =>
+			(auditResult?.available_tool_ids?.length
+				? auditResult.available_tool_ids
+				: allToolOptions
+			).slice().sort((left, right) => left.localeCompare(right, "sv")),
+		[auditResult?.available_tool_ids, allToolOptions]
+	);
+	const auditIntentOptions = useMemo(
+		() =>
+			(auditResult?.available_intent_ids?.length
+				? auditResult.available_intent_ids
+				: (data?.intents ?? []).map((item) => item.intent_id)
+			).slice().sort((left, right) => left.localeCompare(right, "sv")),
+		[auditResult?.available_intent_ids, data?.intents]
+	);
+	const auditAgentOptions = useMemo(
+		() =>
+			(auditResult?.available_agent_ids?.length
+				? auditResult.available_agent_ids
+				: (data?.agents ?? []).map((item) => item.agent_id)
+			).slice().sort((left, right) => left.localeCompare(right, "sv")),
+		[auditResult?.available_agent_ids, data?.agents]
+	);
+	const selectedToolSuggestions = useMemo(() => {
+		const list = auditSuggestions?.tool_suggestions ?? [];
+		return list.filter((item) => selectedAuditSuggestionToolIds.has(item.tool_id));
+	}, [auditSuggestions?.tool_suggestions, selectedAuditSuggestionToolIds]);
+	const selectedIntentSuggestions = useMemo(() => {
+		const list = auditSuggestions?.intent_suggestions ?? [];
+		return list.filter((item) => selectedAuditSuggestionIntentIds.has(item.intent_id));
+	}, [auditSuggestions?.intent_suggestions, selectedAuditSuggestionIntentIds]);
+	const selectedAgentSuggestions = useMemo(() => {
+		const list = auditSuggestions?.agent_suggestions ?? [];
+		return list.filter((item) => selectedAuditSuggestionAgentIds.has(item.agent_id));
+	}, [auditSuggestions?.agent_suggestions, selectedAuditSuggestionAgentIds]);
 
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((previous) => {
@@ -431,16 +471,34 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			setAuditResult(result);
 			const nextAnnotations: Record<string, AuditAnnotationDraft> = {};
 			for (const probe of result.probes) {
+				const intentExpected = probe.intent.expected_label ?? null;
+				const agentExpected = probe.agent.expected_label ?? null;
+				const toolExpected = probe.tool.expected_label ?? probe.target_tool_id;
+				const intentCorrect = intentExpected
+					? probe.intent.predicted_label === intentExpected
+					: true;
+				const agentCorrect = agentExpected
+					? probe.agent.predicted_label === agentExpected
+					: true;
+				const toolCorrect = toolExpected
+					? probe.tool.predicted_label === toolExpected
+					: true;
 				nextAnnotations[probe.probe_id] = {
-					is_correct: !!probe.is_correct,
-					corrected_tool_id: probe.target_tool_id ?? null,
+					intent_is_correct: intentCorrect,
+					corrected_intent_id: intentExpected,
+					agent_is_correct: agentCorrect,
+					corrected_agent_id: agentExpected,
+					tool_is_correct: toolCorrect,
+					corrected_tool_id: toolExpected,
 				};
 			}
 			setAuditAnnotations(nextAnnotations);
-			setAuditSuggestions([]);
+			setAuditSuggestions(null);
 			setSelectedAuditSuggestionToolIds(new Set());
+			setSelectedAuditSuggestionIntentIds(new Set());
+			setSelectedAuditSuggestionAgentIds(new Set());
 			toast.success(
-				`Audit klar. ${result.summary.incorrect_top1} mismatch av ${result.summary.total_probes} probes.`
+				`Audit klar. ${result.summary.total_probes} probes analyserade.`
 			);
 		} catch (_error) {
 			toast.error("Kunde inte kora metadata-audit.");
@@ -449,33 +507,61 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		}
 	};
 
-	const updateAnnotationCorrectness = (probeId: string, isCorrect: boolean) => {
+	const updateAnnotationCorrectness = (
+		probeId: string,
+		layer: "intent" | "agent" | "tool",
+		isCorrect: boolean
+	) => {
 		setAuditAnnotations((previous) => {
 			const current = previous[probeId] ?? {
-				is_correct: true,
+				intent_is_correct: true,
+				corrected_intent_id: null,
+				agent_is_correct: true,
+				corrected_agent_id: null,
+				tool_is_correct: true,
 				corrected_tool_id: null,
 			};
+			const key =
+				layer === "intent"
+					? "intent_is_correct"
+					: layer === "agent"
+						? "agent_is_correct"
+						: "tool_is_correct";
 			return {
 				...previous,
 				[probeId]: {
 					...current,
-					is_correct: isCorrect,
+					[key]: isCorrect,
 				},
 			};
 		});
 	};
 
-	const updateAnnotationCorrectedTool = (probeId: string, correctedToolId: string) => {
+	const updateAnnotationCorrectedLabel = (
+		probeId: string,
+		layer: "intent" | "agent" | "tool",
+		correctedLabel: string
+	) => {
 		setAuditAnnotations((previous) => {
 			const current = previous[probeId] ?? {
-				is_correct: true,
+				intent_is_correct: true,
+				corrected_intent_id: null,
+				agent_is_correct: true,
+				corrected_agent_id: null,
+				tool_is_correct: true,
 				corrected_tool_id: null,
 			};
+			const key =
+				layer === "intent"
+					? "corrected_intent_id"
+					: layer === "agent"
+						? "corrected_agent_id"
+						: "corrected_tool_id";
 			return {
 				...previous,
 				[probeId]: {
 					...current,
-					corrected_tool_id: correctedToolId || null,
+					[key]: correctedLabel || null,
 				},
 			};
 		});
@@ -485,22 +571,45 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		if (!data?.search_space_id || !auditResult) return;
 		const annotations = auditResult.probes.map((probe) => {
 			const draft = auditAnnotations[probe.probe_id] ?? {
-				is_correct: !!probe.is_correct,
-				corrected_tool_id: probe.target_tool_id ?? null,
+				intent_is_correct: probe.intent.predicted_label === probe.intent.expected_label,
+				corrected_intent_id: probe.intent.expected_label ?? null,
+				agent_is_correct: probe.agent.predicted_label === probe.agent.expected_label,
+				corrected_agent_id: probe.agent.expected_label ?? null,
+				tool_is_correct: probe.tool.predicted_label === probe.tool.expected_label,
+				corrected_tool_id: probe.tool.expected_label ?? probe.target_tool_id,
 			};
 			return {
 				probe_id: probe.probe_id,
 				query: probe.query,
-				target_tool_id: probe.target_tool_id,
-				predicted_tool_id: probe.predicted_tool_id ?? null,
-				is_correct: draft.is_correct,
-				corrected_tool_id: draft.is_correct
+				expected_intent_id: probe.intent.expected_label ?? null,
+				expected_agent_id: probe.agent.expected_label ?? null,
+				expected_tool_id: probe.tool.expected_label ?? probe.target_tool_id,
+				predicted_intent_id: probe.intent.predicted_label ?? null,
+				predicted_agent_id: probe.agent.predicted_label ?? null,
+				predicted_tool_id: probe.tool.predicted_label ?? null,
+				intent_is_correct: draft.intent_is_correct,
+				corrected_intent_id: draft.intent_is_correct
 					? null
-					: (draft.corrected_tool_id ?? probe.target_tool_id),
-				retrieval_breakdown: probe.retrieval_breakdown ?? [],
+					: (draft.corrected_intent_id ?? probe.intent.expected_label ?? null),
+				agent_is_correct: draft.agent_is_correct,
+				corrected_agent_id: draft.agent_is_correct
+					? null
+					: (draft.corrected_agent_id ?? probe.agent.expected_label ?? null),
+				tool_is_correct: draft.tool_is_correct,
+				corrected_tool_id: draft.tool_is_correct
+					? null
+					: (draft.corrected_tool_id ??
+						probe.tool.expected_label ??
+						probe.target_tool_id),
+				intent_score_breakdown: probe.intent.score_breakdown ?? [],
+				agent_score_breakdown: probe.agent.score_breakdown ?? [],
+				tool_score_breakdown: probe.tool.score_breakdown ?? [],
 			};
 		});
-		const reviewedFailures = annotations.filter((item) => !item.is_correct).length;
+		const reviewedFailures = annotations.filter(
+			(item) =>
+				!item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
+		).length;
 		if (!reviewedFailures) {
 			toast.message("Markera minst en probe som fel innan du genererar forslag.");
 			return;
@@ -513,11 +622,19 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				annotations,
 				max_suggestions: 30,
 			});
-			setAuditSuggestions(response.suggestions);
+			setAuditSuggestions(response);
 			setSelectedAuditSuggestionToolIds(
-				new Set(response.suggestions.map((item) => item.tool_id))
+				new Set(response.tool_suggestions.map((item) => item.tool_id))
 			);
-			toast.success(`Genererade ${response.suggestions.length} metadataforslag.`);
+			setSelectedAuditSuggestionIntentIds(
+				new Set(response.intent_suggestions.map((item) => item.intent_id))
+			);
+			setSelectedAuditSuggestionAgentIds(
+				new Set(response.agent_suggestions.map((item) => item.agent_id))
+			);
+			toast.success(
+				`Genererade ${response.tool_suggestions.length + response.intent_suggestions.length + response.agent_suggestions.length} metadataforslag.`
+			);
 		} catch (_error) {
 			toast.error("Kunde inte generera metadataforslag.");
 		} finally {
@@ -525,7 +642,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		}
 	};
 
-	const toggleAuditSuggestionSelection = (toolId: string, selected: boolean) => {
+	const toggleAuditToolSuggestionSelection = (toolId: string, selected: boolean) => {
 		setSelectedAuditSuggestionToolIds((previous) => {
 			const next = new Set(previous);
 			if (selected) {
@@ -537,21 +654,69 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		});
 	};
 
+	const toggleAuditIntentSuggestionSelection = (intentId: string, selected: boolean) => {
+		setSelectedAuditSuggestionIntentIds((previous) => {
+			const next = new Set(previous);
+			if (selected) {
+				next.add(intentId);
+			} else {
+				next.delete(intentId);
+			}
+			return next;
+		});
+	};
+
+	const toggleAuditAgentSuggestionSelection = (agentId: string, selected: boolean) => {
+		setSelectedAuditSuggestionAgentIds((previous) => {
+			const next = new Set(previous);
+			if (selected) {
+				next.add(agentId);
+			} else {
+				next.delete(agentId);
+			}
+			return next;
+		});
+	};
+
 	const applySelectedAuditSuggestionsToDraft = () => {
-		if (!selectedAuditSuggestions.length) {
+		if (
+			!selectedToolSuggestions.length &&
+			!selectedIntentSuggestions.length &&
+			!selectedAgentSuggestions.length
+		) {
 			toast.message("Inga metadataforslag valda.");
 			return;
 		}
 		setDraftTools((previous) => {
 			const next = { ...previous };
-			for (const suggestion of selectedAuditSuggestions) {
+			for (const suggestion of selectedToolSuggestions) {
 				next[suggestion.tool_id] = {
 					...suggestion.proposed_metadata,
 				};
 			}
 			return next;
 		});
-		toast.success(`Lade ${selectedAuditSuggestions.length} forslag i draft.`);
+		setDraftIntents((previous) => {
+			const next = { ...previous };
+			for (const suggestion of selectedIntentSuggestions) {
+				next[suggestion.intent_id] = {
+					...suggestion.proposed_metadata,
+				};
+			}
+			return next;
+		});
+		setDraftAgents((previous) => {
+			const next = { ...previous };
+			for (const suggestion of selectedAgentSuggestions) {
+				next[suggestion.agent_id] = {
+					...suggestion.proposed_metadata,
+				};
+			}
+			return next;
+		});
+		toast.success(
+			`Lade ${selectedToolSuggestions.length + selectedIntentSuggestions.length + selectedAgentSuggestions.length} forslag i draft.`
+		);
 	};
 
 	const term = searchTerm.trim().toLocaleLowerCase();
@@ -780,82 +945,266 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							<div className="flex flex-wrap gap-2">
 								<Badge variant="outline">Probes: {auditResult.summary.total_probes}</Badge>
 								<Badge variant="outline">
-									Top1: {(auditResult.summary.top1_accuracy * 100).toFixed(1)}%
+									Intent: {(auditResult.summary.intent_accuracy * 100).toFixed(1)}%
 								</Badge>
 								<Badge variant="outline">
-									Mismatch: {auditResult.summary.incorrect_top1}
+									Agent: {(auditResult.summary.agent_accuracy * 100).toFixed(1)}%
 								</Badge>
 								<Badge variant="outline">
-									Ambiguous: {auditResult.summary.ambiguous_count}
+									Tool: {(auditResult.summary.tool_accuracy * 100).toFixed(1)}%
 								</Badge>
+								{auditResult.summary.agent_accuracy_given_intent_correct != null ? (
+									<Badge variant="outline">
+										Agent | Intent OK:{" "}
+										{(auditResult.summary.agent_accuracy_given_intent_correct * 100).toFixed(1)}%
+									</Badge>
+								) : null}
+								{auditResult.summary.tool_accuracy_given_intent_agent_correct != null ? (
+									<Badge variant="outline">
+										Tool | Intent+Agent OK:{" "}
+										{(
+											auditResult.summary.tool_accuracy_given_intent_agent_correct * 100
+										).toFixed(1)}
+										%
+									</Badge>
+								) : null}
 							</div>
-							{auditResult.summary.confusion_pairs.length > 0 ? (
-								<div className="space-y-1">
-									<p className="text-sm font-medium">Vanligaste forvaxlingar</p>
-									<div className="space-y-1 text-xs">
-										{auditResult.summary.confusion_pairs.slice(0, 6).map((pair) => (
+							<div className="grid gap-3 lg:grid-cols-2">
+								<div className="space-y-2">
+									<p className="text-sm font-medium">Intent confusion matrix</p>
+									<div className="max-h-44 overflow-auto rounded border p-2 space-y-1 text-xs">
+										{auditResult.summary.intent_confusion_matrix.slice(0, 10).map((row) => (
 											<div
-												key={`${pair.expected_tool_id}-${pair.predicted_tool_id}`}
-												className="rounded border p-2"
+												key={`intent-${row.expected_label}-${row.predicted_label}`}
+												className="rounded bg-muted/40 px-2 py-1"
 											>
-												{pair.expected_tool_id} -&gt; {pair.predicted_tool_id} ({pair.count})
+												{row.expected_label} -&gt; {row.predicted_label} ({row.count})
 											</div>
 										))}
 									</div>
 								</div>
-							) : null}
+								<div className="space-y-2">
+									<p className="text-sm font-medium">Agent confusion matrix</p>
+									<div className="max-h-44 overflow-auto rounded border p-2 space-y-1 text-xs">
+										{auditResult.summary.agent_confusion_matrix.slice(0, 10).map((row) => (
+											<div
+												key={`agent-${row.expected_label}-${row.predicted_label}`}
+												className="rounded bg-muted/40 px-2 py-1"
+											>
+												{row.expected_label} -&gt; {row.predicted_label} ({row.count})
+											</div>
+										))}
+									</div>
+								</div>
+								<div className="space-y-2">
+									<p className="text-sm font-medium">Tool confusion matrix</p>
+									<div className="max-h-44 overflow-auto rounded border p-2 space-y-1 text-xs">
+										{auditResult.summary.tool_confusion_matrix.slice(0, 10).map((row) => (
+											<div
+												key={`tool-${row.expected_label}-${row.predicted_label}`}
+												className="rounded bg-muted/40 px-2 py-1"
+											>
+												{row.expected_label} -&gt; {row.predicted_label} ({row.count})
+											</div>
+										))}
+									</div>
+								</div>
+								<div className="space-y-2">
+									<p className="text-sm font-medium">Path confusion matrix</p>
+									<div className="max-h-44 overflow-auto rounded border p-2 space-y-1 text-xs">
+										{auditResult.summary.path_confusion_matrix.slice(0, 10).map((row) => (
+											<div
+												key={`path-${row.expected_path}-${row.predicted_path}`}
+												className="rounded bg-muted/40 px-2 py-1"
+											>
+												{row.expected_path} -&gt; {row.predicted_path} ({row.count})
+											</div>
+										))}
+									</div>
+								</div>
+							</div>
 							<div className="max-h-[28rem] overflow-auto space-y-2 rounded border p-3">
 								{auditResult.probes.map((probe) => {
 									const annotation = auditAnnotations[probe.probe_id] ?? {
-										is_correct: !!probe.is_correct,
-										corrected_tool_id: probe.target_tool_id ?? null,
+										intent_is_correct:
+											probe.intent.predicted_label === probe.intent.expected_label,
+										corrected_intent_id: probe.intent.expected_label ?? null,
+										agent_is_correct:
+											probe.agent.predicted_label === probe.agent.expected_label,
+										corrected_agent_id: probe.agent.expected_label ?? null,
+										tool_is_correct: probe.tool.predicted_label === probe.tool.expected_label,
+										corrected_tool_id:
+											probe.tool.expected_label ?? probe.target_tool_id ?? null,
 									};
-									const correctedValue = annotation.corrected_tool_id ?? probe.target_tool_id;
 									return (
 										<div key={probe.probe_id} className="rounded border p-3 space-y-2">
 											<p className="text-sm font-medium">{probe.query}</p>
 											<div className="flex flex-wrap gap-2 text-xs">
-												<Badge variant="outline">target: {probe.target_tool_id}</Badge>
-												<Badge variant="outline">
-													predicted: {probe.predicted_tool_id ?? "-"}
-												</Badge>
-												{probe.confidence_margin != null ? (
-													<Badge variant="outline">
-														margin: {probe.confidence_margin.toFixed(2)}
-													</Badge>
-												) : null}
+												<Badge variant="outline">Expected path: {probe.expected_path}</Badge>
+												<Badge variant="outline">Predicted path: {probe.predicted_path}</Badge>
 												<Badge variant="secondary">{probe.source}</Badge>
 											</div>
-											<div className="flex flex-wrap items-center gap-3">
-												<label className="flex items-center gap-2 text-sm">
-													<input
-														type="checkbox"
-														checked={annotation.is_correct}
-														onChange={(event) =>
-															updateAnnotationCorrectness(probe.probe_id, event.target.checked)
-														}
-													/>
-													Korrekt
-												</label>
-												{!annotation.is_correct ? (
-													<select
-														value={correctedValue ?? ""}
-														onChange={(event) =>
-															updateAnnotationCorrectedTool(
-																probe.probe_id,
-																event.target.value
-															)
-														}
-														className="h-9 rounded-md border bg-transparent px-3 text-sm min-w-72"
-													>
-														<option value="">Valj korrekt tool...</option>
-														{auditToolOptions.map((toolId) => (
-															<option key={`${probe.probe_id}-${toolId}`} value={toolId}>
-																{toolId}
-															</option>
-														))}
-													</select>
-												) : null}
+											<div className="grid gap-3 lg:grid-cols-3">
+												<div className="rounded border p-2 space-y-2">
+													<p className="text-xs font-medium">
+														Intent: {probe.intent.top1 ?? "-"}{" "}
+														{probe.intent.top2 ? `| ${probe.intent.top2}` : ""}
+													</p>
+													<p className="text-xs text-muted-foreground">
+														expected {probe.intent.expected_label ?? "-"} · margin{" "}
+														{probe.intent.margin != null
+															? probe.intent.margin.toFixed(2)
+															: "-"}
+													</p>
+													<label className="flex items-center gap-2 text-xs">
+														<input
+															type="checkbox"
+															checked={annotation.intent_is_correct}
+															onChange={(event) =>
+																updateAnnotationCorrectness(
+																	probe.probe_id,
+																	"intent",
+																	event.target.checked
+																)
+															}
+														/>
+														Intent korrekt
+													</label>
+													{!annotation.intent_is_correct ? (
+														<select
+															value={
+																annotation.corrected_intent_id ??
+																probe.intent.expected_label ??
+																""
+															}
+															onChange={(event) =>
+																updateAnnotationCorrectedLabel(
+																	probe.probe_id,
+																	"intent",
+																	event.target.value
+																)
+															}
+															className="h-8 rounded-md border bg-transparent px-2 text-xs w-full"
+														>
+															<option value="">Valj intent...</option>
+															{auditIntentOptions.map((intentId) => (
+																<option
+																	key={`${probe.probe_id}-intent-${intentId}`}
+																	value={intentId}
+																>
+																	{intentId}
+																</option>
+															))}
+														</select>
+													) : null}
+												</div>
+												<div className="rounded border p-2 space-y-2">
+													<p className="text-xs font-medium">
+														Agent: {probe.agent.top1 ?? "-"}{" "}
+														{probe.agent.top2 ? `| ${probe.agent.top2}` : ""}
+													</p>
+													<p className="text-xs text-muted-foreground">
+														expected {probe.agent.expected_label ?? "-"} · margin{" "}
+														{probe.agent.margin != null
+															? probe.agent.margin.toFixed(2)
+															: "-"}
+													</p>
+													<label className="flex items-center gap-2 text-xs">
+														<input
+															type="checkbox"
+															checked={annotation.agent_is_correct}
+															onChange={(event) =>
+																updateAnnotationCorrectness(
+																	probe.probe_id,
+																	"agent",
+																	event.target.checked
+																)
+															}
+														/>
+														Agent korrekt
+													</label>
+													{!annotation.agent_is_correct ? (
+														<select
+															value={
+																annotation.corrected_agent_id ??
+																probe.agent.expected_label ??
+																""
+															}
+															onChange={(event) =>
+																updateAnnotationCorrectedLabel(
+																	probe.probe_id,
+																	"agent",
+																	event.target.value
+																)
+															}
+															className="h-8 rounded-md border bg-transparent px-2 text-xs w-full"
+														>
+															<option value="">Valj agent...</option>
+															{auditAgentOptions.map((agentId) => (
+																<option
+																	key={`${probe.probe_id}-agent-${agentId}`}
+																	value={agentId}
+																>
+																	{agentId}
+																</option>
+															))}
+														</select>
+													) : null}
+												</div>
+												<div className="rounded border p-2 space-y-2">
+													<p className="text-xs font-medium">
+														Tool: {probe.tool.top1 ?? "-"}{" "}
+														{probe.tool.top2 ? `| ${probe.tool.top2}` : ""}
+													</p>
+													<p className="text-xs text-muted-foreground">
+														expected {probe.tool.expected_label ?? probe.target_tool_id} · margin{" "}
+														{probe.tool.margin != null
+															? probe.tool.margin.toFixed(2)
+															: "-"}
+													</p>
+													<label className="flex items-center gap-2 text-xs">
+														<input
+															type="checkbox"
+															checked={annotation.tool_is_correct}
+															onChange={(event) =>
+																updateAnnotationCorrectness(
+																	probe.probe_id,
+																	"tool",
+																	event.target.checked
+																)
+															}
+														/>
+														Tool korrekt
+													</label>
+													{!annotation.tool_is_correct ? (
+														<select
+															value={
+																annotation.corrected_tool_id ??
+																probe.tool.expected_label ??
+																probe.target_tool_id ??
+																""
+															}
+															onChange={(event) =>
+																updateAnnotationCorrectedLabel(
+																	probe.probe_id,
+																	"tool",
+																	event.target.value
+																)
+															}
+															className="h-8 rounded-md border bg-transparent px-2 text-xs w-full"
+														>
+															<option value="">Valj tool...</option>
+															{auditToolOptions.map((toolId) => (
+																<option
+																	key={`${probe.probe_id}-tool-${toolId}`}
+																	value={toolId}
+																>
+																	{toolId}
+																</option>
+															))}
+														</select>
+													) : null}
+												</div>
 											</div>
 										</div>
 									);
@@ -864,14 +1213,23 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						</div>
 					) : null}
 
-					{auditSuggestions.length > 0 ? (
+					{auditSuggestions ? (
 						<div className="space-y-3">
 							<div className="flex flex-wrap items-center gap-2">
 								<Badge variant="outline">
-									Forslag: {auditSuggestions.length}
+									Tool-forslag: {auditSuggestions.tool_suggestions.length}
 								</Badge>
 								<Badge variant="outline">
-									Valda: {selectedAuditSuggestions.length}
+									Intent-forslag: {auditSuggestions.intent_suggestions.length}
+								</Badge>
+								<Badge variant="outline">
+									Agent-forslag: {auditSuggestions.agent_suggestions.length}
+								</Badge>
+								<Badge variant="outline">
+									Valda:{" "}
+									{selectedToolSuggestions.length +
+										selectedIntentSuggestions.length +
+										selectedAgentSuggestions.length}
 								</Badge>
 								<Button
 									type="button"
@@ -881,36 +1239,94 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									Lagg valda i draft
 								</Button>
 							</div>
-							<div className="space-y-2">
-								{auditSuggestions.map((suggestion) => {
-									const checked = selectedAuditSuggestionToolIds.has(suggestion.tool_id);
-									return (
-										<div key={`audit-suggestion-${suggestion.tool_id}`} className="rounded border p-3">
-											<div className="flex items-center gap-2 mb-2">
-												<input
-													type="checkbox"
-													checked={checked}
-													onChange={(event) =>
-														toggleAuditSuggestionSelection(
-															suggestion.tool_id,
-															event.target.checked
-														)
-													}
-												/>
-												<p className="text-sm font-medium">{suggestion.tool_id}</p>
+							<div className="grid gap-3 lg:grid-cols-3">
+								<div className="space-y-2">
+									<p className="text-sm font-medium">Tool suggestions</p>
+									{auditSuggestions.tool_suggestions.map((suggestion) => {
+										const checked = selectedAuditSuggestionToolIds.has(
+											suggestion.tool_id
+										);
+										return (
+											<div
+												key={`audit-suggestion-tool-${suggestion.tool_id}`}
+												className="rounded border p-3"
+											>
+												<div className="flex items-center gap-2 mb-2">
+													<input
+														type="checkbox"
+														checked={checked}
+														onChange={(event) =>
+															toggleAuditToolSuggestionSelection(
+																suggestion.tool_id,
+																event.target.checked
+															)
+														}
+													/>
+													<p className="text-sm font-medium">{suggestion.tool_id}</p>
+												</div>
+												<p className="text-xs text-muted-foreground">{suggestion.rationale}</p>
 											</div>
-											<p className="text-xs text-muted-foreground mb-2">
-												{suggestion.rationale}
-											</p>
-											<p className="text-xs">
-												Nuvarande: {suggestion.current_metadata.description}
-											</p>
-											<p className="text-xs">
-												Foreslaget: {suggestion.proposed_metadata.description}
-											</p>
-										</div>
-									);
-								})}
+										);
+									})}
+								</div>
+								<div className="space-y-2">
+									<p className="text-sm font-medium">Intent suggestions</p>
+									{auditSuggestions.intent_suggestions.map((suggestion) => {
+										const checked = selectedAuditSuggestionIntentIds.has(
+											suggestion.intent_id
+										);
+										return (
+											<div
+												key={`audit-suggestion-intent-${suggestion.intent_id}`}
+												className="rounded border p-3"
+											>
+												<div className="flex items-center gap-2 mb-2">
+													<input
+														type="checkbox"
+														checked={checked}
+														onChange={(event) =>
+															toggleAuditIntentSuggestionSelection(
+																suggestion.intent_id,
+																event.target.checked
+															)
+														}
+													/>
+													<p className="text-sm font-medium">{suggestion.intent_id}</p>
+												</div>
+												<p className="text-xs text-muted-foreground">{suggestion.rationale}</p>
+											</div>
+										);
+									})}
+								</div>
+								<div className="space-y-2">
+									<p className="text-sm font-medium">Agent suggestions</p>
+									{auditSuggestions.agent_suggestions.map((suggestion) => {
+										const checked = selectedAuditSuggestionAgentIds.has(
+											suggestion.agent_id
+										);
+										return (
+											<div
+												key={`audit-suggestion-agent-${suggestion.agent_id}`}
+												className="rounded border p-3"
+											>
+												<div className="flex items-center gap-2 mb-2">
+													<input
+														type="checkbox"
+														checked={checked}
+														onChange={(event) =>
+															toggleAuditAgentSuggestionSelection(
+																suggestion.agent_id,
+																event.target.checked
+															)
+														}
+													/>
+													<p className="text-sm font-medium">{suggestion.agent_id}</p>
+												</div>
+												<p className="text-xs text-muted-foreground">{suggestion.rationale}</p>
+											</div>
+										);
+									})}
+								</div>
 							</div>
 						</div>
 					) : null}

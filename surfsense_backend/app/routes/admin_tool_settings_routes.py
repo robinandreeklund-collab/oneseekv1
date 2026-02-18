@@ -103,8 +103,10 @@ from app.services.tool_metadata_service import (
     upsert_global_tool_metadata_overrides,
 )
 from app.services.metadata_audit_service import (
-    build_suggestion_inputs_from_audit_annotations,
-    run_tool_metadata_audit,
+    build_layered_suggestion_inputs_from_annotations,
+    generate_agent_metadata_suggestions_from_annotations,
+    generate_intent_metadata_suggestions_from_annotations,
+    run_layered_metadata_audit,
 )
 from app.services.agent_metadata_service import (
     agent_metadata_payload_equal,
@@ -3794,10 +3796,36 @@ async def run_metadata_catalog_audit(
     llm = None
     if payload.include_llm_generated:
         llm = await get_agent_llm(session, resolved_search_space_id)
-    audit_result = await run_tool_metadata_audit(
+    intent_definitions = await get_effective_intent_definitions(session)
+    agent_metadata = await get_effective_agent_metadata(session)
+    expected_intent_by_tool: dict[str, str] = {}
+    expected_agent_by_tool: dict[str, str] = {}
+    for entry in tool_index:
+        route, intent_id = _resolve_expected_route_and_intent(
+            tool_id=str(getattr(entry, "tool_id", "") or ""),
+            category=str(getattr(entry, "category", "") or ""),
+            route=None,
+            intent=None,
+        )
+        expected_intent_by_tool[str(getattr(entry, "tool_id", "") or "")] = (
+            str(intent_id or "").strip().lower() or "action"
+        )
+        expected_agent_by_tool[str(getattr(entry, "tool_id", "") or "")] = (
+            _infer_agent_for_tool(
+                str(getattr(entry, "tool_id", "") or ""),
+                str(getattr(entry, "category", "") or ""),
+                route,
+                None,
+            )
+        )
+    audit_result = await run_layered_metadata_audit(
         tool_index=tool_index,
         llm=llm,
         retrieval_tuning=retrieval_tuning,
+        intent_definitions=intent_definitions,
+        agent_metadata=agent_metadata,
+        expected_intent_by_tool=expected_intent_by_tool,
+        expected_agent_by_tool=expected_agent_by_tool,
         tool_ids=list(payload.tool_ids),
         tool_id_prefix=payload.tool_id_prefix,
         include_existing_examples=bool(payload.include_existing_examples),
@@ -3813,6 +3841,9 @@ async def run_metadata_catalog_audit(
         "retrieval_tuning": ToolRetrievalTuning(**retrieval_tuning),
         "probes": list(audit_result.get("probes") or []),
         "summary": dict(audit_result.get("summary") or {}),
+        "available_intent_ids": list(audit_result.get("available_intent_ids") or []),
+        "available_agent_ids": list(audit_result.get("available_agent_ids") or []),
+        "available_tool_ids": list(audit_result.get("available_tool_ids") or []),
     }
 
 
@@ -3843,23 +3874,44 @@ async def generate_metadata_catalog_audit_suggestions(
     )
     retrieval_tuning = await get_global_tool_retrieval_tuning(session)
     llm = await get_agent_llm(session, resolved_search_space_id)
-    evaluation_results, confusion_pairs, reviewed_failures = (
-        build_suggestion_inputs_from_audit_annotations(
-            annotations=[item.model_dump() for item in payload.annotations]
-        )
+    intent_definitions = await get_effective_intent_definitions(session)
+    agent_metadata = await get_effective_agent_metadata(session)
+    suggestion_inputs = build_layered_suggestion_inputs_from_annotations(
+        annotations=[item.model_dump() for item in payload.annotations]
     )
-    suggestions = await generate_tool_metadata_suggestions(
-        evaluation_results=evaluation_results,
+    tool_suggestions = await generate_tool_metadata_suggestions(
+        evaluation_results=list(suggestion_inputs.get("tool_results") or []),
         tool_index=tool_index,
         llm=llm,
         max_suggestions=max(1, min(int(payload.max_suggestions or 20), 100)),
         retrieval_tuning=retrieval_tuning,
     )
+    intent_suggestions = await generate_intent_metadata_suggestions_from_annotations(
+        intent_definitions=intent_definitions,
+        intent_failures=list(suggestion_inputs.get("intent_failures") or []),
+        llm=llm,
+        max_suggestions=max(1, min(int(payload.max_suggestions or 20), 100)),
+    )
+    agent_suggestions = await generate_agent_metadata_suggestions_from_annotations(
+        agent_metadata=agent_metadata,
+        agent_failures=list(suggestion_inputs.get("agent_failures") or []),
+        llm=llm,
+        max_suggestions=max(1, min(int(payload.max_suggestions or 20), 100)),
+    )
     return {
-        "suggestions": suggestions,
+        "tool_suggestions": tool_suggestions,
+        "intent_suggestions": intent_suggestions,
+        "agent_suggestions": agent_suggestions,
         "total_annotations": len(payload.annotations),
-        "reviewed_failures": reviewed_failures,
-        "confusion_pairs": confusion_pairs,
+        "reviewed_intent_failures": int(
+            suggestion_inputs.get("reviewed_intent_failures") or 0
+        ),
+        "reviewed_agent_failures": int(
+            suggestion_inputs.get("reviewed_agent_failures") or 0
+        ),
+        "reviewed_tool_failures": int(
+            suggestion_inputs.get("reviewed_tool_failures") or 0
+        ),
     }
 
 

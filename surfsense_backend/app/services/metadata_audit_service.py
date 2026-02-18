@@ -9,8 +9,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.new_chat.bigtool_store import (
     ToolIndexEntry,
+    normalize_retrieval_tuning,
     smart_retrieve_tools_with_breakdown,
 )
+from app.services.agent_metadata_service import normalize_agent_metadata_payload
+from app.services.intent_definition_service import normalize_intent_definition_payload
 
 
 _TOOL_AUDIT_STOPWORDS = {
@@ -32,6 +35,98 @@ _TOOL_AUDIT_STOPWORDS = {
     "kan",
     "finns",
     "sverige",
+}
+
+_ACTION_AGENTS = {
+    "action",
+    "weather",
+    "kartor",
+    "media",
+    "trafik",
+    "marketplace",
+}
+_KNOWLEDGE_AGENTS = {"knowledge", "browser", "bolag", "riksdagen"}
+_STATISTICS_AGENTS = {"statistics"}
+_COMPARE_AGENTS = {"synthesis"}
+
+_AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...]]]] = {
+    "knowledge": (
+        [("tools", "knowledge")],
+        [("tools", "action"), ("tools", "statistics"), ("tools", "general")],
+    ),
+    "action": (
+        [("tools", "action")],
+        [
+            ("tools", "knowledge"),
+            ("tools", "statistics"),
+            ("tools", "kartor"),
+            ("tools", "general"),
+        ],
+    ),
+    "weather": (
+        [("tools", "weather")],
+        [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
+    ),
+    "kartor": (
+        [("tools", "kartor")],
+        [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
+    ),
+    "media": (
+        [("tools", "action", "media")],
+        [
+            ("tools", "knowledge"),
+            ("tools", "statistics"),
+            ("tools", "kartor"),
+            ("tools", "general"),
+        ],
+    ),
+    "statistics": (
+        [("tools", "statistics")],
+        [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
+    ),
+    "browser": (
+        [("tools", "knowledge", "web")],
+        [
+            ("tools", "knowledge"),
+            ("tools", "action"),
+            ("tools", "statistics"),
+            ("tools", "general"),
+        ],
+    ),
+    "code": (
+        [("tools", "code")],
+        [
+            ("tools", "general"),
+            ("tools", "knowledge"),
+            ("tools", "action"),
+            ("tools", "statistics"),
+        ],
+    ),
+    "bolag": (
+        [("tools", "bolag")],
+        [
+            ("tools", "knowledge"),
+            ("tools", "statistics"),
+            ("tools", "action"),
+            ("tools", "general"),
+        ],
+    ),
+    "trafik": (
+        [("tools", "trafik")],
+        [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
+    ),
+    "riksdagen": (
+        [("tools", "politik")],
+        [("tools", "knowledge"), ("tools", "action"), ("tools", "general")],
+    ),
+    "marketplace": (
+        [("tools", "marketplace")],
+        [("tools", "knowledge"), ("tools", "general")],
+    ),
+    "synthesis": (
+        [("tools", "knowledge")],
+        [("tools", "statistics"), ("tools", "action"), ("tools", "general")],
+    ),
 }
 
 
@@ -125,6 +220,27 @@ def _jaccard_similarity(left: set[str], right: set[str]) -> float:
     if not union:
         return 0.0
     return len(left & right) / len(union)
+
+
+def _embed_text(text: str) -> list[float] | None:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return None
+    try:
+        from app.config import config
+
+        vector = config.embedding_model_instance.embed(normalized)
+    except Exception:
+        return None
+    if isinstance(vector, list):
+        try:
+            return [float(value) for value in vector]
+        except Exception:
+            return None
+    try:
+        return [float(value) for value in vector]
+    except Exception:
+        return None
 
 
 def _tool_similarity_score(left: ToolIndexEntry, right: ToolIndexEntry) -> float:
@@ -224,9 +340,8 @@ async def _generate_probe_queries_for_tool(
         model = llm
 
     prompt = (
-        "You generate Swedish probe queries for metadata audit.\n"
-        "Goal: create user questions that should clearly map to one tool and help "
-        "separate it from similar tools.\n"
+        "You generate Swedish probe queries for retrieval-only metadata audit.\n"
+        "Goal: create user questions that should map to one tool and expose overlap.\n"
         "Return strict JSON only:\n"
         "{\n"
         '  "queries": ["query 1", "query 2"]\n'
@@ -312,15 +427,198 @@ def _select_audit_entries(
             if str(entry.tool_id).strip().lower().startswith(normalized_prefix)
         ]
     selected.sort(key=lambda entry: str(entry.tool_id))
-    capped = max(1, min(int(max_tools or 25), 200))
+    capped = max(1, min(int(max_tools or 25), 250))
     return selected[:capped]
 
 
-async def run_tool_metadata_audit(
+def _agent_route_bonus(agent_id: str, intent_id: str | None, namespace_boost: float) -> float:
+    normalized_agent = str(agent_id or "").strip().lower()
+    normalized_intent = str(intent_id or "").strip().lower()
+    if not normalized_intent:
+        return 0.0
+    if normalized_intent == "action" and normalized_agent in _ACTION_AGENTS:
+        return namespace_boost
+    if normalized_intent == "knowledge" and normalized_agent in _KNOWLEDGE_AGENTS:
+        return namespace_boost
+    if normalized_intent == "statistics" and normalized_agent in _STATISTICS_AGENTS:
+        return namespace_boost
+    if normalized_intent == "compare" and normalized_agent in _COMPARE_AGENTS:
+        return namespace_boost
+    return 0.0
+
+
+def _rank_metadata_candidates(
+    *,
+    query: str,
+    candidates: list[dict[str, Any]],
+    retrieval_tuning: dict[str, Any],
+    intent_hint: str | None = None,
+) -> list[dict[str, Any]]:
+    tuning = normalize_retrieval_tuning(retrieval_tuning or {})
+    query_norm = str(query or "").strip().lower()
+    query_tokens = set(_tokenize(query_norm))
+    query_embedding = _embed_text(query)
+
+    ranked: list[dict[str, Any]] = []
+    for candidate in candidates:
+        label = _normalize_text(candidate.get("label"))
+        candidate_id = _normalize_text(candidate.get("id"))
+        description = _normalize_text(candidate.get("description"))
+        keywords = _safe_string_list(candidate.get("keywords"))
+        label_norm = label.lower()
+        candidate_id_norm = candidate_id.lower()
+        name_match_hits = 0
+        if label_norm and label_norm in query_norm:
+            name_match_hits += 1
+        if candidate_id_norm and candidate_id_norm in query_norm:
+            name_match_hits += 1
+        keyword_hits = sum(
+            1 for keyword in keywords if str(keyword).strip().lower() in query_norm
+        )
+        description_hits = sum(
+            1 for token in query_tokens if token and token in description.lower()
+        )
+        lexical_score = (
+            (name_match_hits * tuning.name_match_weight)
+            + (keyword_hits * tuning.keyword_weight)
+            + (description_hits * tuning.description_token_weight)
+        )
+        candidate_embedding = candidate.get("embedding")
+        if not isinstance(candidate_embedding, list):
+            candidate_embedding = _embed_text(
+                f"{label}\n{description}\nKeywords: {', '.join(keywords)}"
+            )
+        embedding_raw = _cosine_similarity(query_embedding, candidate_embedding)
+        embedding_weighted = embedding_raw * tuning.embedding_weight
+        route_bonus = _agent_route_bonus(
+            candidate_id,
+            intent_hint,
+            tuning.namespace_boost,
+        )
+        score = lexical_score + embedding_weighted + route_bonus
+        ranked.append(
+            {
+                "label": candidate_id,
+                "name": label,
+                "score": float(score),
+                "pre_score": float(score),
+                "name_match_hits": int(name_match_hits),
+                "keyword_hits": int(keyword_hits),
+                "description_hits": int(description_hits),
+                "lexical_score": float(lexical_score),
+                "embedding_score_raw": float(embedding_raw),
+                "embedding_score_weighted": float(embedding_weighted),
+                "intent_route_bonus": float(route_bonus),
+            }
+        )
+    ranked.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    return ranked
+
+
+def _layer_result(
+    *,
+    expected_label: str | None,
+    ranked: list[dict[str, Any]],
+) -> dict[str, Any]:
+    top1 = str(ranked[0].get("label") or "").strip() if ranked else None
+    top2 = str(ranked[1].get("label") or "").strip() if len(ranked) > 1 else None
+    top1_score = float(ranked[0].get("pre_score") or ranked[0].get("score") or 0.0) if ranked else None
+    top2_score = (
+        float(ranked[1].get("pre_score") or ranked[1].get("score") or 0.0)
+        if len(ranked) > 1
+        else None
+    )
+    margin = (
+        (top1_score - top2_score)
+        if top1_score is not None and top2_score is not None
+        else None
+    )
+    return {
+        "expected_label": expected_label,
+        "predicted_label": top1,
+        "top1": top1,
+        "top2": top2,
+        "margin": margin,
+        "score_breakdown": ranked[:6],
+    }
+
+
+def _tool_layer_result(
+    *,
+    expected_label: str | None,
+    ranked_ids: list[str],
+    retrieval_breakdown: list[dict[str, Any]],
+) -> dict[str, Any]:
+    top1 = ranked_ids[0] if ranked_ids else None
+    top2 = ranked_ids[1] if len(ranked_ids) > 1 else None
+    score_by_id: dict[str, float] = {}
+    for item in retrieval_breakdown:
+        tool_id = _normalize_text(item.get("tool_id"))
+        if not tool_id:
+            continue
+        score_by_id[tool_id] = float(
+            item.get("pre_rerank_score") or item.get("score") or 0.0
+        )
+    margin = (
+        score_by_id[top1] - score_by_id[top2]
+        if top1 and top2 and top1 in score_by_id and top2 in score_by_id
+        else None
+    )
+    return {
+        "expected_label": expected_label,
+        "predicted_label": top1,
+        "top1": top1,
+        "top2": top2,
+        "margin": margin,
+        "score_breakdown": retrieval_breakdown[:8],
+    }
+
+
+def _tool_namespaces_for_agent(
+    agent_id: str | None,
+) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
+    normalized = str(agent_id or "").strip().lower()
+    if normalized in _AGENT_NAMESPACE_MAP:
+        return _AGENT_NAMESPACE_MAP[normalized]
+    return [("tools", "action")], [("tools", "knowledge"), ("tools", "general")]
+
+
+def _path_label(intent_id: str | None, agent_id: str | None, tool_id: str | None) -> str:
+    return f"{intent_id or '-'}>{agent_id or '-'}>{tool_id or '-'}"
+
+
+def _matrix_rows_from_counts(
+    counts: dict[tuple[str, str], int],
+    *,
+    expected_key: str,
+    predicted_key: str,
+    limit: int = 60,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for (expected, predicted), count in sorted(
+        counts.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )[: max(1, int(limit))]:
+        rows.append(
+            {
+                expected_key: expected,
+                predicted_key: predicted,
+                "count": count,
+            }
+        )
+    return rows
+
+
+async def run_layered_metadata_audit(
     *,
     tool_index: list[ToolIndexEntry],
     llm: Any,
-    retrieval_tuning: dict[str, Any] | None = None,
+    retrieval_tuning: dict[str, Any],
+    intent_definitions: list[dict[str, Any]],
+    agent_metadata: list[dict[str, Any]],
+    expected_intent_by_tool: dict[str, str],
+    expected_agent_by_tool: dict[str, str],
     tool_ids: list[str] | None = None,
     tool_id_prefix: str | None = None,
     include_existing_examples: bool = True,
@@ -337,17 +635,57 @@ async def run_tool_metadata_audit(
         max_tools=max_tools,
     )
     neighbors_by_tool = _nearest_neighbor_map(selected_entries, max_neighbors=3)
-    probe_rows: list[dict[str, Any]] = []
-    confusion_counts: dict[tuple[str, str], int] = {}
+    intent_candidates = [
+        {
+            "id": str(definition.get("intent_id") or "").strip(),
+            "label": str(definition.get("label") or definition.get("intent_id") or "").strip(),
+            "description": str(definition.get("description") or "").strip(),
+            "keywords": list(definition.get("keywords") or []),
+            "route": str(definition.get("route") or "").strip().lower(),
+        }
+        for definition in intent_definitions
+        if str(definition.get("intent_id") or "").strip()
+    ]
+    agent_candidates = [
+        {
+            "id": str(payload.get("agent_id") or "").strip(),
+            "label": str(payload.get("label") or payload.get("agent_id") or "").strip(),
+            "description": str(payload.get("description") or "").strip(),
+            "keywords": list(payload.get("keywords") or []),
+            "prompt_key": payload.get("prompt_key"),
+            "namespace": list(payload.get("namespace") or []),
+        }
+        for payload in agent_metadata
+        if str(payload.get("agent_id") or "").strip()
+    ]
+
+    probes: list[dict[str, Any]] = []
+    intent_confusions: dict[tuple[str, str], int] = {}
+    agent_confusions: dict[tuple[str, str], int] = {}
+    tool_confusions: dict[tuple[str, str], int] = {}
+    path_confusions: dict[tuple[str, str], int] = {}
+    intent_correct_count = 0
+    agent_correct_count = 0
+    tool_correct_count = 0
+    agent_conditional_correct = 0
+    agent_conditional_total = 0
+    tool_conditional_correct = 0
+    tool_conditional_total = 0
 
     internal_retrieval_limit = max(2, min(int(retrieval_limit or 5), 20))
     max_probe_queries = max(1, min(int(max_queries_per_tool or 6), 20))
-    llm_query_count = max(1, min(int(llm_queries_per_tool or 3), 10))
+    llm_query_count = max(1, min(int(llm_queries_per_tool or 3), 12))
 
     for entry in selected_entries:
+        expected_tool_id = entry.tool_id
+        expected_intent_id = _normalize_text(expected_intent_by_tool.get(expected_tool_id)).lower() or None
+        expected_agent_id = _normalize_text(expected_agent_by_tool.get(expected_tool_id)).lower() or None
         queries: list[tuple[str, str]] = []
         if include_existing_examples:
-            queries.extend((query, "existing_example") for query in entry.example_queries[:max_probe_queries])
+            queries.extend(
+                (query, "existing_example")
+                for query in entry.example_queries[:max_probe_queries]
+            )
         if include_llm_generated:
             generated = await _generate_probe_queries_for_tool(
                 llm=llm,
@@ -357,144 +695,642 @@ async def run_tool_metadata_audit(
             )
             queries.extend((query, "llm_generated") for query in generated)
         queries = _dedupe_queries(queries)[:max_probe_queries]
+
         for query, source in queries:
-            selected_tool_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
+            intent_ranked = _rank_metadata_candidates(
+                query=query,
+                candidates=intent_candidates,
+                retrieval_tuning=retrieval_tuning,
+                intent_hint=None,
+            )
+            intent_layer = _layer_result(
+                expected_label=expected_intent_id,
+                ranked=intent_ranked,
+            )
+            predicted_intent_id = _normalize_text(intent_layer.get("predicted_label")).lower() or None
+
+            agent_ranked = _rank_metadata_candidates(
+                query=query,
+                candidates=agent_candidates,
+                retrieval_tuning=retrieval_tuning,
+                intent_hint=predicted_intent_id,
+            )
+            agent_layer = _layer_result(
+                expected_label=expected_agent_id,
+                ranked=agent_ranked,
+            )
+            predicted_agent_id = _normalize_text(agent_layer.get("predicted_label")).lower() or None
+
+            primary_namespaces, fallback_namespaces = _tool_namespaces_for_agent(
+                predicted_agent_id
+            )
+            predicted_tool_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
                 query,
                 tool_index=tool_index,
-                primary_namespaces=[("tools",)],
-                fallback_namespaces=[],
+                primary_namespaces=primary_namespaces,
+                fallback_namespaces=fallback_namespaces,
                 limit=internal_retrieval_limit,
                 tuning=retrieval_tuning,
             )
-            predicted_tool_id = (
-                str(selected_tool_ids[0]).strip()
-                if selected_tool_ids
-                else None
+            normalized_predicted_tool_ids = [
+                _normalize_text(tool_id) for tool_id in predicted_tool_ids if _normalize_text(tool_id)
+            ]
+            tool_layer = _tool_layer_result(
+                expected_label=expected_tool_id,
+                ranked_ids=normalized_predicted_tool_ids,
+                retrieval_breakdown=list(retrieval_breakdown),
             )
-            target_tool_id = entry.tool_id
-            is_correct = predicted_tool_id == target_tool_id
-            target_rank = None
-            for idx, candidate_id in enumerate(selected_tool_ids):
-                if str(candidate_id).strip() == target_tool_id:
-                    target_rank = idx + 1
-                    break
-            top_score = (
-                float(retrieval_breakdown[0].get("pre_rerank_score") or retrieval_breakdown[0].get("score") or 0.0)
-                if retrieval_breakdown
-                else None
+            predicted_tool_id = _normalize_text(tool_layer.get("predicted_label")) or None
+
+            expected_path = _path_label(
+                expected_intent_id,
+                expected_agent_id,
+                expected_tool_id,
             )
-            second_score = (
-                float(retrieval_breakdown[1].get("pre_rerank_score") or retrieval_breakdown[1].get("score") or 0.0)
-                if len(retrieval_breakdown) > 1
-                else None
+            predicted_path = _path_label(
+                predicted_intent_id,
+                predicted_agent_id,
+                predicted_tool_id,
             )
-            confidence_margin = (
-                (top_score - second_score)
-                if top_score is not None and second_score is not None
-                else None
-            )
-            if predicted_tool_id and predicted_tool_id != target_tool_id:
-                key = (target_tool_id, predicted_tool_id)
-                confusion_counts[key] = confusion_counts.get(key, 0) + 1
             probe_id = hashlib.sha256(
-                f"{target_tool_id}|{source}|{query}".encode("utf-8")
-            ).hexdigest()[:20]
-            probe_rows.append(
+                f"{expected_tool_id}|{source}|{query}".encode("utf-8")
+            ).hexdigest()[:24]
+
+            probes.append(
                 {
                     "probe_id": probe_id,
                     "query": query,
                     "source": source,
-                    "target_tool_id": target_tool_id,
-                    "predicted_tool_id": predicted_tool_id,
-                    "predicted_tool_ids": [str(tool_id) for tool_id in selected_tool_ids],
-                    "target_rank": target_rank,
-                    "is_correct": is_correct,
-                    "confidence_margin": confidence_margin,
-                    "retrieval_breakdown": list(retrieval_breakdown[:internal_retrieval_limit]),
+                    "target_tool_id": expected_tool_id,
+                    "expected_path": expected_path,
+                    "predicted_path": predicted_path,
+                    "intent": intent_layer,
+                    "agent": agent_layer,
+                    "tool": tool_layer,
                 }
             )
 
-    total_probes = len(probe_rows)
-    correct_top1 = sum(1 for row in probe_rows if row.get("is_correct"))
-    top1_accuracy = (correct_top1 / total_probes) if total_probes else 0.0
-    ambiguous_count = sum(
-        1
-        for row in probe_rows
-        if row.get("confidence_margin") is not None and float(row.get("confidence_margin")) < 0.75
-    )
-    confusion_pairs = [
-        {
-            "expected_tool_id": expected_tool_id,
-            "predicted_tool_id": predicted_tool_id,
-            "count": count,
-        }
-        for (expected_tool_id, predicted_tool_id), count in sorted(
-            confusion_counts.items(),
-            key=lambda item: item[1],
-            reverse=True,
-        )[:30]
-    ]
+            intent_correct = expected_intent_id is not None and predicted_intent_id == expected_intent_id
+            agent_correct = expected_agent_id is not None and predicted_agent_id == expected_agent_id
+            tool_correct = predicted_tool_id == expected_tool_id
+            if intent_correct:
+                intent_correct_count += 1
+            if agent_correct:
+                agent_correct_count += 1
+            if tool_correct:
+                tool_correct_count += 1
+            if expected_intent_id:
+                key = (expected_intent_id, predicted_intent_id or "-")
+                intent_confusions[key] = intent_confusions.get(key, 0) + 1
+            if expected_agent_id:
+                key = (expected_agent_id, predicted_agent_id or "-")
+                agent_confusions[key] = agent_confusions.get(key, 0) + 1
+            key = (expected_tool_id, predicted_tool_id or "-")
+            tool_confusions[key] = tool_confusions.get(key, 0) + 1
+            path_key = (expected_path, predicted_path)
+            path_confusions[path_key] = path_confusions.get(path_key, 0) + 1
+
+            if intent_correct and expected_agent_id:
+                agent_conditional_total += 1
+                if agent_correct:
+                    agent_conditional_correct += 1
+            if intent_correct and agent_correct:
+                tool_conditional_total += 1
+                if tool_correct:
+                    tool_conditional_correct += 1
+
+    total = len(probes)
+    summary = {
+        "total_probes": total,
+        "intent_accuracy": (intent_correct_count / total) if total else 0.0,
+        "agent_accuracy": (agent_correct_count / total) if total else 0.0,
+        "tool_accuracy": (tool_correct_count / total) if total else 0.0,
+        "agent_accuracy_given_intent_correct": (
+            (agent_conditional_correct / agent_conditional_total)
+            if agent_conditional_total
+            else None
+        ),
+        "tool_accuracy_given_intent_agent_correct": (
+            (tool_conditional_correct / tool_conditional_total)
+            if tool_conditional_total
+            else None
+        ),
+        "intent_confusion_matrix": _matrix_rows_from_counts(
+            intent_confusions,
+            expected_key="expected_label",
+            predicted_key="predicted_label",
+        ),
+        "agent_confusion_matrix": _matrix_rows_from_counts(
+            agent_confusions,
+            expected_key="expected_label",
+            predicted_key="predicted_label",
+        ),
+        "tool_confusion_matrix": _matrix_rows_from_counts(
+            tool_confusions,
+            expected_key="expected_label",
+            predicted_key="predicted_label",
+        ),
+        "path_confusion_matrix": _matrix_rows_from_counts(
+            path_confusions,
+            expected_key="expected_path",
+            predicted_key="predicted_path",
+        ),
+    }
     return {
-        "probes": probe_rows,
-        "summary": {
-            "total_probes": total_probes,
-            "correct_top1": correct_top1,
-            "incorrect_top1": max(0, total_probes - correct_top1),
-            "top1_accuracy": top1_accuracy,
-            "ambiguous_count": ambiguous_count,
-            "confusion_pairs": confusion_pairs,
-        },
+        "probes": probes,
+        "summary": summary,
+        "available_intent_ids": sorted(
+            {
+                _normalize_text(item.get("id")).lower()
+                for item in intent_candidates
+                if _normalize_text(item.get("id"))
+            }
+        ),
+        "available_agent_ids": sorted(
+            {
+                _normalize_text(item.get("id")).lower()
+                for item in agent_candidates
+                if _normalize_text(item.get("id"))
+            }
+        ),
+        "available_tool_ids": sorted(
+            {
+                _normalize_text(entry.tool_id)
+                for entry in selected_entries
+                if _normalize_text(entry.tool_id)
+            }
+        ),
     }
 
 
-def build_suggestion_inputs_from_audit_annotations(
+def build_layered_suggestion_inputs_from_annotations(
     *,
     annotations: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
-    evaluation_results: list[dict[str, Any]] = []
-    confusion_counts: dict[tuple[str, str], int] = {}
-    reviewed_failures = 0
+) -> dict[str, Any]:
+    tool_results: list[dict[str, Any]] = []
+    intent_failures: list[dict[str, Any]] = []
+    agent_failures: list[dict[str, Any]] = []
+    reviewed_intent_failures = 0
+    reviewed_agent_failures = 0
+    reviewed_tool_failures = 0
 
     for item in annotations:
+        probe_id = _normalize_text(item.get("probe_id")) or hashlib.sha256(
+            f"{item.get('query')}|{item.get('expected_tool_id')}".encode("utf-8")
+        ).hexdigest()[:24]
         query = _normalize_text(item.get("query"))
-        target_tool_id = _normalize_text(item.get("target_tool_id"))
-        predicted_tool_id = _normalize_text(item.get("predicted_tool_id")) or None
-        corrected_tool_id = _normalize_text(item.get("corrected_tool_id")) or None
-        is_correct = bool(item.get("is_correct", True))
-        expected_tool = corrected_tool_id or target_tool_id
-        passed_tool = bool(is_correct)
-        if not is_correct:
-            reviewed_failures += 1
-            if predicted_tool_id and expected_tool and predicted_tool_id != expected_tool:
-                key = (expected_tool, predicted_tool_id)
-                confusion_counts[key] = confusion_counts.get(key, 0) + 1
-        evaluation_results.append(
+        expected_intent = _normalize_text(item.get("expected_intent_id")).lower() or None
+        expected_agent = _normalize_text(item.get("expected_agent_id")).lower() or None
+        expected_tool = _normalize_text(item.get("expected_tool_id")) or None
+        predicted_intent = _normalize_text(item.get("predicted_intent_id")).lower() or None
+        predicted_agent = _normalize_text(item.get("predicted_agent_id")).lower() or None
+        predicted_tool = _normalize_text(item.get("predicted_tool_id")) or None
+        intent_is_correct = bool(item.get("intent_is_correct", True))
+        agent_is_correct = bool(item.get("agent_is_correct", True))
+        tool_is_correct = bool(item.get("tool_is_correct", True))
+        corrected_intent = _normalize_text(item.get("corrected_intent_id")).lower() or None
+        corrected_agent = _normalize_text(item.get("corrected_agent_id")).lower() or None
+        corrected_tool = _normalize_text(item.get("corrected_tool_id")) or None
+
+        resolved_expected_intent = corrected_intent if not intent_is_correct else expected_intent
+        resolved_expected_agent = corrected_agent if not agent_is_correct else expected_agent
+        resolved_expected_tool = corrected_tool if not tool_is_correct else expected_tool
+
+        if not intent_is_correct and resolved_expected_intent:
+            reviewed_intent_failures += 1
+            intent_failures.append(
+                {
+                    "probe_id": probe_id,
+                    "query": query,
+                    "expected_intent_id": resolved_expected_intent,
+                    "predicted_intent_id": predicted_intent,
+                    "score_breakdown": list(item.get("intent_score_breakdown") or []),
+                }
+            )
+        if not agent_is_correct and resolved_expected_agent:
+            reviewed_agent_failures += 1
+            agent_failures.append(
+                {
+                    "probe_id": probe_id,
+                    "query": query,
+                    "expected_agent_id": resolved_expected_agent,
+                    "predicted_agent_id": predicted_agent,
+                    "score_breakdown": list(item.get("agent_score_breakdown") or []),
+                }
+            )
+        if resolved_expected_tool:
+            if not tool_is_correct:
+                reviewed_tool_failures += 1
+            tool_results.append(
+                {
+                    "test_id": probe_id,
+                    "question": query,
+                    "expected_tool": resolved_expected_tool,
+                    "selected_tool": predicted_tool,
+                    "passed_tool": bool(tool_is_correct),
+                    "passed": bool(tool_is_correct),
+                    "retrieval_breakdown": list(item.get("tool_score_breakdown") or []),
+                }
+            )
+    return {
+        "tool_results": tool_results,
+        "intent_failures": intent_failures,
+        "agent_failures": agent_failures,
+        "reviewed_intent_failures": reviewed_intent_failures,
+        "reviewed_agent_failures": reviewed_agent_failures,
+        "reviewed_tool_failures": reviewed_tool_failures,
+    }
+
+
+def _intent_metadata_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_norm = normalize_intent_definition_payload(
+        left,
+        intent_id=left.get("intent_id"),
+    )
+    right_norm = normalize_intent_definition_payload(
+        right,
+        intent_id=right.get("intent_id"),
+    )
+    return left_norm == right_norm
+
+
+def _agent_metadata_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_norm = normalize_agent_metadata_payload(
+        left,
+        agent_id=left.get("agent_id"),
+    )
+    right_norm = normalize_agent_metadata_payload(
+        right,
+        agent_id=right.get("agent_id"),
+    )
+    return left_norm == right_norm
+
+
+def _fallback_intent_metadata_suggestion(
+    *,
+    current: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> tuple[dict[str, Any], str]:
+    token_counts: dict[str, int] = {}
+    wrong_intents: set[str] = set()
+    for failure in failures:
+        query = _normalize_text(failure.get("query"))
+        for token in _tokenize(query):
+            token_counts[token] = token_counts.get(token, 0) + 1
+        wrong_intent = _normalize_text(failure.get("predicted_intent_id")).lower()
+        if wrong_intent and wrong_intent != _normalize_text(current.get("intent_id")).lower():
+            wrong_intents.add(wrong_intent)
+    keywords = _safe_string_list(current.get("keywords"))
+    seen = {keyword.casefold() for keyword in keywords}
+    for token, _count in sorted(token_counts.items(), key=lambda item: item[1], reverse=True):
+        if token.casefold() in seen:
+            continue
+        keywords.append(token)
+        seen.add(token.casefold())
+        if len(keywords) >= 25:
+            break
+    description = _normalize_text(current.get("description"))
+    if wrong_intents:
+        marker = f"Skilj tydligt mot intent: {', '.join(sorted(wrong_intents)[:4])}."
+        if marker not in description:
+            description = f"{description} {marker}".strip()
+    proposed = {
+        "intent_id": _normalize_text(current.get("intent_id")).lower(),
+        "label": _normalize_text(current.get("label")) or _normalize_text(current.get("intent_id")).title(),
+        "route": _normalize_text(current.get("route")).lower() or "knowledge",
+        "description": description,
+        "keywords": keywords,
+        "priority": int(current.get("priority") or 500),
+        "enabled": bool(current.get("enabled", True)),
+    }
+    rationale = (
+        "Metadataforslag baserat pa granskade intent-kollisioner: "
+        "forstarkt nyckelord och tydligare avgransning mot forvaxlade intents."
+    )
+    return proposed, rationale
+
+
+def _fallback_agent_metadata_suggestion(
+    *,
+    current: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> tuple[dict[str, Any], str]:
+    token_counts: dict[str, int] = {}
+    wrong_agents: set[str] = set()
+    for failure in failures:
+        query = _normalize_text(failure.get("query"))
+        for token in _tokenize(query):
+            token_counts[token] = token_counts.get(token, 0) + 1
+        wrong_agent = _normalize_text(failure.get("predicted_agent_id")).lower()
+        if wrong_agent and wrong_agent != _normalize_text(current.get("agent_id")).lower():
+            wrong_agents.add(wrong_agent)
+    keywords = _safe_string_list(current.get("keywords"))
+    seen = {keyword.casefold() for keyword in keywords}
+    for token, _count in sorted(token_counts.items(), key=lambda item: item[1], reverse=True):
+        if token.casefold() in seen:
+            continue
+        keywords.append(token)
+        seen.add(token.casefold())
+        if len(keywords) >= 25:
+            break
+    description = _normalize_text(current.get("description"))
+    if wrong_agents:
+        marker = f"Skilj tydligt mot agenter: {', '.join(sorted(wrong_agents)[:4])}."
+        if marker not in description:
+            description = f"{description} {marker}".strip()
+    proposed = {
+        "agent_id": _normalize_text(current.get("agent_id")).lower(),
+        "label": _normalize_text(current.get("label")) or _normalize_text(current.get("agent_id")).title(),
+        "description": description,
+        "keywords": keywords,
+        "prompt_key": _normalize_text(current.get("prompt_key")) or None,
+        "namespace": _safe_string_list(current.get("namespace")),
+    }
+    rationale = (
+        "Metadataforslag baserat pa granskade agent-kollisioner: "
+        "forstarkt nyckelord och tydligare avgransning mot forvaxlade agenter."
+    )
+    return proposed, rationale
+
+
+async def _build_llm_intent_metadata_suggestion(
+    *,
+    llm: Any,
+    current: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> tuple[dict[str, Any], str] | None:
+    if llm is None:
+        return None
+    model = llm
+    try:
+        if hasattr(llm, "bind"):
+            model = llm.bind(temperature=0)
+    except Exception:
+        model = llm
+    prompt = (
+        "Du optimerar intent-metadata for retrieval-only.\n"
+        "Forbattra enbart metadatafalten (label, route, description, keywords, priority, enabled).\n"
+        "Inga prompt-forslag och ingen analys av pipeline-steg.\n"
+        "Returnera strikt JSON:\n"
+        "{\n"
+        '  "label": "string",\n'
+        '  "route": "knowledge|action|statistics|compare|smalltalk",\n'
+        '  "description": "string pa svenska",\n'
+        '  "keywords": ["svenska termer"],\n'
+        '  "priority": 100,\n'
+        '  "enabled": true,\n'
+        '  "rationale": "kort motivering pa svenska"\n'
+        "}\n"
+        "Ingen markdown."
+    )
+    payload = {
+        "current_metadata": current,
+        "reviewed_failures": failures,
+    }
+    try:
+        response = await model.ainvoke(
+            [
+                SystemMessage(content=prompt),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+            ]
+        )
+        parsed = _extract_json_object(
+            _response_content_to_text(getattr(response, "content", ""))
+        )
+        if not parsed:
+            return None
+        proposed = {
+            "intent_id": _normalize_text(current.get("intent_id")).lower(),
+            "label": _normalize_text(parsed.get("label")) or _normalize_text(current.get("label")),
+            "route": _normalize_text(parsed.get("route")).lower()
+            or _normalize_text(current.get("route")).lower(),
+            "description": _normalize_text(parsed.get("description")) or _normalize_text(current.get("description")),
+            "keywords": _safe_string_list(parsed.get("keywords")) or _safe_string_list(current.get("keywords")),
+            "priority": int(parsed.get("priority") or current.get("priority") or 500),
+            "enabled": bool(parsed.get("enabled", current.get("enabled", True))),
+        }
+        rationale = _normalize_text(parsed.get("rationale")) or (
+            "LLM-forslag for intent-metadata baserat pa granskade retrieval-fall."
+        )
+        return proposed, rationale
+    except Exception:
+        return None
+
+
+async def _build_llm_agent_metadata_suggestion(
+    *,
+    llm: Any,
+    current: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> tuple[dict[str, Any], str] | None:
+    if llm is None:
+        return None
+    model = llm
+    try:
+        if hasattr(llm, "bind"):
+            model = llm.bind(temperature=0)
+    except Exception:
+        model = llm
+    prompt = (
+        "Du optimerar agent-metadata for retrieval-only.\n"
+        "Forbattra enbart metadatafalten (label, description, keywords).\n"
+        "Inga prompt-forslag och ingen analys av pipeline-steg.\n"
+        "Returnera strikt JSON:\n"
+        "{\n"
+        '  "label": "string",\n'
+        '  "description": "string pa svenska",\n'
+        '  "keywords": ["svenska termer"],\n'
+        '  "rationale": "kort motivering pa svenska"\n'
+        "}\n"
+        "Ingen markdown."
+    )
+    payload = {
+        "current_metadata": current,
+        "reviewed_failures": failures,
+    }
+    try:
+        response = await model.ainvoke(
+            [
+                SystemMessage(content=prompt),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+            ]
+        )
+        parsed = _extract_json_object(
+            _response_content_to_text(getattr(response, "content", ""))
+        )
+        if not parsed:
+            return None
+        proposed = {
+            "agent_id": _normalize_text(current.get("agent_id")).lower(),
+            "label": _normalize_text(parsed.get("label")) or _normalize_text(current.get("label")),
+            "description": _normalize_text(parsed.get("description")) or _normalize_text(current.get("description")),
+            "keywords": _safe_string_list(parsed.get("keywords")) or _safe_string_list(current.get("keywords")),
+            "prompt_key": _normalize_text(current.get("prompt_key")) or None,
+            "namespace": _safe_string_list(current.get("namespace")),
+        }
+        rationale = _normalize_text(parsed.get("rationale")) or (
+            "LLM-forslag for agent-metadata baserat pa granskade retrieval-fall."
+        )
+        return proposed, rationale
+    except Exception:
+        return None
+
+
+async def generate_intent_metadata_suggestions_from_annotations(
+    *,
+    intent_definitions: list[dict[str, Any]],
+    intent_failures: list[dict[str, Any]],
+    llm: Any,
+    max_suggestions: int = 20,
+) -> list[dict[str, Any]]:
+    definitions_by_id = {
+        _normalize_text(item.get("intent_id")).lower(): normalize_intent_definition_payload(
+            item,
+            intent_id=item.get("intent_id"),
+        )
+        for item in intent_definitions
+        if _normalize_text(item.get("intent_id"))
+    }
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for failure in intent_failures:
+        expected_intent_id = _normalize_text(failure.get("expected_intent_id")).lower()
+        if not expected_intent_id:
+            continue
+        grouped.setdefault(expected_intent_id, []).append(failure)
+    suggestions: list[dict[str, Any]] = []
+    for intent_id, failures in grouped.items():
+        if len(suggestions) >= max(1, int(max_suggestions)):
+            break
+        current = definitions_by_id.get(intent_id) or normalize_intent_definition_payload(
+            {"intent_id": intent_id},
+            intent_id=intent_id,
+        )
+        fallback_proposed, fallback_rationale = _fallback_intent_metadata_suggestion(
+            current=current,
+            failures=failures,
+        )
+        llm_result = await _build_llm_intent_metadata_suggestion(
+            llm=llm,
+            current=current,
+            failures=failures,
+        )
+        if llm_result is None:
+            proposed = fallback_proposed
+            rationale = fallback_rationale
+        else:
+            proposed, rationale = llm_result
+        proposed = normalize_intent_definition_payload(
+            proposed,
+            intent_id=intent_id,
+        )
+        if _intent_metadata_equal(current, proposed):
+            continue
+        suggestions.append(
             {
-                "test_id": _normalize_text(item.get("probe_id")) or hashlib.sha256(
-                    f"{expected_tool}|{query}".encode("utf-8")
-                ).hexdigest()[:20],
-                "question": query,
-                "expected_tool": expected_tool,
-                "selected_tool": predicted_tool_id,
-                "passed_tool": passed_tool,
-                "passed": passed_tool,
-                "retrieval_breakdown": (
-                    list(item.get("retrieval_breakdown"))
-                    if isinstance(item.get("retrieval_breakdown"), list)
-                    else []
-                ),
+                "intent_id": intent_id,
+                "failed_probe_ids": [
+                    _normalize_text(item.get("probe_id"))
+                    for item in failures
+                    if _normalize_text(item.get("probe_id"))
+                ],
+                "rationale": rationale,
+                "current_metadata": {
+                    "intent_id": intent_id,
+                    "label": current.get("label"),
+                    "route": current.get("route"),
+                    "description": current.get("description"),
+                    "keywords": list(current.get("keywords") or []),
+                    "priority": int(current.get("priority") or 500),
+                    "enabled": bool(current.get("enabled", True)),
+                },
+                "proposed_metadata": {
+                    "intent_id": intent_id,
+                    "label": proposed.get("label"),
+                    "route": proposed.get("route"),
+                    "description": proposed.get("description"),
+                    "keywords": list(proposed.get("keywords") or []),
+                    "priority": int(proposed.get("priority") or 500),
+                    "enabled": bool(proposed.get("enabled", True)),
+                },
             }
         )
-    confusion_pairs = [
-        {
-            "expected_tool_id": expected_tool_id,
-            "predicted_tool_id": predicted_tool_id,
-            "count": count,
-        }
-        for (expected_tool_id, predicted_tool_id), count in sorted(
-            confusion_counts.items(),
-            key=lambda item: item[1],
-            reverse=True,
-        )[:30]
-    ]
-    return evaluation_results, confusion_pairs, reviewed_failures
+    return suggestions
+
+
+async def generate_agent_metadata_suggestions_from_annotations(
+    *,
+    agent_metadata: list[dict[str, Any]],
+    agent_failures: list[dict[str, Any]],
+    llm: Any,
+    max_suggestions: int = 20,
+) -> list[dict[str, Any]]:
+    metadata_by_id = {
+        _normalize_text(item.get("agent_id")).lower(): normalize_agent_metadata_payload(
+            item,
+            agent_id=item.get("agent_id"),
+        )
+        for item in agent_metadata
+        if _normalize_text(item.get("agent_id"))
+    }
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for failure in agent_failures:
+        expected_agent_id = _normalize_text(failure.get("expected_agent_id")).lower()
+        if not expected_agent_id:
+            continue
+        grouped.setdefault(expected_agent_id, []).append(failure)
+    suggestions: list[dict[str, Any]] = []
+    for agent_id, failures in grouped.items():
+        if len(suggestions) >= max(1, int(max_suggestions)):
+            break
+        current = metadata_by_id.get(agent_id) or normalize_agent_metadata_payload(
+            {"agent_id": agent_id},
+            agent_id=agent_id,
+        )
+        fallback_proposed, fallback_rationale = _fallback_agent_metadata_suggestion(
+            current=current,
+            failures=failures,
+        )
+        llm_result = await _build_llm_agent_metadata_suggestion(
+            llm=llm,
+            current=current,
+            failures=failures,
+        )
+        if llm_result is None:
+            proposed = fallback_proposed
+            rationale = fallback_rationale
+        else:
+            proposed, rationale = llm_result
+        proposed = normalize_agent_metadata_payload(
+            proposed,
+            agent_id=agent_id,
+        )
+        if _agent_metadata_equal(current, proposed):
+            continue
+        suggestions.append(
+            {
+                "agent_id": agent_id,
+                "failed_probe_ids": [
+                    _normalize_text(item.get("probe_id"))
+                    for item in failures
+                    if _normalize_text(item.get("probe_id"))
+                ],
+                "rationale": rationale,
+                "current_metadata": {
+                    "agent_id": agent_id,
+                    "label": current.get("label"),
+                    "description": current.get("description"),
+                    "keywords": list(current.get("keywords") or []),
+                    "prompt_key": current.get("prompt_key"),
+                    "namespace": list(current.get("namespace") or []),
+                },
+                "proposed_metadata": {
+                    "agent_id": agent_id,
+                    "label": proposed.get("label"),
+                    "description": proposed.get("description"),
+                    "keywords": list(proposed.get("keywords") or []),
+                    "prompt_key": proposed.get("prompt_key"),
+                    "namespace": list(proposed.get("namespace") or []),
+                },
+            }
+        )
+    return suggestions

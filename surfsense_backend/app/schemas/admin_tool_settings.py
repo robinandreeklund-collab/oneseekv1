@@ -635,9 +635,24 @@ class ToolApiInputApplyPromptSuggestionsResponse(BaseModel):
 
 
 class MetadataCatalogAuditConfusionPair(BaseModel):
-    expected_tool_id: str
-    predicted_tool_id: str
+    expected_label: str
+    predicted_label: str
     count: int
+
+
+class MetadataCatalogAuditPathConfusionPair(BaseModel):
+    expected_path: str
+    predicted_path: str
+    count: int
+
+
+class MetadataCatalogAuditLayerResult(BaseModel):
+    expected_label: str | None = None
+    predicted_label: str | None = None
+    top1: str | None = None
+    top2: str | None = None
+    margin: float | None = None
+    score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class MetadataCatalogAuditProbeItem(BaseModel):
@@ -645,21 +660,32 @@ class MetadataCatalogAuditProbeItem(BaseModel):
     query: str
     source: str
     target_tool_id: str
-    predicted_tool_id: str | None = None
-    predicted_tool_ids: list[str] = Field(default_factory=list)
-    target_rank: int | None = None
-    is_correct: bool = False
-    confidence_margin: float | None = None
-    retrieval_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    expected_path: str
+    predicted_path: str
+    intent: MetadataCatalogAuditLayerResult
+    agent: MetadataCatalogAuditLayerResult
+    tool: MetadataCatalogAuditLayerResult
 
 
 class MetadataCatalogAuditSummary(BaseModel):
     total_probes: int = 0
-    correct_top1: int = 0
-    incorrect_top1: int = 0
-    top1_accuracy: float = 0.0
-    ambiguous_count: int = 0
-    confusion_pairs: list[MetadataCatalogAuditConfusionPair] = Field(default_factory=list)
+    intent_accuracy: float = 0.0
+    agent_accuracy: float = 0.0
+    tool_accuracy: float = 0.0
+    agent_accuracy_given_intent_correct: float | None = None
+    tool_accuracy_given_intent_agent_correct: float | None = None
+    intent_confusion_matrix: list[MetadataCatalogAuditConfusionPair] = Field(
+        default_factory=list
+    )
+    agent_confusion_matrix: list[MetadataCatalogAuditConfusionPair] = Field(
+        default_factory=list
+    )
+    tool_confusion_matrix: list[MetadataCatalogAuditConfusionPair] = Field(
+        default_factory=list
+    )
+    path_confusion_matrix: list[MetadataCatalogAuditPathConfusionPair] = Field(
+        default_factory=list
+    )
 
 
 class MetadataCatalogAuditRunRequest(BaseModel):
@@ -681,16 +707,45 @@ class MetadataCatalogAuditRunResponse(BaseModel):
     retrieval_tuning: ToolRetrievalTuning
     probes: list[MetadataCatalogAuditProbeItem] = Field(default_factory=list)
     summary: MetadataCatalogAuditSummary = Field(default_factory=MetadataCatalogAuditSummary)
+    available_intent_ids: list[str] = Field(default_factory=list)
+    available_agent_ids: list[str] = Field(default_factory=list)
+    available_tool_ids: list[str] = Field(default_factory=list)
 
 
 class MetadataCatalogAuditAnnotationItem(BaseModel):
     probe_id: str
     query: str
-    target_tool_id: str
+    expected_intent_id: str | None = None
+    expected_agent_id: str | None = None
+    expected_tool_id: str | None = None
+    predicted_intent_id: str | None = None
+    predicted_agent_id: str | None = None
     predicted_tool_id: str | None = None
-    is_correct: bool = True
+    intent_is_correct: bool = True
+    corrected_intent_id: str | None = None
+    agent_is_correct: bool = True
+    corrected_agent_id: str | None = None
+    tool_is_correct: bool = True
     corrected_tool_id: str | None = None
-    retrieval_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    intent_score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    agent_score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    tool_score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class MetadataCatalogIntentSuggestion(BaseModel):
+    intent_id: str
+    failed_probe_ids: list[str] = Field(default_factory=list)
+    rationale: str
+    current_metadata: IntentMetadataUpdateItem
+    proposed_metadata: IntentMetadataUpdateItem
+
+
+class MetadataCatalogAgentSuggestion(BaseModel):
+    agent_id: str
+    failed_probe_ids: list[str] = Field(default_factory=list)
+    rationale: str
+    current_metadata: AgentMetadataUpdateItem
+    proposed_metadata: AgentMetadataUpdateItem
 
 
 class MetadataCatalogAuditSuggestionRequest(BaseModel):
@@ -701,10 +756,13 @@ class MetadataCatalogAuditSuggestionRequest(BaseModel):
 
 
 class MetadataCatalogAuditSuggestionResponse(BaseModel):
-    suggestions: list[ToolMetadataSuggestion] = Field(default_factory=list)
+    tool_suggestions: list[ToolMetadataSuggestion] = Field(default_factory=list)
+    intent_suggestions: list[MetadataCatalogIntentSuggestion] = Field(default_factory=list)
+    agent_suggestions: list[MetadataCatalogAgentSuggestion] = Field(default_factory=list)
     total_annotations: int = 0
-    reviewed_failures: int = 0
-    confusion_pairs: list[MetadataCatalogAuditConfusionPair] = Field(default_factory=list)
+    reviewed_intent_failures: int = 0
+    reviewed_agent_failures: int = 0
+    reviewed_tool_failures: int = 0
 
 
 class ToolSuggestionRequest(BaseModel):
