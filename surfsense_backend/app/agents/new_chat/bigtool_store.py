@@ -1478,6 +1478,7 @@ async def build_global_tool_registry(
     *,
     dependencies: dict[str, Any],
     include_mcp_tools: bool = True,
+    respect_lifecycle: bool = True,
 ) -> dict[str, BaseTool]:
     enabled_tools = list(get_default_enabled_tools())
     runtime_hitl = dependencies.get("runtime_hitl")
@@ -1504,6 +1505,7 @@ async def build_global_tool_registry(
         dependencies,
         enabled_tools=enabled_tools,
         include_mcp_tools=include_mcp_tools,
+        respect_lifecycle=respect_lifecycle,
     )
     registry: dict[str, BaseTool] = {tool.name: tool for tool in tools}
     if sandbox_config.enabled:

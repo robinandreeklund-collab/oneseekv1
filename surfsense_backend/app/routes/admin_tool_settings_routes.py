@@ -3005,6 +3005,7 @@ async def _build_tool_registry_and_index_for_search_space(
     tool_registry = await build_global_tool_registry(
         dependencies=dependencies,
         include_mcp_tools=False,
+        respect_lifecycle=False,
     )
     persisted_overrides = await get_global_tool_metadata_overrides(session)
     effective_overrides = merge_tool_metadata_overrides(
@@ -3605,6 +3606,7 @@ async def _apply_tool_metadata_updates(
     tool_registry = await build_global_tool_registry(
         dependencies=dependencies,
         include_mcp_tools=False,
+        respect_lifecycle=False,
     )
     default_tool_index = build_tool_index(tool_registry)
     defaults_by_tool = {entry.tool_id: _metadata_payload_from_entry(entry) for entry in default_tool_index}
@@ -3720,6 +3722,7 @@ async def update_tool_settings_metadata_catalog(
         tool_registry = await build_global_tool_registry(
             dependencies=dependencies,
             include_mcp_tools=False,
+            respect_lifecycle=False,
         )
         default_tool_index = build_tool_index(tool_registry)
         defaults_by_tool = {
