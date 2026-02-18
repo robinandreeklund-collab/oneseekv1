@@ -1,8 +1,15 @@
-from app.services.agent_metadata_service import (
-    agent_metadata_payload_equal,
-    get_default_agent_metadata,
-    normalize_agent_metadata_payload,
-)
+import importlib.util
+
+import pytest
+
+if importlib.util.find_spec("sqlalchemy") is None:  # pragma: no cover - optional dependency
+    pytestmark = pytest.mark.skip(reason="sqlalchemy is not installed")
+else:
+    from app.services.agent_metadata_service import (
+        agent_metadata_payload_equal,
+        get_default_agent_metadata,
+        normalize_agent_metadata_payload,
+    )
 
 
 def test_default_agent_metadata_contains_expected_agents():
