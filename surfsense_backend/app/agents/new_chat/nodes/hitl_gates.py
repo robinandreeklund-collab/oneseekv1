@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableConfig
 
 
 def build_planner_hitl_gate_node(
@@ -14,7 +15,7 @@ def build_planner_hitl_gate_node(
 ):
     async def planner_hitl_gate_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -57,7 +58,7 @@ def build_execution_hitl_gate_node(
 ):
     async def execution_hitl_gate_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -94,6 +95,9 @@ def build_execution_hitl_gate_node(
         tool_preview = (
             " | ".join(tool_preview_parts) if tool_preview_parts else "Inga tydliga verktyg valda"
         )
+        execution_strategy = str(state.get("execution_strategy") or "").strip().lower()
+        if execution_strategy:
+            tool_preview = f"{tool_preview} | strategi={execution_strategy}"
         message = render_hitl_message_fn(
             hitl_execution_message_template,
             step_preview=step_preview,
@@ -106,6 +110,7 @@ def build_execution_hitl_gate_node(
             "pending_hitl_payload": {
                 "step_preview": step_preview,
                 "tool_preview": tool_preview,
+                "execution_strategy": execution_strategy or None,
             },
             "orchestration_phase": "awaiting_confirmation",
         }
@@ -122,7 +127,7 @@ def build_synthesis_hitl_gate_node(
 ):
     async def synthesis_hitl_gate_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,

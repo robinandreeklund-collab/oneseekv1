@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from langchain_core.runnables import RunnableConfig
 
 
 def build_tool_resolver_node(
@@ -14,7 +15,7 @@ def build_tool_resolver_node(
 ):
     async def tool_resolver_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -32,9 +33,23 @@ def build_tool_resolver_node(
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
         step = next_plan_step_fn(state)
         step_text = str(step.get("content") or "").strip() if isinstance(step, dict) else ""
+        targeted_missing_info_raw = state.get("targeted_missing_info")
+        targeted_missing_info = (
+            [
+                str(item).strip()
+                for item in targeted_missing_info_raw
+                if str(item).strip()
+            ][:6]
+            if isinstance(targeted_missing_info_raw, list)
+            else []
+        )
         resolver_query = " ".join(
             value for value in [latest_user_query, step_text] if str(value).strip()
         ).strip()
+        if targeted_missing_info:
+            resolver_query = (
+                f"{resolver_query} Saknad information: {', '.join(targeted_missing_info)}"
+            ).strip()
         if not resolver_query:
             resolver_query = latest_user_query or step_text
 
@@ -65,9 +80,11 @@ def build_tool_resolver_node(
         return {
             "resolved_tools_by_agent": resolved,
             "orchestration_phase": "execute",
+            "targeted_missing_info": [],
             "pending_hitl_payload": {
                 "tool_resolver_prompt": tool_resolver_prompt_template.strip()[:240],
                 "resolved_agent_count": len(resolved),
+                "targeted_missing_info": targeted_missing_info,
             },
         }
 

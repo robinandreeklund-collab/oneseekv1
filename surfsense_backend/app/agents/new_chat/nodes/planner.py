@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 
 
 def build_planner_node(
@@ -16,7 +17,7 @@ def build_planner_node(
 ):
     async def planner_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -34,6 +35,27 @@ def build_planner_node(
         if current_plan and not state.get("plan_complete") and not state.get("critic_decision"):
             return {"orchestration_phase": "execute"}
 
+        graph_complexity = str(state.get("graph_complexity") or "").strip().lower()
+        if graph_complexity == "simple":
+            fallback_agent = (
+                str(selected_agents[0].get("name") or "").strip()
+                if selected_agents
+                else "agent"
+            )
+            return {
+                "active_plan": [
+                    {
+                        "id": "step-1",
+                        "content": f"Kör uppgiften med {fallback_agent} och sammanfatta resultatet",
+                        "status": "pending",
+                    }
+                ],
+                "plan_step_index": 0,
+                "plan_complete": False,
+                "orchestration_phase": "execute",
+                "critic_decision": None,
+            }
+
         prompt = append_datetime_context_fn(planner_prompt_template)
         planner_input = json.dumps(
             {
@@ -50,7 +72,8 @@ def build_planner_node(
                 [
                     SystemMessage(content=prompt),
                     HumanMessage(content=planner_input),
-                ]
+                ],
+                max_tokens=220,
             )
             parsed = extract_first_json_object_fn(str(getattr(message, "content", "") or ""))
             steps = parsed.get("steps")

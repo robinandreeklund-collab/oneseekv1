@@ -5,13 +5,68 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import Notification
 
 logger = logging.getLogger(__name__)
+
+
+def _is_notifications_pkey_violation(error: Exception) -> bool:
+    message = str(getattr(error, "orig", error) or "").lower()
+    return "duplicate key" in message and "notifications_pkey" in message
+
+
+async def _realign_notifications_sequence(session: AsyncSession) -> None:
+    """
+    Realign notifications.id sequence with current MAX(id).
+
+    This protects against environments where rows were inserted with explicit IDs
+    (for example during data migration/replication), leaving the sequence behind.
+    """
+    await session.execute(text("SELECT pg_advisory_xact_lock(947201)"))
+    await session.execute(
+        text(
+            """
+            SELECT setval(
+                pg_get_serial_sequence('notifications', 'id'),
+                COALESCE((SELECT MAX(id) FROM notifications), 0) + 1,
+                false
+            )
+            """
+        )
+    )
+    await session.commit()
+
+
+async def _insert_notification_with_retry(
+    session: AsyncSession,
+    *,
+    notification_kwargs: dict[str, Any],
+) -> Notification:
+    """
+    Insert a Notification row with one automatic retry for notifications_pkey drift.
+    """
+    for attempt in range(2):
+        notification = Notification(**notification_kwargs)
+        session.add(notification)
+        try:
+            await session.commit()
+            await session.refresh(notification)
+            return notification
+        except IntegrityError as exc:
+            await session.rollback()
+            if attempt == 0 and _is_notifications_pkey_violation(exc):
+                logger.warning(
+                    "Detected notifications sequence drift; realigning and retrying insert."
+                )
+                await _realign_notifications_sequence(session)
+                continue
+            raise
+    raise RuntimeError("Failed to insert notification after retries")
 
 
 class BaseNotificationHandler:
@@ -110,17 +165,17 @@ class BaseNotificationHandler:
         metadata["status"] = "in_progress"
         metadata["started_at"] = datetime.now(UTC).isoformat()
 
-        notification = Notification(
-            user_id=user_id,
-            search_space_id=search_space_id,
-            type=self.notification_type,
-            title=title,
-            message=message,
-            notification_metadata=metadata,
+        notification = await _insert_notification_with_retry(
+            session,
+            notification_kwargs={
+                "user_id": user_id,
+                "search_space_id": search_space_id,
+                "type": self.notification_type,
+                "title": title,
+                "message": message,
+                "notification_metadata": metadata,
+            },
         )
-        session.add(notification)
-        await session.commit()
-        await session.refresh(notification)
         logger.info(
             f"Created notification {notification.id} for operation {operation_id}"
         )
@@ -829,17 +884,17 @@ class MentionNotificationHandler(BaseNotificationHandler):
         }
 
         try:
-            notification = Notification(
-                user_id=mentioned_user_id,
-                search_space_id=search_space_id,
-                type=self.notification_type,
-                title=title,
-                message=message,
-                notification_metadata=metadata,
+            notification = await _insert_notification_with_retry(
+                session,
+                notification_kwargs={
+                    "user_id": mentioned_user_id,
+                    "search_space_id": search_space_id,
+                    "type": self.notification_type,
+                    "title": title,
+                    "message": message,
+                    "notification_metadata": metadata,
+                },
             )
-            session.add(notification)
-            await session.commit()
-            await session.refresh(notification)
             logger.info(
                 f"Created new_mention notification {notification.id} for user {mentioned_user_id}"
             )
@@ -935,17 +990,17 @@ class PageLimitNotificationHandler(BaseNotificationHandler):
             "action_label": "Upgrade Plan",
         }
 
-        notification = Notification(
-            user_id=user_id,
-            search_space_id=search_space_id,
-            type=self.notification_type,
-            title=title,
-            message=message,
-            notification_metadata=metadata,
+        notification = await _insert_notification_with_retry(
+            session,
+            notification_kwargs={
+                "user_id": user_id,
+                "search_space_id": search_space_id,
+                "type": self.notification_type,
+                "title": title,
+                "message": message,
+                "notification_metadata": metadata,
+            },
         )
-        session.add(notification)
-        await session.commit()
-        await session.refresh(notification)
         logger.info(
             f"Created page_limit_exceeded notification {notification.id} for user {user_id}"
         )
@@ -986,16 +1041,16 @@ class NotificationService:
         Returns:
             Notification: The created notification
         """
-        notification = Notification(
-            user_id=user_id,
-            search_space_id=search_space_id,
-            type=notification_type,
-            title=title,
-            message=message,
-            notification_metadata=notification_metadata or {},
+        notification = await _insert_notification_with_retry(
+            session,
+            notification_kwargs={
+                "user_id": user_id,
+                "search_space_id": search_space_id,
+                "type": notification_type,
+                "title": title,
+                "message": message,
+                "notification_metadata": notification_metadata or {},
+            },
         )
-        session.add(notification)
-        await session.commit()
-        await session.refresh(notification)
         logger.info(f"Created notification {notification.id} for user {user_id}")
         return notification

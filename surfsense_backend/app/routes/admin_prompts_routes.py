@@ -3,7 +3,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.new_chat.prompt_registry import PROMPT_DEFINITION_MAP, get_prompt_definitions
+from app.agents.new_chat.prompt_registry import (
+    ACTIVE_PROMPT_DEFINITION_MAP,
+    get_prompt_definitions,
+)
 from sqlalchemy.future import select
 
 from app.db import GlobalAgentPromptOverrideHistory, SearchSpaceMembership, User
@@ -54,12 +57,14 @@ async def get_agent_prompts(
     await _require_admin(session, user)
     overrides = await get_global_prompt_overrides(session)
     items = []
-    for definition in get_prompt_definitions():
+    for definition in get_prompt_definitions(active_only=True):
         items.append(
             {
                 "key": definition.key,
                 "label": definition.label,
                 "description": definition.description,
+                "node_group": definition.node_group,
+                "node_group_label": definition.node_group_label,
                 "default_prompt": definition.default_prompt,
                 "override_prompt": overrides.get(definition.key),
             }
@@ -79,7 +84,7 @@ async def update_agent_prompts(
     await _require_admin(session, user)
     updates = []
     for item in payload.items:
-        if item.key not in PROMPT_DEFINITION_MAP:
+        if item.key not in ACTIVE_PROMPT_DEFINITION_MAP:
             raise HTTPException(
                 status_code=400, detail=f"Unknown prompt key: {item.key}"
             )
@@ -101,12 +106,14 @@ async def update_agent_prompts(
 
     overrides = await get_global_prompt_overrides(session)
     items = []
-    for definition in get_prompt_definitions():
+    for definition in get_prompt_definitions(active_only=True):
         items.append(
             {
                 "key": definition.key,
                 "label": definition.label,
                 "description": definition.description,
+                "node_group": definition.node_group,
+                "node_group_label": definition.node_group_label,
                 "default_prompt": definition.default_prompt,
                 "override_prompt": overrides.get(definition.key),
             }
@@ -124,7 +131,7 @@ async def get_agent_prompt_history(
     user: User = Depends(current_active_user),
 ):
     await _require_admin(session, user)
-    if prompt_key not in PROMPT_DEFINITION_MAP:
+    if prompt_key not in ACTIVE_PROMPT_DEFINITION_MAP:
         raise HTTPException(status_code=400, detail="Unknown prompt key")
 
     result = await session.execute(

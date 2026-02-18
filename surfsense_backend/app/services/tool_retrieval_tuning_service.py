@@ -15,6 +15,7 @@ DEFAULT_TOOL_RETRIEVAL_TUNING: dict[str, Any] = {
     "namespace_boost": 3.0,
     "embedding_weight": 4.0,
     "rerank_candidates": 24,
+    "retrieval_feedback_db_enabled": False,
 }
 
 _TUNING_DEFAULT_KEY = "default"
@@ -34,6 +35,19 @@ def _as_int(value: Any, *, default: int, min_value: int, max_value: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(min_value, min(max_value, parsed))
+
+
+def _as_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return bool(default)
 
 
 def normalize_tool_retrieval_tuning(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -80,6 +94,10 @@ def normalize_tool_retrieval_tuning(payload: dict[str, Any] | None) -> dict[str,
             default=int(DEFAULT_TOOL_RETRIEVAL_TUNING["rerank_candidates"]),
             min_value=1,
             max_value=100,
+        ),
+        "retrieval_feedback_db_enabled": _as_bool(
+            source.get("retrieval_feedback_db_enabled"),
+            default=bool(DEFAULT_TOOL_RETRIEVAL_TUNING["retrieval_feedback_db_enabled"]),
         ),
     }
 

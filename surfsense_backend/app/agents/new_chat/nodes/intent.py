@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 
 
 def build_intent_resolver_node(
@@ -18,18 +20,68 @@ def build_intent_resolver_node(
     append_datetime_context_fn: Callable[[str], str],
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
     coerce_confidence_fn: Callable[[Any, float], float],
+    classify_graph_complexity_fn: Callable[[dict[str, Any], str], str],
+    build_speculative_candidates_fn: Callable[[dict[str, Any], str], list[dict[str, Any]]],
+    build_trivial_response_fn: Callable[[str], str | None],
+    route_default_agent_fn: Callable[..., str],
+    coerce_resolved_intent_fn: Callable[
+        [dict[str, Any], str, str | None], dict[str, Any]
+    ]
+    | None = None,
 ):
+    def _latest_human_turn_id(messages: list[Any] | None) -> str:
+        human_count = 0
+        latest_human: Any | None = None
+        for message in messages or []:
+            if isinstance(message, HumanMessage):
+                human_count += 1
+                latest_human = message
+            elif isinstance(message, dict) and str(message.get("type") or "").strip().lower() in {
+                "human",
+                "user",
+            }:
+                human_count += 1
+                latest_human = message
+        if human_count <= 0 or latest_human is None:
+            return ""
+        if isinstance(latest_human, dict):
+            message_id = str(latest_human.get("id") or "").strip()
+            content = latest_human.get("content")
+        else:
+            message_id = str(getattr(latest_human, "id", "") or "").strip()
+            content = getattr(latest_human, "content", "")
+        if isinstance(content, list):
+            content_text = "".join(
+                str(item.get("text") or "")
+                for item in content
+                if isinstance(item, dict)
+            ).strip()
+        else:
+            content_text = str(content or "").strip()
+        if message_id:
+            signature = message_id
+        elif content_text:
+            signature = hashlib.sha1(
+                content_text.encode("utf-8", errors="ignore")
+            ).hexdigest()[:16]
+        else:
+            signature = "empty"
+        return f"implicit_turn:{human_count}:{signature}"
+
     async def resolve_intent_node(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
     ) -> dict[str, Any]:
+        state_messages = list(state.get("messages") or [])
         incoming_turn_id = str(state.get("turn_id") or "").strip()
+        if not incoming_turn_id:
+            incoming_turn_id = _latest_human_turn_id(state_messages)
         active_turn_id = str(state.get("active_turn_id") or "").strip()
         new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
-        latest_user_query = latest_user_query_fn(state.get("messages") or [])
+        latest_user_query = latest_user_query_fn(state_messages)
 
         if new_user_turn and bool(state.get("awaiting_confirmation")):
             pending_stage = str(state.get("pending_hitl_stage") or "").strip().lower()
@@ -91,7 +143,12 @@ def build_intent_resolver_node(
         }
 
         resolved = intent_from_route_fn(route_hint)
-        if latest_user_query:
+        should_resolve_with_llm = bool(latest_user_query)
+        if route_hint and route_hint in route_to_intent_id:
+            # Route has already been resolved upstream; skip an extra control-plane
+            # LLM pass and trust route_hint unless we have no candidates at all.
+            should_resolve_with_llm = False
+        if latest_user_query and should_resolve_with_llm:
             prompt = append_datetime_context_fn(intent_resolver_prompt_template)
             resolver_input = json.dumps(
                 {
@@ -106,7 +163,8 @@ def build_intent_resolver_node(
                     [
                         SystemMessage(content=prompt),
                         HumanMessage(content=resolver_input),
-                    ]
+                    ],
+                    max_tokens=140,
                 )
                 parsed = extract_first_json_object_fn(
                     str(getattr(message, "content", "") or "")
@@ -135,8 +193,67 @@ def build_intent_resolver_node(
             except Exception:
                 pass
 
+        if coerce_resolved_intent_fn is not None:
+            try:
+                coerced_resolved = coerce_resolved_intent_fn(
+                    resolved if isinstance(resolved, dict) else {},
+                    latest_user_query,
+                    route_hint or None,
+                )
+                if isinstance(coerced_resolved, dict) and coerced_resolved:
+                    resolved = coerced_resolved
+            except Exception:
+                pass
+
+        graph_complexity = str(
+            classify_graph_complexity_fn(resolved, latest_user_query)
+        ).strip().lower()
+        if graph_complexity not in {"trivial", "simple", "complex"}:
+            graph_complexity = "complex"
+        speculative_candidates = build_speculative_candidates_fn(
+            resolved,
+            latest_user_query,
+        )
+        if not isinstance(speculative_candidates, list):
+            speculative_candidates = []
+        speculative_candidates = [
+            item for item in speculative_candidates[:3] if isinstance(item, dict)
+        ]
+
+        selected_agents_for_simple: list[dict[str, Any]] = []
+        if graph_complexity == "simple":
+            try:
+                default_agent_name = route_default_agent_fn(
+                    resolved.get("route"),
+                    latest_user_query,
+                )
+            except TypeError:
+                default_agent_name = route_default_agent_fn(resolved.get("route"))
+            if default_agent_name:
+                selected_agents_for_simple = [
+                    {
+                        "name": str(default_agent_name),
+                        "description": "Preselected from hybrid intent complexity.",
+                    }
+                ]
+
+        trivial_response = (
+            build_trivial_response_fn(latest_user_query)
+            if graph_complexity == "trivial"
+            else None
+        )
+
         updates: dict[str, Any] = {
             "resolved_intent": resolved,
+            "route_hint": normalize_route_hint_fn(resolved.get("route")),
+            "graph_complexity": graph_complexity,
+            "speculative_candidates": speculative_candidates,
+            "speculative_results": {},
+            "execution_strategy": None,
+            "worker_results": [],
+            "synthesis_drafts": [],
+            "retrieval_feedback": {},
+            "targeted_missing_info": [],
             "orchestration_phase": "select_agent",
         }
         if new_user_turn:
@@ -159,10 +276,27 @@ def build_intent_resolver_node(
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
             updates["guard_parallel_preview"] = []
+            updates["graph_complexity"] = graph_complexity
+            updates["speculative_candidates"] = speculative_candidates
+            updates["speculative_results"] = {}
+            updates["execution_strategy"] = None
+            updates["worker_results"] = []
+            updates["synthesis_drafts"] = []
+            updates["retrieval_feedback"] = {}
+            updates["targeted_missing_info"] = []
             if incoming_turn_id:
                 updates["active_turn_id"] = incoming_turn_id
         elif incoming_turn_id and not active_turn_id:
             updates["active_turn_id"] = incoming_turn_id
+
+        if selected_agents_for_simple:
+            updates["selected_agents"] = selected_agents_for_simple
+
+        if trivial_response:
+            updates["final_agent_response"] = trivial_response
+            updates["final_response"] = trivial_response
+            updates["final_agent_name"] = "supervisor"
+            updates["orchestration_phase"] = "finalize"
         return updates
 
     return resolve_intent_node

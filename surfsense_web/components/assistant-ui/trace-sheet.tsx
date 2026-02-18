@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
-import YAML from "yaml";
 import {
 	Activity,
 	AlertCircle,
@@ -9,15 +7,24 @@ import {
 	ChevronRight,
 	CircleDot,
 	Copy,
+	Download,
 } from "lucide-react";
-import { Drawer, DrawerContent, DrawerHandle, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
+import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import YAML from "yaml";
+import { Button } from "@/components/ui/button";
+import {
+	Drawer,
+	DrawerContent,
+	DrawerHandle,
+	DrawerHeader,
+	DrawerTitle,
+} from "@/components/ui/drawer";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
+import type { TraceSpan } from "@/contracts/types/chat-trace.types";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
-import type { TraceSpan } from "@/contracts/types/chat-trace.types";
 
 interface TraceSheetProps {
 	open: boolean;
@@ -51,9 +58,18 @@ function formatPayload(payload: unknown, mode: "json" | "yaml" | "raw") {
 			return YAML.stringify(payload, { indent: 2 });
 		}
 		return JSON.stringify(payload, null, 2);
-	} catch (error) {
+	} catch (_error) {
 		return typeof payload === "string" ? payload : String(payload);
 	}
+}
+
+function toSafeFilenameSegment(value: string | null | undefined) {
+	if (!value) return "";
+	return value
+		.replace(/[^a-zA-Z0-9_-]+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "")
+		.slice(0, 48);
 }
 
 function extractAttribution(span: TraceSpan | null) {
@@ -87,9 +103,7 @@ function getTokenInfo(span: TraceSpan | null) {
 	const outputTokens = Number(meta.output_tokens ?? 0);
 	const totalTokens = Number(meta.total_tokens ?? 0);
 	const resolvedTotal =
-		Number.isFinite(totalTokens) && totalTokens > 0
-			? totalTokens
-			: inputTokens + outputTokens;
+		Number.isFinite(totalTokens) && totalTokens > 0 ? totalTokens : inputTokens + outputTokens;
 	if (!resolvedTotal) return null;
 	return {
 		total: resolvedTotal,
@@ -113,9 +127,12 @@ export function TraceSheet({
 	const [panelWidth, setPanelWidth] = useState(720);
 	const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 	const [followLive, setFollowLive] = useState(true);
+	const [isJustExported, setIsJustExported] = useState(false);
 	const [isDragging, setIsDragging] = useState(false);
 	const startXRef = useRef(0);
 	const startWidthRef = useRef(0);
+	const exportFeedbackTimerRef = useRef<number | null>(null);
+	const previousMessageIdRef = useRef<string | null>(null);
 
 	const sortedSpans = useMemo(() => {
 		const next = [...spans];
@@ -140,7 +157,9 @@ export function TraceSheet({
 			memo.set(span.id, depth);
 			return depth;
 		};
-		sortedSpans.forEach((span) => getDepth(span));
+		sortedSpans.forEach((span) => {
+			getDepth(span);
+		});
 		return memo;
 	}, [sortedSpans, spanMap]);
 
@@ -166,20 +185,30 @@ export function TraceSheet({
 		if (open) return;
 		setSelectedSpanId(null);
 		setFollowLive(true);
+		setIsJustExported(false);
 	}, [open]);
 
 	useEffect(() => {
+		if (previousMessageIdRef.current === messageId) return;
+		previousMessageIdRef.current = messageId;
 		setSelectedSpanId(null);
 		setFollowLive(true);
+		setIsJustExported(false);
 	}, [messageId]);
+
+	useEffect(() => {
+		return () => {
+			if (exportFeedbackTimerRef.current) {
+				window.clearTimeout(exportFeedbackTimerRef.current);
+			}
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!isDragging) return;
 		const handlePointerMove = (event: PointerEvent) => {
 			const delta =
-				dock === "right"
-					? startXRef.current - event.clientX
-					: event.clientX - startXRef.current;
+				dock === "right" ? startXRef.current - event.clientX : event.clientX - startXRef.current;
 			const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidthRef.current + delta));
 			setPanelWidth(nextWidth);
 		};
@@ -193,7 +222,7 @@ export function TraceSheet({
 			window.removeEventListener("pointermove", handlePointerMove);
 			window.removeEventListener("pointerup", handlePointerUp);
 		};
-	}, [isDragging]);
+	}, [dock, isDragging, maxWidth, minWidth]);
 
 	const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
 		event.preventDefault();
@@ -205,6 +234,61 @@ export function TraceSheet({
 
 	const attributionEntries = extractAttribution(selectedSpan);
 	const selectedTokenInfo = getTokenInfo(selectedSpan);
+	const canExportTrace = sortedSpans.length > 0 || Boolean(sessionId);
+
+	const handleExportJson = () => {
+		if (!canExportTrace) return;
+		const runningSpans = sortedSpans.filter((span) => span.status === "running").length;
+		const errorSpans = sortedSpans.filter((span) => span.status === "error").length;
+		const maxDepth = sortedSpans.reduce((currentMax, span) => {
+			return Math.max(currentMax, depthMap.get(span.id) ?? 0);
+		}, 0);
+		const payload = {
+			export_type: "oneseek-live-trace",
+			export_version: 1,
+			exported_at: new Date().toISOString(),
+			message_id: messageId,
+			session_id: sessionId,
+			ui_state: {
+				follow_live: followLive,
+				active_span_id: activeSpan?.id ?? null,
+				selected_span_id: selectedSpan?.id ?? null,
+			},
+			summary: {
+				total_spans: sortedSpans.length,
+				running_spans: runningSpans,
+				error_spans: errorSpans,
+				completed_spans: Math.max(0, sortedSpans.length - runningSpans - errorSpans),
+				max_depth: maxDepth,
+			},
+			spans: sortedSpans.map((span) => ({
+				...span,
+				tree_depth: depthMap.get(span.id) ?? 0,
+			})),
+		};
+		const json = JSON.stringify(payload, null, 2);
+		const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+		const sessionSegment = toSafeFilenameSegment(sessionId);
+		const messageSegment = toSafeFilenameSegment(messageId);
+		const targetSegment = sessionSegment || messageSegment || "trace";
+		const fileName = `oneseek-live-trace-${targetSegment}-${timestamp}.json`;
+		const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+		const objectUrl = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		anchor.href = objectUrl;
+		anchor.download = fileName;
+		document.body.appendChild(anchor);
+		anchor.click();
+		anchor.remove();
+		URL.revokeObjectURL(objectUrl);
+		setIsJustExported(true);
+		if (exportFeedbackTimerRef.current) {
+			window.clearTimeout(exportFeedbackTimerRef.current);
+		}
+		exportFeedbackTimerRef.current = window.setTimeout(() => {
+			setIsJustExported(false);
+		}, 1500);
+	};
 
 	const headerContent = (
 		<div className="flex items-center justify-between gap-3">
@@ -219,14 +303,30 @@ export function TraceSheet({
 					</div>
 				</div>
 			</div>
-			<Button
-				variant="ghost"
-				size="sm"
-				onClick={() => setFollowLive((prev) => !prev)}
-				className={cn("text-xs", followLive && "text-primary")}
-			>
-				{followLive ? "Följer live" : "Pausa följning"}
-			</Button>
+			<div className="flex items-center gap-2">
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={() => setFollowLive((prev) => !prev)}
+					className={cn("text-xs", followLive && "text-primary")}
+				>
+					{followLive ? "Följer live" : "Pausa följning"}
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={handleExportJson}
+					disabled={!canExportTrace}
+					className="gap-1.5 text-xs"
+				>
+					{isJustExported ? (
+						<CheckCircle2 className="size-3.5 text-emerald-500" />
+					) : (
+						<Download className="size-3.5" />
+					)}
+					{isJustExported ? "Exporterad" : "Exportera JSON"}
+				</Button>
+			</div>
 		</div>
 	);
 
@@ -311,7 +411,8 @@ export function TraceSheet({
 											"group relative flex w-full flex-col gap-1 rounded-lg border border-border/40 bg-card/50 px-3 py-2 text-left text-sm transition-all",
 											"hover:border-primary/40 hover:bg-primary/5",
 											isSelected && "border-primary/60 bg-primary/10 shadow-md",
-											isActive && "animate-pulse border-primary/80 shadow-[0_0_0_1px_rgba(59,130,246,0.4)]"
+											isActive &&
+												"animate-pulse border-primary/80 shadow-[0_0_0_1px_rgba(59,130,246,0.4)]"
 										)}
 										style={{ paddingLeft }}
 									>
@@ -329,10 +430,7 @@ export function TraceSheet({
 													</div>
 												))}
 												{depth > 0 && (
-													<div
-														className="relative"
-														style={{ width: gutterWidth }}
-													>
+													<div className="relative" style={{ width: gutterWidth }}>
 														<div
 															className={cn(
 																"absolute left-1/2 w-px bg-border/60",
@@ -401,9 +499,7 @@ export function TraceSheet({
 							{selectedSpan && (
 								<>
 									<div className="space-y-1">
-										<div className="text-sm font-semibold text-foreground">
-											{selectedSpan.name}
-										</div>
+										<div className="text-sm font-semibold text-foreground">{selectedSpan.name}</div>
 										<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 											<span className="rounded-full border border-border/60 px-2 py-0.5">
 												{selectedSpan.kind}
@@ -545,7 +641,11 @@ function TracePayloadSection({ title, payload }: { title: string; payload: unkno
 							setTimeout(() => setCopied(false), 1200);
 						}}
 					>
-						{copied ? <CheckCircle2 className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
+						{copied ? (
+							<CheckCircle2 className="size-4 text-emerald-500" />
+						) : (
+							<Copy className="size-4" />
+						)}
 					</Button>
 				</div>
 			</div>

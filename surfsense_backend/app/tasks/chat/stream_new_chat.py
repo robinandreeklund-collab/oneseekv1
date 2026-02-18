@@ -19,10 +19,10 @@ from typing import Any
 from uuid import UUID
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableLambda
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.agents.new_chat.chat_deepagent import create_surfsense_deep_agent
 from app.agents.new_chat.checkpointer import (
     build_checkpoint_namespace,
     get_checkpointer,
@@ -55,10 +55,11 @@ from app.agents.new_chat.dispatcher import (
     dispatch_route_with_trace,
 )
 from app.agents.new_chat.prompt_registry import resolve_prompt
-from app.agents.new_chat.routing import Route, ROUTE_TOOL_SETS
+from app.agents.new_chat.routing import Route
 from app.agents.new_chat.system_prompt import (
     SURFSENSE_CITATION_INSTRUCTIONS,
     SURFSENSE_SYSTEM_INSTRUCTIONS,
+    append_datetime_context,
 )
 from app.agents.new_chat.complete_graph import build_complete_graph
 from app.agents.new_chat.supervisor_prompts import (
@@ -69,9 +70,13 @@ from app.agents.new_chat.statistics_prompts import (
     DEFAULT_STATISTICS_SYSTEM_PROMPT,
     build_statistics_system_prompt,
 )
+from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
+from app.agents.new_chat.marketplace_prompts import (
+    DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+    build_marketplace_prompt,
+)
 from app.agents.new_chat.subagent_utils import (
     SMALLTALK_INSTRUCTIONS,
-    build_subagent_config,
 )
 from app.agents.new_chat.trafik_prompts import (
     DEFAULT_TRAFFIC_SYSTEM_PROMPT,
@@ -696,7 +701,7 @@ _REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _STREAM_JSON_DECODER = json.JSONDecoder()
 _CRITIC_JSON_START_RE = re.compile(r"\{\s*[\"']status[\"']\s*:", re.IGNORECASE)
 _PIPELINE_JSON_START_RE = re.compile(
-    r"\{\s*[\"'](?:intent_id|selected_agents|status|decision|steps)\b",
+    r"\{\s*[\"'](?:intent_id|graph_complexity|selected_agents|status|decision|steps|execution_strategy|speculative_candidates|speculative_reused_tools|synthesis_drafts)\b",
     re.IGNORECASE,
 )
 _PIPELINE_JSON_PARTIAL_KEY_RE = re.compile(
@@ -705,20 +710,32 @@ _PIPELINE_JSON_PARTIAL_KEY_RE = re.compile(
 )
 _PIPELINE_JSON_KEYS = (
     "intent_id",
+    "graph_complexity",
     "selected_agents",
     "status",
     "decision",
     "steps",
+    "execution_strategy",
+    "execution_reason",
+    "speculative_candidates",
+    "speculative_reused_tools",
+    "speculative_remaining_tools",
+    "speculative_discarded_tools",
+    "synthesis_drafts",
     "reason",
     "confidence",
 )
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
 _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "resolve_intent",
+    "speculative",
+    "speculative_merge",
     "agent_resolver",
     "planner",
     "tool_resolver",
+    "execution_router",
     "critic",
+    "progressive_synthesizer",
     "synthesizer",
 )
 
@@ -893,7 +910,87 @@ def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
         and isinstance(payload.get("reason"), str)
     ):
         return "critic"
+    execution_strategy = str(payload.get("execution_strategy") or "").strip().lower()
+    if execution_strategy in {"inline", "parallel", "subagent"}:
+        return "execution_router"
+    if isinstance(payload.get("speculative_candidates"), list) or isinstance(
+        payload.get("speculative_reused_tools"),
+        list,
+    ):
+        return "speculative"
+    if isinstance(payload.get("synthesis_drafts"), list):
+        return "progressive_synthesizer"
     return None
+
+
+def _normalize_synthesis_draft_payload(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    draft_text = str(
+        value.get("draft") or value.get("text") or value.get("content") or ""
+    ).strip()
+    if not draft_text:
+        return None
+    confidence_raw = value.get("confidence")
+    try:
+        confidence = float(confidence_raw)
+    except (TypeError, ValueError):
+        confidence = 0.5
+    version_raw = value.get("version")
+    try:
+        version = int(version_raw)
+    except (TypeError, ValueError):
+        version = 0
+    return {
+        "draft": draft_text,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "version": max(0, version),
+    }
+
+
+def _extract_synthesis_drafts_from_event_output(output: Any) -> list[dict[str, Any]]:
+    if output is None:
+        return []
+    if isinstance(output, dict):
+        drafts = output.get("synthesis_drafts")
+        if isinstance(drafts, list):
+            normalized: list[dict[str, Any]] = []
+            for item in drafts:
+                payload = _normalize_synthesis_draft_payload(item)
+                if payload:
+                    normalized.append(payload)
+            if normalized:
+                return normalized
+        for key in ("output", "message", "messages", "generations"):
+            if key not in output:
+                continue
+            nested = _extract_synthesis_drafts_from_event_output(output.get(key))
+            if nested:
+                return nested
+        return []
+    if isinstance(output, list):
+        for item in reversed(output):
+            nested = _extract_synthesis_drafts_from_event_output(item)
+            if nested:
+                return nested
+        return []
+    if hasattr(output, "generations"):
+        nested = _extract_synthesis_drafts_from_event_output(
+            getattr(output, "generations"),
+        )
+        if nested:
+            return nested
+    if hasattr(output, "message"):
+        nested = _extract_synthesis_drafts_from_event_output(
+            getattr(output, "message"),
+        )
+        if nested:
+            return nested
+    if hasattr(output, "synthesis_drafts"):
+        return _extract_synthesis_drafts_from_event_output(
+            getattr(output, "synthesis_drafts"),
+        )
+    return []
 
 
 def _decode_json_object_from_text(
@@ -983,6 +1080,19 @@ def _is_internal_pipeline_chain_name(chain_name: str) -> bool:
     return any(token in normalized for token in _INTERNAL_PIPELINE_CHAIN_TOKENS)
 
 
+def _coerce_runtime_flag(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return bool(default)
+
+
 async def stream_new_chat(
     user_query: str,
     search_space_id: int,
@@ -1022,7 +1132,31 @@ async def stream_new_chat(
             - False/None: disable citation instruction injection.
             - str: inject custom citation instructions.
         runtime_hitl:
-            Optional runtime HITL flags for planner/execution/synthesis checkpoints.
+            Optional runtime flags. Supports:
+            - planner/execution/synthesis HITL checkpoints.
+            - hybrid_mode (bool): enables hybrid supervisor routing.
+            - speculative_enabled (bool): enables speculative execution paths.
+            - subagent_enabled (bool): allows execution_strategy=subagent paths.
+            - subagent_isolation_enabled (bool): enables strict subagent context isolation.
+            - subagent_max_concurrency (int): max parallel subagent calls per step.
+            - subagent_context_max_chars (int): max parent context chars injected to subagent.
+            - subagent_result_max_chars (int): max compacted subagent result chars.
+            - subagent_sandbox_scope (str): sandbox scope policy ("thread" or "subagent").
+            - artifact_offload_enabled (bool): offload large tool payloads to artifacts.
+            - artifact_offload_threshold_chars (int): offload threshold for payload size.
+            - artifact_offload_max_entries (int): max artifact entries kept in state.
+            - artifact_offload_storage_mode (str): "auto", "sandbox", or "local" artifact storage backend.
+            - context_compaction_enabled (bool): enables semantic context compactor.
+            - context_compaction_trigger_ratio (float): token-budget ratio that triggers compaction.
+            - context_compaction_summary_max_chars (int): max chars in rolling summary.
+            - cross_session_memory_enabled (bool): enables selective persistent memory injection.
+            - cross_session_memory_max_items (int): max persistent memory items injected.
+            - cross_session_memory_max_chars (int): max chars for injected memory context.
+            - sandbox_enabled (bool): enables sandbox execution tools for code tasks.
+            - sandbox_mode (str): sandbox runtime mode ("docker", "local", or "provisioner").
+            - sandbox_provisioner_url (str): provisioner base URL when mode=provisioner.
+            - sandbox_state_store (str): "file", "redis", or "auto" for lease/state storage.
+            - sandbox_idle_timeout_seconds (int): idle timeout before sandbox lease cleanup.
         checkpoint_ns_override:
             Optional explicit checkpoint namespace. When provided, bypasses automatic
             namespace resolution and uses this value ("" means legacy namespace).
@@ -1234,8 +1368,13 @@ async def stream_new_chat(
             citation_instructions=citation_instructions_block,
         )
         if route == Route.COMPARE:
+            compare_supervisor_instructions = resolve_prompt(
+                prompt_overrides,
+                "compare.supervisor.instructions",
+                COMPARE_SUPERVISOR_INSTRUCTIONS,
+            )
             supervisor_system_prompt = (
-                supervisor_system_prompt + "\n\n" + COMPARE_SUPERVISOR_INSTRUCTIONS
+                supervisor_system_prompt + "\n\n" + compare_supervisor_instructions
             )
 
         knowledge_prompt = resolve_prompt(
@@ -1318,6 +1457,25 @@ async def stream_new_chat(
             trafik_prompt,
             citation_instructions=citation_instructions_block,
         )
+        riksdagen_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.riksdagen.system",
+            DEFAULT_RIKSDAGEN_SYSTEM_PROMPT,
+        )
+        riksdagen_worker_prompt = build_worker_prompt(
+            riksdagen_prompt,
+            citations_enabled=citations_enabled,
+            citation_instructions=citation_instructions_block,
+        )
+        marketplace_prompt = resolve_prompt(
+            prompt_overrides,
+            "agent.marketplace.system",
+            DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+        )
+        marketplace_worker_prompt = build_marketplace_prompt(
+            marketplace_prompt,
+            citation_instructions=citation_instructions_block,
+        )
         compare_analysis_prompt = resolve_prompt(
             prompt_overrides,
             "compare.analysis.system",
@@ -1343,11 +1501,101 @@ async def stream_new_chat(
         else:
             worker_system_prompt = supervisor_system_prompt
 
-        effective_agent_config = agent_config
-        if route == Route.SMALLTALK and smalltalk_prompt:
-            effective_agent_config = build_subagent_config(
-                agent_config, smalltalk_prompt
+        runtime_flags = dict(runtime_hitl or {})
+        hybrid_mode = _coerce_runtime_flag(
+            runtime_flags.get("hybrid_mode"),
+            default=False,
+        )
+        speculative_enabled = _coerce_runtime_flag(
+            runtime_flags.get("speculative_enabled"),
+            default=False,
+        )
+        sandbox_enabled = _coerce_runtime_flag(
+            runtime_flags.get("sandbox_enabled"),
+            default=False,
+        )
+        sandbox_mode = str(runtime_flags.get("sandbox_mode") or "docker").strip().lower()
+        if sandbox_mode == "remote":
+            sandbox_mode = "provisioner"
+        sandbox_provisioner_url = str(
+            runtime_flags.get("sandbox_provisioner_url")
+            or runtime_flags.get("sandbox_service_url")
+            or ""
+        ).strip()
+        sandbox_state_store = str(
+            runtime_flags.get("sandbox_state_store") or "file"
+        ).strip().lower()
+        try:
+            sandbox_idle_timeout_seconds = int(
+                runtime_flags.get("sandbox_idle_timeout_seconds") or 15 * 60
             )
+        except (TypeError, ValueError):
+            sandbox_idle_timeout_seconds = 15 * 60
+        subagent_enabled = _coerce_runtime_flag(
+            runtime_flags.get("subagent_enabled"),
+            default=True,
+        )
+        subagent_isolation_enabled = (
+            subagent_enabled
+            and _coerce_runtime_flag(
+                runtime_flags.get("subagent_isolation_enabled"),
+                default=False,
+            )
+        )
+        try:
+            subagent_max_concurrency = int(
+                runtime_flags.get("subagent_max_concurrency") or 3
+            )
+        except (TypeError, ValueError):
+            subagent_max_concurrency = 3
+        try:
+            subagent_context_max_chars = int(
+                runtime_flags.get("subagent_context_max_chars") or 1400
+            )
+        except (TypeError, ValueError):
+            subagent_context_max_chars = 1400
+        try:
+            subagent_result_max_chars = int(
+                runtime_flags.get("subagent_result_max_chars") or 1000
+            )
+        except (TypeError, ValueError):
+            subagent_result_max_chars = 1000
+        subagent_sandbox_scope = str(
+            runtime_flags.get("subagent_sandbox_scope")
+            or runtime_flags.get("sandbox_scope")
+            or "thread"
+        ).strip().lower()
+        artifact_offload_enabled = _coerce_runtime_flag(
+            runtime_flags.get("artifact_offload_enabled"),
+            default=False,
+        )
+        artifact_offload_storage_mode = str(
+            runtime_flags.get("artifact_offload_storage_mode") or "auto"
+        ).strip().lower()
+        if artifact_offload_storage_mode not in {"auto", "sandbox", "local"}:
+            artifact_offload_storage_mode = "auto"
+        context_compaction_enabled = _coerce_runtime_flag(
+            runtime_flags.get("context_compaction_enabled"),
+            default=True,
+        )
+        try:
+            context_compaction_trigger_ratio = float(
+                runtime_flags.get("context_compaction_trigger_ratio") or 0.65
+            )
+        except (TypeError, ValueError):
+            context_compaction_trigger_ratio = 0.65
+        cross_session_memory_enabled = _coerce_runtime_flag(
+            runtime_flags.get("cross_session_memory_enabled"),
+            default=True,
+        )
+        try:
+            cross_session_memory_max_items = int(
+                runtime_flags.get("cross_session_memory_max_items") or 6
+            )
+        except (TypeError, ValueError):
+            cross_session_memory_max_items = 6
+        if not hybrid_mode:
+            speculative_enabled = False
 
         if trace_recorder:
             route_span_id = f"route-{uuid.uuid4().hex[:8]}"
@@ -1360,6 +1608,25 @@ async def stream_new_chat(
                 "citations_enabled": citations_enabled,
                 "citation_instructions_enabled": citations_enabled,
                 "runtime_hitl": runtime_hitl or {},
+                "hybrid_mode": hybrid_mode,
+                "speculative_enabled": speculative_enabled,
+                "subagent_enabled": subagent_enabled,
+                "subagent_isolation_enabled": subagent_isolation_enabled,
+                "subagent_max_concurrency": subagent_max_concurrency,
+                "subagent_context_max_chars": subagent_context_max_chars,
+                "subagent_result_max_chars": subagent_result_max_chars,
+                "subagent_sandbox_scope": subagent_sandbox_scope,
+                "artifact_offload_enabled": artifact_offload_enabled,
+                "artifact_offload_storage_mode": artifact_offload_storage_mode,
+                "context_compaction_enabled": context_compaction_enabled,
+                "context_compaction_trigger_ratio": context_compaction_trigger_ratio,
+                "cross_session_memory_enabled": cross_session_memory_enabled,
+                "cross_session_memory_max_items": cross_session_memory_max_items,
+                "sandbox_enabled": sandbox_enabled,
+                "sandbox_mode": sandbox_mode,
+                "sandbox_provisioner_url": sandbox_provisioner_url,
+                "sandbox_state_store": sandbox_state_store,
+                "sandbox_idle_timeout_seconds": sandbox_idle_timeout_seconds,
             }
             route_start = await trace_recorder.start_span(
                 span_id=route_span_id,
@@ -1379,39 +1646,60 @@ async def stream_new_chat(
             if route_end:
                 yield route_end
 
-        # Create connector service
-        connector_service = ConnectorService(
-            session, search_space_id=search_space_id, user_id=user_id
-        )
-
-        # Get Firecrawl API key from webcrawler connector if configured
-        from app.db import SearchSourceConnectorType
-
-        firecrawl_api_key = None
-        webcrawler_connector = await connector_service.get_connector_by_type(
-            SearchSourceConnectorType.WEBCRAWLER_CONNECTOR, search_space_id
-        )
-        if webcrawler_connector and webcrawler_connector.config:
-            firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
-
-        preferred_checkpoint_ns = build_checkpoint_namespace(
-            user_id=user_id,
-            flow="new_chat_v2",
-        )
-
-        # Get the PostgreSQL checkpointer for persistent conversation memory
-        checkpointer = await get_checkpointer()
-        if checkpoint_ns_override is not None:
-            checkpoint_ns = str(checkpoint_ns_override).strip()
-        else:
-            checkpoint_ns = await resolve_checkpoint_namespace_for_thread(
-                checkpointer=checkpointer,
-                thread_id=chat_id,
-                preferred_namespace=preferred_checkpoint_ns,
+        checkpoint_ns = ""
+        if route != Route.SMALLTALK:
+            # Create connector service
+            connector_service = ConnectorService(
+                session, search_space_id=search_space_id, user_id=user_id
             )
 
-        if route != Route.SMALLTALK:
-            print(f"[DEBUG] Building graph with compare_mode={compare_mode}")
+            # Get Firecrawl API key from webcrawler connector if configured
+            from app.db import SearchSourceConnectorType
+
+            firecrawl_api_key = None
+            webcrawler_connector = await connector_service.get_connector_by_type(
+                SearchSourceConnectorType.WEBCRAWLER_CONNECTOR, search_space_id
+            )
+            if webcrawler_connector and webcrawler_connector.config:
+                firecrawl_api_key = webcrawler_connector.config.get("FIRECRAWL_API_KEY")
+
+            preferred_checkpoint_ns = build_checkpoint_namespace(
+                user_id=user_id,
+                flow="new_chat_v2",
+            )
+
+            # Get the PostgreSQL checkpointer for persistent conversation memory
+            checkpointer = await get_checkpointer()
+            if checkpoint_ns_override is not None:
+                checkpoint_ns = str(checkpoint_ns_override).strip()
+            else:
+                checkpoint_ns = await resolve_checkpoint_namespace_for_thread(
+                    checkpointer=checkpointer,
+                    thread_id=chat_id,
+                    preferred_namespace=preferred_checkpoint_ns,
+                )
+
+            print(
+                "[DEBUG] Building graph with "
+                f"compare_mode={compare_mode}, "
+                f"hybrid_mode={hybrid_mode}, "
+                f"speculative_enabled={speculative_enabled}, "
+                f"subagent_enabled={subagent_enabled}, "
+                f"subagent_isolation_enabled={subagent_isolation_enabled}, "
+                f"subagent_max_concurrency={subagent_max_concurrency}, "
+                f"subagent_sandbox_scope={subagent_sandbox_scope}, "
+                f"artifact_offload_enabled={artifact_offload_enabled}, "
+                f"artifact_offload_storage_mode={artifact_offload_storage_mode}, "
+                f"context_compaction_enabled={context_compaction_enabled}, "
+                f"context_compaction_trigger_ratio={context_compaction_trigger_ratio:.2f}, "
+                f"cross_session_memory_enabled={cross_session_memory_enabled}, "
+                f"cross_session_memory_max_items={cross_session_memory_max_items}, "
+                f"sandbox_enabled={sandbox_enabled}, "
+                f"sandbox_mode={sandbox_mode}, "
+                f"sandbox_provisioner_url={sandbox_provisioner_url or '<none>'}, "
+                f"sandbox_state_store={sandbox_state_store}, "
+                f"sandbox_idle_timeout_seconds={sandbox_idle_timeout_seconds}"
+            )
             agent = await build_complete_graph(
                 llm=llm,
                 dependencies={
@@ -1423,6 +1711,10 @@ async def stream_new_chat(
                     "thread_id": chat_id,
                     "checkpoint_ns": checkpoint_ns,
                     "runtime_hitl": dict(runtime_hitl or {}),
+                    "trace_recorder": trace_recorder,
+                    "trace_parent_span_id": (
+                        trace_recorder.root_span_id if trace_recorder else None
+                    ),
                 },
                 checkpointer=checkpointer,
                 knowledge_prompt=knowledge_worker_prompt,
@@ -1430,6 +1722,8 @@ async def stream_new_chat(
                 statistics_prompt=statistics_worker_prompt,
                 synthesis_prompt=compare_synthesis_prompt or synthesis_prompt,
                 compare_mode=compare_mode,
+                hybrid_mode=hybrid_mode,
+                speculative_enabled=speculative_enabled,
                 external_model_prompt=compare_external_prompt,
                 bolag_prompt=bolag_worker_prompt,
                 trafik_prompt=trafik_worker_prompt,
@@ -1453,24 +1747,43 @@ async def stream_new_chat(
                     citations_enabled=citations_enabled,
                     citation_instructions=citation_instructions_block,
                 ),
+                riksdagen_prompt=riksdagen_worker_prompt,
+                marketplace_prompt=marketplace_worker_prompt,
                 tool_prompt_overrides=prompt_overrides,
             )
         else:
-            # Fallback to deep agent for smalltalk
-            agent = await create_surfsense_deep_agent(
-                llm=llm,
-                search_space_id=search_space_id,
-                db_session=session,
-                connector_service=connector_service,
-                checkpointer=checkpointer,
-                user_id=user_id,  # Pass user ID for memory tools
-                thread_id=chat_id,  # Pass chat ID for podcast association
-                agent_config=effective_agent_config,  # Pass prompt configuration
-                firecrawl_api_key=firecrawl_api_key,  # Pass Firecrawl API key if configured
-                enabled_tools=ROUTE_TOOL_SETS.get(route, []),
-                tool_names_for_prompt=[],
-                force_citations_enabled=citations_enabled,
-                citation_instructions=citation_instructions_block,
+            smalltalk_system_prompt = append_datetime_context(
+                str(smalltalk_prompt or SMALLTALK_INSTRUCTIONS).strip()
+            )
+
+            async def _run_smalltalk_fast_path(state: dict[str, Any]) -> dict[str, Any]:
+                incoming = list(state.get("messages") or [])
+                latest_query = ""
+                for message in reversed(incoming):
+                    if isinstance(message, HumanMessage):
+                        latest_query = str(message.content or "").strip()
+                        if latest_query:
+                            break
+                if not latest_query and incoming:
+                    latest_query = str(getattr(incoming[-1], "content", "") or "").strip()
+                if not latest_query:
+                    latest_query = str(raw_user_query or "").strip()
+                response = await llm.ainvoke(
+                    [
+                        SystemMessage(content=smalltalk_system_prompt),
+                        HumanMessage(content=latest_query),
+                    ]
+                )
+                if isinstance(response, AIMessage):
+                    assistant_message = response
+                else:
+                    assistant_message = AIMessage(
+                        content=str(getattr(response, "content", "") or response or "")
+                    )
+                return {"messages": [assistant_message]}
+
+            agent = RunnableLambda(_run_smalltalk_fast_path).with_config(
+                {"run_name": "SmalltalkFastPath"}
             )
 
         # Build input with message history
@@ -1663,6 +1976,7 @@ async def stream_new_chat(
         model_parent_chain_by_run_id: dict[str, str] = {}
         internal_model_buffers: dict[str, str] = {}
         emitted_pipeline_payload_signatures: set[str] = set()
+        emitted_synthesis_draft_signatures: set[str] = set()
         streamed_tool_call_ids: set[str] = set()  # Track tool calls already streamed to prevent duplicates
         stream_pipeline_prefix_buffer: str = ""
 
@@ -1719,10 +2033,13 @@ async def stream_new_chat(
                 if kind == "intent":
                     title = format_step_title("Resolving intent")
                     intent_id = str(payload.get("intent_id") or "").strip()
+                    graph_complexity = str(payload.get("graph_complexity") or "").strip()
                     reason = str(payload.get("reason") or "").strip()
                     confidence = payload.get("confidence")
                     if intent_id:
                         items.append(f"Intent: {intent_id}")
+                    if graph_complexity:
+                        items.append(f"Graph complexity: {graph_complexity}")
                     if isinstance(confidence, (int, float)):
                         items.append(f"Confidence: {float(confidence):.2f}")
                     if reason:
@@ -1762,6 +2079,45 @@ async def stream_new_chat(
                         items.append(f"Decision: {decision}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
+                elif kind == "execution_router":
+                    title = format_step_title("Routing execution strategy")
+                    strategy = str(payload.get("execution_strategy") or "").strip()
+                    reason = str(payload.get("execution_reason") or payload.get("reason") or "").strip()
+                    if strategy:
+                        items.append(f"Strategi: {strategy}")
+                    if reason:
+                        items.append(f"Orsak: {reason[:180]}")
+                elif kind == "speculative":
+                    title = format_step_title("Running speculative tools")
+                    candidates = payload.get("speculative_candidates")
+                    if isinstance(candidates, list):
+                        candidate_ids = [
+                            str((item or {}).get("tool_id") or "").strip()
+                            for item in candidates
+                            if isinstance(item, dict)
+                        ]
+                        candidate_ids = [item for item in candidate_ids if item]
+                        if candidate_ids:
+                            items.append(
+                                f"Kandidater: {', '.join(candidate_ids[:4])}"
+                            )
+                    reused = payload.get("speculative_reused_tools")
+                    if isinstance(reused, list) and reused:
+                        items.append(f"Återanvända: {len(reused)}")
+                    remaining = payload.get("speculative_remaining_tools")
+                    if isinstance(remaining, list) and remaining:
+                        items.append(f"Kvar att köra: {len(remaining)}")
+                elif kind == "progressive_synthesizer":
+                    title = format_step_title("Preparing answer draft")
+                    drafts = payload.get("synthesis_drafts")
+                    if isinstance(drafts, list) and drafts:
+                        first_draft = drafts[0] if isinstance(drafts[0], dict) else {}
+                        confidence = first_draft.get("confidence")
+                        draft_text = str(first_draft.get("draft") or "").strip()
+                        if isinstance(confidence, (int, float)):
+                            items.append(f"Draft confidence: {float(confidence):.2f}")
+                        if draft_text:
+                            items.append(draft_text[:180])
                 if source_chain and _is_internal_pipeline_chain_name(source_chain):
                     items.insert(0, f"Nod: {source_chain}")
                 events.append(
@@ -1794,6 +2150,22 @@ async def stream_new_chat(
                 if _pipeline_payload_kind(payload)
             ]
             return emit_pipeline_steps_from_payloads(payloads, source_chain=source_chain)
+
+        def emit_synthesis_draft_events(output: Any) -> list[str]:
+            events: list[str] = []
+            for draft_payload in _extract_synthesis_drafts_from_event_output(output):
+                signature = json.dumps(
+                    draft_payload,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+                if signature in emitted_synthesis_draft_signatures:
+                    continue
+                emitted_synthesis_draft_signatures.add(signature)
+                events.append(
+                    streaming_service.format_data("synthesis-draft", draft_payload)
+                )
+            return events
 
         route_step_id = next_thinking_step_id()
         route_items = [f"Route: {route.value}"]
@@ -2018,6 +2390,8 @@ async def stream_new_chat(
                         yield trace_event
                 elif event_type == "on_chain_end":
                     chain_output = event.get("data", {}).get("output")
+                    for synthesis_event in emit_synthesis_draft_events(chain_output):
+                        yield synthesis_event
                     trace_event = await trace_recorder.end_span(
                         span_id=run_id,
                         output_data=chain_output,
@@ -3500,9 +3874,12 @@ async def stream_new_chat(
 
             # Handle chain/agent end to close any open text blocks
             elif event_type in ("on_chain_end", "on_agent_end"):
+                chain_output = event.get("data", {}).get("output")
+                for synthesis_event in emit_synthesis_draft_events(chain_output):
+                    yield synthesis_event
                 chain_name = chain_name_by_run_id.get(run_id) or str(event.get("name") or "")
                 candidate_text = _extract_assistant_text_from_event_output(
-                    event.get("data", {}).get("output")
+                    chain_output
                 )
                 if candidate_text:
                     source_chain = chain_name if _is_internal_pipeline_chain_name(chain_name) else None

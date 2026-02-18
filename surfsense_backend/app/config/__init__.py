@@ -86,6 +86,33 @@ def initialize_llm_router():
     Initialize the LLM Router service for Auto mode.
     This should be called during application startup.
     """
+    return _initialize_llm_router_internal(force=False)
+
+
+def initialize_llm_router_force():
+    """
+    Force initialize the LLM Router service regardless of eager-init setting.
+    Use this for lazy initialization when Auto mode is actually requested.
+    """
+    return _initialize_llm_router_internal(force=True)
+
+
+def _is_truthy_env(value: str | None, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _initialize_llm_router_internal(*, force: bool) -> None:
+    # Avoid eager startup cost unless explicitly enabled.
+    eager_enabled = _is_truthy_env(os.getenv("LLM_ROUTER_EAGER_INIT"), default=False)
+    if not force and not eager_enabled:
+        print(
+            "Info: Skipping eager LLM Router initialization "
+            "(set LLM_ROUTER_EAGER_INIT=true to enable)."
+        )
+        return
+
     global_configs = load_global_llm_configs()
     router_settings = load_router_settings()
 

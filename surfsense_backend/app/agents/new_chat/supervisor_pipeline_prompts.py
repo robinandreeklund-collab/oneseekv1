@@ -3,12 +3,16 @@ Du ar noden intent_resolver i supervisor-grafen.
 Uppgift:
 - Tolka anvandarens senaste fraga.
 - Valt intent MASTE vara ett av kandidaterna.
+- Route ska vara konsistent med valt intent och route_hint om mojligt.
 - Prioritera semantiskt bast matchande intent.
+- Fraga om aktuellt vader/prognos for plats/tid ska routas till `action`
+  (for weather-verktyg), inte `knowledge`.
 - Hall motivering kort och pa svenska.
 
 Returnera strikt JSON:
 {
   "intent_id": "string",
+  "route": "knowledge|action|statistics|compare|smalltalk",
   "reason": "kort svensk motivering",
   "confidence": 0.0
 }
@@ -22,6 +26,10 @@ Du far kandidatagenter fran retrieval.
 Uppgift:
 - Valj 1-3 agenter som bor anvandas i nasta steg.
 - Agentnamn maste vara exakta och komma fran kandidaterna.
+- Om uppgiften galler filsystem, terminal, kod eller sandbox: prioritera `code`-agent.
+- Anvand aldrig memory-verktyg som ersattning for filsystemsoperationer.
+- Foredra specialiserad agent nar uppgiften tydligt ar domanspecifik
+  (t.ex. marketplace, statistik, trafik, riksdagen, bolag).
 - Hall motivering kort och pa svenska.
 
 Returnera strikt JSON:
@@ -42,6 +50,9 @@ Regler:
 - Ett steg = en konkret delegerbar aktivitet.
 - **VIKTIGT: Använd ENDAST de agenter som redan finns i `selected_agents`. Lägg INTE till fler agenter.**
 - Om en specialiserad agent (marketplace, statistics, etc.) är vald, använd ENDAST den agenten.
+- Om anvandaren explicit ber om att lasa filinnehall: lagg in ett steg som faktiskt laser filen
+  (sandbox_read_file) innan slutsats.
+- Foredra artifact-first: stora mellanresultat ska kunna refereras via artifact path/uri.
 - Hall stegen korta och pa svenska.
 
 Returnera strikt JSON:
@@ -60,12 +71,20 @@ Uppgift:
 - Matcha plansteg och valda agenter till relevanta verktyg.
 - Prioritera fa men hogrelevanta verktyg per agent.
 - Hall dig till retrieval-resultat och hitta inte pa verktygs-id.
+- Om uppgiften ar filsystem/sandbox: prioritera sandbox_* verktyg.
+- Om anvandaren explicit ber om fillasning: inkludera sandbox_read_file.
 """
 
 
 DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT = """
 Du ar noden critic i supervisor-grafen.
 Bedom om aktuellt agentsvar ar tillrackligt for slutleverans.
+
+Vagledning:
+- Om planssteg aterstar: "needs_more".
+- Om svaret tydligt anger att path/data saknas (not found/does not exist/finns inte)
+  och uppgiften faktiskt ar verifierad: "ok" (inte loopa i onodan).
+- Anvand "replan" endast nar planinriktningen ar fel, inte vid normal komplettering.
 
 Returnera strikt JSON:
 {
@@ -84,6 +103,7 @@ Regler:
 - Behall betydelse och fakta.
 - Kort och tydligt pa svenska.
 - Ingen intern process-text.
+- Om kallsvaret innehaller guardrail/no-data/not-found: bevara det, hitta inte pa data.
 
 Returnera strikt JSON:
 {

@@ -29,7 +29,10 @@ from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.services.reranker_service import RerankerService
 from app.services.cache_control import is_cache_disabled
+from app.agents.new_chat.retrieval_feedback import get_global_retrieval_feedback_store
+from app.agents.new_chat.sandbox_runtime import sandbox_config_from_runtime_flags
 from app.agents.new_chat.tools.registry import (
+    build_tools,
     build_tools_async,
     get_default_enabled_tools,
 )
@@ -63,6 +66,13 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "display_image": ("tools", "action", "media"),
     "link_preview": ("tools", "action", "web"),
     "scrape_webpage": ("tools", "action", "web"),
+    "sandbox_execute": ("tools", "code", "sandbox"),
+    "sandbox_ls": ("tools", "code", "sandbox"),
+    "sandbox_read_file": ("tools", "code", "sandbox"),
+    "sandbox_write_file": ("tools", "code", "sandbox"),
+    "sandbox_replace": ("tools", "code", "sandbox"),
+    "sandbox_release": ("tools", "code", "sandbox"),
+    "list_directory": ("tools", "code", "sandbox"),
     "smhi_weather": ("tools", "weather", "smhi"),
     "trafiklab_route": ("tools", "action", "travel"),
     "libris_search": ("tools", "action", "data"),
@@ -132,6 +142,109 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     ],
     "link_preview": ["lank", "link", "preview", "url"],
     "scrape_webpage": ["scrape", "skrapa", "webb", "article"],
+    "sandbox_execute": [
+        "sandbox",
+        "docker",
+        "provisioner",
+        "remote",
+        "shell",
+        "bash",
+        "python",
+        "script",
+        "kod",
+        "code",
+        "terminal",
+        "kommandon",
+        "filesystem",
+        "filsystem",
+    ],
+    "sandbox_ls": [
+        "sandbox",
+        "docker",
+        "provisioner",
+        "remote",
+        "list",
+        "ls",
+        "tree",
+        "directory",
+        "folder",
+        "files",
+        "lista filer",
+        "visa filer",
+        "mapp",
+        "katalog",
+        "filer",
+    ],
+    "sandbox_read_file": [
+        "sandbox",
+        "docker",
+        "provisioner",
+        "remote",
+        "read",
+        "file",
+        "cat",
+        "content",
+        "open",
+        "read_file",
+        "läs fil",
+        "las fil",
+        "visa fil",
+        "filinnehall",
+        "filinnehåll",
+        "innehall",
+        "innehåll",
+    ],
+    "sandbox_write_file": [
+        "sandbox",
+        "docker",
+        "provisioner",
+        "remote",
+        "write",
+        "edit",
+        "save",
+        "file",
+        "create",
+        "write_file",
+        "skriv fil",
+        "skapa fil",
+        "spara fil",
+        "append",
+        "textfil",
+    ],
+    "sandbox_replace": [
+        "sandbox",
+        "docker",
+        "provisioner",
+        "remote",
+        "replace",
+        "edit",
+        "patch",
+        "string",
+        "update",
+        "ersätt",
+        "ersatt",
+        "byt ut",
+    ],
+    "sandbox_release": [
+        "sandbox",
+        "release",
+        "cleanup",
+        "stop",
+        "provisioner",
+        "docker",
+    ],
+    "list_directory": [
+        "sandbox",
+        "directory",
+        "list",
+        "ls",
+        "recursive",
+        "list_directory",
+        "mapp",
+        "katalog",
+        "filer",
+        "lista filer",
+    ],
     "smhi_weather": [
         "weather",
         "vader",
@@ -228,6 +341,7 @@ class ToolRetrievalTuning:
     namespace_boost: float = 3.0
     embedding_weight: float = 4.0
     rerank_candidates: int = 24
+    retrieval_feedback_db_enabled: bool = False
 
 
 DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
@@ -570,6 +684,19 @@ def _bounded_int(
     return max(min_value, min(max_value, parsed))
 
 
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return bool(default)
+
+
 def normalize_retrieval_tuning(
     tuning: ToolRetrievalTuning | dict[str, Any] | None,
 ) -> ToolRetrievalTuning:
@@ -618,6 +745,10 @@ def normalize_retrieval_tuning(
             default=DEFAULT_TOOL_RETRIEVAL_TUNING.rerank_candidates,
             min_value=1,
             max_value=100,
+        ),
+        retrieval_feedback_db_enabled=_coerce_bool(
+            payload.get("retrieval_feedback_db_enabled"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.retrieval_feedback_db_enabled,
         ),
     )
 
@@ -815,6 +946,7 @@ def _run_smart_retrieval(
     tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     normalized_tuning = normalize_retrieval_tuning(tuning)
+    retrieval_feedback_store = get_global_retrieval_feedback_store()
     query_norm = _normalize_text(query)
     query_tokens = set(_tokenize(query_norm))
     fallback_namespaces = fallback_namespaces or []
@@ -851,8 +983,15 @@ def _run_smart_retrieval(
             _match_namespace(entry.namespace, prefix) for prefix in fallback_namespaces
         )
         namespace_bonus = normalized_tuning.namespace_boost if is_primary else 0.0
+        retrieval_feedback_boost = retrieval_feedback_store.get_boost(
+            tool_id=entry.tool_id,
+            query=query_norm or query,
+        )
         pre_rerank_score = (
-            breakdown["lexical_score"] + embedding_weighted + namespace_bonus
+            breakdown["lexical_score"]
+            + embedding_weighted
+            + namespace_bonus
+            + retrieval_feedback_boost
         )
         breakdown_by_id[entry.tool_id] = {
             "tool_id": entry.tool_id,
@@ -866,6 +1005,7 @@ def _run_smart_retrieval(
             "embedding_score_raw": float(semantic_score),
             "embedding_score_weighted": float(embedding_weighted),
             "namespace_bonus": float(namespace_bonus),
+            "retrieval_feedback_boost": float(retrieval_feedback_boost),
             "pre_rerank_score": float(pre_rerank_score),
             "namespace_scope": "primary" if is_primary else ("fallback" if is_fallback else "none"),
         }
@@ -939,6 +1079,9 @@ def _run_smart_retrieval(
                     breakdown.get("embedding_score_weighted", 0.0)
                 ),
                 "namespace_bonus": float(breakdown.get("namespace_bonus", 0.0)),
+                "retrieval_feedback_boost": float(
+                    breakdown.get("retrieval_feedback_boost", 0.0)
+                ),
                 "namespace_scope": breakdown.get("namespace_scope"),
             }
         )
@@ -1025,6 +1168,23 @@ async def build_global_tool_registry(
     include_mcp_tools: bool = True,
 ) -> dict[str, BaseTool]:
     enabled_tools = list(get_default_enabled_tools())
+    runtime_hitl = dependencies.get("runtime_hitl")
+    sandbox_tool_ids = (
+        "sandbox_execute",
+        "sandbox_ls",
+        "sandbox_read_file",
+        "sandbox_write_file",
+        "sandbox_replace",
+        "sandbox_release",
+        "list_directory",
+    )
+    sandbox_config = sandbox_config_from_runtime_flags(
+        runtime_hitl if isinstance(runtime_hitl, dict) else None
+    )
+    if sandbox_config.enabled:
+        for sandbox_tool_id in sandbox_tool_ids:
+            if sandbox_tool_id not in enabled_tools:
+                enabled_tools.append(sandbox_tool_id)
     for extra in ("write_todos", "reflect_on_progress"):
         if extra not in enabled_tools:
             enabled_tools.append(extra)
@@ -1034,6 +1194,19 @@ async def build_global_tool_registry(
         include_mcp_tools=include_mcp_tools,
     )
     registry: dict[str, BaseTool] = {tool.name: tool for tool in tools}
+    if sandbox_config.enabled:
+        missing_sandbox_tool_ids = [
+            tool_id for tool_id in sandbox_tool_ids if tool_id not in registry
+        ]
+        if missing_sandbox_tool_ids:
+            # Lifecycle filtering can hide built-ins that are required for runtime sandbox
+            # execution; force-load missing sandbox tools to keep routing and execution in sync.
+            fallback_tools = build_tools(
+                dependencies,
+                enabled_tools=missing_sandbox_tool_ids,
+            )
+            for tool in fallback_tools:
+                registry[str(tool.name)] = tool
     scb_registry = build_scb_tool_registry(
         connector_service=dependencies["connector_service"],
         search_space_id=dependencies["search_space_id"],

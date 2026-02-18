@@ -5,6 +5,8 @@ class AgentPromptItem(BaseModel):
     key: str = Field(..., description="Prompt key identifier")
     label: str = Field(..., description="Human-readable label")
     description: str = Field(..., description="Description of where the prompt is used")
+    node_group: str = Field(..., description="LangGraph node group (router/supervisor/subagent/compare/system/other)")
+    node_group_label: str = Field(..., description="Display label for node_group")
     default_prompt: str = Field(..., description="Default prompt text")
     override_prompt: str | None = Field(
         None, description="Override prompt text if configured"

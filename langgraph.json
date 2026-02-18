@@ -1,0 +1,10 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "dependencies": [
+    "./surfsense_backend"
+  ],
+  "env": "./surfsense_backend/.env",
+  "graphs": {
+    "surfsense_supervisor": "app.langgraph_studio:make_studio_graph"
+  }
+}

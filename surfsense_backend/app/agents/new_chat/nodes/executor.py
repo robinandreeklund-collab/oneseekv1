@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 
 from app.agents.new_chat.token_budget import TokenBudget
 
@@ -13,6 +14,14 @@ def _build_executor_updates_for_new_user_turn(
 ) -> dict[str, Any]:
     updates: dict[str, Any] = {
         "resolved_intent": None,
+        "graph_complexity": None,
+        "speculative_candidates": [],
+        "speculative_results": {},
+        "execution_strategy": None,
+        "worker_results": [],
+        "synthesis_drafts": [],
+        "retrieval_feedback": {},
+        "targeted_missing_info": [],
         "selected_agents": [],
         "resolved_tools_by_agent": {},
         "query_embedding": None,
@@ -22,6 +31,9 @@ def _build_executor_updates_for_new_user_turn(
         "step_results": [],
         "recent_agent_calls": [],
         "compare_outputs": [],
+        "subagent_handoffs": [],
+        "cross_session_memory_context": None,
+        "rolling_context_summary": None,
         "final_agent_response": None,
         "final_response": None,
         "critic_decision": None,
@@ -50,9 +62,14 @@ def build_executor_nodes(
     format_plan_context_fn: Callable[[dict[str, Any]], str | None],
     format_recent_calls_fn: Callable[[dict[str, Any]], str | None],
     format_route_hint_fn: Callable[[dict[str, Any]], str | None],
+    format_execution_strategy_fn: Callable[[dict[str, Any]], str | None],
     format_intent_context_fn: Callable[[dict[str, Any]], str | None],
     format_selected_agents_context_fn: Callable[[dict[str, Any]], str | None],
     format_resolved_tools_context_fn: Callable[[dict[str, Any]], str | None],
+    format_subagent_handoffs_context_fn: Callable[[dict[str, Any]], str | None],
+    format_artifact_manifest_context_fn: Callable[[dict[str, Any]], str | None],
+    format_cross_session_memory_context_fn: Callable[[dict[str, Any]], str | None],
+    format_rolling_context_summary_context_fn: Callable[[dict[str, Any]], str | None],
     coerce_supervisor_tool_calls_fn: Callable[..., Any],
 ):
     def _build_context_messages(
@@ -64,6 +81,9 @@ def build_executor_nodes(
         plan_context = None if new_user_turn else format_plan_context_fn(state)
         recent_context = None if new_user_turn else format_recent_calls_fn(state)
         route_context = format_route_hint_fn(state)
+        execution_strategy_context = (
+            None if new_user_turn else format_execution_strategy_fn(state)
+        )
         intent_context = None if new_user_turn else format_intent_context_fn(state)
         selected_agents_context = (
             None if new_user_turn else format_selected_agents_context_fn(state)
@@ -71,15 +91,32 @@ def build_executor_nodes(
         resolved_tools_context = (
             None if new_user_turn else format_resolved_tools_context_fn(state)
         )
+        subagent_handoffs_context = (
+            None if new_user_turn else format_subagent_handoffs_context_fn(state)
+        )
+        artifact_manifest_context = (
+            None if new_user_turn else format_artifact_manifest_context_fn(state)
+        )
+        cross_session_memory_context = (
+            None if new_user_turn else format_cross_session_memory_context_fn(state)
+        )
+        rolling_context_summary = (
+            None if new_user_turn else format_rolling_context_summary_context_fn(state)
+        )
         system_bits = [
             item
             for item in (
                 plan_context,
                 recent_context,
                 route_context,
+                execution_strategy_context,
                 intent_context,
                 selected_agents_context,
                 resolved_tools_context,
+                subagent_handoffs_context,
+                artifact_manifest_context,
+                cross_session_memory_context,
+                rolling_context_summary,
             )
             if item
         ]
@@ -93,7 +130,7 @@ def build_executor_nodes(
 
     def call_model(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -116,7 +153,9 @@ def build_executor_nodes(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),
             agent_hops=int(state.get("agent_hops") or 0),
+            execution_strategy=str(state.get("execution_strategy") or ""),
             allow_multiple=bool(compare_mode),
+            state=state,
         )
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:
@@ -134,7 +173,7 @@ def build_executor_nodes(
 
     async def acall_model(
         state: dict[str, Any],
-        config: dict | None = None,
+        config: RunnableConfig | None = None,
         *,
         store=None,
         **kwargs,
@@ -156,7 +195,9 @@ def build_executor_nodes(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),
             agent_hops=int(state.get("agent_hops") or 0),
+            execution_strategy=str(state.get("execution_strategy") or ""),
             allow_multiple=bool(compare_mode),
+            state=state,
         )
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:

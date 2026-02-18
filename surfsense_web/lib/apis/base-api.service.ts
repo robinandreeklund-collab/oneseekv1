@@ -1,6 +1,12 @@
 import type { ZodType } from "zod";
 import { getBearerToken, handleUnauthorized } from "../auth-utils";
-import { AppError, AuthenticationError, AuthorizationError, NotFoundError } from "../error";
+import {
+	AppError,
+	AuthenticationError,
+	AuthorizationError,
+	NetworkError,
+	NotFoundError,
+} from "../error";
 
 enum ResponseType {
 	JSON = "json",
@@ -115,7 +121,20 @@ class BaseApiService {
 				}
 			}
 
-			const response = await fetch(fullUrl, fetchOptions);
+			let response: Response;
+			try {
+				response = await fetch(fullUrl, fetchOptions);
+			} catch (fetchError) {
+				// Browsers throw TypeError for DNS/CORS/connection failures.
+				if (fetchError instanceof TypeError) {
+					throw new NetworkError(
+						`Could not reach backend (${fullUrl}). Check NEXT_PUBLIC_FASTAPI_BACKEND_URL, backend status, and CORS.`,
+						0,
+						"NETWORK_ERROR"
+					);
+				}
+				throw fetchError;
+			}
 
 			/**
 			 * ----------

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
@@ -34,6 +35,7 @@ class WorkerPoolKey:
     thread_id: str
     checkpoint_ns: str
     firecrawl_fingerprint: str
+    runtime_hitl_fingerprint: str
     config_signature: tuple[
         tuple[
             str,
@@ -50,6 +52,27 @@ def _fingerprint_firecrawl_key(value: Any) -> str:
     if not key:
         return ""
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+
+
+def _fingerprint_runtime_hitl(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if isinstance(value, dict):
+            serialized = json.dumps(
+                value,
+                sort_keys=True,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+        else:
+            serialized = str(value)
+    except Exception:
+        serialized = str(value)
+    serialized = str(serialized or "").strip()
+    if not serialized:
+        return ""
+    return hashlib.sha1(serialized.encode("utf-8")).hexdigest()[:12]
 
 
 def _serialize_worker_configs(
@@ -102,6 +125,9 @@ def _build_worker_pool_key(
         checkpoint_ns=str(dependencies.get("checkpoint_ns") or ""),
         firecrawl_fingerprint=_fingerprint_firecrawl_key(
             dependencies.get("firecrawl_api_key")
+        ),
+        runtime_hitl_fingerprint=_fingerprint_runtime_hitl(
+            dependencies.get("runtime_hitl")
         ),
         config_signature=_serialize_worker_configs(configs),
     )

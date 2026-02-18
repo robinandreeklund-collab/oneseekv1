@@ -16,7 +16,19 @@ from app.agents.new_chat.bigtool_store import (
     smart_retrieve_tools_with_breakdown,
 )
 from app.agents.new_chat.dispatcher import dispatch_route_with_trace
+from app.agents.new_chat.hybrid_state import (
+    GRAPH_COMPLEXITY_COMPLEX,
+    GRAPH_COMPLEXITY_SIMPLE,
+    GRAPH_COMPLEXITY_TRIVIAL,
+    classify_graph_complexity,
+)
 from app.agents.new_chat.knowledge_router import KnowledgeRoute, dispatch_knowledge_route
+from app.agents.new_chat.nodes.execution_router import (
+    EXECUTION_STRATEGY_INLINE,
+    EXECUTION_STRATEGY_PARALLEL,
+    EXECUTION_STRATEGY_SUBAGENT,
+    classify_execution_strategy,
+)
 from app.agents.new_chat.routing import Route
 from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
 
@@ -119,6 +131,16 @@ _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
     "synthesis": "Cross-source compare/synthesis tasks.",
 }
 _DIFFICULTY_ORDER = ("lätt", "medel", "svår")
+_GRAPH_COMPLEXITY_VALUES = {
+    GRAPH_COMPLEXITY_TRIVIAL,
+    GRAPH_COMPLEXITY_SIMPLE,
+    GRAPH_COMPLEXITY_COMPLEX,
+}
+_EXECUTION_STRATEGY_VALUES = {
+    EXECUTION_STRATEGY_INLINE,
+    EXECUTION_STRATEGY_PARALLEL,
+    EXECUTION_STRATEGY_SUBAGENT,
+}
 _SKOLVERKET_TOOL_CATEGORY_BY_ID: dict[str, str] = {
     str(definition.tool_id).strip().lower(): str(definition.category or "").strip().lower()
     for definition in SKOLVERKET_TOOL_DEFINITIONS
@@ -400,6 +422,71 @@ def _normalize_sub_route_value(value: Any) -> str | None:
     }:
         return sub_route
     return None
+
+
+def _normalize_graph_complexity(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in _GRAPH_COMPLEXITY_VALUES:
+        return normalized
+    return None
+
+
+def _normalize_execution_strategy(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in _EXECUTION_STRATEGY_VALUES:
+        return normalized
+    return None
+
+
+def _infer_graph_complexity_for_eval(
+    *,
+    question: str,
+    selected_route: str | None,
+    selected_intent: str | None,
+    route_decision: dict[str, Any] | None,
+) -> str:
+    confidence = None
+    if isinstance(route_decision, dict):
+        raw_confidence = route_decision.get("confidence")
+        if isinstance(raw_confidence, (int, float)):
+            confidence = float(raw_confidence)
+    resolved_intent = {
+        "intent_id": _normalize_intent_id(selected_intent),
+        "route": _normalize_route_value(selected_route),
+        "confidence": confidence if confidence is not None else 0.75,
+    }
+    return _normalize_graph_complexity(
+        classify_graph_complexity(
+            resolved_intent=resolved_intent,
+            user_query=question,
+        )
+    ) or GRAPH_COMPLEXITY_COMPLEX
+
+
+def _infer_execution_strategy_for_eval(
+    *,
+    question: str,
+    selected_agent: str | None,
+    selected_tool: str | None,
+    planning_steps: list[str],
+) -> str:
+    active_plan = [
+        {"id": str(index + 1), "content": step}
+        for index, step in enumerate(_safe_string_list(planning_steps))
+    ]
+    eval_state: dict[str, Any] = {
+        "selected_agents": [{"name": selected_agent}] if selected_agent else [],
+        "active_plan": active_plan,
+    }
+    if selected_agent and selected_tool:
+        eval_state["resolved_tools_by_agent"] = {selected_agent: [selected_tool]}
+    next_step_text = active_plan[0]["content"] if active_plan else ""
+    strategy, _reason = classify_execution_strategy(
+        state=eval_state,
+        latest_user_query=question,
+        next_step_text=next_step_text,
+    )
+    return _normalize_execution_strategy(strategy) or EXECUTION_STRATEGY_INLINE
 
 
 def _normalize_token_for_match(value: Any) -> str:
@@ -1153,11 +1240,15 @@ def _build_supervisor_trace(
     expected_sub_route: str | None,
     expected_agent: str | None,
     expected_tool: str | None,
+    expected_graph_complexity: str | None,
+    expected_execution_strategy: str | None,
     selected_intent: str | None,
     selected_route: str | None,
     selected_sub_route: str | None,
     selected_agent: str | None,
     selected_tool: str | None,
+    selected_graph_complexity: str | None,
+    selected_execution_strategy: str | None,
     agent_selection_analysis: str,
     planning_analysis: str,
     planning_steps: list[str],
@@ -1171,6 +1262,8 @@ def _build_supervisor_trace(
             "sub_route": expected_sub_route,
             "agent": expected_agent,
             "tool": expected_tool,
+            "graph_complexity": expected_graph_complexity,
+            "execution_strategy": expected_execution_strategy,
         },
         "selected": {
             "intent": selected_intent,
@@ -1178,6 +1271,8 @@ def _build_supervisor_trace(
             "sub_route": selected_sub_route,
             "agent": selected_agent,
             "tool": selected_tool,
+            "graph_complexity": selected_graph_complexity,
+            "execution_strategy": selected_execution_strategy,
         },
         "reasoning": {
             "agent_selection_analysis": str(agent_selection_analysis or "").strip(),
@@ -1206,11 +1301,15 @@ def _build_supervisor_review_rubric(
     expected_sub_route = str(expected.get("sub_route") or "").strip()
     expected_agent = str(expected.get("agent") or "").strip()
     expected_tool = str(expected.get("tool") or "").strip()
+    expected_graph_complexity = str(expected.get("graph_complexity") or "").strip()
+    expected_execution_strategy = str(expected.get("execution_strategy") or "").strip()
     selected_route = str(selected.get("route") or "").strip()
     selected_intent = str(selected.get("intent") or "").strip()
     selected_sub_route = str(selected.get("sub_route") or "").strip()
     selected_agent = str(selected.get("agent") or "").strip()
     selected_tool = str(selected.get("tool") or "").strip()
+    selected_graph_complexity = str(selected.get("graph_complexity") or "").strip()
+    selected_execution_strategy = str(selected.get("execution_strategy") or "").strip()
     agent_analysis = str(reasoning.get("agent_selection_analysis") or "").strip()
     tool_analysis = str(reasoning.get("tool_planning_analysis") or "").strip()
     failed_requirements = [
@@ -1281,6 +1380,36 @@ def _build_supervisor_review_rubric(
         weight=0.7,
         evidence=f"expected={expected_sub_route or '-'} selected={selected_sub_route or '-'}",
     )
+    if expected_graph_complexity or selected_graph_complexity:
+        _item(
+            key="graph_complexity_alignment",
+            label="Graph complexity matchar förväntad",
+            passed=(
+                (selected_graph_complexity == expected_graph_complexity)
+                if expected_graph_complexity
+                else bool(selected_graph_complexity)
+            ),
+            weight=0.6,
+            evidence=(
+                f"expected={expected_graph_complexity or '-'} "
+                f"selected={selected_graph_complexity or '-'}"
+            ),
+        )
+    if expected_execution_strategy or selected_execution_strategy:
+        _item(
+            key="execution_strategy_alignment",
+            label="Execution-strategi matchar förväntad",
+            passed=(
+                (selected_execution_strategy == expected_execution_strategy)
+                if expected_execution_strategy
+                else bool(selected_execution_strategy)
+            ),
+            weight=0.6,
+            evidence=(
+                f"expected={expected_execution_strategy or '-'} "
+                f"selected={selected_execution_strategy or '-'}"
+            ),
+        )
     _item(
         key="agent_presence",
         label="Agent är satt",
@@ -1854,6 +1983,8 @@ async def run_tool_evaluation(
     intent_checks: list[bool] = []
     route_checks: list[bool] = []
     sub_route_checks: list[bool] = []
+    graph_complexity_checks: list[bool] = []
+    execution_strategy_checks: list[bool] = []
     agent_checks: list[bool] = []
     gated_scores: list[float] = []
     plan_checks: list[bool] = []
@@ -1923,6 +2054,12 @@ async def run_tool_evaluation(
                 *_safe_string_list(expected.get("acceptable_tools")),
             ]
         )
+        expected_graph_complexity = _normalize_graph_complexity(
+            expected.get("graph_complexity")
+        )
+        expected_execution_strategy = _normalize_execution_strategy(
+            expected.get("execution_strategy")
+        )
         allowed_tools = _safe_string_list(test.get("allowed_tools"))
         if expected_acceptable_tools:
             allowed_tools = _dedupe_strings([*expected_acceptable_tools, *allowed_tools])
@@ -1933,9 +2070,13 @@ async def run_tool_evaluation(
         selected_sub_route: str | None = None
         selected_intent: str | None = None
         selected_agent: str | None = None
+        selected_graph_complexity: str | None = None
+        selected_execution_strategy: str | None = None
         passed_intent: bool | None = None
         passed_route: bool | None = None
         passed_sub_route: bool | None = None
+        passed_graph_complexity: bool | None = None
+        passed_execution_strategy: bool | None = None
         passed_agent: bool | None = None
         passed_plan: bool | None = None
         selected_agent_analysis = ""
@@ -1952,7 +2093,7 @@ async def run_tool_evaluation(
                 selected_route,
                 selected_sub_route,
                 selected_intent,
-                _route_decision,
+                route_decision,
             ) = await _dispatch_route_from_start(
                 question=question,
                 llm=llm,
@@ -1971,6 +2112,17 @@ async def run_tool_evaluation(
             passed_sub_route = (
                 selected_sub_route == expected_sub_route
                 if expected_sub_route is not None
+                else None
+            )
+            selected_graph_complexity = _infer_graph_complexity_for_eval(
+                question=question,
+                selected_route=selected_route,
+                selected_intent=selected_intent,
+                route_decision=route_decision,
+            )
+            passed_graph_complexity = (
+                selected_graph_complexity == expected_graph_complexity
+                if expected_graph_complexity is not None
                 else None
             )
             selected_agent_plan = await _plan_agent_choice(
@@ -2046,6 +2198,17 @@ async def run_tool_evaluation(
                 passed_agent = selected_agent in expected_acceptable_agents
             elif expected_agent is not None:
                 passed_agent = selected_agent == expected_agent
+            selected_execution_strategy = _infer_execution_strategy_for_eval(
+                question=question,
+                selected_agent=selected_agent,
+                selected_tool=selected_tool,
+                planning_steps=_safe_string_list(planning.get("plan_steps")),
+            )
+            passed_execution_strategy = (
+                selected_execution_strategy == expected_execution_strategy
+                if expected_execution_strategy is not None
+                else None
+            )
             plan_requirement_checks, passed_plan = _evaluate_plan_requirements(
                 requirements=plan_requirements,
                 planning_analysis=str(planning.get("analysis") or ""),
@@ -2065,11 +2228,15 @@ async def run_tool_evaluation(
                 expected_sub_route=expected_sub_route,
                 expected_agent=expected_agent,
                 expected_tool=expected_tool,
+                expected_graph_complexity=expected_graph_complexity,
+                expected_execution_strategy=expected_execution_strategy,
                 selected_intent=selected_intent,
                 selected_route=selected_route,
                 selected_sub_route=selected_sub_route,
                 selected_agent=selected_agent,
                 selected_tool=selected_tool,
+                selected_graph_complexity=selected_graph_complexity,
+                selected_execution_strategy=selected_execution_strategy,
                 agent_selection_analysis=selected_agent_analysis,
                 planning_analysis=str(planning.get("analysis") or ""),
                 planning_steps=_safe_string_list(planning.get("plan_steps")),
@@ -2120,6 +2287,8 @@ async def run_tool_evaluation(
                     passed_intent,
                     passed_route,
                     passed_sub_route,
+                    passed_graph_complexity,
+                    passed_execution_strategy,
                     passed_agent,
                     passed_plan,
                     passed_category,
@@ -2132,6 +2301,8 @@ async def run_tool_evaluation(
                 upstream_checks=[
                     passed_route,
                     passed_sub_route,
+                    passed_graph_complexity,
+                    passed_execution_strategy,
                     passed_agent,
                     passed_plan,
                 ],
@@ -2151,6 +2322,10 @@ async def run_tool_evaluation(
                 route_checks.append(bool(passed_route))
             if passed_sub_route is not None:
                 sub_route_checks.append(bool(passed_sub_route))
+            if passed_graph_complexity is not None:
+                graph_complexity_checks.append(bool(passed_graph_complexity))
+            if passed_execution_strategy is not None:
+                execution_strategy_checks.append(bool(passed_execution_strategy))
             if passed_agent is not None:
                 agent_checks.append(bool(passed_agent))
             if passed_plan is not None:
@@ -2169,6 +2344,8 @@ async def run_tool_evaluation(
                 "expected_intent": expected_intent,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
+                "expected_graph_complexity": expected_graph_complexity,
+                "expected_execution_strategy": expected_execution_strategy,
                 "expected_agent": expected_agent,
                 "expected_acceptable_agents": expected_acceptable_agents,
                 "expected_category": expected_category,
@@ -2178,6 +2355,8 @@ async def run_tool_evaluation(
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
                 "selected_intent": selected_intent,
+                "selected_graph_complexity": selected_graph_complexity,
+                "selected_execution_strategy": selected_execution_strategy,
                 "selected_agent": selected_agent,
                 "agent_selection_analysis": selected_agent_analysis,
                 "selected_category": selected_category,
@@ -2204,6 +2383,8 @@ async def run_tool_evaluation(
                 "passed_intent": passed_intent,
                 "passed_route": passed_route,
                 "passed_sub_route": passed_sub_route,
+                "passed_graph_complexity": passed_graph_complexity,
+                "passed_execution_strategy": passed_execution_strategy,
                 "passed_agent": passed_agent,
                 "passed_plan": passed_plan,
                 "passed_category": passed_category,
@@ -2227,6 +2408,8 @@ async def run_tool_evaluation(
                     "selected_intent": selected_intent,
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
+                    "selected_graph_complexity": selected_graph_complexity,
+                    "selected_execution_strategy": selected_execution_strategy,
                     "selected_agent": selected_agent,
                     "agent_selection_analysis": selected_agent_analysis,
                     "selected_tool": selected_tool,
@@ -2246,11 +2429,15 @@ async def run_tool_evaluation(
                 expected_sub_route=expected_sub_route,
                 expected_agent=expected_agent,
                 expected_tool=expected_tool,
+                expected_graph_complexity=expected_graph_complexity,
+                expected_execution_strategy=expected_execution_strategy,
                 selected_intent=selected_intent,
                 selected_route=selected_route,
                 selected_sub_route=selected_sub_route,
                 selected_agent=selected_agent,
                 selected_tool=None,
+                selected_graph_complexity=selected_graph_complexity,
+                selected_execution_strategy=selected_execution_strategy,
                 agent_selection_analysis=selected_agent_analysis,
                 planning_analysis=f"Evaluation failed for this case: {exc}",
                 planning_steps=[],
@@ -2267,6 +2454,8 @@ async def run_tool_evaluation(
                     "expected_intent": expected_intent,
                     "expected_route": expected_route,
                     "expected_sub_route": expected_sub_route,
+                    "expected_graph_complexity": expected_graph_complexity,
+                    "expected_execution_strategy": expected_execution_strategy,
                     "expected_agent": expected_agent,
                     "expected_acceptable_agents": expected_acceptable_agents,
                     "expected_category": expected_category,
@@ -2276,6 +2465,8 @@ async def run_tool_evaluation(
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
                     "selected_intent": selected_intent,
+                    "selected_graph_complexity": selected_graph_complexity,
+                    "selected_execution_strategy": selected_execution_strategy,
                     "selected_agent": selected_agent,
                     "agent_selection_analysis": selected_agent_analysis,
                     "selected_category": None,
@@ -2300,6 +2491,12 @@ async def run_tool_evaluation(
                     "passed_intent": False if expected_intent is not None else None,
                     "passed_route": False if expected_route is not None else None,
                     "passed_sub_route": False if expected_sub_route is not None else None,
+                    "passed_graph_complexity": (
+                        False if expected_graph_complexity is not None else None
+                    ),
+                    "passed_execution_strategy": (
+                        False if expected_execution_strategy is not None else None
+                    ),
                     "passed_agent": False if expected_agent is not None else None,
                     "passed_plan": False if plan_requirements else None,
                     "passed_category": False if expected_category is not None else None,
@@ -2324,6 +2521,10 @@ async def run_tool_evaluation(
                 route_checks.append(False)
             if expected_sub_route is not None:
                 sub_route_checks.append(False)
+            if expected_graph_complexity is not None:
+                graph_complexity_checks.append(False)
+            if expected_execution_strategy is not None:
+                execution_strategy_checks.append(False)
             if expected_agent is not None:
                 agent_checks.append(False)
             if plan_requirements:
@@ -2370,6 +2571,18 @@ async def run_tool_evaluation(
         "sub_route_accuracy": (
             sum(1 for check in sub_route_checks if check) / len(sub_route_checks)
             if sub_route_checks
+            else None
+        ),
+        "graph_complexity_accuracy": (
+            sum(1 for check in graph_complexity_checks if check)
+            / len(graph_complexity_checks)
+            if graph_complexity_checks
+            else None
+        ),
+        "execution_strategy_accuracy": (
+            sum(1 for check in execution_strategy_checks if check)
+            / len(execution_strategy_checks)
+            if execution_strategy_checks
             else None
         ),
         "agent_accuracy": (
@@ -3169,6 +3382,8 @@ async def run_tool_api_input_evaluation(
     intent_checks: list[bool] = []
     route_checks: list[bool] = []
     sub_route_checks: list[bool] = []
+    graph_complexity_checks: list[bool] = []
+    execution_strategy_checks: list[bool] = []
     agent_checks: list[bool] = []
     gated_scores: list[float] = []
     plan_checks: list[bool] = []
@@ -3239,6 +3454,12 @@ async def run_tool_api_input_evaluation(
                 *_safe_string_list(expected.get("acceptable_tools")),
             ]
         )
+        expected_graph_complexity = _normalize_graph_complexity(
+            expected.get("graph_complexity")
+        )
+        expected_execution_strategy = _normalize_execution_strategy(
+            expected.get("execution_strategy")
+        )
         expected_required_fields = _normalize_field_list(expected.get("required_fields"))
         expected_field_values = (
             expected.get("field_values") if isinstance(expected.get("field_values"), dict) else {}
@@ -3259,9 +3480,13 @@ async def run_tool_api_input_evaluation(
         selected_sub_route: str | None = None
         selected_intent: str | None = None
         selected_agent: str | None = None
+        selected_graph_complexity: str | None = None
+        selected_execution_strategy: str | None = None
         passed_intent: bool | None = None
         passed_route: bool | None = None
         passed_sub_route: bool | None = None
+        passed_graph_complexity: bool | None = None
+        passed_execution_strategy: bool | None = None
         passed_agent: bool | None = None
         passed_plan: bool | None = None
         selected_agent_analysis = ""
@@ -3278,7 +3503,7 @@ async def run_tool_api_input_evaluation(
                 selected_route,
                 selected_sub_route,
                 selected_intent,
-                _route_decision,
+                route_decision,
             ) = await _dispatch_route_from_start(
                 question=question,
                 llm=llm,
@@ -3297,6 +3522,17 @@ async def run_tool_api_input_evaluation(
             passed_sub_route = (
                 selected_sub_route == expected_sub_route
                 if expected_sub_route is not None
+                else None
+            )
+            selected_graph_complexity = _infer_graph_complexity_for_eval(
+                question=question,
+                selected_route=selected_route,
+                selected_intent=selected_intent,
+                route_decision=route_decision,
+            )
+            passed_graph_complexity = (
+                selected_graph_complexity == expected_graph_complexity
+                if expected_graph_complexity is not None
                 else None
             )
             selected_agent_plan = await _plan_agent_choice(
@@ -3373,6 +3609,17 @@ async def run_tool_api_input_evaluation(
                 passed_agent = selected_agent in expected_acceptable_agents
             elif expected_agent is not None:
                 passed_agent = selected_agent == expected_agent
+            selected_execution_strategy = _infer_execution_strategy_for_eval(
+                question=question,
+                selected_agent=selected_agent,
+                selected_tool=selected_tool,
+                planning_steps=_safe_string_list(planning.get("plan_steps")),
+            )
+            passed_execution_strategy = (
+                selected_execution_strategy == expected_execution_strategy
+                if expected_execution_strategy is not None
+                else None
+            )
             proposed_arguments = _coerce_arguments(planning.get("proposed_arguments"))
             needs_clarification = bool(planning.get("needs_clarification"))
             clarification_question = (
@@ -3397,11 +3644,15 @@ async def run_tool_api_input_evaluation(
                 expected_sub_route=expected_sub_route,
                 expected_agent=expected_agent,
                 expected_tool=expected_tool,
+                expected_graph_complexity=expected_graph_complexity,
+                expected_execution_strategy=expected_execution_strategy,
                 selected_intent=selected_intent,
                 selected_route=selected_route,
                 selected_sub_route=selected_sub_route,
                 selected_agent=selected_agent,
                 selected_tool=selected_tool,
+                selected_graph_complexity=selected_graph_complexity,
+                selected_execution_strategy=selected_execution_strategy,
                 agent_selection_analysis=selected_agent_analysis,
                 planning_analysis=str(planning.get("analysis") or ""),
                 planning_steps=_safe_string_list(planning.get("plan_steps")),
@@ -3515,6 +3766,10 @@ async def run_tool_api_input_evaluation(
                 route_checks.append(bool(passed_route))
             if passed_sub_route is not None:
                 sub_route_checks.append(bool(passed_sub_route))
+            if passed_graph_complexity is not None:
+                graph_complexity_checks.append(bool(passed_graph_complexity))
+            if passed_execution_strategy is not None:
+                execution_strategy_checks.append(bool(passed_execution_strategy))
             if passed_agent is not None:
                 agent_checks.append(bool(passed_agent))
             if passed_plan is not None:
@@ -3554,6 +3809,8 @@ async def run_tool_api_input_evaluation(
                     passed_intent,
                     passed_route,
                     passed_sub_route,
+                    passed_graph_complexity,
+                    passed_execution_strategy,
                     passed_agent,
                     passed_plan,
                     passed_category,
@@ -3567,6 +3824,8 @@ async def run_tool_api_input_evaluation(
                 upstream_checks=[
                     passed_route,
                     passed_sub_route,
+                    passed_graph_complexity,
+                    passed_execution_strategy,
                     passed_agent,
                     passed_plan,
                 ],
@@ -3581,6 +3840,8 @@ async def run_tool_api_input_evaluation(
                 "expected_intent": expected_intent,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
+                "expected_graph_complexity": expected_graph_complexity,
+                "expected_execution_strategy": expected_execution_strategy,
                 "expected_agent": expected_agent,
                 "expected_acceptable_agents": expected_acceptable_agents,
                 "expected_category": expected_category,
@@ -3590,6 +3851,8 @@ async def run_tool_api_input_evaluation(
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
                 "selected_intent": selected_intent,
+                "selected_graph_complexity": selected_graph_complexity,
+                "selected_execution_strategy": selected_execution_strategy,
                 "selected_agent": selected_agent,
                 "agent_selection_analysis": selected_agent_analysis,
                 "selected_category": selected_category,
@@ -3626,6 +3889,8 @@ async def run_tool_api_input_evaluation(
                 "passed_intent": passed_intent,
                 "passed_route": passed_route,
                 "passed_sub_route": passed_sub_route,
+                "passed_graph_complexity": passed_graph_complexity,
+                "passed_execution_strategy": passed_execution_strategy,
                 "passed_agent": passed_agent,
                 "passed_plan": passed_plan,
                 "passed_category": passed_category,
@@ -3650,6 +3915,8 @@ async def run_tool_api_input_evaluation(
                     "selected_intent": selected_intent,
                     "selected_route": selected_route,
                     "selected_sub_route": selected_sub_route,
+                    "selected_graph_complexity": selected_graph_complexity,
+                    "selected_execution_strategy": selected_execution_strategy,
                     "selected_agent": selected_agent,
                     "agent_selection_analysis": selected_agent_analysis,
                     "selected_tool": selected_tool,
@@ -3669,11 +3936,15 @@ async def run_tool_api_input_evaluation(
                 expected_sub_route=expected_sub_route,
                 expected_agent=expected_agent,
                 expected_tool=expected_tool,
+                expected_graph_complexity=expected_graph_complexity,
+                expected_execution_strategy=expected_execution_strategy,
                 selected_intent=selected_intent,
                 selected_route=selected_route,
                 selected_sub_route=selected_sub_route,
                 selected_agent=selected_agent,
                 selected_tool=None,
+                selected_graph_complexity=selected_graph_complexity,
+                selected_execution_strategy=selected_execution_strategy,
                 agent_selection_analysis=selected_agent_analysis,
                 planning_analysis=f"API input evaluation failed for this case: {exc}",
                 planning_steps=[],
@@ -3689,6 +3960,8 @@ async def run_tool_api_input_evaluation(
                 "expected_intent": expected_intent,
                 "expected_route": expected_route,
                 "expected_sub_route": expected_sub_route,
+                "expected_graph_complexity": expected_graph_complexity,
+                "expected_execution_strategy": expected_execution_strategy,
                 "expected_agent": expected_agent,
                 "expected_acceptable_agents": expected_acceptable_agents,
                 "expected_category": expected_category,
@@ -3698,6 +3971,8 @@ async def run_tool_api_input_evaluation(
                 "selected_route": selected_route,
                 "selected_sub_route": selected_sub_route,
                 "selected_intent": selected_intent,
+                "selected_graph_complexity": selected_graph_complexity,
+                "selected_execution_strategy": selected_execution_strategy,
                 "selected_agent": selected_agent,
                 "agent_selection_analysis": selected_agent_analysis,
                 "selected_category": None,
@@ -3732,6 +4007,12 @@ async def run_tool_api_input_evaluation(
                 "passed_intent": False if expected_intent is not None else None,
                 "passed_route": False if expected_route is not None else None,
                 "passed_sub_route": False if expected_sub_route is not None else None,
+                "passed_graph_complexity": (
+                    False if expected_graph_complexity is not None else None
+                ),
+                "passed_execution_strategy": (
+                    False if expected_execution_strategy is not None else None
+                ),
                 "passed_agent": False if expected_agent is not None else None,
                 "passed_plan": False if plan_requirements else None,
                 "passed_category": False if expected_category is not None else None,
@@ -3757,6 +4038,10 @@ async def run_tool_api_input_evaluation(
                 route_checks.append(False)
             if expected_sub_route is not None:
                 sub_route_checks.append(False)
+            if expected_graph_complexity is not None:
+                graph_complexity_checks.append(False)
+            if expected_execution_strategy is not None:
+                execution_strategy_checks.append(False)
             if expected_agent is not None:
                 agent_checks.append(False)
             if plan_requirements:
@@ -3810,6 +4095,18 @@ async def run_tool_api_input_evaluation(
         "sub_route_accuracy": (
             sum(1 for check in sub_route_checks if check) / len(sub_route_checks)
             if sub_route_checks
+            else None
+        ),
+        "graph_complexity_accuracy": (
+            sum(1 for check in graph_complexity_checks if check)
+            / len(graph_complexity_checks)
+            if graph_complexity_checks
+            else None
+        ),
+        "execution_strategy_accuracy": (
+            sum(1 for check in execution_strategy_checks if check)
+            / len(execution_strategy_checks)
+            if execution_strategy_checks
             else None
         ),
         "agent_accuracy": (

@@ -609,6 +609,14 @@ def get_auto_mode_llm() -> ChatLiteLLMRouter | None:
         ChatLiteLLMRouter instance or None if router not initialized
     """
     if not LLMRouterService.is_initialized():
+        try:
+            from app.config import initialize_llm_router_force
+
+            initialize_llm_router_force()
+        except Exception as exc:
+            logger.warning(f"Failed lazy initialization for auto mode: {exc}")
+            return None
+    if not LLMRouterService.is_initialized():
         logger.warning("LLM Router not initialized for auto mode")
         return None
 

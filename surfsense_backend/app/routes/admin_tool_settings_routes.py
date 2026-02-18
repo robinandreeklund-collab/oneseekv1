@@ -2269,6 +2269,8 @@ def _comparison_metric_keys(stage: str) -> list[str]:
         "intent_accuracy",
         "route_accuracy",
         "sub_route_accuracy",
+        "graph_complexity_accuracy",
+        "execution_strategy_accuracy",
         "agent_accuracy",
         "plan_accuracy",
         "supervisor_review_pass_rate",
@@ -2323,10 +2325,18 @@ def _guidance_from_comparison(
                 "Regression i intent-igenkanning: uppdatera intent-definitioner (keywords/beskrivning) "
                 "och intent_resolver-prompten innan fler downstream-andringar."
             )
-        if any(metric in degraded_metrics for metric in ["route_accuracy", "sub_route_accuracy"]):
+        if any(
+            metric in degraded_metrics
+            for metric in [
+                "route_accuracy",
+                "sub_route_accuracy",
+                "graph_complexity_accuracy",
+                "execution_strategy_accuracy",
+            ]
+        ):
             guidance.append(
-                "Regression i route/sub-route: prioritera supervisor/router-prompt och kontrollera "
-                "att route/sub-route-exempel matchar testernas formuleringar."
+                "Regression i route/sub-route/hybrid-strategi: prioritera supervisor/router-prompt "
+                "och verifiera regler för graph_complexity/execution_strategy."
             )
         if "agent_accuracy" in degraded_metrics:
             guidance.append(
@@ -3099,6 +3109,12 @@ async def _execute_tool_evaluation(
                     "intent": resolved_intent,
                     "route": resolved_route or expected_route,
                     "sub_route": test.expected.sub_route if test.expected else None,
+                    "graph_complexity": (
+                        test.expected.graph_complexity if test.expected else None
+                    ),
+                    "execution_strategy": (
+                        test.expected.execution_strategy if test.expected else None
+                    ),
                     "plan_requirements": (
                         list(test.expected.plan_requirements) if test.expected else []
                     ),
@@ -3216,6 +3232,12 @@ async def _execute_api_input_evaluation(
                         "intent": resolved_intent,
                         "route": resolved_route or expected_route,
                         "sub_route": test.expected.sub_route if test.expected else None,
+                        "graph_complexity": (
+                            test.expected.graph_complexity if test.expected else None
+                        ),
+                        "execution_strategy": (
+                            test.expected.execution_strategy if test.expected else None
+                        ),
                         "plan_requirements": (
                             list(test.expected.plan_requirements) if test.expected else []
                         ),

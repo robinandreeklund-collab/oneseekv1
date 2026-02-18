@@ -38,6 +38,7 @@ class ToolRetrievalTuning(BaseModel):
     namespace_boost: float = 3.0
     embedding_weight: float = 4.0
     rerank_candidates: int = 24
+    retrieval_feedback_db_enabled: bool = False
 
 
 class ToolLatestEvaluationSummary(BaseModel):
@@ -79,6 +80,8 @@ class ToolEvaluationExpected(BaseModel):
     intent: str | None = None
     route: str | None = None
     sub_route: str | None = None
+    graph_complexity: str | None = None
+    execution_strategy: str | None = None
     plan_requirements: list[str] = Field(default_factory=list)
 
 
@@ -91,6 +94,8 @@ class ToolApiInputEvaluationExpected(BaseModel):
     intent: str | None = None
     route: str | None = None
     sub_route: str | None = None
+    graph_complexity: str | None = None
+    execution_strategy: str | None = None
     plan_requirements: list[str] = Field(default_factory=list)
     required_fields: list[str] = Field(default_factory=list)
     field_values: dict[str, Any] = Field(default_factory=dict)
@@ -152,6 +157,8 @@ class ToolEvaluationMetrics(BaseModel):
     intent_accuracy: float | None = None
     route_accuracy: float | None = None
     sub_route_accuracy: float | None = None
+    graph_complexity_accuracy: float | None = None
+    execution_strategy_accuracy: float | None = None
     agent_accuracy: float | None = None
     plan_accuracy: float | None = None
     supervisor_review_score: float | None = None
@@ -177,6 +184,8 @@ class ToolEvaluationCaseResult(BaseModel):
     expected_intent: str | None = None
     expected_route: str | None = None
     expected_sub_route: str | None = None
+    expected_graph_complexity: str | None = None
+    expected_execution_strategy: str | None = None
     expected_agent: str | None = None
     expected_acceptable_agents: list[str] = Field(default_factory=list)
     expected_category: str | None = None
@@ -186,6 +195,8 @@ class ToolEvaluationCaseResult(BaseModel):
     selected_route: str | None = None
     selected_sub_route: str | None = None
     selected_intent: str | None = None
+    selected_graph_complexity: str | None = None
+    selected_execution_strategy: str | None = None
     selected_agent: str | None = None
     agent_selection_analysis: str = ""
     selected_category: str | None = None
@@ -209,6 +220,8 @@ class ToolEvaluationCaseResult(BaseModel):
     expected_normalized: bool = False
     passed_route: bool | None = None
     passed_sub_route: bool | None = None
+    passed_graph_complexity: bool | None = None
+    passed_execution_strategy: bool | None = None
     passed_intent: bool | None = None
     passed_agent: bool | None = None
     passed_plan: bool | None = None
@@ -233,6 +246,8 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     expected_intent: str | None = None
     expected_route: str | None = None
     expected_sub_route: str | None = None
+    expected_graph_complexity: str | None = None
+    expected_execution_strategy: str | None = None
     expected_agent: str | None = None
     expected_acceptable_agents: list[str] = Field(default_factory=list)
     expected_category: str | None = None
@@ -242,6 +257,8 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     selected_route: str | None = None
     selected_sub_route: str | None = None
     selected_intent: str | None = None
+    selected_graph_complexity: str | None = None
+    selected_execution_strategy: str | None = None
     selected_agent: str | None = None
     agent_selection_analysis: str = ""
     selected_category: str | None = None
@@ -275,6 +292,8 @@ class ToolApiInputEvaluationCaseResult(BaseModel):
     clarification_question: str | None = None
     passed_route: bool | None = None
     passed_sub_route: bool | None = None
+    passed_graph_complexity: bool | None = None
+    passed_execution_strategy: bool | None = None
     passed_intent: bool | None = None
     passed_agent: bool | None = None
     passed_plan: bool | None = None
@@ -294,6 +313,8 @@ class ToolApiInputEvaluationMetrics(BaseModel):
     intent_accuracy: float | None = None
     route_accuracy: float | None = None
     sub_route_accuracy: float | None = None
+    graph_complexity_accuracy: float | None = None
+    execution_strategy_accuracy: float | None = None
     agent_accuracy: float | None = None
     plan_accuracy: float | None = None
     supervisor_review_score: float | None = None
