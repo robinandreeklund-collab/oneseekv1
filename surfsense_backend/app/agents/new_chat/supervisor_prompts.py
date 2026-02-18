@@ -33,6 +33,8 @@ Regler:
 6) Om information saknas: stall en kort foljdfraga i stallet for att hallucinera.
 7) Om "not found"/guard-resultat redan ar konstaterat: skriv inte om det till positiv fakta.
 8) Nar svaret ar tillrackligt: avsluta utan onodiga extra steg.
+9) Om <selected_agents> och ett aktivt plansteg redan finns: ga direkt till call_agent
+   eller call_agents_parallel. Anropa inte retrieve_agents igen utan tydlig ny riktning.
 
 Svarsstil:
 - Kort, tydlig svenska.

@@ -284,7 +284,6 @@ TOOL_CONTEXT_DROP_KEYS = {
 }
 _LOOP_GUARD_TOOL_NAMES = {
     "retrieve_agents",
-    "call_agents_parallel",
     "reflect_on_progress",
     "write_todos",
 }
@@ -1671,10 +1670,13 @@ def _tool_call_priority(
     orchestration_phase: str,
     agent_hops: int,
     execution_strategy: str = "",
+    state: dict[str, Any] | None = None,
 ) -> int:
     normalized_tool = str(tool_name or "").strip()
     phase = str(orchestration_phase or "").strip().lower()
     strategy = str(execution_strategy or "").strip().lower()
+    selected_agents_present = bool(_selected_agent_names_from_state(state))
+    pending_plan_steps = _has_followup_plan_steps(state)
     if strategy in {"parallel", "subagent"}:
         preferred = {
             "call_agents_parallel": 0,
@@ -1686,7 +1688,15 @@ def _tool_call_priority(
         if normalized_tool in _EXTERNAL_MODEL_TOOL_NAMES:
             return 5
         return preferred.get(normalized_tool, 99)
-    if phase == "select_agent" or agent_hops <= 0:
+    prefer_retrieval = (
+        phase == "select_agent" and not selected_agents_present and agent_hops <= 0
+    ) or (
+        phase in {"execute", "resolve_tools", "validate_agent_output"}
+        and not selected_agents_present
+        and not pending_plan_steps
+        and agent_hops <= 0
+    )
+    if prefer_retrieval:
         ordering = {
             "retrieve_agents": 0,
             "call_agent": 1,
@@ -1764,6 +1774,101 @@ def _projected_followup_plan_steps(
     )
 
 
+def _selected_agent_names_from_state(state: dict[str, Any] | None) -> list[str]:
+    if not isinstance(state, dict):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in state.get("selected_agents") or []:
+        if isinstance(item, dict):
+            normalized = str(item.get("name") or "").strip().lower()
+        else:
+            normalized = str(item or "").strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        names.append(normalized)
+    return names
+
+
+def _next_plan_step_text(state: dict[str, Any] | None) -> str:
+    if not isinstance(state, dict):
+        return ""
+    plan_items = state.get("active_plan") or []
+    if not isinstance(plan_items, list) or not plan_items:
+        return ""
+    try:
+        step_index = int(state.get("plan_step_index") or 0)
+    except (TypeError, ValueError):
+        step_index = 0
+    step_index = max(0, step_index)
+    for idx, item in enumerate(plan_items):
+        if idx < step_index:
+            continue
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        status = str(item.get("status") or "pending").strip().lower()
+        if not content:
+            continue
+        if status in {"completed", "cancelled", "done"}:
+            continue
+        return content
+    for item in plan_items:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        if content:
+            return content
+    return ""
+
+
+def _coerce_redundant_retrieve_call(
+    tool_calls: list[dict[str, Any]],
+    *,
+    orchestration_phase: str,
+    state: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    if not isinstance(state, dict):
+        return tool_calls, False
+    phase = str(orchestration_phase or "").strip().lower()
+    if phase not in {"execute", "resolve_tools", "validate_agent_output"}:
+        return tool_calls, False
+    if len(tool_calls) != 1:
+        return tool_calls, False
+    only_call = tool_calls[0]
+    if str(only_call.get("name") or "").strip() != "retrieve_agents":
+        return tool_calls, False
+    if str(_normalize_route_hint_value(state.get("route_hint")) or "") == "compare":
+        return tool_calls, False
+    selected_agents = _selected_agent_names_from_state(state)
+    if len(selected_agents) != 1:
+        return tool_calls, False
+    if not _has_followup_plan_steps(state):
+        return tool_calls, False
+    call_args = only_call.get("args")
+    retrieve_query = (
+        str(call_args.get("query") or "").strip()
+        if isinstance(call_args, dict)
+        else ""
+    )
+    task_text = _latest_user_query(state.get("messages") or [])
+    if not task_text:
+        task_text = _next_plan_step_text(state)
+    if not task_text:
+        task_text = retrieve_query
+    if not task_text:
+        return tool_calls, False
+    coerced_call = dict(only_call)
+    coerced_call["name"] = "call_agent"
+    coerced_call["args"] = {
+        "agent_name": selected_agents[0],
+        "task": task_text,
+        "final": False,
+    }
+    return [coerced_call], True
+
+
 def _coerce_supervisor_tool_calls(
     message: Any,
     *,
@@ -1800,6 +1905,12 @@ def _coerce_supervisor_tool_calls(
             changed = True
         if changed:
             tool_calls = coerced_tool_calls
+    tool_calls, retrieve_changed = _coerce_redundant_retrieve_call(
+        tool_calls,
+        orchestration_phase=orchestration_phase,
+        state=state,
+    )
+    changed = changed or retrieve_changed
     if len(tool_calls) <= _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP:
         if not changed:
             return message
@@ -1821,6 +1932,7 @@ def _coerce_supervisor_tool_calls(
                 orchestration_phase=orchestration_phase,
                 agent_hops=agent_hops,
                 execution_strategy=execution_strategy,
+                state=state,
             ),
             item[0],
         ),
@@ -4304,6 +4416,10 @@ async def create_supervisor_agent(
         state: Annotated[dict[str, Any], InjectedState] | None = None,
     ) -> str:
         """Retrieve relevant agents for the task.
+
+        Use this only when selected agent context is missing or stale.
+        If `selected_agents` is already populated for the current plan, continue with
+        call_agent/call_agents_parallel instead of retrieving again.
 
         IMPORTANT: Reuse agent names exactly as returned in `agents[].name`.
         Allowed internal ids include: action, weather, kartor, statistics, media, knowledge,
