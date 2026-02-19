@@ -432,6 +432,36 @@ export const metadataCatalogAuditSuggestionResponse = z.object({
 	reviewed_intent_failures: z.number().int().optional().default(0),
 	reviewed_agent_failures: z.number().int().optional().default(0),
 	reviewed_tool_failures: z.number().int().optional().default(0),
+	diagnostics: z
+		.object({
+			total_ms: z.number().optional().default(0),
+			preparation_ms: z.number().optional().default(0),
+			tool_stage_ms: z.number().optional().default(0),
+			intent_stage_ms: z.number().optional().default(0),
+			agent_stage_ms: z.number().optional().default(0),
+			annotations_count: z.number().int().optional().default(0),
+			annotations_payload_bytes: z.number().int().optional().default(0),
+			tool_failure_candidates: z.number().int().optional().default(0),
+			intent_failure_candidates: z.number().int().optional().default(0),
+			agent_failure_candidates: z.number().int().optional().default(0),
+			llm_parallelism: z.number().int().optional().default(1),
+			max_suggestions: z.number().int().optional().default(20),
+		})
+		.optional()
+		.default({
+			total_ms: 0,
+			preparation_ms: 0,
+			tool_stage_ms: 0,
+			intent_stage_ms: 0,
+			agent_stage_ms: 0,
+			annotations_count: 0,
+			annotations_payload_bytes: 0,
+			tool_failure_candidates: 0,
+			intent_failure_candidates: 0,
+			agent_failure_candidates: 0,
+			llm_parallelism: 1,
+			max_suggestions: 20,
+		}),
 });
 
 export const toolEvaluationExpected = z.object({

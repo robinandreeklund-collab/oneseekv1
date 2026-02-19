@@ -244,6 +244,11 @@ type AutoAuditRoundEntry = {
 	vectorExpectedInTopK: number | null;
 	totalProbes: number;
 	monitorScore: number;
+	step2TotalMs: number | null;
+	step2PreparationMs: number | null;
+	step2ToolMs: number | null;
+	step2IntentMs: number | null;
+	step2AgentMs: number | null;
 	toolSuggestions: number;
 	intentSuggestions: number;
 	agentSuggestions: number;
@@ -275,6 +280,11 @@ function formatDeltaPp(deltaPp: number | null): string {
 	const arrow = deltaPp > 0.05 ? "↑" : deltaPp < -0.05 ? "↓" : "→";
 	const sign = deltaPp > 0 ? "+" : "";
 	return `${arrow} ${sign}${deltaPp.toFixed(1)} pp`;
+}
+
+function formatMs(value: number | null | undefined): string {
+	if (typeof value !== "number" || Number.isNaN(value)) return "-";
+	return `${value.toFixed(0)} ms`;
 }
 
 function summarizeDeltaComment(
@@ -1034,7 +1044,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				new Set(response.agent_suggestions.map((item) => item.agent_id))
 			);
 			toast.success(
-				`Genererade ${response.tool_suggestions.length + response.intent_suggestions.length + response.agent_suggestions.length} metadataforslag.`
+				`Genererade ${response.tool_suggestions.length + response.intent_suggestions.length + response.agent_suggestions.length} metadataforslag (${formatMs(response.diagnostics?.total_ms)}).`
 			);
 		} catch (_error) {
 			toast.error("Kunde inte generera metadataforslag.");
@@ -1243,6 +1253,11 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							: null,
 					totalProbes,
 					monitorScore,
+					step2TotalMs: null,
+					step2PreparationMs: null,
+					step2ToolMs: null,
+					step2IntentMs: null,
+					step2AgentMs: null,
 					toolSuggestions: 0,
 					intentSuggestions: 0,
 					agentSuggestions: 0,
@@ -1311,8 +1326,14 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				const agentSuggestionCount = suggestions.agent_suggestions.length;
 				const totalSuggestionCount =
 					toolSuggestionCount + intentSuggestionCount + agentSuggestionCount;
+				const step2Diagnostics = suggestions.diagnostics ?? null;
 				roundEntries.push({
 					...baseEntry,
+					step2TotalMs: step2Diagnostics?.total_ms ?? null,
+					step2PreparationMs: step2Diagnostics?.preparation_ms ?? null,
+					step2ToolMs: step2Diagnostics?.tool_stage_ms ?? null,
+					step2IntentMs: step2Diagnostics?.intent_stage_ms ?? null,
+					step2AgentMs: step2Diagnostics?.agent_stage_ms ?? null,
 					toolSuggestions: toolSuggestionCount,
 					intentSuggestions: intentSuggestionCount,
 					agentSuggestions: agentSuggestionCount,
@@ -1926,6 +1947,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										{(item.toolAccuracy * 100).toFixed(1)}% · Monitor{" "}
 										{(item.monitorScore * 100).toFixed(1)}% · Förslag{" "}
 										{item.toolSuggestions}/{item.intentSuggestions}/{item.agentSuggestions}
+										{item.step2TotalMs != null
+											? ` · Steg2 ${formatMs(item.step2TotalMs)}`
+											: ""}
 										{item.note ? ` · ${item.note}` : ""}
 									</div>
 								))}
@@ -2455,6 +2479,36 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									{selectedToolSuggestions.length +
 										selectedIntentSuggestions.length +
 										selectedAgentSuggestions.length}
+								</Badge>
+								<Badge variant="outline">
+									Steg2 total: {formatMs(auditSuggestions.diagnostics?.total_ms)}
+								</Badge>
+								<Badge variant="outline">
+									Prep: {formatMs(auditSuggestions.diagnostics?.preparation_ms)}
+								</Badge>
+								<Badge variant="outline">
+									Tool: {formatMs(auditSuggestions.diagnostics?.tool_stage_ms)}
+								</Badge>
+								<Badge variant="outline">
+									Intent: {formatMs(auditSuggestions.diagnostics?.intent_stage_ms)}
+								</Badge>
+								<Badge variant="outline">
+									Agent: {formatMs(auditSuggestions.diagnostics?.agent_stage_ms)}
+								</Badge>
+								<Badge variant="outline">
+									Payload:{" "}
+									{Number(
+										auditSuggestions.diagnostics?.annotations_payload_bytes ?? 0
+									).toLocaleString("sv")} B
+								</Badge>
+								<Badge variant="outline">
+									Fail-kandidater (T/I/A):{" "}
+									{auditSuggestions.diagnostics?.tool_failure_candidates ?? 0}/
+									{auditSuggestions.diagnostics?.intent_failure_candidates ?? 0}/
+									{auditSuggestions.diagnostics?.agent_failure_candidates ?? 0}
+								</Badge>
+								<Badge variant="outline">
+									LLM parallel: {auditSuggestions.diagnostics?.llm_parallelism ?? 1}
 								</Badge>
 								<Button
 									type="button"

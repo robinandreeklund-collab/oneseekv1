@@ -5,6 +5,7 @@ import random
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
@@ -3949,6 +3950,7 @@ async def generate_metadata_catalog_audit_suggestions(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
+    started_at = perf_counter()
     _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
         session,
         user,
@@ -3956,6 +3958,7 @@ async def generate_metadata_catalog_audit_suggestions(
     )
     if not payload.annotations:
         raise HTTPException(status_code=400, detail="No audit annotations provided")
+    preparation_started_at = perf_counter()
     patch_map = _patch_map_from_updates(payload.metadata_patch)
     tool_index, _persisted_overrides, _effective_overrides = (
         await _build_tool_index_for_search_space(
@@ -3979,38 +3982,60 @@ async def generate_metadata_catalog_audit_suggestions(
             effective_metadata=agent_metadata,
             patch_items=[item.model_dump() for item in payload.agent_metadata_patch],
         )
+    annotation_payload = [item.model_dump() for item in payload.annotations]
     suggestion_inputs = build_layered_suggestion_inputs_from_annotations(
-        annotations=[item.model_dump() for item in payload.annotations]
+        annotations=annotation_payload
     )
     normalized_max_suggestions = max(1, min(int(payload.max_suggestions or 20), 100))
     normalized_parallelism = max(1, min(int(payload.llm_parallelism or 1), 32))
-    tool_suggestions, intent_suggestions, agent_suggestions = await asyncio.gather(
-        generate_tool_metadata_suggestions(
-            evaluation_results=list(suggestion_inputs.get("tool_results") or []),
-            tool_index=tool_index,
-            llm=llm,
-            max_suggestions=normalized_max_suggestions,
-            retrieval_tuning=retrieval_tuning,
-            retrieval_context={
-                "audit_mode": "metadata_catalog",
-                "pipeline": "intent->agent->tool",
-            },
-            parallelism=normalized_parallelism,
+    preparation_ms = (perf_counter() - preparation_started_at) * 1000
+
+    async def _run_timed(task_factory):
+        started = perf_counter()
+        result = await task_factory()
+        elapsed_ms = (perf_counter() - started) * 1000
+        return result, elapsed_ms
+
+    (tool_suggestions, tool_stage_ms), (intent_suggestions, intent_stage_ms), (
+        agent_suggestions,
+        agent_stage_ms,
+    ) = await asyncio.gather(
+        _run_timed(
+            lambda: generate_tool_metadata_suggestions(
+                evaluation_results=list(suggestion_inputs.get("tool_results") or []),
+                tool_index=tool_index,
+                llm=llm,
+                max_suggestions=normalized_max_suggestions,
+                retrieval_tuning=retrieval_tuning,
+                retrieval_context={
+                    "audit_mode": "metadata_catalog",
+                    "pipeline": "intent->agent->tool",
+                },
+                parallelism=normalized_parallelism,
+            )
         ),
-        generate_intent_metadata_suggestions_from_annotations(
-            intent_definitions=intent_definitions,
-            intent_failures=list(suggestion_inputs.get("intent_failures") or []),
-            llm=llm,
-            max_suggestions=normalized_max_suggestions,
-            parallelism=normalized_parallelism,
+        _run_timed(
+            lambda: generate_intent_metadata_suggestions_from_annotations(
+                intent_definitions=intent_definitions,
+                intent_failures=list(suggestion_inputs.get("intent_failures") or []),
+                llm=llm,
+                max_suggestions=normalized_max_suggestions,
+                parallelism=normalized_parallelism,
+            )
         ),
-        generate_agent_metadata_suggestions_from_annotations(
-            agent_metadata=agent_metadata,
-            agent_failures=list(suggestion_inputs.get("agent_failures") or []),
-            llm=llm,
-            max_suggestions=normalized_max_suggestions,
-            parallelism=normalized_parallelism,
+        _run_timed(
+            lambda: generate_agent_metadata_suggestions_from_annotations(
+                agent_metadata=agent_metadata,
+                agent_failures=list(suggestion_inputs.get("agent_failures") or []),
+                llm=llm,
+                max_suggestions=normalized_max_suggestions,
+                parallelism=normalized_parallelism,
+            )
         ),
+    )
+    total_ms = (perf_counter() - started_at) * 1000
+    annotations_payload_bytes = len(
+        json.dumps(annotation_payload, ensure_ascii=True, separators=(",", ":"))
     )
     return {
         "tool_suggestions": tool_suggestions,
@@ -4026,6 +4051,20 @@ async def generate_metadata_catalog_audit_suggestions(
         "reviewed_tool_failures": int(
             suggestion_inputs.get("reviewed_tool_failures") or 0
         ),
+        "diagnostics": {
+            "total_ms": round(float(total_ms), 2),
+            "preparation_ms": round(float(preparation_ms), 2),
+            "tool_stage_ms": round(float(tool_stage_ms), 2),
+            "intent_stage_ms": round(float(intent_stage_ms), 2),
+            "agent_stage_ms": round(float(agent_stage_ms), 2),
+            "annotations_count": len(annotation_payload),
+            "annotations_payload_bytes": int(annotations_payload_bytes),
+            "tool_failure_candidates": len(suggestion_inputs.get("tool_results") or []),
+            "intent_failure_candidates": len(suggestion_inputs.get("intent_failures") or []),
+            "agent_failure_candidates": len(suggestion_inputs.get("agent_failures") or []),
+            "llm_parallelism": int(normalized_parallelism),
+            "max_suggestions": int(normalized_max_suggestions),
+        },
     }
 
 

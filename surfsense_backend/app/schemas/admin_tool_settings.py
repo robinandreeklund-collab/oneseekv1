@@ -806,6 +806,21 @@ class MetadataCatalogAuditSuggestionRequest(BaseModel):
     llm_parallelism: int = 1
 
 
+class MetadataCatalogAuditSuggestionDiagnostics(BaseModel):
+    total_ms: float = 0.0
+    preparation_ms: float = 0.0
+    tool_stage_ms: float = 0.0
+    intent_stage_ms: float = 0.0
+    agent_stage_ms: float = 0.0
+    annotations_count: int = 0
+    annotations_payload_bytes: int = 0
+    tool_failure_candidates: int = 0
+    intent_failure_candidates: int = 0
+    agent_failure_candidates: int = 0
+    llm_parallelism: int = 1
+    max_suggestions: int = 20
+
+
 class MetadataCatalogAuditSuggestionResponse(BaseModel):
     tool_suggestions: list[ToolMetadataSuggestion] = Field(default_factory=list)
     intent_suggestions: list[MetadataCatalogIntentSuggestion] = Field(default_factory=list)
@@ -814,6 +829,9 @@ class MetadataCatalogAuditSuggestionResponse(BaseModel):
     reviewed_intent_failures: int = 0
     reviewed_agent_failures: int = 0
     reviewed_tool_failures: int = 0
+    diagnostics: MetadataCatalogAuditSuggestionDiagnostics = Field(
+        default_factory=MetadataCatalogAuditSuggestionDiagnostics
+    )
 
 
 class ToolSuggestionRequest(BaseModel):
