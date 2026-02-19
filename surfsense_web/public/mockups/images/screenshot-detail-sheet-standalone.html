@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CompareDetailSheet - Styled</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 20px;
+            background: #f9fafb;
+        }
+        .sheet {
+            max-width: 480px;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 24px;
+        }
+        .sheet-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .logo {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            background: #5A67D8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 20px;
+            font-weight: bold;
+        }
+        .header-info {
+            flex: 1;
+        }
+        .provider-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #111827;
+            margin-bottom: 4px;
+        }
+        .provider-meta {
+            display: flex;
+            gap: 8px;
+            font-size: 13px;
+            color: #6b7280;
+        }
+        .badge {
+            padding: 2px 8px;
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #1e40af;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .stat-box {
+            padding: 12px;
+            background: rgba(249, 250, 251, 0.3);
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: #111827;
+            margin-bottom: 4px;
+        }
+        .stat-label {
+            font-size: 11px;
+            color: #6b7280;
+        }
+        .response-section {
+            margin-bottom: 24px;
+        }
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 12px;
+        }
+        .response-text {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #374151;
+            padding: 16px;
+            background: #f9fafb;
+            border-radius: 8px;
+        }
+        .metadata {
+            padding: 16px;
+            background: #f9fafb;
+            border-radius: 8px;
+            margin-bottom: 24px;
+        }
+        .metadata-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 13px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .metadata-item:last-child {
+            border-bottom: none;
+        }
+        .metadata-label {
+            color: #6b7280;
+        }
+        .metadata-value {
+            color: #111827;
+            font-weight: 500;
+        }
+        .navigation {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 16px;
+            border-top: 1px solid #e5e7eb;
+        }
+        .nav-button {
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #374151;
+            cursor: pointer;
+        }
+        .nav-button:hover {
+            background: #f9fafb;
+        }
+        .nav-dots {
+            display: flex;
+            gap: 6px;
+        }
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #d1d5db;
+        }
+        .dot.active {
+            background: #3b82f6;
+        }
+    </style>
+</head>
+<body>
+    <div class="sheet">
+        <div class="sheet-header">
+            <div class="logo">C</div>
+            <div class="header-info">
+                <div class="provider-title">Claude 3.5 Sonnet</div>
+                <div class="provider-meta">
+                    <span class="badge">Anthropic</span>
+                    <span>⏱️ 1.8s</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-value">1.8s</div>
+                <div class="stat-label">Svarstid</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">1.2k</div>
+                <div class="stat-label">Tokens</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">0.12g</div>
+                <div class="stat-label">CO₂</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">0.24Wh</div>
+                <div class="stat-label">Energi</div>
+            </div>
+        </div>
+        
+        <div class="response-section">
+            <div class="section-title">Fullständigt svar</div>
+            <div class="response-text">
+                <p style="margin-bottom: 12px;">Based on the comparison of different approaches, here are the key findings:</p>
+                <p style="margin-bottom: 12px;">1. Performance varies significantly across models</p>
+                <p style="margin-bottom: 12px;">2. Token efficiency differs by up to 40%</p>
+                <p>3. Response quality correlates with latency in most cases</p>
+            </div>
+        </div>
+        
+        <div class="metadata">
+            <div class="metadata-item">
+                <span class="metadata-label">Modell</span>
+                <span class="metadata-value">claude-3-5-sonnet-20241022</span>
+            </div>
+            <div class="metadata-item">
+                <span class="metadata-label">API Base</span>
+                <span class="metadata-value">https://api.anthropic.com</span>
+            </div>
+        </div>
+        
+        <div class="navigation">
+            <button class="nav-button">← Perplexity</button>
+            <div class="nav-dots">
+                <div class="dot"></div>
+                <div class="dot active"></div>
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+            <button class="nav-button">GPT-4 →</button>
+        </div>
+    </div>
+</body>
+</html>

@@ -25,6 +25,12 @@ import {
 	ThinkingStepsDisplay,
 } from "@/components/assistant-ui/thinking-steps";
 import { TracePanelContext } from "@/components/assistant-ui/trace-context";
+import {
+	CompareProvidersContext,
+	CompareDetailContext,
+} from "@/components/assistant-ui/compare-context";
+import { CompareSourcesBar } from "@/components/tool-ui/compare-sources-bar";
+import { CompareDetailSheet } from "@/components/tool-ui/compare-detail-sheet";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { CommentPanelContainer } from "@/components/chat-comments/comment-panel-container/comment-panel-container";
@@ -67,6 +73,40 @@ const ThinkingStepsPart: FC = () => {
 		<div className="mb-3">
 			<ThinkingStepsDisplay steps={thinkingSteps} isThreadRunning={isMessageStreaming} />
 		</div>
+	);
+};
+
+/**
+ * Custom component to render compare providers bar from Context
+ */
+const CompareProvidersPart: FC = () => {
+	const compareProvidersMap = useContext(CompareProvidersContext);
+	const compareDetailState = useContext(CompareDetailContext);
+
+	// Get the current message ID to look up compare providers
+	const messageId = useAssistantState(({ message }) => message?.id);
+	const compareProviders = compareProvidersMap.get(messageId) || [];
+
+	// Check if this specific message is currently streaming
+	const isThreadRunning = useAssistantState(({ thread }) => thread.isRunning);
+	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
+	const isMessageStreaming = isThreadRunning && isLastMessage;
+
+	if (compareProviders.length === 0) return null;
+
+	const handleProviderClick = (providerKey: string) => {
+		if (compareDetailState) {
+			compareDetailState.setSelectedProviderKey(providerKey);
+			compareDetailState.setIsDetailSheetOpen(true);
+		}
+	};
+
+	return (
+		<CompareSourcesBar
+			providers={compareProviders}
+			onProviderClick={handleProviderClick}
+			isStreaming={isMessageStreaming}
+		/>
 	);
 };
 
@@ -211,6 +251,10 @@ const AssistantMessageInner: FC = () => {
 				/>
 				<MessageError />
 			</div>
+			
+			{/* Render compare providers bar after text content */}
+			<CompareProvidersPart />
+			
 			<FollowUpSuggestions />
 
 			<div className="aui-assistant-message-footer mt-1 mb-5 ml-2 flex">
