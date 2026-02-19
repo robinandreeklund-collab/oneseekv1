@@ -778,8 +778,17 @@ class MetadataCatalogAuditRunDiagnostics(BaseModel):
     excluded_query_pool_size: int = 0
     probe_generation_parallelism: int = 1
     probe_round: int = 1
+    anchor_probe_mode: bool = False
+    anchor_probe_candidates: int = 0
+    anchor_probe_tools: int = 0
     include_existing_examples: bool = True
     include_llm_generated: bool = True
+
+
+class MetadataCatalogAuditAnchorProbeItem(BaseModel):
+    tool_id: str
+    query: str
+    source: str = "anchor"
 
 
 class MetadataCatalogAuditRunRequest(BaseModel):
@@ -799,6 +808,7 @@ class MetadataCatalogAuditRunRequest(BaseModel):
     probe_generation_parallelism: int = 1
     probe_round: int = 1
     exclude_probe_queries: list[str] = Field(default_factory=list)
+    anchor_probe_set: list[MetadataCatalogAuditAnchorProbeItem] = Field(default_factory=list)
 
 
 class MetadataCatalogAuditRunResponse(BaseModel):

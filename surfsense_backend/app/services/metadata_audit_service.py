@@ -988,6 +988,28 @@ def _normalize_parallelism(value: int | None, *, default: int = 1) -> int:
     return max(1, min(parsed, 32))
 
 
+def _normalize_anchor_probe_set(
+    anchor_probe_set: list[dict[str, Any]] | None,
+) -> dict[str, list[tuple[str, str]]]:
+    normalized: dict[str, list[tuple[str, str]]] = {}
+    seen_by_tool: dict[str, set[str]] = {}
+    for item in list(anchor_probe_set or []):
+        if not isinstance(item, dict):
+            continue
+        tool_id = _normalize_text(item.get("tool_id"))
+        query = _swedishify_query_text(item.get("query"))
+        source = _normalize_text(item.get("source")) or "anchor"
+        if not tool_id or not query:
+            continue
+        key = query.casefold()
+        seen = seen_by_tool.setdefault(tool_id, set())
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.setdefault(tool_id, []).append((query, source))
+    return normalized
+
+
 async def run_layered_metadata_audit(
     *,
     tool_index: list[ToolIndexEntry],
@@ -1009,6 +1031,7 @@ async def run_layered_metadata_audit(
     probe_generation_parallelism: int = 1,
     probe_round: int = 1,
     exclude_probe_queries: list[str] | None = None,
+    anchor_probe_set: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     total_started_at = perf_counter()
     preparation_started_at = total_started_at
@@ -1067,6 +1090,7 @@ async def run_layered_metadata_audit(
     excluded_query_history_count = 0
     excluded_query_duplicate_count = 0
     round_refresh_queries = 0
+    anchor_probe_candidates = 0
     final_queries_evaluated = 0
     intent_layer_ms = 0.0
     agent_layer_ms = 0.0
@@ -1085,9 +1109,17 @@ async def run_layered_metadata_audit(
         for query in list(exclude_probe_queries or [])
         if (normalized := _swedishify_query_text(query))
     }
+    normalized_anchor_probes = _normalize_anchor_probe_set(anchor_probe_set)
+    selected_tool_ids = {entry.tool_id for entry in selected_entries}
+    normalized_anchor_probes = {
+        tool_id: queries
+        for tool_id, queries in normalized_anchor_probes.items()
+        if tool_id in selected_tool_ids and queries
+    }
+    anchor_probe_mode = bool(normalized_anchor_probes)
     probe_generation_started_at = perf_counter()
     generated_queries_by_tool: dict[str, list[str]] = {}
-    if include_llm_generated:
+    if include_llm_generated and not anchor_probe_mode:
         async def _generate_for_entry(entry: ToolIndexEntry) -> tuple[str, list[str]]:
             seed_examples = [
                 normalized
@@ -1131,32 +1163,56 @@ async def run_layered_metadata_audit(
         expected_intent_id = _normalize_text(expected_intent_by_tool.get(expected_tool_id)).lower() or None
         expected_agent_id = _normalize_text(expected_agent_by_tool.get(expected_tool_id)).lower() or None
         queries: list[tuple[str, str]] = []
-        if include_existing_examples:
-            existing_queries = [
-                normalized
-                for query in entry.example_queries[:max_probe_queries]
-                if (normalized := _swedishify_query_text(query))
-            ]
-            queries.extend(
-                (query, "existing_example")
-                for query in existing_queries
-            )
-            existing_example_candidates += len(existing_queries)
-            query_candidates_total += len(existing_queries)
-        if include_llm_generated:
-            generated = list(generated_queries_by_tool.get(entry.tool_id) or [])
-            queries.extend((query, "llm_generated") for query in generated)
-            llm_generated_candidates += len(generated)
-            query_candidates_total += len(generated)
+        if anchor_probe_mode:
+            anchored_queries = list(normalized_anchor_probes.get(entry.tool_id) or [])
+            queries.extend(anchored_queries)
+            anchor_probe_candidates += len(anchored_queries)
+            query_candidates_total += len(anchored_queries)
+            if not anchored_queries and include_existing_examples:
+                # Fallback if a selected tool lacks anchor probes.
+                existing_queries = [
+                    normalized
+                    for query in entry.example_queries[:max_probe_queries]
+                    if (normalized := _swedishify_query_text(query))
+                ]
+                queries.extend(
+                    (query, "anchor_existing_fallback")
+                    for query in existing_queries
+                )
+                existing_example_candidates += len(existing_queries)
+                query_candidates_total += len(existing_queries)
+        else:
+            if include_existing_examples:
+                existing_queries = [
+                    normalized
+                    for query in entry.example_queries[:max_probe_queries]
+                    if (normalized := _swedishify_query_text(query))
+                ]
+                queries.extend(
+                    (query, "existing_example")
+                    for query in existing_queries
+                )
+                existing_example_candidates += len(existing_queries)
+                query_candidates_total += len(existing_queries)
+            if include_llm_generated:
+                generated = list(generated_queries_by_tool.get(entry.tool_id) or [])
+                queries.extend((query, "llm_generated") for query in generated)
+                llm_generated_candidates += len(generated)
+                query_candidates_total += len(generated)
         queries = _dedupe_queries(queries)
 
         filtered_queries: list[tuple[str, str]] = []
         seen_query_keys: set[str] = set()
+        history_exclusion_enabled = not anchor_probe_mode
         for query, source in queries:
             normalized_query = _swedishify_query_text(query)
             key = normalized_query.casefold()
-            if not normalized_query or key in seen_query_keys or key in excluded_query_keys:
-                if key in excluded_query_keys:
+            if (
+                not normalized_query
+                or key in seen_query_keys
+                or (history_exclusion_enabled and key in excluded_query_keys)
+            ):
+                if history_exclusion_enabled and key in excluded_query_keys:
                     excluded_query_history_count += 1
                 elif key in seen_query_keys:
                     excluded_query_duplicate_count += 1
@@ -1166,7 +1222,7 @@ async def run_layered_metadata_audit(
             if len(filtered_queries) >= max_probe_queries:
                 break
 
-        if len(filtered_queries) < max_probe_queries:
+        if len(filtered_queries) < max_probe_queries and not anchor_probe_mode:
             fallback_queries = _fallback_probe_queries(
                 entry=entry,
                 neighbors=neighbors_by_tool.get(entry.tool_id, []),
@@ -1487,8 +1543,13 @@ async def run_layered_metadata_audit(
             "excluded_query_pool_size": int(len(excluded_query_keys)),
             "probe_generation_parallelism": int(normalized_probe_parallelism),
             "probe_round": int(normalized_probe_round),
+            "anchor_probe_mode": bool(anchor_probe_mode),
+            "anchor_probe_candidates": int(anchor_probe_candidates),
+            "anchor_probe_tools": int(len(normalized_anchor_probes)),
             "include_existing_examples": bool(include_existing_examples),
-            "include_llm_generated": bool(include_llm_generated),
+            "include_llm_generated": bool(
+                include_llm_generated and not anchor_probe_mode
+            ),
         },
         "available_intent_ids": sorted(
             {

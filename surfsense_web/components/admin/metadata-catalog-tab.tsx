@@ -10,6 +10,7 @@ import {
 	type AgentMetadataUpdateItem,
 	type IntentMetadataItem,
 	type IntentMetadataUpdateItem,
+	type MetadataCatalogAuditAnchorProbeItem,
 	type MetadataCatalogAuditRunResponse,
 	type MetadataCatalogAuditToolRankingItem,
 	type MetadataCatalogAuditSuggestionResponse,
@@ -348,6 +349,28 @@ function toToolRankingSnapshotRows(
 	}));
 }
 
+function buildAnchorProbeSetFromResult(
+	result: MetadataCatalogAuditRunResponse
+): MetadataCatalogAuditAnchorProbeItem[] {
+	const seen = new Set<string>();
+	const anchors: MetadataCatalogAuditAnchorProbeItem[] = [];
+	for (const probe of result.probes ?? []) {
+		const toolId = String(probe.target_tool_id ?? "").trim();
+		const query = String(probe.query ?? "").trim();
+		if (!toolId || !query) continue;
+		const source = String(probe.source ?? "anchor").trim() || "anchor";
+		const key = `${toolId.toLocaleLowerCase()}::${query.toLocaleLowerCase()}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		anchors.push({
+			tool_id: toolId,
+			query,
+			source: source || "anchor",
+		});
+	}
+	return anchors;
+}
+
 function summarizeDeltaComment(
 	metric: string,
 	older: number | null,
@@ -452,6 +475,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [autoMaxRounds, setAutoMaxRounds] = useState(6);
 	const [autoPatienceRounds, setAutoPatienceRounds] = useState(2);
 	const [autoAbortDropPp, setAutoAbortDropPp] = useState(8);
+	const [autoUseAnchorProbeSet, setAutoUseAnchorProbeSet] = useState(true);
 	const [autoExcludeProbeHistoryBetweenRounds, setAutoExcludeProbeHistoryBetweenRounds] =
 		useState(true);
 	const [isAutoRunning, setIsAutoRunning] = useState(false);
@@ -1297,6 +1321,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 
 		try {
 			const usedProbeQueryKeys = new Set<string>();
+			let anchorProbeSet: MetadataCatalogAuditAnchorProbeItem[] = [];
 			let toolPatchMap: Record<string, ToolMetadataUpdateItem> = Object.fromEntries(
 				metadataPatchForDraft.map((item) => [item.tool_id, { ...item }])
 			);
@@ -1320,9 +1345,11 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 
 			for (let round = 1; round <= maxRounds; round += 1) {
 				setAutoRunStatusText(`Autonom loop: kör runda ${round}/${maxRounds}...`);
-				const excludedProbeQueries = autoExcludeProbeHistoryBetweenRounds
-					? Array.from(usedProbeQueryKeys).slice(-2500)
-					: [];
+				const useAnchorSetThisRound = autoUseAnchorProbeSet && anchorProbeSet.length > 0;
+				let excludedProbeQueries: string[] = [];
+				if (!useAnchorSetThisRound && autoExcludeProbeHistoryBetweenRounds) {
+					excludedProbeQueries = Array.from(usedProbeQueryKeys).slice(-2500);
+				}
 				const result = await adminToolSettingsApiService.runMetadataCatalogAudit({
 					search_space_id: data.search_space_id,
 					metadata_patch: Object.values(toolPatchMap),
@@ -1337,8 +1364,17 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					probe_generation_parallelism: probeGenerationParallelism,
 					probe_round: round,
 					exclude_probe_queries: excludedProbeQueries,
+					anchor_probe_set: useAnchorSetThisRound ? anchorProbeSet : [],
 				});
-				if (autoExcludeProbeHistoryBetweenRounds) {
+				if (autoUseAnchorProbeSet && anchorProbeSet.length === 0) {
+					anchorProbeSet = buildAnchorProbeSetFromResult(result);
+					if (anchorProbeSet.length > 0) {
+						setAutoRunStatusText(
+							`Anchor probe-set låst (${anchorProbeSet.length} frågor). Kör runda ${round}/${maxRounds}...`
+						);
+					}
+				}
+				if (autoExcludeProbeHistoryBetweenRounds && !useAnchorSetThisRound) {
 					for (const probe of result.probes) {
 						const key = String(probe.query ?? "").trim().toLocaleLowerCase();
 						if (key) usedProbeQueryKeys.add(key);
@@ -1919,6 +1955,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						<div className="flex flex-wrap items-center gap-2">
 							<p className="text-sm font-medium">Autonom optimering (målstyrd loop)</p>
 							<Badge variant="outline">Nuvarande monitor: {(currentAutoMonitorScore * 100).toFixed(1)}%</Badge>
+							<Badge variant="outline">
+								Anchor probes: {autoUseAnchorProbeSet ? "på" : "av"}
+							</Badge>
 							{autoRunStatusText ? <Badge variant="secondary">{autoRunStatusText}</Badge> : null}
 						</div>
 						<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
@@ -1991,6 +2030,20 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						</div>
 						<div className="flex items-center gap-2">
 							<input
+								id="auto-use-anchor-probe-set"
+								type="checkbox"
+								checked={autoUseAnchorProbeSet}
+								onChange={(event) => setAutoUseAnchorProbeSet(event.target.checked)}
+							/>
+							<Label htmlFor="auto-use-anchor-probe-set" className="text-sm">
+								Använd anchor probe-set mellan rundor
+							</Label>
+							<Badge variant="outline">
+								{autoUseAnchorProbeSet ? "På" : "Av"}
+							</Badge>
+						</div>
+						<div className="flex items-center gap-2">
+							<input
 								id="auto-exclude-history-between-rounds"
 								type="checkbox"
 								checked={autoExcludeProbeHistoryBetweenRounds}
@@ -2005,6 +2058,10 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								{autoExcludeProbeHistoryBetweenRounds ? "På" : "Av"}
 							</Badge>
 						</div>
+						<p className="text-xs text-muted-foreground">
+							Anchor-läge låser query-set från runda 1; från runda 2 används samma probes
+							för stabil jämförelse.
+						</p>
 						<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
 							<div className="space-y-1">
 								<Label>Tool mål %</Label>
@@ -2278,6 +2335,12 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									Exkluderade (history/dupes):{" "}
 									{auditResult.diagnostics?.excluded_query_history_count ?? 0}/
 									{auditResult.diagnostics?.excluded_query_duplicate_count ?? 0}
+								</Badge>
+								<Badge variant="outline">
+									Anchor probes (mode/candidates/tools):{" "}
+									{auditResult.diagnostics?.anchor_probe_mode ? "på" : "av"} ·{" "}
+									{auditResult.diagnostics?.anchor_probe_candidates ?? 0} ·{" "}
+									{auditResult.diagnostics?.anchor_probe_tools ?? 0}
 								</Badge>
 								<Badge variant="outline">
 									Evals: {auditResult.diagnostics?.evaluated_queries ?? 0} · Verktyg:{" "}

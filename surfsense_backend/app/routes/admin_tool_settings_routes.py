@@ -3874,7 +3874,7 @@ async def run_metadata_catalog_audit(
     )
     retrieval_tuning = await get_global_tool_retrieval_tuning(session)
     llm = None
-    if payload.include_llm_generated:
+    if payload.include_llm_generated and not payload.anchor_probe_set:
         llm = await get_agent_llm(session, resolved_search_space_id)
     intent_definitions = await get_effective_intent_definitions(session)
     if payload.intent_metadata_patch:
@@ -3928,6 +3928,7 @@ async def run_metadata_catalog_audit(
         probe_generation_parallelism=int(payload.probe_generation_parallelism),
         probe_round=int(payload.probe_round),
         exclude_probe_queries=list(payload.exclude_probe_queries),
+        anchor_probe_set=[item.model_dump() for item in payload.anchor_probe_set],
     )
     return {
         "search_space_id": resolved_search_space_id,

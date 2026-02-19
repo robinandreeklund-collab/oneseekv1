@@ -387,8 +387,17 @@ export const metadataCatalogAuditRunDiagnostics = z.object({
 	excluded_query_pool_size: z.number().int().optional().default(0),
 	probe_generation_parallelism: z.number().int().optional().default(1),
 	probe_round: z.number().int().optional().default(1),
+	anchor_probe_mode: z.boolean().optional().default(false),
+	anchor_probe_candidates: z.number().int().optional().default(0),
+	anchor_probe_tools: z.number().int().optional().default(0),
 	include_existing_examples: z.boolean().optional().default(true),
 	include_llm_generated: z.boolean().optional().default(true),
+});
+
+export const metadataCatalogAuditAnchorProbeItem = z.object({
+	tool_id: z.string(),
+	query: z.string(),
+	source: z.string().optional().default("anchor"),
 });
 
 export const metadataCatalogAuditRunRequest = z.object({
@@ -408,6 +417,7 @@ export const metadataCatalogAuditRunRequest = z.object({
 	probe_generation_parallelism: z.number().int().optional().default(1),
 	probe_round: z.number().int().optional().default(1),
 	exclude_probe_queries: z.array(z.string()).optional().default([]),
+	anchor_probe_set: z.array(metadataCatalogAuditAnchorProbeItem).optional().default([]),
 });
 
 export const metadataCatalogAuditRunResponse = z.object({
@@ -438,6 +448,9 @@ export const metadataCatalogAuditRunResponse = z.object({
 		excluded_query_pool_size: 0,
 		probe_generation_parallelism: 1,
 		probe_round: 1,
+		anchor_probe_mode: false,
+		anchor_probe_candidates: 0,
+		anchor_probe_tools: 0,
 		include_existing_examples: true,
 		include_llm_generated: true,
 	}),
@@ -1165,6 +1178,9 @@ export type MetadataCatalogAuditToolRankingSummary = z.infer<
 >;
 export type MetadataCatalogAuditProbeItem = z.infer<typeof metadataCatalogAuditProbeItem>;
 export type MetadataCatalogAuditSummary = z.infer<typeof metadataCatalogAuditSummary>;
+export type MetadataCatalogAuditAnchorProbeItem = z.infer<
+	typeof metadataCatalogAuditAnchorProbeItem
+>;
 export type MetadataCatalogAuditRunRequest = z.infer<typeof metadataCatalogAuditRunRequest>;
 export type MetadataCatalogAuditRunResponse = z.infer<typeof metadataCatalogAuditRunResponse>;
 export type MetadataCatalogAuditAnnotationItem = z.infer<
