@@ -2227,13 +2227,13 @@ async def filter_metadata_suggestions_with_pair_locks(
         right_id = _normalized_key(right.get("tool_id"))
         sem_left = _embed_text(_tool_semantic_text(left))
         sem_right = _embed_text(_tool_semantic_text(right))
-        semantic_similarity = _cosine_similarity(sem_left, sem_right)
         struct_left = struct_map.get(left_id)
         struct_right = struct_map.get(right_id)
-        structural_similarity = _cosine_similarity(struct_left, struct_right)
         return _fused_tool_similarity(
-            semantic_similarity=semantic_similarity,
-            structural_similarity=structural_similarity,
+            left_sem=sem_left,
+            left_struct=struct_left,
+            right_sem=sem_right,
+            right_struct=struct_right,
             semantic_weight=semantic_weight,
             structural_weight=structural_weight,
         )
