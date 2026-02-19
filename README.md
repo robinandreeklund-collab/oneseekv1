@@ -92,6 +92,9 @@ Denna PR innehaller en stor uppgradering av admin-ytan for metadata-kvalitet och
 - Granulara tidsdiagnoser:
   - Steg 1 (prep/qgen/eval + per-layer I/A/T)
   - Steg 2 (prep + tool/intent/agent stage)
+- Probe/exempelfrage-guardrails:
+  - naturlig svenska med korrekt diakritik
+  - strikt forbud mot tool_id/toolnamn/internala identifierare i genererade fragor
 - Autonomous audit-loop med stoppvillkor:
   - max rounds, patience, abort-drop, target score
   - valbar probe-history exclusion mellan rundor
@@ -123,6 +126,56 @@ Implementerad fasstyrd utrullning i produktion med central styrning via Retrieva
 - **Fas 3 - intent_finetune**: intent shortlist + vikter (lexical/semantic) i intent resolver.
 
 Nya loggar ar tillagda for intent/agent/tool-selection och tool-outcome for att mojliggora skuggkorning och kontrollerad ramp-up.
+
+### 4) Praktisk korguide: Metadata Audit + BSSS + verifiering
+
+Folj detta for att fa jamforbara resultat och undvika att tolka "falska hopp" mellan rundor:
+
+1. **Baseline (single metadata audit)**
+   - Kor `Metadata Audit` en gang.
+   - Spara:
+     - intent/agent/tool-accuracy
+     - conditional metrics (`agent|intent`, `tool|intent+agent`)
+     - ranking stability-tabellen
+     - diagnostics (Steg1/Steg2 ms + probe-volym)
+
+2. **Separation (Bottom-up BSSS)**
+   - Kor `Bottom-up Separation` pa samma urval (tool_ids/prefix).
+   - Kontrollera i svaret:
+     - stage lock-status per lager
+     - baseline vs final summary
+     - diagnostics + antal skapade separation-locks
+
+3. **Autonomous metadata-loop (forbattringsfas)**
+   - Kor autonom loop (t.ex. 4-8 rundor) med tydliga stoppvillkor.
+   - For stabil trendtolkning:
+     - anvand **anchor probe-set mode** om du vill mata "samma frageset" mellan rundor
+     - anvand samma eval-konfiguration (max_tools, max_queries, hard negatives, prefix/tool_ids)
+
+4. **Verifiering efter loop**
+   - Kor en ny single audit.
+   - Jamfor:
+     - **Runda-mot-runda** (stabilitet over samma probes)
+     - **Single-run mot baseline** (generalisering pa nytt query-urval)
+
+#### Varfor kan single-run bli samre efter en stark auto-loop?
+
+Det ar normalt om single-run bygger ett **annat frageset** an auto-loopens interna jamforelse:
+
+- Auto-loop kan ge hog score pa ett stabilt/ankrat probe-set.
+- En ny single-run utan anchor/probe-likhet provar andra fragor (hard negatives, andra formuleringar).
+- Resultatet blir da en mer "out-of-sample" kontroll och kan falla tillbaka.
+
+Det betyder inte nodvandigtvis att forbattringen ar falsk - utan att robustheten inte ar jamn over hela query-rummet an.
+
+#### Rekommenderade guardrails
+
+- Hall eval-konfigurationen konstant nar du jamfor.
+- Tracka bade:
+  - **stabilitetsmetrik** (rank shift, churn, margin)
+  - **generalisering** (ny single-run utan anchor)
+- Vid stor skillnad: kor en extra BSSS-runda pa kvarvarande kollisionskluster och verifiera igen.
+- BSSS lock mode ar aktivt for att hindra att vanliga metadata-forslag aterintroducerar tidigare separation-kollisioner.
 
 ---
 

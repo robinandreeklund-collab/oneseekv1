@@ -60,6 +60,7 @@ _MAX_INTENT_FAILURES_FOR_LLM = 20
 _MAX_AGENT_FAILURES_FOR_LLM = 20
 _PROBE_QUERY_LLM_TIMEOUT_SECONDS = 18.0
 _METADATA_LAYER_LLM_TIMEOUT_SECONDS = 20.0
+_TOOL_ID_LIKE_RE = re.compile(r"\b[a-z0-9]+_[a-z0-9_]+\b", re.IGNORECASE)
 
 _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...]]]] = {
     "knowledge": (
@@ -202,6 +203,50 @@ def _swedishify_query_text(value: Any) -> str:
 
 def _has_swedish_diacritics(value: str) -> bool:
     return bool(re.search(r"[åäöÅÄÖ]", str(value or "")))
+
+
+def _tool_reference_markers(entry: ToolIndexEntry, neighbors: list[str]) -> set[str]:
+    markers: set[str] = set()
+
+    def _add(raw: Any) -> None:
+        text = _normalize_text(raw).casefold()
+        if len(text) < 3:
+            return
+        compact = " ".join(text.split())
+        if compact:
+            markers.add(compact)
+        if "_" in compact:
+            markers.add(compact.replace("_", " "))
+            markers.add(compact.replace("_", "-"))
+
+    _add(entry.tool_id)
+    _add(entry.name)
+    for neighbor in list(neighbors or []):
+        _add(neighbor)
+    return markers
+
+
+def _contains_forbidden_tool_reference(query: str, *, forbidden_markers: set[str]) -> bool:
+    normalized = _normalize_text(query).casefold()
+    if not normalized:
+        return False
+    if _TOOL_ID_LIKE_RE.search(normalized):
+        return True
+    for marker in forbidden_markers:
+        if marker and marker in normalized:
+            return True
+    return False
+
+
+def _is_valid_probe_query(query: str, *, forbidden_markers: set[str]) -> bool:
+    normalized = _swedishify_query_text(query)
+    if not normalized:
+        return False
+    if not _has_swedish_diacritics(normalized):
+        return False
+    if _contains_forbidden_tool_reference(normalized, forbidden_markers=forbidden_markers):
+        return False
+    return True
 
 
 def _compact_failures_for_llm(
@@ -389,6 +434,7 @@ def _fallback_probe_queries(
 ) -> list[str]:
     hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
     normalized_round = max(1, min(int(round_index or 1), 1000))
+    forbidden_markers = _tool_reference_markers(entry, neighbors)
     hints = list(entry.keywords[: max(2, query_count * 4)])
     if not hints:
         hints = _tokenize(entry.description)[: max(2, query_count * 4)]
@@ -437,6 +483,8 @@ def _fallback_probe_queries(
         normalized = _swedishify_query_text(prompt)
         if not normalized:
             return
+        if not _is_valid_probe_query(normalized, forbidden_markers=forbidden_markers):
+            return
         key = normalized.casefold()
         if key in seen or key in avoid_keys:
             return
@@ -445,17 +493,17 @@ def _fallback_probe_queries(
 
     if neighbors and hard_negative_count > 0:
         for idx in range(max(hard_negative_count * 2, hard_negative_count)):
-            neighbor_id = neighbors[idx % len(neighbors)]
-            if not neighbor_id:
-                continue
             location = locations[(location_offset + idx) % len(locations)]
+            time_window = time_windows[(time_offset + idx) % len(time_windows)]
+            hint = hints[idx % len(hints)]
+            alt_hint = hints[(idx + 3) % len(hints)] if hints else hint
             if idx % 2 == 0:
                 _append(
-                    f"När är {entry.name} rätt val i stället för {neighbor_id} i {location}?"
+                    f"När gäller {hint} i stället för {alt_hint} i {location} {time_window}?"
                 )
             else:
                 _append(
-                    f"Jämför {entry.name} och {neighbor_id} för samma fråga i {location}."
+                    f"Jag vill jämföra {hint} och {alt_hint} för {location} {time_window}."
                 )
             if len(prompts) >= query_count:
                 return prompts[:query_count]
@@ -468,16 +516,16 @@ def _fallback_probe_queries(
         if idx % 3 == 0:
             _append(f"Visa {hint} i {location} {time_window}")
         elif idx % 3 == 1:
-            _append(f"Hjälp mig med {entry.name} i {location} {time_window}")
+            _append(f"Hjälp mig med {hint} i {location} {time_window}")
         else:
             _append(f"Vad betyder {hint} för {location} {time_window}?")
         if len(prompts) >= query_count:
             return prompts[:query_count]
 
-    if neighbors:
-        _append(f"När ska jag använda {entry.name} i stället för {neighbors[0]}?")
-    _append(f"Hjälp mig med {entry.name} för Sverige")
-    _append(f"Data från {entry.name} för år {2020 + (normalized_round % 7)}")
+    if hints:
+        _append(f"När ska jag använda {hints[0]} i stället för andra liknande mått?")
+    _append("Hjälp mig med relevanta data för Sverige")
+    _append(f"Visa utvecklingen för relevanta mått under år {2020 + (normalized_round % 7)}")
 
     return prompts[:query_count]
 
@@ -493,6 +541,7 @@ async def _generate_probe_queries_for_tool(
     round_index: int = 1,
 ) -> list[str]:
     hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
+    forbidden_markers = _tool_reference_markers(entry, neighbors)
     avoid_keys = {
         normalized.casefold()
         for query in list(avoid_queries or [])
@@ -523,7 +572,10 @@ async def _generate_probe_queries_for_tool(
         "}\n"
         "Rules:\n"
         "- Swedish language.\n"
+        "- Every query must be natural Swedish as a real user would write it.\n"
         "- Use correct Swedish spelling with diacritics (å, ä, ö); do not transliterate.\n"
+        "- Strictly forbidden: tool_id, tool names, function names, endpoint names, internal identifiers.\n"
+        "- Never include underscore identifiers like marketplace_regions, smhi_forecast, trafikverket_*.\n"
         "- No markdown.\n"
         "- Keep each query short and realistic.\n"
         "- Include borderline/ambiguous hard negatives when requested.\n"
@@ -531,12 +583,14 @@ async def _generate_probe_queries_for_tool(
         "- Prioritize novel phrasings for the provided round_index.\n"
     )
     payload = {
-        "tool_id": entry.tool_id,
-        "tool_name": entry.name,
+        "tool_context": {
+            "description": entry.description,
+            "keywords": entry.keywords,
+            "example_queries": entry.example_queries[:8],
+        },
         "description": entry.description,
         "keywords": entry.keywords,
-        "example_queries": entry.example_queries[:8],
-        "nearby_tools": neighbors,
+        "neighbor_count": len(list(neighbors or [])),
         "query_count": max(1, int(query_count)),
         "hard_negatives_per_tool": hard_negative_count,
         "round_index": max(1, int(round_index or 1)),
@@ -568,6 +622,7 @@ async def _generate_probe_queries_for_tool(
             normalized
             for query in _safe_string_list(parsed.get("queries"))
             if (normalized := _swedishify_query_text(query))
+            and _is_valid_probe_query(normalized, forbidden_markers=forbidden_markers)
         ]
         if not generated:
             return _fallback_probe_queries(
@@ -599,7 +654,10 @@ async def _generate_probe_queries_for_tool(
                 not normalized
                 or key in seen
                 or key in avoid_keys
-                or not _has_swedish_diacritics(normalized)
+                or not _is_valid_probe_query(
+                    normalized,
+                    forbidden_markers=forbidden_markers,
+                )
             ):
                 continue
             seen.add(key)
@@ -622,7 +680,10 @@ async def _generate_probe_queries_for_tool(
                     not normalized
                     or key in seen
                     or key in avoid_keys
-                    or not _has_swedish_diacritics(normalized)
+                    or not _is_valid_probe_query(
+                        normalized,
+                        forbidden_markers=forbidden_markers,
+                    )
                 ):
                     continue
                 seen.add(key)
@@ -1121,10 +1182,18 @@ async def run_layered_metadata_audit(
     generated_queries_by_tool: dict[str, list[str]] = {}
     if include_llm_generated and not anchor_probe_mode:
         async def _generate_for_entry(entry: ToolIndexEntry) -> tuple[str, list[str]]:
+            forbidden_markers = _tool_reference_markers(
+                entry,
+                neighbors_by_tool.get(entry.tool_id, []),
+            )
             seed_examples = [
                 normalized
                 for query in entry.example_queries[:max_probe_queries]
                 if (normalized := _swedishify_query_text(query))
+                and _is_valid_probe_query(
+                    normalized,
+                    forbidden_markers=forbidden_markers,
+                )
             ]
             avoid_for_generation = [*list(excluded_query_keys)[:160], *seed_examples[:40]]
             generated = await _generate_probe_queries_for_tool(
@@ -1160,11 +1229,22 @@ async def run_layered_metadata_audit(
 
     for entry in selected_entries:
         expected_tool_id = entry.tool_id
+        forbidden_markers = _tool_reference_markers(
+            entry,
+            neighbors_by_tool.get(entry.tool_id, []),
+        )
         expected_intent_id = _normalize_text(expected_intent_by_tool.get(expected_tool_id)).lower() or None
         expected_agent_id = _normalize_text(expected_agent_by_tool.get(expected_tool_id)).lower() or None
         queries: list[tuple[str, str]] = []
         if anchor_probe_mode:
-            anchored_queries = list(normalized_anchor_probes.get(entry.tool_id) or [])
+            anchored_queries = [
+                (query, source)
+                for query, source in list(normalized_anchor_probes.get(entry.tool_id) or [])
+                if _is_valid_probe_query(
+                    query,
+                    forbidden_markers=forbidden_markers,
+                )
+            ]
             queries.extend(anchored_queries)
             anchor_probe_candidates += len(anchored_queries)
             query_candidates_total += len(anchored_queries)
@@ -1174,6 +1254,10 @@ async def run_layered_metadata_audit(
                     normalized
                     for query in entry.example_queries[:max_probe_queries]
                     if (normalized := _swedishify_query_text(query))
+                    and _is_valid_probe_query(
+                        normalized,
+                        forbidden_markers=forbidden_markers,
+                    )
                 ]
                 queries.extend(
                     (query, "anchor_existing_fallback")
@@ -1187,6 +1271,10 @@ async def run_layered_metadata_audit(
                     normalized
                     for query in entry.example_queries[:max_probe_queries]
                     if (normalized := _swedishify_query_text(query))
+                    and _is_valid_probe_query(
+                        normalized,
+                        forbidden_markers=forbidden_markers,
+                    )
                 ]
                 queries.extend(
                     (query, "existing_example")
@@ -1211,6 +1299,10 @@ async def run_layered_metadata_audit(
                 not normalized_query
                 or key in seen_query_keys
                 or (history_exclusion_enabled and key in excluded_query_keys)
+                or not _is_valid_probe_query(
+                    normalized_query,
+                    forbidden_markers=forbidden_markers,
+                )
             ):
                 if history_exclusion_enabled and key in excluded_query_keys:
                     excluded_query_history_count += 1
@@ -1234,7 +1326,15 @@ async def run_layered_metadata_audit(
             for query in fallback_queries:
                 normalized_query = _swedishify_query_text(query)
                 key = normalized_query.casefold()
-                if not normalized_query or key in seen_query_keys or key in excluded_query_keys:
+                if (
+                    not normalized_query
+                    or key in seen_query_keys
+                    or key in excluded_query_keys
+                    or not _is_valid_probe_query(
+                        normalized_query,
+                        forbidden_markers=forbidden_markers,
+                    )
+                ):
                     continue
                 seen_query_keys.add(key)
                 filtered_queries.append((normalized_query, "round_refresh"))

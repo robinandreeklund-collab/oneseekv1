@@ -152,6 +152,7 @@ _SKOLVERKET_TOOL_CATEGORY_BY_ID: dict[str, str] = {
 _SKOLVERKET_TOOL_IDS = set(_SKOLVERKET_TOOL_CATEGORY_BY_ID.keys())
 _MAX_TOOL_FAILURES_FOR_LLM = 18
 _TOOL_METADATA_LLM_TIMEOUT_SECONDS = 20.0
+_TOOL_ID_LIKE_RE = re.compile(r"\b[a-z0-9]+_[a-z0-9_]+\b", re.IGNORECASE)
 
 
 def compute_metadata_version_hash(tool_index: list[ToolIndexEntry]) -> str:
@@ -225,6 +226,66 @@ def _safe_string_list(values: Any) -> list[str]:
         seen.add(key)
         cleaned.append(item)
     return cleaned
+
+
+def _tool_reference_markers_for_suggestions(
+    *,
+    tool_id: str | None,
+    tool_name: str | None,
+) -> set[str]:
+    markers: set[str] = set()
+
+    def _add(raw: Any) -> None:
+        value = str(raw or "").strip().casefold()
+        if len(value) < 3:
+            return
+        compact = " ".join(value.split())
+        if compact:
+            markers.add(compact)
+        if "_" in compact:
+            markers.add(compact.replace("_", " "))
+            markers.add(compact.replace("_", "-"))
+
+    _add(tool_id)
+    _add(tool_name)
+    return markers
+
+
+def _contains_forbidden_tool_reference(
+    value: str,
+    *,
+    forbidden_markers: set[str],
+) -> bool:
+    text = str(value or "").strip().casefold()
+    if not text:
+        return False
+    if _TOOL_ID_LIKE_RE.search(text):
+        return True
+    for marker in forbidden_markers:
+        if marker and marker in text:
+            return True
+    return False
+
+
+def _sanitize_example_queries_no_tool_refs(
+    values: list[str],
+    *,
+    forbidden_markers: set[str],
+) -> list[str]:
+    sanitized: list[str] = []
+    seen: set[str] = set()
+    for raw in list(values or []):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if _contains_forbidden_tool_reference(text, forbidden_markers=forbidden_markers):
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        sanitized.append(text)
+    return sanitized
 
 
 def _normalize_difficulty_value(value: Any) -> str | None:
@@ -1751,6 +1812,10 @@ def _build_fallback_suggestion(
     questions: list[str],
     failed_count: int,
 ) -> tuple[dict[str, Any], str]:
+    forbidden_markers = _tool_reference_markers_for_suggestions(
+        tool_id=tool_id,
+        tool_name=str(current.get("name") or ""),
+    )
     token_counts: dict[str, int] = {}
     for question in questions:
         for token in _tokenize_for_suggestions(question):
@@ -1777,6 +1842,11 @@ def _build_fallback_suggestion(
         cleaned = question.strip()
         if not cleaned:
             continue
+        if _contains_forbidden_tool_reference(
+            cleaned,
+            forbidden_markers=forbidden_markers,
+        ):
+            continue
         key = cleaned.casefold()
         if key in seen_examples:
             continue
@@ -1784,6 +1854,10 @@ def _build_fallback_suggestion(
         seen_examples.add(key)
         if len(proposed_examples) >= 12:
             break
+    proposed_examples = _sanitize_example_queries_no_tool_refs(
+        proposed_examples,
+        forbidden_markers=forbidden_markers,
+    )
 
     description = str(current.get("description") or "").strip()
     hint_terms = [token for token, _count in sorted_tokens[:3]]
@@ -1826,6 +1900,10 @@ async def _build_llm_suggestion(
             model = llm.bind(temperature=0)
     except Exception:
         model = llm
+    forbidden_markers = _tool_reference_markers_for_suggestions(
+        tool_id=tool_id,
+        tool_name=str(current.get("name") or ""),
+    )
 
     prompt = (
         "Du optimerar verktygsmetadata för retrieval.\n"
@@ -1834,6 +1912,9 @@ async def _build_llm_suggestion(
         "Om vector recall och embedding-context finns i underlaget ska de vägas in i motiveringen.\n"
         "Behåll kategori om det inte finns starka skäl att ändra.\n"
         "ALL text måste vara på svenska.\n"
+        "Exempelfrågor måste vara naturlig svenska och skrivna som riktiga användarfrågor.\n"
+        "Strikt förbud: tool_id, toolnamn, funktionsnamn, endpoint- eller interna identifierare i exempelfrågor.\n"
+        "Använd aldrig snake_case eller identifierare med underscore i exempelfrågor.\n"
         "Returnera strikt JSON:\n"
         "{\n"
         '  "name": "string",\n'
@@ -1889,6 +1970,22 @@ async def _build_llm_suggestion(
         parsed = _extract_json_object(text)
         if not parsed:
             return None
+        parsed_examples = _sanitize_example_queries_no_tool_refs(
+            [
+                value
+                for value in _safe_string_list(parsed.get("example_queries"))
+                if not _looks_english_text(value)
+            ],
+            forbidden_markers=forbidden_markers,
+        )
+        fallback_examples = _sanitize_example_queries_no_tool_refs(
+            list(fallback_proposed.get("example_queries") or []),
+            forbidden_markers=forbidden_markers,
+        )
+        current_examples = _sanitize_example_queries_no_tool_refs(
+            list(current.get("example_queries") or []),
+            forbidden_markers=forbidden_markers,
+        )
         suggested = {
             "tool_id": tool_id,
             "name": str(parsed.get("name") or current.get("name") or "").strip(),
@@ -1898,16 +1995,7 @@ async def _build_llm_suggestion(
             ),
             "keywords": _safe_string_list(parsed.get("keywords"))
             or list(current.get("keywords") or []),
-            "example_queries": [
-                value
-                for value in (
-                    _safe_string_list(parsed.get("example_queries"))
-                    or list(current.get("example_queries") or [])
-                )
-                if not _looks_english_text(value)
-            ]
-            or list(fallback_proposed.get("example_queries") or [])
-            or list(current.get("example_queries") or []),
+            "example_queries": parsed_examples or fallback_examples or current_examples,
             "category": str(
                 parsed.get("category") or current.get("category") or ""
             ).strip(),
@@ -1955,6 +2043,10 @@ def _enrich_metadata_suggestion_fields(
 ) -> tuple[dict[str, Any], bool]:
     merged = dict(proposed)
     enriched = False
+    forbidden_markers = _tool_reference_markers_for_suggestions(
+        tool_id=str(current.get("tool_id") or merged.get("tool_id") or ""),
+        tool_name=str(current.get("name") or merged.get("name") or ""),
+    )
 
     current_description = str(current.get("description") or "").strip()
     proposed_description = str(merged.get("description") or "").strip()
@@ -1976,9 +2068,18 @@ def _enrich_metadata_suggestion_fields(
     else:
         merged["keywords"] = proposed_keywords
 
-    current_examples = _safe_string_list(current.get("example_queries"))
-    proposed_examples = _safe_string_list(merged.get("example_queries"))
-    fallback_examples = _safe_string_list(fallback.get("example_queries"))
+    current_examples = _sanitize_example_queries_no_tool_refs(
+        _safe_string_list(current.get("example_queries")),
+        forbidden_markers=forbidden_markers,
+    )
+    proposed_examples = _sanitize_example_queries_no_tool_refs(
+        _safe_string_list(merged.get("example_queries")),
+        forbidden_markers=forbidden_markers,
+    )
+    fallback_examples = _sanitize_example_queries_no_tool_refs(
+        _safe_string_list(fallback.get("example_queries")),
+        forbidden_markers=forbidden_markers,
+    )
     if proposed_examples == current_examples and fallback_examples != current_examples:
         merged["example_queries"] = fallback_examples
         enriched = True
