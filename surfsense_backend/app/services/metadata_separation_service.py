@@ -2225,8 +2225,8 @@ async def filter_metadata_suggestions_with_pair_locks(
     async def _tool_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
         left_id = _normalized_key(left.get("tool_id"))
         right_id = _normalized_key(right.get("tool_id"))
-        sem_left = await _embed_text(_tool_semantic_text(left))
-        sem_right = await _embed_text(_tool_semantic_text(right))
+        sem_left = _embed_text(_tool_semantic_text(left))
+        sem_right = _embed_text(_tool_semantic_text(right))
         semantic_similarity = _cosine_similarity(sem_left, sem_right)
         struct_left = struct_map.get(left_id)
         struct_right = struct_map.get(right_id)
@@ -2239,13 +2239,13 @@ async def filter_metadata_suggestions_with_pair_locks(
         )
 
     async def _intent_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
-        sem_left = await _embed_text(_intent_text(left))
-        sem_right = await _embed_text(_intent_text(right))
+        sem_left = _embed_text(_intent_text(left))
+        sem_right = _embed_text(_intent_text(right))
         return _cosine_similarity(sem_left, sem_right)
 
     async def _agent_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
-        sem_left = await _embed_text(_agent_text(left))
-        sem_right = await _embed_text(_agent_text(right))
+        sem_left = _embed_text(_agent_text(left))
+        sem_right = _embed_text(_agent_text(right))
         return _cosine_similarity(sem_left, sem_right)
 
     async def _filter_layer(
