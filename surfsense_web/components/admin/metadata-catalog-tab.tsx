@@ -184,6 +184,81 @@ function KeywordEditor({
 	);
 }
 
+function ExampleQueryEditor({
+	entityId,
+	exampleQueries,
+	onChange,
+	placeholder = "Ny exempelfråga...",
+}: {
+	entityId: string;
+	exampleQueries: string[];
+	onChange: (nextExampleQueries: string[]) => void;
+	placeholder?: string;
+}) {
+	const [newExampleQuery, setNewExampleQuery] = useState("");
+
+	const addExampleQuery = () => {
+		const text = newExampleQuery.trim();
+		if (!text) return;
+		const seen = new Set(exampleQueries.map((query) => query.toLocaleLowerCase()));
+		if (seen.has(text.toLocaleLowerCase())) {
+			setNewExampleQuery("");
+			return;
+		}
+		onChange([...exampleQueries, text]);
+		setNewExampleQuery("");
+	};
+
+	const removeExampleQuery = (index: number) => {
+		onChange(exampleQueries.filter((_, idx) => idx !== index));
+	};
+
+	return (
+		<div className="space-y-2">
+			<Label>Exempelfrågor</Label>
+			<div className="space-y-2">
+				{exampleQueries.length === 0 ? (
+					<p className="text-xs text-muted-foreground">Inga exempelfrågor ännu.</p>
+				) : null}
+				{exampleQueries.map((query, index) => (
+					<div
+						key={`${entityId}-example-${index}`}
+						className="flex items-start justify-between gap-2 rounded border bg-muted/30 px-3 py-2"
+					>
+						<p className="text-sm">{query}</p>
+						<Button
+							type="button"
+							size="icon"
+							variant="ghost"
+							className="h-7 w-7 shrink-0"
+							onClick={() => removeExampleQuery(index)}
+							aria-label={`Ta bort exempelfråga ${index + 1}`}
+						>
+							<X className="h-3.5 w-3.5" />
+						</Button>
+					</div>
+				))}
+			</div>
+			<div className="flex gap-2">
+				<Input
+					value={newExampleQuery}
+					onChange={(event) => setNewExampleQuery(event.target.value)}
+					placeholder={placeholder}
+					onKeyDown={(event) => {
+						if (event.key === "Enter") {
+							event.preventDefault();
+							addExampleQuery();
+						}
+					}}
+				/>
+				<Button type="button" size="sm" variant="outline" onClick={addExampleQuery}>
+					<Plus className="h-4 w-4" />
+				</Button>
+			</div>
+		</div>
+	);
+}
+
 type AuditAnnotationDraft = {
 	intent_is_correct: boolean;
 	corrected_intent_id: string | null;
@@ -1692,7 +1767,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						draft.name.toLocaleLowerCase().includes(term) ||
 						draft.description.toLocaleLowerCase().includes(term) ||
 						draft.category.toLocaleLowerCase().includes(term) ||
-						draft.keywords.some((keyword) => keyword.toLocaleLowerCase().includes(term))
+						draft.keywords.some((keyword) => keyword.toLocaleLowerCase().includes(term)) ||
+						draft.example_queries.some((query) => query.toLocaleLowerCase().includes(term))
 					);
 				});
 				return {
@@ -1729,7 +1805,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				<CardHeader>
 					<CardTitle>Metadata-katalog: Agents, Intents och Tools</CardTitle>
 					<CardDescription>
-						Redigera beskrivning, keywords och metadata i en samlad vy.
+						Redigera beskrivning, keywords, exempelfrågor och metadata i en samlad vy.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
@@ -3218,6 +3294,15 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													onChange={(keywords) =>
 														onToolChange(tool.tool_id, {
 															keywords,
+														})
+													}
+												/>
+												<ExampleQueryEditor
+													entityId={tool.tool_id}
+													exampleQueries={draft.example_queries}
+													onChange={(example_queries) =>
+														onToolChange(tool.tool_id, {
+															example_queries,
 														})
 													}
 												/>
