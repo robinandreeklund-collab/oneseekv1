@@ -496,6 +496,7 @@ export const metadataCatalogAuditSuggestionResponse = z.object({
 			intent_failure_candidates: z.number().int().optional().default(0),
 			agent_failure_candidates: z.number().int().optional().default(0),
 			llm_parallelism: z.number().int().optional().default(1),
+			llm_parallelism_effective: z.number().int().optional().default(1),
 			max_suggestions: z.number().int().optional().default(20),
 		})
 		.optional()
@@ -511,6 +512,7 @@ export const metadataCatalogAuditSuggestionResponse = z.object({
 			intent_failure_candidates: 0,
 			agent_failure_candidates: 0,
 			llm_parallelism: 1,
+			llm_parallelism_effective: 1,
 			max_suggestions: 20,
 		}),
 });

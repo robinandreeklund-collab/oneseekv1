@@ -847,6 +847,7 @@ class MetadataCatalogAuditSuggestionDiagnostics(BaseModel):
     intent_failure_candidates: int = 0
     agent_failure_candidates: int = 0
     llm_parallelism: int = 1
+    llm_parallelism_effective: int = 1
     max_suggestions: int = 20
 
 

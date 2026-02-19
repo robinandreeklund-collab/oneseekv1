@@ -3989,6 +3989,7 @@ async def generate_metadata_catalog_audit_suggestions(
     )
     normalized_max_suggestions = max(1, min(int(payload.max_suggestions or 20), 100))
     normalized_parallelism = max(1, min(int(payload.llm_parallelism or 1), 32))
+    per_stage_parallelism = max(1, min((normalized_parallelism + 2) // 3, 12))
     preparation_ms = (perf_counter() - preparation_started_at) * 1000
 
     async def _run_timed(task_factory):
@@ -4012,7 +4013,7 @@ async def generate_metadata_catalog_audit_suggestions(
                     "audit_mode": "metadata_catalog",
                     "pipeline": "intent->agent->tool",
                 },
-                parallelism=normalized_parallelism,
+                parallelism=per_stage_parallelism,
             )
         ),
         _run_timed(
@@ -4021,7 +4022,7 @@ async def generate_metadata_catalog_audit_suggestions(
                 intent_failures=list(suggestion_inputs.get("intent_failures") or []),
                 llm=llm,
                 max_suggestions=normalized_max_suggestions,
-                parallelism=normalized_parallelism,
+                parallelism=per_stage_parallelism,
             )
         ),
         _run_timed(
@@ -4030,7 +4031,7 @@ async def generate_metadata_catalog_audit_suggestions(
                 agent_failures=list(suggestion_inputs.get("agent_failures") or []),
                 llm=llm,
                 max_suggestions=normalized_max_suggestions,
-                parallelism=normalized_parallelism,
+                parallelism=per_stage_parallelism,
             )
         ),
     )
@@ -4064,6 +4065,7 @@ async def generate_metadata_catalog_audit_suggestions(
             "intent_failure_candidates": len(suggestion_inputs.get("intent_failures") or []),
             "agent_failure_candidates": len(suggestion_inputs.get("agent_failures") or []),
             "llm_parallelism": int(normalized_parallelism),
+            "llm_parallelism_effective": int(per_stage_parallelism),
             "max_suggestions": int(normalized_max_suggestions),
         },
     }

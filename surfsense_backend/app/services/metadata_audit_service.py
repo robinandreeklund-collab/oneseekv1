@@ -54,6 +54,8 @@ _STATISTICS_AGENTS = {"statistics"}
 _COMPARE_AGENTS = {"synthesis"}
 _MAX_INTENT_FAILURES_FOR_LLM = 20
 _MAX_AGENT_FAILURES_FOR_LLM = 20
+_PROBE_QUERY_LLM_TIMEOUT_SECONDS = 18.0
+_METADATA_LAYER_LLM_TIMEOUT_SECONDS = 20.0
 
 _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...]]]] = {
     "knowledge": (
@@ -480,11 +482,14 @@ async def _generate_probe_queries_for_tool(
         "avoid_queries": list(avoid_keys)[:80],
     }
     try:
-        response = await model.ainvoke(
-            [
-                SystemMessage(content=prompt),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
-            ]
+        response = await asyncio.wait_for(
+            model.ainvoke(
+                [
+                    SystemMessage(content=prompt),
+                    HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+                ]
+            ),
+            timeout=_PROBE_QUERY_LLM_TIMEOUT_SECONDS,
         )
         parsed = _extract_json_object(
             _response_content_to_text(getattr(response, "content", ""))
@@ -1544,11 +1549,14 @@ async def _build_llm_intent_metadata_suggestion(
         ),
     }
     try:
-        response = await model.ainvoke(
-            [
-                SystemMessage(content=prompt),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
-            ]
+        response = await asyncio.wait_for(
+            model.ainvoke(
+                [
+                    SystemMessage(content=prompt),
+                    HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+                ]
+            ),
+            timeout=_METADATA_LAYER_LLM_TIMEOUT_SECONDS,
         )
         parsed = _extract_json_object(
             _response_content_to_text(getattr(response, "content", ""))
@@ -1608,11 +1616,14 @@ async def _build_llm_agent_metadata_suggestion(
         ),
     }
     try:
-        response = await model.ainvoke(
-            [
-                SystemMessage(content=prompt),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
-            ]
+        response = await asyncio.wait_for(
+            model.ainvoke(
+                [
+                    SystemMessage(content=prompt),
+                    HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+                ]
+            ),
+            timeout=_METADATA_LAYER_LLM_TIMEOUT_SECONDS,
         )
         parsed = _extract_json_object(
             _response_content_to_text(getattr(response, "content", ""))

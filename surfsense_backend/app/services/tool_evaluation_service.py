@@ -151,6 +151,7 @@ _SKOLVERKET_TOOL_CATEGORY_BY_ID: dict[str, str] = {
 }
 _SKOLVERKET_TOOL_IDS = set(_SKOLVERKET_TOOL_CATEGORY_BY_ID.keys())
 _MAX_TOOL_FAILURES_FOR_LLM = 18
+_TOOL_METADATA_LLM_TIMEOUT_SECONDS = 20.0
 
 
 def compute_metadata_version_hash(tool_index: list[ToolIndexEntry]) -> str:
@@ -1875,11 +1876,14 @@ async def _build_llm_suggestion(
             questions=failure_questions,
             failed_count=len(failure_questions),
         )
-        response = await model.ainvoke(
-            [
-                SystemMessage(content=prompt),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
-            ]
+        response = await asyncio.wait_for(
+            model.ainvoke(
+                [
+                    SystemMessage(content=prompt),
+                    HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+                ]
+            ),
+            timeout=_TOOL_METADATA_LLM_TIMEOUT_SECONDS,
         )
         text = str(getattr(response, "content", "") or "")
         parsed = _extract_json_object(text)

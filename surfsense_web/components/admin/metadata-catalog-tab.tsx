@@ -2575,7 +2575,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									{auditSuggestions.diagnostics?.agent_failure_candidates ?? 0}
 								</Badge>
 								<Badge variant="outline">
-									LLM parallel: {auditSuggestions.diagnostics?.llm_parallelism ?? 1}
+									LLM parallel (req/eff):{" "}
+									{auditSuggestions.diagnostics?.llm_parallelism ?? 1}/
+									{auditSuggestions.diagnostics?.llm_parallelism_effective ?? 1}
 								</Badge>
 								<Button
 									type="button"
