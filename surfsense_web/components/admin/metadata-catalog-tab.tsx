@@ -398,6 +398,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [autoMaxRounds, setAutoMaxRounds] = useState(6);
 	const [autoPatienceRounds, setAutoPatienceRounds] = useState(2);
 	const [autoAbortDropPp, setAutoAbortDropPp] = useState(8);
+	const [autoExcludeProbeHistoryBetweenRounds, setAutoExcludeProbeHistoryBetweenRounds] =
+		useState(true);
 	const [isAutoRunning, setIsAutoRunning] = useState(false);
 	const [autoRoundHistory, setAutoRoundHistory] = useState<AutoAuditRoundEntry[]>([]);
 	const [autoRunStatusText, setAutoRunStatusText] = useState<string | null>(null);
@@ -1200,6 +1202,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 
 			for (let round = 1; round <= maxRounds; round += 1) {
 				setAutoRunStatusText(`Autonom loop: kör runda ${round}/${maxRounds}...`);
+				const excludedProbeQueries = autoExcludeProbeHistoryBetweenRounds
+					? Array.from(usedProbeQueryKeys).slice(-2500)
+					: [];
 				const result = await adminToolSettingsApiService.runMetadataCatalogAudit({
 					search_space_id: data.search_space_id,
 					metadata_patch: Object.values(toolPatchMap),
@@ -1213,11 +1218,13 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					hard_negatives_per_tool: hardNegativesPerTool,
 					probe_generation_parallelism: probeGenerationParallelism,
 					probe_round: round,
-					exclude_probe_queries: Array.from(usedProbeQueryKeys).slice(-2500),
+					exclude_probe_queries: excludedProbeQueries,
 				});
-				for (const probe of result.probes) {
-					const key = String(probe.query ?? "").trim().toLocaleLowerCase();
-					if (key) usedProbeQueryKeys.add(key);
+				if (autoExcludeProbeHistoryBetweenRounds) {
+					for (const probe of result.probes) {
+						const key = String(probe.query ?? "").trim().toLocaleLowerCase();
+						if (key) usedProbeQueryKeys.add(key);
+					}
 				}
 				const currentAnnotations = buildDefaultAnnotations(result);
 				setAuditResult(result);
@@ -1860,6 +1867,22 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									{isAutoRunning ? "Autoloop kör..." : "Kör autonom loop"}
 								</Button>
 							</div>
+						</div>
+						<div className="flex items-center gap-2">
+							<input
+								id="auto-exclude-history-between-rounds"
+								type="checkbox"
+								checked={autoExcludeProbeHistoryBetweenRounds}
+								onChange={(event) =>
+									setAutoExcludeProbeHistoryBetweenRounds(event.target.checked)
+								}
+							/>
+							<Label htmlFor="auto-exclude-history-between-rounds" className="text-sm">
+								Exkludera probe-historik mellan rundor
+							</Label>
+							<Badge variant="outline">
+								{autoExcludeProbeHistoryBetweenRounds ? "På" : "Av"}
+							</Badge>
 						</div>
 						<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
 							<div className="space-y-1">
