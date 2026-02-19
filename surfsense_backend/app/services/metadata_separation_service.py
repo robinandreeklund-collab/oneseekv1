@@ -228,6 +228,7 @@ def _copy_tool_patch_map(
     next_map: dict[str, dict[str, Any]] = {}
     for tool_id, payload in patch_map.items():
         next_map[tool_id] = {
+            "tool_id": _normalize_text(payload.get("tool_id")) or _normalize_text(tool_id),
             **payload,
             "keywords": _safe_string_list(payload.get("keywords")),
             "example_queries": _safe_string_list(payload.get("example_queries")),
@@ -1747,11 +1748,28 @@ async def run_bottom_up_metadata_separation(
             _normalized_key(item.get("competitor_id")),
         )
         deduped_contrast[key] = item
+    normalized_tool_patch_output: list[dict[str, Any]] = []
+    for tool_id, payload in current_tool_patch_map.items():
+        normalized_tool_patch_output.append(
+            {
+                "tool_id": _normalize_text(payload.get("tool_id")) or _normalize_text(tool_id),
+                "name": _normalize_text(payload.get("name")),
+                "description": _normalize_text(payload.get("description")),
+                "keywords": _safe_string_list(payload.get("keywords")),
+                "example_queries": _safe_string_list(payload.get("example_queries")),
+                "category": _normalize_text(payload.get("category")),
+                "base_path": (
+                    _normalize_text(payload.get("base_path")) or None
+                    if payload.get("base_path") is not None
+                    else None
+                ),
+            }
+        )
     return {
         "baseline_summary": dict(baseline_result.get("summary") or {}),
         "final_summary": dict(final_audit.get("summary") or {}),
         "stage_reports": stage_reports,
-        "proposed_tool_metadata_patch": list(current_tool_patch_map.values()),
+        "proposed_tool_metadata_patch": normalized_tool_patch_output,
         "proposed_intent_metadata_patch": list(current_intent_patch_map.values()),
         "proposed_agent_metadata_patch": list(current_agent_patch_map.values()),
         "contrast_memory": list(deduped_contrast.values()),
