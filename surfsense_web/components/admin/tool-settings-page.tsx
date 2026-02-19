@@ -1035,12 +1035,40 @@ export function ToolSettingsPage() {
 		setDraftRetrievalTuning((prev) => {
 			const current = prev ?? data?.retrieval_tuning;
 			if (!current) return prev;
+			if (key === "embedding_weight") {
+				const nextEmbeddingWeight = Math.max(0, Number(value));
+				const semanticCurrent = Math.max(0, Number(current.semantic_embedding_weight ?? 0));
+				const structuralCurrent = Math.max(0, Number(current.structural_embedding_weight ?? 0));
+				const currentTotal = semanticCurrent + structuralCurrent;
+				const semanticNext =
+					currentTotal > 0
+						? (semanticCurrent / currentTotal) * nextEmbeddingWeight
+						: nextEmbeddingWeight * 0.7;
+				const structuralNext = Math.max(0, nextEmbeddingWeight - semanticNext);
+				return {
+					...current,
+					embedding_weight: nextEmbeddingWeight,
+					semantic_embedding_weight: semanticNext,
+					structural_embedding_weight: structuralNext,
+				};
+			}
 			return {
 				...current,
 				[key]:
 					key === "rerank_candidates"
 						? Math.max(1, Math.round(value))
 						: Number(value),
+				...(key === "semantic_embedding_weight" || key === "structural_embedding_weight"
+					? {
+							embedding_weight:
+								(key === "semantic_embedding_weight"
+									? Math.max(0, Number(value))
+									: Math.max(0, Number(current.semantic_embedding_weight ?? 0))) +
+								(key === "structural_embedding_weight"
+									? Math.max(0, Number(value))
+									: Math.max(0, Number(current.structural_embedding_weight ?? 0))),
+						}
+					: {}),
 			};
 		});
 	};
@@ -2124,6 +2152,34 @@ export function ToolSettingsPage() {
 												onChange={(e) =>
 													updateRetrievalTuningField(
 														"embedding_weight",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Semantic embedding</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.semantic_embedding_weight ?? 0}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"semantic_embedding_weight",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Structural embedding</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.structural_embedding_weight ?? 0}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"structural_embedding_weight",
 														Number.parseFloat(e.target.value || "0")
 													)
 												}
@@ -3613,6 +3669,14 @@ export function ToolSettingsPage() {
 											embedding: {evaluationResult.retrieval_tuning.embedding_weight}
 										</Badge>
 										<Badge variant="outline">
+											semantic:{" "}
+											{evaluationResult.retrieval_tuning.semantic_embedding_weight ?? "-"}
+										</Badge>
+										<Badge variant="outline">
+											structural:{" "}
+											{evaluationResult.retrieval_tuning.structural_embedding_weight ?? "-"}
+										</Badge>
+										<Badge variant="outline">
 											rerank_candidates:{" "}
 											{evaluationResult.retrieval_tuning.rerank_candidates}
 										</Badge>
@@ -3665,6 +3729,20 @@ export function ToolSettingsPage() {
 													{
 														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
 															.embedding_weight
+													}
+												</Badge>
+												<Badge variant="secondary">
+													semantic:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.semantic_embedding_weight
+													}
+												</Badge>
+												<Badge variant="secondary">
+													structural:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.structural_embedding_weight
 													}
 												</Badge>
 												<Badge variant="secondary">

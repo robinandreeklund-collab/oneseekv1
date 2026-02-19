@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.new_chat.bigtool_store import (
     ToolIndexEntry,
+    get_tool_embedding_context_split_fields,
     get_tool_embedding_context_fields,
     get_vector_recall_top_k,
     normalize_retrieval_tuning,
@@ -789,11 +790,28 @@ def _layer_result(
         if top1_score is not None and top2_score is not None
         else None
     )
+    expected_rank: int | None = None
+    expected_margin: float | None = None
+    if expected_label:
+        expected_score: float | None = None
+        best_other_score: float | None = None
+        for idx, item in enumerate(ranked):
+            label = _normalize_text(item.get("label"))
+            score = float(item.get("pre_score") or item.get("score") or 0.0)
+            if label == expected_label and expected_rank is None:
+                expected_rank = idx + 1
+                expected_score = score
+            elif best_other_score is None or score > best_other_score:
+                best_other_score = score
+        if expected_score is not None and best_other_score is not None:
+            expected_margin = expected_score - best_other_score
     return {
         "expected_label": expected_label,
         "predicted_label": top1,
         "top1": top1,
         "top2": top2,
+        "expected_rank": expected_rank,
+        "expected_margin_vs_best_other": expected_margin,
         "margin": margin,
         "score_breakdown": ranked[:6],
     }
@@ -808,10 +826,15 @@ def _tool_layer_result(
     top1 = ranked_ids[0] if ranked_ids else None
     top2 = ranked_ids[1] if len(ranked_ids) > 1 else None
     score_by_id: dict[str, float] = {}
+    rank_by_id: dict[str, int] = {}
     for item in retrieval_breakdown:
         tool_id = _normalize_text(item.get("tool_id"))
         if not tool_id:
             continue
+        rank_value = _to_positive_int_or_none(item.get("rank"))
+        if rank_value is None:
+            rank_value = len(rank_by_id) + 1
+        rank_by_id[tool_id] = rank_value
         score_by_id[tool_id] = float(
             item.get("pre_rerank_score") or item.get("score") or 0.0
         )
@@ -820,11 +843,24 @@ def _tool_layer_result(
         if top1 and top2 and top1 in score_by_id and top2 in score_by_id
         else None
     )
+    expected_rank = rank_by_id.get(expected_label) if expected_label else None
+    expected_margin: float | None = None
+    if expected_label and expected_label in score_by_id:
+        expected_score = score_by_id[expected_label]
+        competitor_scores = [
+            score
+            for tool_id, score in score_by_id.items()
+            if tool_id != expected_label
+        ]
+        if competitor_scores:
+            expected_margin = expected_score - max(competitor_scores)
     return {
         "expected_label": expected_label,
         "predicted_label": top1,
         "top1": top1,
         "top2": top2,
+        "expected_rank": expected_rank,
+        "expected_margin_vs_best_other": expected_margin,
         "margin": margin,
         "score_breakdown": retrieval_breakdown[:8],
     }
@@ -1035,6 +1071,8 @@ async def run_layered_metadata_audit(
     intent_layer_ms = 0.0
     agent_layer_ms = 0.0
     tool_layer_ms = 0.0
+    tool_ranking_top_k = max(2, int(get_vector_recall_top_k()))
+    tool_ranking_stats: dict[str, dict[str, float | int]] = {}
 
     internal_retrieval_limit = max(2, min(int(retrieval_limit or 5), 20))
     max_probe_queries = max(1, min(int(max_queries_per_tool or 6), 20))
@@ -1201,6 +1239,32 @@ async def run_layered_metadata_audit(
                 retrieval_breakdown=list(retrieval_breakdown),
             )
             predicted_tool_id = _normalize_text(tool_layer.get("predicted_label")) or None
+            if expected_tool_id:
+                stats = tool_ranking_stats.setdefault(
+                    expected_tool_id,
+                    {
+                        "probes": 0,
+                        "top1_hits": 0,
+                        "topk_hits": 0,
+                        "rank_sum": 0.0,
+                        "rank_count": 0,
+                        "margin_sum": 0.0,
+                        "margin_count": 0,
+                    },
+                )
+                stats["probes"] = int(stats["probes"]) + 1
+                if predicted_tool_id == expected_tool_id:
+                    stats["top1_hits"] = int(stats["top1_hits"]) + 1
+                expected_rank = _to_positive_int_or_none(tool_layer.get("expected_rank"))
+                if expected_rank is not None:
+                    stats["rank_sum"] = float(stats["rank_sum"]) + float(expected_rank)
+                    stats["rank_count"] = int(stats["rank_count"]) + 1
+                    if expected_rank <= tool_ranking_top_k:
+                        stats["topk_hits"] = int(stats["topk_hits"]) + 1
+                expected_margin = tool_layer.get("expected_margin_vs_best_other")
+                if isinstance(expected_margin, (float, int)):
+                    stats["margin_sum"] = float(stats["margin_sum"]) + float(expected_margin)
+                    stats["margin_count"] = int(stats["margin_count"]) + 1
             tool_vector_diagnostics = _tool_vector_diagnostics(
                 expected_label=expected_tool_id,
                 predicted_label=predicted_tool_id,
@@ -1283,6 +1347,39 @@ async def run_layered_metadata_audit(
     evaluation_ms = (perf_counter() - evaluation_started_at) * 1000
     summary_started_at = perf_counter()
     total = len(probes)
+    tool_ranking_rows: list[dict[str, Any]] = []
+    for tool_id, stats in sorted(tool_ranking_stats.items(), key=lambda item: item[0]):
+        probes_for_tool = int(stats.get("probes") or 0)
+        if probes_for_tool <= 0:
+            continue
+        top1_hits = int(stats.get("top1_hits") or 0)
+        topk_hits = int(stats.get("topk_hits") or 0)
+        rank_count = int(stats.get("rank_count") or 0)
+        margin_count = int(stats.get("margin_count") or 0)
+        avg_expected_rank = (
+            float(stats.get("rank_sum") or 0.0) / rank_count
+            if rank_count > 0
+            else None
+        )
+        avg_margin = (
+            float(stats.get("margin_sum") or 0.0) / margin_count
+            if margin_count > 0
+            else None
+        )
+        tool_ranking_rows.append(
+            {
+                "tool_id": tool_id,
+                "probes": probes_for_tool,
+                "top1_hits": top1_hits,
+                "topk_hits": topk_hits,
+                "top1_rate": (top1_hits / probes_for_tool) if probes_for_tool else 0.0,
+                "topk_rate": (topk_hits / probes_for_tool) if probes_for_tool else 0.0,
+                "avg_expected_rank": avg_expected_rank,
+                "avg_margin_vs_best_other": avg_margin,
+            }
+        )
+    normalized_retrieval_tuning = normalize_retrieval_tuning(retrieval_tuning or {})
+    embedding_context_split = get_tool_embedding_context_split_fields()
     summary = {
         "total_probes": total,
         "intent_accuracy": (intent_correct_count / total) if total else 0.0,
@@ -1342,11 +1439,24 @@ async def run_layered_metadata_audit(
                 (vector_probes_with_expected_tool_in_top_k / total) if total else 0.0
             ),
         },
+        "tool_ranking_summary": {
+            "top_k": int(tool_ranking_top_k),
+            "tools": tool_ranking_rows,
+        },
         "tool_embedding_context": {
             "enabled": True,
             "context_fields": get_tool_embedding_context_fields(),
+            "semantic_fields": list(embedding_context_split.get("semantic") or []),
+            "structural_fields": list(embedding_context_split.get("structural") or []),
+            "semantic_weight": float(
+                getattr(normalized_retrieval_tuning, "semantic_embedding_weight", 0.0)
+            ),
+            "structural_weight": float(
+                getattr(normalized_retrieval_tuning, "structural_embedding_weight", 0.0)
+            ),
             "description": (
-                "Embeddings bygger pa tool metadata, indata-schema, example input JSON och expected output-hint."
+                "Embeddings ar uppdelade i semantic (namn/beskrivning/keywords/exempel) "
+                "och structural (schema/required/example input/output-hint) med viktad fusion."
             ),
         },
     }

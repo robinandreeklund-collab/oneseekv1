@@ -34,6 +34,8 @@ export const toolRetrievalTuning = z.object({
 	example_query_weight: z.number(),
 	namespace_boost: z.number(),
 	embedding_weight: z.number(),
+	semantic_embedding_weight: z.number().optional().default(2.8),
+	structural_embedding_weight: z.number().optional().default(1.2),
 	rerank_candidates: z.number().int(),
 	retrieval_feedback_db_enabled: z.boolean().optional().default(false),
 });
@@ -240,6 +242,8 @@ export const metadataCatalogAuditLayerResult = z.object({
 	predicted_label: z.string().nullable().optional(),
 	top1: z.string().nullable().optional(),
 	top2: z.string().nullable().optional(),
+	expected_rank: z.number().int().nullable().optional(),
+	expected_margin_vs_best_other: z.number().nullable().optional(),
 	margin: z.number().nullable().optional(),
 	score_breakdown: z.array(z.record(z.string(), z.unknown())).optional().default([]),
 });
@@ -273,7 +277,27 @@ export const metadataCatalogAuditVectorRecallSummary = z.object({
 export const metadataCatalogAuditToolEmbeddingContext = z.object({
 	enabled: z.boolean().optional().default(true),
 	context_fields: z.array(z.string()).optional().default([]),
+	semantic_fields: z.array(z.string()).optional().default([]),
+	structural_fields: z.array(z.string()).optional().default([]),
+	semantic_weight: z.number().nullable().optional(),
+	structural_weight: z.number().nullable().optional(),
 	description: z.string().nullable().optional(),
+});
+
+export const metadataCatalogAuditToolRankingItem = z.object({
+	tool_id: z.string(),
+	probes: z.number().int().optional().default(0),
+	top1_hits: z.number().int().optional().default(0),
+	topk_hits: z.number().int().optional().default(0),
+	top1_rate: z.number().optional().default(0),
+	topk_rate: z.number().optional().default(0),
+	avg_expected_rank: z.number().nullable().optional(),
+	avg_margin_vs_best_other: z.number().nullable().optional(),
+});
+
+export const metadataCatalogAuditToolRankingSummary = z.object({
+	top_k: z.number().int().optional().default(5),
+	tools: z.array(metadataCatalogAuditToolRankingItem).optional().default([]),
 });
 
 export const metadataCatalogAuditProbeItem = z.object({
@@ -325,9 +349,20 @@ export const metadataCatalogAuditSummary = z.object({
 			share_top1_from_vector: 0,
 			share_expected_tool_in_vector_top_k: 0,
 		}),
+	tool_ranking_summary: metadataCatalogAuditToolRankingSummary
+		.optional()
+		.default({ top_k: 5, tools: [] }),
 	tool_embedding_context: metadataCatalogAuditToolEmbeddingContext
 		.optional()
-		.default({ enabled: true, context_fields: [], description: null }),
+		.default({
+			enabled: true,
+			context_fields: [],
+			semantic_fields: [],
+			structural_fields: [],
+			semantic_weight: null,
+			structural_weight: null,
+			description: null,
+		}),
 });
 
 export const metadataCatalogAuditRunDiagnostics = z.object({
@@ -1121,6 +1156,12 @@ export type MetadataCatalogAuditVectorRecallSummary = z.infer<
 >;
 export type MetadataCatalogAuditToolEmbeddingContext = z.infer<
 	typeof metadataCatalogAuditToolEmbeddingContext
+>;
+export type MetadataCatalogAuditToolRankingItem = z.infer<
+	typeof metadataCatalogAuditToolRankingItem
+>;
+export type MetadataCatalogAuditToolRankingSummary = z.infer<
+	typeof metadataCatalogAuditToolRankingSummary
 >;
 export type MetadataCatalogAuditProbeItem = z.infer<typeof metadataCatalogAuditProbeItem>;
 export type MetadataCatalogAuditSummary = z.infer<typeof metadataCatalogAuditSummary>;

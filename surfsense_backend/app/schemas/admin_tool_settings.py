@@ -37,6 +37,8 @@ class ToolRetrievalTuning(BaseModel):
     example_query_weight: float = 2.0
     namespace_boost: float = 3.0
     embedding_weight: float = 4.0
+    semantic_embedding_weight: float = 2.8
+    structural_embedding_weight: float = 1.2
     rerank_candidates: int = 24
     retrieval_feedback_db_enabled: bool = False
 
@@ -651,6 +653,8 @@ class MetadataCatalogAuditLayerResult(BaseModel):
     predicted_label: str | None = None
     top1: str | None = None
     top2: str | None = None
+    expected_rank: int | None = None
+    expected_margin_vs_best_other: float | None = None
     margin: float | None = None
     score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -684,6 +688,10 @@ class MetadataCatalogAuditVectorRecallSummary(BaseModel):
 class MetadataCatalogAuditToolEmbeddingContext(BaseModel):
     enabled: bool = True
     context_fields: list[str] = Field(default_factory=list)
+    semantic_fields: list[str] = Field(default_factory=list)
+    structural_fields: list[str] = Field(default_factory=list)
+    semantic_weight: float | None = None
+    structural_weight: float | None = None
     description: str | None = None
 
 
@@ -700,6 +708,22 @@ class MetadataCatalogAuditProbeItem(BaseModel):
     tool_vector_diagnostics: MetadataCatalogAuditToolVectorDiagnostics = Field(
         default_factory=MetadataCatalogAuditToolVectorDiagnostics
     )
+
+
+class MetadataCatalogAuditToolRankingItem(BaseModel):
+    tool_id: str
+    probes: int = 0
+    top1_hits: int = 0
+    topk_hits: int = 0
+    top1_rate: float = 0.0
+    topk_rate: float = 0.0
+    avg_expected_rank: float | None = None
+    avg_margin_vs_best_other: float | None = None
+
+
+class MetadataCatalogAuditToolRankingSummary(BaseModel):
+    top_k: int = 5
+    tools: list[MetadataCatalogAuditToolRankingItem] = Field(default_factory=list)
 
 
 class MetadataCatalogAuditSummary(BaseModel):
@@ -723,6 +747,9 @@ class MetadataCatalogAuditSummary(BaseModel):
     )
     vector_recall_summary: MetadataCatalogAuditVectorRecallSummary = Field(
         default_factory=MetadataCatalogAuditVectorRecallSummary
+    )
+    tool_ranking_summary: MetadataCatalogAuditToolRankingSummary = Field(
+        default_factory=MetadataCatalogAuditToolRankingSummary
     )
     tool_embedding_context: MetadataCatalogAuditToolEmbeddingContext = Field(
         default_factory=MetadataCatalogAuditToolEmbeddingContext

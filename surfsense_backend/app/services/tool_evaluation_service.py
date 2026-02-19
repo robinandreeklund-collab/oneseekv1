@@ -3094,8 +3094,11 @@ async def suggest_retrieval_tuning(
         fallback_proposed["keyword_weight"] = min(
             25.0, fallback_proposed["keyword_weight"] + 0.8
         )
-        fallback_proposed["embedding_weight"] = min(
-            25.0, fallback_proposed["embedding_weight"] + 1.0
+        fallback_proposed["semantic_embedding_weight"] = min(
+            25.0, fallback_proposed.get("semantic_embedding_weight", 0.0) + 0.8
+        )
+        fallback_proposed["structural_embedding_weight"] = min(
+            25.0, fallback_proposed.get("structural_embedding_weight", 0.0) + 0.2
         )
         fallback_proposed["rerank_candidates"] = min(
             100, fallback_proposed["rerank_candidates"] + 8
@@ -3152,6 +3155,8 @@ async def suggest_retrieval_tuning(
         '  "example_query_weight": number,\n'
         '  "namespace_boost": number,\n'
         '  "embedding_weight": number,\n'
+        '  "semantic_embedding_weight": number,\n'
+        '  "structural_embedding_weight": number,\n'
         '  "rerank_candidates": integer,\n'
         '  "rationale": "kort motivering på svenska"\n'
         "}\n"

@@ -14,6 +14,8 @@ DEFAULT_TOOL_RETRIEVAL_TUNING: dict[str, Any] = {
     "example_query_weight": 2.0,
     "namespace_boost": 3.0,
     "embedding_weight": 4.0,
+    "semantic_embedding_weight": 2.8,
+    "structural_embedding_weight": 1.2,
     "rerank_candidates": 24,
     "retrieval_feedback_db_enabled": False,
 }
@@ -52,6 +54,43 @@ def _as_bool(value: Any, *, default: bool) -> bool:
 
 def normalize_tool_retrieval_tuning(payload: dict[str, Any] | None) -> dict[str, Any]:
     source = payload or {}
+    legacy_embedding_weight = _as_float(
+        source.get("embedding_weight"),
+        default=float(DEFAULT_TOOL_RETRIEVAL_TUNING["embedding_weight"]),
+        min_value=0.0,
+        max_value=25.0,
+    )
+    semantic_raw = source.get("semantic_embedding_weight")
+    structural_raw = source.get("structural_embedding_weight")
+    if semantic_raw is None and structural_raw is None:
+        semantic_embedding_weight = legacy_embedding_weight * 0.7
+        structural_embedding_weight = legacy_embedding_weight * 0.3
+    else:
+        semantic_embedding_weight = _as_float(
+            semantic_raw,
+            default=float(DEFAULT_TOOL_RETRIEVAL_TUNING["semantic_embedding_weight"]),
+            min_value=0.0,
+            max_value=25.0,
+        )
+        structural_embedding_weight = _as_float(
+            structural_raw,
+            default=float(DEFAULT_TOOL_RETRIEVAL_TUNING["structural_embedding_weight"]),
+            min_value=0.0,
+            max_value=25.0,
+        )
+        if source.get("embedding_weight") is not None:
+            current_total = semantic_embedding_weight + structural_embedding_weight
+            if current_total > 0:
+                scale = legacy_embedding_weight / current_total
+                semantic_embedding_weight *= scale
+                structural_embedding_weight *= scale
+            else:
+                semantic_embedding_weight = legacy_embedding_weight * 0.7
+                structural_embedding_weight = legacy_embedding_weight * 0.3
+    combined_embedding_weight = max(
+        0.0,
+        min(25.0, semantic_embedding_weight + structural_embedding_weight),
+    )
     return {
         "name_match_weight": _as_float(
             source.get("name_match_weight"),
@@ -83,12 +122,9 @@ def normalize_tool_retrieval_tuning(payload: dict[str, Any] | None) -> dict[str,
             min_value=0.0,
             max_value=10.0,
         ),
-        "embedding_weight": _as_float(
-            source.get("embedding_weight"),
-            default=float(DEFAULT_TOOL_RETRIEVAL_TUNING["embedding_weight"]),
-            min_value=0.0,
-            max_value=25.0,
-        ),
+        "embedding_weight": combined_embedding_weight,
+        "semantic_embedding_weight": semantic_embedding_weight,
+        "structural_embedding_weight": structural_embedding_weight,
         "rerank_candidates": _as_int(
             source.get("rerank_candidates"),
             default=int(DEFAULT_TOOL_RETRIEVAL_TUNING["rerank_candidates"]),

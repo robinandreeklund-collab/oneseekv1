@@ -11,6 +11,7 @@ import {
 	type IntentMetadataItem,
 	type IntentMetadataUpdateItem,
 	type MetadataCatalogAuditRunResponse,
+	type MetadataCatalogAuditToolRankingItem,
 	type MetadataCatalogAuditSuggestionResponse,
 	type ToolMetadataItem,
 	type ToolMetadataUpdateItem,
@@ -243,6 +244,8 @@ type AutoAuditRoundEntry = {
 	vectorTop1FromVector: number | null;
 	vectorExpectedInTopK: number | null;
 	totalProbes: number;
+	toolRankingTopK: number;
+	toolRankingRows: ToolRankingSnapshotItem[];
 	monitorScore: number;
 	step1TotalMs: number | null;
 	step1PreparationMs: number | null;
@@ -272,6 +275,29 @@ type AutoEvolutionRow = {
 	comment: string;
 };
 
+type ToolRankingSnapshotItem = {
+	toolId: string;
+	probes: number;
+	top1Rate: number;
+	topKRate: number;
+	avgExpectedRank: number | null;
+	avgMargin: number | null;
+};
+
+type AutoToolRankingStabilityRow = {
+	toolId: string;
+	probesOlder: number;
+	probesNewer: number;
+	rankShift: number | null;
+	marginOlder: number | null;
+	marginNewer: number | null;
+	top1Older: number | null;
+	top1Newer: number | null;
+	topKOlder: number | null;
+	topKNewer: number | null;
+	label: "stabilt" | "instabilt" | "overkansligt" | "omdistribuerat";
+};
+
 function normalizeRate(value: number | null | undefined): number | null {
 	if (typeof value !== "number" || Number.isNaN(value)) return null;
 	return Math.max(0, Math.min(1, value));
@@ -292,6 +318,34 @@ function formatDeltaPp(deltaPp: number | null): string {
 function formatMs(value: number | null | undefined): string {
 	if (typeof value !== "number" || Number.isNaN(value)) return "-";
 	return `${value.toFixed(0)} ms`;
+}
+
+function formatSigned(value: number | null | undefined, digits = 2): string {
+	if (typeof value !== "number" || Number.isNaN(value)) return "--";
+	const sign = value > 0 ? "+" : "";
+	return `${sign}${value.toFixed(digits)}`;
+}
+
+function toToolRankingSnapshotRows(
+	rows: MetadataCatalogAuditToolRankingItem[] | undefined
+): ToolRankingSnapshotItem[] {
+	return (rows ?? []).map((row) => ({
+		toolId: row.tool_id,
+		probes: Math.max(0, Number(row.probes ?? 0)),
+		top1Rate:
+			typeof row.top1_rate === "number" && !Number.isNaN(row.top1_rate) ? row.top1_rate : 0,
+		topKRate:
+			typeof row.topk_rate === "number" && !Number.isNaN(row.topk_rate) ? row.topk_rate : 0,
+		avgExpectedRank:
+			typeof row.avg_expected_rank === "number" && !Number.isNaN(row.avg_expected_rank)
+				? row.avg_expected_rank
+				: null,
+		avgMargin:
+			typeof row.avg_margin_vs_best_other === "number" &&
+			!Number.isNaN(row.avg_margin_vs_best_other)
+				? row.avg_margin_vs_best_other
+				: null,
+	}));
 }
 
 function summarizeDeltaComment(
@@ -791,6 +845,70 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			rows,
 		};
 	}, [autoRoundHistory]);
+	const autoToolRankingStability = useMemo(() => {
+		if (autoRoundHistory.length < 2) return null;
+		const olderRound = autoRoundHistory[autoRoundHistory.length - 2];
+		const newerRound = autoRoundHistory[autoRoundHistory.length - 1];
+		const olderByTool = new Map(olderRound.toolRankingRows.map((item) => [item.toolId, item]));
+		const newerByTool = new Map(newerRound.toolRankingRows.map((item) => [item.toolId, item]));
+		const toolIds = new Set<string>([...olderByTool.keys(), ...newerByTool.keys()]);
+		const rows: AutoToolRankingStabilityRow[] = [];
+		for (const toolId of toolIds) {
+			const older = olderByTool.get(toolId);
+			const newer = newerByTool.get(toolId);
+			const rankShift =
+				older?.avgExpectedRank != null && newer?.avgExpectedRank != null
+					? newer.avgExpectedRank - older.avgExpectedRank
+					: null;
+			const top1Older = older?.top1Rate ?? null;
+			const top1Newer = newer?.top1Rate ?? null;
+			const topKOlder = older?.topKRate ?? null;
+			const topKNewer = newer?.topKRate ?? null;
+			const top1Delta =
+				top1Older != null && top1Newer != null ? top1Newer - top1Older : null;
+			const topKDelta =
+				topKOlder != null && topKNewer != null ? topKNewer - topKOlder : null;
+			const absShift = rankShift != null ? Math.abs(rankShift) : 0;
+			let label: AutoToolRankingStabilityRow["label"] = "stabilt";
+			if (rankShift != null && absShift >= 1.25 && (newer?.avgMargin ?? 0) < 0.15) {
+				label = "overkansligt";
+			} else if (rankShift != null && absShift >= 0.75) {
+				label = "instabilt";
+			} else if (
+				top1Delta != null &&
+				topKDelta != null &&
+				top1Delta < -0.08 &&
+				topKDelta > -0.02
+			) {
+				label = "omdistribuerat";
+			}
+			rows.push({
+				toolId,
+				probesOlder: older?.probes ?? 0,
+				probesNewer: newer?.probes ?? 0,
+				rankShift,
+				marginOlder: older?.avgMargin ?? null,
+				marginNewer: newer?.avgMargin ?? null,
+				top1Older,
+				top1Newer,
+				topKOlder,
+				topKNewer,
+				label,
+			});
+		}
+		rows.sort((left, right) => {
+			const shiftLeft = Math.abs(left.rankShift ?? 0);
+			const shiftRight = Math.abs(right.rankShift ?? 0);
+			if (shiftRight !== shiftLeft) return shiftRight - shiftLeft;
+			return right.probesNewer - left.probesNewer;
+		});
+		return {
+			olderRound: olderRound.round,
+			newerRound: newerRound.round,
+			topK: Math.max(olderRound.toolRankingTopK, newerRound.toolRankingTopK, 1),
+			rows,
+		};
+	}, [autoRoundHistory]);
 
 	const onToolChange = (toolId: string, updates: Partial<ToolMetadataUpdateItem>) => {
 		setDraftTools((previous) => {
@@ -1247,6 +1365,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					previousMonitor != null && monitorScore < previousMonitor - dropThreshold;
 				previousMonitor = monitorScore;
 				const vectorSummary = result.summary.vector_recall_summary;
+				const rankingSummary = result.summary.tool_ranking_summary;
 				const step1Diagnostics = result.diagnostics ?? null;
 				const totalProbes = Math.max(0, Number(result.summary.total_probes || 0));
 
@@ -1271,6 +1390,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							? vectorSummary.share_expected_tool_in_vector_top_k
 							: null,
 					totalProbes,
+					toolRankingTopK: Math.max(1, Number(rankingSummary?.top_k ?? 5)),
+					toolRankingRows: toToolRankingSnapshotRows(rankingSummary?.tools),
 					monitorScore,
 					step1TotalMs: step1Diagnostics?.total_ms ?? null,
 					step1PreparationMs: step1Diagnostics?.preparation_ms ?? null,
@@ -2067,6 +2188,65 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								</div>
 							</div>
 						) : null}
+						{autoToolRankingStability ? (
+							<div className="rounded border">
+								<div className="border-b bg-muted/30 px-3 py-2">
+									<p className="text-sm font-medium">Ranking stability per tool</p>
+									<p className="text-xs text-muted-foreground">
+										Jämför runda {autoToolRankingStability.olderRound} mot{" "}
+										{autoToolRankingStability.newerRound} (top-
+										{autoToolRankingStability.topK}).
+									</p>
+								</div>
+								<div className="overflow-x-auto">
+									<table className="min-w-full text-xs">
+										<thead className="bg-muted/20 text-left">
+											<tr>
+												<th className="px-3 py-2 font-medium">Tool</th>
+												<th className="px-3 py-2 font-medium">Rank-shift</th>
+												<th className="px-3 py-2 font-medium">Margin (old→new)</th>
+												<th className="px-3 py-2 font-medium">Top-1 (old→new)</th>
+												<th className="px-3 py-2 font-medium">Top-K (old→new)</th>
+												<th className="px-3 py-2 font-medium">Status</th>
+											</tr>
+										</thead>
+										<tbody>
+											{autoToolRankingStability.rows.slice(0, 24).map((row) => (
+												<tr key={`stability-${row.toolId}`} className="border-t">
+													<td className="px-3 py-2 font-mono">{row.toolId}</td>
+													<td className="px-3 py-2">
+														{formatSigned(row.rankShift, 2)}
+													</td>
+													<td className="px-3 py-2">
+														{formatSigned(row.marginOlder, 2)} →{" "}
+														{formatSigned(row.marginNewer, 2)}
+													</td>
+													<td className="px-3 py-2">
+														{formatRate(row.top1Older)} → {formatRate(row.top1Newer)}
+													</td>
+													<td className="px-3 py-2">
+														{formatRate(row.topKOlder)} → {formatRate(row.topKNewer)}
+													</td>
+													<td className="px-3 py-2">
+														<Badge
+															variant={
+																row.label === "stabilt"
+																	? "outline"
+																	: row.label === "omdistribuerat"
+																		? "secondary"
+																		: "destructive"
+															}
+														>
+															{row.label}
+														</Badge>
+													</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+							</div>
+						) : null}
 					</div>
 
 					{auditResult ? (
@@ -2191,11 +2371,83 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									<Badge variant="secondary">
 										Vector recall top-k: {auditResult.summary.vector_recall_summary.top_k}
 									</Badge>
+									<Badge variant="secondary">
+										Semantic/Structural vikt:{" "}
+										{auditResult.summary.tool_embedding_context.semantic_weight?.toFixed(2) ??
+											"--"}
+										/
+										{auditResult.summary.tool_embedding_context.structural_weight?.toFixed(
+											2
+										) ?? "--"}
+									</Badge>
 									{auditResult.summary.tool_embedding_context.context_fields.map((field) => (
 										<Badge key={`embedding-context-${field}`} variant="outline">
 											{field}
 										</Badge>
 									))}
+								</div>
+								<div className="flex flex-wrap gap-2">
+									{auditResult.summary.tool_embedding_context.semantic_fields.map((field) => (
+										<Badge key={`embedding-semantic-${field}`} variant="secondary">
+											semantic:{field}
+										</Badge>
+									))}
+									{auditResult.summary.tool_embedding_context.structural_fields.map((field) => (
+										<Badge key={`embedding-structural-${field}`} variant="outline">
+											structural:{field}
+										</Badge>
+									))}
+								</div>
+							</div>
+							<div className="rounded border p-3 space-y-2">
+								<p className="text-sm font-medium">Ranking stability (aktuell audit)</p>
+								<p className="text-xs text-muted-foreground">
+									Per tool: top-1/top-k träff, genomsnittlig expected-rank och margin mot
+									närmaste konkurrent.
+								</p>
+								<div className="overflow-x-auto">
+									<table className="min-w-full text-xs">
+										<thead className="bg-muted/20 text-left">
+											<tr>
+												<th className="px-3 py-2 font-medium">Tool</th>
+												<th className="px-3 py-2 font-medium">Probes</th>
+												<th className="px-3 py-2 font-medium">Top-1</th>
+												<th className="px-3 py-2 font-medium">
+													Top-{auditResult.summary.tool_ranking_summary.top_k}
+												</th>
+												<th className="px-3 py-2 font-medium">Avg expected-rank</th>
+												<th className="px-3 py-2 font-medium">Avg margin</th>
+											</tr>
+										</thead>
+										<tbody>
+											{auditResult.summary.tool_ranking_summary.tools
+												.slice()
+												.sort((left, right) => {
+													const probesDiff = (right.probes ?? 0) - (left.probes ?? 0);
+													if (probesDiff !== 0) return probesDiff;
+													return left.tool_id.localeCompare(right.tool_id, "sv");
+												})
+												.slice(0, 32)
+												.map((row) => (
+													<tr key={`tool-ranking-${row.tool_id}`} className="border-t">
+														<td className="px-3 py-2 font-mono">{row.tool_id}</td>
+														<td className="px-3 py-2">{row.probes}</td>
+														<td className="px-3 py-2">{formatRate(row.top1_rate ?? 0)}</td>
+														<td className="px-3 py-2">{formatRate(row.topk_rate ?? 0)}</td>
+														<td className="px-3 py-2">
+															{row.avg_expected_rank != null
+																? row.avg_expected_rank.toFixed(2)
+																: "--"}
+														</td>
+														<td className="px-3 py-2">
+															{row.avg_margin_vs_best_other != null
+																? row.avg_margin_vs_best_other.toFixed(2)
+																: "--"}
+														</td>
+													</tr>
+												))}
+										</tbody>
+									</table>
 								</div>
 							</div>
 							<div className="rounded border p-3 space-y-2">

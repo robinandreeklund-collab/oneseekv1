@@ -55,6 +55,8 @@ class ToolIndexEntry:
     example_queries: list[str]
     category: str
     embedding: list[float] | None = None
+    semantic_embedding: list[float] | None = None
+    structural_embedding: list[float] | None = None
     base_path: str | None = None
 
 
@@ -430,20 +432,28 @@ class ToolRetrievalTuning:
     example_query_weight: float = 2.0
     namespace_boost: float = 3.0
     embedding_weight: float = 4.0
+    semantic_embedding_weight: float = 2.8
+    structural_embedding_weight: float = 1.2
     rerank_candidates: int = 24
     retrieval_feedback_db_enabled: bool = False
 
 
 DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
-_TOOL_EMBED_CACHE: dict[str, tuple[str, list[float]]] = {}
+_TOOL_EMBED_CACHE: dict[tuple[str, str], tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
 _VECTOR_RECALL_TOP_K = 5
-_TOOL_AWARE_EMBEDDING_CONTEXT_FIELDS: tuple[str, ...] = (
+_TOOL_AWARE_SEMANTIC_EMBEDDING_CONTEXT_FIELDS: tuple[str, ...] = (
     "name_description_keywords_examples",
+)
+_TOOL_AWARE_STRUCTURAL_EMBEDDING_CONTEXT_FIELDS: tuple[str, ...] = (
     "required_input_fields",
     "input_field_types",
     "example_input_json",
     "expected_output_hint",
+)
+_TOOL_AWARE_EMBEDDING_CONTEXT_FIELDS: tuple[str, ...] = (
+    *_TOOL_AWARE_SEMANTIC_EMBEDDING_CONTEXT_FIELDS,
+    *_TOOL_AWARE_STRUCTURAL_EMBEDDING_CONTEXT_FIELDS,
 )
 
 
@@ -453,6 +463,13 @@ def get_vector_recall_top_k() -> int:
 
 def get_tool_embedding_context_fields() -> list[str]:
     return list(_TOOL_AWARE_EMBEDDING_CONTEXT_FIELDS)
+
+
+def get_tool_embedding_context_split_fields() -> dict[str, list[str]]:
+    return {
+        "semantic": list(_TOOL_AWARE_SEMANTIC_EMBEDDING_CONTEXT_FIELDS),
+        "structural": list(_TOOL_AWARE_STRUCTURAL_EMBEDDING_CONTEXT_FIELDS),
+    }
 
 
 def _normalize_text(text: str) -> str:
@@ -809,6 +826,43 @@ def normalize_retrieval_tuning(
     if isinstance(tuning, ToolRetrievalTuning):
         return tuning
     payload = tuning or {}
+    legacy_embedding_weight = _bounded_float(
+        payload.get("embedding_weight"),
+        default=DEFAULT_TOOL_RETRIEVAL_TUNING.embedding_weight,
+        min_value=0.0,
+        max_value=25.0,
+    )
+    semantic_raw = payload.get("semantic_embedding_weight")
+    structural_raw = payload.get("structural_embedding_weight")
+    if semantic_raw is None and structural_raw is None:
+        semantic_embedding_weight = legacy_embedding_weight * 0.7
+        structural_embedding_weight = legacy_embedding_weight * 0.3
+    else:
+        semantic_embedding_weight = _bounded_float(
+            semantic_raw,
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.semantic_embedding_weight,
+            min_value=0.0,
+            max_value=25.0,
+        )
+        structural_embedding_weight = _bounded_float(
+            structural_raw,
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.structural_embedding_weight,
+            min_value=0.0,
+            max_value=25.0,
+        )
+        if payload.get("embedding_weight") is not None:
+            current_total = semantic_embedding_weight + structural_embedding_weight
+            if current_total > 0:
+                scale = legacy_embedding_weight / current_total
+                semantic_embedding_weight *= scale
+                structural_embedding_weight *= scale
+            else:
+                semantic_embedding_weight = legacy_embedding_weight * 0.7
+                structural_embedding_weight = legacy_embedding_weight * 0.3
+    combined_embedding_weight = max(
+        0.0,
+        min(25.0, semantic_embedding_weight + structural_embedding_weight),
+    )
     return ToolRetrievalTuning(
         name_match_weight=_bounded_float(
             payload.get("name_match_weight"),
@@ -840,12 +894,9 @@ def normalize_retrieval_tuning(
             min_value=0.0,
             max_value=10.0,
         ),
-        embedding_weight=_bounded_float(
-            payload.get("embedding_weight"),
-            default=DEFAULT_TOOL_RETRIEVAL_TUNING.embedding_weight,
-            min_value=0.0,
-            max_value=25.0,
-        ),
+        embedding_weight=combined_embedding_weight,
+        semantic_embedding_weight=semantic_embedding_weight,
+        structural_embedding_weight=structural_embedding_weight,
         rerank_candidates=_bounded_int(
             payload.get("rerank_candidates"),
             default=DEFAULT_TOOL_RETRIEVAL_TUNING.rerank_candidates,
@@ -1009,16 +1060,16 @@ def _tool_aware_output_hint(entry: ToolIndexEntry) -> str:
     return "Structured result relevant to requested tool operation."
 
 
-def _build_tool_embedding_text(
+def _build_tool_semantic_embedding_text(entry: ToolIndexEntry) -> str:
+    return _build_rerank_text(entry)
+
+
+def _build_tool_structural_embedding_text(
     entry: ToolIndexEntry,
     *,
     tool_schema: dict[str, Any],
 ) -> str:
     parts: list[str] = []
-    base_text = _build_rerank_text(entry)
-    if base_text:
-        parts.append(base_text)
-
     properties = tool_schema.get("properties")
     required = tool_schema.get("required")
     if isinstance(required, list) and required:
@@ -1063,6 +1114,19 @@ def _build_tool_embedding_text(
     return "\n".join(part for part in parts if part)
 
 
+def _build_tool_embedding_text(
+    entry: ToolIndexEntry,
+    *,
+    tool_schema: dict[str, Any],
+) -> str:
+    semantic_text = _build_tool_semantic_embedding_text(entry)
+    structural_text = _build_tool_structural_embedding_text(
+        entry,
+        tool_schema=tool_schema,
+    )
+    return "\n".join(part for part in [semantic_text, structural_text] if part)
+
+
 def _normalize_vector(vector: Any) -> list[float] | None:
     if vector is None:
         return None
@@ -1074,12 +1138,18 @@ def _normalize_vector(vector: Any) -> list[float] | None:
         return None
 
 
-def _get_embedding_for_tool(tool_id: str, text: str) -> list[float] | None:
+def _get_embedding_for_tool(
+    tool_id: str,
+    text: str,
+    *,
+    vector_kind: str = "semantic",
+) -> list[float] | None:
     if not text:
         return None
     text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    if not is_cache_disabled() and tool_id in _TOOL_EMBED_CACHE:
-        cached_text_hash, cached_embedding = _TOOL_EMBED_CACHE[tool_id]
+    cache_key = (tool_id, vector_kind)
+    if not is_cache_disabled() and cache_key in _TOOL_EMBED_CACHE:
+        cached_text_hash, cached_embedding = _TOOL_EMBED_CACHE[cache_key]
         if cached_text_hash == text_hash:
             return cached_embedding
     try:
@@ -1094,7 +1164,7 @@ def _get_embedding_for_tool(tool_id: str, text: str) -> list[float] | None:
     if normalized is None:
         return None
     if not is_cache_disabled():
-        _TOOL_EMBED_CACHE[tool_id] = (text_hash, normalized)
+        _TOOL_EMBED_CACHE[cache_key] = (text_hash, normalized)
     return normalized
 
 
@@ -1236,9 +1306,18 @@ def _run_smart_retrieval(
             normalized_tuning,
         )
         semantic_score = 0.0
-        if query_embedding and entry.embedding:
-            semantic_score = _cosine_similarity(query_embedding, entry.embedding)
-        embedding_weighted = semantic_score * normalized_tuning.embedding_weight
+        structural_score = 0.0
+        semantic_embedding = entry.semantic_embedding or entry.embedding
+        structural_embedding = entry.structural_embedding
+        if query_embedding and semantic_embedding:
+            semantic_score = _cosine_similarity(query_embedding, semantic_embedding)
+        if query_embedding and structural_embedding:
+            structural_score = _cosine_similarity(query_embedding, structural_embedding)
+        semantic_weighted = semantic_score * normalized_tuning.semantic_embedding_weight
+        structural_weighted = (
+            structural_score * normalized_tuning.structural_embedding_weight
+        )
+        embedding_weighted = semantic_weighted + structural_weighted
         is_primary = any(
             _match_namespace(entry.namespace, prefix) for prefix in primary_namespaces
         )
@@ -1265,8 +1344,12 @@ def _run_smart_retrieval(
             "description_hits": breakdown["description_hits"],
             "example_hits": breakdown["example_hits"],
             "lexical_score": float(breakdown["lexical_score"]),
-            "embedding_score_raw": float(semantic_score),
+            "embedding_score_raw": float(semantic_score + structural_score),
             "embedding_score_weighted": float(embedding_weighted),
+            "semantic_embedding_score_raw": float(semantic_score),
+            "semantic_embedding_score_weighted": float(semantic_weighted),
+            "structural_embedding_score_raw": float(structural_score),
+            "structural_embedding_score_weighted": float(structural_weighted),
             "namespace_bonus": float(namespace_bonus),
             "retrieval_feedback_boost": float(retrieval_feedback_boost),
             "pre_rerank_score": float(pre_rerank_score),
@@ -1278,10 +1361,10 @@ def _run_smart_retrieval(
         }
         if is_primary:
             primary_scored.append((entry.tool_id, pre_rerank_score))
-            primary_vector_scored.append((entry.tool_id, float(semantic_score)))
+            primary_vector_scored.append((entry.tool_id, float(embedding_weighted)))
         elif is_fallback:
             fallback_scored.append((entry.tool_id, pre_rerank_score))
-            fallback_vector_scored.append((entry.tool_id, float(semantic_score)))
+            fallback_vector_scored.append((entry.tool_id, float(embedding_weighted)))
 
     primary_scored.sort(key=lambda item: item[1], reverse=True)
     fallback_scored.sort(key=lambda item: item[1], reverse=True)
@@ -1379,6 +1462,18 @@ def _run_smart_retrieval(
                 "embedding_score_raw": float(breakdown.get("embedding_score_raw", 0.0)),
                 "embedding_score_weighted": float(
                     breakdown.get("embedding_score_weighted", 0.0)
+                ),
+                "semantic_embedding_score_raw": float(
+                    breakdown.get("semantic_embedding_score_raw", 0.0)
+                ),
+                "semantic_embedding_score_weighted": float(
+                    breakdown.get("semantic_embedding_score_weighted", 0.0)
+                ),
+                "structural_embedding_score_raw": float(
+                    breakdown.get("structural_embedding_score_raw", 0.0)
+                ),
+                "structural_embedding_score_weighted": float(
+                    breakdown.get("structural_embedding_score_weighted", 0.0)
                 ),
                 "namespace_bonus": float(breakdown.get("namespace_bonus", 0.0)),
                 "retrieval_feedback_boost": float(
@@ -1717,11 +1812,22 @@ def build_tool_index(
             category=category,
         )
         tool_schema = _tool_input_schema(tool)
-        embedding_text = _build_tool_embedding_text(
+        semantic_embedding_text = _build_tool_semantic_embedding_text(entry)
+        structural_embedding_text = _build_tool_structural_embedding_text(
             entry,
             tool_schema=tool_schema,
         )
-        embedding = _get_embedding_for_tool(tool_id, embedding_text)
+        semantic_embedding = _get_embedding_for_tool(
+            tool_id,
+            semantic_embedding_text,
+            vector_kind="semantic",
+        )
+        structural_embedding = _get_embedding_for_tool(
+            tool_id,
+            structural_embedding_text,
+            vector_kind="structural",
+        )
+        embedding = semantic_embedding or structural_embedding
         entries.append(
             ToolIndexEntry(
                 tool_id=entry.tool_id,
@@ -1732,6 +1838,8 @@ def build_tool_index(
                 example_queries=entry.example_queries,
                 category=entry.category,
                 embedding=embedding,
+                semantic_embedding=semantic_embedding,
+                structural_embedding=structural_embedding,
                 base_path=base_path,
             )
         )
