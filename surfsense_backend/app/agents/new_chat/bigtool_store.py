@@ -436,12 +436,32 @@ class ToolRetrievalTuning:
     structural_embedding_weight: float = 1.2
     rerank_candidates: int = 24
     retrieval_feedback_db_enabled: bool = False
+    live_routing_enabled: bool = False
+    live_routing_phase: str = "shadow"
+    intent_candidate_top_k: int = 3
+    agent_candidate_top_k: int = 3
+    tool_candidate_top_k: int = 5
+    intent_lexical_weight: float = 1.0
+    intent_embedding_weight: float = 1.0
+    agent_auto_margin_threshold: float = 0.18
+    agent_auto_score_threshold: float = 0.55
+    tool_auto_margin_threshold: float = 0.25
+    tool_auto_score_threshold: float = 0.60
+    adaptive_threshold_delta: float = 0.08
+    adaptive_min_samples: int = 8
 
 
 DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
 _TOOL_EMBED_CACHE: dict[tuple[str, str], tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
 _VECTOR_RECALL_TOP_K = 5
+_LIVE_ROUTING_PHASES = {
+    "shadow",
+    "tool_gate",
+    "agent_auto",
+    "adaptive",
+    "intent_finetune",
+}
 _TOOL_AWARE_SEMANTIC_EMBEDDING_CONTEXT_FIELDS: tuple[str, ...] = (
     "name_description_keywords_examples",
 )
@@ -863,6 +883,9 @@ def normalize_retrieval_tuning(
         0.0,
         min(25.0, semantic_embedding_weight + structural_embedding_weight),
     )
+    phase_raw = str(payload.get("live_routing_phase") or "").strip().lower()
+    if phase_raw not in _LIVE_ROUTING_PHASES:
+        phase_raw = DEFAULT_TOOL_RETRIEVAL_TUNING.live_routing_phase
     return ToolRetrievalTuning(
         name_match_weight=_bounded_float(
             payload.get("name_match_weight"),
@@ -906,6 +929,77 @@ def normalize_retrieval_tuning(
         retrieval_feedback_db_enabled=_coerce_bool(
             payload.get("retrieval_feedback_db_enabled"),
             default=DEFAULT_TOOL_RETRIEVAL_TUNING.retrieval_feedback_db_enabled,
+        ),
+        live_routing_enabled=_coerce_bool(
+            payload.get("live_routing_enabled"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.live_routing_enabled,
+        ),
+        live_routing_phase=phase_raw,
+        intent_candidate_top_k=_bounded_int(
+            payload.get("intent_candidate_top_k"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.intent_candidate_top_k,
+            min_value=2,
+            max_value=8,
+        ),
+        agent_candidate_top_k=_bounded_int(
+            payload.get("agent_candidate_top_k"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.agent_candidate_top_k,
+            min_value=2,
+            max_value=8,
+        ),
+        tool_candidate_top_k=_bounded_int(
+            payload.get("tool_candidate_top_k"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.tool_candidate_top_k,
+            min_value=2,
+            max_value=10,
+        ),
+        intent_lexical_weight=_bounded_float(
+            payload.get("intent_lexical_weight"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.intent_lexical_weight,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        intent_embedding_weight=_bounded_float(
+            payload.get("intent_embedding_weight"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.intent_embedding_weight,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        agent_auto_margin_threshold=_bounded_float(
+            payload.get("agent_auto_margin_threshold"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.agent_auto_margin_threshold,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        agent_auto_score_threshold=_bounded_float(
+            payload.get("agent_auto_score_threshold"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.agent_auto_score_threshold,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        tool_auto_margin_threshold=_bounded_float(
+            payload.get("tool_auto_margin_threshold"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.tool_auto_margin_threshold,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        tool_auto_score_threshold=_bounded_float(
+            payload.get("tool_auto_score_threshold"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.tool_auto_score_threshold,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        adaptive_threshold_delta=_bounded_float(
+            payload.get("adaptive_threshold_delta"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.adaptive_threshold_delta,
+            min_value=0.0,
+            max_value=1.0,
+        ),
+        adaptive_min_samples=_bounded_int(
+            payload.get("adaptive_min_samples"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.adaptive_min_samples,
+            min_value=1,
+            max_value=1000,
         ),
     )
 

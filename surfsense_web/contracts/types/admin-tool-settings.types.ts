@@ -38,6 +38,22 @@ export const toolRetrievalTuning = z.object({
 	structural_embedding_weight: z.number().optional().default(1.2),
 	rerank_candidates: z.number().int(),
 	retrieval_feedback_db_enabled: z.boolean().optional().default(false),
+	live_routing_enabled: z.boolean().optional().default(false),
+	live_routing_phase: z
+		.enum(["shadow", "tool_gate", "agent_auto", "adaptive", "intent_finetune"])
+		.optional()
+		.default("shadow"),
+	intent_candidate_top_k: z.number().int().optional().default(3),
+	agent_candidate_top_k: z.number().int().optional().default(3),
+	tool_candidate_top_k: z.number().int().optional().default(5),
+	intent_lexical_weight: z.number().optional().default(1),
+	intent_embedding_weight: z.number().optional().default(1),
+	agent_auto_margin_threshold: z.number().optional().default(0.18),
+	agent_auto_score_threshold: z.number().optional().default(0.55),
+	tool_auto_margin_threshold: z.number().optional().default(0.25),
+	tool_auto_score_threshold: z.number().optional().default(0.6),
+	adaptive_threshold_delta: z.number().optional().default(0.08),
+	adaptive_min_samples: z.number().int().optional().default(8),
 });
 
 export const toolRetrievalTuningResponse = z.object({

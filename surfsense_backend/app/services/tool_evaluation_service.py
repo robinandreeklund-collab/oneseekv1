@@ -3157,6 +3157,19 @@ async def suggest_retrieval_tuning(
         '  "embedding_weight": number,\n'
         '  "semantic_embedding_weight": number,\n'
         '  "structural_embedding_weight": number,\n'
+        '  "live_routing_enabled": true,\n'
+        '  "live_routing_phase": "shadow|tool_gate|agent_auto|adaptive|intent_finetune",\n'
+        '  "intent_candidate_top_k": integer,\n'
+        '  "agent_candidate_top_k": integer,\n'
+        '  "tool_candidate_top_k": integer,\n'
+        '  "intent_lexical_weight": number,\n'
+        '  "intent_embedding_weight": number,\n'
+        '  "agent_auto_margin_threshold": number,\n'
+        '  "agent_auto_score_threshold": number,\n'
+        '  "tool_auto_margin_threshold": number,\n'
+        '  "tool_auto_score_threshold": number,\n'
+        '  "adaptive_threshold_delta": number,\n'
+        '  "adaptive_min_samples": integer,\n'
         '  "rerank_candidates": integer,\n'
         '  "rationale": "kort motivering på svenska"\n'
         "}\n"
@@ -3178,7 +3191,9 @@ async def suggest_retrieval_tuning(
         parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
         if not parsed:
             raise ValueError("No JSON tuning proposal returned")
-        proposed = normalize_retrieval_tuning(parsed).__dict__
+        merged_payload = dict(normalized_current.__dict__)
+        merged_payload.update(parsed)
+        proposed = normalize_retrieval_tuning(merged_payload).__dict__
         if proposed == normalized_current.__dict__:
             return None
         rationale = _prefer_swedish_text(

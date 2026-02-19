@@ -41,6 +41,19 @@ class ToolRetrievalTuning(BaseModel):
     structural_embedding_weight: float = 1.2
     rerank_candidates: int = 24
     retrieval_feedback_db_enabled: bool = False
+    live_routing_enabled: bool = False
+    live_routing_phase: str = "shadow"
+    intent_candidate_top_k: int = 3
+    agent_candidate_top_k: int = 3
+    tool_candidate_top_k: int = 5
+    intent_lexical_weight: float = 1.0
+    intent_embedding_weight: float = 1.0
+    agent_auto_margin_threshold: float = 0.18
+    agent_auto_score_threshold: float = 0.55
+    tool_auto_margin_threshold: float = 0.25
+    tool_auto_score_threshold: float = 0.60
+    adaptive_threshold_delta: float = 0.08
+    adaptive_min_samples: int = 8
 
 
 class ToolLatestEvaluationSummary(BaseModel):
