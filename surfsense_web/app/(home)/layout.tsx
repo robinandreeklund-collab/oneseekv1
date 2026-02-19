@@ -9,10 +9,10 @@ export default function HomePageLayout({ children }: { children: React.ReactNode
 	const isAuthPage = pathname === "/login" || pathname === "/register";
 
 	return (
-		<main className="min-h-screen bg-linear-to-b from-gray-50 to-gray-100 text-gray-900 dark:from-black dark:to-gray-900 dark:text-white overflow-x-hidden">
+		<div className="min-h-screen bg-white text-gray-900 dark:bg-neutral-950 dark:text-white overflow-x-hidden">
 			<Navbar />
 			{children}
 			{!isAuthPage && <FooterNew />}
-		</main>
+		</div>
 	);
 }

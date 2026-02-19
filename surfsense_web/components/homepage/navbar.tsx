@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { SignInButton } from "@/components/auth/sign-in-button";
-import { Logo } from "@/components/Logo";
+import { LogoImage } from "@/components/Logo";
 import { ThemeTogglerComponent } from "@/components/theme/theme-toggle";
 import { useGithubStars } from "@/hooks/use-github-stars";
 import { cn } from "@/lib/utils";
@@ -66,7 +66,7 @@ const DesktopNav = ({ navItems, isScrolled }: any) => {
 				href="/"
 				className="flex flex-1 flex-row items-center gap-0.5 hover:opacity-80 transition-opacity"
 			>
-				<Logo className="h-8 w-8 rounded-md" />
+				<LogoImage className="h-8 w-8 rounded-md" />
 				<span className="dark:text-white/90 text-gray-800 text-lg font-bold">Oneseek</span>
 			</Link>
 			<div className="hidden flex-1 flex-row items-center justify-center space-x-2 text-sm font-medium text-zinc-600 transition duration-200 hover:text-zinc-800 lg:flex lg:space-x-2">
@@ -148,7 +148,7 @@ const MobileNav = ({ navItems, isScrolled }: any) => {
 					href="/"
 					className="flex flex-row items-center gap-2 hover:opacity-80 transition-opacity"
 				>
-					<Logo className="h-8 w-8 rounded-md" />
+					<LogoImage className="h-8 w-8 rounded-md" />
 					<span className="dark:text-white/90 text-gray-800 text-lg font-bold">Oneseek</span>
 				</Link>
 				<button

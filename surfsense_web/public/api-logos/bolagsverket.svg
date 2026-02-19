@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" fill="none">
+  <rect width="200" height="100" fill="#006341"/>
+  <text x="100" y="40" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="white" text-anchor="middle">Bolagsverket</text>
+  <text x="100" y="65" font-family="Arial, sans-serif" font-size="10" fill="white" text-anchor="middle" opacity="0.9">Swedish Companies Registration Office</text>
+</svg>
