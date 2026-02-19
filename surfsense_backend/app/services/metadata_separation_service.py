@@ -95,6 +95,13 @@ def _safe_string_list(values: Any) -> list[str]:
     return output
 
 
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
 def _tokenize(value: str) -> list[str]:
     return [
         token.lower()
@@ -291,6 +298,49 @@ def _build_anchor_probe_set(probes: list[dict[str, Any]]) -> list[dict[str, Any]
         seen.add(key)
         output.append({"tool_id": tool_id, "query": query, "source": "anchor"})
     return output
+
+
+def _tool_metadata_payload_with_id(payload: dict[str, Any], *, tool_id: str) -> dict[str, Any]:
+    return {
+        "tool_id": _normalize_text(payload.get("tool_id")) or _normalize_text(tool_id),
+        "name": _normalize_text(payload.get("name")),
+        "description": _normalize_text(payload.get("description")),
+        "keywords": _safe_string_list(payload.get("keywords")),
+        "example_queries": _safe_string_list(payload.get("example_queries")),
+        "category": _normalize_text(payload.get("category")),
+        "base_path": (
+            _normalize_text(payload.get("base_path")) or None
+            if payload.get("base_path") is not None
+            else None
+        ),
+    }
+
+
+def _intent_metadata_payload_with_id(
+    payload: dict[str, Any], *, intent_id: str
+) -> dict[str, Any]:
+    return {
+        "intent_id": _normalize_text(payload.get("intent_id")) or _normalize_text(intent_id),
+        "label": _normalize_text(payload.get("label")),
+        "route": _normalize_text(payload.get("route")) or "knowledge",
+        "description": _normalize_text(payload.get("description")),
+        "keywords": _safe_string_list(payload.get("keywords")),
+        "priority": int(payload.get("priority") or 500),
+        "enabled": bool(payload.get("enabled", True)),
+    }
+
+
+def _agent_metadata_payload_with_id(
+    payload: dict[str, Any], *, agent_id: str
+) -> dict[str, Any]:
+    return {
+        "agent_id": _normalize_text(payload.get("agent_id")) or _normalize_text(agent_id),
+        "label": _normalize_text(payload.get("label")),
+        "description": _normalize_text(payload.get("description")),
+        "keywords": _safe_string_list(payload.get("keywords")),
+        "prompt_key": _normalize_text(payload.get("prompt_key")) or None,
+        "namespace": _safe_string_list(payload.get("namespace")),
+    }
 
 
 def _normalize_layer_config(raw: dict[str, Any] | None) -> _LayerConfig:
@@ -1968,4 +2018,319 @@ async def run_bottom_up_metadata_separation(
             "anchor_probe_count": int(len(baseline_anchor)),
         },
         "final_tool_index": current_tool_index,
+    }
+
+
+_LOCK_LAYER_SET = {"intent", "agent", "tool"}
+
+
+def _lock_pair_key(layer: str, item_a: str, item_b: str) -> tuple[str, str, str]:
+    left = _normalized_key(item_a)
+    right = _normalized_key(item_b)
+    if left <= right:
+        return (_normalized_key(layer), left, right)
+    return (_normalized_key(layer), right, left)
+
+
+def normalize_metadata_separation_lock_registry(payload: Any) -> dict[str, Any]:
+    raw = payload if isinstance(payload, dict) else {}
+    raw_locks = raw.get("pair_locks")
+    normalized_locks: list[dict[str, Any]] = []
+    if isinstance(raw_locks, list):
+        for item in raw_locks:
+            if not isinstance(item, dict):
+                continue
+            layer = _normalized_key(item.get("layer"))
+            item_a = _normalized_key(item.get("item_a"))
+            item_b = _normalized_key(item.get("item_b"))
+            if layer not in _LOCK_LAYER_SET or not item_a or not item_b or item_a == item_b:
+                continue
+            _, left, right = _lock_pair_key(layer, item_a, item_b)
+            max_similarity = max(-1.0, min(1.0, _as_float(item.get("max_similarity"), 0.9)))
+            normalized_locks.append(
+                {
+                    "layer": layer,
+                    "item_a": left,
+                    "item_b": right,
+                    "max_similarity": float(max_similarity),
+                    "source": _normalize_text(item.get("source")) or "bsss",
+                    "updated_at": _normalize_text(item.get("updated_at")) or None,
+                }
+            )
+    deduped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for lock in normalized_locks:
+        key = _lock_pair_key(lock["layer"], lock["item_a"], lock["item_b"])
+        existing = deduped.get(key)
+        if not existing:
+            deduped[key] = lock
+            continue
+        # Keep the strictest ceiling when duplicates exist.
+        existing["max_similarity"] = float(
+            min(_as_float(existing.get("max_similarity"), 1.0), _as_float(lock.get("max_similarity"), 1.0))
+        )
+        if lock.get("updated_at"):
+            existing["updated_at"] = lock["updated_at"]
+        if lock.get("source"):
+            existing["source"] = lock["source"]
+    return {
+        "lock_mode_enabled": bool(raw.get("lock_mode_enabled", True)),
+        "updated_at": _normalize_text(raw.get("updated_at")) or None,
+        "pair_locks": list(deduped.values()),
+    }
+
+
+def build_metadata_separation_pair_locks_from_stage_reports(
+    *,
+    stage_reports: list[dict[str, Any]],
+    epsilon: float = 0.015,
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for stage in stage_reports or []:
+        if not isinstance(stage, dict):
+            continue
+        layer = _normalized_key(stage.get("layer"))
+        if layer not in _LOCK_LAYER_SET:
+            continue
+        decisions = stage.get("candidate_decisions")
+        if not isinstance(decisions, list):
+            continue
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                continue
+            if not bool(decision.get("applied")):
+                continue
+            item_id = _normalized_key(decision.get("item_id"))
+            competitor_id = _normalized_key(decision.get("primary_competitor"))
+            if not item_id or not competitor_id or item_id == competitor_id:
+                continue
+            similarity_raw = decision.get("selected_similarity_to_primary")
+            if similarity_raw is None:
+                similarity_raw = decision.get("selected_nearest_similarity")
+            if similarity_raw is None:
+                continue
+            similarity = _as_float(similarity_raw, 0.0)
+            ceiling = max(-1.0, min(0.999, similarity + float(epsilon)))
+            _, left, right = _lock_pair_key(layer, item_id, competitor_id)
+            output.append(
+                {
+                    "layer": layer,
+                    "item_a": left,
+                    "item_b": right,
+                    "max_similarity": float(ceiling),
+                    "source": "bsss",
+                    "updated_at": now_iso,
+                }
+            )
+    return output
+
+
+def merge_metadata_separation_pair_locks(
+    *,
+    existing_locks: list[dict[str, Any]],
+    new_locks: list[dict[str, Any]],
+    max_items: int = 4000,
+) -> list[dict[str, Any]]:
+    merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for raw in list(existing_locks or []) + list(new_locks or []):
+        if not isinstance(raw, dict):
+            continue
+        layer = _normalized_key(raw.get("layer"))
+        item_a = _normalized_key(raw.get("item_a"))
+        item_b = _normalized_key(raw.get("item_b"))
+        if layer not in _LOCK_LAYER_SET or not item_a or not item_b or item_a == item_b:
+            continue
+        key = _lock_pair_key(layer, item_a, item_b)
+        existing = merged.get(key)
+        lock_payload = {
+            "layer": key[0],
+            "item_a": key[1],
+            "item_b": key[2],
+            "max_similarity": float(max(-1.0, min(1.0, _as_float(raw.get("max_similarity"), 0.9)))),
+            "source": _normalize_text(raw.get("source")) or "bsss",
+            "updated_at": _normalize_text(raw.get("updated_at")) or None,
+        }
+        if not existing:
+            merged[key] = lock_payload
+            continue
+        existing["max_similarity"] = float(
+            min(_as_float(existing.get("max_similarity"), 1.0), _as_float(lock_payload.get("max_similarity"), 1.0))
+        )
+        if lock_payload.get("updated_at"):
+            existing["updated_at"] = lock_payload.get("updated_at")
+        if lock_payload.get("source"):
+            existing["source"] = lock_payload.get("source")
+    rows = list(merged.values())
+    rows.sort(key=lambda item: (item.get("layer") or "", item.get("item_a") or "", item.get("item_b") or ""))
+    if len(rows) > int(max_items):
+        rows = rows[: int(max_items)]
+    return rows
+
+
+async def filter_metadata_suggestions_with_pair_locks(
+    *,
+    pair_locks: list[dict[str, Any]],
+    current_tool_map: dict[str, dict[str, Any]],
+    current_intent_map: dict[str, dict[str, Any]],
+    current_agent_map: dict[str, dict[str, Any]],
+    tool_struct_map: dict[str, list[float] | None] | None = None,
+    tool_suggestions: list[dict[str, Any]] | None = None,
+    intent_suggestions: list[dict[str, Any]] | None = None,
+    agent_suggestions: list[dict[str, Any]] | None = None,
+    semantic_weight: float = 1.0,
+    structural_weight: float = 0.0,
+) -> dict[str, Any]:
+    normalized = normalize_metadata_separation_lock_registry({"pair_locks": pair_locks})
+    locks = list(normalized.get("pair_locks") or [])
+    if not locks:
+        return {
+            "tool_suggestions": list(tool_suggestions or []),
+            "intent_suggestions": list(intent_suggestions or []),
+            "agent_suggestions": list(agent_suggestions or []),
+            "rejections": {"tool": [], "intent": [], "agent": []},
+        }
+
+    lock_index: dict[str, list[dict[str, Any]]] = {"tool": [], "intent": [], "agent": []}
+    for lock in locks:
+        layer = _normalized_key(lock.get("layer"))
+        if layer in lock_index:
+            lock_index[layer].append(lock)
+
+    tool_work_map: dict[str, dict[str, Any]] = {}
+    for tool_id, payload in (current_tool_map or {}).items():
+        key = _normalized_key(tool_id)
+        if not key or not isinstance(payload, dict):
+            continue
+        tool_work_map[key] = _tool_metadata_payload_with_id(payload, tool_id=key)
+    intent_work_map: dict[str, dict[str, Any]] = {}
+    for intent_id, payload in (current_intent_map or {}).items():
+        key = _normalized_key(intent_id)
+        if not key or not isinstance(payload, dict):
+            continue
+        intent_work_map[key] = _intent_metadata_payload_with_id(payload, intent_id=key)
+    agent_work_map: dict[str, dict[str, Any]] = {}
+    for agent_id, payload in (current_agent_map or {}).items():
+        key = _normalized_key(agent_id)
+        if not key or not isinstance(payload, dict):
+            continue
+        agent_work_map[key] = _agent_metadata_payload_with_id(payload, agent_id=key)
+
+    struct_map = {
+        _normalized_key(tool_id): (list(values) if isinstance(values, list) else None)
+        for tool_id, values in (tool_struct_map or {}).items()
+        if _normalized_key(tool_id)
+    }
+
+    async def _tool_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
+        left_id = _normalized_key(left.get("tool_id"))
+        right_id = _normalized_key(right.get("tool_id"))
+        sem_left = await _embed_text(_tool_semantic_text(left))
+        sem_right = await _embed_text(_tool_semantic_text(right))
+        semantic_similarity = _cosine_similarity(sem_left, sem_right)
+        struct_left = struct_map.get(left_id)
+        struct_right = struct_map.get(right_id)
+        structural_similarity = _cosine_similarity(struct_left, struct_right)
+        return _fused_tool_similarity(
+            semantic_similarity=semantic_similarity,
+            structural_similarity=structural_similarity,
+            semantic_weight=semantic_weight,
+            structural_weight=structural_weight,
+        )
+
+    async def _intent_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
+        sem_left = await _embed_text(_intent_text(left))
+        sem_right = await _embed_text(_intent_text(right))
+        return _cosine_similarity(sem_left, sem_right)
+
+    async def _agent_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
+        sem_left = await _embed_text(_agent_text(left))
+        sem_right = await _embed_text(_agent_text(right))
+        return _cosine_similarity(sem_left, sem_right)
+
+    async def _filter_layer(
+        *,
+        layer: str,
+        suggestions: list[dict[str, Any]] | None,
+        item_id_field: str,
+        current_map: dict[str, dict[str, Any]],
+        payload_builder,
+        similarity_fn,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        accepted: list[dict[str, Any]] = []
+        rejected: list[dict[str, Any]] = []
+        layer_locks = lock_index.get(layer) or []
+        for row in suggestions or []:
+            if not isinstance(row, dict):
+                continue
+            item_id = _normalized_key(row.get(item_id_field))
+            if not item_id:
+                continue
+            proposed_meta = row.get("proposed_metadata")
+            if not isinstance(proposed_meta, dict):
+                accepted.append(row)
+                continue
+            existing = dict(current_map.get(item_id) or {})
+            merged_payload = {**existing, **proposed_meta, item_id_field: item_id}
+            candidate = payload_builder(merged_payload, **{item_id_field: item_id})
+            violation: dict[str, Any] | None = None
+            for lock in layer_locks:
+                lock_item_a = _normalized_key(lock.get("item_a"))
+                lock_item_b = _normalized_key(lock.get("item_b"))
+                if item_id not in {lock_item_a, lock_item_b}:
+                    continue
+                competitor_id = lock_item_b if item_id == lock_item_a else lock_item_a
+                competitor = current_map.get(competitor_id)
+                if not isinstance(competitor, dict):
+                    continue
+                similarity = await similarity_fn(candidate, competitor)
+                max_similarity = _as_float(lock.get("max_similarity"), 1.0)
+                if similarity > (max_similarity + 1e-6):
+                    violation = {
+                        "item_id": item_id,
+                        "competitor_id": competitor_id,
+                        "similarity": float(similarity),
+                        "max_similarity": float(max_similarity),
+                    }
+                    break
+            if violation:
+                rejected.append(violation)
+                continue
+            current_map[item_id] = candidate
+            accepted.append(row)
+        return accepted, rejected
+
+    filtered_intent, rejected_intent = await _filter_layer(
+        layer="intent",
+        suggestions=intent_suggestions,
+        item_id_field="intent_id",
+        current_map=intent_work_map,
+        payload_builder=_intent_metadata_payload_with_id,
+        similarity_fn=_intent_similarity,
+    )
+    filtered_agent, rejected_agent = await _filter_layer(
+        layer="agent",
+        suggestions=agent_suggestions,
+        item_id_field="agent_id",
+        current_map=agent_work_map,
+        payload_builder=_agent_metadata_payload_with_id,
+        similarity_fn=_agent_similarity,
+    )
+    filtered_tool, rejected_tool = await _filter_layer(
+        layer="tool",
+        suggestions=tool_suggestions,
+        item_id_field="tool_id",
+        current_map=tool_work_map,
+        payload_builder=_tool_metadata_payload_with_id,
+        similarity_fn=_tool_similarity,
+    )
+
+    return {
+        "tool_suggestions": filtered_tool,
+        "intent_suggestions": filtered_intent,
+        "agent_suggestions": filtered_agent,
+        "rejections": {
+            "tool": rejected_tool,
+            "intent": rejected_intent,
+            "agent": rejected_agent,
+        },
     }

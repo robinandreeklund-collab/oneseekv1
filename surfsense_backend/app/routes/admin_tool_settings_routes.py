@@ -111,7 +111,13 @@ from app.services.metadata_audit_service import (
     generate_intent_metadata_suggestions_from_annotations,
     run_layered_metadata_audit,
 )
-from app.services.metadata_separation_service import run_bottom_up_metadata_separation
+from app.services.metadata_separation_service import (
+    build_metadata_separation_pair_locks_from_stage_reports,
+    filter_metadata_suggestions_with_pair_locks,
+    merge_metadata_separation_pair_locks,
+    normalize_metadata_separation_lock_registry,
+    run_bottom_up_metadata_separation,
+)
 from app.services.agent_metadata_service import (
     agent_metadata_payload_equal,
     get_default_agent_metadata,
@@ -128,8 +134,10 @@ from app.services.intent_definition_service import (
     upsert_global_intent_definition_overrides,
 )
 from app.services.tool_retrieval_tuning_service import (
+    get_metadata_separation_lock_registry,
     get_global_tool_retrieval_tuning,
     normalize_tool_retrieval_tuning,
+    upsert_metadata_separation_lock_registry,
     upsert_global_tool_retrieval_tuning,
 )
 from app.users import current_active_user
@@ -2970,6 +2978,59 @@ def _patch_map_from_updates(
     return patch_map
 
 
+async def _load_metadata_separation_lock_registry(
+    session: AsyncSession,
+) -> dict[str, Any]:
+    try:
+        return await get_metadata_separation_lock_registry(session)
+    except Exception:
+        logger.exception("Failed to load metadata separation lock registry")
+        return normalize_metadata_separation_lock_registry({})
+
+
+async def _persist_metadata_separation_pair_locks(
+    session: AsyncSession,
+    *,
+    user: User,
+    stage_reports: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    existing_registry = await _load_metadata_separation_lock_registry(session)
+    existing_locks = list(existing_registry.get("pair_locks") or [])
+    new_locks = build_metadata_separation_pair_locks_from_stage_reports(
+        stage_reports=list(stage_reports or []),
+    )
+    merged_locks = merge_metadata_separation_pair_locks(
+        existing_locks=existing_locks,
+        new_locks=new_locks,
+    )
+    lock_mode_enabled = bool(existing_registry.get("lock_mode_enabled", True))
+    if merged_locks == existing_locks:
+        return {
+            "lock_registry": normalize_metadata_separation_lock_registry(existing_registry),
+            "new_lock_count": len(new_locks),
+            "total_lock_count": len(merged_locks),
+            "changed": False,
+        }
+    registry_payload = normalize_metadata_separation_lock_registry(
+        {
+            "lock_mode_enabled": lock_mode_enabled,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "pair_locks": merged_locks,
+        }
+    )
+    await upsert_metadata_separation_lock_registry(
+        session,
+        registry_payload,
+        updated_by_id=user.id,
+    )
+    return {
+        "lock_registry": registry_payload,
+        "new_lock_count": len(new_locks),
+        "total_lock_count": len(merged_locks),
+        "changed": True,
+    }
+
+
 async def _resolve_search_space_id(
     session: AsyncSession,
     user: User,
@@ -3709,6 +3770,9 @@ async def update_tool_settings_metadata_catalog(
         user,
         requested_search_space_id=search_space_id,
     )
+    defaults_by_tool: dict[str, dict[str, Any]] = {}
+    default_intent_definitions: dict[str, dict[str, Any]] = {}
+    default_agent_metadata: dict[str, dict[str, Any]] = {}
     tool_update_rows: list[tuple[str, dict[str, Any] | None]] = []
     if payload.tools:
         connector_service = ConnectorService(
@@ -3807,6 +3871,164 @@ async def update_tool_settings_metadata_catalog(
             user,
             search_space_id=resolved_search_space_id,
         )
+
+    lock_registry = await _load_metadata_separation_lock_registry(session)
+    lock_pair_count = len(lock_registry.get("pair_locks") or [])
+    if bool(lock_registry.get("lock_mode_enabled", True)) and lock_pair_count > 0:
+        current_tool_index, _persisted_overrides, _effective_overrides = (
+            await _build_tool_index_for_search_space(
+                session,
+                user,
+                search_space_id=resolved_search_space_id,
+                metadata_patch=None,
+            )
+        )
+        current_tool_map: dict[str, dict[str, Any]] = {}
+        tool_struct_map: dict[str, list[float] | None] = {}
+        for entry in current_tool_index:
+            tool_id = str(getattr(entry, "tool_id", "") or "").strip().lower()
+            if not tool_id:
+                continue
+            current_tool_map[tool_id] = {
+                "tool_id": tool_id,
+                **_metadata_payload_from_entry(entry),
+            }
+            struct_values = getattr(entry, "structural_embedding", None)
+            if isinstance(struct_values, list):
+                tool_struct_map[tool_id] = [
+                    float(value)
+                    for value in struct_values
+                    if isinstance(value, (int, float))
+                ]
+            else:
+                tool_struct_map[tool_id] = None
+
+        current_intent_map: dict[str, dict[str, Any]] = {}
+        for item in await get_effective_intent_definitions(session):
+            if not isinstance(item, dict):
+                continue
+            intent_id = str(item.get("intent_id") or "").strip().lower()
+            if not intent_id:
+                continue
+            current_intent_map[intent_id] = normalize_intent_definition_payload(
+                item,
+                intent_id=intent_id,
+            )
+
+        current_agent_map: dict[str, dict[str, Any]] = {}
+        for item in await get_effective_agent_metadata(session):
+            if not isinstance(item, dict):
+                continue
+            agent_id = str(item.get("agent_id") or "").strip().lower()
+            if not agent_id:
+                continue
+            current_agent_map[agent_id] = normalize_agent_metadata_payload(
+                item,
+                agent_id=agent_id,
+            )
+
+        tool_lock_suggestions: list[dict[str, Any]] = []
+        for tool_id, override_payload in tool_update_rows:
+            normalized_id = str(tool_id or "").strip().lower()
+            if not normalized_id:
+                continue
+            target_payload = (
+                dict(override_payload)
+                if isinstance(override_payload, dict)
+                else dict(defaults_by_tool.get(normalized_id) or {})
+            )
+            if not target_payload:
+                target_payload = dict(current_tool_map.get(normalized_id) or {})
+            if not target_payload:
+                continue
+            tool_lock_suggestions.append(
+                {
+                    "tool_id": normalized_id,
+                    "proposed_metadata": target_payload,
+                }
+            )
+
+        intent_lock_suggestions: list[dict[str, Any]] = []
+        for intent_id, override_payload in intent_update_rows:
+            normalized_id = str(intent_id or "").strip().lower()
+            if not normalized_id:
+                continue
+            target_payload = (
+                dict(override_payload)
+                if isinstance(override_payload, dict)
+                else dict(default_intent_definitions.get(normalized_id) or {})
+            )
+            if not target_payload:
+                target_payload = dict(current_intent_map.get(normalized_id) or {})
+            if not target_payload:
+                continue
+            intent_lock_suggestions.append(
+                {
+                    "intent_id": normalized_id,
+                    "proposed_metadata": target_payload,
+                }
+            )
+
+        agent_lock_suggestions: list[dict[str, Any]] = []
+        for agent_id, override_payload in agent_update_rows:
+            normalized_id = str(agent_id or "").strip().lower()
+            if not normalized_id:
+                continue
+            target_payload = (
+                dict(override_payload)
+                if isinstance(override_payload, dict)
+                else dict(default_agent_metadata.get(normalized_id) or {})
+            )
+            if not target_payload:
+                target_payload = dict(current_agent_map.get(normalized_id) or {})
+            if not target_payload:
+                continue
+            agent_lock_suggestions.append(
+                {
+                    "agent_id": normalized_id,
+                    "proposed_metadata": target_payload,
+                }
+            )
+
+        retrieval_tuning = await get_global_tool_retrieval_tuning(session)
+        semantic_weight = float(retrieval_tuning.get("semantic_embedding_weight") or 0.0)
+        structural_weight = float(
+            retrieval_tuning.get("structural_embedding_weight") or 0.0
+        )
+        if semantic_weight <= 0 and structural_weight <= 0:
+            semantic_weight = 1.0
+            structural_weight = 0.0
+        lock_filtered = await filter_metadata_suggestions_with_pair_locks(
+            pair_locks=list(lock_registry.get("pair_locks") or []),
+            current_tool_map=current_tool_map,
+            current_intent_map=current_intent_map,
+            current_agent_map=current_agent_map,
+            tool_struct_map=tool_struct_map,
+            tool_suggestions=tool_lock_suggestions,
+            intent_suggestions=intent_lock_suggestions,
+            agent_suggestions=agent_lock_suggestions,
+            semantic_weight=semantic_weight,
+            structural_weight=structural_weight,
+        )
+        lock_rejections = dict(lock_filtered.get("rejections") or {})
+        tool_rejected = list(lock_rejections.get("tool") or [])
+        intent_rejected = list(lock_rejections.get("intent") or [])
+        agent_rejected = list(lock_rejections.get("agent") or [])
+        if tool_rejected or intent_rejected or agent_rejected:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": (
+                        "Metadata update blocked by BSSS lock mode. "
+                        "One or more updates violate persisted separation constraints."
+                    ),
+                    "rejected": {
+                        "tool": tool_rejected,
+                        "intent": intent_rejected,
+                        "agent": agent_rejected,
+                    },
+                },
+            )
 
     try:
         if tool_update_rows:
@@ -4039,6 +4261,79 @@ async def generate_metadata_catalog_audit_suggestions(
             )
         ),
     )
+    lock_registry = await _load_metadata_separation_lock_registry(session)
+    lock_pair_count = len(lock_registry.get("pair_locks") or [])
+    lock_mode_enabled = bool(lock_registry.get("lock_mode_enabled", True))
+    lock_rejections: dict[str, list[dict[str, Any]]] = {
+        "tool": [],
+        "intent": [],
+        "agent": [],
+    }
+    if lock_mode_enabled and lock_pair_count > 0:
+        current_tool_map: dict[str, dict[str, Any]] = {}
+        tool_struct_map: dict[str, list[float] | None] = {}
+        for entry in tool_index:
+            tool_id = str(getattr(entry, "tool_id", "") or "").strip().lower()
+            if not tool_id:
+                continue
+            current_tool_map[tool_id] = {
+                "tool_id": tool_id,
+                **_metadata_payload_from_entry(entry),
+            }
+            struct_values = getattr(entry, "structural_embedding", None)
+            if isinstance(struct_values, list):
+                tool_struct_map[tool_id] = [
+                    float(value)
+                    for value in struct_values
+                    if isinstance(value, (int, float))
+                ]
+            else:
+                tool_struct_map[tool_id] = None
+        current_intent_map: dict[str, dict[str, Any]] = {}
+        for item in intent_definitions:
+            if not isinstance(item, dict):
+                continue
+            intent_id = str(item.get("intent_id") or "").strip().lower()
+            if not intent_id:
+                continue
+            current_intent_map[intent_id] = normalize_intent_definition_payload(
+                item,
+                intent_id=intent_id,
+            )
+        current_agent_map: dict[str, dict[str, Any]] = {}
+        for item in agent_metadata:
+            if not isinstance(item, dict):
+                continue
+            agent_id = str(item.get("agent_id") or "").strip().lower()
+            if not agent_id:
+                continue
+            current_agent_map[agent_id] = normalize_agent_metadata_payload(
+                item,
+                agent_id=agent_id,
+            )
+        semantic_weight = float(retrieval_tuning.get("semantic_embedding_weight") or 0.0)
+        structural_weight = float(
+            retrieval_tuning.get("structural_embedding_weight") or 0.0
+        )
+        if semantic_weight <= 0 and structural_weight <= 0:
+            semantic_weight = 1.0
+            structural_weight = 0.0
+        lock_filtered = await filter_metadata_suggestions_with_pair_locks(
+            pair_locks=list(lock_registry.get("pair_locks") or []),
+            current_tool_map=current_tool_map,
+            current_intent_map=current_intent_map,
+            current_agent_map=current_agent_map,
+            tool_struct_map=tool_struct_map,
+            tool_suggestions=tool_suggestions,
+            intent_suggestions=intent_suggestions,
+            agent_suggestions=agent_suggestions,
+            semantic_weight=semantic_weight,
+            structural_weight=structural_weight,
+        )
+        tool_suggestions = list(lock_filtered.get("tool_suggestions") or [])
+        intent_suggestions = list(lock_filtered.get("intent_suggestions") or [])
+        agent_suggestions = list(lock_filtered.get("agent_suggestions") or [])
+        lock_rejections = dict(lock_filtered.get("rejections") or lock_rejections)
     total_ms = (perf_counter() - started_at) * 1000
     annotations_payload_bytes = len(
         json.dumps(annotation_payload, ensure_ascii=True, separators=(",", ":"))
@@ -4071,6 +4366,15 @@ async def generate_metadata_catalog_audit_suggestions(
             "llm_parallelism": int(normalized_parallelism),
             "llm_parallelism_effective": int(per_stage_parallelism),
             "max_suggestions": int(normalized_max_suggestions),
+            "separation_lock_mode_enabled": bool(lock_mode_enabled),
+            "separation_lock_pair_count": int(lock_pair_count),
+            "separation_lock_rejected_tool": int(len(lock_rejections.get("tool") or [])),
+            "separation_lock_rejected_intent": int(
+                len(lock_rejections.get("intent") or [])
+            ),
+            "separation_lock_rejected_agent": int(
+                len(lock_rejections.get("agent") or [])
+            ),
         },
     }
 
@@ -4186,6 +4490,36 @@ async def run_metadata_catalog_separation(
         tool_layer_config=payload.tool_layer.model_dump(),
     )
     final_tool_index = list(separation_result.get("final_tool_index") or [])
+    try:
+        lock_persist_result = await _persist_metadata_separation_pair_locks(
+            session,
+            user=user,
+            stage_reports=list(separation_result.get("stage_reports") or []),
+        )
+        if lock_persist_result.get("changed"):
+            await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to persist metadata separation locks")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to persist separation locks: {exc!s}",
+        ) from exc
+    diagnostics_payload = dict(separation_result.get("diagnostics") or {})
+    diagnostics_payload.update(
+        {
+            "separation_lock_mode_enabled": bool(
+                (lock_persist_result.get("lock_registry") or {}).get(
+                    "lock_mode_enabled", True
+                )
+            ),
+            "separation_lock_new_pairs": int(lock_persist_result.get("new_lock_count") or 0),
+            "separation_lock_total_pairs": int(
+                lock_persist_result.get("total_lock_count") or 0
+            ),
+            "separation_lock_registry_updated": bool(lock_persist_result.get("changed")),
+        }
+    )
     return {
         "search_space_id": resolved_search_space_id,
         "metadata_version_hash": compute_metadata_version_hash(final_tool_index),
@@ -4203,7 +4537,7 @@ async def run_metadata_catalog_separation(
             separation_result.get("proposed_agent_metadata_patch") or []
         ),
         "contrast_memory": list(separation_result.get("contrast_memory") or []),
-        "diagnostics": dict(separation_result.get("diagnostics") or {}),
+        "diagnostics": diagnostics_payload,
     }
 
 
@@ -4464,10 +4798,13 @@ async def update_tool_retrieval_tuning(
 ):
     await _require_admin(session, user)
     normalized = normalize_tool_retrieval_tuning(payload.model_dump())
+    update_payload = dict(normalized)
+    # Keep separation lock registry persistent unless explicitly updated by lock-service.
+    update_payload.pop("metadata_separation_lock_registry", None)
     try:
-        await upsert_global_tool_retrieval_tuning(
+        persisted = await upsert_global_tool_retrieval_tuning(
             session,
-            normalized,
+            update_payload,
             updated_by_id=user.id,
         )
         await session.commit()
@@ -4479,7 +4816,7 @@ async def update_tool_retrieval_tuning(
             status_code=500,
             detail=f"Failed to update retrieval tuning: {exc!s}",
         ) from exc
-    return {"tuning": normalized}
+    return {"tuning": persisted}
 
 
 @router.get(

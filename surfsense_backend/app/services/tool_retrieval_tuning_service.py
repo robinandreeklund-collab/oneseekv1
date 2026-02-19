@@ -6,6 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.db import GlobalToolRetrievalTuning, GlobalToolRetrievalTuningHistory
+from app.services.metadata_separation_service import (
+    normalize_metadata_separation_lock_registry,
+)
 
 DEFAULT_TOOL_RETRIEVAL_TUNING: dict[str, Any] = {
     "name_match_weight": 5.0,
@@ -42,6 +45,7 @@ _LIVE_ROUTING_PHASES = {
 }
 
 _TUNING_DEFAULT_KEY = "default"
+_METADATA_SEPARATION_LOCK_REGISTRY_KEY = "metadata_separation_lock_registry"
 
 
 def _as_float(value: Any, *, default: float, min_value: float, max_value: float) -> float:
@@ -233,6 +237,18 @@ def normalize_tool_retrieval_tuning(payload: dict[str, Any] | None) -> dict[str,
     }
 
 
+def _normalize_tuning_payload_with_registry(payload: dict[str, Any] | None) -> dict[str, Any]:
+    normalized = normalize_tool_retrieval_tuning(payload)
+    source = payload if isinstance(payload, dict) else {}
+    if _METADATA_SEPARATION_LOCK_REGISTRY_KEY in source:
+        normalized[_METADATA_SEPARATION_LOCK_REGISTRY_KEY] = (
+            normalize_metadata_separation_lock_registry(
+                source.get(_METADATA_SEPARATION_LOCK_REGISTRY_KEY)
+            )
+        )
+    return normalized
+
+
 def tool_retrieval_tuning_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return normalize_tool_retrieval_tuning(left) == normalize_tool_retrieval_tuning(right)
 
@@ -255,17 +271,30 @@ async def upsert_global_tool_retrieval_tuning(
     *,
     updated_by_id=None,
 ) -> dict[str, Any]:
-    normalized_payload = normalize_tool_retrieval_tuning(tuning_payload)
     result = await session.execute(
         select(GlobalToolRetrievalTuning).filter(
             GlobalToolRetrievalTuning.config_key == _TUNING_DEFAULT_KEY
         )
     )
-    existing = result.scalars().first()
+    row = result.scalars().first()
+    source_payload = dict(tuning_payload or {})
+    normalized_payload = normalize_tool_retrieval_tuning(source_payload)
+    requested_registry = None
+    if _METADATA_SEPARATION_LOCK_REGISTRY_KEY in source_payload:
+        requested_registry = normalize_metadata_separation_lock_registry(
+            source_payload.get(_METADATA_SEPARATION_LOCK_REGISTRY_KEY)
+        )
+    elif row and isinstance(row.tuning_payload, dict):
+        requested_registry = normalize_metadata_separation_lock_registry(
+            row.tuning_payload.get(_METADATA_SEPARATION_LOCK_REGISTRY_KEY)
+        )
+    if requested_registry is not None:
+        normalized_payload[_METADATA_SEPARATION_LOCK_REGISTRY_KEY] = requested_registry
+    existing = row
     previous_payload = (
-        normalize_tool_retrieval_tuning(existing.tuning_payload)
+        _normalize_tuning_payload_with_registry(existing.tuning_payload)
         if existing and isinstance(existing.tuning_payload, dict)
-        else normalize_tool_retrieval_tuning(DEFAULT_TOOL_RETRIEVAL_TUNING)
+        else _normalize_tuning_payload_with_registry(DEFAULT_TOOL_RETRIEVAL_TUNING)
     )
 
     if existing:
@@ -292,3 +321,71 @@ async def upsert_global_tool_retrieval_tuning(
         )
 
     return normalized_payload
+
+
+async def get_metadata_separation_lock_registry(
+    session: AsyncSession,
+) -> dict[str, Any]:
+    result = await session.execute(
+        select(GlobalToolRetrievalTuning).filter(
+            GlobalToolRetrievalTuning.config_key == _TUNING_DEFAULT_KEY
+        )
+    )
+    row = result.scalars().first()
+    payload = row.tuning_payload if row and isinstance(row.tuning_payload, dict) else {}
+    return normalize_metadata_separation_lock_registry(
+        payload.get(_METADATA_SEPARATION_LOCK_REGISTRY_KEY)
+    )
+
+
+async def upsert_metadata_separation_lock_registry(
+    session: AsyncSession,
+    lock_registry: dict[str, Any],
+    *,
+    updated_by_id=None,
+) -> dict[str, Any]:
+    result = await session.execute(
+        select(GlobalToolRetrievalTuning).filter(
+            GlobalToolRetrievalTuning.config_key == _TUNING_DEFAULT_KEY
+        )
+    )
+    existing = result.scalars().first()
+    existing_payload = (
+        existing.tuning_payload if existing and isinstance(existing.tuning_payload, dict) else {}
+    )
+    normalized_registry = normalize_metadata_separation_lock_registry(lock_registry)
+    base_tuning = normalize_tool_retrieval_tuning(existing_payload)
+    new_payload = {
+        **base_tuning,
+        _METADATA_SEPARATION_LOCK_REGISTRY_KEY: normalized_registry,
+    }
+    previous_payload = (
+        _normalize_tuning_payload_with_registry(existing_payload)
+        if existing
+        else _normalize_tuning_payload_with_registry(DEFAULT_TOOL_RETRIEVAL_TUNING)
+    )
+
+    if existing:
+        existing.tuning_payload = new_payload
+        if updated_by_id is not None:
+            existing.updated_by_id = updated_by_id
+    else:
+        session.add(
+            GlobalToolRetrievalTuning(
+                config_key=_TUNING_DEFAULT_KEY,
+                tuning_payload=new_payload,
+                updated_by_id=updated_by_id,
+            )
+        )
+
+    if previous_payload != new_payload:
+        session.add(
+            GlobalToolRetrievalTuningHistory(
+                config_key=_TUNING_DEFAULT_KEY,
+                previous_payload=previous_payload,
+                new_payload=new_payload,
+                updated_by_id=updated_by_id,
+            )
+        )
+
+    return normalized_registry
