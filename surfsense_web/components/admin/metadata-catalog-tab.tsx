@@ -12,6 +12,7 @@ import {
 	type IntentMetadataUpdateItem,
 	type MetadataCatalogAuditAnchorProbeItem,
 	type MetadataCatalogAuditRunResponse,
+	type MetadataCatalogSeparationResponse,
 	type MetadataCatalogAuditToolRankingItem,
 	type MetadataCatalogAuditSuggestionResponse,
 	type ToolMetadataItem,
@@ -564,6 +565,10 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [isGeneratingAuditSuggestions, setIsGeneratingAuditSuggestions] = useState(false);
 	const [auditSuggestions, setAuditSuggestions] =
 		useState<MetadataCatalogAuditSuggestionResponse | null>(null);
+	const [isRunningSeparation, setIsRunningSeparation] = useState(false);
+	const [separationResult, setSeparationResult] =
+		useState<MetadataCatalogSeparationResponse | null>(null);
+	const [autoApplySeparationDraft, setAutoApplySeparationDraft] = useState(true);
 	const [selectedAuditSuggestionToolIds, setSelectedAuditSuggestionToolIds] = useState<
 		Set<string>
 	>(new Set());
@@ -1134,6 +1139,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			}
 			setAuditAnnotations(nextAnnotations);
 			setAuditSuggestions(null);
+			setSeparationResult(null);
 			setSelectedAuditSuggestionToolIds(new Set());
 			setSelectedAuditSuggestionIntentIds(new Set());
 			setSelectedAuditSuggestionAgentIds(new Set());
@@ -1283,12 +1289,86 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		}
 	};
 
+	const applySeparationPatchesToDraft = (result: MetadataCatalogSeparationResponse) => {
+		const toolCount = result.proposed_tool_metadata_patch.length;
+		const intentCount = result.proposed_intent_metadata_patch.length;
+		const agentCount = result.proposed_agent_metadata_patch.length;
+		if (!toolCount && !intentCount && !agentCount) {
+			toast.message("Separationskörningen gav inga nya patchar att applicera.");
+			return;
+		}
+		setDraftTools((previous) => {
+			const next = { ...previous };
+			for (const item of result.proposed_tool_metadata_patch) {
+				next[item.tool_id] = {
+					...item,
+				};
+			}
+			return next;
+		});
+		setDraftIntents((previous) => {
+			const next = { ...previous };
+			for (const item of result.proposed_intent_metadata_patch) {
+				next[item.intent_id] = {
+					...item,
+				};
+			}
+			return next;
+		});
+		setDraftAgents((previous) => {
+			const next = { ...previous };
+			for (const item of result.proposed_agent_metadata_patch) {
+				next[item.agent_id] = {
+					...item,
+				};
+			}
+			return next;
+		});
+		toast.success(
+			`Applicerade separationpatchar i draft (${toolCount}/${intentCount}/${agentCount}).`
+		);
+	};
+
+	const runMetadataSeparation = async () => {
+		if (!data?.search_space_id || !auditResult) return;
+		setIsRunningSeparation(true);
+		try {
+			const anchorProbeSet = buildAnchorProbeSetFromResult(auditResult);
+			const response = await adminToolSettingsApiService.runMetadataCatalogSeparation({
+				search_space_id: data.search_space_id,
+				metadata_patch: metadataPatchForDraft,
+				intent_metadata_patch: intentMetadataPatchForDraft,
+				agent_metadata_patch: agentMetadataPatchForDraft,
+				tool_ids: requestedAuditToolIds,
+				retrieval_limit: 5,
+				max_tools: Math.max(25, requestedAuditToolIds.length || 0),
+				max_queries_per_tool: maxQueriesPerTool,
+				hard_negatives_per_tool: hardNegativesPerTool,
+				anchor_probe_set: anchorProbeSet,
+				include_llm_refinement: includeLlmGenerated,
+				llm_parallelism: suggestionParallelism,
+			});
+			setSeparationResult(response);
+			if (autoApplySeparationDraft) {
+				applySeparationPatchesToDraft(response);
+			}
+			toast.success(
+				`Bottom-up separation klar (${formatMs(response.diagnostics?.total_ms)}).`
+			);
+		} catch (_error) {
+			toast.error("Kunde inte köra bottom-up separation.");
+		} finally {
+			setIsRunningSeparation(false);
+		}
+	};
+
 	const runAutoAuditLoop = async () => {
 		if (!data?.search_space_id) return;
 		setIsAutoRunning(true);
 		setAutoRoundHistory([]);
 		setAutoRunStatusText("Startar autonom metadata-loop...");
 		setAuditSuggestions(null);
+		setSeparationResult(null);
 		setSelectedAuditSuggestionToolIds(new Set());
 		setSelectedAuditSuggestionIntentIds(new Set());
 		setSelectedAuditSuggestionAgentIds(new Set());
@@ -2026,6 +2106,30 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									: "Kor Steg B Forslag"}
 							</Button>
 						</div>
+						<div className="space-y-2 lg:col-span-2">
+							<Label className="block">Bottom-up separation</Label>
+							<label className="flex items-center gap-2 text-sm">
+								<input
+									type="checkbox"
+									checked={autoApplySeparationDraft}
+									onChange={(event) => setAutoApplySeparationDraft(event.target.checked)}
+								/>
+								Applicera patchar direkt till draft efter körning
+							</label>
+						</div>
+						<div className="flex items-end">
+							<Button
+								type="button"
+								variant="secondary"
+								onClick={runMetadataSeparation}
+								disabled={!auditResult || isRunningSeparation}
+								className="w-full"
+							>
+								{isRunningSeparation
+									? "Kör bottom-up..."
+									: "Kör Bottom-up Separation"}
+							</Button>
+						</div>
 					</div>
 					<div className="rounded border p-3 space-y-3">
 						<div className="flex flex-wrap items-center gap-2">
@@ -2589,6 +2693,166 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									</table>
 								</div>
 							</div>
+							{separationResult ? (
+								<div className="rounded border p-3 space-y-3">
+									<div className="flex flex-wrap items-center gap-2">
+										<p className="text-sm font-medium">
+											Bottom-up separation (Intent -&gt; Agent -&gt; Tool)
+										</p>
+										<Badge variant="outline">
+											Tid: {formatMs(separationResult.diagnostics?.total_ms)}
+										</Badge>
+										<Badge variant="outline">
+											Kandidater: {separationResult.diagnostics?.candidate_count_total ?? 0}
+										</Badge>
+										<Badge variant="outline">
+											Valda: {separationResult.diagnostics?.candidate_count_selected ?? 0}
+										</Badge>
+									</div>
+									<div className="grid gap-3 md:grid-cols-3">
+										<div className="rounded border p-2 text-xs space-y-1">
+											<p className="font-medium">Baseline</p>
+											<p>Intent: {formatRate(separationResult.baseline_summary.intent_accuracy)}</p>
+											<p>Agent: {formatRate(separationResult.baseline_summary.agent_accuracy)}</p>
+											<p>Tool: {formatRate(separationResult.baseline_summary.tool_accuracy)}</p>
+										</div>
+										<div className="rounded border p-2 text-xs space-y-1">
+											<p className="font-medium">Efter separation</p>
+											<p>Intent: {formatRate(separationResult.final_summary.intent_accuracy)}</p>
+											<p>Agent: {formatRate(separationResult.final_summary.agent_accuracy)}</p>
+											<p>Tool: {formatRate(separationResult.final_summary.tool_accuracy)}</p>
+										</div>
+										<div className="rounded border p-2 text-xs space-y-1">
+											<p className="font-medium">Patches</p>
+											<p>Tools: {separationResult.proposed_tool_metadata_patch.length}</p>
+											<p>Intents: {separationResult.proposed_intent_metadata_patch.length}</p>
+											<p>Agents: {separationResult.proposed_agent_metadata_patch.length}</p>
+										</div>
+									</div>
+									<div className="flex flex-wrap gap-2">
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											onClick={() => applySeparationPatchesToDraft(separationResult)}
+										>
+											Applicera separationspatch till draft
+										</Button>
+										<Badge variant="outline">
+											Anchor probes: {separationResult.diagnostics?.anchor_probe_count ?? 0}
+										</Badge>
+									</div>
+									<div className="overflow-x-auto">
+										<table className="min-w-full text-xs">
+											<thead className="bg-muted/20 text-left">
+												<tr>
+													<th className="px-3 py-2 font-medium">Layer</th>
+													<th className="px-3 py-2 font-medium">Lock</th>
+													<th className="px-3 py-2 font-medium">Before</th>
+													<th className="px-3 py-2 font-medium">After</th>
+													<th className="px-3 py-2 font-medium">Delta pp</th>
+													<th className="px-3 py-2 font-medium">Applied</th>
+													<th className="px-3 py-2 font-medium">Kandidater</th>
+												</tr>
+											</thead>
+											<tbody>
+												{separationResult.stage_reports.map((stage) => (
+													<tr key={`sep-stage-${stage.layer}`} className="border-t">
+														<td className="px-3 py-2 uppercase">{stage.layer}</td>
+														<td className="px-3 py-2">
+															{stage.locked ? (
+																<Badge variant="secondary">locked</Badge>
+															) : (
+																<Badge variant="destructive">rollback/skipped</Badge>
+															)}
+														</td>
+														<td className="px-3 py-2">{formatRate(stage.before_metric ?? null)}</td>
+														<td className="px-3 py-2">{formatRate(stage.after_metric ?? null)}</td>
+														<td className="px-3 py-2">
+															{stage.delta_pp != null
+																? `${stage.delta_pp >= 0 ? "+" : ""}${stage.delta_pp.toFixed(2)}`
+																: "--"}
+														</td>
+														<td className="px-3 py-2">{stage.applied_changes ?? 0}</td>
+														<td className="px-3 py-2">
+															{stage.candidate_decisions.length}
+														</td>
+													</tr>
+												))}
+											</tbody>
+										</table>
+									</div>
+									{separationResult.stage_reports.some(
+										(stage) => stage.similarity_matrices.length > 0
+									) ? (
+										<div className="space-y-2">
+											<p className="text-sm font-medium">Similarity matrix (per stage/scope)</p>
+											{separationResult.stage_reports.map((stage) =>
+												stage.similarity_matrices.map((matrix) => (
+													<div
+														key={`sep-matrix-${stage.layer}-${matrix.scope_id}`}
+														className="rounded border p-2"
+													>
+														<p className="text-xs font-medium mb-2">
+															{stage.layer} / {matrix.scope_id}
+														</p>
+														<div className="overflow-x-auto">
+															<table className="text-[11px]">
+																<thead>
+																	<tr>
+																		<th className="px-2 py-1"></th>
+																		{matrix.labels.map((label) => (
+																			<th
+																				key={`head-${stage.layer}-${matrix.scope_id}-${label}`}
+																				className="px-2 py-1 font-mono"
+																			>
+																				{label}
+																			</th>
+																		))}
+																	</tr>
+																</thead>
+																<tbody>
+																	{matrix.values.map((row, rowIndex) => (
+																		<tr key={`row-${stage.layer}-${matrix.scope_id}-${rowIndex}`}>
+																			<td className="px-2 py-1 font-mono">
+																				{matrix.labels[rowIndex] ?? `#${rowIndex + 1}`}
+																			</td>
+																			{row.map((value, colIndex) => (
+																				<td
+																					key={`cell-${stage.layer}-${matrix.scope_id}-${rowIndex}-${colIndex}`}
+																					className="px-2 py-1 text-right"
+																				>
+																					{value.toFixed(3)}
+																				</td>
+																			))}
+																		</tr>
+																	))}
+																</tbody>
+															</table>
+														</div>
+													</div>
+												))
+											)}
+										</div>
+									) : null}
+									{separationResult.contrast_memory.length > 0 ? (
+										<div className="space-y-2">
+											<p className="text-sm font-medium">Contrast memory</p>
+											<div className="max-h-44 overflow-auto rounded border p-2 space-y-1 text-xs">
+												{separationResult.contrast_memory.slice(0, 120).map((item, index) => (
+													<div
+														key={`contrast-memory-${item.layer}-${item.item_id}-${item.competitor_id}-${index}`}
+														className="rounded bg-muted/40 px-2 py-1"
+													>
+														<span className="font-medium uppercase">{item.layer}</span>:{" "}
+														{item.memory_text}
+													</div>
+												))}
+											</div>
+										</div>
+									) : null}
+								</div>
+							) : null}
 							<div className="rounded border p-3 space-y-2">
 								<p className="text-sm font-medium">Snabbfilter: hitta fel snabbt</p>
 								<div className="flex flex-wrap items-center gap-3 text-xs">

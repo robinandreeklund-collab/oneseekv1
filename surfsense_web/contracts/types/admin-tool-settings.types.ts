@@ -581,6 +581,202 @@ export const metadataCatalogAuditSuggestionResponse = z.object({
 		}),
 });
 
+export const metadataCatalogSeparationLayerConfig = z.object({
+	enabled: z.boolean().optional().default(true),
+	min_probes: z.number().int().optional().default(5),
+	tier1_margin: z.number().optional().default(-1.5),
+	tier2_margin: z.number().optional().default(0.5),
+	tier3_top1_threshold: z.number().optional().default(0.45),
+	local_delta: z.number().optional().default(0.02),
+	global_similarity_threshold: z.number().optional().default(0.85),
+	epsilon_noise: z.number().optional().default(0.02),
+	alignment_drop_max: z.number().optional().default(0.03),
+	score_alignment_weight: z.number().optional().default(0.5),
+	score_separation_weight: z.number().optional().default(0.5),
+	min_metric_delta: z.number().optional().default(0),
+	max_items: z.number().int().optional().default(24),
+	llm_enabled: z.boolean().optional().default(true),
+});
+
+export const metadataCatalogSeparationCandidateDecision = z.object({
+	item_id: z.string(),
+	tier: z.string().optional().default("watch"),
+	probes: z.number().int().optional().default(0),
+	top1_rate: z.number().optional().default(0),
+	avg_margin: z.number().nullable().optional(),
+	primary_competitor: z.string().nullable().optional(),
+	selected_source: z.string().optional().default("none"),
+	local_check_passed: z.boolean().optional().default(false),
+	global_check_passed: z.boolean().optional().default(false),
+	selected_score: z.number().nullable().optional(),
+	selected_margin: z.number().nullable().optional(),
+	selected_alignment: z.number().nullable().optional(),
+	selected_nearest_similarity: z.number().nullable().optional(),
+	selected_similarity_to_primary: z.number().nullable().optional(),
+	old_similarity_to_primary: z.number().nullable().optional(),
+	old_margin: z.number().nullable().optional(),
+	applied: z.boolean().optional().default(false),
+	rejection_reasons: z.array(z.string()).optional().default([]),
+});
+
+export const metadataCatalogSeparationSimilarityMatrix = z.object({
+	scope_id: z.string(),
+	labels: z.array(z.string()).optional().default([]),
+	values: z.array(z.array(z.number())).optional().default([]),
+});
+
+export const metadataCatalogSeparationStageReport = z.object({
+	layer: z.enum(["intent", "agent", "tool"]),
+	enabled: z.boolean().optional().default(true),
+	locked: z.boolean().optional().default(false),
+	skipped_reason: z.string().nullable().optional(),
+	before_metric: z.number().nullable().optional(),
+	after_metric: z.number().nullable().optional(),
+	delta_pp: z.number().nullable().optional(),
+	before_total_accuracy: z.number().nullable().optional(),
+	after_total_accuracy: z.number().nullable().optional(),
+	applied_changes: z.number().int().optional().default(0),
+	evaluated_items: z.number().int().optional().default(0),
+	candidate_decisions: z
+		.array(metadataCatalogSeparationCandidateDecision)
+		.optional()
+		.default([]),
+	similarity_matrices: z
+		.array(metadataCatalogSeparationSimilarityMatrix)
+		.optional()
+		.default([]),
+	notes: z.array(z.string()).optional().default([]),
+	mini_audit_summary: metadataCatalogAuditSummary.nullable().optional(),
+});
+
+export const metadataCatalogContrastMemoryItem = z.object({
+	layer: z.enum(["intent", "agent", "tool"]),
+	item_id: z.string(),
+	competitor_id: z.string(),
+	memory_text: z.string(),
+	updated: z.boolean().optional().default(false),
+});
+
+export const metadataCatalogSeparationDiagnostics = z.object({
+	total_ms: z.number().optional().default(0),
+	baseline_audit_ms: z.number().optional().default(0),
+	final_audit_ms: z.number().optional().default(0),
+	stage_total_ms: z.number().optional().default(0),
+	stage_intent_ms: z.number().optional().default(0),
+	stage_agent_ms: z.number().optional().default(0),
+	stage_tool_ms: z.number().optional().default(0),
+	candidate_count_total: z.number().int().optional().default(0),
+	candidate_count_rule: z.number().int().optional().default(0),
+	candidate_count_llm: z.number().int().optional().default(0),
+	candidate_count_combined: z.number().int().optional().default(0),
+	candidate_count_selected: z.number().int().optional().default(0),
+	candidate_count_rejected: z.number().int().optional().default(0),
+	llm_refinement_enabled: z.boolean().optional().default(true),
+	llm_parallelism: z.number().int().optional().default(1),
+	anchor_probe_count: z.number().int().optional().default(0),
+});
+
+export const metadataCatalogSeparationRequest = z.object({
+	search_space_id: z.number().nullable().optional(),
+	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
+	intent_metadata_patch: z.array(intentMetadataUpdateItem).optional().default([]),
+	agent_metadata_patch: z.array(agentMetadataUpdateItem).optional().default([]),
+	tool_ids: z.array(z.string()).optional().default([]),
+	tool_id_prefix: z.string().nullable().optional(),
+	retrieval_limit: z.number().int().optional().default(5),
+	max_tools: z.number().int().optional().default(25),
+	max_queries_per_tool: z.number().int().optional().default(6),
+	hard_negatives_per_tool: z.number().int().optional().default(1),
+	anchor_probe_set: z.array(metadataCatalogAuditAnchorProbeItem).optional().default([]),
+	include_llm_refinement: z.boolean().optional().default(true),
+	llm_parallelism: z.number().int().optional().default(4),
+	intent_layer: metadataCatalogSeparationLayerConfig
+		.optional()
+		.default({
+			enabled: true,
+			min_probes: 5,
+			tier1_margin: -1.5,
+			tier2_margin: 0.5,
+			tier3_top1_threshold: 0.45,
+			local_delta: 0.015,
+			global_similarity_threshold: 0.9,
+			epsilon_noise: 0.02,
+			alignment_drop_max: 0.03,
+			score_alignment_weight: 0.7,
+			score_separation_weight: 0.3,
+			min_metric_delta: 0,
+			max_items: 16,
+			llm_enabled: true,
+		}),
+	agent_layer: metadataCatalogSeparationLayerConfig
+		.optional()
+		.default({
+			enabled: true,
+			min_probes: 5,
+			tier1_margin: -1.5,
+			tier2_margin: 0.5,
+			tier3_top1_threshold: 0.45,
+			local_delta: 0.02,
+			global_similarity_threshold: 0.88,
+			epsilon_noise: 0.02,
+			alignment_drop_max: 0.03,
+			score_alignment_weight: 0.6,
+			score_separation_weight: 0.4,
+			min_metric_delta: 0,
+			max_items: 18,
+			llm_enabled: true,
+		}),
+	tool_layer: metadataCatalogSeparationLayerConfig
+		.optional()
+		.default({
+			enabled: true,
+			min_probes: 5,
+			tier1_margin: -1.5,
+			tier2_margin: 0.5,
+			tier3_top1_threshold: 0.45,
+			local_delta: 0.03,
+			global_similarity_threshold: 0.85,
+			epsilon_noise: 0.02,
+			alignment_drop_max: 0.03,
+			score_alignment_weight: 0.5,
+			score_separation_weight: 0.5,
+			min_metric_delta: 0,
+			max_items: 28,
+			llm_enabled: true,
+		}),
+});
+
+export const metadataCatalogSeparationResponse = z.object({
+	search_space_id: z.number(),
+	metadata_version_hash: z.string(),
+	retrieval_tuning: toolRetrievalTuning,
+	baseline_summary: metadataCatalogAuditSummary,
+	final_summary: metadataCatalogAuditSummary,
+	stage_reports: z.array(metadataCatalogSeparationStageReport).optional().default([]),
+	proposed_tool_metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
+	proposed_intent_metadata_patch: z.array(intentMetadataUpdateItem).optional().default([]),
+	proposed_agent_metadata_patch: z.array(agentMetadataUpdateItem).optional().default([]),
+	contrast_memory: z.array(metadataCatalogContrastMemoryItem).optional().default([]),
+	diagnostics: metadataCatalogSeparationDiagnostics.optional().default({
+		total_ms: 0,
+		baseline_audit_ms: 0,
+		final_audit_ms: 0,
+		stage_total_ms: 0,
+		stage_intent_ms: 0,
+		stage_agent_ms: 0,
+		stage_tool_ms: 0,
+		candidate_count_total: 0,
+		candidate_count_rule: 0,
+		candidate_count_llm: 0,
+		candidate_count_combined: 0,
+		candidate_count_selected: 0,
+		candidate_count_rejected: 0,
+		llm_refinement_enabled: true,
+		llm_parallelism: 1,
+		anchor_probe_count: 0,
+	}),
+});
+
 export const toolEvaluationExpected = z.object({
 	category: z.string().nullable().optional(),
 	tool: z.string().nullable().optional(),
@@ -1207,6 +1403,30 @@ export type MetadataCatalogAuditSuggestionRequest = z.infer<
 >;
 export type MetadataCatalogAuditSuggestionResponse = z.infer<
 	typeof metadataCatalogAuditSuggestionResponse
+>;
+export type MetadataCatalogSeparationLayerConfig = z.infer<
+	typeof metadataCatalogSeparationLayerConfig
+>;
+export type MetadataCatalogSeparationCandidateDecision = z.infer<
+	typeof metadataCatalogSeparationCandidateDecision
+>;
+export type MetadataCatalogSeparationSimilarityMatrix = z.infer<
+	typeof metadataCatalogSeparationSimilarityMatrix
+>;
+export type MetadataCatalogSeparationStageReport = z.infer<
+	typeof metadataCatalogSeparationStageReport
+>;
+export type MetadataCatalogContrastMemoryItem = z.infer<
+	typeof metadataCatalogContrastMemoryItem
+>;
+export type MetadataCatalogSeparationDiagnostics = z.infer<
+	typeof metadataCatalogSeparationDiagnostics
+>;
+export type MetadataCatalogSeparationRequest = z.infer<
+	typeof metadataCatalogSeparationRequest
+>;
+export type MetadataCatalogSeparationResponse = z.infer<
+	typeof metadataCatalogSeparationResponse
 >;
 export type ToolEvaluationExpected = z.infer<typeof toolEvaluationExpected>;
 export type ToolApiInputEvaluationExpected = z.infer<

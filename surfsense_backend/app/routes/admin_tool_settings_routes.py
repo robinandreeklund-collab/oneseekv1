@@ -36,6 +36,8 @@ from app.schemas.admin_tool_settings import (
     MetadataCatalogAuditRunResponse,
     MetadataCatalogAuditSuggestionRequest,
     MetadataCatalogAuditSuggestionResponse,
+    MetadataCatalogSeparationRequest,
+    MetadataCatalogSeparationResponse,
     MetadataCatalogResponse,
     MetadataCatalogUpdateRequest,
     ToolAutoLoopJobStatusResponse,
@@ -109,6 +111,7 @@ from app.services.metadata_audit_service import (
     generate_intent_metadata_suggestions_from_annotations,
     run_layered_metadata_audit,
 )
+from app.services.metadata_separation_service import run_bottom_up_metadata_separation
 from app.services.agent_metadata_service import (
     agent_metadata_payload_equal,
     get_default_agent_metadata,
@@ -4069,6 +4072,138 @@ async def generate_metadata_catalog_audit_suggestions(
             "llm_parallelism_effective": int(per_stage_parallelism),
             "max_suggestions": int(normalized_max_suggestions),
         },
+    }
+
+
+@router.post(
+    "/tool-settings/metadata-audit/separate-collisions",
+    response_model=MetadataCatalogSeparationResponse,
+)
+async def run_metadata_catalog_separation(
+    payload: MetadataCatalogSeparationRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    tool_patch_map = _patch_map_from_updates(payload.metadata_patch)
+
+    async def _rebuild_tool_index(
+        patch_map: dict[str, dict[str, Any]],
+    ):
+        tool_index, _persisted_overrides, _effective_overrides = (
+            await _build_tool_index_for_search_space(
+                session,
+                user,
+                search_space_id=resolved_search_space_id,
+                metadata_patch=patch_map,
+            )
+        )
+        return tool_index
+
+    tool_index = await _rebuild_tool_index(tool_patch_map)
+    retrieval_tuning = await get_global_tool_retrieval_tuning(session)
+    intent_definitions = await get_effective_intent_definitions(session)
+    if payload.intent_metadata_patch:
+        intent_definitions = _merge_effective_intent_definitions_with_patch(
+            effective_definitions=intent_definitions,
+            patch_items=[item.model_dump() for item in payload.intent_metadata_patch],
+        )
+    agent_metadata = await get_effective_agent_metadata(session)
+    if payload.agent_metadata_patch:
+        agent_metadata = _merge_effective_agent_metadata_with_patch(
+            effective_metadata=agent_metadata,
+            patch_items=[item.model_dump() for item in payload.agent_metadata_patch],
+        )
+    expected_intent_by_tool: dict[str, str] = {}
+    expected_agent_by_tool: dict[str, str] = {}
+    for entry in tool_index:
+        route, intent_id = _resolve_expected_route_and_intent(
+            tool_id=str(getattr(entry, "tool_id", "") or ""),
+            category=str(getattr(entry, "category", "") or ""),
+            route=None,
+            intent=None,
+        )
+        normalized_tool_id = str(getattr(entry, "tool_id", "") or "")
+        if not normalized_tool_id:
+            continue
+        expected_intent_by_tool[normalized_tool_id] = (
+            str(intent_id or "").strip().lower() or "action"
+        )
+        expected_agent_by_tool[normalized_tool_id] = _infer_agent_for_tool(
+            normalized_tool_id,
+            str(getattr(entry, "category", "") or ""),
+            route,
+            None,
+        )
+    llm = None
+    any_layer_llm_enabled = bool(
+        payload.include_llm_refinement
+        and (
+            payload.intent_layer.llm_enabled
+            or payload.agent_layer.llm_enabled
+            or payload.tool_layer.llm_enabled
+        )
+    )
+    if any_layer_llm_enabled:
+        llm = await get_agent_llm(session, resolved_search_space_id)
+
+    intent_patch_map = {
+        str(item.intent_id or "").strip().lower(): item.model_dump()
+        for item in payload.intent_metadata_patch
+        if str(item.intent_id or "").strip()
+    }
+    agent_patch_map = {
+        str(item.agent_id or "").strip().lower(): item.model_dump()
+        for item in payload.agent_metadata_patch
+        if str(item.agent_id or "").strip()
+    }
+    separation_result = await run_bottom_up_metadata_separation(
+        rebuild_tool_index_fn=_rebuild_tool_index,
+        retrieval_tuning=retrieval_tuning,
+        expected_intent_by_tool=expected_intent_by_tool,
+        expected_agent_by_tool=expected_agent_by_tool,
+        intent_definitions=intent_definitions,
+        agent_metadata=agent_metadata,
+        tool_patch_map=tool_patch_map,
+        intent_patch_map=intent_patch_map,
+        agent_patch_map=agent_patch_map,
+        tool_ids=list(payload.tool_ids),
+        tool_id_prefix=payload.tool_id_prefix,
+        retrieval_limit=int(payload.retrieval_limit or 5),
+        max_tools=int(payload.max_tools or 25),
+        max_queries_per_tool=int(payload.max_queries_per_tool or 6),
+        hard_negatives_per_tool=int(payload.hard_negatives_per_tool or 1),
+        anchor_probe_set=[item.model_dump() for item in payload.anchor_probe_set],
+        include_llm_refinement=bool(payload.include_llm_refinement),
+        llm=llm,
+        llm_parallelism=int(payload.llm_parallelism or 4),
+        intent_layer_config=payload.intent_layer.model_dump(),
+        agent_layer_config=payload.agent_layer.model_dump(),
+        tool_layer_config=payload.tool_layer.model_dump(),
+    )
+    final_tool_index = list(separation_result.get("final_tool_index") or [])
+    return {
+        "search_space_id": resolved_search_space_id,
+        "metadata_version_hash": compute_metadata_version_hash(final_tool_index),
+        "retrieval_tuning": ToolRetrievalTuning(**retrieval_tuning),
+        "baseline_summary": dict(separation_result.get("baseline_summary") or {}),
+        "final_summary": dict(separation_result.get("final_summary") or {}),
+        "stage_reports": list(separation_result.get("stage_reports") or []),
+        "proposed_tool_metadata_patch": list(
+            separation_result.get("proposed_tool_metadata_patch") or []
+        ),
+        "proposed_intent_metadata_patch": list(
+            separation_result.get("proposed_intent_metadata_patch") or []
+        ),
+        "proposed_agent_metadata_patch": list(
+            separation_result.get("proposed_agent_metadata_patch") or []
+        ),
+        "contrast_memory": list(separation_result.get("contrast_memory") or []),
+        "diagnostics": dict(separation_result.get("diagnostics") or {}),
     }
 
 

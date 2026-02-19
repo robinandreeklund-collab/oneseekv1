@@ -1,5 +1,6 @@
 import {
 	type MetadataCatalogAuditRunRequest,
+	type MetadataCatalogSeparationRequest,
 	type MetadataCatalogAuditSuggestionRequest,
 	type MetadataCatalogUpdateRequest,
 	type ToolApplySuggestionsRequest,
@@ -13,6 +14,8 @@ import {
 	type ToolSuggestionRequest,
 	metadataCatalogAuditRunRequest,
 	metadataCatalogAuditRunResponse,
+	metadataCatalogSeparationRequest,
+	metadataCatalogSeparationResponse,
 	metadataCatalogAuditSuggestionRequest,
 	metadataCatalogAuditSuggestionResponse,
 	metadataCatalogResponse,
@@ -150,6 +153,21 @@ class AdminToolSettingsApiService {
 		return baseApiService.post(
 			"/api/v1/admin/tool-settings/metadata-audit/run",
 			metadataCatalogAuditRunResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async runMetadataCatalogSeparation(request: MetadataCatalogSeparationRequest) {
+		const parsed = metadataCatalogSeparationRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/metadata-audit/separate-collisions",
+			metadataCatalogSeparationResponse,
 			{
 				body: parsed.data,
 			}
