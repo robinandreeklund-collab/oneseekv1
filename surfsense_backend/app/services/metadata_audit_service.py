@@ -51,6 +51,8 @@ _ACTION_AGENTS = {
 _KNOWLEDGE_AGENTS = {"knowledge", "browser", "bolag", "riksdagen"}
 _STATISTICS_AGENTS = {"statistics"}
 _COMPARE_AGENTS = {"synthesis"}
+_MAX_INTENT_FAILURES_FOR_LLM = 20
+_MAX_AGENT_FAILURES_FOR_LLM = 20
 
 _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...]]]] = {
     "knowledge": (
@@ -137,6 +139,29 @@ def _normalize_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _compact_failures_for_llm(
+    failures: list[dict[str, Any]],
+    *,
+    max_items: int,
+) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for item in failures[: max(1, int(max_items))]:
+        if not isinstance(item, dict):
+            continue
+        compacted.append(
+            {
+                "probe_id": _normalize_text(item.get("probe_id")),
+                "query": _normalize_text(item.get("query")),
+                "expected_intent_id": _normalize_text(item.get("expected_intent_id")).lower() or None,
+                "predicted_intent_id": _normalize_text(item.get("predicted_intent_id")).lower() or None,
+                "expected_agent_id": _normalize_text(item.get("expected_agent_id")).lower() or None,
+                "predicted_agent_id": _normalize_text(item.get("predicted_agent_id")).lower() or None,
+                "score_breakdown": list(item.get("score_breakdown") or [])[:4],
+            }
+        )
+    return compacted
 
 
 def _safe_string_list(values: Any) -> list[str]:
@@ -1446,7 +1471,10 @@ async def _build_llm_intent_metadata_suggestion(
     )
     payload = {
         "current_metadata": current,
-        "reviewed_failures": failures,
+        "reviewed_failures": _compact_failures_for_llm(
+            failures,
+            max_items=_MAX_INTENT_FAILURES_FOR_LLM,
+        ),
     }
     try:
         response = await model.ainvoke(
@@ -1507,7 +1535,10 @@ async def _build_llm_agent_metadata_suggestion(
     )
     payload = {
         "current_metadata": current,
-        "reviewed_failures": failures,
+        "reviewed_failures": _compact_failures_for_llm(
+            failures,
+            max_items=_MAX_AGENT_FAILURES_FOR_LLM,
+        ),
     }
     try:
         response = await model.ainvoke(

@@ -150,6 +150,7 @@ _SKOLVERKET_TOOL_CATEGORY_BY_ID: dict[str, str] = {
     if str(definition.tool_id or "").strip()
 }
 _SKOLVERKET_TOOL_IDS = set(_SKOLVERKET_TOOL_CATEGORY_BY_ID.keys())
+_MAX_TOOL_FAILURES_FOR_LLM = 18
 
 
 def compute_metadata_version_hash(tool_index: list[ToolIndexEntry]) -> str:
@@ -1843,9 +1844,22 @@ async def _build_llm_suggestion(
         "}\n"
         "Ingen markdown."
     )
+    trimmed_failures: list[dict[str, Any]] = []
+    for item in failures[:_MAX_TOOL_FAILURES_FOR_LLM]:
+        if not isinstance(item, dict):
+            continue
+        trimmed_failures.append(
+            {
+                "question": str(item.get("question") or "").strip(),
+                "selected_wrong_tool": str(item.get("selected_wrong_tool") or "").strip() or None,
+                "retrieval_breakdown": list(item.get("retrieval_breakdown") or [])[:3],
+                "tool_vector_diagnostics": dict(item.get("tool_vector_diagnostics") or {}),
+            }
+        )
+
     payload = {
         "current_metadata": current,
-        "failed_cases": failures,
+        "failed_cases": trimmed_failures,
         "retrieval_tuning": retrieval_tuning or {},
         "retrieval_context": retrieval_context or {},
     }
