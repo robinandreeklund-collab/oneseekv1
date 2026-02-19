@@ -121,19 +121,57 @@ class BaseApiService {
 				}
 			}
 
-			let response: Response;
+			let response: Response | null = null;
+			let fallbackUrl: string | null = null;
+			if (typeof window !== "undefined") {
+				try {
+					const backendUrl = new URL(fullUrl);
+					const backendHost = backendUrl.hostname.toLocaleLowerCase();
+					const frontendHost = window.location.hostname.toLocaleLowerCase();
+					const localBackendHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+					const backendLooksLocal = localBackendHosts.has(backendHost);
+					const frontendIsDifferentHost = !localBackendHosts.has(frontendHost);
+					if (backendLooksLocal && frontendIsDifferentHost && url.startsWith("/")) {
+						// Fallback for cloud/container setups where browser cannot reach localhost:PORT.
+						fallbackUrl = url;
+					}
+				} catch {
+					fallbackUrl = null;
+				}
+			}
 			try {
 				response = await fetch(fullUrl, fetchOptions);
 			} catch (fetchError) {
 				// Browsers throw TypeError for DNS/CORS/connection failures.
-				if (fetchError instanceof TypeError) {
+				if (!(fetchError instanceof TypeError)) {
+					throw fetchError;
+				}
+				if (!fallbackUrl) {
 					throw new NetworkError(
 						`Could not reach backend (${fullUrl}). Check NEXT_PUBLIC_FASTAPI_BACKEND_URL, backend status, and CORS.`,
 						0,
 						"NETWORK_ERROR"
 					);
 				}
-				throw fetchError;
+				try {
+					response = await fetch(fallbackUrl, fetchOptions);
+				} catch (fallbackError) {
+					if (fallbackError instanceof TypeError) {
+						throw new NetworkError(
+							`Could not reach backend (${fullUrl}) and fallback (${fallbackUrl}). Check NEXT_PUBLIC_FASTAPI_BACKEND_URL, backend status, and CORS.`,
+							0,
+							"NETWORK_ERROR"
+						);
+					}
+					throw fallbackError;
+				}
+			}
+			if (!response) {
+				throw new NetworkError(
+					`Could not reach backend (${fullUrl}). Check NEXT_PUBLIC_FASTAPI_BACKEND_URL, backend status, and CORS.`,
+					0,
+					"NETWORK_ERROR"
+				);
 			}
 
 			/**
