@@ -48,6 +48,8 @@ _CONTRAST_MEMORY: dict[str, dict[tuple[str, str], str]] = {
     "agent": {},
     "tool": {},
 }
+_CONTRAST_MEMORY_DRIFT_EPS = 0.005
+_CLUSTER_BALANCE_MAX_DROP = 0.015
 
 
 @dataclass(frozen=True)
@@ -125,6 +127,24 @@ def _normalize_vector(value: Any) -> list[float] | None:
         return [float(item) for item in value]
     except Exception:
         return None
+
+
+def _mean_vector(vectors: list[list[float] | None]) -> list[float] | None:
+    usable = [vector for vector in vectors if vector]
+    if not usable:
+        return None
+    dim = len(usable[0])
+    if dim <= 0:
+        return None
+    for vector in usable:
+        if len(vector) != dim:
+            return None
+    sums = [0.0] * dim
+    for vector in usable:
+        for index, value in enumerate(vector):
+            sums[index] += float(value)
+    count = float(len(usable))
+    return [value / count for value in sums]
 
 
 def _cosine_similarity(left: list[float] | None, right: list[float] | None) -> float:
@@ -508,6 +528,17 @@ def _contrast_hints_for_item(layer: str, item_id: str, *, limit: int = 3) -> lis
     return hints
 
 
+def _contrast_memory_rivals(layer: str, item_id: str) -> set[str]:
+    item_key = _normalized_key(item_id)
+    rivals: set[str] = set()
+    for left, right in _CONTRAST_MEMORY.get(layer, {}).keys():
+        if item_key == left and right:
+            rivals.add(right)
+        elif item_key == right and left:
+            rivals.add(left)
+    return rivals
+
+
 def _rule_patch_candidate(
     *,
     layer: str,
@@ -796,6 +827,65 @@ def _extract_tool_struct_map(
     }
 
 
+def _cluster_balance_score(
+    *,
+    layer: str,
+    components: list[list[str]],
+    intent_map: dict[str, dict[str, Any]],
+    agent_map: dict[str, dict[str, Any]],
+    tool_map: dict[str, dict[str, Any]],
+    tool_struct_map: dict[str, list[float] | None],
+    semantic_weight: float,
+    structural_weight: float,
+) -> float | None:
+    if len(components) < 2:
+        return None
+    centroids: list[tuple[list[float] | None, list[float] | None]] = []
+    for component in components:
+        labels = [item_id for item_id in component if _normalized_key(item_id)]
+        if not labels:
+            continue
+        if layer == "intent":
+            semantic_centroid = _mean_vector(
+                [_embed_text(_intent_text(intent_map.get(item_id, {}))) for item_id in labels]
+            )
+            centroids.append((semantic_centroid, None))
+            continue
+        if layer == "agent":
+            semantic_centroid = _mean_vector(
+                [_embed_text(_agent_text(agent_map.get(item_id, {}))) for item_id in labels]
+            )
+            centroids.append((semantic_centroid, None))
+            continue
+        semantic_centroid = _mean_vector(
+            [_embed_text(_tool_semantic_text(tool_map.get(item_id, {}))) for item_id in labels]
+        )
+        structural_centroid = _mean_vector([tool_struct_map.get(item_id) for item_id in labels])
+        centroids.append((semantic_centroid, structural_centroid))
+    if len(centroids) < 2:
+        return None
+    distances: list[float] = []
+    for left_index in range(len(centroids)):
+        for right_index in range(left_index + 1, len(centroids)):
+            left_sem, left_struct = centroids[left_index]
+            right_sem, right_struct = centroids[right_index]
+            if layer == "tool":
+                similarity = _fused_tool_similarity(
+                    left_sem=left_sem,
+                    left_struct=left_struct,
+                    right_sem=right_sem,
+                    right_struct=right_struct,
+                    semantic_weight=semantic_weight,
+                    structural_weight=structural_weight,
+                )
+            else:
+                similarity = _cosine_similarity(left_sem, right_sem)
+            distances.append(1.0 - similarity)
+    if not distances:
+        return None
+    return float(sum(distances) / len(distances))
+
+
 def _compute_alignment_semantic(
     *,
     queries: list[str],
@@ -912,6 +1002,8 @@ def _evaluate_candidate(
     nearest_new = -1.0
     similarity_to_primary_old: float | None = None
     similarity_to_primary_new: float | None = None
+    similarity_old_by_other: dict[str, float] = {}
+    similarity_new_by_other: dict[str, float] = {}
 
     for other_id in other_ids:
         if layer == "intent":
@@ -943,6 +1035,8 @@ def _evaluate_candidate(
             )
         nearest_old = max(nearest_old, sim_old)
         nearest_new = max(nearest_new, sim_new)
+        similarity_old_by_other[other_id] = float(sim_old)
+        similarity_new_by_other[other_id] = float(sim_new)
         if other_id == primary_competitor:
             similarity_to_primary_old = sim_old
             similarity_to_primary_new = sim_new
@@ -969,8 +1063,21 @@ def _evaluate_candidate(
         nearest_old + cfg.epsilon_noise,
         cfg.global_similarity_threshold,
     )
-    global_pass = nearest_new <= global_limit and alignment_new >= (
+    contrast_violations: list[str] = []
+    for rival in sorted(_contrast_memory_rivals(layer, item_id)):
+        if rival not in similarity_old_by_other or rival not in similarity_new_by_other:
+            continue
+        if similarity_new_by_other[rival] > (similarity_old_by_other[rival] + _CONTRAST_MEMORY_DRIFT_EPS):
+            contrast_violations.append(
+                f"{rival}: {similarity_old_by_other[rival]:.4f}->{similarity_new_by_other[rival]:.4f}"
+            )
+    contrast_pass = len(contrast_violations) == 0
+    global_pass = (
+        nearest_new <= global_limit
+        and alignment_new >= (
         alignment_old - cfg.alignment_drop_max
+        )
+        and contrast_pass
     )
 
     alignment_weight = max(0.0, cfg.score_alignment_weight)
@@ -997,6 +1104,8 @@ def _evaluate_candidate(
         "nearest_new": float(nearest_new),
         "similarity_to_primary_old": similarity_to_primary_old,
         "similarity_to_primary_new": similarity_to_primary_new,
+        "contrast_pass": contrast_pass,
+        "contrast_violations": contrast_violations,
     }
 
 
@@ -1324,6 +1433,16 @@ async def run_bottom_up_metadata_separation(
             return stage_report, (perf_counter() - stage_started_at) * 1000
 
         components = _conflict_components(layer_stats=layer_stats)
+        baseline_cluster_balance = _cluster_balance_score(
+            layer=layer,
+            components=components,
+            intent_map=current_intent_map,
+            agent_map=current_agent_map,
+            tool_map=current_tool_map,
+            tool_struct_map=_extract_tool_struct_map(current_tool_index),
+            semantic_weight=semantic_weight,
+            structural_weight=structural_weight,
+        )
         ordered_ids: list[str] = []
         for component in components:
             sorted_component = sorted(
@@ -1519,9 +1638,15 @@ async def run_bottom_up_metadata_separation(
                     )
                     continue
                 if not bool(eval_payload.get("global_pass")):
-                    decision_payload["rejection_reasons"].append(
-                        f"{source}: global-safety failed"
-                    )
+                    contrast_violations = list(eval_payload.get("contrast_violations") or [])
+                    if contrast_violations:
+                        decision_payload["rejection_reasons"].append(
+                            f"{source}: contrast-memory drift ({'; '.join(contrast_violations[:3])})"
+                        )
+                    else:
+                        decision_payload["rejection_reasons"].append(
+                            f"{source}: global-safety failed"
+                        )
                     continue
                 if selected is None:
                     selected = (source, candidate_payload, eval_payload)
@@ -1647,6 +1772,17 @@ async def run_bottom_up_metadata_separation(
         after_summary = dict(mini_audit.get("summary") or {})
         after_metric = _layer_metric(layer, after_summary)
         delta = after_metric - before_metric
+        after_tool_struct_map = _extract_tool_struct_map(current_tool_index)
+        after_cluster_balance = _cluster_balance_score(
+            layer=layer,
+            components=components,
+            intent_map=current_intent_map,
+            agent_map=current_agent_map,
+            tool_map=current_tool_map,
+            tool_struct_map=after_tool_struct_map,
+            semantic_weight=semantic_weight,
+            structural_weight=structural_weight,
+        )
         upstream_ok, upstream_notes = _upstream_ok(
             layer=layer,
             before_summary=before_summary,
@@ -1657,9 +1793,24 @@ async def run_bottom_up_metadata_separation(
             stage_report["notes"].append(
                 f"Metric-delta under tröskel ({delta * 100:.2f} pp < {cfg.min_metric_delta * 100:.2f} pp)."
             )
+        cluster_balance_ok = True
+        if baseline_cluster_balance is not None and after_cluster_balance is not None:
+            allowed_drop = max(_CLUSTER_BALANCE_MAX_DROP, float(cfg.epsilon_noise))
+            if after_cluster_balance < (baseline_cluster_balance - allowed_drop):
+                cluster_balance_ok = False
+                stage_report["notes"].append(
+                    "Cluster-balance regressade: "
+                    f"{baseline_cluster_balance:.4f} -> {after_cluster_balance:.4f} "
+                    f"(max tillåten drop {allowed_drop:.4f})."
+                )
+            else:
+                stage_report["notes"].append(
+                    "Cluster-balance ok: "
+                    f"{baseline_cluster_balance:.4f} -> {after_cluster_balance:.4f}."
+                )
         stage_report["notes"].extend(upstream_notes)
 
-        locked = bool(metric_ok and upstream_ok)
+        locked = bool(metric_ok and upstream_ok and cluster_balance_ok)
         stage_report["locked"] = locked
         stage_report["after_metric"] = after_metric
         stage_report["delta_pp"] = round(delta * 100, 2)
@@ -1765,13 +1916,38 @@ async def run_bottom_up_metadata_separation(
                 ),
             }
         )
+    normalized_intent_patch_output: list[dict[str, Any]] = []
+    for intent_id, payload in current_intent_patch_map.items():
+        normalized_intent_patch_output.append(
+            {
+                "intent_id": _normalize_text(payload.get("intent_id")) or _normalize_text(intent_id),
+                "label": _normalize_text(payload.get("label")),
+                "route": _normalize_text(payload.get("route")) or "knowledge",
+                "description": _normalize_text(payload.get("description")),
+                "keywords": _safe_string_list(payload.get("keywords")),
+                "priority": int(payload.get("priority") or 500),
+                "enabled": bool(payload.get("enabled", True)),
+            }
+        )
+    normalized_agent_patch_output: list[dict[str, Any]] = []
+    for agent_id, payload in current_agent_patch_map.items():
+        normalized_agent_patch_output.append(
+            {
+                "agent_id": _normalize_text(payload.get("agent_id")) or _normalize_text(agent_id),
+                "label": _normalize_text(payload.get("label")),
+                "description": _normalize_text(payload.get("description")),
+                "keywords": _safe_string_list(payload.get("keywords")),
+                "prompt_key": _normalize_text(payload.get("prompt_key")) or None,
+                "namespace": _safe_string_list(payload.get("namespace")),
+            }
+        )
     return {
         "baseline_summary": dict(baseline_result.get("summary") or {}),
         "final_summary": dict(final_audit.get("summary") or {}),
         "stage_reports": stage_reports,
         "proposed_tool_metadata_patch": normalized_tool_patch_output,
-        "proposed_intent_metadata_patch": list(current_intent_patch_map.values()),
-        "proposed_agent_metadata_patch": list(current_agent_patch_map.values()),
+        "proposed_intent_metadata_patch": normalized_intent_patch_output,
+        "proposed_agent_metadata_patch": normalized_agent_patch_output,
         "contrast_memory": list(deduped_contrast.values()),
         "diagnostics": {
             "total_ms": round(float(total_ms), 2),
