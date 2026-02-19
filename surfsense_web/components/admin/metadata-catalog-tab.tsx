@@ -244,6 +244,13 @@ type AutoAuditRoundEntry = {
 	vectorExpectedInTopK: number | null;
 	totalProbes: number;
 	monitorScore: number;
+	step1TotalMs: number | null;
+	step1PreparationMs: number | null;
+	step1ProbeGenerationMs: number | null;
+	step1EvaluationMs: number | null;
+	step1IntentMs: number | null;
+	step1AgentMs: number | null;
+	step1ToolMs: number | null;
 	step2TotalMs: number | null;
 	step2PreparationMs: number | null;
 	step2ToolMs: number | null;
@@ -912,7 +919,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			setSelectedAuditSuggestionIntentIds(new Set());
 			setSelectedAuditSuggestionAgentIds(new Set());
 			toast.success(
-				`Audit klar. ${result.summary.total_probes} probes analyserade.`
+				`Audit klar. ${result.summary.total_probes} probes analyserade (${formatMs(result.diagnostics?.total_ms)}).`
 			);
 		} catch (_error) {
 			toast.error("Kunde inte kora metadata-audit.");
@@ -1233,6 +1240,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					previousMonitor != null && monitorScore < previousMonitor - dropThreshold;
 				previousMonitor = monitorScore;
 				const vectorSummary = result.summary.vector_recall_summary;
+				const step1Diagnostics = result.diagnostics ?? null;
 				const totalProbes = Math.max(0, Number(result.summary.total_probes || 0));
 
 				const baseEntry: AutoAuditRoundEntry = {
@@ -1257,6 +1265,13 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							: null,
 					totalProbes,
 					monitorScore,
+					step1TotalMs: step1Diagnostics?.total_ms ?? null,
+					step1PreparationMs: step1Diagnostics?.preparation_ms ?? null,
+					step1ProbeGenerationMs: step1Diagnostics?.probe_generation_ms ?? null,
+					step1EvaluationMs: step1Diagnostics?.evaluation_ms ?? null,
+					step1IntentMs: step1Diagnostics?.intent_layer_ms ?? null,
+					step1AgentMs: step1Diagnostics?.agent_layer_ms ?? null,
+					step1ToolMs: step1Diagnostics?.tool_layer_ms ?? null,
 					step2TotalMs: null,
 					step2PreparationMs: null,
 					step2ToolMs: null,
@@ -1955,6 +1970,15 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										{(item.toolAccuracy * 100).toFixed(1)}% · Monitor{" "}
 										{(item.monitorScore * 100).toFixed(1)}% · Förslag{" "}
 										{item.toolSuggestions}/{item.intentSuggestions}/{item.agentSuggestions}
+										{item.step1TotalMs != null
+											? ` · Steg1 ${formatMs(item.step1TotalMs)} (Prep ${formatMs(
+													item.step1PreparationMs
+												)} | QGen ${formatMs(item.step1ProbeGenerationMs)} | Eval ${formatMs(
+													item.step1EvaluationMs
+												)} | I ${formatMs(item.step1IntentMs)} | A ${formatMs(
+													item.step1AgentMs
+												)} | T ${formatMs(item.step1ToolMs)})`
+											: ""}
 										{item.step2TotalMs != null
 											? ` · Steg2 ${formatMs(item.step2TotalMs)} (T ${formatMs(
 													item.step2ToolMs
@@ -2026,6 +2050,37 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						<div className="space-y-4">
 							<div className="flex flex-wrap gap-2">
 								<Badge variant="outline">Probes: {auditResult.summary.total_probes}</Badge>
+								<Badge variant="outline">
+									Steg1 total: {formatMs(auditResult.diagnostics?.total_ms)}
+								</Badge>
+								<Badge variant="outline">
+									Steg1 Prep/QGen/Eval:{" "}
+									{formatMs(auditResult.diagnostics?.preparation_ms)}/
+									{formatMs(auditResult.diagnostics?.probe_generation_ms)}/
+									{formatMs(auditResult.diagnostics?.evaluation_ms)}
+								</Badge>
+								<Badge variant="outline">
+									Steg1 I/A/T: {formatMs(auditResult.diagnostics?.intent_layer_ms)}/
+									{formatMs(auditResult.diagnostics?.agent_layer_ms)}/
+									{formatMs(auditResult.diagnostics?.tool_layer_ms)}
+								</Badge>
+								<Badge variant="outline">
+									Q-kandidater (tot/ex/llm/refresh):{" "}
+									{auditResult.diagnostics?.query_candidates_total ?? 0}/
+									{auditResult.diagnostics?.existing_example_candidates ?? 0}/
+									{auditResult.diagnostics?.llm_generated_candidates ?? 0}/
+									{auditResult.diagnostics?.round_refresh_queries ?? 0}
+								</Badge>
+								<Badge variant="outline">
+									Exkluderade (history/dupes):{" "}
+									{auditResult.diagnostics?.excluded_query_history_count ?? 0}/
+									{auditResult.diagnostics?.excluded_query_duplicate_count ?? 0}
+								</Badge>
+								<Badge variant="outline">
+									Evals: {auditResult.diagnostics?.evaluated_queries ?? 0} · Verktyg:{" "}
+									{auditResult.diagnostics?.selected_tools_count ?? 0} · Probe pool:{" "}
+									{auditResult.diagnostics?.excluded_query_pool_size ?? 0}
+								</Badge>
 								<Badge variant="outline">
 									Intent: {(auditResult.summary.intent_accuracy * 100).toFixed(1)}%
 								</Badge>

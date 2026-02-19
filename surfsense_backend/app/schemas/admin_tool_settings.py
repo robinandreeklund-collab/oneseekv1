@@ -729,6 +729,32 @@ class MetadataCatalogAuditSummary(BaseModel):
     )
 
 
+class MetadataCatalogAuditRunDiagnostics(BaseModel):
+    total_ms: float = 0.0
+    preparation_ms: float = 0.0
+    probe_generation_ms: float = 0.0
+    evaluation_ms: float = 0.0
+    intent_layer_ms: float = 0.0
+    agent_layer_ms: float = 0.0
+    tool_layer_ms: float = 0.0
+    summary_build_ms: float = 0.0
+    selected_tools_count: int = 0
+    intent_candidate_count: int = 0
+    agent_candidate_count: int = 0
+    query_candidates_total: int = 0
+    existing_example_candidates: int = 0
+    llm_generated_candidates: int = 0
+    round_refresh_queries: int = 0
+    excluded_query_history_count: int = 0
+    excluded_query_duplicate_count: int = 0
+    evaluated_queries: int = 0
+    excluded_query_pool_size: int = 0
+    probe_generation_parallelism: int = 1
+    probe_round: int = 1
+    include_existing_examples: bool = True
+    include_llm_generated: bool = True
+
+
 class MetadataCatalogAuditRunRequest(BaseModel):
     search_space_id: int | None = None
     metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
@@ -754,6 +780,9 @@ class MetadataCatalogAuditRunResponse(BaseModel):
     retrieval_tuning: ToolRetrievalTuning
     probes: list[MetadataCatalogAuditProbeItem] = Field(default_factory=list)
     summary: MetadataCatalogAuditSummary = Field(default_factory=MetadataCatalogAuditSummary)
+    diagnostics: MetadataCatalogAuditRunDiagnostics = Field(
+        default_factory=MetadataCatalogAuditRunDiagnostics
+    )
     available_intent_ids: list[str] = Field(default_factory=list)
     available_agent_ids: list[str] = Field(default_factory=list)
     available_tool_ids: list[str] = Field(default_factory=list)

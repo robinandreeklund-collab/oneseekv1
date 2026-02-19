@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+from time import perf_counter
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -876,6 +877,8 @@ async def run_layered_metadata_audit(
     probe_round: int = 1,
     exclude_probe_queries: list[str] | None = None,
 ) -> dict[str, Any]:
+    total_started_at = perf_counter()
+    preparation_started_at = total_started_at
     selected_entries = _select_audit_entries(
         tool_index=tool_index,
         tool_ids=list(tool_ids or []),
@@ -925,6 +928,16 @@ async def run_layered_metadata_audit(
     vector_probes_with_expected_tool_in_top_k = 0
     vector_probes_with_expected_tool_vector_only = 0
     vector_probes_correct_tool_with_vector_support = 0
+    query_candidates_total = 0
+    existing_example_candidates = 0
+    llm_generated_candidates = 0
+    excluded_query_history_count = 0
+    excluded_query_duplicate_count = 0
+    round_refresh_queries = 0
+    final_queries_evaluated = 0
+    intent_layer_ms = 0.0
+    agent_layer_ms = 0.0
+    tool_layer_ms = 0.0
 
     internal_retrieval_limit = max(2, min(int(retrieval_limit or 5), 20))
     max_probe_queries = max(1, min(int(max_queries_per_tool or 6), 20))
@@ -937,6 +950,7 @@ async def run_layered_metadata_audit(
         for query in list(exclude_probe_queries or [])
         if _normalize_text(query)
     }
+    probe_generation_started_at = perf_counter()
     generated_queries_by_tool: dict[str, list[str]] = {}
     if include_llm_generated:
         async def _generate_for_entry(entry: ToolIndexEntry) -> tuple[str, list[str]]:
@@ -973,6 +987,9 @@ async def run_layered_metadata_audit(
             )
             for tool_id, generated in generated_results:
                 generated_queries_by_tool[tool_id] = list(generated)
+    probe_generation_ms = (perf_counter() - probe_generation_started_at) * 1000
+    preparation_ms = (probe_generation_started_at - preparation_started_at) * 1000
+    evaluation_started_at = perf_counter()
 
     for entry in selected_entries:
         expected_tool_id = entry.tool_id
@@ -980,13 +997,22 @@ async def run_layered_metadata_audit(
         expected_agent_id = _normalize_text(expected_agent_by_tool.get(expected_tool_id)).lower() or None
         queries: list[tuple[str, str]] = []
         if include_existing_examples:
+            existing_queries = [
+                query
+                for query in entry.example_queries[:max_probe_queries]
+                if _normalize_text(query)
+            ]
             queries.extend(
                 (query, "existing_example")
-                for query in entry.example_queries[:max_probe_queries]
+                for query in existing_queries
             )
+            existing_example_candidates += len(existing_queries)
+            query_candidates_total += len(existing_queries)
         if include_llm_generated:
             generated = list(generated_queries_by_tool.get(entry.tool_id) or [])
             queries.extend((query, "llm_generated") for query in generated)
+            llm_generated_candidates += len(generated)
+            query_candidates_total += len(generated)
         queries = _dedupe_queries(queries)
 
         filtered_queries: list[tuple[str, str]] = []
@@ -995,6 +1021,10 @@ async def run_layered_metadata_audit(
             normalized_query = _normalize_text(query)
             key = normalized_query.casefold()
             if not normalized_query or key in seen_query_keys or key in excluded_query_keys:
+                if key in excluded_query_keys:
+                    excluded_query_history_count += 1
+                elif key in seen_query_keys:
+                    excluded_query_duplicate_count += 1
                 continue
             seen_query_keys.add(key)
             filtered_queries.append((normalized_query, source))
@@ -1017,12 +1047,15 @@ async def run_layered_metadata_audit(
                     continue
                 seen_query_keys.add(key)
                 filtered_queries.append((normalized_query, "round_refresh"))
+                round_refresh_queries += 1
                 if len(filtered_queries) >= max_probe_queries:
                     break
 
         queries = filtered_queries[:max_probe_queries]
+        final_queries_evaluated += len(queries)
 
         for query, source in queries:
+            intent_started_at = perf_counter()
             intent_ranked = _rank_metadata_candidates(
                 query=query,
                 candidates=intent_candidates,
@@ -1033,8 +1066,10 @@ async def run_layered_metadata_audit(
                 expected_label=expected_intent_id,
                 ranked=intent_ranked,
             )
+            intent_layer_ms += (perf_counter() - intent_started_at) * 1000
             predicted_intent_id = _normalize_text(intent_layer.get("predicted_label")).lower() or None
 
+            agent_started_at = perf_counter()
             agent_ranked = _rank_metadata_candidates(
                 query=query,
                 candidates=agent_candidates,
@@ -1045,8 +1080,10 @@ async def run_layered_metadata_audit(
                 expected_label=expected_agent_id,
                 ranked=agent_ranked,
             )
+            agent_layer_ms += (perf_counter() - agent_started_at) * 1000
             predicted_agent_id = _normalize_text(agent_layer.get("predicted_label")).lower() or None
 
+            tool_started_at = perf_counter()
             primary_namespaces, fallback_namespaces = _tool_namespaces_for_agent(
                 predicted_agent_id
             )
@@ -1072,6 +1109,7 @@ async def run_layered_metadata_audit(
                 predicted_label=predicted_tool_id,
                 retrieval_breakdown=list(retrieval_breakdown),
             )
+            tool_layer_ms += (perf_counter() - tool_started_at) * 1000
 
             expected_path = _path_label(
                 expected_intent_id,
@@ -1145,6 +1183,8 @@ async def run_layered_metadata_audit(
                 if tool_correct:
                     tool_conditional_correct += 1
 
+    evaluation_ms = (perf_counter() - evaluation_started_at) * 1000
+    summary_started_at = perf_counter()
     total = len(probes)
     summary = {
         "total_probes": total,
@@ -1213,9 +1253,36 @@ async def run_layered_metadata_audit(
             ),
         },
     }
+    summary_build_ms = (perf_counter() - summary_started_at) * 1000
+    total_ms = (perf_counter() - total_started_at) * 1000
     return {
         "probes": probes,
         "summary": summary,
+        "diagnostics": {
+            "total_ms": round(float(total_ms), 2),
+            "preparation_ms": round(float(preparation_ms), 2),
+            "probe_generation_ms": round(float(probe_generation_ms), 2),
+            "evaluation_ms": round(float(evaluation_ms), 2),
+            "intent_layer_ms": round(float(intent_layer_ms), 2),
+            "agent_layer_ms": round(float(agent_layer_ms), 2),
+            "tool_layer_ms": round(float(tool_layer_ms), 2),
+            "summary_build_ms": round(float(summary_build_ms), 2),
+            "selected_tools_count": len(selected_entries),
+            "intent_candidate_count": len(intent_candidates),
+            "agent_candidate_count": len(agent_candidates),
+            "query_candidates_total": int(query_candidates_total),
+            "existing_example_candidates": int(existing_example_candidates),
+            "llm_generated_candidates": int(llm_generated_candidates),
+            "round_refresh_queries": int(round_refresh_queries),
+            "excluded_query_history_count": int(excluded_query_history_count),
+            "excluded_query_duplicate_count": int(excluded_query_duplicate_count),
+            "evaluated_queries": int(final_queries_evaluated),
+            "excluded_query_pool_size": int(len(excluded_query_keys)),
+            "probe_generation_parallelism": int(normalized_probe_parallelism),
+            "probe_round": int(normalized_probe_round),
+            "include_existing_examples": bool(include_existing_examples),
+            "include_llm_generated": bool(include_llm_generated),
+        },
         "available_intent_ids": sorted(
             {
                 _normalize_text(item.get("id")).lower()

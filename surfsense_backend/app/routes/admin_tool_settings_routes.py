@@ -3935,6 +3935,7 @@ async def run_metadata_catalog_audit(
         "retrieval_tuning": ToolRetrievalTuning(**retrieval_tuning),
         "probes": list(audit_result.get("probes") or []),
         "summary": dict(audit_result.get("summary") or {}),
+        "diagnostics": dict(audit_result.get("diagnostics") or {}),
         "available_intent_ids": list(audit_result.get("available_intent_ids") or []),
         "available_agent_ids": list(audit_result.get("available_agent_ids") or []),
         "available_tool_ids": list(audit_result.get("available_tool_ids") or []),
