@@ -29,10 +29,13 @@ _TOOL_AUDIT_STOPWORDS = {
     "for",
     "med",
     "pa",
+    "på",
     "i",
     "av",
     "till",
     "fran",
+    "från",
+    "för",
     "hur",
     "vad",
     "visa",
@@ -142,6 +145,62 @@ def _normalize_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+_SWEDISH_QUERY_DIACRITIC_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    (r"\bgoteborg\b", "göteborg"),
+    (r"\bmalmo\b", "malmö"),
+    (r"\blulea\b", "luleå"),
+    (r"\bostersund\b", "östersund"),
+    (r"\bgavle\b", "gävle"),
+    (r"\bvasteras\b", "västerås"),
+    (r"\bjonkoping\b", "jönköping"),
+    (r"\bnasta\b", "nästa"),
+    (r"\bmanad\b", "månad"),
+    (r"\bmanaden\b", "månaden"),
+    (r"\bmanader\b", "månader"),
+    (r"\bvader\b", "väder"),
+    (r"\bhjalp\b", "hjälp"),
+    (r"\bjamfor\b", "jämför"),
+    (r"\bfraga\b", "fråga"),
+    (r"\bfragor\b", "frågor"),
+    (r"\banvanda\b", "använda"),
+    (r"\banvander\b", "använder"),
+    (r"\banvandning\b", "användning"),
+    (r"\bfor\b", "för"),
+    (r"\bfran\b", "från"),
+    (r"\bnar\b", "när"),
+    (r"\bratt\b", "rätt"),
+)
+
+
+def _apply_case_pattern(source: str, replacement: str) -> str:
+    if not source:
+        return replacement
+    if source.isupper():
+        return replacement.upper()
+    if source[0].isupper():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
+
+
+def _swedishify_query_text(value: Any) -> str:
+    text = _normalize_text(value)
+    if not text:
+        return ""
+    updated = text
+    for pattern, replacement in _SWEDISH_QUERY_DIACRITIC_REPLACEMENTS:
+        updated = re.sub(
+            pattern,
+            lambda match, repl=replacement: _apply_case_pattern(match.group(0), repl),
+            updated,
+            flags=re.IGNORECASE,
+        )
+    return updated
+
+
+def _has_swedish_diacritics(value: str) -> bool:
+    return bool(re.search(r"[åäöÅÄÖ]", str(value or "")))
 
 
 def _compact_failures_for_llm(
@@ -337,17 +396,17 @@ def _fallback_probe_queries(
 
     locations = [
         "Stockholm",
-        "Goteborg",
-        "Malmo",
+        "Göteborg",
+        "Malmö",
         "Uppsala",
         "Sundsvall",
-        "Lulea",
-        "Ostersund",
+        "Luleå",
+        "Östersund",
         "Visby",
         "Karlstad",
-        "Gavle",
-        "Vasteras",
-        "Jonkoping",
+        "Gävle",
+        "Västerås",
+        "Jönköping",
     ]
     time_windows = [
         "idag",
@@ -356,16 +415,16 @@ def _fallback_probe_queries(
         "kommande veckan",
         "just nu",
         "denna helg",
-        "nasta manad",
+        "nästa månad",
         "under vintern",
         "under sommaren",
         "de senaste 24 timmarna",
     ]
 
     avoid_keys = {
-        _normalize_text(query).casefold()
+        normalized.casefold()
         for query in list(avoid_queries or [])
-        if _normalize_text(query)
+        if (normalized := _swedishify_query_text(query))
     }
     prompts: list[str] = []
     seen: set[str] = set()
@@ -374,7 +433,7 @@ def _fallback_probe_queries(
     time_offset = (rotation_seed * 3) % len(time_windows)
 
     def _append(prompt: str) -> None:
-        normalized = _normalize_text(prompt)
+        normalized = _swedishify_query_text(prompt)
         if not normalized:
             return
         key = normalized.casefold()
@@ -391,11 +450,11 @@ def _fallback_probe_queries(
             location = locations[(location_offset + idx) % len(locations)]
             if idx % 2 == 0:
                 _append(
-                    f"Nar ar {entry.name} ratt val i stallet for {neighbor_id} i {location}?"
+                    f"När är {entry.name} rätt val i stället för {neighbor_id} i {location}?"
                 )
             else:
                 _append(
-                    f"Jamfor {entry.name} och {neighbor_id} for samma fraga i {location}."
+                    f"Jämför {entry.name} och {neighbor_id} för samma fråga i {location}."
                 )
             if len(prompts) >= query_count:
                 return prompts[:query_count]
@@ -408,16 +467,16 @@ def _fallback_probe_queries(
         if idx % 3 == 0:
             _append(f"Visa {hint} i {location} {time_window}")
         elif idx % 3 == 1:
-            _append(f"Hjalp mig med {entry.name} i {location} {time_window}")
+            _append(f"Hjälp mig med {entry.name} i {location} {time_window}")
         else:
-            _append(f"Vad betyder {hint} for {location} {time_window}?")
+            _append(f"Vad betyder {hint} för {location} {time_window}?")
         if len(prompts) >= query_count:
             return prompts[:query_count]
 
     if neighbors:
-        _append(f"Nar ska jag anvanda {entry.name} i stallet for {neighbors[0]}?")
-    _append(f"Hjalp mig med {entry.name} for Sverige")
-    _append(f"Data fran {entry.name} for ar {2020 + (normalized_round % 7)}")
+        _append(f"När ska jag använda {entry.name} i stället för {neighbors[0]}?")
+    _append(f"Hjälp mig med {entry.name} för Sverige")
+    _append(f"Data från {entry.name} för år {2020 + (normalized_round % 7)}")
 
     return prompts[:query_count]
 
@@ -434,9 +493,9 @@ async def _generate_probe_queries_for_tool(
 ) -> list[str]:
     hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
     avoid_keys = {
-        _normalize_text(query).casefold()
+        normalized.casefold()
         for query in list(avoid_queries or [])
-        if _normalize_text(query)
+        if (normalized := _swedishify_query_text(query))
     }
     if llm is None:
         return _fallback_probe_queries(
@@ -463,6 +522,7 @@ async def _generate_probe_queries_for_tool(
         "}\n"
         "Rules:\n"
         "- Swedish language.\n"
+        "- Use correct Swedish spelling with diacritics (å, ä, ö); do not transliterate.\n"
         "- No markdown.\n"
         "- Keep each query short and realistic.\n"
         "- Include borderline/ambiguous hard negatives when requested.\n"
@@ -503,7 +563,11 @@ async def _generate_probe_queries_for_tool(
                 avoid_queries=list(avoid_keys),
                 round_index=round_index,
             )
-        generated = _safe_string_list(parsed.get("queries"))
+        generated = [
+            normalized
+            for query in _safe_string_list(parsed.get("queries"))
+            if (normalized := _swedishify_query_text(query))
+        ]
         if not generated:
             return _fallback_probe_queries(
                 entry=entry,
@@ -528,14 +592,42 @@ async def _generate_probe_queries_for_tool(
         merged: list[str] = []
         seen: set[str] = set()
         for query in [*generated, *hard_negative_queries]:
-            normalized = _normalize_text(query)
+            normalized = _swedishify_query_text(query)
             key = normalized.casefold()
-            if not normalized or key in seen or key in avoid_keys:
+            if (
+                not normalized
+                or key in seen
+                or key in avoid_keys
+                or not _has_swedish_diacritics(normalized)
+            ):
                 continue
             seen.add(key)
             merged.append(normalized)
             if len(merged) >= query_count:
                 break
+        if len(merged) < query_count:
+            refill_queries = _fallback_probe_queries(
+                entry=entry,
+                neighbors=neighbors,
+                query_count=max(query_count * 2, query_count),
+                hard_negatives_per_tool=hard_negative_count,
+                avoid_queries=[*list(avoid_keys), *merged],
+                round_index=round_index,
+            )
+            for query in refill_queries:
+                normalized = _swedishify_query_text(query)
+                key = normalized.casefold()
+                if (
+                    not normalized
+                    or key in seen
+                    or key in avoid_keys
+                    or not _has_swedish_diacritics(normalized)
+                ):
+                    continue
+                seen.add(key)
+                merged.append(normalized)
+                if len(merged) >= query_count:
+                    break
         if merged:
             return merged[:query_count]
         return _fallback_probe_queries(
@@ -561,7 +653,7 @@ def _dedupe_queries(queries: list[tuple[str, str]]) -> list[tuple[str, str]]:
     deduped: list[tuple[str, str]] = []
     seen: set[str] = set()
     for query, source in queries:
-        cleaned = _normalize_text(query)
+        cleaned = _swedishify_query_text(query)
         if not cleaned:
             continue
         key = cleaned.casefold()
@@ -951,18 +1043,18 @@ async def run_layered_metadata_audit(
     normalized_probe_parallelism = _normalize_parallelism(probe_generation_parallelism)
     normalized_probe_round = max(1, min(int(probe_round or 1), 1000))
     excluded_query_keys = {
-        _normalize_text(query).casefold()
+        normalized.casefold()
         for query in list(exclude_probe_queries or [])
-        if _normalize_text(query)
+        if (normalized := _swedishify_query_text(query))
     }
     probe_generation_started_at = perf_counter()
     generated_queries_by_tool: dict[str, list[str]] = {}
     if include_llm_generated:
         async def _generate_for_entry(entry: ToolIndexEntry) -> tuple[str, list[str]]:
             seed_examples = [
-                query
+                normalized
                 for query in entry.example_queries[:max_probe_queries]
-                if _normalize_text(query)
+                if (normalized := _swedishify_query_text(query))
             ]
             avoid_for_generation = [*list(excluded_query_keys)[:160], *seed_examples[:40]]
             generated = await _generate_probe_queries_for_tool(
@@ -1003,9 +1095,9 @@ async def run_layered_metadata_audit(
         queries: list[tuple[str, str]] = []
         if include_existing_examples:
             existing_queries = [
-                query
+                normalized
                 for query in entry.example_queries[:max_probe_queries]
-                if _normalize_text(query)
+                if (normalized := _swedishify_query_text(query))
             ]
             queries.extend(
                 (query, "existing_example")
@@ -1023,7 +1115,7 @@ async def run_layered_metadata_audit(
         filtered_queries: list[tuple[str, str]] = []
         seen_query_keys: set[str] = set()
         for query, source in queries:
-            normalized_query = _normalize_text(query)
+            normalized_query = _swedishify_query_text(query)
             key = normalized_query.casefold()
             if not normalized_query or key in seen_query_keys or key in excluded_query_keys:
                 if key in excluded_query_keys:
@@ -1046,7 +1138,7 @@ async def run_layered_metadata_audit(
                 round_index=normalized_probe_round,
             )
             for query in fallback_queries:
-                normalized_query = _normalize_text(query)
+                normalized_query = _swedishify_query_text(query)
                 key = normalized_query.casefold()
                 if not normalized_query or key in seen_query_keys or key in excluded_query_keys:
                     continue
