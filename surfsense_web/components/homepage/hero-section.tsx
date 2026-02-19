@@ -1,14 +1,12 @@
 "use client";
 import { useFeatureFlagVariantKey } from "@posthog/react";
-import { AnimatePresence, motion } from "motion/react";
 import Image from "next/image";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import React, { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import Balancer from "react-wrap-balancer";
 import { AUTH_TYPE, BACKEND_URL } from "@/lib/env-config";
 import { trackLoginAttempt } from "@/lib/posthog/events";
-import { cn } from "@/lib/utils";
 
 // Official Google "G" logo with brand colors
 const GoogleLogo = ({ className }: { className?: string }) => (
@@ -42,100 +40,53 @@ export function HeroSection() {
 	return (
 		<div
 			ref={parentRef}
-			className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-20 md:px-8 md:py-40"
+			className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-20 md:px-8 md:py-32"
 		>
-			<BackgroundGrids />
-			<CollisionMechanism
-				beamOptions={{
-					initialX: -400,
-					translateX: 600,
-					duration: 7,
-					repeatDelay: 3,
-				}}
-				containerRef={containerRef}
-				parentRef={parentRef}
-			/>
-			<CollisionMechanism
-				beamOptions={{
-					initialX: -200,
-					translateX: 800,
-					duration: 4,
-					repeatDelay: 3,
-				}}
-				containerRef={containerRef}
-				parentRef={parentRef}
-			/>
-			<CollisionMechanism
-				beamOptions={{
-					initialX: 200,
-					translateX: 1200,
-					duration: 5,
-					repeatDelay: 3,
-				}}
-				containerRef={containerRef}
-				parentRef={parentRef}
-			/>
-			<CollisionMechanism
-				containerRef={containerRef}
-				parentRef={parentRef}
-				beamOptions={{
-					initialX: 400,
-					translateX: 1400,
-					duration: 6,
-					repeatDelay: 3,
-				}}
-			/>
+			{/* Simplified background - OpenAI style */}
+			<div className="absolute inset-0 bg-gradient-to-b from-white via-gray-50 to-white dark:from-neutral-950 dark:via-neutral-900 dark:to-neutral-950" />
+			
+			{/* Subtle grid pattern */}
+			<div className="absolute inset-0 bg-[linear-gradient(to_right,#8882_1px,transparent_1px),linear-gradient(to_bottom,#8882_1px,transparent_1px)] bg-[size:14px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_110%)] dark:bg-[linear-gradient(to_right,#ffffff08_1px,transparent_1px),linear-gradient(to_bottom,#ffffff08_1px,transparent_1px)]" />
 
-			<h2 className="relative z-50 mx-auto mb-4 mt-4 max-w-4xl text-balance text-center text-3xl font-semibold tracking-tight text-gray-700 md:text-7xl dark:text-neutral-300">
+			<h1 className="relative z-50 mx-auto mb-6 mt-4 max-w-5xl text-balance text-center text-4xl font-bold tracking-tight text-gray-900 md:text-6xl lg:text-7xl dark:text-white">
 				{isNotebookLMVariant ? (
-					<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
-						<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
-							<Balancer>
-								<span>{t("notebooklm_title")}</span>
-							</Balancer>
-						</div>
-					</div>
+					<Balancer>
+						<span>{t("notebooklm_title")}</span>
+					</Balancer>
 				) : (
-					<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
-						<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
-							<Balancer>
-								<span>{t("hero_title_part1")}</span>
-								{t("hero_title_part2") && <span> {t("hero_title_part2")}</span>}
-							</Balancer>
-						</div>
-					</div>
+					<Balancer>
+						<span>{t("hero_title_part1")}</span>
+						{t("hero_title_part2") && <span> {t("hero_title_part2")}</span>}
+					</Balancer>
 				)}
-			</h2>
-			{/* // TODO:aCTUAL DESCRITION */}
-			<p className="relative z-50 mx-auto mt-4 max-w-lg px-4 text-center text-base/6 text-gray-600 dark:text-gray-200">
+			</h1>
+			<p className="relative z-50 mx-auto mt-4 max-w-2xl px-4 text-center text-lg text-gray-600 md:text-xl dark:text-gray-300">
 				{t("hero_description")}
 			</p>
-			<div className="mb-10 mt-8 flex w-full flex-col items-center justify-center gap-4 px-8 sm:flex-row md:mb-20">
+			<div className="mb-16 mt-10 flex w-full flex-col items-center justify-center gap-4 px-8 sm:flex-row md:mb-20">
 				<GetStartedButton />
-				{/* Contact Sales button hidden per requirements */}
-				{/* <ContactSalesButton /> */}
 			</div>
 			<div
 				ref={containerRef}
-				className="relative mx-auto max-w-7xl rounded-[32px] border border-neutral-200/50 bg-neutral-100 p-2 backdrop-blur-lg md:p-4 dark:border-neutral-700 dark:bg-neutral-800/50"
+				className="relative mx-auto max-w-7xl rounded-2xl border border-gray-200 bg-white p-2 shadow-2xl md:p-3 dark:border-neutral-800 dark:bg-neutral-900"
 			>
-				<div className="rounded-[24px] border border-neutral-200 bg-white p-2 dark:border-neutral-700 dark:bg-black">
+				<div className="rounded-xl border border-gray-100 bg-white overflow-hidden dark:border-neutral-800 dark:bg-black">
 					{/* Light mode image */}
 					<Image
 						src="/homepage/main_demo.webp"
-						alt="header"
+						alt="OneSeek AI Workspace Demo"
 						width={1920}
 						height={1080}
-						className="rounded-[20px] block dark:hidden"
+						className="rounded-lg block dark:hidden"
 						unoptimized
 					/>
 					{/* Dark mode image */}
 					<Image
 						src="/homepage/main_demo.webp"
-						alt="header"
+						alt="OneSeek AI Workspace Demo"
 						width={1920}
 						height={1080}
-						className="rounded-[20px] hidden dark:block"
+						className="rounded-lg hidden dark:block"
 						unoptimized
 					/>
 				</div>
@@ -156,272 +107,44 @@ function GetStartedButton() {
 
 	if (isGoogleAuth) {
 		return (
-			<motion.button
+			<button
 				type="button"
 				onClick={handleGoogleLogin}
-				whileHover="hover"
-				whileTap={{ scale: 0.98 }}
-				initial="idle"
-				className="group relative z-20 flex h-11 w-full cursor-pointer items-center justify-center gap-3 overflow-hidden rounded-xl bg-white px-6 py-2.5 text-sm font-semibold text-neutral-700 shadow-lg ring-1 ring-neutral-200/50 transition-shadow duration-300 hover:shadow-xl sm:w-56 dark:bg-neutral-900 dark:text-neutral-200 dark:ring-neutral-700/50"
-				variants={{
-					idle: { scale: 1, y: 0 },
-					hover: { scale: 1.02, y: -2 },
-				}}
+				className="group relative z-20 flex h-12 w-full cursor-pointer items-center justify-center gap-3 overflow-hidden rounded-lg bg-white px-8 py-3 text-base font-medium text-gray-700 shadow-sm ring-1 ring-gray-300 transition-all duration-200 hover:bg-gray-50 hover:shadow-md sm:w-auto dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700 dark:hover:bg-neutral-700"
 			>
-				{/* Animated gradient background on hover */}
-				<motion.div
-					className="absolute inset-0 bg-linear-to-r from-blue-50 via-green-50 to-yellow-50 dark:from-blue-950/30 dark:via-green-950/30 dark:to-yellow-950/30"
-					variants={{
-						idle: { opacity: 0 },
-						hover: { opacity: 1 },
-					}}
-					transition={{ duration: 0.3 }}
-				/>
-				{/* Google logo with subtle animation */}
-				<motion.div
-					className="relative"
-					variants={{
-						idle: { rotate: 0 },
-						hover: { rotate: [0, -8, 8, 0] },
-					}}
-					transition={{ duration: 0.4, ease: "easeInOut" }}
-				>
-					<GoogleLogo className="h-5 w-5" />
-				</motion.div>
-				<span className="relative">{tAuth("continue_with_google")}</span>
-			</motion.button>
+				<GoogleLogo className="h-5 w-5" />
+				<span>{tAuth("continue_with_google")}</span>
+			</button>
 		);
 	}
 
 	return (
-		<motion.div whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.98 }}>
-			<Link
-				href="/dashboard/public/new-chat"
-				className="group relative z-20 flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-black px-6 py-2.5 text-sm font-semibold text-white shadow-lg transition-shadow duration-300 hover:shadow-xl sm:w-56 dark:bg-white dark:text-black"
+		<Link
+			href="/dashboard/public/new-chat"
+			className="group relative z-20 flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-black px-8 py-3 text-base font-medium text-white shadow-sm transition-all duration-200 hover:bg-gray-800 hover:shadow-md sm:w-auto dark:bg-white dark:text-black dark:hover:bg-gray-100"
+		>
+			{tPricing("get_started")}
+			<svg
+				className="h-4 w-4 transition-transform group-hover:translate-x-1"
+				fill="none"
+				stroke="currentColor"
+				viewBox="0 0 24 24"
 			>
-				{tPricing("get_started")}
-			</Link>
-		</motion.div>
+				<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+			</svg>
+		</Link>
 	);
 }
 
 function ContactSalesButton() {
 	const tPricing = useTranslations("pricing");
 	return (
-		<motion.div whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.98 }}>
-			<Link
-				href="/contact"
-				//target="_blank"
-				rel="noopener noreferrer"
-				className="group relative z-20 flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-6 py-2.5 text-sm font-semibold text-neutral-700 shadow-lg ring-1 ring-neutral-200/50 transition-shadow duration-300 hover:shadow-xl sm:w-56 dark:bg-neutral-900 dark:text-neutral-200 dark:ring-neutral-700/50"
-			>
-				{tPricing("contact_sales")}
-			</Link>
-		</motion.div>
+		<Link
+			href="/contact"
+			rel="noopener noreferrer"
+			className="group relative z-20 flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-8 py-3 text-base font-medium text-gray-700 shadow-sm ring-1 ring-gray-300 transition-all duration-200 hover:bg-gray-50 hover:shadow-md sm:w-auto dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700 dark:hover:bg-neutral-700"
+		>
+			{tPricing("contact_sales")}
+		</Link>
 	);
 }
-
-const BackgroundGrids = () => {
-	return (
-		<div className="pointer-events-none absolute inset-0 z-0 grid h-full w-full -rotate-45 transform select-none grid-cols-2 gap-10 md:grid-cols-4">
-			<div className="relative h-full w-full">
-				<GridLineVertical className="left-0" />
-				<GridLineVertical className="left-auto right-0" />
-			</div>
-			<div className="relative h-full w-full">
-				<GridLineVertical className="left-0" />
-				<GridLineVertical className="left-auto right-0" />
-			</div>
-			<div className="relative h-full w-full bg-linear-to-b from-transparent via-neutral-100 to-transparent dark:via-neutral-800">
-				<GridLineVertical className="left-0" />
-				<GridLineVertical className="left-auto right-0" />
-			</div>
-			<div className="relative h-full w-full">
-				<GridLineVertical className="left-0" />
-				<GridLineVertical className="left-auto right-0" />
-			</div>
-		</div>
-	);
-};
-
-const CollisionMechanism = React.forwardRef<
-	HTMLDivElement,
-	{
-		containerRef: React.RefObject<HTMLDivElement | null>;
-		parentRef: React.RefObject<HTMLDivElement | null>;
-		beamOptions?: {
-			initialX?: number;
-			translateX?: number;
-			initialY?: number;
-			translateY?: number;
-			rotate?: number;
-			className?: string;
-			duration?: number;
-			delay?: number;
-			repeatDelay?: number;
-		};
-	}
->(({ parentRef, containerRef, beamOptions = {} }, ref) => {
-	const beamRef = useRef<HTMLDivElement>(null);
-	const [collision, setCollision] = useState<{
-		detected: boolean;
-		coordinates: { x: number; y: number } | null;
-	}>({ detected: false, coordinates: null });
-	const [beamKey, setBeamKey] = useState(0);
-	const [cycleCollisionDetected, setCycleCollisionDetected] = useState(false);
-
-	useEffect(() => {
-		const checkCollision = () => {
-			if (beamRef.current && containerRef.current && parentRef.current && !cycleCollisionDetected) {
-				const beamRect = beamRef.current.getBoundingClientRect();
-				const containerRect = containerRef.current.getBoundingClientRect();
-				const parentRect = parentRef.current.getBoundingClientRect();
-
-				if (beamRect.bottom >= containerRect.top) {
-					const relativeX = beamRect.left - parentRect.left + beamRect.width / 2;
-					const relativeY = beamRect.bottom - parentRect.top;
-
-					setCollision({
-						detected: true,
-						coordinates: { x: relativeX, y: relativeY },
-					});
-					setCycleCollisionDetected(true);
-					if (beamRef.current) {
-						beamRef.current.style.opacity = "0";
-					}
-				}
-			}
-		};
-
-		const animationInterval = setInterval(checkCollision, 100);
-
-		return () => clearInterval(animationInterval);
-	}, [cycleCollisionDetected, containerRef]);
-
-	useEffect(() => {
-		if (collision.detected && collision.coordinates) {
-			setTimeout(() => {
-				setCollision({ detected: false, coordinates: null });
-				setCycleCollisionDetected(false);
-				// Set beam opacity to 0
-				if (beamRef.current) {
-					beamRef.current.style.opacity = "1";
-				}
-			}, 2000);
-
-			// Reset the beam animation after a delay
-			setTimeout(() => {
-				setBeamKey((prevKey) => prevKey + 1);
-			}, 2000);
-		}
-	}, [collision]);
-
-	return (
-		<>
-			<motion.div
-				key={beamKey}
-				ref={beamRef}
-				animate="animate"
-				initial={{
-					translateY: beamOptions.initialY || "-200px",
-					translateX: beamOptions.initialX || "0px",
-					rotate: beamOptions.rotate || -45,
-				}}
-				variants={{
-					animate: {
-						translateY: beamOptions.translateY || "800px",
-						translateX: beamOptions.translateX || "700px",
-						rotate: beamOptions.rotate || -45,
-					},
-				}}
-				transition={{
-					duration: beamOptions.duration || 8,
-					repeat: Infinity,
-					repeatType: "loop",
-					ease: "linear",
-					delay: beamOptions.delay || 0,
-					repeatDelay: beamOptions.repeatDelay || 0,
-				}}
-				className={cn(
-					"absolute left-96 top-20 m-auto h-14 w-px rounded-full bg-linear-to-t from-orange-500 via-yellow-500 to-transparent will-change-transform",
-					beamOptions.className
-				)}
-			/>
-			<AnimatePresence>
-				{collision.detected && collision.coordinates && (
-					<Explosion
-						key={`${collision.coordinates.x}-${collision.coordinates.y}`}
-						className=""
-						style={{
-							left: `${collision.coordinates.x + 20}px`,
-							top: `${collision.coordinates.y}px`,
-							transform: "translate(-50%, -50%)",
-						}}
-					/>
-				)}
-			</AnimatePresence>
-		</>
-	);
-});
-
-CollisionMechanism.displayName = "CollisionMechanism";
-
-const Explosion = ({ ...props }: React.HTMLProps<HTMLDivElement>) => {
-	const spans = Array.from({ length: 20 }, (_, index) => ({
-		id: index,
-		initialX: 0,
-		initialY: 0,
-		directionX: Math.floor(Math.random() * 80 - 40),
-		directionY: Math.floor(Math.random() * -50 - 10),
-	}));
-
-	return (
-		<div {...props} className={cn("absolute z-50 h-2 w-2", props.className)}>
-			<motion.div
-				initial={{ opacity: 0 }}
-				animate={{ opacity: [0, 1, 0] }}
-				exit={{ opacity: 0 }}
-				transition={{ duration: 1, ease: "easeOut" }}
-				className="absolute -inset-x-10 top-0 m-auto h-[4px] w-10 rounded-full bg-linear-to-r from-transparent via-orange-500 to-transparent blur-sm"
-			></motion.div>
-			{spans.map((span) => (
-				<motion.span
-					key={span.id}
-					initial={{ x: span.initialX, y: span.initialY, opacity: 1 }}
-					animate={{ x: span.directionX, y: span.directionY, opacity: 0 }}
-					transition={{ duration: Math.random() * 1.5 + 0.5, ease: "easeOut" }}
-					className="absolute h-1 w-1 rounded-full bg-linear-to-b from-orange-500 to-yellow-500"
-				/>
-			))}
-		</div>
-	);
-};
-
-const GridLineVertical = ({ className, offset }: { className?: string; offset?: string }) => {
-	return (
-		<div
-			style={
-				{
-					"--background": "#ffffff",
-					"--color": "rgba(0, 0, 0, 0.2)",
-					"--height": "5px",
-					"--width": "1px",
-					"--fade-stop": "90%",
-					"--offset": offset || "150px", //-100px if you want to keep the line inside
-					"--color-dark": "rgba(255, 255, 255, 0.3)",
-					maskComposite: "exclude",
-				} as React.CSSProperties
-			}
-			className={cn(
-				"absolute top-[calc(var(--offset)/2*-1)] h-[calc(100%+var(--offset))] w-(--width)",
-				"bg-[linear-gradient(to_bottom,var(--color),var(--color)_50%,transparent_0,transparent)]",
-				"bg-size-[var(--width)_var(--height)]",
-				"[mask:linear-gradient(to_top,var(--background)_var(--fade-stop),transparent),linear-gradient(to_bottom,var(--background)_var(--fade-stop),transparent),linear-gradient(black,black)]",
-				"mask-exclude",
-				"z-30",
-				"dark:bg-[linear-gradient(to_bottom,var(--color-dark),var(--color-dark)_50%,transparent_0,transparent)]",
-				className
-			)}
-		></div>
-	);
-};
