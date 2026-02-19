@@ -1022,6 +1022,10 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			toast.message("Markera minst en probe som fel innan du genererar forslag.");
 			return;
 		}
+		const failingAnnotations = annotations.filter(
+			(item) =>
+				!item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
+		);
 		setIsGeneratingAuditSuggestions(true);
 		try {
 			const response = await adminToolSettingsApiService.generateMetadataCatalogAuditSuggestions({
@@ -1029,7 +1033,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				metadata_patch: metadataPatchForDraft,
 				intent_metadata_patch: intentMetadataPatchForDraft,
 				agent_metadata_patch: agentMetadataPatchForDraft,
-				annotations,
+				annotations: failingAnnotations,
 				max_suggestions: 30,
 				llm_parallelism: suggestionParallelism,
 			});
@@ -1044,7 +1048,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				new Set(response.agent_suggestions.map((item) => item.agent_id))
 			);
 			toast.success(
-				`Genererade ${response.tool_suggestions.length + response.intent_suggestions.length + response.agent_suggestions.length} metadataforslag (${formatMs(response.diagnostics?.total_ms)}).`
+				`Genererade ${response.tool_suggestions.length + response.intent_suggestions.length + response.agent_suggestions.length} metadataforslag fran ${failingAnnotations.length} felprobes (${formatMs(response.diagnostics?.total_ms)}).`
 			);
 		} catch (_error) {
 			toast.error("Kunde inte generera metadataforslag.");
@@ -1309,6 +1313,10 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					setAutoRoundHistory([...roundEntries]);
 					break;
 				}
+				const failingAnnotations = annotations.filter(
+					(item) =>
+						!item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
+				);
 
 				setAutoRunStatusText(`Autonom loop: genererar metadataförslag för runda ${round}...`);
 				const suggestions =
@@ -1317,7 +1325,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						metadata_patch: Object.values(toolPatchMap),
 						intent_metadata_patch: Object.values(intentPatchMap),
 						agent_metadata_patch: Object.values(agentPatchMap),
-						annotations,
+						annotations: failingAnnotations,
 						max_suggestions: 30,
 						llm_parallelism: suggestionParallelism,
 					});
@@ -1948,7 +1956,11 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										{(item.monitorScore * 100).toFixed(1)}% · Förslag{" "}
 										{item.toolSuggestions}/{item.intentSuggestions}/{item.agentSuggestions}
 										{item.step2TotalMs != null
-											? ` · Steg2 ${formatMs(item.step2TotalMs)}`
+											? ` · Steg2 ${formatMs(item.step2TotalMs)} (T ${formatMs(
+													item.step2ToolMs
+												)} | I ${formatMs(item.step2IntentMs)} | A ${formatMs(
+													item.step2AgentMs
+												)} | Prep ${formatMs(item.step2PreparationMs)})`
 											: ""}
 										{item.note ? ` · ${item.note}` : ""}
 									</div>
