@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.agents.new_chat.token_budget import TokenBudget
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_message_content(value: Any) -> str:
@@ -114,7 +117,7 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
     Avoid NullValue in content/tool-call fields between turns.
     """
     normalized_messages: list[Any] = []
-    for idx, message in enumerate(messages):
+    for message in messages:
         if isinstance(message, AIMessage):
             content = _normalize_message_content(getattr(message, "content", ""))
             raw_tool_calls = getattr(message, "tool_calls", None)
@@ -200,6 +203,102 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
 
         normalized_messages.append(message)
     return normalized_messages
+
+
+def _is_jinja_nullvalue_error(error: Exception) -> bool:
+    text = str(error or "")
+    lowered = text.lower()
+    return (
+        "error rendering prompt with jinja template" in lowered
+        and "nullvalue" in lowered
+    ) or (
+        "cannot apply filter \"string\" to type: nullvalue" in lowered
+    )
+
+
+def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
+    """
+    Retry payload for strict templates:
+    - collapse ToolMessage blocks into one HumanMessage observation
+    - strip assistant tool_calls metadata from historical assistant messages
+    """
+    retried: list[Any] = []
+    pending_tool_lines: list[str] = []
+
+    def _flush_tool_lines() -> None:
+        if not pending_tool_lines:
+            return
+        retried.append(
+            HumanMessage(
+                content=(
+                    "<tool_results>\n"
+                    + "\n".join(pending_tool_lines)
+                    + "\n</tool_results>"
+                )
+            )
+        )
+        pending_tool_lines.clear()
+
+    for idx, message in enumerate(messages):
+        if isinstance(message, ToolMessage):
+            tool_name = str(getattr(message, "name", "") or "").strip() or "tool"
+            tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+            content = _normalize_message_content(getattr(message, "content", ""))
+            label = f"{tool_name}" + (f"#{tool_call_id}" if tool_call_id else "")
+            line = f"- {label}: {content or '(empty)'}"
+            pending_tool_lines.append(line)
+            continue
+
+        _flush_tool_lines()
+        if isinstance(message, AIMessage):
+            try:
+                retried.append(
+                    message.model_copy(
+                        update={
+                            "content": _normalize_message_content(
+                                getattr(message, "content", "")
+                            ),
+                            "tool_calls": [],
+                        }
+                    )
+                )
+            except Exception:
+                retried.append(
+                    AIMessage(
+                        content=_normalize_message_content(
+                            getattr(message, "content", "")
+                        ),
+                        additional_kwargs=dict(
+                            getattr(message, "additional_kwargs", {}) or {}
+                        ),
+                        response_metadata=dict(
+                            getattr(message, "response_metadata", {}) or {}
+                        ),
+                        id=getattr(message, "id", None),
+                    )
+                )
+            continue
+
+        if isinstance(message, HumanMessage):
+            retried.append(
+                HumanMessage(
+                    content=_normalize_message_content(getattr(message, "content", ""))
+                )
+            )
+            continue
+
+        if isinstance(message, SystemMessage):
+            retried.append(
+                SystemMessage(
+                    content=_normalize_message_content(getattr(message, "content", ""))
+                )
+            )
+            continue
+
+        retried.append(message)
+
+    _flush_tool_lines()
+    return retried
 
 
 def _build_executor_updates_for_new_user_turn(
@@ -343,7 +442,24 @@ def build_executor_nodes(
 
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
         messages = _normalize_messages_for_provider_compat(messages)
-        response = llm_with_tools.invoke(messages)
+        try:
+            response = llm_with_tools.invoke(messages)
+        except Exception as exc:
+            if not _is_jinja_nullvalue_error(exc):
+                raise
+            retry_messages = _build_template_safe_retry_messages(messages)
+            logger.warning(
+                "Template NullValue in sync invoke; retrying with tool-result compaction"
+            )
+            try:
+                response = llm_with_tools.invoke(retry_messages)
+            except Exception as retry_exc:
+                if not _is_jinja_nullvalue_error(retry_exc):
+                    raise
+                logger.warning(
+                    "Template NullValue persisted after compaction; retrying without tools"
+                )
+                response = llm.invoke(retry_messages)
         response = coerce_supervisor_tool_calls_fn(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),
@@ -386,7 +502,24 @@ def build_executor_nodes(
 
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
         messages = _normalize_messages_for_provider_compat(messages)
-        response = await llm_with_tools.ainvoke(messages)
+        try:
+            response = await llm_with_tools.ainvoke(messages)
+        except Exception as exc:
+            if not _is_jinja_nullvalue_error(exc):
+                raise
+            retry_messages = _build_template_safe_retry_messages(messages)
+            logger.warning(
+                "Template NullValue in async invoke; retrying with tool-result compaction"
+            )
+            try:
+                response = await llm_with_tools.ainvoke(retry_messages)
+            except Exception as retry_exc:
+                if not _is_jinja_nullvalue_error(retry_exc):
+                    raise
+                logger.warning(
+                    "Template NullValue persisted after compaction; retrying without tools"
+                )
+                response = await llm.ainvoke(retry_messages)
         response = coerce_supervisor_tool_calls_fn(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),

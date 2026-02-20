@@ -2099,6 +2099,8 @@ def _sanitize_openai_tool_schema(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
+            if item is None:
+                continue
             if key == "default" and item is None:
                 continue
             if key in {"anyOf", "oneOf", "allOf"} and isinstance(item, list):
@@ -2119,11 +2121,36 @@ def _sanitize_openai_tool_schema(value: Any) -> Any:
 
         properties = sanitized.get("properties")
         required = sanitized.get("required")
-        if isinstance(properties, dict) and isinstance(required, list):
+        required_set = {
+            str(field).strip()
+            for field in (required if isinstance(required, list) else [])
+            if str(field).strip()
+        }
+        if isinstance(properties, dict):
+            cleaned_properties: dict[str, Any] = {}
+            for prop_name, prop_schema in properties.items():
+                normalized_name = str(prop_name or "").strip()
+                # Injected runtime state must never be exposed in the model-facing schema.
+                if normalized_name == "state":
+                    continue
+                cleaned_schema = _sanitize_openai_tool_schema(prop_schema)
+                if isinstance(cleaned_schema, dict):
+                    if (
+                        "default" not in cleaned_schema
+                        and normalized_name not in required_set
+                    ):
+                        inferred_default = _infer_non_null_tool_default(cleaned_schema)
+                        if inferred_default is not None:
+                            cleaned_schema["default"] = inferred_default
+                cleaned_properties[normalized_name] = cleaned_schema
+            sanitized["properties"] = cleaned_properties
+            properties = cleaned_properties
+
+        if isinstance(required, list) and isinstance(properties, dict):
             kept_required = [
-                str(field)
+                str(field).strip()
                 for field in required
-                if isinstance(field, str) and field in properties
+                if isinstance(field, str) and str(field).strip() in properties
             ]
             if kept_required:
                 sanitized["required"] = kept_required
@@ -2133,6 +2160,34 @@ def _sanitize_openai_tool_schema(value: Any) -> Any:
     if isinstance(value, list):
         return [_sanitize_openai_tool_schema(item) for item in value]
     return value
+
+
+def _infer_non_null_tool_default(schema: dict[str, Any]) -> Any:
+    type_name = str(schema.get("type") or "").strip().lower()
+    if type_name == "boolean":
+        return False
+    if type_name == "string":
+        return ""
+    if type_name == "integer":
+        return 0
+    if type_name == "number":
+        return 0
+    if type_name == "array":
+        return []
+    if type_name == "object":
+        return {}
+
+    for union_key in ("anyOf", "oneOf", "allOf"):
+        variants = schema.get(union_key)
+        if not isinstance(variants, list):
+            continue
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            inferred = _infer_non_null_tool_default(variant)
+            if inferred is not None:
+                return inferred
+    return None
 
 
 def _format_tools_for_llm_binding(tools: list[Any]) -> list[dict[str, Any]]:
