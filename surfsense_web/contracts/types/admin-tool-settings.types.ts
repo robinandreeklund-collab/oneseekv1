@@ -320,6 +320,10 @@ export const metadataCatalogStabilityLockActionResponse = z.object({
 	monitored_tools: z.number().int().optional().default(0),
 	newly_locked_item_ids: z.array(z.string()).optional().default([]),
 	newly_unlocked_item_ids: z.array(z.string()).optional().default([]),
+	robust_gate_ready: z.boolean().nullable().optional(),
+	robust_gate_blockers: z.array(z.string()).optional().default([]),
+	robust_gate_snapshot: z.record(z.string(), z.unknown()).optional().default({}),
+	robust_gate_requirements: z.record(z.string(), z.unknown()).optional().default({}),
 	stability_locks: metadataCatalogResponse.shape.stability_locks,
 });
 

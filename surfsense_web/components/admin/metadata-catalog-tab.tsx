@@ -826,6 +826,25 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				: stabilityLockRows.length,
 		[stabilityLocks.locked_count, stabilityLockRows.length]
 	);
+	const stabilityGateDescription = useMemo(() => {
+		const cfg = _asObject(stabilityLocks.config) ?? {};
+		const minTotalProbes = _asNumber(cfg.min_total_probes);
+		const minProbesPerTool = _asNumber(cfg.min_probes_per_tool);
+		const minMedianMargin = _asNumber(cfg.global_median_margin_threshold);
+		const maxNegativeMargins = _asNumber(cfg.max_negative_margins);
+		const rankShiftTolerance = _asNumber(cfg.global_rank_shift_tolerance);
+		const rankShiftText =
+			rankShiftTolerance != null && rankShiftTolerance <= 0.000001
+				? "rank-shift = 0 över 2 rundor"
+				: `rank-shift <= ${rankShiftTolerance?.toFixed(3) ?? "--"} över 2 rundor`;
+		return [
+			`Autolås tillåts först när total probes ≥ ${minTotalProbes ?? 100}`,
+			`probes/tool ≥ ${minProbesPerTool ?? 5}`,
+			rankShiftText,
+			`median margin > ${minMedianMargin ?? 2}`,
+			`negativa marginaler ≤ ${maxNegativeMargins ?? 1}`,
+		].join(" · ");
+	}, [stabilityLocks.config]);
 	const allToolOptions = useMemo(() => {
 		const options: string[] = [];
 		for (const category of data?.tool_categories ?? []) {
@@ -1375,6 +1394,13 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			});
 			setStabilityLocks(response.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
 			if (!response.changed) {
+				if (
+					response.robust_gate_ready === false &&
+					(response.robust_gate_blockers?.length ?? 0) > 0
+				) {
+					toast.message(`Autolås blockerat: ${(response.robust_gate_blockers ?? []).join(" | ")}`);
+					return;
+				}
 				toast.message("Inga nya stabila verktyg att låsa just nu.");
 				return;
 			}
@@ -2373,6 +2399,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							</Badge>
 							<Badge variant="outline">Låsta tools: {stabilityLockRows.length}</Badge>
 						</div>
+						<p className="text-xs text-muted-foreground">{stabilityGateDescription}</p>
 						{stabilityLockRows.length === 0 ? (
 							<p className="text-xs text-muted-foreground">
 								Inga stabilitetslåsta tools ännu. Kör metadata-audit över flera rundor och använd

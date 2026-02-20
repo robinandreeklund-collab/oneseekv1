@@ -4853,6 +4853,12 @@ async def lock_stable_metadata_audit_items(
             "monitored_tools": int(update_result.get("monitored_tools") or 0),
             "newly_locked_item_ids": list(update_result.get("newly_locked") or []),
             "newly_unlocked_item_ids": list(update_result.get("newly_unlocked") or []),
+            "robust_gate_ready": bool(update_result.get("robust_gate_ready", False)),
+            "robust_gate_blockers": list(update_result.get("robust_gate_blockers") or []),
+            "robust_gate_snapshot": dict(update_result.get("robust_gate_snapshot") or {}),
+            "robust_gate_requirements": dict(
+                update_result.get("robust_gate_requirements") or {}
+            ),
             "stability_locks": stability_summary,
         }
     except Exception as exc:
@@ -4904,6 +4910,10 @@ async def unlock_metadata_audit_items(
             "monitored_tools": 0,
             "newly_locked_item_ids": [],
             "newly_unlocked_item_ids": list(unlock_result.get("unlocked_item_ids") or []),
+            "robust_gate_ready": None,
+            "robust_gate_blockers": [],
+            "robust_gate_snapshot": {},
+            "robust_gate_requirements": {},
             "stability_locks": stability_summary,
         }
     except Exception as exc:

@@ -203,6 +203,10 @@ class MetadataCatalogStabilityLockActionResponse(BaseModel):
     monitored_tools: int = 0
     newly_locked_item_ids: list[str] = Field(default_factory=list)
     newly_unlocked_item_ids: list[str] = Field(default_factory=list)
+    robust_gate_ready: bool | None = None
+    robust_gate_blockers: list[str] = Field(default_factory=list)
+    robust_gate_snapshot: dict[str, Any] = Field(default_factory=dict)
+    robust_gate_requirements: dict[str, Any] = Field(default_factory=dict)
     stability_locks: MetadataCatalogStabilityLockSummary = Field(
         default_factory=MetadataCatalogStabilityLockSummary
     )

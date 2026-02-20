@@ -7,6 +7,7 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from statistics import median
 from time import perf_counter
 from typing import Any, Awaitable, Callable
 
@@ -2065,11 +2066,16 @@ _STABILITY_LAYER_SET = {"tool"}
 _STABILITY_LOCK_LEVELS = {"soft", "hard"}
 _DEFAULT_STABILITY_LOCK_CONFIG = {
     "min_rounds": 2,
-    "rank_shift_tolerance": 0.05,
+    "rank_shift_tolerance": 0.0,
     "top1_lock_threshold": 0.95,
     "top1_hard_lock_threshold": 1.0,
     "topk_lock_threshold": 1.0,
     "margin_lock_threshold": 0.8,
+    "min_total_probes": 100,
+    "min_probes_per_tool": 5,
+    "global_median_margin_threshold": 2.0,
+    "max_negative_margins": 1,
+    "global_rank_shift_tolerance": 0.0,
     "unlock_top1_drop_pp": 0.10,
     "unlock_margin_negative_rounds": 2,
     "history_size": 12,
@@ -2086,20 +2092,146 @@ def _lock_pair_key(layer: str, item_a: str, item_b: str) -> tuple[str, str, str]
 
 def _normalize_stability_config(payload: Any) -> dict[str, Any]:
     raw = payload if isinstance(payload, dict) else {}
-    min_rounds = max(2, min(6, _as_int(raw.get("min_rounds"), 2)))
-    rank_shift_tolerance = max(0.0, min(5.0, _as_float(raw.get("rank_shift_tolerance"), 0.05)))
-    top1_lock_threshold = max(0.0, min(1.0, _as_float(raw.get("top1_lock_threshold"), 0.95)))
+    min_rounds = max(
+        2,
+        min(
+            6,
+            _as_int(
+                raw.get("min_rounds"),
+                int(_DEFAULT_STABILITY_LOCK_CONFIG["min_rounds"]),
+            ),
+        ),
+    )
+    rank_shift_tolerance = max(
+        0.0,
+        min(
+            5.0,
+            _as_float(
+                raw.get("rank_shift_tolerance"),
+                float(_DEFAULT_STABILITY_LOCK_CONFIG["rank_shift_tolerance"]),
+            ),
+        ),
+    )
+    top1_lock_threshold = max(
+        0.0,
+        min(
+            1.0,
+            _as_float(
+                raw.get("top1_lock_threshold"),
+                float(_DEFAULT_STABILITY_LOCK_CONFIG["top1_lock_threshold"]),
+            ),
+        ),
+    )
     top1_hard_lock_threshold = max(
         top1_lock_threshold,
-        min(1.0, _as_float(raw.get("top1_hard_lock_threshold"), 1.0)),
+        min(
+            1.0,
+            _as_float(
+                raw.get("top1_hard_lock_threshold"),
+                float(_DEFAULT_STABILITY_LOCK_CONFIG["top1_hard_lock_threshold"]),
+            ),
+        ),
     )
-    topk_lock_threshold = max(0.0, min(1.0, _as_float(raw.get("topk_lock_threshold"), 1.0)))
-    margin_lock_threshold = max(-2.0, min(10.0, _as_float(raw.get("margin_lock_threshold"), 0.8)))
-    unlock_top1_drop_pp = max(0.0, min(1.0, _as_float(raw.get("unlock_top1_drop_pp"), 0.10)))
+    topk_lock_threshold = max(
+        0.0,
+        min(
+            1.0,
+            _as_float(
+                raw.get("topk_lock_threshold"),
+                float(_DEFAULT_STABILITY_LOCK_CONFIG["topk_lock_threshold"]),
+            ),
+        ),
+    )
+    margin_lock_threshold = max(
+        -2.0,
+        min(
+            10.0,
+            _as_float(
+                raw.get("margin_lock_threshold"),
+                float(_DEFAULT_STABILITY_LOCK_CONFIG["margin_lock_threshold"]),
+            ),
+        ),
+    )
+    min_total_probes = max(
+        1,
+        min(
+            10000,
+            _as_int(
+                raw.get("min_total_probes"),
+                int(_DEFAULT_STABILITY_LOCK_CONFIG["min_total_probes"]),
+            ),
+        ),
+    )
+    min_probes_per_tool = max(
+        1,
+        min(
+            1000,
+            _as_int(
+                raw.get("min_probes_per_tool"),
+                int(_DEFAULT_STABILITY_LOCK_CONFIG["min_probes_per_tool"]),
+            ),
+        ),
+    )
+    global_median_margin_threshold = max(
+        -10.0,
+        min(
+            25.0,
+            _as_float(
+                raw.get("global_median_margin_threshold"),
+                float(_DEFAULT_STABILITY_LOCK_CONFIG["global_median_margin_threshold"]),
+            ),
+        ),
+    )
+    max_negative_margins = max(
+        0,
+        min(
+            1000,
+            _as_int(
+                raw.get("max_negative_margins"),
+                int(_DEFAULT_STABILITY_LOCK_CONFIG["max_negative_margins"]),
+            ),
+        ),
+    )
+    global_rank_shift_tolerance = max(
+        0.0,
+        min(
+            5.0,
+            _as_float(
+                raw.get("global_rank_shift_tolerance"),
+                float(_DEFAULT_STABILITY_LOCK_CONFIG["global_rank_shift_tolerance"]),
+            ),
+        ),
+    )
+    unlock_top1_drop_pp = max(
+        0.0,
+        min(
+            1.0,
+            _as_float(
+                raw.get("unlock_top1_drop_pp"),
+                float(_DEFAULT_STABILITY_LOCK_CONFIG["unlock_top1_drop_pp"]),
+            ),
+        ),
+    )
     unlock_margin_negative_rounds = max(
-        1, min(10, _as_int(raw.get("unlock_margin_negative_rounds"), 2))
+        1,
+        min(
+            10,
+            _as_int(
+                raw.get("unlock_margin_negative_rounds"),
+                int(_DEFAULT_STABILITY_LOCK_CONFIG["unlock_margin_negative_rounds"]),
+            ),
+        ),
     )
-    history_size = max(3, min(50, _as_int(raw.get("history_size"), 12)))
+    history_size = max(
+        3,
+        min(
+            50,
+            _as_int(
+                raw.get("history_size"),
+                int(_DEFAULT_STABILITY_LOCK_CONFIG["history_size"]),
+            ),
+        ),
+    )
     return {
         "min_rounds": min_rounds,
         "rank_shift_tolerance": rank_shift_tolerance,
@@ -2107,6 +2239,11 @@ def _normalize_stability_config(payload: Any) -> dict[str, Any]:
         "top1_hard_lock_threshold": top1_hard_lock_threshold,
         "topk_lock_threshold": topk_lock_threshold,
         "margin_lock_threshold": margin_lock_threshold,
+        "min_total_probes": min_total_probes,
+        "min_probes_per_tool": min_probes_per_tool,
+        "global_median_margin_threshold": global_median_margin_threshold,
+        "max_negative_margins": max_negative_margins,
+        "global_rank_shift_tolerance": global_rank_shift_tolerance,
         "unlock_top1_drop_pp": unlock_top1_drop_pp,
         "unlock_margin_negative_rounds": unlock_margin_negative_rounds,
         "history_size": history_size,
@@ -2426,11 +2563,21 @@ def _stability_lock_reason_text(
     latest_topk: float,
     latest_margin: float | None,
     hard_lock: bool,
+    robust_gate_snapshot: dict[str, Any] | None = None,
 ) -> str:
     margin_text = (
         f"{latest_margin:.2f}" if isinstance(latest_margin, (float, int)) else "n/a"
     )
     level_text = "Hårt lås" if hard_lock else "Stabilt lås"
+    robust_suffix = ""
+    if isinstance(robust_gate_snapshot, dict):
+        robust_suffix = (
+            " Robust gate: "
+            f"total_probes {int(robust_gate_snapshot.get('total_probes') or 0)}, "
+            f"min_probes/tool {int(robust_gate_snapshot.get('min_probes_per_tool') or 0)}, "
+            f"median_margin {float(robust_gate_snapshot.get('median_margin') or 0.0):.2f}, "
+            f"neg_margins {int(robust_gate_snapshot.get('negative_margins') or 0)}."
+        )
     return (
         f"{level_text}: stabil i {min_rounds} rundor "
         f"(rank_shift <= {rank_shift_tolerance:.3f}, "
@@ -2438,7 +2585,7 @@ def _stability_lock_reason_text(
         f"topK >= {topk_lock_threshold * 100:.1f}%, "
         f"margin > {margin_lock_threshold:.2f}). "
         f"Senaste: top1 {latest_top1 * 100:.1f}%, topK {latest_topk * 100:.1f}%, "
-        f"margin {margin_text}."
+        f"margin {margin_text}.{robust_suffix}"
     )
 
 
@@ -2453,7 +2600,7 @@ def update_stability_locks_from_tool_ranking(
     cfg = dict(normalized.get("stability_config") or {})
     history_size = max(3, min(50, _as_int(cfg.get("history_size"), 12)))
     min_rounds = max(2, min(6, _as_int(cfg.get("min_rounds"), 2)))
-    rank_shift_tolerance = max(0.0, float(cfg.get("rank_shift_tolerance") or 0.05))
+    rank_shift_tolerance = max(0.0, float(cfg.get("rank_shift_tolerance") or 0.0))
     top1_lock_threshold = max(0.0, min(1.0, float(cfg.get("top1_lock_threshold") or 0.95)))
     top1_hard_lock_threshold = max(
         top1_lock_threshold,
@@ -2461,6 +2608,16 @@ def update_stability_locks_from_tool_ranking(
     )
     topk_lock_threshold = max(0.0, min(1.0, float(cfg.get("topk_lock_threshold") or 1.0)))
     margin_lock_threshold = float(cfg.get("margin_lock_threshold") or 0.8)
+    min_total_probes = max(1, _as_int(cfg.get("min_total_probes"), 100))
+    min_probes_per_tool = max(1, _as_int(cfg.get("min_probes_per_tool"), 5))
+    global_median_margin_threshold = float(
+        cfg.get("global_median_margin_threshold") or 2.0
+    )
+    max_negative_margins = max(0, _as_int(cfg.get("max_negative_margins"), 1))
+    global_rank_shift_tolerance = max(
+        0.0,
+        float(cfg.get("global_rank_shift_tolerance") or 0.0),
+    )
     unlock_top1_drop_pp = max(
         0.0,
         min(1.0, float(cfg.get("unlock_top1_drop_pp") or 0.10)),
@@ -2523,7 +2680,7 @@ def update_stability_locks_from_tool_ranking(
     )
     newly_locked: list[str] = []
     newly_unlocked: list[str] = []
-    monitored_tools = 0
+    tool_snapshot_map: dict[str, dict[str, Any]] = {}
 
     for tool_id in sorted(observed_ids):
         history_rows = list(history_map.get(tool_id) or [])
@@ -2543,7 +2700,6 @@ def update_stability_locks_from_tool_ranking(
             continue
         history_rows = history_rows[-history_size:]
         history_map[tool_id] = history_rows
-        monitored_tools += 1
         latest = history_rows[-1]
         latest_top1 = max(0.0, min(1.0, _as_float(latest.get("top1_rate"), 0.0)))
         latest_topk = max(0.0, min(1.0, _as_float(latest.get("topk_rate"), 0.0)))
@@ -2560,7 +2716,10 @@ def update_stability_locks_from_tool_ranking(
             if isinstance(left_rank, (float, int)) and isinstance(right_rank, (float, int)):
                 rank_shifts.append(abs(float(right_rank) - float(left_rank)))
             else:
-                rank_shifts.append(0.0)
+                rank_shifts.append(float("inf"))
+        probes_window_ok = len(recent_window) >= min_rounds and all(
+            _as_int(sample.get("probes"), 0) >= min_probes_per_tool for sample in recent_window
+        )
         rank_shift_ok = (
             len(recent_window) >= min_rounds
             and bool(rank_shifts)
@@ -2579,14 +2738,111 @@ def update_stability_locks_from_tool_ranking(
             and float(sample.get("avg_margin")) > margin_lock_threshold
             for sample in recent_window
         )
-        stable_candidate = rank_shift_ok and top1_ok and topk_ok and margin_ok
+        stable_candidate = probes_window_ok and rank_shift_ok and top1_ok and topk_ok and margin_ok
+        tool_snapshot_map[tool_id] = {
+            "tool_id": tool_id,
+            "history_rows": history_rows,
+            "recent_window": recent_window,
+            "latest_probes": _as_int(latest.get("probes"), 0),
+            "latest_top1": latest_top1,
+            "latest_topk": latest_topk,
+            "latest_margin": latest_margin,
+            "latest_rank_shift": _stability_latest_rank_shift(history_rows),
+            "stable_candidate": stable_candidate,
+            "ranking_row_present": ranking_row is not None,
+        }
+
+    monitored_tools = len(tool_snapshot_map)
+    latest_samples = list(tool_snapshot_map.values())
+    total_probes_current = int(sum(item.get("latest_probes") or 0 for item in latest_samples))
+    min_probes_current = (
+        int(min(item.get("latest_probes") or 0 for item in latest_samples))
+        if latest_samples
+        else 0
+    )
+    current_margins = [
+        float(item["latest_margin"])
+        for item in latest_samples
+        if isinstance(item.get("latest_margin"), (float, int))
+    ]
+    median_margin_current = float(median(current_margins)) if current_margins else None
+    negative_margin_count = int(
+        sum(
+            1
+            for item in latest_samples
+            if isinstance(item.get("latest_margin"), (float, int))
+            and float(item.get("latest_margin")) < 0
+        )
+    )
+    rank_shift_values = [
+        float(item["latest_rank_shift"])
+        for item in latest_samples
+        if isinstance(item.get("latest_rank_shift"), (float, int))
+    ]
+    max_rank_shift_current = max(rank_shift_values) if rank_shift_values else None
+    robust_rank_shift_ok = bool(rank_shift_values) and all(
+        value <= global_rank_shift_tolerance for value in rank_shift_values
+    )
+    robust_gate_blockers: list[str] = []
+    if total_probes_current < min_total_probes:
+        robust_gate_blockers.append(
+            f"total_probes {total_probes_current} < {min_total_probes}"
+        )
+    if min_probes_current < min_probes_per_tool:
+        robust_gate_blockers.append(
+            f"min_probes_per_tool {min_probes_current} < {min_probes_per_tool}"
+        )
+    if median_margin_current is None:
+        robust_gate_blockers.append("median_margin saknas")
+    elif median_margin_current <= global_median_margin_threshold:
+        robust_gate_blockers.append(
+            f"median_margin {median_margin_current:.2f} <= {global_median_margin_threshold:.2f}"
+        )
+    if negative_margin_count > max_negative_margins:
+        robust_gate_blockers.append(
+            f"negative_margins {negative_margin_count} > {max_negative_margins}"
+        )
+    if not robust_rank_shift_ok:
+        if max_rank_shift_current is None:
+            robust_gate_blockers.append("rank_shift saknas för 2 rundor")
+        else:
+            robust_gate_blockers.append(
+                f"rank_shift {max_rank_shift_current:.4f} > {global_rank_shift_tolerance:.4f}"
+            )
+    robust_gate_snapshot = {
+        "total_probes": total_probes_current,
+        "min_probes_per_tool": min_probes_current,
+        "median_margin": median_margin_current,
+        "negative_margins": negative_margin_count,
+        "max_rank_shift": max_rank_shift_current,
+    }
+    robust_gate_requirements = {
+        "min_total_probes": min_total_probes,
+        "min_probes_per_tool": min_probes_per_tool,
+        "rank_shift_tolerance": global_rank_shift_tolerance,
+        "min_median_margin": global_median_margin_threshold,
+        "max_negative_margins": max_negative_margins,
+    }
+    robust_gate_ready = len(robust_gate_blockers) == 0
+
+    for tool_id in sorted(tool_snapshot_map.keys()):
+        snapshot = tool_snapshot_map.get(tool_id) or {}
+        latest_top1 = max(0.0, min(1.0, _as_float(snapshot.get("latest_top1"), 0.0)))
+        latest_topk = max(0.0, min(1.0, _as_float(snapshot.get("latest_topk"), 0.0)))
+        latest_margin = (
+            float(snapshot.get("latest_margin"))
+            if isinstance(snapshot.get("latest_margin"), (float, int))
+            else None
+        )
+        history_rows = list(snapshot.get("history_rows") or [])
+        recent_window = list(snapshot.get("recent_window") or [])
         lock_key = ("tool", tool_id)
         current_lock = dict(lock_map.get(lock_key) or {})
         is_locked = bool(current_lock.get("locked"))
 
         if is_locked:
             negative_margin_rounds = int(current_lock.get("negative_margin_rounds") or 0)
-            if ranking_row is not None:
+            if bool(snapshot.get("ranking_row_present")):
                 if isinstance(latest_margin, (float, int)) and latest_margin < 0:
                     negative_margin_rounds += 1
                 else:
@@ -2614,7 +2870,12 @@ def update_stability_locks_from_tool_ranking(
             lock_map[lock_key] = current_lock
             continue
 
-        should_auto_lock = bool(stability_mode_enabled and auto_lock_enabled and stable_candidate)
+        should_auto_lock = bool(
+            stability_mode_enabled
+            and auto_lock_enabled
+            and robust_gate_ready
+            and bool(snapshot.get("stable_candidate"))
+        )
         if not should_auto_lock:
             continue
         hard_lock = all(
@@ -2636,6 +2897,7 @@ def update_stability_locks_from_tool_ranking(
                 latest_topk=latest_topk,
                 latest_margin=latest_margin,
                 hard_lock=hard_lock,
+                robust_gate_snapshot=robust_gate_snapshot,
             ),
             "unlock_trigger": _stability_unlock_trigger_text(cfg),
             "source": "auto",
@@ -2679,6 +2941,10 @@ def update_stability_locks_from_tool_ranking(
         "newly_unlocked": newly_unlocked,
         "locked_tool_ids": locked_tool_ids,
         "monitored_tools": monitored_tools,
+        "robust_gate_ready": robust_gate_ready,
+        "robust_gate_blockers": robust_gate_blockers,
+        "robust_gate_snapshot": robust_gate_snapshot,
+        "robust_gate_requirements": robust_gate_requirements,
     }
 
 
