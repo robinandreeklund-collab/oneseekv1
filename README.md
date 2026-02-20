@@ -177,6 +177,71 @@ Det betyder inte nodvandigtvis att forbattringen ar falsk - utan att robustheten
 - Vid stor skillnad: kor en extra BSSS-runda pa kvarvarande kollisionskluster och verifiera igen.
 - BSSS lock mode ar aktivt for att hindra att vanliga metadata-forslag aterintroducerar tidigare separation-kollisioner.
 
+#### Visuell rymdmodell: embedding -> separation -> lock -> overtrampsblock
+
+```mermaid
+flowchart TD
+    A[Metadata catalog<br/>intent/agent/tool] --> B[Embedding build]
+    B --> B1[Semantic vector]
+    B --> B2[Structural vector]
+    B1 --> C[Similarity matrices + conflict graph]
+    B2 --> C
+    C --> D[BSSS bottom-up<br/>intent -> agent -> tool]
+    D --> E[Candidate scoring<br/>alignment + separation + global check]
+    E --> F{Stage lock?}
+    F -->|No| G[Rollback stage]
+    F -->|Yes| H[Persist pair locks]
+    H --> I[Metadata audit suggestions]
+    I --> J{Lock validator}
+    J -->|Pass| K[Apply suggestion]
+    J -->|Reject| L[Block overtramp]
+```
+
+#### Embedding-space matrix (hur varje lager styrs och lases)
+
+| Lager | Primar alignment-signal | Primar separation-signal | Global safety | Locknyckel |
+|---|---|---|---|---|
+| Intent | likhet mot egna intent-fragor/metadata | avstand till narmaste andra intent | nearest-neighbor + cluster-balance | `(intent, item_a, item_b)` |
+| Agent | likhet givet korrekt intent | avstand till narmaste andra agent inom intent-rymden | upstream-check mot intent + global nn-check | `(agent, item_a, item_b)` |
+| Tool | likhet givet korrekt intent+agent | avstand till narmaste andra tool i kategori/cluster | local + global margin + cluster-balance | `(tool, item_a, item_b)` |
+
+#### Scoring-matris (bottom-up aggressivitet)
+
+| Lager | Score-formel |
+|---|---|
+| Intent | `0.7 * alignment + 0.3 * (1 - nearest_intent_similarity)` |
+| Agent | `0.6 * alignment + 0.4 * (1 - nearest_agent_similarity)` |
+| Tool | `0.5 * alignment + 0.5 * (1 - nearest_tool_similarity)` |
+
+#### Tool-lager: dual embedding-fusion (semantik + struktur)
+
+| Komponent | Innehall | Vikt |
+|---|---|---|
+| Semantic vector | description + keywords + example_queries | `semantic_embedding_weight` |
+| Structural vector | schema/required fields/input shape/output hints | `structural_embedding_weight` |
+| Fusion | viktad cosine-fusion | normaliserad summa av vikter |
+
+#### Overtramps-firewall (var overtramp stoppas)
+
+| Steg | Vad kommer in | Kontroll | Resultat vid fail |
+|---|---|---|---|
+| BSSS stage-gate | kandidatmetadata | local/global similarity + alignment drop + cluster-balance | stage rollback |
+| Suggestion-filter | Steg B-forslag | pair-lock validering i embedding-rummet | forslaget filtreras bort |
+| Metadata apply | PUT metadata-catalog | lock-validering innan persist | `409` block med rejected-lista |
+
+#### Vad du ska kontrollera i UI efter varje korning
+
+1. **Efter BSSS**
+   - stage reports: `locked=true` per lager
+   - similarity matrices: se att kritiska par/kluster separeras
+   - diagnostics: `separation_lock_new_pairs`, `separation_lock_total_pairs`
+2. **Efter metadata suggestions**
+   - diagnostics: `separation_lock_rejected_tool/intent/agent`
+   - forslagslistan: att blockerade overtramp inte dyker upp som applybara
+3. **Efter metadata apply**
+   - inga `409` lock-brott vid legitima uppdateringar
+   - om `409`: granska `rejected`-payload och justera metadata utan doman-glidning
+
 ---
 
 ## LangGraph-flode (Fas 1-4 + subagent A-F)
