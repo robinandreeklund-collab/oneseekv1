@@ -61,6 +61,92 @@ _MAX_AGENT_FAILURES_FOR_LLM = 20
 _PROBE_QUERY_LLM_TIMEOUT_SECONDS = 18.0
 _METADATA_LAYER_LLM_TIMEOUT_SECONDS = 20.0
 _TOOL_ID_LIKE_RE = re.compile(r"\b[a-z0-9]+_[a-z0-9_]+\b", re.IGNORECASE)
+_PROBE_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+_PROBE_TIME_CONTEXT_RE = re.compile(
+    r"\b("
+    r"idag|imorgon|ikväll|i\s+morgon|nu|just\s+nu|"
+    r"denna\s+(vecka|månad|helg)|"
+    r"nästa\s+(vecka|månad|helg|kvartal|år)|"
+    r"förra\s+(veckan|månaden|året)|"
+    r"kommande\s+(dygnet|veckan|månaden)|"
+    r"senaste\s+\d+\s+(dagarna|veckorna|månaderna|åren)|"
+    r"under\s+(vintern|våren|sommaren|hösten)|"
+    r"q[1-4]\s*(19|20)\d{2}|"
+    r"januari|februari|mars|april|maj|juni|juli|augusti|"
+    r"september|oktober|november|december"
+    r")\b",
+    re.IGNORECASE,
+)
+_SWEDISH_REFERENCE_CITIES = (
+    "Stockholm",
+    "Göteborg",
+    "Malmö",
+    "Uppsala",
+    "Västerås",
+    "Örebro",
+    "Linköping",
+    "Helsingborg",
+    "Jönköping",
+    "Norrköping",
+    "Lund",
+    "Umeå",
+    "Gävle",
+    "Borås",
+    "Eskilstuna",
+    "Södertälje",
+    "Karlstad",
+    "Östersund",
+    "Luleå",
+    "Sundsvall",
+    "Visby",
+    "Halmstad",
+    "Helsingborg",
+    "Skellefteå",
+    "Falun",
+    "Trollhättan",
+)
+_GENERIC_QUERY_TERMS = {
+    "hjälp",
+    "hjälpa",
+    "visa",
+    "data",
+    "information",
+    "relevant",
+    "relevanta",
+    "liknande",
+    "mått",
+    "sak",
+    "grej",
+    "sverige",
+    "svenska",
+    "fråga",
+    "frågor",
+    "underlag",
+}
+_LOW_SIGNAL_QUERY_PATTERNS = (
+    re.compile(r"\brelevanta data\b", re.IGNORECASE),
+    re.compile(r"\blika?nande mått\b", re.IGNORECASE),
+    re.compile(r"\bhjälp mig\b", re.IGNORECASE),
+    re.compile(r"\bvisa data\b", re.IGNORECASE),
+    re.compile(r"\bvisa information\b", re.IGNORECASE),
+)
+_SWEDISH_CITY_RE = re.compile(
+    r"\b(" + "|".join(re.escape(city) for city in _SWEDISH_REFERENCE_CITIES) + r")\b",
+    re.IGNORECASE,
+)
+_SWEDISH_QUERY_STARTERS = (
+    "hur",
+    "vad",
+    "vilken",
+    "vilka",
+    "kan",
+    "jämför",
+    "visa",
+    "ge",
+    "ta fram",
+    "när",
+    "varför",
+)
 
 _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...]]]] = {
     "knowledge": (
@@ -242,11 +328,182 @@ def _is_valid_probe_query(query: str, *, forbidden_markers: set[str]) -> bool:
     normalized = _swedishify_query_text(query)
     if not normalized:
         return False
+    if len(normalized) < 12 or len(normalized) > 180:
+        return False
+    if len(_tokenize(normalized)) < 3:
+        return False
+    if any(pattern.search(normalized) for pattern in _LOW_SIGNAL_QUERY_PATTERNS):
+        return False
     if not _has_swedish_diacritics(normalized):
         return False
     if _contains_forbidden_tool_reference(normalized, forbidden_markers=forbidden_markers):
         return False
     return True
+
+
+def _has_city_reference(query: str) -> bool:
+    return bool(_SWEDISH_CITY_RE.search(str(query or "")))
+
+
+def _has_time_or_year_reference(query: str) -> bool:
+    text = str(query or "")
+    return bool(_PROBE_TIME_CONTEXT_RE.search(text) or _PROBE_YEAR_RE.search(text))
+
+
+def _query_domain_terms(entry: ToolIndexEntry, *, limit: int = 80) -> set[str]:
+    terms: set[str] = set()
+
+    def _extend(value: str) -> None:
+        for token in _tokenize(value):
+            if token in _GENERIC_QUERY_TERMS:
+                continue
+            terms.add(token)
+            if len(terms) >= max(10, int(limit)):
+                return
+
+    for keyword in list(entry.keywords or [])[:30]:
+        _extend(str(keyword))
+        if len(terms) >= max(10, int(limit)):
+            break
+    if len(terms) < max(10, int(limit)):
+        _extend(entry.category or "")
+    if len(terms) < max(10, int(limit)):
+        _extend(entry.description or "")
+    if len(terms) < max(10, int(limit)):
+        _extend(entry.name or "")
+    for sample in list(entry.example_queries or [])[:8]:
+        if len(terms) >= max(10, int(limit)):
+            break
+        _extend(str(sample))
+    return terms
+
+
+def _probe_query_quality_row(
+    query: str,
+    *,
+    domain_terms: set[str],
+) -> dict[str, Any]:
+    normalized = _swedishify_query_text(query)
+    tokens = _tokenize(normalized)
+    token_set = set(tokens)
+    domain_overlap = len(token_set & set(domain_terms))
+    has_city = _has_city_reference(normalized)
+    has_time = _has_time_or_year_reference(normalized)
+    starts_naturally = normalized.casefold().startswith(_SWEDISH_QUERY_STARTERS)
+    ends_question = normalized.endswith("?")
+    low_signal = any(pattern.search(normalized) for pattern in _LOW_SIGNAL_QUERY_PATTERNS)
+    score = 0.0
+    score += min(4.0, float(domain_overlap)) * 2.2
+    if has_city:
+        score += 1.2
+    if has_time:
+        score += 1.2
+    if starts_naturally or ends_question:
+        score += 0.6
+    token_count = len(tokens)
+    if 5 <= token_count <= 16:
+        score += 0.6
+    elif token_count < 4 or token_count > 24:
+        score -= 1.0
+    if low_signal:
+        score -= 2.5
+    return {
+        "query": normalized,
+        "score": float(score),
+        "has_city": has_city,
+        "has_time": has_time,
+        "domain_overlap": domain_overlap,
+    }
+
+
+def _select_high_quality_probe_queries(
+    *,
+    entry: ToolIndexEntry,
+    candidates: list[str],
+    query_count: int,
+    forbidden_markers: set[str],
+    avoid_keys: set[str] | None = None,
+) -> list[str]:
+    target_count = max(1, int(query_count))
+    blocked = set(avoid_keys or set())
+    domain_terms = _query_domain_terms(entry)
+    scored: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for candidate in list(candidates or []):
+        normalized = _swedishify_query_text(candidate)
+        key = normalized.casefold()
+        if (
+            not normalized
+            or key in seen
+            or key in blocked
+            or not _is_valid_probe_query(normalized, forbidden_markers=forbidden_markers)
+        ):
+            continue
+        seen.add(key)
+        scored.append(
+            _probe_query_quality_row(
+                normalized,
+                domain_terms=domain_terms,
+            )
+        )
+
+    if not scored:
+        return []
+    scored.sort(
+        key=lambda item: (
+            float(item.get("score") or 0.0),
+            int(item.get("domain_overlap") or 0),
+            len(str(item.get("query") or "")),
+        ),
+        reverse=True,
+    )
+    city_target = 1 if target_count <= 2 else max(1, int(round(target_count * 0.6)))
+    time_target = 1 if target_count <= 2 else max(1, int(round(target_count * 0.6)))
+    selected: list[str] = []
+    selected_keys: set[str] = set()
+    city_count = 0
+    time_count = 0
+
+    def _take_row(
+        *,
+        require_city: bool | None = None,
+        require_time: bool | None = None,
+    ) -> bool:
+        nonlocal city_count, time_count
+        for row in scored:
+            query = str(row.get("query") or "")
+            key = query.casefold()
+            if not query or key in selected_keys:
+                continue
+            has_city = bool(row.get("has_city"))
+            has_time = bool(row.get("has_time"))
+            if require_city is not None and has_city is not require_city:
+                continue
+            if require_time is not None and has_time is not require_time:
+                continue
+            selected.append(query)
+            selected_keys.add(key)
+            if has_city:
+                city_count += 1
+            if has_time:
+                time_count += 1
+            return True
+        return False
+
+    while len(selected) < target_count and city_count < city_target and time_count < time_target:
+        if not _take_row(require_city=True, require_time=True):
+            break
+    while len(selected) < target_count and city_count < city_target:
+        if not _take_row(require_city=True, require_time=None):
+            break
+    while len(selected) < target_count and time_count < time_target:
+        if not _take_row(require_city=None, require_time=True):
+            break
+    while len(selected) < target_count:
+        if not _take_row(require_city=None, require_time=None):
+            break
+    return selected[:target_count]
 
 
 def _compact_failures_for_llm(
@@ -435,37 +692,25 @@ def _fallback_probe_queries(
     hard_negative_count = max(0, min(int(hard_negatives_per_tool or 0), 10))
     normalized_round = max(1, min(int(round_index or 1), 1000))
     forbidden_markers = _tool_reference_markers(entry, neighbors)
-    hints = list(entry.keywords[: max(2, query_count * 4)])
-    if not hints:
-        hints = _tokenize(entry.description)[: max(2, query_count * 4)]
-    if not hints:
-        hints = _tokenize(entry.name)[: max(2, query_count * 2)] or ["data"]
+    domain_terms = list(_query_domain_terms(entry, limit=max(query_count * 8, 24)))
+    if not domain_terms:
+        domain_terms = _tokenize(entry.description)[: max(2, query_count * 4)]
+    if not domain_terms:
+        domain_terms = _tokenize(entry.name)[: max(2, query_count * 2)] or ["utveckling"]
 
-    locations = [
-        "Stockholm",
-        "Göteborg",
-        "Malmö",
-        "Uppsala",
-        "Sundsvall",
-        "Luleå",
-        "Östersund",
-        "Visby",
-        "Karlstad",
-        "Gävle",
-        "Västerås",
-        "Jönköping",
-    ]
+    locations = list(_SWEDISH_REFERENCE_CITIES)
     time_windows = [
         "idag",
         "imorgon",
-        "kommande dygnet",
         "kommande veckan",
-        "just nu",
-        "denna helg",
+        "denna månad",
         "nästa månad",
-        "under vintern",
+        "det här året",
+        "nästa år",
         "under sommaren",
-        "de senaste 24 timmarna",
+        "under vintern",
+        "de senaste 12 månaderna",
+        "de senaste 3 åren",
     ]
 
     avoid_keys = {
@@ -473,61 +718,81 @@ def _fallback_probe_queries(
         for query in list(avoid_queries or [])
         if (normalized := _swedishify_query_text(query))
     }
-    prompts: list[str] = []
+    candidates: list[str] = []
     seen: set[str] = set()
     rotation_seed = sum(ord(ch) for ch in str(entry.tool_id)) + normalized_round
     location_offset = rotation_seed % len(locations)
     time_offset = (rotation_seed * 3) % len(time_windows)
+    year_base = 2021 + (normalized_round % 5)
 
     def _append(prompt: str) -> None:
         normalized = _swedishify_query_text(prompt)
         if not normalized:
             return
-        if not _is_valid_probe_query(normalized, forbidden_markers=forbidden_markers):
-            return
         key = normalized.casefold()
         if key in seen or key in avoid_keys:
             return
         seen.add(key)
-        prompts.append(normalized)
+        candidates.append(normalized)
 
     if neighbors and hard_negative_count > 0:
         for idx in range(max(hard_negative_count * 2, hard_negative_count)):
             location = locations[(location_offset + idx) % len(locations)]
             time_window = time_windows[(time_offset + idx) % len(time_windows)]
-            hint = hints[idx % len(hints)]
-            alt_hint = hints[(idx + 3) % len(hints)] if hints else hint
+            term_a = domain_terms[idx % len(domain_terms)]
+            term_b = domain_terms[(idx + 3) % len(domain_terms)] if domain_terms else term_a
             if idx % 2 == 0:
                 _append(
-                    f"När gäller {hint} i stället för {alt_hint} i {location} {time_window}?"
+                    f"När är {term_a} mer relevant än {term_b} i {location} {time_window}?"
                 )
             else:
                 _append(
-                    f"Jag vill jämföra {hint} och {alt_hint} för {location} {time_window}."
+                    f"Hur skiljer sig {term_a} och {term_b} i {location} {time_window}?"
                 )
-            if len(prompts) >= query_count:
-                return prompts[:query_count]
 
     candidate_limit = max(query_count * 8, 24)
     for idx in range(candidate_limit):
-        hint = hints[idx % len(hints)]
+        term = domain_terms[idx % len(domain_terms)]
+        alt_term = domain_terms[(idx + 5) % len(domain_terms)]
         location = locations[(location_offset + idx) % len(locations)]
         time_window = time_windows[(time_offset + idx) % len(time_windows)]
-        if idx % 3 == 0:
-            _append(f"Visa {hint} i {location} {time_window}")
-        elif idx % 3 == 1:
-            _append(f"Hjälp mig med {hint} i {location} {time_window}")
+        year = year_base + (idx % 4)
+        if idx % 4 == 0:
+            _append(f"Hur har {term} utvecklats i {location} under {time_window}?")
+        elif idx % 4 == 1:
+            _append(f"Kan du visa {term} i {location} för år {year}?")
+        elif idx % 4 == 2:
+            _append(
+                f"Vilka nivåer ser vi för {term} i {location} mellan {year - 1} och {year}?"
+            )
         else:
-            _append(f"Vad betyder {hint} för {location} {time_window}?")
-        if len(prompts) >= query_count:
-            return prompts[:query_count]
+            _append(
+                f"Jämför {term} med {alt_term} i {location} {time_window}."
+            )
 
-    if hints:
-        _append(f"När ska jag använda {hints[0]} i stället för andra liknande mått?")
-    _append("Hjälp mig med relevanta data för Sverige")
-    _append(f"Visa utvecklingen för relevanta mått under år {2020 + (normalized_round % 7)}")
+    selected = _select_high_quality_probe_queries(
+        entry=entry,
+        candidates=candidates,
+        query_count=query_count,
+        forbidden_markers=forbidden_markers,
+        avoid_keys=avoid_keys,
+    )
+    if selected:
+        return selected[:query_count]
 
-    return prompts[:query_count]
+    if domain_terms:
+        _append(f"Hur ser {domain_terms[0]} ut i {locations[location_offset]} under nästa år?")
+        _append(
+            f"Vilken utveckling har {domain_terms[0]} haft i {locations[(location_offset + 1) % len(locations)]} sedan {year_base}?"
+        )
+
+    return _select_high_quality_probe_queries(
+        entry=entry,
+        candidates=candidates,
+        query_count=query_count,
+        forbidden_markers=forbidden_markers,
+        avoid_keys=avoid_keys,
+    )
 
 
 async def _generate_probe_queries_for_tool(
@@ -565,29 +830,59 @@ async def _generate_probe_queries_for_tool(
 
     prompt = (
         "You generate Swedish probe queries for retrieval-only metadata audit.\n"
-        "Goal: create user questions that should map to one tool and expose overlap.\n"
+        "Goal: create top-quality user questions that should map to one tool and expose overlap.\n"
         "Return strict JSON only:\n"
         "{\n"
         '  "queries": ["query 1", "query 2"]\n'
         "}\n"
         "Rules:\n"
         "- Swedish language.\n"
-        "- Every query must be natural Swedish as a real user would write it.\n"
+        "- Every query must be natural, fluent Swedish as a real user would write it.\n"
         "- Use correct Swedish spelling with diacritics (å, ä, ö); do not transliterate.\n"
+        "- Do NOT write robotic, generic, or template-like wording.\n"
+        "- Use realistic Swedish context: cities, municipalities, regions, seasons, dates, years.\n"
+        "- At least 70% of queries should include a Swedish city/place and explicit time context.\n"
+        "- Every query must include domain-specific wording grounded in keywords/description.\n"
+        "- Prefer concrete requests with measurable scope (e.g. period, location, comparison).\n"
+        "- Keep focus tight to the target category; avoid vague phrasing.\n"
         "- Strictly forbidden: tool_id, tool names, function names, endpoint names, internal identifiers.\n"
         "- Never include underscore identifiers like marketplace_regions, smhi_forecast, trafikverket_*.\n"
         "- No markdown.\n"
-        "- Keep each query short and realistic.\n"
+        "- Keep each query realistic and concise (roughly 6-16 words when possible).\n"
         "- Include borderline/ambiguous hard negatives when requested.\n"
         "- Do not repeat any query listed in avoid_queries.\n"
         "- Prioritize novel phrasings for the provided round_index.\n"
     )
+    domain_terms = sorted(_query_domain_terms(entry))[:40]
+    city_examples = list(_SWEDISH_REFERENCE_CITIES[:16])
+    time_examples = [
+        "idag",
+        "imorgon",
+        "denna månad",
+        "nästa månad",
+        "de senaste 12 månaderna",
+        "under 2024",
+        "Q1 2025",
+        "under sommaren",
+    ]
     payload = {
         "tool_context": {
+            "name": entry.name,
+            "category": entry.category,
             "description": entry.description,
             "keywords": entry.keywords,
             "example_queries": entry.example_queries[:8],
         },
+        "target_quality_profile": {
+            "language": "naturlig svenska",
+            "style": "konkret och verklighetsnära användarfråga",
+            "must_use_context": ["svensk plats", "tid/år/period"],
+            "must_reflect_category": True,
+            "forbid_internal_identifiers": True,
+        },
+        "domain_terms": domain_terms,
+        "city_examples": city_examples,
+        "time_examples": time_examples,
         "description": entry.description,
         "keywords": entry.keywords,
         "neighbor_count": len(list(neighbors or [])),
@@ -601,7 +896,7 @@ async def _generate_probe_queries_for_tool(
             model.ainvoke(
                 [
                     SystemMessage(content=prompt),
-                    HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+                    HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ]
             ),
             timeout=_PROBE_QUERY_LLM_TIMEOUT_SECONDS,
@@ -618,13 +913,8 @@ async def _generate_probe_queries_for_tool(
                 avoid_queries=list(avoid_keys),
                 round_index=round_index,
             )
-        generated = [
-            normalized
-            for query in _safe_string_list(parsed.get("queries"))
-            if (normalized := _swedishify_query_text(query))
-            and _is_valid_probe_query(normalized, forbidden_markers=forbidden_markers)
-        ]
-        if not generated:
+        generated_candidates = _safe_string_list(parsed.get("queries"))
+        if not generated_candidates:
             return _fallback_probe_queries(
                 entry=entry,
                 neighbors=neighbors,
@@ -639,31 +929,19 @@ async def _generate_probe_queries_for_tool(
                 neighbors=neighbors,
                 query_count=min(hard_negative_count, max(1, int(query_count))),
                 hard_negatives_per_tool=hard_negative_count,
-                avoid_queries=[*list(avoid_keys), *generated],
+                avoid_queries=[*list(avoid_keys), *generated_candidates],
                 round_index=round_index,
             )
             if hard_negative_count > 0
             else []
         )
-        merged: list[str] = []
-        seen: set[str] = set()
-        for query in [*generated, *hard_negative_queries]:
-            normalized = _swedishify_query_text(query)
-            key = normalized.casefold()
-            if (
-                not normalized
-                or key in seen
-                or key in avoid_keys
-                or not _is_valid_probe_query(
-                    normalized,
-                    forbidden_markers=forbidden_markers,
-                )
-            ):
-                continue
-            seen.add(key)
-            merged.append(normalized)
-            if len(merged) >= query_count:
-                break
+        merged = _select_high_quality_probe_queries(
+            entry=entry,
+            candidates=[*generated_candidates, *hard_negative_queries],
+            query_count=query_count,
+            forbidden_markers=forbidden_markers,
+            avoid_keys=avoid_keys,
+        )
         if len(merged) < query_count:
             refill_queries = _fallback_probe_queries(
                 entry=entry,
@@ -673,23 +951,13 @@ async def _generate_probe_queries_for_tool(
                 avoid_queries=[*list(avoid_keys), *merged],
                 round_index=round_index,
             )
-            for query in refill_queries:
-                normalized = _swedishify_query_text(query)
-                key = normalized.casefold()
-                if (
-                    not normalized
-                    or key in seen
-                    or key in avoid_keys
-                    or not _is_valid_probe_query(
-                        normalized,
-                        forbidden_markers=forbidden_markers,
-                    )
-                ):
-                    continue
-                seen.add(key)
-                merged.append(normalized)
-                if len(merged) >= query_count:
-                    break
+            merged = _select_high_quality_probe_queries(
+                entry=entry,
+                candidates=[*merged, *refill_queries],
+                query_count=query_count,
+                forbidden_markers=forbidden_markers,
+                avoid_keys=avoid_keys,
+            )
         if merged:
             return merged[:query_count]
         return _fallback_probe_queries(
@@ -1288,6 +1556,27 @@ async def run_layered_metadata_audit(
                 llm_generated_candidates += len(generated)
                 query_candidates_total += len(generated)
         queries = _dedupe_queries(queries)
+        if queries:
+            query_source_by_key = {
+                _swedishify_query_text(query).casefold(): source
+                for query, source in queries
+                if _swedishify_query_text(query)
+            }
+            ranked_queries = _select_high_quality_probe_queries(
+                entry=entry,
+                candidates=[query for query, _source in queries],
+                query_count=len(queries),
+                forbidden_markers=forbidden_markers,
+                avoid_keys=None,
+            )
+            if ranked_queries:
+                queries = [
+                    (
+                        query,
+                        query_source_by_key.get(_swedishify_query_text(query).casefold(), "candidate"),
+                    )
+                    for query in ranked_queries
+                ]
 
         filtered_queries: list[tuple[str, str]] = []
         seen_query_keys: set[str] = set()
