@@ -241,6 +241,40 @@ export const metadataCatalogUpdateRequest = z.object({
 	intents: z.array(intentMetadataUpdateItem).optional().default([]),
 });
 
+export const metadataCatalogSafeRenameSuggestionRequest = z.object({
+	search_space_id: z.number().nullable().optional(),
+	layer: z.string().optional().default("tool"),
+	item_id: z.string(),
+	competitor_id: z.string().nullable().optional(),
+	desired_label: z.string().nullable().optional(),
+	metadata_patch: z.array(toolMetadataUpdateItem).optional().default([]),
+	intent_metadata_patch: z.array(intentMetadataUpdateItem).optional().default([]),
+	agent_metadata_patch: z.array(agentMetadataUpdateItem).optional().default([]),
+});
+
+export const metadataCatalogSafeRenameRejectedCandidate = z.object({
+	candidate: z.string(),
+	competitor_id: z.string().nullable().optional(),
+	similarity: z.number().nullable().optional(),
+	max_similarity: z.number().nullable().optional(),
+	delta: z.number().nullable().optional(),
+});
+
+export const metadataCatalogSafeRenameSuggestionResponse = z.object({
+	layer: z.string(),
+	item_id: z.string(),
+	competitor_id: z.string().nullable().optional(),
+	desired_label: z.string().nullable().optional(),
+	suggested_label: z.string(),
+	validated: z.boolean().optional().default(false),
+	reason: z.string(),
+	tested_candidates: z.array(z.string()).optional().default([]),
+	rejected_candidates: z
+		.array(metadataCatalogSafeRenameRejectedCandidate)
+		.optional()
+		.default([]),
+});
+
 export const metadataCatalogAuditConfusionPair = z.object({
 	expected_label: z.string(),
 	predicted_label: z.string(),
@@ -1364,6 +1398,15 @@ export type IntentMetadataItem = z.infer<typeof intentMetadataItem>;
 export type IntentMetadataUpdateItem = z.infer<typeof intentMetadataUpdateItem>;
 export type MetadataCatalogResponse = z.infer<typeof metadataCatalogResponse>;
 export type MetadataCatalogUpdateRequest = z.infer<typeof metadataCatalogUpdateRequest>;
+export type MetadataCatalogSafeRenameSuggestionRequest = z.infer<
+	typeof metadataCatalogSafeRenameSuggestionRequest
+>;
+export type MetadataCatalogSafeRenameRejectedCandidate = z.infer<
+	typeof metadataCatalogSafeRenameRejectedCandidate
+>;
+export type MetadataCatalogSafeRenameSuggestionResponse = z.infer<
+	typeof metadataCatalogSafeRenameSuggestionResponse
+>;
 export type MetadataCatalogAuditConfusionPair = z.infer<
 	typeof metadataCatalogAuditConfusionPair
 >;

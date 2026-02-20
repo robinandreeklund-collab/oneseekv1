@@ -1,7 +1,9 @@
 import {
 	type MetadataCatalogAuditRunRequest,
 	type MetadataCatalogSeparationRequest,
+	type MetadataCatalogSafeRenameSuggestionRequest,
 	type MetadataCatalogAuditSuggestionRequest,
+	type MetadataCatalogSafeRenameSuggestionResponse,
 	type MetadataCatalogUpdateRequest,
 	type ToolApplySuggestionsRequest,
 	type ToolAutoLoopRequest,
@@ -16,6 +18,8 @@ import {
 	metadataCatalogAuditRunResponse,
 	metadataCatalogSeparationRequest,
 	metadataCatalogSeparationResponse,
+	metadataCatalogSafeRenameSuggestionRequest,
+	metadataCatalogSafeRenameSuggestionResponse,
 	metadataCatalogAuditSuggestionRequest,
 	metadataCatalogAuditSuggestionResponse,
 	metadataCatalogResponse,
@@ -138,6 +142,23 @@ class AdminToolSettingsApiService {
 		return baseApiService.put(
 			`/api/v1/admin/tool-settings/metadata-catalog${query}`,
 			metadataCatalogResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async suggestMetadataCatalogSafeRename(
+		request: MetadataCatalogSafeRenameSuggestionRequest
+	): Promise<MetadataCatalogSafeRenameSuggestionResponse> {
+		const parsed = metadataCatalogSafeRenameSuggestionRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/metadata-catalog/safe-rename-suggestion",
+			metadataCatalogSafeRenameSuggestionResponse,
 			{
 				body: parsed.data,
 			}

@@ -655,6 +655,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	>(new Set());
 	const [saveLockConflicts, setSaveLockConflicts] = useState<SaveLockConflictRow[]>([]);
 	const [saveLockMessage, setSaveLockMessage] = useState<string | null>(null);
+	const [applyingSafeRenameKey, setApplyingSafeRenameKey] = useState<string | null>(null);
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-tool-metadata-catalog", searchSpaceId],
@@ -1207,6 +1208,96 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			toast.error(message);
 		} finally {
 			setIsSaving(false);
+		}
+	};
+
+	const applySafeRenameSuggestion = async (row: SaveLockConflictRow) => {
+		if (!data?.search_space_id) return;
+		const rowKey = `${row.layer}:${row.itemId}:${row.competitorId}`;
+		const desiredLabel =
+			row.layer === "tool"
+				? draftTools[row.itemId]?.name ?? ""
+				: row.layer === "intent"
+					? draftIntents[row.itemId]?.label ?? ""
+					: row.layer === "agent"
+						? draftAgents[row.itemId]?.label ?? ""
+						: "";
+		if (!desiredLabel.trim()) {
+			toast.message("Kunde inte hitta aktuellt namn/label för raden.");
+			return;
+		}
+		setApplyingSafeRenameKey(rowKey);
+		try {
+			const suggestion = await adminToolSettingsApiService.suggestMetadataCatalogSafeRename({
+				search_space_id: data.search_space_id,
+				layer: row.layer,
+				item_id: row.itemId,
+				competitor_id: row.competitorId === "-" ? null : row.competitorId,
+				desired_label: desiredLabel,
+				metadata_patch: metadataPatchForDraft,
+				intent_metadata_patch: intentMetadataPatchForDraft,
+				agent_metadata_patch: agentMetadataPatchForDraft,
+			});
+			if (!suggestion.validated) {
+				toast.error(
+					`Ingen säker rename hittades: ${suggestion.reason || "okänd orsak"}`
+				);
+				return;
+			}
+			if (suggestion.layer === "tool") {
+				setDraftTools((current) => {
+					const existing = current[suggestion.item_id];
+					if (!existing) return current;
+					return {
+						...current,
+						[suggestion.item_id]: {
+							...existing,
+							name: suggestion.suggested_label,
+						},
+					};
+				});
+			} else if (suggestion.layer === "intent") {
+				setDraftIntents((current) => {
+					const existing = current[suggestion.item_id];
+					if (!existing) return current;
+					return {
+						...current,
+						[suggestion.item_id]: {
+							...existing,
+							label: suggestion.suggested_label,
+						},
+					};
+				});
+			} else if (suggestion.layer === "agent") {
+				setDraftAgents((current) => {
+					const existing = current[suggestion.item_id];
+					if (!existing) return current;
+					return {
+						...current,
+						[suggestion.item_id]: {
+							...existing,
+							label: suggestion.suggested_label,
+						},
+					};
+				});
+			}
+			setSaveLockConflicts((rows) =>
+				rows.filter(
+					(conflict) =>
+						!(
+							conflict.layer === suggestion.layer && conflict.itemId === suggestion.item_id
+						)
+				)
+			);
+			toast.success(`Säker rename applicerad: ${suggestion.suggested_label}`);
+		} catch (error) {
+			const message =
+				error instanceof Error && error.message
+					? error.message
+					: "Kunde inte hämta säker rename.";
+			toast.error(message);
+		} finally {
+			setApplyingSafeRenameKey(null);
 		}
 	};
 
@@ -2042,6 +2133,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 											<th className="px-2 py-1 text-right">Similarity</th>
 											<th className="px-2 py-1 text-right">Max</th>
 											<th className="px-2 py-1 text-right">Delta</th>
+											<th className="px-2 py-1 text-right">Åtgärd</th>
 										</tr>
 									</thead>
 									<tbody>
@@ -2070,6 +2162,25 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 												<td className="px-2 py-1 text-right align-top text-destructive">
 													{row.delta > 0 ? "+" : ""}
 													{row.delta.toFixed(4)}
+												</td>
+												<td className="px-2 py-1 text-right align-top">
+													<Button
+														type="button"
+														size="sm"
+														variant="outline"
+														className="h-7 text-[11px]"
+														onClick={() => applySafeRenameSuggestion(row)}
+														disabled={
+															isSaving ||
+															(applyingSafeRenameKey ===
+																`${row.layer}:${row.itemId}:${row.competitorId}`)
+														}
+													>
+														{applyingSafeRenameKey ===
+														`${row.layer}:${row.itemId}:${row.competitorId}`
+															? "Söker..."
+															: "Applicera säker rename"}
+													</Button>
 												</td>
 											</tr>
 										))}

@@ -130,6 +130,39 @@ class MetadataCatalogUpdateRequest(BaseModel):
     intents: list[IntentMetadataUpdateItem] = Field(default_factory=list)
 
 
+class MetadataCatalogSafeRenameSuggestionRequest(BaseModel):
+    search_space_id: int | None = None
+    layer: str = "tool"
+    item_id: str
+    competitor_id: str | None = None
+    desired_label: str | None = None
+    metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    intent_metadata_patch: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+    agent_metadata_patch: list[AgentMetadataUpdateItem] = Field(default_factory=list)
+
+
+class MetadataCatalogSafeRenameRejectedCandidate(BaseModel):
+    candidate: str
+    competitor_id: str | None = None
+    similarity: float | None = None
+    max_similarity: float | None = None
+    delta: float | None = None
+
+
+class MetadataCatalogSafeRenameSuggestionResponse(BaseModel):
+    layer: str
+    item_id: str
+    competitor_id: str | None = None
+    desired_label: str | None = None
+    suggested_label: str
+    validated: bool = False
+    reason: str
+    tested_candidates: list[str] = Field(default_factory=list)
+    rejected_candidates: list[MetadataCatalogSafeRenameRejectedCandidate] = Field(
+        default_factory=list
+    )
+
+
 class ToolRetrievalTuningResponse(BaseModel):
     tuning: ToolRetrievalTuning
 

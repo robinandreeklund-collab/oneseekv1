@@ -36,6 +36,8 @@ from app.schemas.admin_tool_settings import (
     MetadataCatalogAuditRunResponse,
     MetadataCatalogAuditSuggestionRequest,
     MetadataCatalogAuditSuggestionResponse,
+    MetadataCatalogSafeRenameSuggestionRequest,
+    MetadataCatalogSafeRenameSuggestionResponse,
     MetadataCatalogSeparationRequest,
     MetadataCatalogSeparationResponse,
     MetadataCatalogResponse,
@@ -3031,6 +3033,95 @@ async def _persist_metadata_separation_pair_locks(
     }
 
 
+def _tokenize_lock_label(value: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[a-z0-9åäö]{3,}", str(value or "").lower())
+        if token not in {"och", "for", "för", "med", "som", "tool", "verktyg"}
+    ]
+
+
+def _safe_rename_candidates(
+    *,
+    layer: str,
+    desired_label: str,
+    current_label: str,
+    fallback_label: str | None,
+    item_payload: dict[str, Any],
+    competitor_payload: dict[str, Any] | None,
+) -> list[str]:
+    base = str(desired_label or current_label or "").strip()
+    if not base:
+        base = str(current_label or "").strip()
+    if not base:
+        return [str(fallback_label or "").strip()] if str(fallback_label or "").strip() else []
+
+    competitor_text = " ".join(
+        [
+            str((competitor_payload or {}).get("name") or ""),
+            str((competitor_payload or {}).get("label") or ""),
+            str((competitor_payload or {}).get("description") or ""),
+            " ".join(str(item) for item in ((competitor_payload or {}).get("keywords") or [])),
+        ]
+    )
+    competitor_tokens = set(_tokenize_lock_label(competitor_text))
+    own_text = " ".join(
+        [
+            str(item_payload.get("name") or ""),
+            str(item_payload.get("label") or ""),
+            str(item_payload.get("description") or ""),
+            " ".join(str(item) for item in (item_payload.get("keywords") or [])),
+        ]
+    )
+    own_tokens = _tokenize_lock_label(own_text)
+    base_tokens = set(_tokenize_lock_label(base))
+    qualifier = next(
+        (
+            token
+            for token in own_tokens
+            if token not in competitor_tokens and token not in base_tokens
+        ),
+        None,
+    )
+
+    candidates: list[str] = [base]
+    if qualifier:
+        pretty_qualifier = qualifier.upper() if len(qualifier) <= 5 else qualifier.capitalize()
+        candidates.append(f"{base} ({pretty_qualifier})")
+        candidates.append(f"{base} - {pretty_qualifier}")
+
+    if layer == "tool":
+        category = str(item_payload.get("category") or "").strip()
+        if category:
+            category_tag = category.upper() if len(category) <= 5 else category.capitalize()
+            candidates.append(f"{base} ({category_tag})")
+    elif layer == "intent":
+        route = str(item_payload.get("route") or "").strip()
+        if route:
+            candidates.append(f"{base} ({route})")
+    elif layer == "agent":
+        namespaces = [str(item).strip() for item in (item_payload.get("namespace") or []) if str(item).strip()]
+        if namespaces:
+            candidates.append(f"{base} ({namespaces[0]})")
+
+    safe_fallback = str(fallback_label or "").strip()
+    if safe_fallback:
+        candidates.append(safe_fallback)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in candidates:
+        label = str(value or "").strip()
+        if not label:
+            continue
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(label)
+    return deduped[:12]
+
+
 async def _resolve_search_space_id(
     session: AsyncSession,
     user: User,
@@ -4156,6 +4247,312 @@ async def update_tool_settings_metadata_catalog(
         user,
         search_space_id=resolved_search_space_id,
     )
+
+
+@router.post(
+    "/tool-settings/metadata-catalog/safe-rename-suggestion",
+    response_model=MetadataCatalogSafeRenameSuggestionResponse,
+)
+async def suggest_metadata_catalog_safe_rename(
+    payload: MetadataCatalogSafeRenameSuggestionRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    layer = str(payload.layer or "tool").strip().lower()
+    if layer not in {"tool", "intent", "agent"}:
+        raise HTTPException(
+            status_code=400,
+            detail="layer must be one of: tool, intent, agent",
+        )
+    item_id = str(payload.item_id or "").strip().lower()
+    if not item_id:
+        raise HTTPException(status_code=400, detail="item_id is required")
+    competitor_id = str(payload.competitor_id or "").strip().lower() or None
+    desired_label = str(payload.desired_label or "").strip() or None
+
+    tool_patch_map = _patch_map_from_updates(payload.metadata_patch)
+    tool_index, _persisted_overrides, _effective_overrides = (
+        await _build_tool_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=tool_patch_map,
+        )
+    )
+    persisted_tool_index, _persisted_tool_overrides, _effective_tool_overrides = (
+        await _build_tool_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=None,
+        )
+    )
+    retrieval_tuning = await get_global_tool_retrieval_tuning(session)
+    base_intent_definitions = await get_effective_intent_definitions(session)
+    base_agent_metadata = await get_effective_agent_metadata(session)
+    intent_definitions = list(base_intent_definitions)
+    if payload.intent_metadata_patch:
+        intent_definitions = _merge_effective_intent_definitions_with_patch(
+            effective_definitions=intent_definitions,
+            patch_items=[item.model_dump() for item in payload.intent_metadata_patch],
+        )
+    agent_metadata = list(base_agent_metadata)
+    if payload.agent_metadata_patch:
+        agent_metadata = _merge_effective_agent_metadata_with_patch(
+            effective_metadata=agent_metadata,
+            patch_items=[item.model_dump() for item in payload.agent_metadata_patch],
+        )
+
+    current_tool_map: dict[str, dict[str, Any]] = {}
+    tool_struct_map: dict[str, list[float] | None] = {}
+    for entry in tool_index:
+        tool_id = str(getattr(entry, "tool_id", "") or "").strip().lower()
+        if not tool_id:
+            continue
+        current_tool_map[tool_id] = {
+            "tool_id": tool_id,
+            **_metadata_payload_from_entry(entry),
+        }
+        struct_values = getattr(entry, "structural_embedding", None)
+        if isinstance(struct_values, list):
+            tool_struct_map[tool_id] = [
+                float(value) for value in struct_values if isinstance(value, (int, float))
+            ]
+        else:
+            tool_struct_map[tool_id] = None
+    current_intent_map: dict[str, dict[str, Any]] = {}
+    for item in intent_definitions:
+        if not isinstance(item, dict):
+            continue
+        intent_id = str(item.get("intent_id") or "").strip().lower()
+        if not intent_id:
+            continue
+        current_intent_map[intent_id] = normalize_intent_definition_payload(
+            item,
+            intent_id=intent_id,
+        )
+    current_agent_map: dict[str, dict[str, Any]] = {}
+    for item in agent_metadata:
+        if not isinstance(item, dict):
+            continue
+        agent_id = str(item.get("agent_id") or "").strip().lower()
+        if not agent_id:
+            continue
+        current_agent_map[agent_id] = normalize_agent_metadata_payload(
+            item,
+            agent_id=agent_id,
+        )
+
+    persisted_tool_name_by_id: dict[str, str] = {
+        str(getattr(entry, "tool_id", "") or "").strip().lower(): str(
+            getattr(entry, "name", "") or ""
+        ).strip()
+        for entry in persisted_tool_index
+        if str(getattr(entry, "tool_id", "") or "").strip()
+    }
+    persisted_intent_label_by_id: dict[str, str] = {
+        str(item.get("intent_id") or "").strip().lower(): str(item.get("label") or "").strip()
+        for item in base_intent_definitions
+        if isinstance(item, dict) and str(item.get("intent_id") or "").strip()
+    }
+    persisted_agent_label_by_id: dict[str, str] = {
+        str(item.get("agent_id") or "").strip().lower(): str(item.get("label") or "").strip()
+        for item in base_agent_metadata
+        if isinstance(item, dict) and str(item.get("agent_id") or "").strip()
+    }
+
+    if layer == "tool":
+        current_layer_map = current_tool_map
+        label_field = "name"
+        id_field = "tool_id"
+        fallback_label = persisted_tool_name_by_id.get(item_id)
+    elif layer == "intent":
+        current_layer_map = current_intent_map
+        label_field = "label"
+        id_field = "intent_id"
+        fallback_label = persisted_intent_label_by_id.get(item_id)
+    else:
+        current_layer_map = current_agent_map
+        label_field = "label"
+        id_field = "agent_id"
+        fallback_label = persisted_agent_label_by_id.get(item_id)
+
+    item_payload = current_layer_map.get(item_id)
+    if not isinstance(item_payload, dict):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not find {layer} '{item_id}' in metadata catalog",
+        )
+    current_label = str(item_payload.get(label_field) or "").strip()
+
+    lock_registry = await _load_metadata_separation_lock_registry(session)
+    pair_locks = list(lock_registry.get("pair_locks") or [])
+    if not bool(lock_registry.get("lock_mode_enabled", True)):
+        return {
+            "layer": layer,
+            "item_id": item_id,
+            "competitor_id": competitor_id,
+            "desired_label": desired_label,
+            "suggested_label": desired_label or current_label or fallback_label or item_id,
+            "validated": True,
+            "reason": "Lock mode is disabled.",
+            "tested_candidates": [desired_label or current_label or fallback_label or item_id],
+            "rejected_candidates": [],
+        }
+
+    relevant_locks = [
+        lock
+        for lock in pair_locks
+        if str(lock.get("layer") or "").strip().lower() == layer
+        and item_id
+        in {
+            str(lock.get("item_a") or "").strip().lower(),
+            str(lock.get("item_b") or "").strip().lower(),
+        }
+    ]
+    if competitor_id:
+        relevant_locks = [
+            lock
+            for lock in relevant_locks
+            if competitor_id
+            in {
+                str(lock.get("item_a") or "").strip().lower(),
+                str(lock.get("item_b") or "").strip().lower(),
+            }
+        ]
+    if not relevant_locks:
+        return {
+            "layer": layer,
+            "item_id": item_id,
+            "competitor_id": competitor_id,
+            "desired_label": desired_label,
+            "suggested_label": desired_label or current_label or fallback_label or item_id,
+            "validated": True,
+            "reason": "No active lock constraints found for this item.",
+            "tested_candidates": [desired_label or current_label or fallback_label or item_id],
+            "rejected_candidates": [],
+        }
+
+    if not competitor_id:
+        first_lock = relevant_locks[0]
+        item_a = str(first_lock.get("item_a") or "").strip().lower()
+        item_b = str(first_lock.get("item_b") or "").strip().lower()
+        competitor_id = item_b if item_id == item_a else item_a
+    competitor_payload = (
+        current_layer_map.get(competitor_id) if competitor_id and competitor_id in current_layer_map else None
+    )
+
+    candidates = _safe_rename_candidates(
+        layer=layer,
+        desired_label=desired_label or "",
+        current_label=current_label,
+        fallback_label=fallback_label,
+        item_payload=item_payload,
+        competitor_payload=competitor_payload if isinstance(competitor_payload, dict) else None,
+    )
+    if not candidates:
+        candidates = [desired_label or current_label or fallback_label or item_id]
+
+    semantic_weight = float(retrieval_tuning.get("semantic_embedding_weight") or 0.0)
+    structural_weight = float(retrieval_tuning.get("structural_embedding_weight") or 0.0)
+    if semantic_weight <= 0 and structural_weight <= 0:
+        semantic_weight = 1.0
+        structural_weight = 0.0
+
+    rejected_candidates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        candidate_label = str(candidate or "").strip()
+        if not candidate_label:
+            continue
+        layer_row = {id_field: item_id, "proposed_metadata": {label_field: candidate_label}}
+        lock_filtered = await filter_metadata_suggestions_with_pair_locks(
+            pair_locks=relevant_locks,
+            current_tool_map=current_tool_map,
+            current_intent_map=current_intent_map,
+            current_agent_map=current_agent_map,
+            tool_struct_map=tool_struct_map,
+            tool_suggestions=[layer_row] if layer == "tool" else [],
+            intent_suggestions=[layer_row] if layer == "intent" else [],
+            agent_suggestions=[layer_row] if layer == "agent" else [],
+            semantic_weight=semantic_weight,
+            structural_weight=structural_weight,
+        )
+        layer_rejections = list((lock_filtered.get("rejections") or {}).get(layer) or [])
+        layer_accepted = list((lock_filtered.get(f"{layer}_suggestions") or []))
+        if not layer_rejections and layer_accepted:
+            return {
+                "layer": layer,
+                "item_id": item_id,
+                "competitor_id": competitor_id,
+                "desired_label": desired_label,
+                "suggested_label": candidate_label,
+                "validated": True,
+                "reason": "Candidate passed lock validation.",
+                "tested_candidates": candidates,
+                "rejected_candidates": rejected_candidates,
+            }
+        if layer_rejections:
+            worst = max(
+                layer_rejections,
+                key=lambda row: float(row.get("similarity") or 0.0)
+                - float(row.get("max_similarity") or 0.0),
+            )
+            similarity = float(worst.get("similarity") or 0.0)
+            max_similarity = float(worst.get("max_similarity") or 0.0)
+            rejected_candidates.append(
+                {
+                    "candidate": candidate_label,
+                    "competitor_id": str(worst.get("competitor_id") or "").strip().lower() or None,
+                    "similarity": similarity,
+                    "max_similarity": max_similarity,
+                    "delta": similarity - max_similarity,
+                }
+            )
+        else:
+            rejected_candidates.append(
+                {
+                    "candidate": candidate_label,
+                    "competitor_id": competitor_id,
+                    "similarity": None,
+                    "max_similarity": None,
+                    "delta": None,
+                }
+            )
+
+    preferred_failed = next(
+        (
+            row
+            for row in sorted(
+                rejected_candidates,
+                key=lambda item: float(item.get("delta") or 999.0),
+            )
+            if str(row.get("candidate") or "").strip()
+        ),
+        None,
+    )
+    suggested_label = (
+        str((preferred_failed or {}).get("candidate") or "").strip()
+        or str(fallback_label or "").strip()
+        or str(desired_label or "").strip()
+        or current_label
+        or item_id
+    )
+    return {
+        "layer": layer,
+        "item_id": item_id,
+        "competitor_id": competitor_id,
+        "desired_label": desired_label,
+        "suggested_label": suggested_label,
+        "validated": False,
+        "reason": "No tested rename candidate passed lock validation.",
+        "tested_candidates": candidates,
+        "rejected_candidates": rejected_candidates,
+    }
 
 
 @router.post(
