@@ -37,6 +37,22 @@ def _normalize_message_content(value: Any) -> str | list[Any]:
     return str(value)
 
 
+def _sanitize_template_value(value: Any) -> Any:
+    """Recursively sanitize values so strict templates don't receive null."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            if item is None:
+                continue
+            sanitized[str(key)] = _sanitize_template_value(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_template_value(item) for item in value if item is not None]
+    return value
+
+
 def _normalize_tool_call_dict(tool_call: Any, *, index: int) -> dict[str, Any] | None:
     """Ensure tool call payload has non-null id/name/args for strict templates."""
     if not isinstance(tool_call, dict):
@@ -72,10 +88,15 @@ def _normalize_tool_call_dict(tool_call: Any, *, index: int) -> dict[str, Any] |
 
     normalized["id"] = call_id
     normalized["name"] = name
-    normalized["args"] = args
+    normalized["args"] = _sanitize_template_value(args)
+    if isinstance(normalized.get("function"), dict):
+        function_payload = dict(normalized["function"])
+        function_payload["name"] = name
+        function_payload["arguments"] = json.dumps(normalized["args"], ensure_ascii=False)
+        normalized["function"] = function_payload
     if normalized.get("type") is None:
         normalized["type"] = "tool_call"
-    return normalized
+    return _sanitize_template_value(normalized)
 
 
 def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
@@ -98,7 +119,15 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
                     if normalized_tool_call:
                         tool_calls.append(normalized_tool_call)
             try:
-                updated = {"content": content}
+                updated = {
+                    "content": content,
+                    "additional_kwargs": _sanitize_template_value(
+                        dict(getattr(message, "additional_kwargs", {}) or {})
+                    ),
+                    "response_metadata": _sanitize_template_value(
+                        dict(getattr(message, "response_metadata", {}) or {})
+                    ),
+                }
                 if isinstance(raw_tool_calls, list):
                     updated["tool_calls"] = tool_calls
                 normalized_messages.append(message.model_copy(update=updated))
@@ -107,11 +136,11 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
                     AIMessage(
                         content=content,
                         tool_calls=tool_calls,
-                        additional_kwargs=dict(
-                            getattr(message, "additional_kwargs", {}) or {}
+                        additional_kwargs=_sanitize_template_value(
+                            dict(getattr(message, "additional_kwargs", {}) or {})
                         ),
-                        response_metadata=dict(
-                            getattr(message, "response_metadata", {}) or {}
+                        response_metadata=_sanitize_template_value(
+                            dict(getattr(message, "response_metadata", {}) or {})
                         ),
                         id=getattr(message, "id", None),
                     )
