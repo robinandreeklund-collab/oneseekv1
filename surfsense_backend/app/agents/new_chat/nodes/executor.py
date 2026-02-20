@@ -1,11 +1,167 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.agents.new_chat.token_budget import TokenBudget
+
+
+def _normalize_message_content(value: Any) -> str | list[Any]:
+    """Normalize message content so OpenAI-compatible templates never see null."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        normalized_parts: list[Any] = []
+        for part in value:
+            if part is None:
+                continue
+            if isinstance(part, str):
+                normalized_parts.append(part)
+                continue
+            if isinstance(part, dict):
+                normalized = {k: v for k, v in part.items() if v is not None}
+                if normalized.get("type") == "text":
+                    normalized["text"] = str(normalized.get("text") or "")
+                elif "text" in normalized:
+                    normalized["text"] = str(normalized.get("text") or "")
+                if normalized:
+                    normalized_parts.append(normalized)
+                continue
+            normalized_parts.append(str(part))
+        return normalized_parts
+    return str(value)
+
+
+def _normalize_tool_call_dict(tool_call: Any, *, index: int) -> dict[str, Any] | None:
+    """Ensure tool call payload has non-null id/name/args for strict templates."""
+    if not isinstance(tool_call, dict):
+        return None
+    normalized = dict(tool_call)
+
+    raw_name = normalized.get("name")
+    if not raw_name and isinstance(normalized.get("function"), dict):
+        raw_name = normalized["function"].get("name")
+    name = str(raw_name or "").strip() or "tool_call"
+    call_id = str(normalized.get("id") or normalized.get("tool_call_id") or "").strip()
+    if not call_id:
+        call_id = f"call_{index}"
+
+    raw_args = normalized.get("args")
+    if raw_args is None:
+        args: dict[str, Any] = {}
+    elif isinstance(raw_args, dict):
+        args = raw_args
+    elif isinstance(raw_args, str):
+        payload = raw_args.strip()
+        if not payload:
+            args = {}
+        else:
+            try:
+                parsed = json.loads(payload)
+            except Exception:
+                args = {"value": payload}
+            else:
+                args = parsed if isinstance(parsed, dict) else {"value": payload}
+    else:
+        args = {"value": str(raw_args)}
+
+    normalized["id"] = call_id
+    normalized["name"] = name
+    normalized["args"] = args
+    if normalized.get("type") is None:
+        normalized["type"] = "tool_call"
+    return normalized
+
+
+def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
+    """
+    Guardrail for strict OpenAI-compatible templates (e.g. LM Studio Jinja).
+    Avoid NullValue in content/tool-call fields between turns.
+    """
+    normalized_messages: list[Any] = []
+    for idx, message in enumerate(messages):
+        if isinstance(message, AIMessage):
+            content = _normalize_message_content(getattr(message, "content", ""))
+            raw_tool_calls = getattr(message, "tool_calls", None)
+            tool_calls: list[dict[str, Any]] = []
+            if isinstance(raw_tool_calls, list):
+                for tool_idx, tool_call in enumerate(raw_tool_calls):
+                    normalized_tool_call = _normalize_tool_call_dict(
+                        tool_call,
+                        index=tool_idx,
+                    )
+                    if normalized_tool_call:
+                        tool_calls.append(normalized_tool_call)
+            try:
+                updated = {"content": content}
+                if isinstance(raw_tool_calls, list):
+                    updated["tool_calls"] = tool_calls
+                normalized_messages.append(message.model_copy(update=updated))
+            except Exception:
+                normalized_messages.append(
+                    AIMessage(
+                        content=content,
+                        tool_calls=tool_calls,
+                        additional_kwargs=dict(
+                            getattr(message, "additional_kwargs", {}) or {}
+                        ),
+                        response_metadata=dict(
+                            getattr(message, "response_metadata", {}) or {}
+                        ),
+                        id=getattr(message, "id", None),
+                    )
+                )
+            continue
+
+        if isinstance(message, ToolMessage):
+            content = _normalize_message_content(getattr(message, "content", ""))
+            name = str(getattr(message, "name", "") or "").strip() or "tool"
+            tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+            if not tool_call_id:
+                tool_call_id = f"tool_call_{idx}"
+            try:
+                normalized_messages.append(
+                    message.model_copy(
+                        update={
+                            "content": content,
+                            "name": name,
+                            "tool_call_id": tool_call_id,
+                        }
+                    )
+                )
+            except Exception:
+                normalized_messages.append(
+                    ToolMessage(
+                        content=content,
+                        name=name,
+                        tool_call_id=tool_call_id,
+                    )
+                )
+            continue
+
+        if isinstance(message, HumanMessage):
+            content = _normalize_message_content(getattr(message, "content", ""))
+            try:
+                normalized_messages.append(message.model_copy(update={"content": content}))
+            except Exception:
+                normalized_messages.append(HumanMessage(content=content))
+            continue
+
+        if isinstance(message, SystemMessage):
+            content = _normalize_message_content(getattr(message, "content", ""))
+            try:
+                normalized_messages.append(message.model_copy(update={"content": content}))
+            except Exception:
+                normalized_messages.append(SystemMessage(content=content))
+            continue
+
+        normalized_messages.append(message)
+    return normalized_messages
 
 
 def _build_executor_updates_for_new_user_turn(
@@ -148,6 +304,7 @@ def build_executor_nodes(
             new_user_turn = True
 
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
+        messages = _normalize_messages_for_provider_compat(messages)
         response = llm_with_tools.invoke(messages)
         response = coerce_supervisor_tool_calls_fn(
             response,
@@ -190,6 +347,7 @@ def build_executor_nodes(
             new_user_turn = True
 
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
+        messages = _normalize_messages_for_provider_compat(messages)
         response = await llm_with_tools.ainvoke(messages)
         response = coerce_supervisor_tool_calls_fn(
             response,
