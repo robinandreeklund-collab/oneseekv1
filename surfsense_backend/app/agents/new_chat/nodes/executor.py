@@ -9,31 +9,40 @@ from langchain_core.runnables import RunnableConfig
 from app.agents.new_chat.token_budget import TokenBudget
 
 
-def _normalize_message_content(value: Any) -> str | list[Any]:
-    """Normalize message content so OpenAI-compatible templates never see null."""
+def _normalize_message_content(value: Any) -> str:
+    """Normalize message content to plain text for strict OpenAI templates."""
     if value is None:
         return ""
     if isinstance(value, str):
         return value
     if isinstance(value, list):
-        normalized_parts: list[Any] = []
+        text_parts: list[str] = []
         for part in value:
             if part is None:
                 continue
             if isinstance(part, str):
-                normalized_parts.append(part)
+                if part:
+                    text_parts.append(part)
                 continue
             if isinstance(part, dict):
                 normalized = {k: v for k, v in part.items() if v is not None}
-                if normalized.get("type") == "text":
-                    normalized["text"] = str(normalized.get("text") or "")
-                elif "text" in normalized:
-                    normalized["text"] = str(normalized.get("text") or "")
-                if normalized:
-                    normalized_parts.append(normalized)
+                part_text = ""
+                if normalized.get("type") == "text" or "text" in normalized:
+                    part_text = str(normalized.get("text") or "")
+                elif "content" in normalized:
+                    part_text = str(normalized.get("content") or "")
+                elif "value" in normalized:
+                    part_text = str(normalized.get("value") or "")
+                elif normalized:
+                    try:
+                        part_text = json.dumps(normalized, ensure_ascii=False)
+                    except Exception:
+                        part_text = str(normalized)
+                if part_text:
+                    text_parts.append(part_text)
                 continue
-            normalized_parts.append(str(part))
-        return normalized_parts
+            text_parts.append(str(part))
+        return "\n".join(part for part in text_parts if part).strip()
     return str(value)
 
 

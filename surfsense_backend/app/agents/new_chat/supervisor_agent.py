@@ -2091,6 +2091,66 @@ def _coerce_supervisor_tool_calls(
         )
 
 
+def _sanitize_openai_tool_schema(value: Any) -> Any:
+    """
+    Remove null defaults/variants from tool schemas for strict Jinja templates.
+    LM Studio templates can fail on `default: null` or explicit `type: null`.
+    """
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "default" and item is None:
+                continue
+            if key in {"anyOf", "oneOf", "allOf"} and isinstance(item, list):
+                variants: list[Any] = []
+                for variant in item:
+                    cleaned_variant = _sanitize_openai_tool_schema(variant)
+                    if (
+                        isinstance(cleaned_variant, dict)
+                        and str(cleaned_variant.get("type") or "").strip().lower()
+                        == "null"
+                    ):
+                        continue
+                    variants.append(cleaned_variant)
+                if variants:
+                    sanitized[key] = variants
+                continue
+            sanitized[key] = _sanitize_openai_tool_schema(item)
+
+        properties = sanitized.get("properties")
+        required = sanitized.get("required")
+        if isinstance(properties, dict) and isinstance(required, list):
+            kept_required = [
+                str(field)
+                for field in required
+                if isinstance(field, str) and field in properties
+            ]
+            if kept_required:
+                sanitized["required"] = kept_required
+            else:
+                sanitized.pop("required", None)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_openai_tool_schema(item) for item in value]
+    return value
+
+
+def _format_tools_for_llm_binding(tools: list[Any]) -> list[dict[str, Any]]:
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    formatted: list[dict[str, Any]] = []
+    for tool_def in tools:
+        try:
+            raw = tool_def if isinstance(tool_def, dict) else convert_to_openai_tool(tool_def)
+        except Exception:
+            logger.debug("Failed to convert tool for llm binding", exc_info=True)
+            continue
+        cleaned = _sanitize_openai_tool_schema(raw)
+        if isinstance(cleaned, dict):
+            formatted.append(cleaned)
+    return formatted
+
+
 _CRITIC_SNIPPET_RE = re.compile(
     r"\{\s*[\"']status[\"']\s*:\s*[\"'](?:ok|needs_more)[\"'][\s\S]*?[\"']reason[\"']\s*:\s*[\"'][\s\S]*?[\"']\s*\}",
     re.IGNORECASE,
@@ -6803,7 +6863,9 @@ async def create_supervisor_agent(
         for spec in EXTERNAL_MODEL_SPECS:
             tool_registry[spec.tool_name] = _build_compare_external_tool(spec)
 
-    llm_with_tools = llm.bind_tools(list(tool_registry.values()))
+    llm_with_tools = llm.bind_tools(
+        _format_tools_for_llm_binding(list(tool_registry.values()))
+    )
     tool_node = ToolNode(tool_registry.values())
 
     resolve_intent_node = build_intent_resolver_node(
