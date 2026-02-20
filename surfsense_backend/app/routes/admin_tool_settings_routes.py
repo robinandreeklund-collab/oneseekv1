@@ -3060,41 +3060,97 @@ def _safe_rename_candidates(
         [
             str((competitor_payload or {}).get("name") or ""),
             str((competitor_payload or {}).get("label") or ""),
+            str((competitor_payload or {}).get("tool_id") or ""),
+            str((competitor_payload or {}).get("intent_id") or ""),
+            str((competitor_payload or {}).get("agent_id") or ""),
             str((competitor_payload or {}).get("description") or ""),
             " ".join(str(item) for item in ((competitor_payload or {}).get("keywords") or [])),
+            " ".join(str(item) for item in ((competitor_payload or {}).get("example_queries") or [])),
         ]
     )
     competitor_tokens = set(_tokenize_lock_label(competitor_text))
+    own_id = (
+        str(item_payload.get("tool_id") or "").strip().lower()
+        or str(item_payload.get("intent_id") or "").strip().lower()
+        or str(item_payload.get("agent_id") or "").strip().lower()
+    )
     own_text = " ".join(
         [
+            own_id,
             str(item_payload.get("name") or ""),
             str(item_payload.get("label") or ""),
             str(item_payload.get("description") or ""),
             " ".join(str(item) for item in (item_payload.get("keywords") or [])),
+            " ".join(str(item) for item in (item_payload.get("example_queries") or [])),
         ]
     )
     own_tokens = _tokenize_lock_label(own_text)
     base_tokens = set(_tokenize_lock_label(base))
-    qualifier = next(
-        (
-            token
-            for token in own_tokens
-            if token not in competitor_tokens and token not in base_tokens
-        ),
-        None,
+    generic_tokens = {
+        "smhi",
+        "trafikverket",
+        "scb",
+        "kolada",
+        "tool",
+        "tools",
+        "data",
+        "sverige",
+        "statistik",
+        "index",
+        "query",
+        "agent",
+        "intent",
+    }
+    unique_tokens: list[str] = []
+    seen_unique: set[str] = set()
+    id_tokens = _tokenize_lock_label(own_id)
+    keyword_tokens = _tokenize_lock_label(
+        " ".join(str(item) for item in (item_payload.get("keywords") or []))
     )
+    for token in [*id_tokens, *keyword_tokens, *own_tokens]:
+        if (
+            token in seen_unique
+            or token in base_tokens
+            or token in competitor_tokens
+            or token in generic_tokens
+        ):
+            continue
+        seen_unique.add(token)
+        unique_tokens.append(token)
+        if len(unique_tokens) >= 8:
+            break
+
+    def _pretty_token(token: str) -> str:
+        value = str(token or "").strip()
+        if not value:
+            return ""
+        if len(value) <= 5:
+            return value.upper()
+        return value.capitalize()
 
     candidates: list[str] = [base]
-    if qualifier:
-        pretty_qualifier = qualifier.upper() if len(qualifier) <= 5 else qualifier.capitalize()
-        candidates.append(f"{base} ({pretty_qualifier})")
-        candidates.append(f"{base} - {pretty_qualifier}")
+    for token in unique_tokens:
+        pretty = _pretty_token(token)
+        if not pretty:
+            continue
+        candidates.append(f"{base} ({pretty})")
+        candidates.append(f"{base} - {pretty}")
+        candidates.append(f"{base}: {pretty}")
+    if len(unique_tokens) >= 2:
+        combo = "/".join(_pretty_token(token) for token in unique_tokens[:2] if _pretty_token(token))
+        if combo:
+            candidates.append(f"{base} ({combo})")
+            candidates.append(f"{base} - {combo}")
 
     if layer == "tool":
         category = str(item_payload.get("category") or "").strip()
         if category:
             category_tag = category.upper() if len(category) <= 5 else category.capitalize()
             candidates.append(f"{base} ({category_tag})")
+        if own_id.startswith("smhi_") and "smhi" not in base.casefold():
+            candidates.append(f"SMHI {base}")
+        if own_id.startswith("trafikverket_") and "trafikverket" not in base.casefold():
+            candidates.append(f"Trafikverket {base}")
     elif layer == "intent":
         route = str(item_payload.get("route") or "").strip()
         if route:
@@ -4549,7 +4605,17 @@ async def suggest_metadata_catalog_safe_rename(
         "desired_label": desired_label,
         "suggested_label": suggested_label,
         "validated": False,
-        "reason": "No tested rename candidate passed lock validation.",
+        "reason": (
+            (
+                "No tested rename candidate passed lock validation. "
+                + (
+                    f"Best candidate '{str((preferred_failed or {}).get('candidate') or '').strip()}' "
+                    f"still exceeded lock by {float((preferred_failed or {}).get('delta') or 0.0):.4f}."
+                    if preferred_failed and preferred_failed.get("delta") is not None
+                    else "Try a broader metadata separation update (description/keywords) or rerun BSSS."
+                )
+            )
+        ),
         "tested_candidates": candidates,
         "rejected_candidates": rejected_candidates,
     }

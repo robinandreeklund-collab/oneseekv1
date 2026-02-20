@@ -1240,7 +1240,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			});
 			if (!suggestion.validated) {
 				toast.error(
-					`Ingen säker rename hittades: ${suggestion.reason || "okänd orsak"}`
+					`Ingen säker rename hittades. Bästa kandidat: "${suggestion.suggested_label}". ${suggestion.reason || "okänd orsak"}`
 				);
 				return;
 			}
