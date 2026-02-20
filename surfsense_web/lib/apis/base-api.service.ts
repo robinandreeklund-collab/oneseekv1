@@ -262,7 +262,8 @@ class BaseApiService {
 							? _formatApiErrorDetail(data.detail)
 							: "You are not authenticated. Please login again.",
 						response.status,
-						response.statusText
+						response.statusText,
+						typeof data === "object" && data && "detail" in data ? data.detail : undefined
 					);
 				}
 
@@ -271,7 +272,8 @@ class BaseApiService {
 					throw new AppError(
 						_formatApiErrorDetail(data.detail),
 						response.status,
-						response.statusText
+						response.statusText,
+						data.detail
 					);
 				}
 

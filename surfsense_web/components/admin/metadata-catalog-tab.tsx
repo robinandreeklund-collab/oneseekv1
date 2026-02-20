@@ -19,6 +19,7 @@ import {
 	type ToolMetadataUpdateItem,
 } from "@/contracts/types/admin-tool-settings.types";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
+import { AppError } from "@/lib/error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -268,6 +269,80 @@ type AuditAnnotationDraft = {
 	tool_is_correct: boolean;
 	corrected_tool_id: string | null;
 };
+
+type SaveLockConflictRow = {
+	layer: string;
+	itemId: string;
+	itemLabel: string;
+	competitorId: string;
+	competitorLabel: string;
+	similarity: number;
+	maxSimilarity: number;
+	delta: number;
+};
+
+function _asObject(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function _asNumber(value: unknown): number | null {
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "string") {
+		const parsed = Number.parseFloat(value);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	return null;
+}
+
+function extractSaveLockConflicts(error: unknown): {
+	message: string | null;
+	conflicts: SaveLockConflictRow[];
+} {
+	if (!(error instanceof AppError)) {
+		return { message: null, conflicts: [] };
+	}
+	const detail = _asObject(error.details);
+	if (!detail) {
+		return { message: null, conflicts: [] };
+	}
+	if (detail.code !== "BSSS_LOCK_VIOLATION") {
+		return { message: null, conflicts: [] };
+	}
+	const message = typeof detail.message === "string" ? detail.message : null;
+	const rows = Array.isArray(detail.conflicts) ? detail.conflicts : [];
+	const conflicts: SaveLockConflictRow[] = [];
+	for (const raw of rows) {
+		const row = _asObject(raw);
+		if (!row) continue;
+		const similarity = _asNumber(row.similarity);
+		const maxSimilarity = _asNumber(row.max_similarity);
+		const delta = _asNumber(row.delta);
+		if (similarity == null || maxSimilarity == null || delta == null) continue;
+		conflicts.push({
+			layer: typeof row.layer === "string" ? row.layer : "-",
+			itemId: typeof row.item_id === "string" ? row.item_id : "-",
+			itemLabel:
+				typeof row.item_label === "string"
+					? row.item_label
+					: typeof row.item_id === "string"
+						? row.item_id
+						: "-",
+			competitorId: typeof row.competitor_id === "string" ? row.competitor_id : "-",
+			competitorLabel:
+				typeof row.competitor_label === "string"
+					? row.competitor_label
+					: typeof row.competitor_id === "string"
+						? row.competitor_id
+						: "-",
+			similarity,
+			maxSimilarity,
+			delta,
+		});
+	}
+	return { message, conflicts };
+}
 
 const AUDIT_SCOPE_OPTIONS: Array<{
 	id: string;
@@ -578,6 +653,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [selectedAuditSuggestionAgentIds, setSelectedAuditSuggestionAgentIds] = useState<
 		Set<string>
 	>(new Set());
+	const [saveLockConflicts, setSaveLockConflicts] = useState<SaveLockConflictRow[]>([]);
+	const [saveLockMessage, setSaveLockMessage] = useState<string | null>(null);
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-tool-metadata-catalog", searchSpaceId],
@@ -1076,11 +1153,15 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	};
 
 	const resetDrafts = () => {
+		setSaveLockConflicts([]);
+		setSaveLockMessage(null);
 		void refetch();
 	};
 
 	const saveAllMetadata = async () => {
 		if (!data?.search_space_id) return;
+		setSaveLockConflicts([]);
+		setSaveLockMessage(null);
 		const tools = changedToolIds.map((toolId) => draftTools[toolId]).filter(Boolean);
 		const agents = changedAgentIds
 			.map((agentId) => draftAgents[agentId])
@@ -1107,8 +1188,18 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			});
 			await queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
 			await refetch();
+			setSaveLockConflicts([]);
+			setSaveLockMessage(null);
 			toast.success("Metadata sparat.");
 		} catch (error) {
+			const lockInfo = extractSaveLockConflicts(error);
+			if (lockInfo.conflicts.length > 0) {
+				setSaveLockConflicts(lockInfo.conflicts);
+				setSaveLockMessage(lockInfo.message);
+			} else {
+				setSaveLockConflicts([]);
+				setSaveLockMessage(null);
+			}
 			const message =
 				error instanceof Error && error.message && error.message !== "[object Object]"
 					? error.message
@@ -1929,6 +2020,64 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							{isSaving ? "Sparar..." : "Spara metadata"}
 						</Button>
 					</div>
+					{saveLockConflicts.length > 0 ? (
+						<div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
+							<div className="mb-2 flex items-center gap-2">
+								<Badge variant="destructive">Blockerade av lock</Badge>
+								<span className="text-xs text-muted-foreground">
+									{saveLockConflicts.length} konflikt
+									{saveLockConflicts.length === 1 ? "" : "er"}
+								</span>
+							</div>
+							{saveLockMessage ? (
+								<p className="mb-3 text-xs text-muted-foreground">{saveLockMessage}</p>
+							) : null}
+							<div className="overflow-x-auto">
+								<table className="min-w-full text-xs">
+									<thead>
+										<tr className="border-b text-muted-foreground">
+											<th className="px-2 py-1 text-left">Lager</th>
+											<th className="px-2 py-1 text-left">Ändrad</th>
+											<th className="px-2 py-1 text-left">Kolliderar med</th>
+											<th className="px-2 py-1 text-right">Similarity</th>
+											<th className="px-2 py-1 text-right">Max</th>
+											<th className="px-2 py-1 text-right">Delta</th>
+										</tr>
+									</thead>
+									<tbody>
+										{saveLockConflicts.map((row, index) => (
+											<tr
+												key={`lock-conflict-${row.layer}-${row.itemId}-${row.competitorId}-${index}`}
+												className="border-b last:border-b-0"
+											>
+												<td className="px-2 py-1 align-top font-medium">{row.layer}</td>
+												<td className="px-2 py-1 align-top">
+													<div>{row.itemLabel}</div>
+													<div className="text-[11px] text-muted-foreground">{row.itemId}</div>
+												</td>
+												<td className="px-2 py-1 align-top">
+													<div>{row.competitorLabel}</div>
+													<div className="text-[11px] text-muted-foreground">
+														{row.competitorId}
+													</div>
+												</td>
+												<td className="px-2 py-1 text-right align-top">
+													{row.similarity.toFixed(4)}
+												</td>
+												<td className="px-2 py-1 text-right align-top">
+													{row.maxSimilarity.toFixed(4)}
+												</td>
+												<td className="px-2 py-1 text-right align-top text-destructive">
+													{row.delta > 0 ? "+" : ""}
+													{row.delta.toFixed(4)}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						</div>
+					) : null}
 				</CardContent>
 			</Card>
 
