@@ -656,6 +656,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [saveLockConflicts, setSaveLockConflicts] = useState<SaveLockConflictRow[]>([]);
 	const [saveLockMessage, setSaveLockMessage] = useState<string | null>(null);
 	const [applyingSafeRenameKey, setApplyingSafeRenameKey] = useState<string | null>(null);
+	const [allowLockOverrideSave, setAllowLockOverrideSave] = useState(false);
+	const [lockOverrideReason, setLockOverrideReason] = useState("");
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-tool-metadata-catalog", searchSpaceId],
@@ -1181,6 +1183,10 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					tools,
 					agents,
 					intents,
+					allow_lock_override: allowLockOverrideSave,
+					lock_override_reason: allowLockOverrideSave
+						? lockOverrideReason.trim() || "manual override from metadata catalog UI"
+						: null,
 				},
 				data.search_space_id
 			);
@@ -2110,6 +2116,33 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							<Save className="h-4 w-4" />
 							{isSaving ? "Sparar..." : "Spara metadata"}
 						</Button>
+					</div>
+					<div className="rounded-md border p-3 space-y-2">
+						<label className="flex items-center gap-2 text-sm">
+							<input
+								type="checkbox"
+								checked={allowLockOverrideSave}
+								onChange={(event) => setAllowLockOverrideSave(event.target.checked)}
+								disabled={isSaving}
+							/>
+							Tillat manuell override (ignorera BSSS-lock vid spara)
+						</label>
+						{allowLockOverrideSave ? (
+							<div className="space-y-1">
+								<Label htmlFor="lock-override-reason">Orsak (valfritt)</Label>
+								<Input
+									id="lock-override-reason"
+									value={lockOverrideReason}
+									onChange={(event) => setLockOverrideReason(event.target.value)}
+									placeholder="T.ex. Manuell domanjustering innan ny BSSS-runda"
+									disabled={isSaving}
+								/>
+								<p className="text-xs text-muted-foreground">
+									Anvand endast tillfalligt. Kor BSSS igen efter manuell override for att
+									aterstabilisera separationen.
+								</p>
+							</div>
+						) : null}
 					</div>
 					{saveLockConflicts.length > 0 ? (
 						<div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">

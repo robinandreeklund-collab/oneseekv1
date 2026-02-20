@@ -239,6 +239,8 @@ export const metadataCatalogUpdateRequest = z.object({
 	tools: z.array(toolMetadataUpdateItem).optional().default([]),
 	agents: z.array(agentMetadataUpdateItem).optional().default([]),
 	intents: z.array(intentMetadataUpdateItem).optional().default([]),
+	allow_lock_override: z.boolean().optional().default(false),
+	lock_override_reason: z.string().nullable().optional(),
 });
 
 export const metadataCatalogSafeRenameSuggestionRequest = z.object({

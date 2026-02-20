@@ -128,6 +128,8 @@ class MetadataCatalogUpdateRequest(BaseModel):
     tools: list[ToolMetadataUpdateItem] = Field(default_factory=list)
     agents: list[AgentMetadataUpdateItem] = Field(default_factory=list)
     intents: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+    allow_lock_override: bool = False
+    lock_override_reason: str | None = None
 
 
 class MetadataCatalogSafeRenameSuggestionRequest(BaseModel):

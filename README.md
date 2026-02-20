@@ -244,6 +244,7 @@ flowchart TD
    - anvand `conflicts[]` for att se exakt vilket lock som blockerat uppdateringen
    - admin-UI visar en tabell **"Blockerade av lock"** med samma konfliktpar for snabb felsokning
    - varje rad har knappen **"Applicera saker rename"** som provar minimal namnandring mot lock-validering innan den appliceras i draft
+   - vid behov finns en manuell override-toggle som kan ignorera locken vid save (rekommendation: kor BSSS igen direkt efterat)
 
 ---
 

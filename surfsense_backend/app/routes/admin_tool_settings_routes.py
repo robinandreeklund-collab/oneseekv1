@@ -4021,7 +4021,12 @@ async def update_tool_settings_metadata_catalog(
 
     lock_registry = await _load_metadata_separation_lock_registry(session)
     lock_pair_count = len(lock_registry.get("pair_locks") or [])
-    if bool(lock_registry.get("lock_mode_enabled", True)) and lock_pair_count > 0:
+    lock_override_enabled = bool(payload.allow_lock_override)
+    if (
+        bool(lock_registry.get("lock_mode_enabled", True))
+        and lock_pair_count > 0
+        and not lock_override_enabled
+    ):
         current_tool_index, _persisted_overrides, _effective_overrides = (
             await _build_tool_index_for_search_space(
                 session,
@@ -4260,6 +4265,18 @@ async def update_tool_settings_metadata_catalog(
                     },
                 },
             )
+
+    if (
+        lock_override_enabled
+        and bool(lock_registry.get("lock_mode_enabled", True))
+        and lock_pair_count > 0
+    ):
+        logger.warning(
+            "Metadata catalog lock override used by user_id=%s search_space_id=%s reason=%s",
+            str(user.id),
+            int(resolved_search_space_id),
+            str(payload.lock_override_reason or "").strip() or "-",
+        )
 
     try:
         if tool_update_rows:
