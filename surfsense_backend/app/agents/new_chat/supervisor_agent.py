@@ -1083,6 +1083,7 @@ def _build_cache_key(
     query: str,
     route_hint: str | None,
     recent_agents: list[str] | None,
+    sub_intents: list[str] | None = None,
 ) -> tuple[str, str]:
     tokens = [
         token
@@ -1091,7 +1092,12 @@ def _build_cache_key(
     ]
     token_slice = " ".join(tokens[:6])
     recent_slice = ",".join((recent_agents or [])[-2:])
-    pattern = f"{route_hint or 'none'}|{recent_slice}|{token_slice}"
+    # Include sorted sub_intents in cache key for multi-domain support
+    sub_intents_slice = ""
+    if sub_intents:
+        sorted_intents = sorted(str(i) for i in sub_intents if i)
+        sub_intents_slice = ",".join(sorted_intents)
+    pattern = f"{route_hint or 'none'}|{recent_slice}|{token_slice}|{sub_intents_slice}"
     key = hashlib.sha256(pattern.encode("utf-8")).hexdigest()
     return key, pattern
 
@@ -4617,10 +4623,7 @@ async def create_supervisor_agent(
         if normalized == "action":
             if sandbox_enabled and _has_filesystem_intent(latest_user_query):
                 return "code"
-            if _has_weather_intent(latest_user_query) and not _has_strict_trafik_intent(
-                latest_user_query
-            ):
-                return "weather"
+            # Weather removed: let LLM/retrieval choose agent
             if _has_strict_trafik_intent(latest_user_query):
                 return "trafik"
             if _has_map_intent(latest_user_query):
@@ -4651,12 +4654,8 @@ async def create_supervisor_agent(
 
         override_route: str | None = None
         override_reason = ""
-        if _has_weather_intent(query) and not _has_strict_trafik_intent(query):
-            override_route = "action"
-            override_reason = (
-                "Heuristisk override: vaderfraga ska routas till action/weather."
-            )
-        elif _has_strict_trafik_intent(query):
+        # Weather removed: should be handled by LLM classification, not regex override
+        if _has_strict_trafik_intent(query):
             override_route = "action"
             override_reason = (
                 "Heuristisk override: trafikfraga ska routas till action/trafik."
@@ -4801,10 +4800,23 @@ async def create_supervisor_agent(
                 return preferred
             return None
 
-        # Specific safety locks for weather and trafik remain
+        # Soft preference for weather-capable agents on weather tasks
         if route_hint == "action" and weather_task and not strict_trafik_task:
             if requested_raw in agent_by_name and requested_raw != "weather":
-                return "weather", f"weather_lock:{requested_raw}->weather"
+                # Check if requested agent has SMHI tools via its WorkerConfig
+                requested_worker = worker_configs.get(requested_raw)
+                has_weather_tools = False
+                if requested_worker:
+                    # Check if agent has weather namespace in primary or fallback
+                    all_namespaces = list(requested_worker.primary_namespaces or [])
+                    all_namespaces.extend(requested_worker.fallback_namespaces or [])
+                    has_weather_tools = any(
+                        ("weather" in ns or "smhi" in str(ns).lower())
+                        for ns in all_namespaces
+                    )
+                # Only lock if requested agent lacks weather tools
+                if not has_weather_tools:
+                    return "weather", f"weather_soft_lock:{requested_raw}->weather"
         if route_hint == "action" and strict_trafik_task:
             allowed_for_strict = {"trafik", "kartor", "action"}
             if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
@@ -4899,8 +4911,7 @@ async def create_supervisor_agent(
             if marketplace_task and "marketplace" not in preferred:
                 preferred.insert(0, "marketplace")
             if str(route_hint) == "action":
-                if weather_task and not strict_trafik_task:
-                    preferred = ["weather", "action"]
+                # Weather preference removed: rely on retrieval
                 if sandbox_enabled and filesystem_task:
                     preferred = ["code", "action"]
                 if marketplace_task and "marketplace" not in preferred:
@@ -5024,13 +5035,14 @@ async def create_supervisor_agent(
         has_filesystem_intent = _has_filesystem_intent(policy_query)
         route_allowed = _route_allowed_agents(route_hint)
         default_for_route = _route_default_agent(route_hint, route_allowed)
-        if route_hint == "action" and has_weather_intent and not has_strict_trafik_intent:
-            limit = 1
+        # Weather limit removed: should be controlled by graph_complexity like other routes
         if route_hint == "statistics":
             limit = 1
 
+        # Extract sub_intents from state for multi-domain cache key
+        sub_intents = state.get("sub_intents") if state else None
         cache_key, cache_pattern = _build_cache_key(
-            query, route_hint, recent_agents
+            query, route_hint, recent_agents, sub_intents
         )
         cached_agents = _get_cached_combo(cache_key)
         if cached_agents is None:
@@ -5046,14 +5058,7 @@ async def create_supervisor_agent(
             cached_agents = None
         if cached_agents and has_trafik_intent and "trafik" not in cached_agents:
             cached_agents = None
-        if (
-            cached_agents
-            and route_hint == "action"
-            and has_weather_intent
-            and not has_strict_trafik_intent
-            and "weather" not in cached_agents
-        ):
-            cached_agents = None
+        # Weather cache invalidation removed: let LLM classification handle routing
         if (
             cached_agents
             and has_marketplace_intent
@@ -5085,8 +5090,7 @@ async def create_supervisor_agent(
                 if has_marketplace_intent and "marketplace" not in preferred:
                     preferred.insert(0, "marketplace")
                 if str(route_hint) == "action":
-                    if has_weather_intent and not has_strict_trafik_intent:
-                        preferred = ["weather", "action"]
+                    # Weather preference removed: rely on retrieval and LLM classification
                     if sandbox_enabled and has_filesystem_intent:
                         preferred = ["code", "action"]
                     if has_marketplace_intent and "marketplace" not in preferred:
@@ -5100,8 +5104,6 @@ async def create_supervisor_agent(
                         preferred = []
                         if has_marketplace_intent:
                             preferred = ["marketplace"]
-                    if has_weather_intent and not has_strict_trafik_intent:
-                        preferred = ["weather", "action"]
                     if has_map_intent and "kartor" not in preferred:
                         preferred.insert(0, "kartor")
                     if (
@@ -5174,16 +5176,7 @@ async def create_supervisor_agent(
                 agent_by_name[name] for name in marketplace_order if name in agent_by_name
             ]
             selected = marketplace_selected[:limit] if marketplace_selected else selected
-        if (
-            route_hint == "action"
-            and has_weather_intent
-            and not has_strict_trafik_intent
-        ):
-            weather_order = ["weather", "action"]
-            weather_selected = [
-                agent_by_name[name] for name in weather_order if name in agent_by_name
-            ]
-            selected = weather_selected[:limit] if weather_selected else selected
+        # Weather order removed: selection should be based on retrieval and LLM classification
         if route_hint == "action" and has_strict_trafik_intent:
             strict_order = ["trafik"]
             if has_map_intent:
