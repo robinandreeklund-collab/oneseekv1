@@ -38,6 +38,8 @@ from app.schemas.admin_tool_settings import (
     MetadataCatalogAuditSuggestionResponse,
     MetadataCatalogSafeRenameSuggestionRequest,
     MetadataCatalogSafeRenameSuggestionResponse,
+    MetadataCatalogStabilityLockActionRequest,
+    MetadataCatalogStabilityLockActionResponse,
     MetadataCatalogSeparationRequest,
     MetadataCatalogSeparationResponse,
     MetadataCatalogResponse,
@@ -116,9 +118,13 @@ from app.services.metadata_audit_service import (
 from app.services.metadata_separation_service import (
     build_metadata_separation_pair_locks_from_stage_reports,
     filter_metadata_suggestions_with_pair_locks,
+    get_stability_locked_item_ids,
     merge_metadata_separation_pair_locks,
     normalize_metadata_separation_lock_registry,
     run_bottom_up_metadata_separation,
+    summarize_stability_item_locks,
+    unlock_stability_item_locks,
+    update_stability_locks_from_tool_ranking,
 )
 from app.services.agent_metadata_service import (
     agent_metadata_payload_equal,
@@ -2990,6 +2996,22 @@ async def _load_metadata_separation_lock_registry(
         return normalize_metadata_separation_lock_registry({})
 
 
+def _build_stability_lock_summary(lock_registry: dict[str, Any]) -> dict[str, Any]:
+    normalized = normalize_metadata_separation_lock_registry(lock_registry)
+    locked_items = summarize_stability_item_locks(
+        normalized,
+        layer="tool",
+        include_unlocked=False,
+    )
+    return {
+        "lock_mode_enabled": bool(normalized.get("stability_lock_mode_enabled", True)),
+        "auto_lock_enabled": bool(normalized.get("stability_auto_lock_enabled", True)),
+        "config": dict(normalized.get("stability_config") or {}),
+        "locked_items": locked_items,
+        "locked_count": len(locked_items),
+    }
+
+
 async def _persist_metadata_separation_pair_locks(
     session: AsyncSession,
     *,
@@ -3464,12 +3486,15 @@ async def _build_metadata_catalog_response(
                 has_override=agent_id in agent_overrides,
             )
         )
+    lock_registry = await _load_metadata_separation_lock_registry(session)
+    stability_summary = _build_stability_lock_summary(lock_registry)
     return MetadataCatalogResponse(
         search_space_id=search_space_id,
         metadata_version_hash=compute_metadata_version_hash(tool_index),
         tool_categories=tool_categories,
         agents=agent_items,
         intents=intent_items,
+        stability_locks=stability_summary,
     )
 
 
@@ -4719,17 +4744,175 @@ async def run_metadata_catalog_audit(
         exclude_probe_queries=list(payload.exclude_probe_queries),
         anchor_probe_set=[item.model_dump() for item in payload.anchor_probe_set],
     )
+    lock_registry = await _load_metadata_separation_lock_registry(session)
+    stability_update_result: dict[str, Any] = {
+        "changed": False,
+        "newly_locked": [],
+        "newly_unlocked": [],
+        "locked_tool_ids": list(get_stability_locked_item_ids(lock_registry)),
+        "monitored_tools": 0,
+        "lock_registry": lock_registry,
+    }
+    try:
+        ranking_rows = list(
+            (
+                (dict(audit_result.get("summary") or {})).get("tool_ranking_summary") or {}
+            ).get("tools")
+            or []
+        )
+        stability_update_result = update_stability_locks_from_tool_ranking(
+            lock_registry=lock_registry,
+            tool_ranking_rows=ranking_rows,
+        )
+        lock_registry = normalize_metadata_separation_lock_registry(
+            stability_update_result.get("lock_registry")
+        )
+        if stability_update_result.get("changed"):
+            await upsert_metadata_separation_lock_registry(
+                session,
+                lock_registry,
+                updated_by_id=user.id,
+            )
+            await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("Failed to update metadata stability locks from audit run")
+        lock_registry = await _load_metadata_separation_lock_registry(session)
+    stability_summary = _build_stability_lock_summary(lock_registry)
+    diagnostics_payload = dict(audit_result.get("diagnostics") or {})
+    diagnostics_payload.update(
+        {
+            "stability_lock_mode_enabled": bool(
+                lock_registry.get("stability_lock_mode_enabled", True)
+            ),
+            "stability_auto_lock_enabled": bool(
+                lock_registry.get("stability_auto_lock_enabled", True)
+            ),
+            "stability_locked_tool_count": int(stability_summary.get("locked_count") or 0),
+            "stability_newly_locked": int(
+                len(stability_update_result.get("newly_locked") or [])
+            ),
+            "stability_newly_unlocked": int(
+                len(stability_update_result.get("newly_unlocked") or [])
+            ),
+            "stability_monitored_tools": int(
+                stability_update_result.get("monitored_tools") or 0
+            ),
+        }
+    )
     return {
         "search_space_id": resolved_search_space_id,
         "metadata_version_hash": compute_metadata_version_hash(tool_index),
         "retrieval_tuning": ToolRetrievalTuning(**retrieval_tuning),
         "probes": list(audit_result.get("probes") or []),
         "summary": dict(audit_result.get("summary") or {}),
-        "diagnostics": dict(audit_result.get("diagnostics") or {}),
+        "diagnostics": diagnostics_payload,
         "available_intent_ids": list(audit_result.get("available_intent_ids") or []),
         "available_agent_ids": list(audit_result.get("available_agent_ids") or []),
         "available_tool_ids": list(audit_result.get("available_tool_ids") or []),
+        "stability_locks": stability_summary,
     }
+
+
+@router.post(
+    "/tool-settings/metadata-audit/stability-locks/lock-stable",
+    response_model=MetadataCatalogStabilityLockActionResponse,
+)
+async def lock_stable_metadata_audit_items(
+    payload: MetadataCatalogStabilityLockActionRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    lock_registry = await _load_metadata_separation_lock_registry(session)
+    try:
+        update_result = update_stability_locks_from_tool_ranking(
+            lock_registry=lock_registry,
+            tool_ranking_rows=[],
+            force_auto_lock=True,
+        )
+        updated_registry = normalize_metadata_separation_lock_registry(
+            update_result.get("lock_registry") or lock_registry
+        )
+        changed = bool(update_result.get("changed"))
+        if changed:
+            await upsert_metadata_separation_lock_registry(
+                session,
+                updated_registry,
+                updated_by_id=user.id,
+            )
+            await session.commit()
+        stability_summary = _build_stability_lock_summary(updated_registry)
+        return {
+            "search_space_id": resolved_search_space_id,
+            "changed": changed,
+            "monitored_tools": int(update_result.get("monitored_tools") or 0),
+            "newly_locked_item_ids": list(update_result.get("newly_locked") or []),
+            "newly_unlocked_item_ids": list(update_result.get("newly_unlocked") or []),
+            "stability_locks": stability_summary,
+        }
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to apply stability lock pass")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to apply stability lock pass: {exc!s}",
+        ) from exc
+
+
+@router.post(
+    "/tool-settings/metadata-audit/stability-locks/unlock",
+    response_model=MetadataCatalogStabilityLockActionResponse,
+)
+async def unlock_metadata_audit_items(
+    payload: MetadataCatalogStabilityLockActionRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+    lock_registry = await _load_metadata_separation_lock_registry(session)
+    try:
+        unlock_result = unlock_stability_item_locks(
+            lock_registry=lock_registry,
+            layer="tool",
+            item_ids=list(payload.item_ids),
+            reason=payload.reason,
+        )
+        updated_registry = normalize_metadata_separation_lock_registry(
+            unlock_result.get("lock_registry") or lock_registry
+        )
+        changed = bool(unlock_result.get("changed"))
+        if changed:
+            await upsert_metadata_separation_lock_registry(
+                session,
+                updated_registry,
+                updated_by_id=user.id,
+            )
+            await session.commit()
+        stability_summary = _build_stability_lock_summary(updated_registry)
+        return {
+            "search_space_id": resolved_search_space_id,
+            "changed": changed,
+            "monitored_tools": 0,
+            "newly_locked_item_ids": [],
+            "newly_unlocked_item_ids": list(unlock_result.get("unlocked_item_ids") or []),
+            "stability_locks": stability_summary,
+        }
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to unlock stability locks")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to unlock stability locks: {exc!s}",
+        ) from exc
 
 
 @router.post(
@@ -4777,6 +4960,22 @@ async def generate_metadata_catalog_audit_suggestions(
     suggestion_inputs = build_layered_suggestion_inputs_from_annotations(
         annotations=annotation_payload
     )
+    lock_registry = await _load_metadata_separation_lock_registry(session)
+    stability_locked_tool_ids = get_stability_locked_item_ids(lock_registry, layer="tool")
+    stability_filtered_tool_failures = 0
+    if stability_locked_tool_ids:
+        tool_results = list(suggestion_inputs.get("tool_results") or [])
+        filtered_tool_results = []
+        for item in tool_results:
+            expected_tool_id = str(item.get("expected_tool") or "").strip().lower()
+            if expected_tool_id and expected_tool_id in stability_locked_tool_ids:
+                stability_filtered_tool_failures += 1
+                continue
+            filtered_tool_results.append(item)
+        suggestion_inputs = {
+            **suggestion_inputs,
+            "tool_results": filtered_tool_results,
+        }
     normalized_max_suggestions = max(1, min(int(payload.max_suggestions or 20), 100))
     normalized_parallelism = max(1, min(int(payload.llm_parallelism or 1), 32))
     per_stage_parallelism = max(1, min((normalized_parallelism + 2) // 3, 12))
@@ -4825,7 +5024,6 @@ async def generate_metadata_catalog_audit_suggestions(
             )
         ),
     )
-    lock_registry = await _load_metadata_separation_lock_registry(session)
     lock_pair_count = len(lock_registry.get("pair_locks") or [])
     lock_mode_enabled = bool(lock_registry.get("lock_mode_enabled", True))
     lock_rejections: dict[str, list[dict[str, Any]]] = {
@@ -4898,6 +5096,15 @@ async def generate_metadata_catalog_audit_suggestions(
         intent_suggestions = list(lock_filtered.get("intent_suggestions") or [])
         agent_suggestions = list(lock_filtered.get("agent_suggestions") or [])
         lock_rejections = dict(lock_filtered.get("rejections") or lock_rejections)
+    stability_filtered_tool_suggestions = 0
+    if stability_locked_tool_ids:
+        pre_filter_count = len(tool_suggestions)
+        tool_suggestions = [
+            item
+            for item in tool_suggestions
+            if str(item.get("tool_id") or "").strip().lower() not in stability_locked_tool_ids
+        ]
+        stability_filtered_tool_suggestions = max(0, pre_filter_count - len(tool_suggestions))
     total_ms = (perf_counter() - started_at) * 1000
     annotations_payload_bytes = len(
         json.dumps(annotation_payload, ensure_ascii=True, separators=(",", ":"))
@@ -4939,6 +5146,12 @@ async def generate_metadata_catalog_audit_suggestions(
             "separation_lock_rejected_agent": int(
                 len(lock_rejections.get("agent") or [])
             ),
+            "stability_lock_mode_enabled": bool(
+                lock_registry.get("stability_lock_mode_enabled", True)
+            ),
+            "stability_locked_tool_count": int(len(stability_locked_tool_ids)),
+            "stability_filtered_tool_failures": int(stability_filtered_tool_failures),
+            "stability_filtered_tool_suggestions": int(stability_filtered_tool_suggestions),
         },
     }
 
@@ -4974,6 +5187,10 @@ async def run_metadata_catalog_separation(
 
     tool_index = await _rebuild_tool_index(tool_patch_map)
     retrieval_tuning = await get_global_tool_retrieval_tuning(session)
+    lock_registry = await _load_metadata_separation_lock_registry(session)
+    stability_locked_tool_ids = sorted(
+        get_stability_locked_item_ids(lock_registry, layer="tool")
+    )
     intent_definitions = await get_effective_intent_definitions(session)
     if payload.intent_metadata_patch:
         intent_definitions = _merge_effective_intent_definitions_with_patch(
@@ -5052,6 +5269,7 @@ async def run_metadata_catalog_separation(
         intent_layer_config=payload.intent_layer.model_dump(),
         agent_layer_config=payload.agent_layer.model_dump(),
         tool_layer_config=payload.tool_layer.model_dump(),
+        stability_locked_tool_ids=stability_locked_tool_ids,
     )
     final_tool_index = list(separation_result.get("final_tool_index") or [])
     try:
@@ -5070,6 +5288,10 @@ async def run_metadata_catalog_separation(
             detail=f"Failed to persist separation locks: {exc!s}",
         ) from exc
     diagnostics_payload = dict(separation_result.get("diagnostics") or {})
+    updated_lock_registry = normalize_metadata_separation_lock_registry(
+        lock_persist_result.get("lock_registry") or lock_registry
+    )
+    stability_summary = _build_stability_lock_summary(updated_lock_registry)
     diagnostics_payload.update(
         {
             "separation_lock_mode_enabled": bool(
@@ -5082,6 +5304,11 @@ async def run_metadata_catalog_separation(
                 lock_persist_result.get("total_lock_count") or 0
             ),
             "separation_lock_registry_updated": bool(lock_persist_result.get("changed")),
+            "stability_lock_mode_enabled": bool(
+                updated_lock_registry.get("stability_lock_mode_enabled", True)
+            ),
+            "stability_locked_tool_count": int(stability_summary.get("locked_count") or 0),
+            "stability_excluded_tools_from_separation": int(len(stability_locked_tool_ids)),
         }
     )
     return {
@@ -5102,6 +5329,7 @@ async def run_metadata_catalog_separation(
         ),
         "contrast_memory": list(separation_result.get("contrast_memory") or []),
         "diagnostics": diagnostics_payload,
+        "stability_locks": stability_summary,
     }
 
 

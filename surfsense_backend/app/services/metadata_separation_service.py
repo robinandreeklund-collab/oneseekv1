@@ -103,6 +103,26 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return bool(default)
+
+
 def _tokenize(value: str) -> list[str]:
     return [
         token.lower()
@@ -1361,6 +1381,7 @@ async def run_bottom_up_metadata_separation(
     intent_layer_config: dict[str, Any] | None = None,
     agent_layer_config: dict[str, Any] | None = None,
     tool_layer_config: dict[str, Any] | None = None,
+    stability_locked_tool_ids: list[str] | set[str] | None = None,
 ) -> dict[str, Any]:
     total_started_at = perf_counter()
     normalized_tuning = normalize_retrieval_tuning(retrieval_tuning or {})
@@ -1373,6 +1394,11 @@ async def run_bottom_up_metadata_separation(
     intent_cfg = _normalize_layer_config(intent_layer_config)
     agent_cfg = _normalize_layer_config(agent_layer_config)
     tool_cfg = _normalize_layer_config(tool_layer_config)
+    locked_tool_ids = {
+        _normalized_key(item_id)
+        for item_id in list(stability_locked_tool_ids or [])
+        if _normalized_key(item_id)
+    }
     current_tool_patch_map = _copy_tool_patch_map(tool_patch_map)
     current_intent_patch_map = _copy_simple_patch_map(intent_patch_map)
     current_agent_patch_map = _copy_simple_patch_map(agent_patch_map)
@@ -1477,6 +1503,18 @@ async def run_bottom_up_metadata_separation(
             for item_id, stats in layer_stats.items()
             if str(stats.get("tier")) != "stable"
         }
+        if layer == "tool" and locked_tool_ids:
+            locked_candidates = sorted(
+                item_id for item_id in unstable.keys() if item_id in locked_tool_ids
+            )
+            if locked_candidates:
+                for item_id in locked_candidates:
+                    unstable.pop(item_id, None)
+                stage_report["notes"].append(
+                    "Stability-lock exkluderade tools från rewrite: "
+                    + ", ".join(locked_candidates[:12])
+                    + ("..." if len(locked_candidates) > 12 else "")
+                )
         if not unstable:
             stage_report["locked"] = True
             stage_report["skipped_reason"] = "Inga instabila kandidater i lagret."
@@ -2023,6 +2061,19 @@ async def run_bottom_up_metadata_separation(
 
 
 _LOCK_LAYER_SET = {"intent", "agent", "tool"}
+_STABILITY_LAYER_SET = {"tool"}
+_STABILITY_LOCK_LEVELS = {"soft", "hard"}
+_DEFAULT_STABILITY_LOCK_CONFIG = {
+    "min_rounds": 2,
+    "rank_shift_tolerance": 0.05,
+    "top1_lock_threshold": 0.95,
+    "top1_hard_lock_threshold": 1.0,
+    "topk_lock_threshold": 1.0,
+    "margin_lock_threshold": 0.8,
+    "unlock_top1_drop_pp": 0.10,
+    "unlock_margin_negative_rounds": 2,
+    "history_size": 12,
+}
 
 
 def _lock_pair_key(layer: str, item_a: str, item_b: str) -> tuple[str, str, str]:
@@ -2033,8 +2084,167 @@ def _lock_pair_key(layer: str, item_a: str, item_b: str) -> tuple[str, str, str]
     return (_normalized_key(layer), right, left)
 
 
+def _normalize_stability_config(payload: Any) -> dict[str, Any]:
+    raw = payload if isinstance(payload, dict) else {}
+    min_rounds = max(2, min(6, _as_int(raw.get("min_rounds"), 2)))
+    rank_shift_tolerance = max(0.0, min(5.0, _as_float(raw.get("rank_shift_tolerance"), 0.05)))
+    top1_lock_threshold = max(0.0, min(1.0, _as_float(raw.get("top1_lock_threshold"), 0.95)))
+    top1_hard_lock_threshold = max(
+        top1_lock_threshold,
+        min(1.0, _as_float(raw.get("top1_hard_lock_threshold"), 1.0)),
+    )
+    topk_lock_threshold = max(0.0, min(1.0, _as_float(raw.get("topk_lock_threshold"), 1.0)))
+    margin_lock_threshold = max(-2.0, min(10.0, _as_float(raw.get("margin_lock_threshold"), 0.8)))
+    unlock_top1_drop_pp = max(0.0, min(1.0, _as_float(raw.get("unlock_top1_drop_pp"), 0.10)))
+    unlock_margin_negative_rounds = max(
+        1, min(10, _as_int(raw.get("unlock_margin_negative_rounds"), 2))
+    )
+    history_size = max(3, min(50, _as_int(raw.get("history_size"), 12)))
+    return {
+        "min_rounds": min_rounds,
+        "rank_shift_tolerance": rank_shift_tolerance,
+        "top1_lock_threshold": top1_lock_threshold,
+        "top1_hard_lock_threshold": top1_hard_lock_threshold,
+        "topk_lock_threshold": topk_lock_threshold,
+        "margin_lock_threshold": margin_lock_threshold,
+        "unlock_top1_drop_pp": unlock_top1_drop_pp,
+        "unlock_margin_negative_rounds": unlock_margin_negative_rounds,
+        "history_size": history_size,
+    }
+
+
+def _normalize_stability_history(
+    payload: Any,
+    *,
+    history_size: int,
+) -> dict[str, list[dict[str, Any]]]:
+    raw = payload if isinstance(payload, dict) else {}
+    normalized: dict[str, list[dict[str, Any]]] = {}
+    for raw_item_id, raw_samples in raw.items():
+        item_id = _normalized_key(raw_item_id)
+        if not item_id:
+            continue
+        if not isinstance(raw_samples, list):
+            continue
+        samples: list[dict[str, Any]] = []
+        for sample in raw_samples:
+            if not isinstance(sample, dict):
+                continue
+            probes = max(0, _as_int(sample.get("probes"), 0))
+            top1_rate = max(0.0, min(1.0, _as_float(sample.get("top1_rate"), 0.0)))
+            topk_rate = max(0.0, min(1.0, _as_float(sample.get("topk_rate"), 0.0)))
+            avg_margin_raw = sample.get("avg_margin")
+            avg_margin = (
+                float(avg_margin_raw)
+                if isinstance(avg_margin_raw, (float, int))
+                else None
+            )
+            avg_expected_rank_raw = sample.get("avg_expected_rank")
+            avg_expected_rank = (
+                float(avg_expected_rank_raw)
+                if isinstance(avg_expected_rank_raw, (float, int))
+                else None
+            )
+            captured_at = _normalize_text(sample.get("captured_at")) or None
+            samples.append(
+                {
+                    "captured_at": captured_at,
+                    "probes": probes,
+                    "top1_rate": top1_rate,
+                    "topk_rate": topk_rate,
+                    "avg_margin": avg_margin,
+                    "avg_expected_rank": avg_expected_rank,
+                }
+            )
+        if not samples:
+            continue
+        normalized[item_id] = samples[-history_size:]
+    return normalized
+
+
+def _normalize_stability_item_locks(payload: Any) -> list[dict[str, Any]]:
+    raw_items = payload if isinstance(payload, list) else []
+    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        layer = _normalized_key(raw_item.get("layer"))
+        item_id = _normalized_key(raw_item.get("item_id"))
+        if layer not in _STABILITY_LAYER_SET or not item_id:
+            continue
+        lock_level = _normalized_key(raw_item.get("lock_level"))
+        if lock_level not in _STABILITY_LOCK_LEVELS:
+            lock_level = "soft"
+        top1_rate = max(0.0, min(1.0, _as_float(raw_item.get("top1_rate"), 0.0)))
+        topk_rate = max(0.0, min(1.0, _as_float(raw_item.get("topk_rate"), 0.0)))
+        avg_margin_raw = raw_item.get("avg_margin")
+        avg_margin = (
+            float(avg_margin_raw)
+            if isinstance(avg_margin_raw, (float, int))
+            else None
+        )
+        last_rank_shift_raw = raw_item.get("last_rank_shift")
+        last_rank_shift = (
+            float(last_rank_shift_raw)
+            if isinstance(last_rank_shift_raw, (float, int))
+            else None
+        )
+        baseline_top1_raw = raw_item.get("baseline_top1_rate")
+        baseline_top1_rate = (
+            max(0.0, min(1.0, float(baseline_top1_raw)))
+            if isinstance(baseline_top1_raw, (float, int))
+            else None
+        )
+        baseline_margin_raw = raw_item.get("baseline_margin")
+        baseline_margin = (
+            float(baseline_margin_raw)
+            if isinstance(baseline_margin_raw, (float, int))
+            else None
+        )
+        normalized_item = {
+            "layer": layer,
+            "item_id": item_id,
+            "locked": _as_bool(raw_item.get("locked"), True),
+            "lock_level": lock_level,
+            "lock_reason": _normalize_text(raw_item.get("lock_reason")) or None,
+            "unlock_trigger": _normalize_text(raw_item.get("unlock_trigger")) or None,
+            "source": _normalize_text(raw_item.get("source")) or "auto",
+            "top1_rate": top1_rate,
+            "topk_rate": topk_rate,
+            "avg_margin": avg_margin,
+            "last_rank_shift": last_rank_shift,
+            "baseline_top1_rate": baseline_top1_rate,
+            "baseline_margin": baseline_margin,
+            "negative_margin_rounds": max(
+                0,
+                _as_int(raw_item.get("negative_margin_rounds"), 0),
+            ),
+            "locked_at": _normalize_text(raw_item.get("locked_at")) or None,
+            "updated_at": _normalize_text(raw_item.get("updated_at")) or None,
+        }
+        key = (layer, item_id)
+        existing = deduped.get(key)
+        if not existing:
+            deduped[key] = normalized_item
+            continue
+        existing_locked = bool(existing.get("locked"))
+        next_locked = bool(normalized_item.get("locked"))
+        if next_locked and not existing_locked:
+            deduped[key] = normalized_item
+            continue
+        if next_locked == existing_locked and (
+            _normalize_text(normalized_item.get("updated_at"))
+            > _normalize_text(existing.get("updated_at"))
+        ):
+            deduped[key] = normalized_item
+    rows = list(deduped.values())
+    rows.sort(key=lambda item: (item.get("layer") or "", item.get("item_id") or ""))
+    return rows
+
+
 def normalize_metadata_separation_lock_registry(payload: Any) -> dict[str, Any]:
     raw = payload if isinstance(payload, dict) else {}
+    stability_config = _normalize_stability_config(raw.get("stability_config"))
     raw_locks = raw.get("pair_locks")
     normalized_locks: list[dict[str, Any]] = []
     if isinstance(raw_locks, list):
@@ -2073,10 +2283,28 @@ def normalize_metadata_separation_lock_registry(payload: Any) -> dict[str, Any]:
             existing["updated_at"] = lock["updated_at"]
         if lock.get("source"):
             existing["source"] = lock["source"]
+    normalized_stability_history = _normalize_stability_history(
+        raw.get("stability_history"),
+        history_size=int(stability_config.get("history_size") or 12),
+    )
+    normalized_stability_items = _normalize_stability_item_locks(
+        raw.get("stability_item_locks")
+    )
     return {
-        "lock_mode_enabled": bool(raw.get("lock_mode_enabled", True)),
+        "lock_mode_enabled": _as_bool(raw.get("lock_mode_enabled"), True),
         "updated_at": _normalize_text(raw.get("updated_at")) or None,
         "pair_locks": list(deduped.values()),
+        "stability_lock_mode_enabled": _as_bool(
+            raw.get("stability_lock_mode_enabled"),
+            True,
+        ),
+        "stability_auto_lock_enabled": _as_bool(
+            raw.get("stability_auto_lock_enabled"),
+            True,
+        ),
+        "stability_config": stability_config,
+        "stability_item_locks": normalized_stability_items,
+        "stability_history": normalized_stability_history,
     }
 
 
@@ -2166,6 +2394,416 @@ def merge_metadata_separation_pair_locks(
     if len(rows) > int(max_items):
         rows = rows[: int(max_items)]
     return rows
+
+
+def _stability_latest_rank_shift(history_rows: list[dict[str, Any]]) -> float | None:
+    if len(history_rows) < 2:
+        return None
+    left_rank = history_rows[-2].get("avg_expected_rank")
+    right_rank = history_rows[-1].get("avg_expected_rank")
+    if not isinstance(left_rank, (float, int)) or not isinstance(right_rank, (float, int)):
+        return None
+    return float(abs(float(right_rank) - float(left_rank)))
+
+
+def _stability_unlock_trigger_text(cfg: dict[str, Any]) -> str:
+    drop_pp = float(cfg.get("unlock_top1_drop_pp") or 0.10) * 100
+    negative_rounds = int(cfg.get("unlock_margin_negative_rounds") or 2)
+    return (
+        f"Lås upp vid top1-drop >= {drop_pp:.1f} pp mot baseline "
+        f"eller margin < 0 i {negative_rounds} rundor i rad."
+    )
+
+
+def _stability_lock_reason_text(
+    *,
+    min_rounds: int,
+    rank_shift_tolerance: float,
+    top1_lock_threshold: float,
+    topk_lock_threshold: float,
+    margin_lock_threshold: float,
+    latest_top1: float,
+    latest_topk: float,
+    latest_margin: float | None,
+    hard_lock: bool,
+) -> str:
+    margin_text = (
+        f"{latest_margin:.2f}" if isinstance(latest_margin, (float, int)) else "n/a"
+    )
+    level_text = "Hårt lås" if hard_lock else "Stabilt lås"
+    return (
+        f"{level_text}: stabil i {min_rounds} rundor "
+        f"(rank_shift <= {rank_shift_tolerance:.3f}, "
+        f"top1 >= {top1_lock_threshold * 100:.1f}%, "
+        f"topK >= {topk_lock_threshold * 100:.1f}%, "
+        f"margin > {margin_lock_threshold:.2f}). "
+        f"Senaste: top1 {latest_top1 * 100:.1f}%, topK {latest_topk * 100:.1f}%, "
+        f"margin {margin_text}."
+    )
+
+
+def update_stability_locks_from_tool_ranking(
+    *,
+    lock_registry: dict[str, Any],
+    tool_ranking_rows: list[dict[str, Any]] | None,
+    captured_at: str | None = None,
+    force_auto_lock: bool | None = None,
+) -> dict[str, Any]:
+    normalized = normalize_metadata_separation_lock_registry(lock_registry)
+    cfg = dict(normalized.get("stability_config") or {})
+    history_size = max(3, min(50, _as_int(cfg.get("history_size"), 12)))
+    min_rounds = max(2, min(6, _as_int(cfg.get("min_rounds"), 2)))
+    rank_shift_tolerance = max(0.0, float(cfg.get("rank_shift_tolerance") or 0.05))
+    top1_lock_threshold = max(0.0, min(1.0, float(cfg.get("top1_lock_threshold") or 0.95)))
+    top1_hard_lock_threshold = max(
+        top1_lock_threshold,
+        min(1.0, float(cfg.get("top1_hard_lock_threshold") or 1.0)),
+    )
+    topk_lock_threshold = max(0.0, min(1.0, float(cfg.get("topk_lock_threshold") or 1.0)))
+    margin_lock_threshold = float(cfg.get("margin_lock_threshold") or 0.8)
+    unlock_top1_drop_pp = max(
+        0.0,
+        min(1.0, float(cfg.get("unlock_top1_drop_pp") or 0.10)),
+    )
+    unlock_margin_negative_rounds = max(
+        1,
+        min(10, _as_int(cfg.get("unlock_margin_negative_rounds"), 2)),
+    )
+    now_iso = captured_at or datetime.now(timezone.utc).isoformat()
+    stability_mode_enabled = bool(normalized.get("stability_lock_mode_enabled", True))
+    auto_lock_enabled = (
+        bool(force_auto_lock)
+        if force_auto_lock is not None
+        else bool(normalized.get("stability_auto_lock_enabled", True))
+    )
+    ranking_rows = list(tool_ranking_rows or [])
+    ranking_map: dict[str, dict[str, Any]] = {}
+    for raw in ranking_rows:
+        if not isinstance(raw, dict):
+            continue
+        tool_id = _normalized_key(raw.get("tool_id"))
+        if not tool_id:
+            continue
+        ranking_map[tool_id] = {
+            "probes": max(0, _as_int(raw.get("probes"), 0)),
+            "top1_rate": max(0.0, min(1.0, _as_float(raw.get("top1_rate"), 0.0))),
+            "topk_rate": max(0.0, min(1.0, _as_float(raw.get("topk_rate"), 0.0))),
+            "avg_margin": (
+                float(raw.get("avg_margin_vs_best_other"))
+                if isinstance(raw.get("avg_margin_vs_best_other"), (float, int))
+                else None
+            ),
+            "avg_expected_rank": (
+                float(raw.get("avg_expected_rank"))
+                if isinstance(raw.get("avg_expected_rank"), (float, int))
+                else None
+            ),
+        }
+
+    history_map = {
+        _normalized_key(item_id): list(samples)
+        for item_id, samples in dict(normalized.get("stability_history") or {}).items()
+        if _normalized_key(item_id)
+    }
+    lock_map: dict[tuple[str, str], dict[str, Any]] = {}
+    for lock_item in list(normalized.get("stability_item_locks") or []):
+        if not isinstance(lock_item, dict):
+            continue
+        layer = _normalized_key(lock_item.get("layer"))
+        item_id = _normalized_key(lock_item.get("item_id"))
+        if not layer or not item_id:
+            continue
+        lock_map[(layer, item_id)] = dict(lock_item)
+
+    observed_ids = set(history_map.keys()) | set(ranking_map.keys())
+    observed_ids.update(
+        item_id
+        for (layer, item_id), row in lock_map.items()
+        if layer == "tool" and bool(row.get("locked"))
+    )
+    newly_locked: list[str] = []
+    newly_unlocked: list[str] = []
+    monitored_tools = 0
+
+    for tool_id in sorted(observed_ids):
+        history_rows = list(history_map.get(tool_id) or [])
+        ranking_row = ranking_map.get(tool_id)
+        if ranking_row is not None:
+            history_rows.append(
+                {
+                    "captured_at": now_iso,
+                    "probes": int(ranking_row.get("probes") or 0),
+                    "top1_rate": float(ranking_row.get("top1_rate") or 0.0),
+                    "topk_rate": float(ranking_row.get("topk_rate") or 0.0),
+                    "avg_margin": ranking_row.get("avg_margin"),
+                    "avg_expected_rank": ranking_row.get("avg_expected_rank"),
+                }
+            )
+        if not history_rows:
+            continue
+        history_rows = history_rows[-history_size:]
+        history_map[tool_id] = history_rows
+        monitored_tools += 1
+        latest = history_rows[-1]
+        latest_top1 = max(0.0, min(1.0, _as_float(latest.get("top1_rate"), 0.0)))
+        latest_topk = max(0.0, min(1.0, _as_float(latest.get("topk_rate"), 0.0)))
+        latest_margin = (
+            float(latest.get("avg_margin"))
+            if isinstance(latest.get("avg_margin"), (float, int))
+            else None
+        )
+        recent_window = history_rows[-min_rounds:]
+        rank_shifts: list[float] = []
+        for index in range(1, len(recent_window)):
+            left_rank = recent_window[index - 1].get("avg_expected_rank")
+            right_rank = recent_window[index].get("avg_expected_rank")
+            if isinstance(left_rank, (float, int)) and isinstance(right_rank, (float, int)):
+                rank_shifts.append(abs(float(right_rank) - float(left_rank)))
+            else:
+                rank_shifts.append(0.0)
+        rank_shift_ok = (
+            len(recent_window) >= min_rounds
+            and bool(rank_shifts)
+            and all(shift <= rank_shift_tolerance for shift in rank_shifts)
+        )
+        top1_ok = len(recent_window) >= min_rounds and all(
+            _as_float(sample.get("top1_rate"), 0.0) >= top1_lock_threshold
+            for sample in recent_window
+        )
+        topk_ok = len(recent_window) >= min_rounds and all(
+            _as_float(sample.get("topk_rate"), 0.0) >= (topk_lock_threshold - 1e-6)
+            for sample in recent_window
+        )
+        margin_ok = len(recent_window) >= min_rounds and all(
+            isinstance(sample.get("avg_margin"), (float, int))
+            and float(sample.get("avg_margin")) > margin_lock_threshold
+            for sample in recent_window
+        )
+        stable_candidate = rank_shift_ok and top1_ok and topk_ok and margin_ok
+        lock_key = ("tool", tool_id)
+        current_lock = dict(lock_map.get(lock_key) or {})
+        is_locked = bool(current_lock.get("locked"))
+
+        if is_locked:
+            negative_margin_rounds = int(current_lock.get("negative_margin_rounds") or 0)
+            if ranking_row is not None:
+                if isinstance(latest_margin, (float, int)) and latest_margin < 0:
+                    negative_margin_rounds += 1
+                else:
+                    negative_margin_rounds = 0
+            baseline_top1 = (
+                float(current_lock.get("baseline_top1_rate"))
+                if isinstance(current_lock.get("baseline_top1_rate"), (float, int))
+                else None
+            )
+            top1_drop_triggered = (
+                isinstance(baseline_top1, (float, int))
+                and (baseline_top1 - latest_top1) >= unlock_top1_drop_pp
+            )
+            margin_drop_triggered = negative_margin_rounds >= unlock_margin_negative_rounds
+            if top1_drop_triggered or margin_drop_triggered:
+                lock_map.pop(lock_key, None)
+                newly_unlocked.append(tool_id)
+                continue
+            current_lock["top1_rate"] = latest_top1
+            current_lock["topk_rate"] = latest_topk
+            current_lock["avg_margin"] = latest_margin
+            current_lock["last_rank_shift"] = _stability_latest_rank_shift(history_rows)
+            current_lock["negative_margin_rounds"] = negative_margin_rounds
+            current_lock["updated_at"] = now_iso
+            lock_map[lock_key] = current_lock
+            continue
+
+        should_auto_lock = bool(stability_mode_enabled and auto_lock_enabled and stable_candidate)
+        if not should_auto_lock:
+            continue
+        hard_lock = all(
+            _as_float(sample.get("top1_rate"), 0.0) >= top1_hard_lock_threshold
+            for sample in recent_window
+        )
+        lock_payload = {
+            "layer": "tool",
+            "item_id": tool_id,
+            "locked": True,
+            "lock_level": "hard" if hard_lock else "soft",
+            "lock_reason": _stability_lock_reason_text(
+                min_rounds=min_rounds,
+                rank_shift_tolerance=rank_shift_tolerance,
+                top1_lock_threshold=top1_lock_threshold,
+                topk_lock_threshold=topk_lock_threshold,
+                margin_lock_threshold=margin_lock_threshold,
+                latest_top1=latest_top1,
+                latest_topk=latest_topk,
+                latest_margin=latest_margin,
+                hard_lock=hard_lock,
+            ),
+            "unlock_trigger": _stability_unlock_trigger_text(cfg),
+            "source": "auto",
+            "top1_rate": latest_top1,
+            "topk_rate": latest_topk,
+            "avg_margin": latest_margin,
+            "last_rank_shift": _stability_latest_rank_shift(history_rows),
+            "baseline_top1_rate": latest_top1,
+            "baseline_margin": latest_margin,
+            "negative_margin_rounds": 0,
+            "locked_at": now_iso,
+            "updated_at": now_iso,
+        }
+        lock_map[lock_key] = lock_payload
+        newly_locked.append(tool_id)
+
+    normalized_locks = sorted(
+        lock_map.values(),
+        key=lambda item: (item.get("layer") or "", item.get("item_id") or ""),
+    )
+    updated_registry = normalize_metadata_separation_lock_registry(
+        {
+            **normalized,
+            "updated_at": now_iso,
+            "stability_history": history_map,
+            "stability_item_locks": normalized_locks,
+        }
+    )
+    locked_tool_ids = sorted(
+        {
+            _normalized_key(item.get("item_id"))
+            for item in list(updated_registry.get("stability_item_locks") or [])
+            if _normalized_key(item.get("layer")) == "tool" and bool(item.get("locked"))
+        }
+    )
+    changed = bool(newly_locked or newly_unlocked or bool(ranking_rows))
+    return {
+        "lock_registry": updated_registry,
+        "changed": changed,
+        "newly_locked": newly_locked,
+        "newly_unlocked": newly_unlocked,
+        "locked_tool_ids": locked_tool_ids,
+        "monitored_tools": monitored_tools,
+    }
+
+
+def summarize_stability_item_locks(
+    lock_registry: dict[str, Any],
+    *,
+    layer: str = "tool",
+    include_unlocked: bool = False,
+) -> list[dict[str, Any]]:
+    normalized = normalize_metadata_separation_lock_registry(lock_registry)
+    target_layer = _normalized_key(layer)
+    rows: list[dict[str, Any]] = []
+    for item in list(normalized.get("stability_item_locks") or []):
+        if not isinstance(item, dict):
+            continue
+        if _normalized_key(item.get("layer")) != target_layer:
+            continue
+        is_locked = bool(item.get("locked"))
+        if not is_locked and not include_unlocked:
+            continue
+        rows.append(
+            {
+                "layer": target_layer,
+                "item_id": _normalized_key(item.get("item_id")),
+                "locked": is_locked,
+                "lock_level": _normalized_key(item.get("lock_level")) or "soft",
+                "lock_reason": _normalize_text(item.get("lock_reason")) or None,
+                "unlock_trigger": _normalize_text(item.get("unlock_trigger")) or None,
+                "top1_rate": (
+                    float(item.get("top1_rate"))
+                    if isinstance(item.get("top1_rate"), (float, int))
+                    else None
+                ),
+                "topk_rate": (
+                    float(item.get("topk_rate"))
+                    if isinstance(item.get("topk_rate"), (float, int))
+                    else None
+                ),
+                "avg_margin": (
+                    float(item.get("avg_margin"))
+                    if isinstance(item.get("avg_margin"), (float, int))
+                    else None
+                ),
+                "last_rank_shift": (
+                    float(item.get("last_rank_shift"))
+                    if isinstance(item.get("last_rank_shift"), (float, int))
+                    else None
+                ),
+                "negative_margin_rounds": max(
+                    0, _as_int(item.get("negative_margin_rounds"), 0)
+                ),
+                "locked_at": _normalize_text(item.get("locked_at")) or None,
+                "updated_at": _normalize_text(item.get("updated_at")) or None,
+            }
+        )
+    rows.sort(key=lambda item: item.get("item_id") or "")
+    return rows
+
+
+def get_stability_locked_item_ids(
+    lock_registry: dict[str, Any],
+    *,
+    layer: str = "tool",
+    respect_lock_mode: bool = True,
+) -> set[str]:
+    normalized = normalize_metadata_separation_lock_registry(lock_registry)
+    if respect_lock_mode and not bool(normalized.get("stability_lock_mode_enabled", True)):
+        return set()
+    target_layer = _normalized_key(layer)
+    locked_ids: set[str] = set()
+    for item in list(normalized.get("stability_item_locks") or []):
+        if not isinstance(item, dict):
+            continue
+        if _normalized_key(item.get("layer")) != target_layer:
+            continue
+        if not bool(item.get("locked")):
+            continue
+        item_id = _normalized_key(item.get("item_id"))
+        if item_id:
+            locked_ids.add(item_id)
+    return locked_ids
+
+
+def unlock_stability_item_locks(
+    *,
+    lock_registry: dict[str, Any],
+    layer: str = "tool",
+    item_ids: list[str] | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    normalized = normalize_metadata_separation_lock_registry(lock_registry)
+    target_layer = _normalized_key(layer)
+    requested_ids = {
+        _normalized_key(item_id)
+        for item_id in list(item_ids or [])
+        if _normalized_key(item_id)
+    }
+    now_iso = datetime.now(timezone.utc).isoformat()
+    unlocked_ids: list[str] = []
+    kept_items: list[dict[str, Any]] = []
+    for item in list(normalized.get("stability_item_locks") or []):
+        if not isinstance(item, dict):
+            continue
+        item_layer = _normalized_key(item.get("layer"))
+        item_id = _normalized_key(item.get("item_id"))
+        should_unlock = bool(item_layer == target_layer and bool(item.get("locked")))
+        if should_unlock and requested_ids:
+            should_unlock = item_id in requested_ids
+        if should_unlock:
+            unlocked_ids.append(item_id)
+            continue
+        kept_items.append(item)
+    updated_registry = normalize_metadata_separation_lock_registry(
+        {
+            **normalized,
+            "updated_at": now_iso,
+            "stability_item_locks": kept_items,
+        }
+    )
+    return {
+        "lock_registry": updated_registry,
+        "changed": bool(unlocked_ids),
+        "unlocked_item_ids": sorted({item_id for item_id in unlocked_ids if item_id}),
+        "reason": _normalize_text(reason) or None,
+    }
 
 
 async def filter_metadata_suggestions_with_pair_locks(

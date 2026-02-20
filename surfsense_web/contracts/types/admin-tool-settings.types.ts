@@ -233,6 +233,40 @@ export const metadataCatalogResponse = z.object({
 	tool_categories: z.array(toolCategoryResponse).default([]),
 	agents: z.array(agentMetadataItem).default([]),
 	intents: z.array(intentMetadataItem).default([]),
+	stability_locks: z
+		.object({
+			lock_mode_enabled: z.boolean().optional().default(true),
+			auto_lock_enabled: z.boolean().optional().default(true),
+			config: z.record(z.string(), z.unknown()).optional().default({}),
+			locked_items: z
+				.array(
+					z.object({
+						layer: z.string().optional().default("tool"),
+						item_id: z.string(),
+						lock_level: z.string().optional().default("soft"),
+						lock_reason: z.string().nullable().optional(),
+						unlock_trigger: z.string().nullable().optional(),
+						top1_rate: z.number().nullable().optional(),
+						topk_rate: z.number().nullable().optional(),
+						avg_margin: z.number().nullable().optional(),
+						last_rank_shift: z.number().nullable().optional(),
+						negative_margin_rounds: z.number().int().optional().default(0),
+						locked_at: z.string().nullable().optional(),
+						updated_at: z.string().nullable().optional(),
+					})
+				)
+				.optional()
+				.default([]),
+			locked_count: z.number().int().optional().default(0),
+		})
+		.optional()
+		.default({
+			lock_mode_enabled: true,
+			auto_lock_enabled: true,
+			config: {},
+			locked_items: [],
+			locked_count: 0,
+		}),
 });
 
 export const metadataCatalogUpdateRequest = z.object({
@@ -271,10 +305,22 @@ export const metadataCatalogSafeRenameSuggestionResponse = z.object({
 	validated: z.boolean().optional().default(false),
 	reason: z.string(),
 	tested_candidates: z.array(z.string()).optional().default([]),
-	rejected_candidates: z
-		.array(metadataCatalogSafeRenameRejectedCandidate)
-		.optional()
-		.default([]),
+	rejected_candidates: z.array(metadataCatalogSafeRenameRejectedCandidate).optional().default([]),
+});
+
+export const metadataCatalogStabilityLockActionRequest = z.object({
+	search_space_id: z.number().nullable().optional(),
+	item_ids: z.array(z.string()).optional().default([]),
+	reason: z.string().nullable().optional(),
+});
+
+export const metadataCatalogStabilityLockActionResponse = z.object({
+	search_space_id: z.number(),
+	changed: z.boolean().optional().default(false),
+	monitored_tools: z.number().int().optional().default(0),
+	newly_locked_item_ids: z.array(z.string()).optional().default([]),
+	newly_unlocked_item_ids: z.array(z.string()).optional().default([]),
+	stability_locks: metadataCatalogResponse.shape.stability_locks,
 });
 
 export const metadataCatalogAuditConfusionPair = z.object({
@@ -387,34 +433,30 @@ export const metadataCatalogAuditSummary = z.object({
 	agent_confusion_matrix: z.array(metadataCatalogAuditConfusionPair).optional().default([]),
 	tool_confusion_matrix: z.array(metadataCatalogAuditConfusionPair).optional().default([]),
 	path_confusion_matrix: z.array(metadataCatalogAuditPathConfusionPair).optional().default([]),
-	vector_recall_summary: metadataCatalogAuditVectorRecallSummary
-		.optional()
-		.default({
-			top_k: 5,
-			probes_with_vector_candidates: 0,
-			probes_with_top1_from_vector: 0,
-			probes_with_top1_vector_only: 0,
-			probes_with_expected_tool_in_vector_top_k: 0,
-			probes_with_expected_tool_vector_only: 0,
-			probes_with_correct_tool_and_vector_support: 0,
-			share_probes_with_vector_candidates: 0,
-			share_top1_from_vector: 0,
-			share_expected_tool_in_vector_top_k: 0,
-		}),
+	vector_recall_summary: metadataCatalogAuditVectorRecallSummary.optional().default({
+		top_k: 5,
+		probes_with_vector_candidates: 0,
+		probes_with_top1_from_vector: 0,
+		probes_with_top1_vector_only: 0,
+		probes_with_expected_tool_in_vector_top_k: 0,
+		probes_with_expected_tool_vector_only: 0,
+		probes_with_correct_tool_and_vector_support: 0,
+		share_probes_with_vector_candidates: 0,
+		share_top1_from_vector: 0,
+		share_expected_tool_in_vector_top_k: 0,
+	}),
 	tool_ranking_summary: metadataCatalogAuditToolRankingSummary
 		.optional()
 		.default({ top_k: 5, tools: [] }),
-	tool_embedding_context: metadataCatalogAuditToolEmbeddingContext
-		.optional()
-		.default({
-			enabled: true,
-			context_fields: [],
-			semantic_fields: [],
-			structural_fields: [],
-			semantic_weight: null,
-			structural_weight: null,
-			description: null,
-		}),
+	tool_embedding_context: metadataCatalogAuditToolEmbeddingContext.optional().default({
+		enabled: true,
+		context_fields: [],
+		semantic_fields: [],
+		structural_fields: [],
+		semantic_weight: null,
+		structural_weight: null,
+		description: null,
+	}),
 });
 
 export const metadataCatalogAuditRunDiagnostics = z.object({
@@ -509,6 +551,7 @@ export const metadataCatalogAuditRunResponse = z.object({
 	available_intent_ids: z.array(z.string()).optional().default([]),
 	available_agent_ids: z.array(z.string()).optional().default([]),
 	available_tool_ids: z.array(z.string()).optional().default([]),
+	stability_locks: metadataCatalogResponse.shape.stability_locks,
 });
 
 export const metadataCatalogAuditAnnotationItem = z.object({
@@ -673,14 +716,8 @@ export const metadataCatalogSeparationStageReport = z.object({
 	after_total_accuracy: z.number().nullable().optional(),
 	applied_changes: z.number().int().optional().default(0),
 	evaluated_items: z.number().int().optional().default(0),
-	candidate_decisions: z
-		.array(metadataCatalogSeparationCandidateDecision)
-		.optional()
-		.default([]),
-	similarity_matrices: z
-		.array(metadataCatalogSeparationSimilarityMatrix)
-		.optional()
-		.default([]),
+	candidate_decisions: z.array(metadataCatalogSeparationCandidateDecision).optional().default([]),
+	similarity_matrices: z.array(metadataCatalogSeparationSimilarityMatrix).optional().default([]),
 	notes: z.array(z.string()).optional().default([]),
 	mini_audit_summary: metadataCatalogAuditSummary.nullable().optional(),
 });
@@ -726,60 +763,54 @@ export const metadataCatalogSeparationRequest = z.object({
 	anchor_probe_set: z.array(metadataCatalogAuditAnchorProbeItem).optional().default([]),
 	include_llm_refinement: z.boolean().optional().default(true),
 	llm_parallelism: z.number().int().optional().default(4),
-	intent_layer: metadataCatalogSeparationLayerConfig
-		.optional()
-		.default({
-			enabled: true,
-			min_probes: 5,
-			tier1_margin: -1.5,
-			tier2_margin: 0.5,
-			tier3_top1_threshold: 0.45,
-			local_delta: 0.015,
-			global_similarity_threshold: 0.9,
-			epsilon_noise: 0.02,
-			alignment_drop_max: 0.03,
-			score_alignment_weight: 0.7,
-			score_separation_weight: 0.3,
-			min_metric_delta: 0,
-			max_items: 16,
-			llm_enabled: true,
-		}),
-	agent_layer: metadataCatalogSeparationLayerConfig
-		.optional()
-		.default({
-			enabled: true,
-			min_probes: 5,
-			tier1_margin: -1.5,
-			tier2_margin: 0.5,
-			tier3_top1_threshold: 0.45,
-			local_delta: 0.02,
-			global_similarity_threshold: 0.88,
-			epsilon_noise: 0.02,
-			alignment_drop_max: 0.03,
-			score_alignment_weight: 0.6,
-			score_separation_weight: 0.4,
-			min_metric_delta: 0,
-			max_items: 18,
-			llm_enabled: true,
-		}),
-	tool_layer: metadataCatalogSeparationLayerConfig
-		.optional()
-		.default({
-			enabled: true,
-			min_probes: 5,
-			tier1_margin: -1.5,
-			tier2_margin: 0.5,
-			tier3_top1_threshold: 0.45,
-			local_delta: 0.03,
-			global_similarity_threshold: 0.85,
-			epsilon_noise: 0.02,
-			alignment_drop_max: 0.03,
-			score_alignment_weight: 0.5,
-			score_separation_weight: 0.5,
-			min_metric_delta: 0,
-			max_items: 28,
-			llm_enabled: true,
-		}),
+	intent_layer: metadataCatalogSeparationLayerConfig.optional().default({
+		enabled: true,
+		min_probes: 5,
+		tier1_margin: -1.5,
+		tier2_margin: 0.5,
+		tier3_top1_threshold: 0.45,
+		local_delta: 0.015,
+		global_similarity_threshold: 0.9,
+		epsilon_noise: 0.02,
+		alignment_drop_max: 0.03,
+		score_alignment_weight: 0.7,
+		score_separation_weight: 0.3,
+		min_metric_delta: 0,
+		max_items: 16,
+		llm_enabled: true,
+	}),
+	agent_layer: metadataCatalogSeparationLayerConfig.optional().default({
+		enabled: true,
+		min_probes: 5,
+		tier1_margin: -1.5,
+		tier2_margin: 0.5,
+		tier3_top1_threshold: 0.45,
+		local_delta: 0.02,
+		global_similarity_threshold: 0.88,
+		epsilon_noise: 0.02,
+		alignment_drop_max: 0.03,
+		score_alignment_weight: 0.6,
+		score_separation_weight: 0.4,
+		min_metric_delta: 0,
+		max_items: 18,
+		llm_enabled: true,
+	}),
+	tool_layer: metadataCatalogSeparationLayerConfig.optional().default({
+		enabled: true,
+		min_probes: 5,
+		tier1_margin: -1.5,
+		tier2_margin: 0.5,
+		tier3_top1_threshold: 0.45,
+		local_delta: 0.03,
+		global_similarity_threshold: 0.85,
+		epsilon_noise: 0.02,
+		alignment_drop_max: 0.03,
+		score_alignment_weight: 0.5,
+		score_separation_weight: 0.5,
+		min_metric_delta: 0,
+		max_items: 28,
+		llm_enabled: true,
+	}),
 });
 
 export const metadataCatalogSeparationResponse = z.object({
@@ -811,6 +842,7 @@ export const metadataCatalogSeparationResponse = z.object({
 		llm_parallelism: 1,
 		anchor_probe_count: 0,
 	}),
+	stability_locks: metadataCatalogResponse.shape.stability_locks,
 });
 
 export const toolEvaluationExpected = z.object({
@@ -1370,15 +1402,11 @@ export type ToolApiCategoryItem = z.infer<typeof toolApiCategoryItem>;
 export type ToolApiCategoryProvider = z.infer<typeof toolApiCategoryProvider>;
 export type ToolApiCategoriesResponse = z.infer<typeof toolApiCategoriesResponse>;
 export type ToolDifficultyBreakdownItem = z.infer<typeof toolDifficultyBreakdownItem>;
-export type ToolEvalLibraryGenerateRequest = z.infer<
-	typeof toolEvalLibraryGenerateRequest
->;
+export type ToolEvalLibraryGenerateRequest = z.infer<typeof toolEvalLibraryGenerateRequest>;
 export type ToolEvalLibraryFileItem = z.infer<typeof toolEvalLibraryFileItem>;
 export type ToolEvalLibraryListResponse = z.infer<typeof toolEvalLibraryListResponse>;
 export type ToolEvalLibraryFileResponse = z.infer<typeof toolEvalLibraryFileResponse>;
-export type ToolEvalLibraryGenerateResponse = z.infer<
-	typeof toolEvalLibraryGenerateResponse
->;
+export type ToolEvalLibraryGenerateResponse = z.infer<typeof toolEvalLibraryGenerateResponse>;
 export type ToolEvaluationStageHistoryCategoryItem = z.infer<
 	typeof toolEvaluationStageHistoryCategoryItem
 >;
@@ -1386,12 +1414,8 @@ export type ToolEvaluationStageHistoryItem = z.infer<typeof toolEvaluationStageH
 export type ToolEvaluationStageCategorySeriesPoint = z.infer<
 	typeof toolEvaluationStageCategorySeriesPoint
 >;
-export type ToolEvaluationStageCategorySeries = z.infer<
-	typeof toolEvaluationStageCategorySeries
->;
-export type ToolEvaluationStageHistoryResponse = z.infer<
-	typeof toolEvaluationStageHistoryResponse
->;
+export type ToolEvaluationStageCategorySeries = z.infer<typeof toolEvaluationStageCategorySeries>;
+export type ToolEvaluationStageHistoryResponse = z.infer<typeof toolEvaluationStageHistoryResponse>;
 export type ToolSettingsResponse = z.infer<typeof toolSettingsResponse>;
 export type ToolSettingsUpdateRequest = z.infer<typeof toolSettingsUpdateRequest>;
 export type AgentMetadataItem = z.infer<typeof agentMetadataItem>;
@@ -1399,8 +1423,8 @@ export type AgentMetadataUpdateItem = z.infer<typeof agentMetadataUpdateItem>;
 export type IntentMetadataItem = z.infer<typeof intentMetadataItem>;
 export type IntentMetadataUpdateItem = z.infer<typeof intentMetadataUpdateItem>;
 export type MetadataCatalogResponse = z.infer<typeof metadataCatalogResponse>;
-export type MetadataCatalogUpdateRequest = z.infer<typeof metadataCatalogUpdateRequest>;
-export type MetadataCatalogSafeRenameSuggestionRequest = z.infer<
+export type MetadataCatalogUpdateRequest = z.input<typeof metadataCatalogUpdateRequest>;
+export type MetadataCatalogSafeRenameSuggestionRequest = z.input<
 	typeof metadataCatalogSafeRenameSuggestionRequest
 >;
 export type MetadataCatalogSafeRenameRejectedCandidate = z.infer<
@@ -1409,15 +1433,17 @@ export type MetadataCatalogSafeRenameRejectedCandidate = z.infer<
 export type MetadataCatalogSafeRenameSuggestionResponse = z.infer<
 	typeof metadataCatalogSafeRenameSuggestionResponse
 >;
-export type MetadataCatalogAuditConfusionPair = z.infer<
-	typeof metadataCatalogAuditConfusionPair
+export type MetadataCatalogStabilityLockActionRequest = z.input<
+	typeof metadataCatalogStabilityLockActionRequest
 >;
+export type MetadataCatalogStabilityLockActionResponse = z.infer<
+	typeof metadataCatalogStabilityLockActionResponse
+>;
+export type MetadataCatalogAuditConfusionPair = z.infer<typeof metadataCatalogAuditConfusionPair>;
 export type MetadataCatalogAuditPathConfusionPair = z.infer<
 	typeof metadataCatalogAuditPathConfusionPair
 >;
-export type MetadataCatalogAuditLayerResult = z.infer<
-	typeof metadataCatalogAuditLayerResult
->;
+export type MetadataCatalogAuditLayerResult = z.infer<typeof metadataCatalogAuditLayerResult>;
 export type MetadataCatalogAuditToolVectorDiagnostics = z.infer<
 	typeof metadataCatalogAuditToolVectorDiagnostics
 >;
@@ -1438,12 +1464,10 @@ export type MetadataCatalogAuditSummary = z.infer<typeof metadataCatalogAuditSum
 export type MetadataCatalogAuditAnchorProbeItem = z.infer<
 	typeof metadataCatalogAuditAnchorProbeItem
 >;
-export type MetadataCatalogAuditRunRequest = z.infer<typeof metadataCatalogAuditRunRequest>;
+export type MetadataCatalogAuditRunRequest = z.input<typeof metadataCatalogAuditRunRequest>;
 export type MetadataCatalogAuditRunResponse = z.infer<typeof metadataCatalogAuditRunResponse>;
-export type MetadataCatalogAuditAnnotationItem = z.infer<
-	typeof metadataCatalogAuditAnnotationItem
->;
-export type MetadataCatalogAuditSuggestionRequest = z.infer<
+export type MetadataCatalogAuditAnnotationItem = z.infer<typeof metadataCatalogAuditAnnotationItem>;
+export type MetadataCatalogAuditSuggestionRequest = z.input<
 	typeof metadataCatalogAuditSuggestionRequest
 >;
 export type MetadataCatalogAuditSuggestionResponse = z.infer<
@@ -1461,59 +1485,35 @@ export type MetadataCatalogSeparationSimilarityMatrix = z.infer<
 export type MetadataCatalogSeparationStageReport = z.infer<
 	typeof metadataCatalogSeparationStageReport
 >;
-export type MetadataCatalogContrastMemoryItem = z.infer<
-	typeof metadataCatalogContrastMemoryItem
->;
+export type MetadataCatalogContrastMemoryItem = z.infer<typeof metadataCatalogContrastMemoryItem>;
 export type MetadataCatalogSeparationDiagnostics = z.infer<
 	typeof metadataCatalogSeparationDiagnostics
 >;
-export type MetadataCatalogSeparationRequest = z.infer<
-	typeof metadataCatalogSeparationRequest
->;
-export type MetadataCatalogSeparationResponse = z.infer<
-	typeof metadataCatalogSeparationResponse
->;
+export type MetadataCatalogSeparationRequest = z.input<typeof metadataCatalogSeparationRequest>;
+export type MetadataCatalogSeparationResponse = z.infer<typeof metadataCatalogSeparationResponse>;
 export type ToolEvaluationExpected = z.infer<typeof toolEvaluationExpected>;
-export type ToolApiInputEvaluationExpected = z.infer<
-	typeof toolApiInputEvaluationExpected
->;
+export type ToolApiInputEvaluationExpected = z.infer<typeof toolApiInputEvaluationExpected>;
 export type ToolEvaluationTestCase = z.infer<typeof toolEvaluationTestCase>;
-export type ToolApiInputEvaluationTestCase = z.infer<
-	typeof toolApiInputEvaluationTestCase
->;
+export type ToolApiInputEvaluationTestCase = z.infer<typeof toolApiInputEvaluationTestCase>;
 export type ToolEvaluationRequest = z.infer<typeof toolEvaluationRequest>;
-export type ToolApiInputEvaluationRequest = z.infer<
-	typeof toolApiInputEvaluationRequest
->;
+export type ToolApiInputEvaluationRequest = z.infer<typeof toolApiInputEvaluationRequest>;
 export type ToolEvaluationMetrics = z.infer<typeof toolEvaluationMetrics>;
 export type ToolPlanRequirementCheck = z.infer<typeof toolPlanRequirementCheck>;
-export type ToolSupervisorReviewRubricItem = z.infer<
-	typeof toolSupervisorReviewRubricItem
->;
+export type ToolSupervisorReviewRubricItem = z.infer<typeof toolSupervisorReviewRubricItem>;
 export type ToolEvaluationCaseResult = z.infer<typeof toolEvaluationCaseResult>;
 export type ToolApiInputFieldCheck = z.infer<typeof toolApiInputFieldCheck>;
-export type ToolApiInputEvaluationCaseResult = z.infer<
-	typeof toolApiInputEvaluationCaseResult
->;
-export type ToolApiInputEvaluationMetrics = z.infer<
-	typeof toolApiInputEvaluationMetrics
->;
+export type ToolApiInputEvaluationCaseResult = z.infer<typeof toolApiInputEvaluationCaseResult>;
+export type ToolApiInputEvaluationMetrics = z.infer<typeof toolApiInputEvaluationMetrics>;
 export type ToolMetadataSuggestion = z.infer<typeof toolMetadataSuggestion>;
-export type ToolIntentDefinitionSuggestion = z.infer<
-	typeof toolIntentDefinitionSuggestion
->;
+export type ToolIntentDefinitionSuggestion = z.infer<typeof toolIntentDefinitionSuggestion>;
 export type ToolEvaluationMetricDeltaItem = z.infer<typeof toolEvaluationMetricDeltaItem>;
 export type ToolEvaluationRunComparison = z.infer<typeof toolEvaluationRunComparison>;
 export type ToolEvaluationResponse = z.infer<typeof toolEvaluationResponse>;
 export type ToolApiInputPromptSuggestion = z.infer<typeof toolApiInputPromptSuggestion>;
-export type ToolApiInputEvaluationResponse = z.infer<
-	typeof toolApiInputEvaluationResponse
->;
+export type ToolApiInputEvaluationResponse = z.infer<typeof toolApiInputEvaluationResponse>;
 export type ToolEvaluationStartResponse = z.infer<typeof toolEvaluationStartResponse>;
 export type ToolEvaluationCaseStatus = z.infer<typeof toolEvaluationCaseStatus>;
-export type ToolEvaluationJobStatusResponse = z.infer<
-	typeof toolEvaluationJobStatusResponse
->;
+export type ToolEvaluationJobStatusResponse = z.infer<typeof toolEvaluationJobStatusResponse>;
 export type ToolApiInputEvaluationStartResponse = z.infer<
 	typeof toolApiInputEvaluationStartResponse
 >;
@@ -1527,9 +1527,7 @@ export type ToolAutoLoopDraftPromptItem = z.infer<typeof toolAutoLoopDraftPrompt
 export type ToolAutoLoopDraftBundle = z.infer<typeof toolAutoLoopDraftBundle>;
 export type ToolAutoLoopIterationSummary = z.infer<typeof toolAutoLoopIterationSummary>;
 export type ToolAutoLoopResult = z.infer<typeof toolAutoLoopResult>;
-export type ToolAutoLoopJobStatusResponse = z.infer<
-	typeof toolAutoLoopJobStatusResponse
->;
+export type ToolAutoLoopJobStatusResponse = z.infer<typeof toolAutoLoopJobStatusResponse>;
 export type ToolApiInputApplyPromptSuggestionItem = z.infer<
 	typeof toolApiInputApplyPromptSuggestionItem
 >;

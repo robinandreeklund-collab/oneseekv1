@@ -116,12 +116,38 @@ class IntentMetadataUpdateItem(BaseModel):
     enabled: bool = True
 
 
+class MetadataCatalogStabilityLockItem(BaseModel):
+    layer: str = "tool"
+    item_id: str
+    lock_level: str = "soft"
+    lock_reason: str | None = None
+    unlock_trigger: str | None = None
+    top1_rate: float | None = None
+    topk_rate: float | None = None
+    avg_margin: float | None = None
+    last_rank_shift: float | None = None
+    negative_margin_rounds: int = 0
+    locked_at: str | None = None
+    updated_at: str | None = None
+
+
+class MetadataCatalogStabilityLockSummary(BaseModel):
+    lock_mode_enabled: bool = True
+    auto_lock_enabled: bool = True
+    config: dict[str, Any] = Field(default_factory=dict)
+    locked_items: list[MetadataCatalogStabilityLockItem] = Field(default_factory=list)
+    locked_count: int = 0
+
+
 class MetadataCatalogResponse(BaseModel):
     search_space_id: int
     metadata_version_hash: str
     tool_categories: list[ToolCategoryResponse] = Field(default_factory=list)
     agents: list[AgentMetadataItem] = Field(default_factory=list)
     intents: list[IntentMetadataItem] = Field(default_factory=list)
+    stability_locks: MetadataCatalogStabilityLockSummary = Field(
+        default_factory=MetadataCatalogStabilityLockSummary
+    )
 
 
 class MetadataCatalogUpdateRequest(BaseModel):
@@ -162,6 +188,23 @@ class MetadataCatalogSafeRenameSuggestionResponse(BaseModel):
     tested_candidates: list[str] = Field(default_factory=list)
     rejected_candidates: list[MetadataCatalogSafeRenameRejectedCandidate] = Field(
         default_factory=list
+    )
+
+
+class MetadataCatalogStabilityLockActionRequest(BaseModel):
+    search_space_id: int | None = None
+    item_ids: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class MetadataCatalogStabilityLockActionResponse(BaseModel):
+    search_space_id: int
+    changed: bool = False
+    monitored_tools: int = 0
+    newly_locked_item_ids: list[str] = Field(default_factory=list)
+    newly_unlocked_item_ids: list[str] = Field(default_factory=list)
+    stability_locks: MetadataCatalogStabilityLockSummary = Field(
+        default_factory=MetadataCatalogStabilityLockSummary
     )
 
 
@@ -871,6 +914,9 @@ class MetadataCatalogAuditRunResponse(BaseModel):
     available_intent_ids: list[str] = Field(default_factory=list)
     available_agent_ids: list[str] = Field(default_factory=list)
     available_tool_ids: list[str] = Field(default_factory=list)
+    stability_locks: MetadataCatalogStabilityLockSummary = Field(
+        default_factory=MetadataCatalogStabilityLockSummary
+    )
 
 
 class MetadataCatalogAuditAnnotationItem(BaseModel):
@@ -1106,6 +1152,9 @@ class MetadataCatalogSeparationResponse(BaseModel):
     contrast_memory: list[MetadataCatalogContrastMemoryItem] = Field(default_factory=list)
     diagnostics: MetadataCatalogSeparationDiagnostics = Field(
         default_factory=MetadataCatalogSeparationDiagnostics
+    )
+    stability_locks: MetadataCatalogStabilityLockSummary = Field(
+        default_factory=MetadataCatalogStabilityLockSummary
     )
 
 

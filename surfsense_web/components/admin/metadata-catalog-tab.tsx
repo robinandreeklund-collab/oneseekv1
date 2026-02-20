@@ -1,25 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RotateCcw, Save, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-
-import {
-	type AgentMetadataItem,
-	type AgentMetadataUpdateItem,
-	type IntentMetadataItem,
-	type IntentMetadataUpdateItem,
-	type MetadataCatalogAuditAnchorProbeItem,
-	type MetadataCatalogAuditRunResponse,
-	type MetadataCatalogSeparationResponse,
-	type MetadataCatalogAuditToolRankingItem,
-	type MetadataCatalogAuditSuggestionResponse,
-	type ToolMetadataItem,
-	type ToolMetadataUpdateItem,
-} from "@/contracts/types/admin-tool-settings.types";
-import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
-import { AppError } from "@/lib/error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +12,22 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import type {
+	AgentMetadataItem,
+	AgentMetadataUpdateItem,
+	IntentMetadataItem,
+	IntentMetadataUpdateItem,
+	MetadataCatalogAuditAnchorProbeItem,
+	MetadataCatalogAuditRunResponse,
+	MetadataCatalogAuditSuggestionResponse,
+	MetadataCatalogAuditToolRankingItem,
+	MetadataCatalogResponse,
+	MetadataCatalogSeparationResponse,
+	ToolMetadataItem,
+	ToolMetadataUpdateItem,
+} from "@/contracts/types/admin-tool-settings.types";
+import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
+import { AppError } from "@/lib/error";
 
 function normalizeKeywordList(values: string[]) {
 	const seen = new Set<string>();
@@ -281,6 +281,21 @@ type SaveLockConflictRow = {
 	delta: number;
 };
 
+type StabilityLockRow = {
+	layer: string;
+	itemId: string;
+	lockLevel: string;
+	lockReason: string | null;
+	unlockTrigger: string | null;
+	top1Rate: number | null;
+	topKRate: number | null;
+	avgMargin: number | null;
+	lastRankShift: number | null;
+	negativeMarginRounds: number;
+	lockedAt: string | null;
+	updatedAt: string | null;
+};
+
 function _asObject(value: unknown): Record<string, unknown> | null {
 	return value && typeof value === "object" && !Array.isArray(value)
 		? (value as Record<string, unknown>)
@@ -383,6 +398,16 @@ const DEFAULT_AUTO_TARGET_AGENT = 85;
 const DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT = 90;
 const DEFAULT_AUTO_TARGET_TOOL_GIVEN_INTENT_AGENT = 90;
 
+type StabilityLockSummary = MetadataCatalogResponse["stability_locks"];
+
+const EMPTY_STABILITY_LOCK_SUMMARY: StabilityLockSummary = {
+	lock_mode_enabled: true,
+	auto_lock_enabled: true,
+	config: {},
+	locked_items: [],
+	locked_count: 0,
+};
+
 type AutoAuditTargetMode = "tool_only" | "layered";
 
 type AutoAuditRoundEntry = {
@@ -484,10 +509,8 @@ function toToolRankingSnapshotRows(
 	return (rows ?? []).map((row) => ({
 		toolId: row.tool_id,
 		probes: Math.max(0, Number(row.probes ?? 0)),
-		top1Rate:
-			typeof row.top1_rate === "number" && !Number.isNaN(row.top1_rate) ? row.top1_rate : 0,
-		topKRate:
-			typeof row.topk_rate === "number" && !Number.isNaN(row.topk_rate) ? row.topk_rate : 0,
+		top1Rate: typeof row.top1_rate === "number" && !Number.isNaN(row.top1_rate) ? row.top1_rate : 0,
+		topKRate: typeof row.topk_rate === "number" && !Number.isNaN(row.topk_rate) ? row.topk_rate : 0,
 		avgExpectedRank:
 			typeof row.avg_expected_rank === "number" && !Number.isNaN(row.avg_expected_rank)
 				? row.avg_expected_rank
@@ -644,9 +667,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [separationResult, setSeparationResult] =
 		useState<MetadataCatalogSeparationResponse | null>(null);
 	const [autoApplySeparationDraft, setAutoApplySeparationDraft] = useState(true);
-	const [selectedAuditSuggestionToolIds, setSelectedAuditSuggestionToolIds] = useState<
-		Set<string>
-	>(new Set());
+	const [selectedAuditSuggestionToolIds, setSelectedAuditSuggestionToolIds] = useState<Set<string>>(
+		new Set()
+	);
 	const [selectedAuditSuggestionIntentIds, setSelectedAuditSuggestionIntentIds] = useState<
 		Set<string>
 	>(new Set());
@@ -658,6 +681,10 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [applyingSafeRenameKey, setApplyingSafeRenameKey] = useState<string | null>(null);
 	const [allowLockOverrideSave, setAllowLockOverrideSave] = useState(false);
 	const [lockOverrideReason, setLockOverrideReason] = useState("");
+	const [stabilityLocks, setStabilityLocks] = useState(EMPTY_STABILITY_LOCK_SUMMARY);
+	const [isLockingStableItems, setIsLockingStableItems] = useState(false);
+	const [isUnlockingStableItems, setIsUnlockingStableItems] = useState(false);
+	const [unlockingToolId, setUnlockingToolId] = useState<string | null>(null);
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-tool-metadata-catalog", searchSpaceId],
@@ -711,6 +738,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			nextIntents[item.intent_id] = toIntentUpdateItem(item);
 		}
 		setDraftIntents(nextIntents);
+		setStabilityLocks(data.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
 	}, [data]);
 
 	const changedToolIds = useMemo(() => {
@@ -753,6 +781,51 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			.map((agentId) => draftAgents[agentId])
 			.filter((item): item is AgentMetadataUpdateItem => Boolean(item));
 	}, [changedAgentIds, draftAgents]);
+	const stabilityLockRows = useMemo<StabilityLockRow[]>(() => {
+		const rows = Array.isArray(stabilityLocks.locked_items) ? stabilityLocks.locked_items : [];
+		const parsed: StabilityLockRow[] = [];
+		for (const raw of rows) {
+			const row = _asObject(raw);
+			if (!row) continue;
+			const itemId = typeof row.item_id === "string" ? row.item_id : "";
+			if (!itemId) continue;
+			parsed.push({
+				layer: typeof row.layer === "string" ? row.layer : "tool",
+				itemId,
+				lockLevel: typeof row.lock_level === "string" ? row.lock_level : "soft",
+				lockReason: typeof row.lock_reason === "string" ? row.lock_reason : null,
+				unlockTrigger: typeof row.unlock_trigger === "string" ? row.unlock_trigger : null,
+				top1Rate: _asNumber(row.top1_rate),
+				topKRate: _asNumber(row.topk_rate),
+				avgMargin: _asNumber(row.avg_margin),
+				lastRankShift: _asNumber(row.last_rank_shift),
+				negativeMarginRounds:
+					typeof row.negative_margin_rounds === "number"
+						? Math.max(0, Math.floor(row.negative_margin_rounds))
+						: 0,
+				lockedAt: typeof row.locked_at === "string" ? row.locked_at : null,
+				updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
+			});
+		}
+		return parsed
+			.filter((row) => row.layer === "tool")
+			.sort((left, right) => left.itemId.localeCompare(right.itemId, "sv"));
+	}, [stabilityLocks.locked_items]);
+	const stabilityLockedToolById = useMemo(() => {
+		const map = new Map<string, StabilityLockRow>();
+		for (const row of stabilityLockRows) {
+			map.set(row.itemId, row);
+		}
+		return map;
+	}, [stabilityLockRows]);
+	const stabilityLockCount = useMemo(
+		() =>
+			typeof stabilityLocks.locked_count === "number" &&
+			Number.isFinite(stabilityLocks.locked_count)
+				? stabilityLocks.locked_count
+				: stabilityLockRows.length,
+		[stabilityLocks.locked_count, stabilityLockRows.length]
+	);
 	const allToolOptions = useMemo(() => {
 		const options: string[] = [];
 		for (const category of data?.tool_categories ?? []) {
@@ -797,10 +870,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	}, [hasAllScopeSelected, scopeDerivedAuditToolIds, customAuditToolIds]);
 	const auditToolOptions = useMemo(
 		() =>
-			(auditResult?.available_tool_ids?.length
-				? auditResult.available_tool_ids
-				: allToolOptions
-			).slice().sort((left, right) => left.localeCompare(right, "sv")),
+			(auditResult?.available_tool_ids?.length ? auditResult.available_tool_ids : allToolOptions)
+				.slice()
+				.sort((left, right) => left.localeCompare(right, "sv")),
 		[auditResult?.available_tool_ids, allToolOptions]
 	);
 	const auditIntentOptions = useMemo(
@@ -808,7 +880,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			(auditResult?.available_intent_ids?.length
 				? auditResult.available_intent_ids
 				: (data?.intents ?? []).map((item) => item.intent_id)
-			).slice().sort((left, right) => left.localeCompare(right, "sv")),
+			)
+				.slice()
+				.sort((left, right) => left.localeCompare(right, "sv")),
 		[auditResult?.available_intent_ids, data?.intents]
 	);
 	const auditAgentOptions = useMemo(
@@ -816,7 +890,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			(auditResult?.available_agent_ids?.length
 				? auditResult.available_agent_ids
 				: (data?.agents ?? []).map((item) => item.agent_id)
-			).slice().sort((left, right) => left.localeCompare(right, "sv")),
+			)
+				.slice()
+				.sort((left, right) => left.localeCompare(right, "sv")),
 		[auditResult?.available_agent_ids, data?.agents]
 	);
 	const selectedToolSuggestions = useMemo(() => {
@@ -838,9 +914,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			const intentExpected = probe.intent.expected_label ?? null;
 			const agentExpected = probe.agent.expected_label ?? null;
 			const toolExpected = probe.tool.expected_label ?? probe.target_tool_id ?? null;
-			const intentCorrect = intentExpected
-				? probe.intent.predicted_label === intentExpected
-				: true;
+			const intentCorrect = intentExpected ? probe.intent.predicted_label === intentExpected : true;
 			const agentCorrect = agentExpected ? probe.agent.predicted_label === agentExpected : true;
 			const toolCorrect = toolExpected ? probe.tool.predicted_label === toolExpected : true;
 			const intentLowMargin = isLowMargin(probe.intent.margin, auditLowMarginThreshold);
@@ -923,10 +997,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			intent: clampPercentage(autoTargetIntentPct, DEFAULT_AUTO_TARGET_INTENT) / 100,
 			agent: clampPercentage(autoTargetAgentPct, DEFAULT_AUTO_TARGET_AGENT) / 100,
 			agentGivenIntent:
-				clampPercentage(
-					autoTargetAgentGivenIntentPct,
-					DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT
-				) / 100,
+				clampPercentage(autoTargetAgentGivenIntentPct, DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT) /
+				100,
 			toolGivenIntentAgent:
 				clampPercentage(
 					autoTargetToolGivenIntentAgentPct,
@@ -1048,22 +1120,15 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			const top1Newer = newer?.top1Rate ?? null;
 			const topKOlder = older?.topKRate ?? null;
 			const topKNewer = newer?.topKRate ?? null;
-			const top1Delta =
-				top1Older != null && top1Newer != null ? top1Newer - top1Older : null;
-			const topKDelta =
-				topKOlder != null && topKNewer != null ? topKNewer - topKOlder : null;
+			const top1Delta = top1Older != null && top1Newer != null ? top1Newer - top1Older : null;
+			const topKDelta = topKOlder != null && topKNewer != null ? topKNewer - topKOlder : null;
 			const absShift = rankShift != null ? Math.abs(rankShift) : 0;
 			let label: AutoToolRankingStabilityRow["label"] = "stabilt";
 			if (rankShift != null && absShift >= 1.25 && (newer?.avgMargin ?? 0) < 0.15) {
 				label = "overkansligt";
 			} else if (rankShift != null && absShift >= 0.75) {
 				label = "instabilt";
-			} else if (
-				top1Delta != null &&
-				topKDelta != null &&
-				top1Delta < -0.08 &&
-				topKDelta > -0.02
-			) {
+			} else if (top1Delta != null && topKDelta != null && top1Delta < -0.08 && topKDelta > -0.02) {
 				label = "omdistribuerat";
 			}
 			rows.push({
@@ -1166,19 +1231,15 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		setSaveLockConflicts([]);
 		setSaveLockMessage(null);
 		const tools = changedToolIds.map((toolId) => draftTools[toolId]).filter(Boolean);
-		const agents = changedAgentIds
-			.map((agentId) => draftAgents[agentId])
-			.filter(Boolean);
-		const intents = changedIntentIds
-			.map((intentId) => draftIntents[intentId])
-			.filter(Boolean);
+		const agents = changedAgentIds.map((agentId) => draftAgents[agentId]).filter(Boolean);
+		const intents = changedIntentIds.map((intentId) => draftIntents[intentId]).filter(Boolean);
 		if (!tools.length && !agents.length && !intents.length) {
 			toast.message("Inga metadataandringar att spara.");
 			return;
 		}
 		setIsSaving(true);
 		try {
-			await adminToolSettingsApiService.updateMetadataCatalog(
+			const updatedCatalog = await adminToolSettingsApiService.updateMetadataCatalog(
 				{
 					tools,
 					agents,
@@ -1190,6 +1251,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				},
 				data.search_space_id
 			);
+			setStabilityLocks(updatedCatalog.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
 			await queryClient.invalidateQueries({
 				queryKey: ["admin-tool-metadata-catalog", searchSpaceId],
 			});
@@ -1222,11 +1284,11 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		const rowKey = `${row.layer}:${row.itemId}:${row.competitorId}`;
 		const desiredLabel =
 			row.layer === "tool"
-				? draftTools[row.itemId]?.name ?? ""
+				? (draftTools[row.itemId]?.name ?? "")
 				: row.layer === "intent"
-					? draftIntents[row.itemId]?.label ?? ""
+					? (draftIntents[row.itemId]?.label ?? "")
 					: row.layer === "agent"
-						? draftAgents[row.itemId]?.label ?? ""
+						? (draftAgents[row.itemId]?.label ?? "")
 						: "";
 		if (!desiredLabel.trim()) {
 			toast.message("Kunde inte hitta aktuellt namn/label för raden.");
@@ -1290,20 +1352,84 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			setSaveLockConflicts((rows) =>
 				rows.filter(
 					(conflict) =>
-						!(
-							conflict.layer === suggestion.layer && conflict.itemId === suggestion.item_id
-						)
+						!(conflict.layer === suggestion.layer && conflict.itemId === suggestion.item_id)
 				)
 			);
 			toast.success(`Säker rename applicerad: ${suggestion.suggested_label}`);
 		} catch (error) {
 			const message =
-				error instanceof Error && error.message
-					? error.message
-					: "Kunde inte hämta säker rename.";
+				error instanceof Error && error.message ? error.message : "Kunde inte hämta säker rename.";
 			toast.error(message);
 		} finally {
 			setApplyingSafeRenameKey(null);
+		}
+	};
+
+	const lockStableMetadataItems = async () => {
+		if (!data?.search_space_id) return;
+		setIsLockingStableItems(true);
+		try {
+			const response = await adminToolSettingsApiService.lockStableMetadataAuditItems({
+				search_space_id: data.search_space_id,
+				item_ids: [],
+			});
+			setStabilityLocks(response.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
+			if (!response.changed) {
+				toast.message("Inga nya stabila verktyg att låsa just nu.");
+				return;
+			}
+			toast.success(
+				`Stabilitetslås uppdaterade. Nya lås: ${response.newly_locked_item_ids.length}, upplåsta: ${response.newly_unlocked_item_ids.length}.`
+			);
+		} catch (error) {
+			const message =
+				error instanceof Error && error.message
+					? error.message
+					: "Kunde inte låsa stabila verktyg.";
+			toast.error(message);
+		} finally {
+			setIsLockingStableItems(false);
+		}
+	};
+
+	const unlockStableMetadataItems = async (itemIds: string[]) => {
+		if (!data?.search_space_id) return;
+		const normalizedIds = Array.from(
+			new Set(
+				itemIds
+					.map((itemId) => itemId.trim().toLocaleLowerCase())
+					.filter((itemId) => itemId.length > 0)
+			)
+		);
+		const singleId = normalizedIds.length === 1 ? normalizedIds[0] : null;
+		setIsUnlockingStableItems(true);
+		if (singleId) {
+			setUnlockingToolId(singleId);
+		}
+		try {
+			const response = await adminToolSettingsApiService.unlockMetadataAuditItems({
+				search_space_id: data.search_space_id,
+				item_ids: normalizedIds,
+				reason:
+					normalizedIds.length > 0
+						? "manual unlock from metadata catalog UI"
+						: "manual unlock all from metadata catalog UI",
+			});
+			setStabilityLocks(response.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
+			if (!response.changed) {
+				toast.message("Inga stabilitetslås matchade upplåsning.");
+				return;
+			}
+			toast.success(
+				`Låste upp ${response.newly_unlocked_item_ids.length} verktyg från stabilitetslås.`
+			);
+		} catch (error) {
+			const message =
+				error instanceof Error && error.message ? error.message : "Kunde inte låsa upp verktyg.";
+			toast.error(message);
+		} finally {
+			setIsUnlockingStableItems(false);
+			setUnlockingToolId(null);
 		}
 	};
 
@@ -1325,6 +1451,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				probe_generation_parallelism: probeGenerationParallelism,
 			});
 			setAuditResult(result);
+			setStabilityLocks(result.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
 			const nextAnnotations: Record<string, AuditAnnotationDraft> = {};
 			for (const probe of result.probes) {
 				nextAnnotations[probe.probe_id] = defaultAuditAnnotationForProbe(probe);
@@ -1429,9 +1556,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				tool_is_correct: draft.tool_is_correct,
 				corrected_tool_id: draft.tool_is_correct
 					? null
-					: (draft.corrected_tool_id ??
-						probe.tool.expected_label ??
-						probe.target_tool_id),
+					: (draft.corrected_tool_id ?? probe.tool.expected_label ?? probe.target_tool_id),
 				intent_score_breakdown: probe.intent.score_breakdown ?? [],
 				agent_score_breakdown: probe.agent.score_breakdown ?? [],
 				tool_score_breakdown: probe.tool.score_breakdown ?? [],
@@ -1439,16 +1564,14 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			};
 		});
 		const reviewedFailures = annotations.filter(
-			(item) =>
-				!item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
+			(item) => !item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
 		).length;
 		if (!reviewedFailures) {
 			toast.message("Markera minst en probe som fel innan du genererar forslag.");
 			return;
 		}
 		const failingAnnotations = annotations.filter(
-			(item) =>
-				!item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
+			(item) => !item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
 		);
 		setIsGeneratingAuditSuggestions(true);
 		try {
@@ -1541,12 +1664,11 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				llm_parallelism: suggestionParallelism,
 			});
 			setSeparationResult(response);
+			setStabilityLocks(response.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
 			if (autoApplySeparationDraft) {
 				applySeparationPatchesToDraft(response);
 			}
-			toast.success(
-				`Bottom-up separation klar (${formatMs(response.diagnostics?.total_ms)}).`
-			);
+			toast.success(`Bottom-up separation klar (${formatMs(response.diagnostics?.total_ms)}).`);
 		} catch (_error) {
 			toast.error("Kunde inte köra bottom-up separation.");
 		} finally {
@@ -1569,7 +1691,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			0,
 			Math.min(10, Number.parseInt(`${autoPatienceRounds}`, 10) || 0)
 		);
-		const dropThreshold = Math.max(0, Math.min(50, Number.parseFloat(`${autoAbortDropPp}`) || 0)) / 100;
+		const dropThreshold =
+			Math.max(0, Math.min(50, Number.parseFloat(`${autoAbortDropPp}`) || 0)) / 100;
 		const targetMode: AutoAuditTargetMode = autoTargetMode;
 
 		const summaryMeetsTargets = (summary: MetadataCatalogAuditRunResponse["summary"]) => {
@@ -1655,9 +1778,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					tool_is_correct: draft.tool_is_correct,
 					corrected_tool_id: draft.tool_is_correct
 						? null
-						: (draft.corrected_tool_id ??
-							probe.tool.expected_label ??
-							probe.target_tool_id),
+						: (draft.corrected_tool_id ?? probe.tool.expected_label ?? probe.target_tool_id),
 					intent_score_breakdown: probe.intent.score_breakdown ?? [],
 					agent_score_breakdown: probe.agent.score_breakdown ?? [],
 					tool_score_breakdown: probe.tool.score_breakdown ?? [],
@@ -1669,13 +1790,13 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		try {
 			const usedProbeQueryKeys = new Set<string>();
 			let anchorProbeSet: MetadataCatalogAuditAnchorProbeItem[] = [];
-			let toolPatchMap: Record<string, ToolMetadataUpdateItem> = Object.fromEntries(
+			const toolPatchMap: Record<string, ToolMetadataUpdateItem> = Object.fromEntries(
 				metadataPatchForDraft.map((item) => [item.tool_id, { ...item }])
 			);
-			let intentPatchMap: Record<string, IntentMetadataUpdateItem> = Object.fromEntries(
+			const intentPatchMap: Record<string, IntentMetadataUpdateItem> = Object.fromEntries(
 				intentMetadataPatchForDraft.map((item) => [item.intent_id, { ...item }])
 			);
-			let agentPatchMap: Record<string, AgentMetadataUpdateItem> = Object.fromEntries(
+			const agentPatchMap: Record<string, AgentMetadataUpdateItem> = Object.fromEntries(
 				agentMetadataPatchForDraft.map((item) => [item.agent_id, { ...item }])
 			);
 
@@ -1723,12 +1844,15 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				}
 				if (autoExcludeProbeHistoryBetweenRounds && !useAnchorSetThisRound) {
 					for (const probe of result.probes) {
-						const key = String(probe.query ?? "").trim().toLocaleLowerCase();
+						const key = String(probe.query ?? "")
+							.trim()
+							.toLocaleLowerCase();
 						if (key) usedProbeQueryKeys.add(key);
 					}
 				}
 				const currentAnnotations = buildDefaultAnnotations(result);
 				setAuditResult(result);
+				setStabilityLocks(result.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
 				setAuditAnnotations(currentAnnotations);
 				const monitorScore = monitorScoreForMode(result.summary, targetMode);
 				const meetsTarget = summaryMeetsTargets(result.summary);
@@ -1805,9 +1929,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					break;
 				}
 				if (dropTriggered) {
-					stopReason = `Avbruten i runda ${round}: tappade mer än ${(
-						dropThreshold * 100
-					).toFixed(1)} pp mot föregående.`;
+					stopReason = `Avbruten i runda ${round}: tappade mer än ${(dropThreshold * 100).toFixed(
+						1
+					)} pp mot föregående.`;
 					roundEntries.push({
 						...baseEntry,
 						note: `Tapp > ${(dropThreshold * 100).toFixed(1)} pp`,
@@ -1827,8 +1951,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 
 				const annotations = buildAutoSuggestionAnnotations(result);
 				const reviewedFailures = annotations.filter(
-					(item) =>
-						!item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
+					(item) => !item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
 				).length;
 				if (!reviewedFailures) {
 					stopReason = `Stopp i runda ${round}: inga fel kvar att optimera.`;
@@ -1840,8 +1963,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					break;
 				}
 				const failingAnnotations = annotations.filter(
-					(item) =>
-						!item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
+					(item) => !item.intent_is_correct || !item.agent_is_correct || !item.tool_is_correct
 				);
 
 				setAutoRunStatusText(`Autonom loop: genererar metadataförslag för runda ${round}...`);
@@ -1908,6 +2030,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			setDraftAgents((previous) => ({ ...previous, ...bestAgentPatchMap }));
 			if (bestAuditResult) {
 				setAuditResult(bestAuditResult);
+				setStabilityLocks(bestAuditResult.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
 				setAuditAnnotations(bestAuditAnnotations);
 			}
 			setAutoRunStatusText(stopReason);
@@ -2092,6 +2215,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							Andringar: {changedAgentIds.length + changedIntentIds.length + changedToolIds.length}
 						</Badge>
 						<Badge variant="outline">Version: {data.metadata_version_hash}</Badge>
+						<Badge variant={stabilityLocks.lock_mode_enabled ? "secondary" : "outline"}>
+							Stabilitetslås: {stabilityLockCount}
+						</Badge>
 						<Button
 							type="button"
 							variant="outline"
@@ -2104,13 +2230,27 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						</Button>
 						<Button
 							type="button"
+							variant="outline"
+							onClick={lockStableMetadataItems}
+							disabled={isLockingStableItems || isUnlockingStableItems}
+						>
+							{isLockingStableItems ? "Låser..." : "Lås stabila"}
+						</Button>
+						<Button
+							type="button"
+							variant="outline"
+							onClick={() => unlockStableMetadataItems([])}
+							disabled={isUnlockingStableItems || stabilityLockRows.length === 0}
+						>
+							{isUnlockingStableItems && !unlockingToolId ? "Låser upp..." : "Lås upp alla"}
+						</Button>
+						<Button
+							type="button"
 							className="gap-2"
 							onClick={saveAllMetadata}
 							disabled={
 								isSaving ||
-								(!changedAgentIds.length &&
-									!changedIntentIds.length &&
-									!changedToolIds.length)
+								(!changedAgentIds.length && !changedIntentIds.length && !changedToolIds.length)
 							}
 						>
 							<Save className="h-4 w-4" />
@@ -2205,8 +2345,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 														onClick={() => applySafeRenameSuggestion(row)}
 														disabled={
 															isSaving ||
-															(applyingSafeRenameKey ===
-																`${row.layer}:${row.itemId}:${row.competitorId}`)
+															applyingSafeRenameKey ===
+																`${row.layer}:${row.itemId}:${row.competitorId}`
 														}
 													>
 														{applyingSafeRenameKey ===
@@ -2222,6 +2362,74 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							</div>
 						</div>
 					) : null}
+					<div className="rounded-md border p-3 space-y-2">
+						<div className="flex flex-wrap items-center gap-2">
+							<Badge variant="secondary">Stabilitetslås</Badge>
+							<Badge variant="outline">
+								Lock mode: {stabilityLocks.lock_mode_enabled ? "på" : "av"}
+							</Badge>
+							<Badge variant="outline">
+								Auto-lock: {stabilityLocks.auto_lock_enabled ? "på" : "av"}
+							</Badge>
+							<Badge variant="outline">Låsta tools: {stabilityLockRows.length}</Badge>
+						</div>
+						{stabilityLockRows.length === 0 ? (
+							<p className="text-xs text-muted-foreground">
+								Inga stabilitetslåsta tools ännu. Kör metadata-audit över flera rundor och använd
+								sedan "Lås stabila".
+							</p>
+						) : (
+							<div className="overflow-x-auto">
+								<table className="min-w-full text-xs">
+									<thead>
+										<tr className="border-b text-muted-foreground">
+											<th className="px-2 py-1 text-left">Tool</th>
+											<th className="px-2 py-1 text-left">Nivå</th>
+											<th className="px-2 py-1 text-right">Top-1</th>
+											<th className="px-2 py-1 text-right">Top-K</th>
+											<th className="px-2 py-1 text-right">Margin</th>
+											<th className="px-2 py-1 text-left">Varför låst</th>
+											<th className="px-2 py-1 text-left">Unlock-trigger</th>
+											<th className="px-2 py-1 text-right">Åtgärd</th>
+										</tr>
+									</thead>
+									<tbody>
+										{stabilityLockRows.map((row) => (
+											<tr key={`stability-lock-${row.itemId}`} className="border-b last:border-b-0">
+												<td className="px-2 py-1 font-mono">{row.itemId}</td>
+												<td className="px-2 py-1">
+													<Badge variant={row.lockLevel === "hard" ? "secondary" : "outline"}>
+														{row.lockLevel === "hard" ? "hårt lås" : "stabil"}
+													</Badge>
+												</td>
+												<td className="px-2 py-1 text-right">{formatRate(row.top1Rate)}</td>
+												<td className="px-2 py-1 text-right">{formatRate(row.topKRate)}</td>
+												<td className="px-2 py-1 text-right">
+													{row.avgMargin != null ? row.avgMargin.toFixed(2) : "--"}
+												</td>
+												<td className="px-2 py-1">{row.lockReason ?? "-"}</td>
+												<td className="px-2 py-1">{row.unlockTrigger ?? "-"}</td>
+												<td className="px-2 py-1 text-right">
+													<Button
+														type="button"
+														size="sm"
+														variant="outline"
+														className="h-7 text-[11px]"
+														onClick={() => unlockStableMetadataItems([row.itemId])}
+														disabled={isUnlockingStableItems}
+													>
+														{isUnlockingStableItems && unlockingToolId === row.itemId
+															? "Låser upp..."
+															: "Lås upp"}
+													</Button>
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						)}
+					</div>
 				</CardContent>
 			</Card>
 
@@ -2229,8 +2437,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 				<CardHeader>
 					<CardTitle>Metadata Audit (Steg A + Steg B)</CardTitle>
 					<CardDescription>
-						Kor produktionens retrieval-vikter mot probe-queries och markera snabbt vad som
-						ar korrekt.
+						Kor produktionens retrieval-vikter mot probe-queries och markera snabbt vad som ar
+						korrekt.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
@@ -2240,14 +2448,11 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							<div className="rounded border p-2 space-y-1 max-h-32 overflow-auto text-xs">
 								{AUDIT_SCOPE_OPTIONS.map((scopeOption) => {
 									const checked = selectedAuditScopes.includes(scopeOption.id);
-									const disabled =
-										selectedAuditScopes.includes("all") && scopeOption.id !== "all";
+									const disabled = selectedAuditScopes.includes("all") && scopeOption.id !== "all";
 									return (
 										<label
 											key={`audit-scope-${scopeOption.id}`}
-											className={`flex items-center gap-2 ${
-												disabled ? "opacity-50" : ""
-											}`}
+											className={`flex items-center gap-2 ${disabled ? "opacity-50" : ""}`}
 										>
 											<input
 												type="checkbox"
@@ -2264,9 +2469,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							</div>
 						</div>
 						<div className="space-y-1 lg:col-span-2">
-							<Label htmlFor="audit-tool-ids-input">
-								Extra tool IDs (komma eller radbrytning)
-							</Label>
+							<Label htmlFor="audit-tool-ids-input">Extra tool IDs (komma eller radbrytning)</Label>
 							<Textarea
 								id="audit-tool-ids-input"
 								rows={4}
@@ -2364,9 +2567,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								LLM generated
 							</label>
 							<div className="flex flex-wrap gap-2 pt-1">
-								<Badge variant="outline">
-									Scope-val: {selectedAuditScopes.length}
-								</Badge>
+								<Badge variant="outline">Scope-val: {selectedAuditScopes.length}</Badge>
 								<Badge variant="outline">
 									Valda tool IDs:{" "}
 									{hasAllScopeSelected && customAuditToolIds.length === 0
@@ -2381,12 +2582,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							</div>
 						</div>
 						<div className="flex items-end">
-							<Button
-								type="button"
-								onClick={runAudit}
-								disabled={isRunningAudit}
-								className="w-full"
-							>
+							<Button type="button" onClick={runAudit} disabled={isRunningAudit} className="w-full">
 								{isRunningAudit ? "Korer..." : "Kor Steg A Audit"}
 							</Button>
 						</div>
@@ -2398,9 +2594,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								disabled={!auditResult || isGeneratingAuditSuggestions}
 								className="w-full"
 							>
-								{isGeneratingAuditSuggestions
-									? "Genererar..."
-									: "Kor Steg B Forslag"}
+								{isGeneratingAuditSuggestions ? "Genererar..." : "Kor Steg B Forslag"}
 							</Button>
 						</div>
 						<div className="space-y-2 lg:col-span-2">
@@ -2422,19 +2616,17 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								disabled={!auditResult || isRunningSeparation}
 								className="w-full"
 							>
-								{isRunningSeparation
-									? "Kör bottom-up..."
-									: "Kör Bottom-up Separation"}
+								{isRunningSeparation ? "Kör bottom-up..." : "Kör Bottom-up Separation"}
 							</Button>
 						</div>
 					</div>
 					<div className="rounded border p-3 space-y-3">
 						<div className="flex flex-wrap items-center gap-2">
 							<p className="text-sm font-medium">Autonom optimering (målstyrd loop)</p>
-							<Badge variant="outline">Nuvarande monitor: {(currentAutoMonitorScore * 100).toFixed(1)}%</Badge>
 							<Badge variant="outline">
-								Anchor probes: {autoUseAnchorProbeSet ? "på" : "av"}
+								Nuvarande monitor: {(currentAutoMonitorScore * 100).toFixed(1)}%
 							</Badge>
+							<Badge variant="outline">Anchor probes: {autoUseAnchorProbeSet ? "på" : "av"}</Badge>
 							{autoRunStatusText ? <Badge variant="secondary">{autoRunStatusText}</Badge> : null}
 						</div>
 						<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
@@ -2442,9 +2634,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								<Label>Mållägen</Label>
 								<select
 									value={autoTargetMode}
-									onChange={(event) =>
-										setAutoTargetMode(event.target.value as AutoAuditTargetMode)
-									}
+									onChange={(event) => setAutoTargetMode(event.target.value as AutoAuditTargetMode)}
 									className="h-9 rounded-md border bg-transparent px-3 text-sm w-full"
 								>
 									<option value="layered">Layer gates + total (rekommenderad)</option>
@@ -2515,29 +2705,23 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							<Label htmlFor="auto-use-anchor-probe-set" className="text-sm">
 								Använd anchor probe-set mellan rundor
 							</Label>
-							<Badge variant="outline">
-								{autoUseAnchorProbeSet ? "På" : "Av"}
-							</Badge>
+							<Badge variant="outline">{autoUseAnchorProbeSet ? "På" : "Av"}</Badge>
 						</div>
 						<div className="flex items-center gap-2">
 							<input
 								id="auto-exclude-history-between-rounds"
 								type="checkbox"
 								checked={autoExcludeProbeHistoryBetweenRounds}
-								onChange={(event) =>
-									setAutoExcludeProbeHistoryBetweenRounds(event.target.checked)
-								}
+								onChange={(event) => setAutoExcludeProbeHistoryBetweenRounds(event.target.checked)}
 							/>
 							<Label htmlFor="auto-exclude-history-between-rounds" className="text-sm">
 								Exkludera probe-historik mellan rundor
 							</Label>
-							<Badge variant="outline">
-								{autoExcludeProbeHistoryBetweenRounds ? "På" : "Av"}
-							</Badge>
+							<Badge variant="outline">{autoExcludeProbeHistoryBetweenRounds ? "På" : "Av"}</Badge>
 						</div>
 						<p className="text-xs text-muted-foreground">
-							Anchor-läge låser query-set från runda 1; från runda 2 används samma probes
-							för stabil jämförelse.
+							Anchor-läge låser query-set från runda 1; från runda 2 används samma probes för stabil
+							jämförelse.
 						</p>
 						<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
 							<div className="space-y-1">
@@ -2604,8 +2788,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										setAutoTargetAgentGivenIntentPct(
 											clampPercentage(
 												Number.parseFloat(
-													event.target.value ||
-														`${DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT}`
+													event.target.value || `${DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT}`
 												),
 												DEFAULT_AUTO_TARGET_AGENT_GIVEN_INTENT
 											)
@@ -2625,8 +2808,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										setAutoTargetToolGivenIntentAgentPct(
 											clampPercentage(
 												Number.parseFloat(
-													event.target.value ||
-														`${DEFAULT_AUTO_TARGET_TOOL_GIVEN_INTENT_AGENT}`
+													event.target.value || `${DEFAULT_AUTO_TARGET_TOOL_GIVEN_INTENT_AGENT}`
 												),
 												DEFAULT_AUTO_TARGET_TOOL_GIVEN_INTENT_AGENT
 											)
@@ -2639,15 +2821,12 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						{autoRoundHistory.length > 0 ? (
 							<div className="max-h-44 overflow-auto rounded border p-2 text-xs space-y-1">
 								{autoRoundHistory.map((item) => (
-									<div
-										key={`auto-round-${item.round}`}
-										className="rounded bg-muted/40 px-2 py-1"
-									>
+									<div key={`auto-round-${item.round}`} className="rounded bg-muted/40 px-2 py-1">
 										Runda {item.round}: I {(item.intentAccuracy * 100).toFixed(1)}% · A{" "}
 										{(item.agentAccuracy * 100).toFixed(1)}% · T{" "}
 										{(item.toolAccuracy * 100).toFixed(1)}% · Monitor{" "}
-										{(item.monitorScore * 100).toFixed(1)}% · Förslag{" "}
-										{item.toolSuggestions}/{item.intentSuggestions}/{item.agentSuggestions}
+										{(item.monitorScore * 100).toFixed(1)}% · Förslag {item.toolSuggestions}/
+										{item.intentSuggestions}/{item.agentSuggestions}
 										{item.step1TotalMs != null
 											? ` · Steg1 ${formatMs(item.step1TotalMs)} (Prep ${formatMs(
 													item.step1PreparationMs
@@ -2675,9 +2854,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									<p className="text-sm font-medium">Sammanfattning av utvecklingen</p>
 									<p className="text-xs text-muted-foreground">
 										Jämför runda {autoEvolutionSummary.olderRound} mot runda{" "}
-										{autoEvolutionSummary.newerRound}. Uppdateras live under autoloop.
-										{" "}Probes: {autoEvolutionSummary.olderProbes} →{" "}
-										{autoEvolutionSummary.newerProbes}
+										{autoEvolutionSummary.newerRound}. Uppdateras live under autoloop. Probes:{" "}
+										{autoEvolutionSummary.olderProbes} → {autoEvolutionSummary.newerProbes}
 									</p>
 								</div>
 								<div className="overflow-auto">
@@ -2748,12 +2926,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 											{autoToolRankingStability.rows.slice(0, 24).map((row) => (
 												<tr key={`stability-${row.toolId}`} className="border-t">
 													<td className="px-3 py-2 font-mono">{row.toolId}</td>
+													<td className="px-3 py-2">{formatSigned(row.rankShift, 2)}</td>
 													<td className="px-3 py-2">
-														{formatSigned(row.rankShift, 2)}
-													</td>
-													<td className="px-3 py-2">
-														{formatSigned(row.marginOlder, 2)} →{" "}
-														{formatSigned(row.marginNewer, 2)}
+														{formatSigned(row.marginOlder, 2)} → {formatSigned(row.marginNewer, 2)}
 													</td>
 													<td className="px-3 py-2">
 														{formatRate(row.top1Older)} → {formatRate(row.top1Newer)}
@@ -2791,8 +2966,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									Steg1 total: {formatMs(auditResult.diagnostics?.total_ms)}
 								</Badge>
 								<Badge variant="outline">
-									Steg1 Prep/QGen/Eval:{" "}
-									{formatMs(auditResult.diagnostics?.preparation_ms)}/
+									Steg1 Prep/QGen/Eval: {formatMs(auditResult.diagnostics?.preparation_ms)}/
 									{formatMs(auditResult.diagnostics?.probe_generation_ms)}/
 									{formatMs(auditResult.diagnostics?.evaluation_ms)}
 								</Badge>
@@ -2833,6 +3007,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								<Badge variant="outline">
 									Tool: {(auditResult.summary.tool_accuracy * 100).toFixed(1)}%
 								</Badge>
+								<Badge variant="outline">Stabilitetslås: {stabilityLockCount}</Badge>
 								{auditResult.summary.agent_accuracy_given_intent_correct != null ? (
 									<Badge variant="outline">
 										Agent | Intent OK:{" "}
@@ -2842,9 +3017,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								{auditResult.summary.tool_accuracy_given_intent_agent_correct != null ? (
 									<Badge variant="outline">
 										Tool | Intent+Agent OK:{" "}
-										{(
-											auditResult.summary.tool_accuracy_given_intent_agent_correct * 100
-										).toFixed(1)}
+										{(auditResult.summary.tool_accuracy_given_intent_agent_correct * 100).toFixed(
+											1
+										)}
 										%
 									</Badge>
 								) : null}
@@ -2853,8 +3028,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									{auditResult.summary.vector_recall_summary.probes_with_vector_candidates}/
 									{auditResult.summary.total_probes} (
 									{(
-										auditResult.summary.vector_recall_summary
-											.share_probes_with_vector_candidates * 100
+										auditResult.summary.vector_recall_summary.share_probes_with_vector_candidates *
+										100
 									).toFixed(1)}
 									%)
 								</Badge>
@@ -2862,9 +3037,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									Top1 fran vector:{" "}
 									{auditResult.summary.vector_recall_summary.probes_with_top1_from_vector}/
 									{auditResult.summary.total_probes} (
-									{(
-										auditResult.summary.vector_recall_summary.share_top1_from_vector * 100
-									).toFixed(1)}
+									{(auditResult.summary.vector_recall_summary.share_top1_from_vector * 100).toFixed(
+										1
+									)}
 									%)
 								</Badge>
 								<Badge variant="outline">
@@ -2876,15 +3051,13 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									}
 									/{auditResult.summary.total_probes} (
 									{(
-										auditResult.summary.vector_recall_summary
-											.share_expected_tool_in_vector_top_k * 100
+										auditResult.summary.vector_recall_summary.share_expected_tool_in_vector_top_k *
+										100
 									).toFixed(1)}
 									%)
 								</Badge>
 								<Badge
-									variant={
-										auditIssueSummary.probesWithAnyError > 0 ? "destructive" : "outline"
-									}
+									variant={auditIssueSummary.probesWithAnyError > 0 ? "destructive" : "outline"}
 								>
 									Probes med fel: {auditIssueSummary.probesWithAnyError}/
 									{auditIssueSummary.totalProbes}
@@ -2913,12 +3086,10 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									</Badge>
 									<Badge variant="secondary">
 										Semantic/Structural vikt:{" "}
-										{auditResult.summary.tool_embedding_context.semantic_weight?.toFixed(2) ??
-											"--"}
+										{auditResult.summary.tool_embedding_context.semantic_weight?.toFixed(2) ?? "--"}
 										/
-										{auditResult.summary.tool_embedding_context.structural_weight?.toFixed(
-											2
-										) ?? "--"}
+										{auditResult.summary.tool_embedding_context.structural_weight?.toFixed(2) ??
+											"--"}
 									</Badge>
 									{auditResult.summary.tool_embedding_context.context_fields.map((field) => (
 										<Badge key={`embedding-context-${field}`} variant="outline">
@@ -2942,8 +3113,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							<div className="rounded border p-3 space-y-2">
 								<p className="text-sm font-medium">Ranking stability (aktuell audit)</p>
 								<p className="text-xs text-muted-foreground">
-									Per tool: top-1/top-k träff, genomsnittlig expected-rank och margin mot
-									närmaste konkurrent.
+									Per tool: top-1/top-k träff, genomsnittlig expected-rank och margin mot närmaste
+									konkurrent.
 								</p>
 								<div className="overflow-x-auto">
 									<table className="min-w-full text-xs">
@@ -2968,24 +3139,34 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													return left.tool_id.localeCompare(right.tool_id, "sv");
 												})
 												.slice(0, 32)
-												.map((row) => (
-													<tr key={`tool-ranking-${row.tool_id}`} className="border-t">
-														<td className="px-3 py-2 font-mono">{row.tool_id}</td>
-														<td className="px-3 py-2">{row.probes}</td>
-														<td className="px-3 py-2">{formatRate(row.top1_rate ?? 0)}</td>
-														<td className="px-3 py-2">{formatRate(row.topk_rate ?? 0)}</td>
-														<td className="px-3 py-2">
-															{row.avg_expected_rank != null
-																? row.avg_expected_rank.toFixed(2)
-																: "--"}
-														</td>
-														<td className="px-3 py-2">
-															{row.avg_margin_vs_best_other != null
-																? row.avg_margin_vs_best_other.toFixed(2)
-																: "--"}
-														</td>
-													</tr>
-												))}
+												.map((row) => {
+													const isStableLocked = stabilityLockedToolById.has(
+														row.tool_id.toLocaleLowerCase()
+													);
+													return (
+														<tr key={`tool-ranking-${row.tool_id}`} className="border-t">
+															<td className="px-3 py-2">
+																<div className="flex flex-wrap items-center gap-2">
+																	<span className="font-mono">{row.tool_id}</span>
+																	{isStableLocked ? <Badge variant="secondary">Låst</Badge> : null}
+																</div>
+															</td>
+															<td className="px-3 py-2">{row.probes}</td>
+															<td className="px-3 py-2">{formatRate(row.top1_rate ?? 0)}</td>
+															<td className="px-3 py-2">{formatRate(row.topk_rate ?? 0)}</td>
+															<td className="px-3 py-2">
+																{row.avg_expected_rank != null
+																	? row.avg_expected_rank.toFixed(2)
+																	: "--"}
+															</td>
+															<td className="px-3 py-2">
+																{row.avg_margin_vs_best_other != null
+																	? row.avg_margin_vs_best_other.toFixed(2)
+																	: "--"}
+															</td>
+														</tr>
+													);
+												})}
 										</tbody>
 									</table>
 								</div>
@@ -3071,9 +3252,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 																: "--"}
 														</td>
 														<td className="px-3 py-2">{stage.applied_changes ?? 0}</td>
-														<td className="px-3 py-2">
-															{stage.candidate_decisions.length}
-														</td>
+														<td className="px-3 py-2">{stage.candidate_decisions.length}</td>
 													</tr>
 												))}
 											</tbody>
@@ -3192,8 +3371,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 														Math.min(
 															5,
 															Number.parseFloat(
-																event.target.value ||
-																	`${DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD}`
+																event.target.value || `${DEFAULT_AUDIT_LOW_MARGIN_THRESHOLD}`
 															)
 														)
 													)
@@ -3322,9 +3500,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													</p>
 													<p className="text-xs text-muted-foreground">
 														expected {probe.intent.expected_label ?? "-"} · margin{" "}
-														{probe.intent.margin != null
-															? probe.intent.margin.toFixed(2)
-															: "-"}
+														{probe.intent.margin != null ? probe.intent.margin.toFixed(2) : "-"}
 													</p>
 													<label className="flex items-center gap-2 text-xs">
 														<input
@@ -3343,9 +3519,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													{!annotation.intent_is_correct ? (
 														<select
 															value={
-																annotation.corrected_intent_id ??
-																probe.intent.expected_label ??
-																""
+																annotation.corrected_intent_id ?? probe.intent.expected_label ?? ""
 															}
 															onChange={(event) =>
 																updateAnnotationCorrectedLabel(
@@ -3375,9 +3549,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													</p>
 													<p className="text-xs text-muted-foreground">
 														expected {probe.agent.expected_label ?? "-"} · margin{" "}
-														{probe.agent.margin != null
-															? probe.agent.margin.toFixed(2)
-															: "-"}
+														{probe.agent.margin != null ? probe.agent.margin.toFixed(2) : "-"}
 													</p>
 													<label className="flex items-center gap-2 text-xs">
 														<input
@@ -3396,9 +3568,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													{!annotation.agent_is_correct ? (
 														<select
 															value={
-																annotation.corrected_agent_id ??
-																probe.agent.expected_label ??
-																""
+																annotation.corrected_agent_id ?? probe.agent.expected_label ?? ""
 															}
 															onChange={(event) =>
 																updateAnnotationCorrectedLabel(
@@ -3411,10 +3581,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 														>
 															<option value="">Valj agent...</option>
 															{auditAgentOptions.map((agentId) => (
-																<option
-																	key={`${probe.probe_id}-agent-${agentId}`}
-																	value={agentId}
-																>
+																<option key={`${probe.probe_id}-agent-${agentId}`} value={agentId}>
 																	{agentId}
 																</option>
 															))}
@@ -3428,9 +3595,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													</p>
 													<p className="text-xs text-muted-foreground">
 														expected {probe.tool.expected_label ?? probe.target_tool_id} · margin{" "}
-														{probe.tool.margin != null
-															? probe.tool.margin.toFixed(2)
-															: "-"}
+														{probe.tool.margin != null ? probe.tool.margin.toFixed(2) : "-"}
 													</p>
 													<p className="text-[11px] text-muted-foreground">
 														Vector top-{vectorDiagnostics.vector_top_k}:{" "}
@@ -3481,10 +3646,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 														>
 															<option value="">Valj tool...</option>
 															{auditToolOptions.map((toolId) => (
-																<option
-																	key={`${probe.probe_id}-tool-${toolId}`}
-																	value={toolId}
-																>
+																<option key={`${probe.probe_id}-tool-${toolId}`} value={toolId}>
 																	{toolId}
 																</option>
 															))}
@@ -3541,7 +3703,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									Payload:{" "}
 									{Number(
 										auditSuggestions.diagnostics?.annotations_payload_bytes ?? 0
-									).toLocaleString("sv")} B
+									).toLocaleString("sv")}{" "}
+									B
 								</Badge>
 								<Badge variant="outline">
 									Fail-kandidater (T/I/A):{" "}
@@ -3550,8 +3713,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 									{auditSuggestions.diagnostics?.agent_failure_candidates ?? 0}
 								</Badge>
 								<Badge variant="outline">
-									LLM parallel (req/eff):{" "}
-									{auditSuggestions.diagnostics?.llm_parallelism ?? 1}/
+									LLM parallel (req/eff): {auditSuggestions.diagnostics?.llm_parallelism ?? 1}/
 									{auditSuggestions.diagnostics?.llm_parallelism_effective ?? 1}
 								</Badge>
 								<Button
@@ -3566,9 +3728,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								<div className="space-y-2">
 									<p className="text-sm font-medium">Tool suggestions</p>
 									{auditSuggestions.tool_suggestions.map((suggestion) => {
-										const checked = selectedAuditSuggestionToolIds.has(
-											suggestion.tool_id
-										);
+										const checked = selectedAuditSuggestionToolIds.has(suggestion.tool_id);
 										return (
 											<div
 												key={`audit-suggestion-tool-${suggestion.tool_id}`}
@@ -3595,9 +3755,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								<div className="space-y-2">
 									<p className="text-sm font-medium">Intent suggestions</p>
 									{auditSuggestions.intent_suggestions.map((suggestion) => {
-										const checked = selectedAuditSuggestionIntentIds.has(
-											suggestion.intent_id
-										);
+										const checked = selectedAuditSuggestionIntentIds.has(suggestion.intent_id);
 										return (
 											<div
 												key={`audit-suggestion-intent-${suggestion.intent_id}`}
@@ -3624,9 +3782,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								<div className="space-y-2">
 									<p className="text-sm font-medium">Agent suggestions</p>
 									{auditSuggestions.agent_suggestions.map((suggestion) => {
-										const checked = selectedAuditSuggestionAgentIds.has(
-											suggestion.agent_id
-										);
+										const checked = selectedAuditSuggestionAgentIds.has(suggestion.agent_id);
 										return (
 											<div
 												key={`audit-suggestion-agent-${suggestion.agent_id}`}
@@ -3680,9 +3836,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										<h3 className="font-semibold">{draft.label}</h3>
 										<Badge variant="secondary">{draft.agent_id}</Badge>
 										{draft.prompt_key ? <Badge variant="outline">{draft.prompt_key}</Badge> : null}
-										{(item.has_override || changed) && (
-											<Badge variant="outline">override</Badge>
-										)}
+										{(item.has_override || changed) && <Badge variant="outline">override</Badge>}
 									</div>
 									<div className="space-y-2">
 										<Label htmlFor={`agent-label-${index}`}>Namn</Label>
@@ -3748,9 +3902,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 										) : (
 											<Badge variant="destructive">disabled</Badge>
 										)}
-										{(item.has_override || changed) && (
-											<Badge variant="outline">override</Badge>
-										)}
+										{(item.has_override || changed) && <Badge variant="outline">override</Badge>}
 									</div>
 									<div className="space-y-2">
 										<Label htmlFor={`intent-label-${index}`}>Namn</Label>
@@ -3810,6 +3962,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 								{category.tools.map((tool, index) => {
 									const draft = draftTools[tool.tool_id] ?? toToolUpdateItem(tool);
 									const changed = changedToolSet.has(tool.tool_id);
+									const stabilityLock = stabilityLockedToolById.get(
+										tool.tool_id.toLocaleLowerCase()
+									);
 									return (
 										<div key={tool.tool_id}>
 											{index > 0 ? <Separator className="my-4" /> : null}
@@ -3818,6 +3973,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													<h3 className="font-semibold">{draft.name}</h3>
 													<Badge variant="secondary">{draft.tool_id}</Badge>
 													<Badge variant="outline">{draft.category}</Badge>
+													{stabilityLock ? <Badge variant="secondary">Låst (stabil)</Badge> : null}
 													{(tool.has_override || changed) && (
 														<Badge variant="outline">override</Badge>
 													)}
@@ -3835,9 +3991,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													/>
 												</div>
 												<div className="space-y-2">
-													<Label htmlFor={`tool-description-${tool.tool_id}`}>
-														Beskrivning
-													</Label>
+													<Label htmlFor={`tool-description-${tool.tool_id}`}>Beskrivning</Label>
 													<Textarea
 														id={`tool-description-${tool.tool_id}`}
 														rows={3}

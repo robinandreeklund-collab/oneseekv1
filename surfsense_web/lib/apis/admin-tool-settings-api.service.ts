@@ -1,32 +1,34 @@
 import {
 	type MetadataCatalogAuditRunRequest,
-	type MetadataCatalogSeparationRequest,
-	type MetadataCatalogSafeRenameSuggestionRequest,
 	type MetadataCatalogAuditSuggestionRequest,
+	type MetadataCatalogSafeRenameSuggestionRequest,
 	type MetadataCatalogSafeRenameSuggestionResponse,
+	type MetadataCatalogSeparationRequest,
+	type MetadataCatalogStabilityLockActionRequest,
+	type MetadataCatalogStabilityLockActionResponse,
 	type MetadataCatalogUpdateRequest,
-	type ToolApplySuggestionsRequest,
-	type ToolAutoLoopRequest,
+	metadataCatalogAuditRunRequest,
+	metadataCatalogAuditRunResponse,
+	metadataCatalogAuditSuggestionRequest,
+	metadataCatalogAuditSuggestionResponse,
+	metadataCatalogResponse,
+	metadataCatalogSafeRenameSuggestionRequest,
+	metadataCatalogSafeRenameSuggestionResponse,
+	metadataCatalogSeparationRequest,
+	metadataCatalogSeparationResponse,
+	metadataCatalogStabilityLockActionRequest,
+	metadataCatalogStabilityLockActionResponse,
+	metadataCatalogUpdateRequest,
 	type ToolApiInputApplyPromptSuggestionsRequest,
 	type ToolApiInputEvaluationRequest,
+	type ToolApplySuggestionsRequest,
+	type ToolAutoLoopRequest,
 	type ToolEvalLibraryGenerateRequest,
 	type ToolEvaluationRequest,
 	type ToolRetrievalTuning,
 	type ToolSettingsUpdateRequest,
 	type ToolSuggestionRequest,
-	metadataCatalogAuditRunRequest,
-	metadataCatalogAuditRunResponse,
-	metadataCatalogSeparationRequest,
-	metadataCatalogSeparationResponse,
-	metadataCatalogSafeRenameSuggestionRequest,
-	metadataCatalogSafeRenameSuggestionResponse,
-	metadataCatalogAuditSuggestionRequest,
-	metadataCatalogAuditSuggestionResponse,
-	metadataCatalogResponse,
-	metadataCatalogUpdateRequest,
-	toolAutoLoopJobStatusResponse,
-	toolAutoLoopRequest,
-	toolAutoLoopStartResponse,
+	toolApiCategoriesResponse,
 	toolApiInputApplyPromptSuggestionsRequest,
 	toolApiInputApplyPromptSuggestionsResponse,
 	toolApiInputEvaluationJobStatusResponse,
@@ -35,15 +37,17 @@ import {
 	toolApiInputEvaluationStartResponse,
 	toolApplySuggestionsRequest,
 	toolApplySuggestionsResponse,
-	toolApiCategoriesResponse,
+	toolAutoLoopJobStatusResponse,
+	toolAutoLoopRequest,
+	toolAutoLoopStartResponse,
 	toolEvalLibraryFileResponse,
 	toolEvalLibraryGenerateRequest,
 	toolEvalLibraryGenerateResponse,
 	toolEvalLibraryListResponse,
+	toolEvaluationJobStatusResponse,
 	toolEvaluationRequest,
 	toolEvaluationResponse,
 	toolEvaluationStageHistoryResponse,
-	toolEvaluationJobStatusResponse,
 	toolEvaluationStartResponse,
 	toolRetrievalTuning,
 	toolRetrievalTuningResponse,
@@ -52,13 +56,12 @@ import {
 	toolSuggestionRequest,
 	toolSuggestionResponse,
 } from "@/contracts/types/admin-tool-settings.types";
-import { ValidationError } from "@/lib/error";
 import { baseApiService } from "@/lib/apis/base-api.service";
+import { ValidationError } from "@/lib/error";
 
 class AdminToolSettingsApiService {
 	async getToolApiCategories(searchSpaceId?: number) {
-		const query =
-			typeof searchSpaceId === "number" ? `?search_space_id=${searchSpaceId}` : "";
+		const query = typeof searchSpaceId === "number" ? `?search_space_id=${searchSpaceId}` : "";
 		return baseApiService.get(
 			`/api/v1/admin/tool-settings/api-categories${query}`,
 			toolApiCategoriesResponse
@@ -118,10 +121,7 @@ class AdminToolSettingsApiService {
 
 	async getToolSettings(searchSpaceId?: number) {
 		const query = typeof searchSpaceId === "number" ? `?search_space_id=${searchSpaceId}` : "";
-		return baseApiService.get(
-			`/api/v1/admin/tool-settings${query}`,
-			toolSettingsResponse
-		);
+		return baseApiService.get(`/api/v1/admin/tool-settings${query}`, toolSettingsResponse);
 	}
 
 	async getMetadataCatalog(searchSpaceId?: number) {
@@ -174,6 +174,40 @@ class AdminToolSettingsApiService {
 		return baseApiService.post(
 			"/api/v1/admin/tool-settings/metadata-audit/run",
 			metadataCatalogAuditRunResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async lockStableMetadataAuditItems(
+		request: MetadataCatalogStabilityLockActionRequest
+	): Promise<MetadataCatalogStabilityLockActionResponse> {
+		const parsed = metadataCatalogStabilityLockActionRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/metadata-audit/stability-locks/lock-stable",
+			metadataCatalogStabilityLockActionResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async unlockMetadataAuditItems(
+		request: MetadataCatalogStabilityLockActionRequest
+	): Promise<MetadataCatalogStabilityLockActionResponse> {
+		const parsed = metadataCatalogStabilityLockActionRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/metadata-audit/stability-locks/unlock",
+			metadataCatalogStabilityLockActionResponse,
 			{
 				body: parsed.data,
 			}
@@ -314,9 +348,7 @@ class AdminToolSettingsApiService {
 		);
 	}
 
-	async applyApiInputPromptSuggestions(
-		request: ToolApiInputApplyPromptSuggestionsRequest
-	) {
+	async applyApiInputPromptSuggestions(request: ToolApiInputApplyPromptSuggestionsRequest) {
 		const parsed = toolApiInputApplyPromptSuggestionsRequest.safeParse(request);
 		if (!parsed.success) {
 			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
