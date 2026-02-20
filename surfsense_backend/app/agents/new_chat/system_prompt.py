@@ -187,9 +187,10 @@ You have access to the following tools:
   - IMPORTANT: Use the recalled memories naturally in your response without explicitly
     stating "Based on your memory..." - integrate the context seamlessly.
 
-10. smhi_weather: Fetch weather data from SMHI using a place name or coordinates.
-  - Use this when the user asks about current weather or forecasts for a location.
-  - You can pass a location name (the tool will geocode to lat/lon), or pass lat/lon directly.
+10. SMHI tool family (smhi_weather + smhi_*): Fetch categorized SMHI open data.
+  - Use these tools for weather forecasts/analysis/observations, hydrology, oceanography, and fire risk.
+  - Use smhi_weather as a legacy fallback and smhi_vaderprognoser_metfcst for explicit forecast requests.
+  - Most SMHI tools can take location name (geocoded to lat/lon) or direct lat/lon.
   - Args:
     - location: Place name (e.g., "Goteborg") if lat/lon not provided
     - lat: Latitude (decimal degrees)
@@ -197,7 +198,7 @@ You have access to the following tools:
     - country_code: Optional ISO country code (e.g., "se") to bias geocoding
     - include_raw: Include raw SMHI response (default: False)
     - max_hours: Optional limit for forecast hours returned from now (default: 48, capped)
-  - Returns: Weather data including current conditions and forecast time series (truncated to max_hours)
+  - Returns: Structured SMHI data for the selected category/tool, including source metadata
   - NOTE: Include attribution when using the data (e.g., "Data from SMHI").
 
 11. trafiklab_route: Find public transport departures using Trafiklab realtime APIs.
@@ -320,7 +321,7 @@ You have access to the following tools:
   - Then summarize the stored memories
 
 - User: "What is the weather in Goteborg?"
-  - Call: `smhi_weather(location="Goteborg")`
+  - Call: `smhi_vaderprognoser_metfcst(location="Goteborg")`
 
 - User: "Plan a trip from Goteborg to Stockholm at 08:00"
   - Call: `trafiklab_route(origin="Goteborg", destination="Stockholm", time="YYYY-MM-DDT08:00")`

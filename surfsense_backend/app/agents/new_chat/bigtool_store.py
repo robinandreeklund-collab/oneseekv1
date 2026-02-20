@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -26,6 +27,7 @@ from app.agents.new_chat.marketplace_tools import (
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.services.reranker_service import RerankerService
 from app.services.cache_control import is_cache_disabled
@@ -53,6 +55,8 @@ class ToolIndexEntry:
     example_queries: list[str]
     category: str
     embedding: list[float] | None = None
+    semantic_embedding: list[float] | None = None
+    structural_embedding: list[float] | None = None
     base_path: str | None = None
 
 
@@ -256,6 +260,94 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "smhi",
         "temperatur",
     ],
+    "smhi_vaderprognoser_metfcst": [
+        "smhi",
+        "weather",
+        "vader",
+        "prognos",
+        "metfcst",
+        "pmp3g",
+        "temperatur",
+        "vind",
+        "nederbord",
+        "nederbörd",
+    ],
+    "smhi_vaderprognoser_snow1g": [
+        "smhi",
+        "weather",
+        "vader",
+        "snow",
+        "snö",
+        "sno",
+        "snow1g",
+        "snodjup",
+        "snödjup",
+    ],
+    "smhi_vaderanalyser_mesan2g": [
+        "smhi",
+        "weather",
+        "analys",
+        "mesan",
+        "mesan2g",
+        "metanalys",
+        "vind",
+        "moln",
+    ],
+    "smhi_vaderobservationer_metobs": [
+        "smhi",
+        "weather",
+        "observation",
+        "station",
+        "metobs",
+        "temperatur",
+        "lufttryck",
+    ],
+    "smhi_hydrologi_hydroobs": [
+        "smhi",
+        "hydrologi",
+        "hydroobs",
+        "vattenstånd",
+        "vattenstand",
+        "vattenforing",
+        "vattenföring",
+    ],
+    "smhi_hydrologi_pthbv": [
+        "smhi",
+        "hydrologi",
+        "pthbv",
+        "nederbord",
+        "nederbörd",
+        "temperatur",
+        "analys",
+    ],
+    "smhi_oceanografi_ocobs": [
+        "smhi",
+        "oceanografi",
+        "ocobs",
+        "hav",
+        "våghöjd",
+        "vaghojd",
+        "havsniva",
+        "havsnivå",
+    ],
+    "smhi_brandrisk_fwif": [
+        "smhi",
+        "brandrisk",
+        "fwif",
+        "fwi",
+        "isi",
+        "ffmc",
+        "prognos",
+    ],
+    "smhi_brandrisk_fwia": [
+        "smhi",
+        "brandrisk",
+        "fwia",
+        "fwi",
+        "isi",
+        "ffmc",
+        "analys",
+    ],
     "trafiklab_route": [
         "trafik",
         "resa",
@@ -340,13 +432,64 @@ class ToolRetrievalTuning:
     example_query_weight: float = 2.0
     namespace_boost: float = 3.0
     embedding_weight: float = 4.0
+    semantic_embedding_weight: float = 2.8
+    structural_embedding_weight: float = 1.2
     rerank_candidates: int = 24
     retrieval_feedback_db_enabled: bool = False
+    live_routing_enabled: bool = False
+    live_routing_phase: str = "shadow"
+    intent_candidate_top_k: int = 3
+    agent_candidate_top_k: int = 3
+    tool_candidate_top_k: int = 5
+    intent_lexical_weight: float = 1.0
+    intent_embedding_weight: float = 1.0
+    agent_auto_margin_threshold: float = 0.18
+    agent_auto_score_threshold: float = 0.55
+    tool_auto_margin_threshold: float = 0.25
+    tool_auto_score_threshold: float = 0.60
+    adaptive_threshold_delta: float = 0.08
+    adaptive_min_samples: int = 8
 
 
 DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
-_TOOL_EMBED_CACHE: dict[str, tuple[str, list[float]]] = {}
+_TOOL_EMBED_CACHE: dict[tuple[str, str], tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
+_VECTOR_RECALL_TOP_K = 5
+_LIVE_ROUTING_PHASES = {
+    "shadow",
+    "tool_gate",
+    "agent_auto",
+    "adaptive",
+    "intent_finetune",
+}
+_TOOL_AWARE_SEMANTIC_EMBEDDING_CONTEXT_FIELDS: tuple[str, ...] = (
+    "name_description_keywords_examples",
+)
+_TOOL_AWARE_STRUCTURAL_EMBEDDING_CONTEXT_FIELDS: tuple[str, ...] = (
+    "required_input_fields",
+    "input_field_types",
+    "example_input_json",
+    "expected_output_hint",
+)
+_TOOL_AWARE_EMBEDDING_CONTEXT_FIELDS: tuple[str, ...] = (
+    *_TOOL_AWARE_SEMANTIC_EMBEDDING_CONTEXT_FIELDS,
+    *_TOOL_AWARE_STRUCTURAL_EMBEDDING_CONTEXT_FIELDS,
+)
+
+
+def get_vector_recall_top_k() -> int:
+    return int(_VECTOR_RECALL_TOP_K)
+
+
+def get_tool_embedding_context_fields() -> list[str]:
+    return list(_TOOL_AWARE_EMBEDDING_CONTEXT_FIELDS)
+
+
+def get_tool_embedding_context_split_fields() -> dict[str, list[str]]:
+    return {
+        "semantic": list(_TOOL_AWARE_SEMANTIC_EMBEDDING_CONTEXT_FIELDS),
+        "structural": list(_TOOL_AWARE_STRUCTURAL_EMBEDDING_CONTEXT_FIELDS),
+    }
 
 
 def _normalize_text(text: str) -> str:
@@ -441,7 +584,7 @@ def _is_weather_tool(tool_id: str) -> bool:
     normalized = str(tool_id or "").strip().lower()
     if not normalized:
         return False
-    if normalized == "smhi_weather":
+    if normalized.startswith("smhi_"):
         return True
     if normalized.startswith("trafikverket_vader_"):
         return True
@@ -450,7 +593,7 @@ def _is_weather_tool(tool_id: str) -> bool:
 
 def _namespace_for_weather_tool(tool_id: str) -> tuple[str, ...]:
     normalized = str(tool_id or "").strip().lower()
-    if normalized == "smhi_weather":
+    if normalized.startswith("smhi_"):
         return ("tools", "weather", "smhi")
     if normalized.startswith("trafikverket_vader_"):
         return ("tools", "weather", "trafikverket_vader")
@@ -703,6 +846,46 @@ def normalize_retrieval_tuning(
     if isinstance(tuning, ToolRetrievalTuning):
         return tuning
     payload = tuning or {}
+    legacy_embedding_weight = _bounded_float(
+        payload.get("embedding_weight"),
+        default=DEFAULT_TOOL_RETRIEVAL_TUNING.embedding_weight,
+        min_value=0.0,
+        max_value=25.0,
+    )
+    semantic_raw = payload.get("semantic_embedding_weight")
+    structural_raw = payload.get("structural_embedding_weight")
+    if semantic_raw is None and structural_raw is None:
+        semantic_embedding_weight = legacy_embedding_weight * 0.7
+        structural_embedding_weight = legacy_embedding_weight * 0.3
+    else:
+        semantic_embedding_weight = _bounded_float(
+            semantic_raw,
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.semantic_embedding_weight,
+            min_value=0.0,
+            max_value=25.0,
+        )
+        structural_embedding_weight = _bounded_float(
+            structural_raw,
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.structural_embedding_weight,
+            min_value=0.0,
+            max_value=25.0,
+        )
+        if payload.get("embedding_weight") is not None:
+            current_total = semantic_embedding_weight + structural_embedding_weight
+            if current_total > 0:
+                scale = legacy_embedding_weight / current_total
+                semantic_embedding_weight *= scale
+                structural_embedding_weight *= scale
+            else:
+                semantic_embedding_weight = legacy_embedding_weight * 0.7
+                structural_embedding_weight = legacy_embedding_weight * 0.3
+    combined_embedding_weight = max(
+        0.0,
+        min(25.0, semantic_embedding_weight + structural_embedding_weight),
+    )
+    phase_raw = str(payload.get("live_routing_phase") or "").strip().lower()
+    if phase_raw not in _LIVE_ROUTING_PHASES:
+        phase_raw = DEFAULT_TOOL_RETRIEVAL_TUNING.live_routing_phase
     return ToolRetrievalTuning(
         name_match_weight=_bounded_float(
             payload.get("name_match_weight"),
@@ -734,12 +917,9 @@ def normalize_retrieval_tuning(
             min_value=0.0,
             max_value=10.0,
         ),
-        embedding_weight=_bounded_float(
-            payload.get("embedding_weight"),
-            default=DEFAULT_TOOL_RETRIEVAL_TUNING.embedding_weight,
-            min_value=0.0,
-            max_value=25.0,
-        ),
+        embedding_weight=combined_embedding_weight,
+        semantic_embedding_weight=semantic_embedding_weight,
+        structural_embedding_weight=structural_embedding_weight,
         rerank_candidates=_bounded_int(
             payload.get("rerank_candidates"),
             default=DEFAULT_TOOL_RETRIEVAL_TUNING.rerank_candidates,
@@ -749,6 +929,77 @@ def normalize_retrieval_tuning(
         retrieval_feedback_db_enabled=_coerce_bool(
             payload.get("retrieval_feedback_db_enabled"),
             default=DEFAULT_TOOL_RETRIEVAL_TUNING.retrieval_feedback_db_enabled,
+        ),
+        live_routing_enabled=_coerce_bool(
+            payload.get("live_routing_enabled"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.live_routing_enabled,
+        ),
+        live_routing_phase=phase_raw,
+        intent_candidate_top_k=_bounded_int(
+            payload.get("intent_candidate_top_k"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.intent_candidate_top_k,
+            min_value=2,
+            max_value=8,
+        ),
+        agent_candidate_top_k=_bounded_int(
+            payload.get("agent_candidate_top_k"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.agent_candidate_top_k,
+            min_value=2,
+            max_value=8,
+        ),
+        tool_candidate_top_k=_bounded_int(
+            payload.get("tool_candidate_top_k"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.tool_candidate_top_k,
+            min_value=2,
+            max_value=10,
+        ),
+        intent_lexical_weight=_bounded_float(
+            payload.get("intent_lexical_weight"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.intent_lexical_weight,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        intent_embedding_weight=_bounded_float(
+            payload.get("intent_embedding_weight"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.intent_embedding_weight,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        agent_auto_margin_threshold=_bounded_float(
+            payload.get("agent_auto_margin_threshold"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.agent_auto_margin_threshold,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        agent_auto_score_threshold=_bounded_float(
+            payload.get("agent_auto_score_threshold"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.agent_auto_score_threshold,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        tool_auto_margin_threshold=_bounded_float(
+            payload.get("tool_auto_margin_threshold"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.tool_auto_margin_threshold,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        tool_auto_score_threshold=_bounded_float(
+            payload.get("tool_auto_score_threshold"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.tool_auto_score_threshold,
+            min_value=0.0,
+            max_value=5.0,
+        ),
+        adaptive_threshold_delta=_bounded_float(
+            payload.get("adaptive_threshold_delta"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.adaptive_threshold_delta,
+            min_value=0.0,
+            max_value=1.0,
+        ),
+        adaptive_min_samples=_bounded_int(
+            payload.get("adaptive_min_samples"),
+            default=DEFAULT_TOOL_RETRIEVAL_TUNING.adaptive_min_samples,
+            min_value=1,
+            max_value=1000,
         ),
     )
 
@@ -802,6 +1053,174 @@ def _build_rerank_text(entry: ToolIndexEntry) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _tool_input_schema(tool: BaseTool) -> dict[str, Any]:
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+        try:
+            schema = args_schema.model_json_schema()
+            if isinstance(schema, dict):
+                return schema
+        except Exception:
+            pass
+    get_input_schema = getattr(tool, "get_input_schema", None)
+    if callable(get_input_schema):
+        try:
+            model = get_input_schema()
+            if model is not None and hasattr(model, "model_json_schema"):
+                schema = model.model_json_schema()
+                if isinstance(schema, dict):
+                    return schema
+        except Exception:
+            pass
+    return {}
+
+
+def _sample_value_for_schema(
+    field_name: str,
+    field_schema: dict[str, Any],
+    *,
+    depth: int = 0,
+) -> Any:
+    if depth > 2:
+        return "value"
+    field_type = str(field_schema.get("type") or "").strip().lower()
+    enum_values = field_schema.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        return enum_values[0]
+    lowered = str(field_name or "").strip().lower()
+    if "lat" in lowered:
+        return 59.33
+    if "lon" in lowered or "lng" in lowered:
+        return 18.06
+    if "date" in lowered:
+        return "2026-02-18"
+    if "time" in lowered:
+        return "12:00"
+    if "city" in lowered or "stad" in lowered:
+        return "Stockholm"
+    if "region" in lowered or "lan" in lowered:
+        return "Stockholms lan"
+    if field_type == "boolean":
+        return True
+    if field_type == "integer":
+        return 1
+    if field_type == "number":
+        return 1.0
+    if field_type == "array":
+        items = field_schema.get("items")
+        if isinstance(items, dict):
+            return [
+                _sample_value_for_schema(
+                    f"{field_name}_item",
+                    items,
+                    depth=depth + 1,
+                )
+            ]
+        return []
+    if field_type == "object":
+        properties = field_schema.get("properties")
+        if isinstance(properties, dict):
+            payload: dict[str, Any] = {}
+            for idx, (nested_name, nested_schema) in enumerate(properties.items()):
+                if idx >= 4:
+                    break
+                if isinstance(nested_schema, dict):
+                    payload[str(nested_name)] = _sample_value_for_schema(
+                        str(nested_name),
+                        nested_schema,
+                        depth=depth + 1,
+                    )
+            return payload
+        return {}
+    return "value"
+
+
+def _tool_aware_output_hint(entry: ToolIndexEntry) -> str:
+    category = str(entry.category or "").strip().lower()
+    if "weather" in category or category.startswith("smhi") or category.startswith("trafikverket_vader"):
+        return "Structured weather data by location and time."
+    if "trafik" in category:
+        return "Realtime traffic status, incidents and transport context."
+    if "statistics" in category or category.startswith("scb") or category.startswith("kolada"):
+        return "Tabular statistical indicators with dimensions and values."
+    if "politik" in category or "riksdag" in category:
+        return "Parliament documents, votes or speeches with metadata."
+    if "marketplace" in category:
+        return "Listings with title, price, location and source."
+    if "kartor" in category or "geo" in category:
+        return "Map artifact or geospatial payload."
+    if "bolag" in category:
+        return "Company profile details and registry fields."
+    return "Structured result relevant to requested tool operation."
+
+
+def _build_tool_semantic_embedding_text(entry: ToolIndexEntry) -> str:
+    return _build_rerank_text(entry)
+
+
+def _build_tool_structural_embedding_text(
+    entry: ToolIndexEntry,
+    *,
+    tool_schema: dict[str, Any],
+) -> str:
+    parts: list[str] = []
+    properties = tool_schema.get("properties")
+    required = tool_schema.get("required")
+    if isinstance(required, list) and required:
+        required_fields = [str(field).strip() for field in required if str(field).strip()]
+        if required_fields:
+            parts.append("Required input fields: " + ", ".join(required_fields))
+
+    if isinstance(properties, dict) and properties:
+        field_descriptions: list[str] = []
+        example_input: dict[str, Any] = {}
+        for idx, (field_name, field_schema) in enumerate(properties.items()):
+            if idx >= 8:
+                break
+            if not isinstance(field_schema, dict):
+                continue
+            normalized_name = str(field_name).strip()
+            if not normalized_name:
+                continue
+            field_type = str(field_schema.get("type") or "string").strip().lower()
+            field_descriptions.append(f"{normalized_name}:{field_type}")
+            example_input[normalized_name] = _sample_value_for_schema(
+                normalized_name,
+                field_schema,
+            )
+        if field_descriptions:
+            parts.append("Input schema fields: " + ", ".join(field_descriptions))
+        if example_input:
+            try:
+                parts.append(
+                    "Example input JSON: "
+                    + json.dumps(
+                        example_input,
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                )
+            except Exception:
+                pass
+
+    parts.append("Expected output: " + _tool_aware_output_hint(entry))
+    return "\n".join(part for part in parts if part)
+
+
+def _build_tool_embedding_text(
+    entry: ToolIndexEntry,
+    *,
+    tool_schema: dict[str, Any],
+) -> str:
+    semantic_text = _build_tool_semantic_embedding_text(entry)
+    structural_text = _build_tool_structural_embedding_text(
+        entry,
+        tool_schema=tool_schema,
+    )
+    return "\n".join(part for part in [semantic_text, structural_text] if part)
+
+
 def _normalize_vector(vector: Any) -> list[float] | None:
     if vector is None:
         return None
@@ -813,12 +1232,18 @@ def _normalize_vector(vector: Any) -> list[float] | None:
         return None
 
 
-def _get_embedding_for_tool(tool_id: str, text: str) -> list[float] | None:
+def _get_embedding_for_tool(
+    tool_id: str,
+    text: str,
+    *,
+    vector_kind: str = "semantic",
+) -> list[float] | None:
     if not text:
         return None
     text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    if not is_cache_disabled() and tool_id in _TOOL_EMBED_CACHE:
-        cached_text_hash, cached_embedding = _TOOL_EMBED_CACHE[tool_id]
+    cache_key = (tool_id, vector_kind)
+    if not is_cache_disabled() and cache_key in _TOOL_EMBED_CACHE:
+        cached_text_hash, cached_embedding = _TOOL_EMBED_CACHE[cache_key]
         if cached_text_hash == text_hash:
             return cached_embedding
     try:
@@ -833,7 +1258,7 @@ def _get_embedding_for_tool(tool_id: str, text: str) -> list[float] | None:
     if normalized is None:
         return None
     if not is_cache_disabled():
-        _TOOL_EMBED_CACHE[tool_id] = (text_hash, normalized)
+        _TOOL_EMBED_CACHE[cache_key] = (text_hash, normalized)
     return normalized
 
 
@@ -963,6 +1388,8 @@ def _run_smart_retrieval(
 
     primary_scored: list[tuple[str, float]] = []
     fallback_scored: list[tuple[str, float]] = []
+    primary_vector_scored: list[tuple[str, float]] = []
+    fallback_vector_scored: list[tuple[str, float]] = []
     breakdown_by_id: dict[str, dict[str, Any]] = {}
 
     for entry in tool_index:
@@ -973,9 +1400,18 @@ def _run_smart_retrieval(
             normalized_tuning,
         )
         semantic_score = 0.0
-        if query_embedding and entry.embedding:
-            semantic_score = _cosine_similarity(query_embedding, entry.embedding)
-        embedding_weighted = semantic_score * normalized_tuning.embedding_weight
+        structural_score = 0.0
+        semantic_embedding = entry.semantic_embedding or entry.embedding
+        structural_embedding = entry.structural_embedding
+        if query_embedding and semantic_embedding:
+            semantic_score = _cosine_similarity(query_embedding, semantic_embedding)
+        if query_embedding and structural_embedding:
+            structural_score = _cosine_similarity(query_embedding, structural_embedding)
+        semantic_weighted = semantic_score * normalized_tuning.semantic_embedding_weight
+        structural_weighted = (
+            structural_score * normalized_tuning.structural_embedding_weight
+        )
+        embedding_weighted = semantic_weighted + structural_weighted
         is_primary = any(
             _match_namespace(entry.namespace, prefix) for prefix in primary_namespaces
         )
@@ -1002,20 +1438,32 @@ def _run_smart_retrieval(
             "description_hits": breakdown["description_hits"],
             "example_hits": breakdown["example_hits"],
             "lexical_score": float(breakdown["lexical_score"]),
-            "embedding_score_raw": float(semantic_score),
+            "embedding_score_raw": float(semantic_score + structural_score),
             "embedding_score_weighted": float(embedding_weighted),
+            "semantic_embedding_score_raw": float(semantic_score),
+            "semantic_embedding_score_weighted": float(semantic_weighted),
+            "structural_embedding_score_raw": float(structural_score),
+            "structural_embedding_score_weighted": float(structural_weighted),
             "namespace_bonus": float(namespace_bonus),
             "retrieval_feedback_boost": float(retrieval_feedback_boost),
             "pre_rerank_score": float(pre_rerank_score),
             "namespace_scope": "primary" if is_primary else ("fallback" if is_fallback else "none"),
+            "lexical_candidate_selected": False,
+            "vector_recall_selected": False,
+            "vector_recall_rank": None,
+            "vector_only_candidate": False,
         }
         if is_primary:
             primary_scored.append((entry.tool_id, pre_rerank_score))
+            primary_vector_scored.append((entry.tool_id, float(embedding_weighted)))
         elif is_fallback:
             fallback_scored.append((entry.tool_id, pre_rerank_score))
+            fallback_vector_scored.append((entry.tool_id, float(embedding_weighted)))
 
     primary_scored.sort(key=lambda item: item[1], reverse=True)
     fallback_scored.sort(key=lambda item: item[1], reverse=True)
+    primary_vector_scored.sort(key=lambda item: item[1], reverse=True)
+    fallback_vector_scored.sort(key=lambda item: item[1], reverse=True)
 
     tool_index_by_id = {entry.tool_id: entry for entry in tool_index}
     scores_by_id = {tool_id: score for tool_id, score in primary_scored}
@@ -1042,6 +1490,37 @@ def _run_smart_retrieval(
             tool_id
             for tool_id, _ in fallback_scored[: normalized_tuning.rerank_candidates]
         ]
+
+    lexical_candidate_ids = list(candidate_ids)
+    lexical_candidate_set = set(lexical_candidate_ids)
+    for tool_id in lexical_candidate_ids:
+        if tool_id in breakdown_by_id:
+            breakdown_by_id[tool_id]["lexical_candidate_selected"] = True
+
+    vector_candidate_ids: list[str] = []
+    if query_embedding:
+        vector_source = [*primary_vector_scored, *fallback_vector_scored]
+        vector_source.sort(key=lambda item: item[1], reverse=True)
+        vector_candidate_ids = [
+            tool_id
+            for tool_id, semantic_score in vector_source
+        ][: max(1, int(_VECTOR_RECALL_TOP_K))]
+        for vector_rank, tool_id in enumerate(vector_candidate_ids):
+            if tool_id in breakdown_by_id:
+                breakdown_by_id[tool_id]["vector_recall_selected"] = True
+                breakdown_by_id[tool_id]["vector_recall_rank"] = vector_rank + 1
+                breakdown_by_id[tool_id]["vector_only_candidate"] = (
+                    tool_id not in lexical_candidate_set
+                )
+    if vector_candidate_ids:
+        deduped_candidates: list[str] = []
+        seen_candidate_ids: set[str] = set()
+        for tool_id in [*candidate_ids, *vector_candidate_ids]:
+            if tool_id in seen_candidate_ids:
+                continue
+            seen_candidate_ids.add(tool_id)
+            deduped_candidates.append(tool_id)
+        candidate_ids = deduped_candidates
 
     reranked_ids, rerank_scores = _rerank_tool_candidates(
         query,
@@ -1078,11 +1557,33 @@ def _run_smart_retrieval(
                 "embedding_score_weighted": float(
                     breakdown.get("embedding_score_weighted", 0.0)
                 ),
+                "semantic_embedding_score_raw": float(
+                    breakdown.get("semantic_embedding_score_raw", 0.0)
+                ),
+                "semantic_embedding_score_weighted": float(
+                    breakdown.get("semantic_embedding_score_weighted", 0.0)
+                ),
+                "structural_embedding_score_raw": float(
+                    breakdown.get("structural_embedding_score_raw", 0.0)
+                ),
+                "structural_embedding_score_weighted": float(
+                    breakdown.get("structural_embedding_score_weighted", 0.0)
+                ),
                 "namespace_bonus": float(breakdown.get("namespace_bonus", 0.0)),
                 "retrieval_feedback_boost": float(
                     breakdown.get("retrieval_feedback_boost", 0.0)
                 ),
                 "namespace_scope": breakdown.get("namespace_scope"),
+                "lexical_candidate_selected": bool(
+                    breakdown.get("lexical_candidate_selected", False)
+                ),
+                "vector_recall_selected": bool(
+                    breakdown.get("vector_recall_selected", False)
+                ),
+                "vector_recall_rank": breakdown.get("vector_recall_rank"),
+                "vector_only_candidate": bool(
+                    breakdown.get("vector_only_candidate", False)
+                ),
             }
         )
 
@@ -1166,6 +1667,7 @@ async def build_global_tool_registry(
     *,
     dependencies: dict[str, Any],
     include_mcp_tools: bool = True,
+    respect_lifecycle: bool = True,
 ) -> dict[str, BaseTool]:
     enabled_tools = list(get_default_enabled_tools())
     runtime_hitl = dependencies.get("runtime_hitl")
@@ -1192,6 +1694,7 @@ async def build_global_tool_registry(
         dependencies,
         enabled_tools=enabled_tools,
         include_mcp_tools=include_mcp_tools,
+        respect_lifecycle=respect_lifecycle,
     )
     registry: dict[str, BaseTool] = {tool.name: tool for tool in tools}
     if sandbox_config.enabled:
@@ -1254,6 +1757,7 @@ def build_tool_index(
     trafikverket_by_id = {
         definition.tool_id: definition for definition in TRAFIKVERKET_TOOL_DEFINITIONS
     }
+    smhi_by_id = {definition.tool_id: definition for definition in SMHI_TOOL_DEFINITIONS}
     geoapify_by_id = {
         definition.tool_id: definition for definition in GEOAPIFY_TOOL_DEFINITIONS
     }
@@ -1310,6 +1814,13 @@ def build_tool_index(
             example_queries = list(definition.example_queries)
             category = definition.category
             base_path = definition.base_path
+        if tool_id in smhi_by_id:
+            definition = smhi_by_id[tool_id]
+            description = definition.description
+            keywords = list(definition.keywords)
+            example_queries = list(definition.example_queries)
+            category = definition.category
+            base_path = definition.base_path
         if tool_id in geoapify_by_id:
             definition = geoapify_by_id[tool_id]
             description = definition.description
@@ -1331,7 +1842,7 @@ def build_tool_index(
             example_queries = list(definition.example_queries)
             category = definition.category
             base_path = None  # Marketplace tools don't use base_path
-        if _is_weather_tool(tool_id):
+        if _is_weather_tool(tool_id) and not tool_id.startswith("smhi_"):
             # Keep weather tools grouped together across providers.
             category = "weather"
         if metadata_overrides and tool_id in metadata_overrides:
@@ -1394,8 +1905,23 @@ def build_tool_index(
             example_queries=example_queries,
             category=category,
         )
-        embedding_text = _build_rerank_text(entry)
-        embedding = _get_embedding_for_tool(tool_id, embedding_text)
+        tool_schema = _tool_input_schema(tool)
+        semantic_embedding_text = _build_tool_semantic_embedding_text(entry)
+        structural_embedding_text = _build_tool_structural_embedding_text(
+            entry,
+            tool_schema=tool_schema,
+        )
+        semantic_embedding = _get_embedding_for_tool(
+            tool_id,
+            semantic_embedding_text,
+            vector_kind="semantic",
+        )
+        structural_embedding = _get_embedding_for_tool(
+            tool_id,
+            structural_embedding_text,
+            vector_kind="structural",
+        )
+        embedding = semantic_embedding or structural_embedding
         entries.append(
             ToolIndexEntry(
                 tool_id=entry.tool_id,
@@ -1406,6 +1932,8 @@ def build_tool_index(
                 example_queries=entry.example_queries,
                 category=entry.category,
                 embedding=embedding,
+                semantic_embedding=semantic_embedding,
+                structural_embedding=structural_embedding,
                 base_path=base_path,
             )
         )

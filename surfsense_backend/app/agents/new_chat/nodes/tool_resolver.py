@@ -10,6 +10,7 @@ def build_tool_resolver_node(
     latest_user_query_fn: Callable[[list[Any] | None], str],
     next_plan_step_fn: Callable[[dict[str, Any]], dict[str, Any] | None],
     focused_tool_ids_for_agent_fn: Callable[[str, str], list[str]],
+    resolve_tool_selection_for_agent_fn: Callable[..., dict[str, Any]] | None = None,
     weather_tool_ids: list[str],
     trafik_tool_ids: list[str],
 ):
@@ -54,10 +55,39 @@ def build_tool_resolver_node(
             resolver_query = latest_user_query or step_text
 
         resolved: dict[str, list[str]] = {}
+        tool_trace: dict[str, Any] = {}
         for agent_name in selected_agent_names[:3]:
-            focused_ids = focused_tool_ids_for_agent_fn(agent_name, resolver_query)
+            resolution_payload: dict[str, Any] = {}
+            if resolve_tool_selection_for_agent_fn is not None:
+                try:
+                    resolution_payload = dict(
+                        resolve_tool_selection_for_agent_fn(
+                            agent_name,
+                            resolver_query,
+                            state=state,
+                        )
+                        or {}
+                    )
+                except Exception:
+                    resolution_payload = {}
+            focused_ids = [
+                str(tool_id).strip()
+                for tool_id in list(resolution_payload.get("selected_tool_ids") or [])
+                if str(tool_id).strip()
+            ]
+            if not focused_ids:
+                focused_ids = focused_tool_ids_for_agent_fn(agent_name, resolver_query)
+            live_gate_mode = str(resolution_payload.get("mode") or "").strip().lower() in {
+                "auto_select",
+                "candidate_shortlist",
+            }
             if agent_name == "weather":
-                focused_ids = list(weather_tool_ids)
+                if live_gate_mode:
+                    focused_ids = [tool_id for tool_id in focused_ids if tool_id in weather_tool_ids]
+                    if not focused_ids:
+                        focused_ids = list(weather_tool_ids)
+                else:
+                    focused_ids = list(weather_tool_ids)
             elif agent_name == "trafik":
                 focused_ids = [tool_id for tool_id in focused_ids if tool_id in trafik_tool_ids]
                 if not focused_ids:
@@ -74,11 +104,22 @@ def build_tool_resolver_node(
                     break
             if deduped_ids:
                 resolved[agent_name] = deduped_ids
+            tool_trace[agent_name] = {
+                "mode": str(resolution_payload.get("mode") or "profile"),
+                "top1": resolution_payload.get("top1"),
+                "top2": resolution_payload.get("top2"),
+                "margin": resolution_payload.get("margin"),
+                "auto_selected": bool(resolution_payload.get("auto_selected", False)),
+                "selected": deduped_ids,
+            }
 
         if not resolved:
             resolved = dict(state.get("resolved_tools_by_agent") or {})
+        trace = dict(state.get("live_routing_trace") or {})
+        trace["tool"] = tool_trace
         return {
             "resolved_tools_by_agent": resolved,
+            "live_routing_trace": trace,
             "orchestration_phase": "execute",
             "targeted_missing_info": [],
             "pending_hitl_payload": {

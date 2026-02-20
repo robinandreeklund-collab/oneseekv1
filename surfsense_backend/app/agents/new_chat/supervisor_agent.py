@@ -4,6 +4,7 @@ import asyncio
 import ast
 import json
 import hashlib
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -28,7 +29,13 @@ from langgraph_bigtool.tools import InjectedState
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.new_chat.bigtool_store import _tokenize, _normalize_text
+from app.agents.new_chat.bigtool_store import (
+    _tokenize,
+    _normalize_text,
+    build_global_tool_registry,
+    build_tool_index,
+    smart_retrieve_tools_with_breakdown,
+)
 from app.agents.new_chat.bigtool_workers import WorkerConfig
 from app.agents.new_chat.nodes import (
     build_agent_resolver_node,
@@ -97,6 +104,7 @@ from app.agents.new_chat.statistics_prompts import build_statistics_system_promp
 from app.agents.new_chat.system_prompt import append_datetime_context
 from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
@@ -112,7 +120,15 @@ from app.services.retrieval_feedback_persistence_service import (
     load_retrieval_feedback_snapshot,
     persist_retrieval_feedback_signal,
 )
-from app.services.tool_retrieval_tuning_service import get_global_tool_retrieval_tuning
+from app.services.agent_metadata_service import get_effective_agent_metadata
+from app.services.tool_retrieval_tuning_service import (
+    get_global_tool_retrieval_tuning,
+    normalize_tool_retrieval_tuning,
+)
+from app.services.tool_metadata_service import get_global_tool_metadata_overrides
+
+
+logger = logging.getLogger(__name__)
 
 
 _AGENT_CACHE_TTL = timedelta(minutes=20)
@@ -184,6 +200,31 @@ _DYNAMIC_TOOL_QUERY_MARKERS = (
     "annons",
     "marknadsplats",
 )
+
+_LIVE_ROUTING_PHASE_ORDER = {
+    "shadow": 0,
+    "tool_gate": 1,
+    "agent_auto": 2,
+    "adaptive": 3,
+    "intent_finetune": 4,
+}
+
+
+def _normalize_live_routing_phase(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in _LIVE_ROUTING_PHASE_ORDER:
+        return normalized
+    return "shadow"
+
+
+def _live_phase_enabled(config: dict[str, Any], minimum_phase: str) -> bool:
+    enabled = bool(config.get("enabled", False))
+    if not enabled:
+        return False
+    current_phase = _normalize_live_routing_phase(config.get("phase"))
+    return _LIVE_ROUTING_PHASE_ORDER.get(current_phase, 0) >= _LIVE_ROUTING_PHASE_ORDER.get(
+        minimum_phase, 0
+    )
 
 
 @dataclass(frozen=True)
@@ -532,7 +573,7 @@ def _is_weather_tool_id(tool_id: str) -> bool:
     normalized = str(tool_id or "").strip().lower()
     if not normalized:
         return False
-    if normalized == "smhi_weather":
+    if normalized.startswith("smhi_"):
         return True
     if normalized.startswith("trafikverket_vader_"):
         return True
@@ -639,6 +680,73 @@ def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -
         return []
     focused = _select_focused_tool_profiles(agent_name, task, limit=limit)
     return [profile.tool_id for profile in focused if profile.tool_id]
+
+
+def _worker_available_tool_ids(worker: Any) -> list[str]:
+    raw_ids = getattr(worker, "available_tool_ids", None)
+    if not isinstance(raw_ids, (list, tuple, set)):
+        return []
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for tool_id in raw_ids:
+        normalized = str(tool_id or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+def _normalize_tool_id_list(
+    tool_ids: list[str] | tuple[str, ...] | set[str] | None,
+    *,
+    limit: int = 8,
+) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for tool_id in list(tool_ids or []):
+        normalized = str(tool_id or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+        if len(ordered) >= max(1, int(limit)):
+            break
+    return ordered
+
+
+def _fallback_tool_ids_for_tool(tool_id: str) -> list[str]:
+    normalized = str(tool_id or "").strip().lower()
+    if normalized.startswith("smhi_") and normalized != "smhi_weather":
+        return ["smhi_weather"]
+    return []
+
+
+def _sanitize_selected_tool_ids_for_worker(
+    worker: Any,
+    selected_tool_ids: list[str],
+    *,
+    fallback_tool_ids: list[str] | None = None,
+    limit: int = 8,
+) -> list[str]:
+    normalized_selected = _normalize_tool_id_list(selected_tool_ids, limit=limit)
+    available_ids = _worker_available_tool_ids(worker)
+    if not available_ids:
+        return normalized_selected
+
+    available_set = set(available_ids)
+    filtered = [tool_id for tool_id in normalized_selected if tool_id in available_set]
+    if filtered:
+        return filtered[: max(1, int(limit))]
+
+    fallback_candidates = _normalize_tool_id_list(fallback_tool_ids, limit=limit)
+    fallback_filtered = [
+        tool_id for tool_id in fallback_candidates if tool_id in available_set
+    ]
+    if fallback_filtered:
+        return fallback_filtered[: max(1, int(limit))]
+
+    return []
 
 
 def _format_prompt_template(
@@ -898,13 +1006,13 @@ def _rerank_agents(
     return ordered
 
 
-def _smart_retrieve_agents(
+def _smart_retrieve_agents_with_breakdown(
     query: str,
     *,
     agent_definitions: list[AgentDefinition],
     recent_agents: list[str] | None = None,
     limit: int = 5,
-) -> list[AgentDefinition]:
+) -> list[dict[str, Any]]:
     query_norm = _normalize_text(query)
     tokens = set(_tokenize(query_norm))
     query_embedding: list[float] | None = None
@@ -940,7 +1048,35 @@ def _smart_retrieve_agents(
     reranked = _rerank_agents(
         query, candidates=candidates, scores_by_name=scores_by_name
     )
-    return reranked[:limit]
+    reranked = reranked[: max(1, int(limit))]
+    return [
+        {
+            "definition": definition,
+            "name": definition.name,
+            "score": float(scores_by_name.get(definition.name, 0.0)),
+        }
+        for definition in reranked
+    ]
+
+
+def _smart_retrieve_agents(
+    query: str,
+    *,
+    agent_definitions: list[AgentDefinition],
+    recent_agents: list[str] | None = None,
+    limit: int = 5,
+) -> list[AgentDefinition]:
+    ranked = _smart_retrieve_agents_with_breakdown(
+        query,
+        agent_definitions=agent_definitions,
+        recent_agents=recent_agents,
+        limit=limit,
+    )
+    return [
+        item.get("definition")
+        for item in ranked
+        if isinstance(item, dict) and item.get("definition") is not None
+    ]
 
 
 def _build_cache_key(
@@ -1168,6 +1304,7 @@ class SupervisorState(TypedDict, total=False):
     worker_results: Annotated[list[dict[str, Any]], _replace]
     synthesis_drafts: Annotated[list[dict[str, Any]], _replace]
     retrieval_feedback: Annotated[dict[str, Any], _replace]
+    live_routing_trace: Annotated[dict[str, Any], _replace]
     targeted_missing_info: Annotated[list[str], _replace]
     selected_agents: Annotated[list[dict[str, Any]], _replace]
     resolved_tools_by_agent: Annotated[dict[str, list[str]], _replace]
@@ -1952,6 +2089,121 @@ def _coerce_supervisor_tool_calls(
             response_metadata=dict(getattr(message, "response_metadata", {}) or {}),
             id=getattr(message, "id", None),
         )
+
+
+def _sanitize_openai_tool_schema(value: Any) -> Any:
+    """
+    Remove null defaults/variants from tool schemas for strict Jinja templates.
+    LM Studio templates can fail on `default: null` or explicit `type: null`.
+    """
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            if item is None:
+                continue
+            if key == "default" and item is None:
+                continue
+            if key in {"anyOf", "oneOf", "allOf"} and isinstance(item, list):
+                variants: list[Any] = []
+                for variant in item:
+                    cleaned_variant = _sanitize_openai_tool_schema(variant)
+                    if (
+                        isinstance(cleaned_variant, dict)
+                        and str(cleaned_variant.get("type") or "").strip().lower()
+                        == "null"
+                    ):
+                        continue
+                    variants.append(cleaned_variant)
+                if variants:
+                    sanitized[key] = variants
+                continue
+            sanitized[key] = _sanitize_openai_tool_schema(item)
+
+        properties = sanitized.get("properties")
+        required = sanitized.get("required")
+        required_set = {
+            str(field).strip()
+            for field in (required if isinstance(required, list) else [])
+            if str(field).strip()
+        }
+        if isinstance(properties, dict):
+            cleaned_properties: dict[str, Any] = {}
+            for prop_name, prop_schema in properties.items():
+                normalized_name = str(prop_name or "").strip()
+                # Injected runtime state must never be exposed in the model-facing schema.
+                if normalized_name == "state":
+                    continue
+                cleaned_schema = _sanitize_openai_tool_schema(prop_schema)
+                if isinstance(cleaned_schema, dict):
+                    if (
+                        "default" not in cleaned_schema
+                        and normalized_name not in required_set
+                    ):
+                        inferred_default = _infer_non_null_tool_default(cleaned_schema)
+                        if inferred_default is not None:
+                            cleaned_schema["default"] = inferred_default
+                cleaned_properties[normalized_name] = cleaned_schema
+            sanitized["properties"] = cleaned_properties
+            properties = cleaned_properties
+
+        if isinstance(required, list) and isinstance(properties, dict):
+            kept_required = [
+                str(field).strip()
+                for field in required
+                if isinstance(field, str) and str(field).strip() in properties
+            ]
+            if kept_required:
+                sanitized["required"] = kept_required
+            else:
+                sanitized.pop("required", None)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_openai_tool_schema(item) for item in value]
+    return value
+
+
+def _infer_non_null_tool_default(schema: dict[str, Any]) -> Any:
+    type_name = str(schema.get("type") or "").strip().lower()
+    if type_name == "boolean":
+        return False
+    if type_name == "string":
+        return ""
+    if type_name == "integer":
+        return 0
+    if type_name == "number":
+        return 0
+    if type_name == "array":
+        return []
+    if type_name == "object":
+        return {}
+
+    for union_key in ("anyOf", "oneOf", "allOf"):
+        variants = schema.get(union_key)
+        if not isinstance(variants, list):
+            continue
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            inferred = _infer_non_null_tool_default(variant)
+            if inferred is not None:
+                return inferred
+    return None
+
+
+def _format_tools_for_llm_binding(tools: list[Any]) -> list[dict[str, Any]]:
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    formatted: list[dict[str, Any]] = []
+    for tool_def in tools:
+        try:
+            raw = tool_def if isinstance(tool_def, dict) else convert_to_openai_tool(tool_def)
+        except Exception:
+            logger.debug("Failed to convert tool for llm binding", exc_info=True)
+            continue
+        cleaned = _sanitize_openai_tool_schema(raw)
+        if isinstance(cleaned, dict):
+            formatted.append(cleaned)
+    return formatted
 
 
 _CRITIC_SNIPPET_RE = re.compile(
@@ -2933,7 +3185,7 @@ def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
             parts.append(f"entries={len(entries)}")
         return _truncate_for_prompt("; ".join(parts))
 
-    if name == "smhi_weather":
+    if name.startswith("smhi_"):
         location = payload.get("location") or {}
         location_name = ""
         if isinstance(location, dict):
@@ -2947,6 +3199,8 @@ def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
             if temperature is not None:
                 parts.append(f"temperature_c={temperature}")
             wind = summary.get("wind_speed_mps")
+            if wind is None:
+                wind = summary.get("wind_speed_m_s")
             if wind is not None:
                 parts.append(f"wind_mps={wind}")
         return _truncate_for_prompt("; ".join(parts))
@@ -3627,8 +3881,45 @@ async def create_supervisor_agent(
         ),
     ]
 
-    agent_by_name = {definition.name: definition for definition in agent_definitions}
     db_session = dependencies.get("db_session")
+    if isinstance(db_session, AsyncSession):
+        try:
+            effective_agent_metadata = await get_effective_agent_metadata(db_session)
+        except Exception:
+            effective_agent_metadata = []
+            logger.exception("Failed to load effective agent metadata overrides")
+        if effective_agent_metadata:
+            metadata_by_agent_id: dict[str, dict[str, Any]] = {}
+            for payload in effective_agent_metadata:
+                agent_id = str(payload.get("agent_id") or "").strip().lower()
+                if agent_id:
+                    metadata_by_agent_id[agent_id] = payload
+            if metadata_by_agent_id:
+                merged_agent_definitions: list[AgentDefinition] = []
+                for definition in agent_definitions:
+                    metadata = metadata_by_agent_id.get(definition.name)
+                    if not metadata:
+                        merged_agent_definitions.append(definition)
+                        continue
+                    merged_agent_definitions.append(
+                        AgentDefinition(
+                            name=definition.name,
+                            description=str(
+                                metadata.get("description") or definition.description
+                            ),
+                            keywords=[
+                                str(keyword)
+                                for keyword in (
+                                    metadata.get("keywords") or definition.keywords
+                                )
+                                if str(keyword).strip()
+                            ],
+                            namespace=definition.namespace,
+                            prompt_key=definition.prompt_key,
+                        )
+                    )
+                agent_definitions = merged_agent_definitions
+    agent_by_name = {definition.name: definition for definition in agent_definitions}
     connector_service = dependencies.get("connector_service")
     search_space_id = dependencies.get("search_space_id")
     user_id = dependencies.get("user_id")
@@ -3659,6 +3950,7 @@ async def create_supervisor_agent(
             return False
         return bool(default)
 
+    persisted_tuning = normalize_tool_retrieval_tuning(None)
     retrieval_feedback_db_enabled = False
     if isinstance(db_session, AsyncSession):
         try:
@@ -3668,6 +3960,7 @@ async def create_supervisor_agent(
             )
         except Exception:
             retrieval_feedback_db_enabled = False
+            persisted_tuning = normalize_tool_retrieval_tuning(None)
 
     if isinstance(runtime_hitl_cfg, dict) and (
         "retrieval_feedback_db_enabled" in runtime_hitl_cfg
@@ -3687,6 +3980,48 @@ async def create_supervisor_agent(
         except Exception:
             # Retrieval ranking should continue even when persistence is unavailable.
             retrieval_feedback_db_enabled = False
+
+    live_phase = _normalize_live_routing_phase(persisted_tuning.get("live_routing_phase"))
+    live_routing_enabled = bool(persisted_tuning.get("live_routing_enabled"))
+    if isinstance(runtime_hitl_cfg, dict) and "live_routing_enabled" in runtime_hitl_cfg:
+        live_routing_enabled = _coerce_bool(
+            runtime_hitl_cfg.get("live_routing_enabled"),
+            default=live_routing_enabled,
+        )
+    if isinstance(runtime_hitl_cfg, dict) and "live_routing_phase" in runtime_hitl_cfg:
+        live_phase = _normalize_live_routing_phase(
+            runtime_hitl_cfg.get("live_routing_phase")
+        )
+    live_routing_config: dict[str, Any] = {
+        "enabled": bool(live_routing_enabled),
+        "phase": live_phase,
+        "phase_index": int(_LIVE_ROUTING_PHASE_ORDER.get(live_phase, 0)),
+        "intent_top_k": int(persisted_tuning.get("intent_candidate_top_k") or 3),
+        "agent_top_k": int(persisted_tuning.get("agent_candidate_top_k") or 3),
+        "tool_top_k": int(persisted_tuning.get("tool_candidate_top_k") or 5),
+        "intent_lexical_weight": float(
+            persisted_tuning.get("intent_lexical_weight") or 1.0
+        ),
+        "intent_embedding_weight": float(
+            persisted_tuning.get("intent_embedding_weight") or 1.0
+        ),
+        "agent_auto_margin_threshold": float(
+            persisted_tuning.get("agent_auto_margin_threshold") or 0.18
+        ),
+        "agent_auto_score_threshold": float(
+            persisted_tuning.get("agent_auto_score_threshold") or 0.55
+        ),
+        "tool_auto_margin_threshold": float(
+            persisted_tuning.get("tool_auto_margin_threshold") or 0.25
+        ),
+        "tool_auto_score_threshold": float(
+            persisted_tuning.get("tool_auto_score_threshold") or 0.60
+        ),
+        "adaptive_threshold_delta": float(
+            persisted_tuning.get("adaptive_threshold_delta") or 0.08
+        ),
+        "adaptive_min_samples": int(persisted_tuning.get("adaptive_min_samples") or 8),
+    }
 
     subagent_enabled = _coerce_bool(
         runtime_hitl_cfg.get("subagent_enabled"),
@@ -3842,7 +4177,7 @@ async def create_supervisor_agent(
             success=bool(success),
         )
 
-    weather_tool_ids = ["smhi_weather"]
+    weather_tool_ids = [definition.tool_id for definition in SMHI_TOOL_DEFINITIONS]
     weather_tool_ids.extend(
         definition.tool_id
         for definition in TRAFIKVERKET_TOOL_DEFINITIONS
@@ -3855,6 +4190,140 @@ async def create_supervisor_agent(
         for definition in TRAFIKVERKET_TOOL_DEFINITIONS
         if definition.tool_id not in weather_tool_id_set
     ]
+    live_tool_index = []
+    if isinstance(db_session, AsyncSession):
+        try:
+            global_tool_registry = await build_global_tool_registry(
+                dependencies=dependencies,
+                include_mcp_tools=True,
+            )
+            metadata_overrides = await get_global_tool_metadata_overrides(db_session)
+            live_tool_index = build_tool_index(
+                global_tool_registry,
+                metadata_overrides=metadata_overrides,
+            )
+        except Exception:
+            live_tool_index = []
+
+    def _adaptive_tool_margin_threshold(tool_id: str, base_threshold: float) -> float:
+        if not _live_phase_enabled(live_routing_config, "adaptive"):
+            return base_threshold
+        rows = list(retrieval_feedback_store.snapshot().get("rows") or [])
+        normalized_tool_id = str(tool_id or "").strip().lower()
+        successes = 0
+        failures = 0
+        for row in rows:
+            if str(row.get("tool_id") or "").strip().lower() != normalized_tool_id:
+                continue
+            try:
+                successes += max(0, int(row.get("successes") or 0))
+                failures += max(0, int(row.get("failures") or 0))
+            except Exception:
+                continue
+        total = successes + failures
+        min_samples = max(1, int(live_routing_config.get("adaptive_min_samples") or 8))
+        if total < min_samples:
+            return base_threshold
+        quality = (successes - failures) / total
+        delta = max(
+            0.0,
+            min(1.0, float(live_routing_config.get("adaptive_threshold_delta") or 0.08)),
+        )
+        if quality <= 0.0:
+            return min(5.0, base_threshold + delta)
+        if quality >= 0.5:
+            return max(0.0, base_threshold - delta)
+        return base_threshold
+
+    def _resolve_live_tool_selection_for_agent(
+        agent_name: str,
+        task: str,
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        fallback_ids = _focused_tool_ids_for_agent(agent_name, task, limit=6)
+        if not _live_phase_enabled(live_routing_config, "shadow"):
+            return {
+                "selected_tool_ids": fallback_ids,
+                "mode": "profile",
+                "auto_selected": False,
+            }
+        if not live_tool_index:
+            return {
+                "selected_tool_ids": fallback_ids,
+                "mode": "profile",
+                "auto_selected": False,
+            }
+        worker_cfg = worker_configs.get(str(agent_name or "").strip().lower())
+        if worker_cfg is None:
+            return {
+                "selected_tool_ids": fallback_ids,
+                "mode": "profile",
+                "auto_selected": False,
+            }
+        tool_top_k = max(2, min(int(live_routing_config.get("tool_top_k") or 5), 10))
+        ranked_ids, retrieval_breakdown = smart_retrieve_tools_with_breakdown(
+            task,
+            tool_index=live_tool_index,
+            primary_namespaces=worker_cfg.primary_namespaces,
+            fallback_namespaces=worker_cfg.fallback_namespaces,
+            limit=max(2, tool_top_k),
+            tuning=persisted_tuning,
+        )
+        candidate_ids = [
+            str(tool_id).strip()
+            for tool_id in ranked_ids
+            if str(tool_id).strip()
+        ][:tool_top_k]
+        top1 = candidate_ids[0] if candidate_ids else None
+        top2 = candidate_ids[1] if len(candidate_ids) > 1 else None
+        score_by_id: dict[str, float] = {}
+        for row in list(retrieval_breakdown or []):
+            tool_id = str(row.get("tool_id") or "").strip()
+            if not tool_id:
+                continue
+            score_by_id[tool_id] = float(
+                row.get("pre_rerank_score") or row.get("score") or 0.0
+            )
+        top1_score = score_by_id.get(top1 or "", 0.0)
+        top2_score = score_by_id.get(top2 or "", 0.0)
+        margin = (top1_score - top2_score) if top1 and top2 else None
+        base_threshold = float(live_routing_config.get("tool_auto_margin_threshold") or 0.25)
+        dynamic_threshold = (
+            _adaptive_tool_margin_threshold(top1 or "", base_threshold)
+            if top1
+            else base_threshold
+        )
+        auto_score_threshold = float(
+            live_routing_config.get("tool_auto_score_threshold") or 0.60
+        )
+        apply_gate = _live_phase_enabled(live_routing_config, "tool_gate")
+        should_auto = bool(
+            apply_gate
+            and top1
+            and margin is not None
+            and margin >= dynamic_threshold
+            and top1_score >= auto_score_threshold
+        )
+        if apply_gate and candidate_ids:
+            selected_tool_ids = [top1] if should_auto and top1 else candidate_ids
+            mode = "auto_select" if should_auto else "candidate_shortlist"
+        else:
+            selected_tool_ids = fallback_ids
+            mode = "shadow" if _live_phase_enabled(live_routing_config, "shadow") else "profile"
+        return {
+            "selected_tool_ids": selected_tool_ids,
+            "mode": mode,
+            "auto_selected": bool(should_auto),
+            "top1": top1,
+            "top2": top2,
+            "top1_score": float(top1_score),
+            "top2_score": float(top2_score),
+            "margin": margin,
+            "threshold": float(dynamic_threshold),
+            "candidate_ids": candidate_ids,
+            "phase": str(live_routing_config.get("phase") or "shadow"),
+        }
 
     def _hitl_enabled(stage: str) -> bool:
         if not bool(runtime_hitl_cfg.get("enabled", True)):
@@ -3960,6 +4429,20 @@ async def create_supervisor_agent(
                 "tool_id": tool_id,
                 "agent": selected_agent_name,
             }
+        selected_tool_ids_for_worker = _sanitize_selected_tool_ids_for_worker(
+            worker,
+            [tool_id],
+            fallback_tool_ids=_fallback_tool_ids_for_tool(tool_id),
+            limit=1,
+        )
+        if not selected_tool_ids_for_worker:
+            return {
+                "status": "failed",
+                "reason": "tool_unavailable",
+                "tool_id": tool_id,
+                "agent": selected_agent_name,
+                "probability": probability,
+            }
 
         cached_payload = episodic_store.get(tool_id=tool_id, query=latest_user_query)
         if isinstance(cached_payload, dict):
@@ -4027,7 +4510,10 @@ async def create_supervisor_agent(
         if prompt:
             worker_messages.append(SystemMessage(content=prompt))
         worker_messages.append(HumanMessage(content=latest_user_query))
-        worker_state = {"messages": worker_messages, "selected_tool_ids": [tool_id]}
+        worker_state = {
+            "messages": worker_messages,
+            "selected_tool_ids": selected_tool_ids_for_worker,
+        }
         turn_key = _current_turn_key(state)
         base_thread_id = str(dependencies.get("thread_id") or "thread")
         worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
@@ -5174,6 +5660,7 @@ async def create_supervisor_agent(
             )
         resolved_tools_map = injected_state.get("resolved_tools_by_agent")
         selected_tool_ids: list[str] = []
+        tool_selection_meta: dict[str, Any] = {}
         if isinstance(resolved_tools_map, dict):
             candidate_tools = resolved_tools_map.get(name) or resolved_tools_map.get(
                 requested_name
@@ -5185,9 +5672,26 @@ async def create_supervisor_agent(
                     if str(tool_id).strip()
                 ][:8]
         if not selected_tool_ids:
-            selected_tool_ids = _focused_tool_ids_for_agent(name, task, limit=6)
+            tool_selection_meta = _resolve_live_tool_selection_for_agent(
+                name,
+                task,
+                state=injected_state,
+            )
+            selected_tool_ids = [
+                str(tool_id).strip()
+                for tool_id in list(tool_selection_meta.get("selected_tool_ids") or [])
+                if str(tool_id).strip()
+            ][:8]
+        live_tool_gate_active = _live_phase_enabled(live_routing_config, "tool_gate")
         if name == "weather":
-            selected_tool_ids = list(weather_tool_ids)
+            if live_tool_gate_active:
+                selected_tool_ids = [
+                    tool_id for tool_id in selected_tool_ids if tool_id in weather_tool_ids
+                ]
+                if not selected_tool_ids:
+                    selected_tool_ids = list(weather_tool_ids)
+            else:
+                selected_tool_ids = list(weather_tool_ids)
         if name == "trafik":
             selected_tool_ids = [
                 tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
@@ -5200,6 +5704,28 @@ async def create_supervisor_agent(
             task=task,
             limit=8,
         )
+        fallback_tool_ids: list[str] = []
+        if name == "weather":
+            fallback_tool_ids = list(weather_tool_ids)
+        elif name == "trafik":
+            fallback_tool_ids = list(trafik_tool_ids)
+        selected_tool_ids = _sanitize_selected_tool_ids_for_worker(
+            worker,
+            selected_tool_ids,
+            fallback_tool_ids=fallback_tool_ids,
+            limit=8,
+        )
+        if _live_phase_enabled(live_routing_config, "shadow"):
+            logger.info(
+                "live-routing tool-selection phase=%s agent=%s mode=%s top1=%s top2=%s margin=%s selected=%s",
+                live_routing_config.get("phase"),
+                name,
+                str(tool_selection_meta.get("mode") or "resolved"),
+                str(tool_selection_meta.get("top1") or ""),
+                str(tool_selection_meta.get("top2") or ""),
+                tool_selection_meta.get("margin"),
+                ",".join(selected_tool_ids[:5]),
+            )
         filesystem_sandbox_task = _is_filesystem_sandbox_task(name, task)
         explicit_file_read_requested = (
             filesystem_sandbox_task
@@ -5676,6 +6202,17 @@ async def create_supervisor_agent(
                     ),
                 }
             )
+        if _live_phase_enabled(live_routing_config, "shadow"):
+            logger.info(
+                "live-routing tool-outcome phase=%s agent=%s mode=%s predicted_top1=%s margin=%s worker_top1=%s used_count=%s",
+                live_routing_config.get("phase"),
+                name,
+                str(tool_selection_meta.get("mode") or "resolved"),
+                str(tool_selection_meta.get("top1") or ""),
+                tool_selection_meta.get("margin"),
+                (used_tool_names[0] if used_tool_names else ""),
+                len(used_tool_names),
+            )
         if (
             not filesystem_sandbox_task
             and str(result_contract.get("status") or "").strip().lower() in {
@@ -5901,6 +6438,7 @@ async def create_supervisor_agent(
                     )
                 resolved_tools_map = injected_state.get("resolved_tools_by_agent")
                 selected_tool_ids: list[str] = []
+                tool_selection_meta: dict[str, Any] = {}
                 if isinstance(resolved_tools_map, dict):
                     candidate_tools = resolved_tools_map.get(agent_name) or resolved_tools_map.get(
                         requested_agent_name
@@ -5912,11 +6450,32 @@ async def create_supervisor_agent(
                             if str(tool_id).strip()
                         ][:8]
                 if not selected_tool_ids:
-                    selected_tool_ids = _focused_tool_ids_for_agent(
-                        agent_name, task, limit=6
+                    tool_selection_meta = _resolve_live_tool_selection_for_agent(
+                        agent_name,
+                        task,
+                        state=injected_state,
                     )
+                    selected_tool_ids = [
+                        str(tool_id).strip()
+                        for tool_id in list(tool_selection_meta.get("selected_tool_ids") or [])
+                        if str(tool_id).strip()
+                    ][:8]
+                if not selected_tool_ids:
+                    selected_tool_ids = _focused_tool_ids_for_agent(
+                        agent_name,
+                        task,
+                        limit=6,
+                    )
+                live_tool_gate_active = _live_phase_enabled(live_routing_config, "tool_gate")
                 if agent_name == "weather":
-                    selected_tool_ids = list(weather_tool_ids)
+                    if live_tool_gate_active:
+                        selected_tool_ids = [
+                            tool_id for tool_id in selected_tool_ids if tool_id in weather_tool_ids
+                        ]
+                        if not selected_tool_ids:
+                            selected_tool_ids = list(weather_tool_ids)
+                    else:
+                        selected_tool_ids = list(weather_tool_ids)
                 if agent_name == "trafik":
                     selected_tool_ids = [
                         tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
@@ -5929,6 +6488,28 @@ async def create_supervisor_agent(
                     task=task,
                     limit=8,
                 )
+                fallback_tool_ids: list[str] = []
+                if agent_name == "weather":
+                    fallback_tool_ids = list(weather_tool_ids)
+                elif agent_name == "trafik":
+                    fallback_tool_ids = list(trafik_tool_ids)
+                selected_tool_ids = _sanitize_selected_tool_ids_for_worker(
+                    worker,
+                    selected_tool_ids,
+                    fallback_tool_ids=fallback_tool_ids,
+                    limit=8,
+                )
+                if _live_phase_enabled(live_routing_config, "shadow"):
+                    logger.info(
+                        "live-routing tool-selection phase=%s agent=%s mode=%s top1=%s top2=%s margin=%s selected=%s",
+                        live_routing_config.get("phase"),
+                        agent_name,
+                        str(tool_selection_meta.get("mode") or "resolved"),
+                        str(tool_selection_meta.get("top1") or ""),
+                        str(tool_selection_meta.get("top2") or ""),
+                        tool_selection_meta.get("margin"),
+                        ",".join(selected_tool_ids[:5]),
+                    )
                 filesystem_sandbox_task = _is_filesystem_sandbox_task(
                     agent_name, task
                 )
@@ -6188,6 +6769,17 @@ async def create_supervisor_agent(
                             ),
                         }
                     )
+                if _live_phase_enabled(live_routing_config, "shadow"):
+                    logger.info(
+                        "live-routing tool-outcome phase=%s agent=%s mode=%s predicted_top1=%s margin=%s worker_top1=%s used_count=%s",
+                        live_routing_config.get("phase"),
+                        agent_name,
+                        str(tool_selection_meta.get("mode") or "resolved"),
+                        str(tool_selection_meta.get("top1") or ""),
+                        tool_selection_meta.get("margin"),
+                        (used_tool_names[0] if used_tool_names else ""),
+                        len(used_tool_names),
+                    )
                 if (
                     not filesystem_sandbox_task
                     and str(result_contract.get("status") or "").strip().lower() in {
@@ -6326,7 +6918,9 @@ async def create_supervisor_agent(
         for spec in EXTERNAL_MODEL_SPECS:
             tool_registry[spec.tool_name] = _build_compare_external_tool(spec)
 
-    llm_with_tools = llm.bind_tools(list(tool_registry.values()))
+    llm_with_tools = llm.bind_tools(
+        _format_tools_for_llm_binding(list(tool_registry.values()))
+    )
     tool_node = ToolNode(tool_registry.values())
 
     resolve_intent_node = build_intent_resolver_node(
@@ -6345,6 +6939,7 @@ async def create_supervisor_agent(
         build_trivial_response_fn=_build_trivial_response_for_intent,
         route_default_agent_fn=_route_default_agent_for_intent,
         coerce_resolved_intent_fn=_coerce_resolved_intent_for_query,
+        live_routing_config=live_routing_config,
     )
 
     resolve_agents_node = build_agent_resolver_node(
@@ -6355,11 +6950,13 @@ async def create_supervisor_agent(
         route_allowed_agents_fn=_route_allowed_agents,
         route_default_agent_fn=_route_default_agent,
         smart_retrieve_agents_fn=_smart_retrieve_agents,
+        smart_retrieve_agents_with_scores_fn=_smart_retrieve_agents_with_breakdown,
         agent_definitions=agent_definitions,
         agent_by_name=agent_by_name,
         agent_payload_fn=_agent_payload,
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
+        live_routing_config=live_routing_config,
     )
 
     planner_node = build_planner_node(
@@ -6381,6 +6978,7 @@ async def create_supervisor_agent(
         tool_resolver_prompt_template=tool_resolver_prompt_template,
         latest_user_query_fn=_latest_user_query,
         next_plan_step_fn=_next_plan_step,
+        resolve_tool_selection_for_agent_fn=_resolve_live_tool_selection_for_agent,
         focused_tool_ids_for_agent_fn=(
             lambda agent_name, task: _prioritize_sandbox_code_tools(
                 _focused_tool_ids_for_agent(agent_name, task, limit=6),

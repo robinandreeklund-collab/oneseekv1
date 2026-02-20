@@ -539,162 +539,177 @@ function ConditionIcon({
 // Tool UI
 // ============================================================================
 
+function renderSmhiWeatherUI({
+	args,
+	result,
+	status,
+}: {
+	args: SmhiWeatherArgs;
+	result: SmhiWeatherResult | undefined;
+	status: any;
+}) {
+	if (status.type === "running" || status.type === "requires-action") {
+		return <WeatherLoading />;
+	}
+
+	if (status.type === "incomplete") {
+		if (status.reason === "cancelled") {
+			return (
+				<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
+					<p className="line-through">Weather lookup cancelled</p>
+				</div>
+			);
+		}
+		if (status.reason === "error") {
+			return (
+				<WeatherErrorState
+					error={typeof status.error === "string" ? status.error : "An error occurred"}
+				/>
+			);
+		}
+	}
+
+	if (!result) {
+		return <WeatherLoading />;
+	}
+
+	if (result.error || result.status === "error") {
+		return <WeatherErrorState error={result.error || "Weather lookup failed"} />;
+	}
+
+	const locationName =
+		result.location?.name ||
+		result.location?.display_name ||
+		args.location ||
+		(result.location?.lat && result.location?.lon
+			? `${result.location.lat}, ${result.location.lon}`
+			: "Unknown location");
+	const summary = result.current?.summary || {};
+	const parameters = result.current?.parameters || {};
+	const temperature =
+		getValue(summary.temperature_c) ?? getValue(parameters.t as unknown);
+	const windSpeed =
+		getValue(summary.wind_speed_m_s) ?? getValue(parameters.ws as unknown);
+	const humidity =
+		getValue(summary.relative_humidity) ?? getValue(parameters.r as unknown);
+	const pressure =
+		getValue(summary.pressure_hpa) ?? getValue(parameters.msl as unknown);
+	const symbol =
+		getValue(summary.weather_symbol) ?? getValue(parameters.Wsymb2 as unknown);
+	const isDaytime = isDaytimeFromIso(result.current?.valid_time || undefined);
+	const phase = resolveDayPhase(result.current?.valid_time || undefined);
+	const timeseries = Array.isArray(result.timeseries) ? result.timeseries : [];
+	const hourlyForecast = buildHourlyForecast(timeseries);
+	const dailyForecast = buildDailyForecast(timeseries);
+	const condition = resolveWeatherCondition(symbol);
+	const conditionLabel = resolveConditionLabel(condition, isDaytime);
+	const updatedAt = result.current?.valid_time;
+
+	return (
+		<Card className="my-4 w-full">
+			<CardContent className="p-4">
+				<div className="mb-4">
+					<WeatherScene condition={condition} phase={phase} />
+				</div>
+				<div className="flex items-start justify-between gap-4">
+					<div>
+						<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+							<span className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 px-2 py-1 text-xs text-white">
+								<ConditionIcon condition={condition} isDaytime={isDaytime} />
+								<span>{conditionLabel}</span>
+							</span>
+							<span className="text-xs">SMHI weather</span>
+						</div>
+						<h3 className="mt-1 text-lg font-semibold">{locationName}</h3>
+						{updatedAt && (
+							<p className="text-xs text-muted-foreground mt-1">Updated: {updatedAt}</p>
+						)}
+					</div>
+					<div className="text-right">
+						<div className="text-3xl font-semibold">
+							{temperature !== undefined ? `${temperature}°C` : "--"}
+						</div>
+						<div className="mt-1 text-xs text-muted-foreground">
+							{windSpeed !== undefined ? `Wind ${windSpeed} m/s` : "Wind --"}
+						</div>
+					</div>
+				</div>
+
+				<div className="mt-3 grid grid-cols-2 gap-2 text-sm text-muted-foreground">
+					<div>Humidity: {humidity !== undefined ? `${humidity}%` : "--"}</div>
+					<div>Pressure: {pressure !== undefined ? `${pressure} hPa` : "--"}</div>
+				</div>
+
+				{hourlyForecast.length > 0 && (
+					<div className="mt-4 rounded-lg border border-border/60 bg-background/60 p-3">
+						<p className="text-xs font-semibold text-muted-foreground">Next hours</p>
+						<div className="mt-2 flex flex-wrap gap-3">
+							{hourlyForecast.map((entry) => {
+								const entryCondition = resolveWeatherCondition(entry.symbol);
+								const entryIsDay = isDaytimeFromIso(entry.time);
+								return (
+									<div
+										key={`hour-${entry.time}`}
+										className="flex min-w-[72px] flex-col items-center gap-1 text-xs text-muted-foreground"
+									>
+										<span>{formatHour(entry.time)}</span>
+										<div className="rounded-full bg-slate-900/70 p-1.5">
+											<ConditionIcon condition={entryCondition} isDaytime={entryIsDay} />
+										</div>
+										<span className="text-foreground">
+											{entry.temp !== undefined ? `${entry.temp}°C` : "--"}
+										</span>
+									</div>
+								);
+							})}
+						</div>
+					</div>
+				)}
+
+				{dailyForecast.length > 1 && (
+					<div className="mt-3 rounded-lg border border-border/60 bg-background/60 p-3">
+						<p className="text-xs font-semibold text-muted-foreground">Next days</p>
+						<div className="mt-2 flex flex-wrap gap-3">
+							{dailyForecast.map((entry) => {
+								const entryCondition = resolveWeatherCondition(entry.symbol);
+								const entryIsDay = isDaytimeFromIso(entry.time);
+								return (
+									<div
+										key={`day-${entry.date}`}
+										className="flex min-w-[80px] flex-col items-center gap-1 text-xs text-muted-foreground"
+									>
+										<span>{formatWeekday(entry.time)}</span>
+										<div className="rounded-full bg-slate-900/70 p-1.5">
+											<ConditionIcon condition={entryCondition} isDaytime={entryIsDay} />
+										</div>
+										<span className="text-foreground">
+											{entry.minTemp !== undefined && entry.maxTemp !== undefined
+												? `${entry.minTemp}°C / ${entry.maxTemp}°C`
+												: "--"}
+										</span>
+									</div>
+								);
+							})}
+						</div>
+					</div>
+				)}
+
+				{result.attribution && (
+					<Badge variant="secondary" className="mt-3 w-fit">
+						{result.attribution}
+					</Badge>
+				)}
+			</CardContent>
+		</Card>
+	);
+}
+
 export const SmhiWeatherToolUI = makeAssistantToolUI<SmhiWeatherArgs, SmhiWeatherResult>({
 	toolName: "smhi_weather",
-	render: function SmhiWeatherUI({ args, result, status }) {
-		if (status.type === "running" || status.type === "requires-action") {
-			return <WeatherLoading />;
-		}
+	render: renderSmhiWeatherUI,
+});
 
-		if (status.type === "incomplete") {
-			if (status.reason === "cancelled") {
-				return (
-					<div className="my-4 rounded-xl border border-muted p-4 text-muted-foreground w-full">
-						<p className="line-through">Weather lookup cancelled</p>
-					</div>
-				);
-			}
-			if (status.reason === "error") {
-				return (
-					<WeatherErrorState
-						error={typeof status.error === "string" ? status.error : "An error occurred"}
-					/>
-				);
-			}
-		}
-
-		if (!result) {
-			return <WeatherLoading />;
-		}
-
-		if (result.error || result.status === "error") {
-			return <WeatherErrorState error={result.error || "Weather lookup failed"} />;
-		}
-
-		const locationName =
-			result.location?.name ||
-			result.location?.display_name ||
-			args.location ||
-			(result.location?.lat && result.location?.lon
-				? `${result.location.lat}, ${result.location.lon}`
-				: "Unknown location");
-		const summary = result.current?.summary || {};
-		const parameters = result.current?.parameters || {};
-		const temperature =
-			getValue(summary.temperature_c) ?? getValue(parameters.t as unknown);
-		const windSpeed =
-			getValue(summary.wind_speed_m_s) ?? getValue(parameters.ws as unknown);
-		const humidity =
-			getValue(summary.relative_humidity) ?? getValue(parameters.r as unknown);
-		const pressure =
-			getValue(summary.pressure_hpa) ?? getValue(parameters.msl as unknown);
-		const symbol =
-			getValue(summary.weather_symbol) ?? getValue(parameters.Wsymb2 as unknown);
-		const isDaytime = isDaytimeFromIso(result.current?.valid_time || undefined);
-		const phase = resolveDayPhase(result.current?.valid_time || undefined);
-		const timeseries = Array.isArray(result.timeseries) ? result.timeseries : [];
-		const hourlyForecast = buildHourlyForecast(timeseries);
-		const dailyForecast = buildDailyForecast(timeseries);
-		const condition = resolveWeatherCondition(symbol);
-		const conditionLabel = resolveConditionLabel(condition, isDaytime);
-		const updatedAt = result.current?.valid_time;
-
-		return (
-			<Card className="my-4 w-full">
-				<CardContent className="p-4">
-					<div className="mb-4">
-						<WeatherScene condition={condition} phase={phase} />
-					</div>
-					<div className="flex items-start justify-between gap-4">
-						<div>
-							<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-								<span className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 px-2 py-1 text-xs text-white">
-									<ConditionIcon condition={condition} isDaytime={isDaytime} />
-									<span>{conditionLabel}</span>
-								</span>
-								<span className="text-xs">SMHI weather</span>
-							</div>
-							<h3 className="mt-1 text-lg font-semibold">{locationName}</h3>
-							{updatedAt && (
-								<p className="text-xs text-muted-foreground mt-1">Updated: {updatedAt}</p>
-							)}
-						</div>
-						<div className="text-right">
-							<div className="text-3xl font-semibold">
-								{temperature !== undefined ? `${temperature}°C` : "--"}
-							</div>
-							<div className="mt-1 text-xs text-muted-foreground">
-								{windSpeed !== undefined ? `Wind ${windSpeed} m/s` : "Wind --"}
-							</div>
-						</div>
-					</div>
-
-					<div className="mt-3 grid grid-cols-2 gap-2 text-sm text-muted-foreground">
-						<div>Humidity: {humidity !== undefined ? `${humidity}%` : "--"}</div>
-						<div>Pressure: {pressure !== undefined ? `${pressure} hPa` : "--"}</div>
-					</div>
-
-					{hourlyForecast.length > 0 && (
-						<div className="mt-4 rounded-lg border border-border/60 bg-background/60 p-3">
-							<p className="text-xs font-semibold text-muted-foreground">Next hours</p>
-							<div className="mt-2 flex flex-wrap gap-3">
-								{hourlyForecast.map((entry) => {
-									const entryCondition = resolveWeatherCondition(entry.symbol);
-									const entryIsDay = isDaytimeFromIso(entry.time);
-									return (
-										<div
-											key={`hour-${entry.time}`}
-											className="flex min-w-[72px] flex-col items-center gap-1 text-xs text-muted-foreground"
-										>
-											<span>{formatHour(entry.time)}</span>
-											<div className="rounded-full bg-slate-900/70 p-1.5">
-												<ConditionIcon condition={entryCondition} isDaytime={entryIsDay} />
-											</div>
-											<span className="text-foreground">
-												{entry.temp !== undefined ? `${entry.temp}°C` : "--"}
-											</span>
-										</div>
-									);
-								})}
-							</div>
-						</div>
-					)}
-
-					{dailyForecast.length > 1 && (
-						<div className="mt-3 rounded-lg border border-border/60 bg-background/60 p-3">
-							<p className="text-xs font-semibold text-muted-foreground">Next days</p>
-							<div className="mt-2 flex flex-wrap gap-3">
-								{dailyForecast.map((entry) => {
-									const entryCondition = resolveWeatherCondition(entry.symbol);
-									const entryIsDay = isDaytimeFromIso(entry.time);
-									return (
-										<div
-											key={`day-${entry.date}`}
-											className="flex min-w-[80px] flex-col items-center gap-1 text-xs text-muted-foreground"
-										>
-											<span>{formatWeekday(entry.time)}</span>
-											<div className="rounded-full bg-slate-900/70 p-1.5">
-												<ConditionIcon condition={entryCondition} isDaytime={entryIsDay} />
-											</div>
-											<span className="text-foreground">
-												{entry.minTemp !== undefined && entry.maxTemp !== undefined
-													? `${entry.minTemp}°C / ${entry.maxTemp}°C`
-													: "--"}
-											</span>
-										</div>
-									);
-								})}
-							</div>
-						</div>
-					)}
-
-					{result.attribution && (
-						<Badge variant="secondary" className="mt-3 w-fit">
-							{result.attribution}
-						</Badge>
-					)}
-				</CardContent>
-			</Card>
-		);
-	},
+export const SmhiMetfcstToolUI = makeAssistantToolUI<SmhiWeatherArgs, SmhiWeatherResult>({
+	toolName: "smhi_vaderprognoser_metfcst",
+	render: renderSmhiWeatherUI,
 });

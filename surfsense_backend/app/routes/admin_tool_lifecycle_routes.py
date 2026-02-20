@@ -127,19 +127,24 @@ async def list_tool_lifecycle(
     
     # Get all lifecycle statuses
     statuses = await get_all_tool_lifecycle_statuses(session)
-    
-    # If empty, initialize with all registered tools
-    if not statuses:
-        from app.agents.new_chat.tools.registry import get_all_tool_names
-        
-        tool_names = get_all_tool_names()
-        if tool_names:
+
+    # Ensure lifecycle table is backfilled with any newly registered tools.
+    # Previous behavior only initialized when table was empty, which skipped
+    # newly added tools in existing environments.
+    from app.agents.new_chat.tools.registry import get_all_tool_names
+
+    registered_tool_ids = [str(tool_id).strip() for tool_id in get_all_tool_names() if str(tool_id).strip()]
+    if registered_tool_ids:
+        existing_tool_ids = {status.tool_id for status in statuses}
+        missing_tool_ids = [
+            tool_id for tool_id in registered_tool_ids if tool_id not in existing_tool_ids
+        ]
+        if missing_tool_ids:
             await initialize_tool_lifecycle_statuses(
-                session, 
-                tool_names, 
-                default_status=ToolLifecycleStatus.REVIEW
+                session,
+                missing_tool_ids,
+                default_status=ToolLifecycleStatus.REVIEW,
             )
-            # Re-fetch after initialization
             statuses = await get_all_tool_lifecycle_statuses(session)
     
     # Calculate summary stats

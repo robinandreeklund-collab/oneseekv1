@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 import json
 import re
@@ -12,6 +13,8 @@ from langchain_core.tools import BaseTool
 from app.agents.new_chat.action_router import ActionRoute, dispatch_action_route
 from app.agents.new_chat.bigtool_store import (
     ToolIndexEntry,
+    get_tool_embedding_context_fields,
+    get_vector_recall_top_k,
     normalize_retrieval_tuning,
     smart_retrieve_tools_with_breakdown,
 )
@@ -147,6 +150,9 @@ _SKOLVERKET_TOOL_CATEGORY_BY_ID: dict[str, str] = {
     if str(definition.tool_id or "").strip()
 }
 _SKOLVERKET_TOOL_IDS = set(_SKOLVERKET_TOOL_CATEGORY_BY_ID.keys())
+_MAX_TOOL_FAILURES_FOR_LLM = 18
+_TOOL_METADATA_LLM_TIMEOUT_SECONDS = 20.0
+_TOOL_ID_LIKE_RE = re.compile(r"\b[a-z0-9]+_[a-z0-9_]+\b", re.IGNORECASE)
 
 
 def compute_metadata_version_hash(tool_index: list[ToolIndexEntry]) -> str:
@@ -220,6 +226,66 @@ def _safe_string_list(values: Any) -> list[str]:
         seen.add(key)
         cleaned.append(item)
     return cleaned
+
+
+def _tool_reference_markers_for_suggestions(
+    *,
+    tool_id: str | None,
+    tool_name: str | None,
+) -> set[str]:
+    markers: set[str] = set()
+
+    def _add(raw: Any) -> None:
+        value = str(raw or "").strip().casefold()
+        if len(value) < 3:
+            return
+        compact = " ".join(value.split())
+        if compact:
+            markers.add(compact)
+        if "_" in compact:
+            markers.add(compact.replace("_", " "))
+            markers.add(compact.replace("_", "-"))
+
+    _add(tool_id)
+    _add(tool_name)
+    return markers
+
+
+def _contains_forbidden_tool_reference(
+    value: str,
+    *,
+    forbidden_markers: set[str],
+) -> bool:
+    text = str(value or "").strip().casefold()
+    if not text:
+        return False
+    if _TOOL_ID_LIKE_RE.search(text):
+        return True
+    for marker in forbidden_markers:
+        if marker and marker in text:
+            return True
+    return False
+
+
+def _sanitize_example_queries_no_tool_refs(
+    values: list[str],
+    *,
+    forbidden_markers: set[str],
+) -> list[str]:
+    sanitized: list[str] = []
+    seen: set[str] = set()
+    for raw in list(values or []):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if _contains_forbidden_tool_reference(text, forbidden_markers=forbidden_markers):
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        sanitized.append(text)
+    return sanitized
 
 
 def _normalize_difficulty_value(value: Any) -> str | None:
@@ -549,11 +615,11 @@ def _normalize_agent_name(value: Any) -> str | None:
 def _is_weather_domain_tool(tool_id: str | None, category: str | None = None) -> bool:
     tool = str(tool_id or "").strip().lower()
     cat = str(category or "").strip().lower()
-    if tool == "smhi_weather":
+    if tool.startswith("smhi_"):
         return True
     if tool.startswith("trafikverket_vader_"):
         return True
-    if cat in {"weather", "trafikverket_vader"}:
+    if cat in {"weather", "trafikverket_vader"} or cat.startswith("smhi_"):
         return True
     return False
 
@@ -1109,7 +1175,7 @@ def _route_requirement_matches(
         if expected == "weather":
             return (
                 selected_agent == "weather"
-                or selected_tool == "smhi_weather"
+                or selected_tool.startswith("smhi_")
                 or selected_tool.startswith("trafikverket_vader_")
             )
         return True
@@ -1746,6 +1812,10 @@ def _build_fallback_suggestion(
     questions: list[str],
     failed_count: int,
 ) -> tuple[dict[str, Any], str]:
+    forbidden_markers = _tool_reference_markers_for_suggestions(
+        tool_id=tool_id,
+        tool_name=str(current.get("name") or ""),
+    )
     token_counts: dict[str, int] = {}
     for question in questions:
         for token in _tokenize_for_suggestions(question):
@@ -1772,6 +1842,11 @@ def _build_fallback_suggestion(
         cleaned = question.strip()
         if not cleaned:
             continue
+        if _contains_forbidden_tool_reference(
+            cleaned,
+            forbidden_markers=forbidden_markers,
+        ):
+            continue
         key = cleaned.casefold()
         if key in seen_examples:
             continue
@@ -1779,6 +1854,10 @@ def _build_fallback_suggestion(
         seen_examples.add(key)
         if len(proposed_examples) >= 12:
             break
+    proposed_examples = _sanitize_example_queries_no_tool_refs(
+        proposed_examples,
+        forbidden_markers=forbidden_markers,
+    )
 
     description = str(current.get("description") or "").strip()
     hint_terms = [token for token, _count in sorted_tokens[:3]]
@@ -1810,6 +1889,8 @@ async def _build_llm_suggestion(
     llm,
     current: dict[str, Any],
     failures: list[dict[str, Any]],
+    retrieval_tuning: dict[str, Any] | None = None,
+    retrieval_context: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str] | None:
     if llm is None:
         return None
@@ -1819,12 +1900,21 @@ async def _build_llm_suggestion(
             model = llm.bind(temperature=0)
     except Exception:
         model = llm
+    forbidden_markers = _tool_reference_markers_for_suggestions(
+        tool_id=tool_id,
+        tool_name=str(current.get("name") or ""),
+    )
 
     prompt = (
         "Du optimerar verktygsmetadata för retrieval.\n"
         "Givet nuvarande metadata och misslyckade eval-fall ska du föreslå förbättrad metadata.\n"
+        "Använd retrieval-vikter och score-breakdown från fallen när du prioriterar ändringar.\n"
+        "Om vector recall och embedding-context finns i underlaget ska de vägas in i motiveringen.\n"
         "Behåll kategori om det inte finns starka skäl att ändra.\n"
         "ALL text måste vara på svenska.\n"
+        "Exempelfrågor måste vara naturlig svenska och skrivna som riktiga användarfrågor.\n"
+        "Strikt förbud: tool_id, toolnamn, funktionsnamn, endpoint- eller interna identifierare i exempelfrågor.\n"
+        "Använd aldrig snake_case eller identifierare med underscore i exempelfrågor.\n"
         "Returnera strikt JSON:\n"
         "{\n"
         '  "name": "string",\n'
@@ -1836,9 +1926,24 @@ async def _build_llm_suggestion(
         "}\n"
         "Ingen markdown."
     )
+    trimmed_failures: list[dict[str, Any]] = []
+    for item in failures[:_MAX_TOOL_FAILURES_FOR_LLM]:
+        if not isinstance(item, dict):
+            continue
+        trimmed_failures.append(
+            {
+                "question": str(item.get("question") or "").strip(),
+                "selected_wrong_tool": str(item.get("selected_wrong_tool") or "").strip() or None,
+                "retrieval_breakdown": list(item.get("retrieval_breakdown") or [])[:3],
+                "tool_vector_diagnostics": dict(item.get("tool_vector_diagnostics") or {}),
+            }
+        )
+
     payload = {
         "current_metadata": current,
-        "failed_cases": failures,
+        "failed_cases": trimmed_failures,
+        "retrieval_tuning": retrieval_tuning or {},
+        "retrieval_context": retrieval_context or {},
     }
     try:
         failure_questions = [
@@ -1852,16 +1957,35 @@ async def _build_llm_suggestion(
             questions=failure_questions,
             failed_count=len(failure_questions),
         )
-        response = await model.ainvoke(
-            [
-                SystemMessage(content=prompt),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
-            ]
+        response = await asyncio.wait_for(
+            model.ainvoke(
+                [
+                    SystemMessage(content=prompt),
+                    HumanMessage(content=json.dumps(payload, ensure_ascii=True)),
+                ]
+            ),
+            timeout=_TOOL_METADATA_LLM_TIMEOUT_SECONDS,
         )
         text = str(getattr(response, "content", "") or "")
         parsed = _extract_json_object(text)
         if not parsed:
             return None
+        parsed_examples = _sanitize_example_queries_no_tool_refs(
+            [
+                value
+                for value in _safe_string_list(parsed.get("example_queries"))
+                if not _looks_english_text(value)
+            ],
+            forbidden_markers=forbidden_markers,
+        )
+        fallback_examples = _sanitize_example_queries_no_tool_refs(
+            list(fallback_proposed.get("example_queries") or []),
+            forbidden_markers=forbidden_markers,
+        )
+        current_examples = _sanitize_example_queries_no_tool_refs(
+            list(current.get("example_queries") or []),
+            forbidden_markers=forbidden_markers,
+        )
         suggested = {
             "tool_id": tool_id,
             "name": str(parsed.get("name") or current.get("name") or "").strip(),
@@ -1871,16 +1995,7 @@ async def _build_llm_suggestion(
             ),
             "keywords": _safe_string_list(parsed.get("keywords"))
             or list(current.get("keywords") or []),
-            "example_queries": [
-                value
-                for value in (
-                    _safe_string_list(parsed.get("example_queries"))
-                    or list(current.get("example_queries") or [])
-                )
-                if not _looks_english_text(value)
-            ]
-            or list(fallback_proposed.get("example_queries") or [])
-            or list(current.get("example_queries") or []),
+            "example_queries": parsed_examples or fallback_examples or current_examples,
             "category": str(
                 parsed.get("category") or current.get("category") or ""
             ).strip(),
@@ -1928,6 +2043,10 @@ def _enrich_metadata_suggestion_fields(
 ) -> tuple[dict[str, Any], bool]:
     merged = dict(proposed)
     enriched = False
+    forbidden_markers = _tool_reference_markers_for_suggestions(
+        tool_id=str(current.get("tool_id") or merged.get("tool_id") or ""),
+        tool_name=str(current.get("name") or merged.get("name") or ""),
+    )
 
     current_description = str(current.get("description") or "").strip()
     proposed_description = str(merged.get("description") or "").strip()
@@ -1949,9 +2068,18 @@ def _enrich_metadata_suggestion_fields(
     else:
         merged["keywords"] = proposed_keywords
 
-    current_examples = _safe_string_list(current.get("example_queries"))
-    proposed_examples = _safe_string_list(merged.get("example_queries"))
-    fallback_examples = _safe_string_list(fallback.get("example_queries"))
+    current_examples = _sanitize_example_queries_no_tool_refs(
+        _safe_string_list(current.get("example_queries")),
+        forbidden_markers=forbidden_markers,
+    )
+    proposed_examples = _sanitize_example_queries_no_tool_refs(
+        _safe_string_list(merged.get("example_queries")),
+        forbidden_markers=forbidden_markers,
+    )
+    fallback_examples = _sanitize_example_queries_no_tool_refs(
+        _safe_string_list(fallback.get("example_queries")),
+        forbidden_markers=forbidden_markers,
+    )
     if proposed_examples == current_examples and fallback_examples != current_examples:
         merged["example_queries"] = fallback_examples
         enriched = True
@@ -2631,9 +2759,18 @@ async def generate_tool_metadata_suggestions(
     evaluation_results: list[dict[str, Any]],
     tool_index: list[ToolIndexEntry],
     llm=None,
+    retrieval_tuning: dict[str, Any] | None = None,
+    retrieval_context: dict[str, Any] | None = None,
     max_suggestions: int = 20,
+    parallelism: int = 1,
 ) -> list[dict[str, Any]]:
     index_by_id = {entry.tool_id: entry for entry in tool_index}
+    effective_retrieval_context = dict(retrieval_context or {})
+    effective_retrieval_context.setdefault("vector_recall_top_k", get_vector_recall_top_k())
+    effective_retrieval_context.setdefault(
+        "tool_embedding_context_fields",
+        get_tool_embedding_context_fields(),
+    )
     grouped: dict[str, dict[str, Any]] = {}
 
     for result in evaluation_results:
@@ -2644,7 +2781,7 @@ async def generate_tool_metadata_suggestions(
             continue
         bucket = grouped.setdefault(
             expected_tool,
-            {"questions": [], "failed_test_ids": [], "wrong_tools": []},
+            {"questions": [], "failed_test_ids": [], "wrong_tools": [], "failures": []},
         )
         question = str(result.get("question") or "").strip()
         if question:
@@ -2655,29 +2792,49 @@ async def generate_tool_metadata_suggestions(
         wrong_tool = str(result.get("selected_tool") or "").strip()
         if wrong_tool and wrong_tool != expected_tool:
             bucket["wrong_tools"].append(wrong_tool)
+        retrieval_breakdown = (
+            list(result.get("retrieval_breakdown"))
+            if isinstance(result.get("retrieval_breakdown"), list)
+            else []
+        )
+        tool_vector_diagnostics = (
+            dict(result.get("tool_vector_diagnostics"))
+            if isinstance(result.get("tool_vector_diagnostics"), dict)
+            else {}
+        )
+        bucket["failures"].append(
+            {
+                "question": question,
+                "selected_wrong_tool": wrong_tool if wrong_tool and wrong_tool != expected_tool else None,
+                "retrieval_breakdown": retrieval_breakdown[:5],
+                "tool_vector_diagnostics": tool_vector_diagnostics,
+            }
+        )
 
-    suggestions: list[dict[str, Any]] = []
-    for tool_id, failure_data in grouped.items():
-        if len(suggestions) >= max_suggestions:
-            break
+    normalized_max_suggestions = max(1, int(max_suggestions))
+    try:
+        normalized_parallelism = int(parallelism or 1)
+    except Exception:
+        normalized_parallelism = 1
+    normalized_parallelism = max(1, min(normalized_parallelism, 32))
+    grouped_items = list(grouped.items())
+
+    async def _suggest_for_tool(
+        tool_id: str,
+        failure_data: dict[str, Any],
+    ) -> dict[str, Any] | None:
         entry = index_by_id[tool_id]
         current = _serialize_tool(entry)
         current["base_path"] = entry.base_path
-        failures = [
-            {
-                "question": question,
-                "selected_wrong_tool": failure_data["wrong_tools"][idx]
-                if idx < len(failure_data["wrong_tools"])
-                else None,
-            }
-            for idx, question in enumerate(failure_data["questions"])
-        ]
+        failures = list(failure_data.get("failures") or [])
 
         llm_suggestion = await _build_llm_suggestion(
             tool_id=tool_id,
             llm=llm,
             current=current,
             failures=failures,
+            retrieval_tuning=retrieval_tuning,
+            retrieval_context=effective_retrieval_context,
         )
         fallback_proposed, fallback_rationale = _build_fallback_suggestion(
             tool_id=tool_id,
@@ -2700,18 +2857,49 @@ async def generate_tool_metadata_suggestions(
         else:
             proposed, rationale = fallback_proposed, fallback_rationale
         if _metadata_equal(current, proposed):
-            continue
-        suggestions.append(
-            {
-                "tool_id": tool_id,
-                "failed_test_ids": list(failure_data["failed_test_ids"]),
-                "rationale": rationale,
-                "current_metadata": current,
-                "proposed_metadata": proposed,
-            }
-        )
+            return None
+        return {
+            "tool_id": tool_id,
+            "failed_test_ids": list(failure_data["failed_test_ids"]),
+            "rationale": rationale,
+            "current_metadata": current,
+            "proposed_metadata": proposed,
+        }
 
-    return suggestions
+    suggestions: list[dict[str, Any]] = []
+    if normalized_parallelism <= 1:
+        for tool_id, failure_data in grouped_items:
+            suggestion = await _suggest_for_tool(tool_id, failure_data)
+            if suggestion is None:
+                continue
+            suggestions.append(suggestion)
+            if len(suggestions) >= normalized_max_suggestions:
+                break
+    else:
+        semaphore = asyncio.Semaphore(normalized_parallelism)
+
+        async def _run_with_limit(
+            tool_id: str,
+            failure_data: dict[str, Any],
+        ) -> dict[str, Any] | None:
+            async with semaphore:
+                return await _suggest_for_tool(tool_id, failure_data)
+
+        for start in range(0, len(grouped_items), normalized_parallelism):
+            chunk = grouped_items[start : start + normalized_parallelism]
+            chunk_results = await asyncio.gather(
+                *[_run_with_limit(tool_id, failure_data) for tool_id, failure_data in chunk]
+            )
+            for item in chunk_results:
+                if item is None:
+                    continue
+                suggestions.append(item)
+                if len(suggestions) >= normalized_max_suggestions:
+                    break
+            if len(suggestions) >= normalized_max_suggestions:
+                break
+
+    return suggestions[:normalized_max_suggestions]
 
 
 async def suggest_intent_definition_improvements(
@@ -3007,8 +3195,11 @@ async def suggest_retrieval_tuning(
         fallback_proposed["keyword_weight"] = min(
             25.0, fallback_proposed["keyword_weight"] + 0.8
         )
-        fallback_proposed["embedding_weight"] = min(
-            25.0, fallback_proposed["embedding_weight"] + 1.0
+        fallback_proposed["semantic_embedding_weight"] = min(
+            25.0, fallback_proposed.get("semantic_embedding_weight", 0.0) + 0.8
+        )
+        fallback_proposed["structural_embedding_weight"] = min(
+            25.0, fallback_proposed.get("structural_embedding_weight", 0.0) + 0.2
         )
         fallback_proposed["rerank_candidates"] = min(
             100, fallback_proposed["rerank_candidates"] + 8
@@ -3065,6 +3256,21 @@ async def suggest_retrieval_tuning(
         '  "example_query_weight": number,\n'
         '  "namespace_boost": number,\n'
         '  "embedding_weight": number,\n'
+        '  "semantic_embedding_weight": number,\n'
+        '  "structural_embedding_weight": number,\n'
+        '  "live_routing_enabled": true,\n'
+        '  "live_routing_phase": "shadow|tool_gate|agent_auto|adaptive|intent_finetune",\n'
+        '  "intent_candidate_top_k": integer,\n'
+        '  "agent_candidate_top_k": integer,\n'
+        '  "tool_candidate_top_k": integer,\n'
+        '  "intent_lexical_weight": number,\n'
+        '  "intent_embedding_weight": number,\n'
+        '  "agent_auto_margin_threshold": number,\n'
+        '  "agent_auto_score_threshold": number,\n'
+        '  "tool_auto_margin_threshold": number,\n'
+        '  "tool_auto_score_threshold": number,\n'
+        '  "adaptive_threshold_delta": number,\n'
+        '  "adaptive_min_samples": integer,\n'
         '  "rerank_candidates": integer,\n'
         '  "rationale": "kort motivering på svenska"\n'
         "}\n"
@@ -3086,7 +3292,9 @@ async def suggest_retrieval_tuning(
         parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
         if not parsed:
             raise ValueError("No JSON tuning proposal returned")
-        proposed = normalize_retrieval_tuning(parsed).__dict__
+        merged_payload = dict(normalized_current.__dict__)
+        merged_payload.update(parsed)
+        proposed = normalize_retrieval_tuning(merged_payload).__dict__
         if proposed == normalized_current.__dict__:
             return None
         rationale = _prefer_swedish_text(
@@ -3210,7 +3418,7 @@ def _prompt_key_for_tool(tool_id: str | None, category: str | None = None) -> st
         return "agent.kartor.system"
     if tool_id.startswith("marketplace_"):
         return "agent.marketplace.system"
-    if tool_id in {"trafiklab_route", "smhi_weather"}:
+    if tool_id == "trafiklab_route" or tool_id.startswith("smhi_"):
         return "agent.action.travel"
     if tool_id in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
         return "agent.action.web"

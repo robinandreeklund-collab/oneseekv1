@@ -53,6 +53,10 @@ from .trafikverket import (
     TRAFIKVERKET_TOOL_DEFINITIONS,
     create_trafikverket_tool,
 )
+from .smhi import (
+    SMHI_TOOL_DEFINITIONS,
+    create_smhi_tool,
+)
 from ..riksdagen_agent import (
     RIKSDAGEN_TOOL_DEFINITIONS,
     build_riksdagen_tool_registry,
@@ -89,7 +93,6 @@ from .sandbox_filesystem import (
     create_sandbox_write_file_tool,
 )
 from .sandbox_release import create_sandbox_release_tool
-from .smhi_weather import create_smhi_weather_tool
 from .tavily_search import create_tavily_search_tool
 from .trafiklab_route import create_trafiklab_route_tool
 from .user_memory import create_recall_memory_tool, create_save_memory_tool
@@ -193,14 +196,15 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         ),
         requires=[],  # firecrawl_api_key is optional
     ),
-    ToolDefinition(
-        name="smhi_weather",
-        description=(
-            "Fetch weather data from SMHI using a place name or lat/lon coordinates"
-        ),
-        factory=lambda deps: create_smhi_weather_tool(),
-        requires=[],
-    ),
+    *[
+        ToolDefinition(
+            name=definition.tool_id,
+            description=definition.description,
+            factory=lambda deps, definition=definition: create_smhi_tool(definition),
+            requires=[],
+        )
+        for definition in SMHI_TOOL_DEFINITIONS
+    ],
     ToolDefinition(
         name="trafiklab_route",
         description=(

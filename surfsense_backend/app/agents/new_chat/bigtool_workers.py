@@ -28,6 +28,24 @@ class WorkerConfig:
     tool_limit: int = 3
 
 
+class WorkerHandle:
+    """Thin wrapper that exposes worker tool inventory for guardrails."""
+
+    def __init__(self, *, graph: Any, available_tool_ids: tuple[str, ...]):
+        self._graph = graph
+        self.available_tool_ids = available_tool_ids
+
+    async def ainvoke(self, *args, **kwargs):
+        return await self._graph.ainvoke(*args, **kwargs)
+
+    async def astream(self, *args, **kwargs):
+        async for item in self._graph.astream(*args, **kwargs):
+            yield item
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._graph, item)
+
+
 async def create_bigtool_worker(
     *,
     llm,
@@ -84,8 +102,13 @@ async def create_bigtool_worker(
         retrieve_tools_function=retrieve_tools,
         retrieve_tools_coroutine=aretrieve_tools,
     )
-    return graph.compile(
+    compiled = graph.compile(
         checkpointer=checkpointer,
         store=store,
         name=config.name,
+    )
+    available_tool_ids = tuple(sorted(str(tool_id) for tool_id in tool_registry.keys()))
+    return WorkerHandle(
+        graph=compiled,
+        available_tool_ids=available_tool_ids,
     )

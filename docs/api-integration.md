@@ -72,14 +72,31 @@ their tools and categories. More APIs will be added over time.
 
 ---
 
-## SMHI (Weather API)
+## SMHI (Open Data API)
 
-**Purpose:** Weather forecasts and current conditions.  
-**Namespace:** `tools/action/travel`  
+**Purpose:** Weather forecasts/analysis/observations, hydrology, oceanography and fire risk.  
+**Namespace:** `tools/weather/smhi`  
 **Citations:** TOOL_OUTPUT ingestion enabled.  
 
+### Categories
+- smhi_vaderprognoser
+- smhi_vaderanalyser
+- smhi_vaderobservationer
+- smhi_hydrologi
+- smhi_oceanografi
+- smhi_brandrisk
+
 ### Tools
-- smhi_weather
+- smhi_weather (legacy alias for metfcst forecasts)
+- smhi_vaderprognoser_metfcst
+- smhi_vaderprognoser_snow1g
+- smhi_vaderanalyser_mesan2g
+- smhi_vaderobservationer_metobs
+- smhi_hydrologi_hydroobs
+- smhi_hydrologi_pthbv
+- smhi_oceanografi_ocobs
+- smhi_brandrisk_fwif
+- smhi_brandrisk_fwia
 
 ---
 

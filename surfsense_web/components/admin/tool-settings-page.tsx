@@ -44,8 +44,18 @@ import { AlertCircle, Save, RotateCcw, Plus, X, Loader2, Download } from "lucide
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { MetadataCatalogTab } from "@/components/admin/metadata-catalog-tab";
 
 type EvalExportFormat = "json" | "yaml";
+type LiveRoutingPhase =
+	| "shadow"
+	| "tool_gate"
+	| "agent_auto"
+	| "adaptive"
+	| "intent_finetune";
+type NumericRetrievalTuningField = {
+	[K in keyof ToolRetrievalTuning]: ToolRetrievalTuning[K] extends number ? K : never;
+}[keyof ToolRetrievalTuning];
 type ExportableEvalJobStatus =
 	| ToolEvaluationJobStatusResponse
 	| ToolApiInputEvaluationJobStatusResponse;
@@ -1028,18 +1038,71 @@ export function ToolSettingsPage() {
 	};
 
 	const updateRetrievalTuningField = (
-		key: keyof ToolRetrievalTuning,
+		key: NumericRetrievalTuningField,
 		value: number
 	) => {
 		setDraftRetrievalTuning((prev) => {
 			const current = prev ?? data?.retrieval_tuning;
 			if (!current) return prev;
+			if (key === "embedding_weight") {
+				const nextEmbeddingWeight = Math.max(0, Number(value));
+				const semanticCurrent = Math.max(0, Number(current.semantic_embedding_weight ?? 0));
+				const structuralCurrent = Math.max(0, Number(current.structural_embedding_weight ?? 0));
+				const currentTotal = semanticCurrent + structuralCurrent;
+				const semanticNext =
+					currentTotal > 0
+						? (semanticCurrent / currentTotal) * nextEmbeddingWeight
+						: nextEmbeddingWeight * 0.7;
+				const structuralNext = Math.max(0, nextEmbeddingWeight - semanticNext);
+				return {
+					...current,
+					embedding_weight: nextEmbeddingWeight,
+					semantic_embedding_weight: semanticNext,
+					structural_embedding_weight: structuralNext,
+				};
+			}
 			return {
 				...current,
 				[key]:
 					key === "rerank_candidates"
 						? Math.max(1, Math.round(value))
 						: Number(value),
+				...(key === "semantic_embedding_weight" || key === "structural_embedding_weight"
+					? {
+							embedding_weight:
+								(key === "semantic_embedding_weight"
+									? Math.max(0, Number(value))
+									: Math.max(0, Number(current.semantic_embedding_weight ?? 0))) +
+								(key === "structural_embedding_weight"
+									? Math.max(0, Number(value))
+									: Math.max(0, Number(current.structural_embedding_weight ?? 0))),
+						}
+					: {}),
+			};
+		});
+	};
+
+	const updateRetrievalTuningToggle = (
+		key: "live_routing_enabled" | "retrieval_feedback_db_enabled",
+		value: boolean
+	) => {
+		setDraftRetrievalTuning((prev) => {
+			const current = prev ?? data?.retrieval_tuning;
+			if (!current) return prev;
+			return {
+				...current,
+				[key]: Boolean(value),
+			};
+		});
+	};
+
+	const updateRetrievalPhase = (phase: LiveRoutingPhase) => {
+		setDraftRetrievalTuning((prev) => {
+			const current = prev ?? data?.retrieval_tuning;
+			if (!current) return prev;
+			return {
+				...current,
+				live_routing_phase: phase,
 			};
 		});
 	};
@@ -1875,6 +1938,7 @@ export function ToolSettingsPage() {
 			<Tabs value={activeTab} onValueChange={setActiveTab}>
 				<TabsList>
 					<TabsTrigger value="metadata">Metadata</TabsTrigger>
+					<TabsTrigger value="metadata-catalog">Metadata Katalog</TabsTrigger>
 					<TabsTrigger value="evaluation">Eval Workflow</TabsTrigger>
 					<TabsTrigger value="stats-agent">Statistik · Agentval</TabsTrigger>
 					<TabsTrigger value="stats-tool">Statistik · Toolval</TabsTrigger>
@@ -2042,6 +2106,217 @@ export function ToolSettingsPage() {
 						<CardContent className="space-y-4">
 							{draftRetrievalTuning ? (
 								<>
+									<div className="rounded-lg border p-3 space-y-3">
+										<div className="flex flex-wrap items-center justify-between gap-3">
+											<div>
+												<p className="text-sm font-medium">Live routing rollout</p>
+												<p className="text-xs text-muted-foreground">
+													Aktivera fasstyrd utrullning (Shadow → Tool gate → Agent auto → Adaptive
+													→ Intent finjustering).
+												</p>
+											</div>
+											<div className="flex items-center gap-2">
+												<Badge
+													variant={
+														draftRetrievalTuning.live_routing_enabled
+															? "default"
+															: "outline"
+													}
+												>
+													{draftRetrievalTuning.live_routing_enabled ? "Aktiv" : "Av"}
+												</Badge>
+												<Switch
+													checked={draftRetrievalTuning.live_routing_enabled ?? false}
+													onCheckedChange={(checked) =>
+														updateRetrievalTuningToggle("live_routing_enabled", checked)
+													}
+												/>
+											</div>
+										</div>
+										<div className="grid gap-3 md:grid-cols-3">
+											<div className="space-y-1 md:col-span-2">
+												<Label>Aktiv fas</Label>
+												<select
+													value={draftRetrievalTuning.live_routing_phase ?? "shadow"}
+													onChange={(event) =>
+														updateRetrievalPhase(event.target.value as LiveRoutingPhase)
+													}
+													className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+												>
+													<option value="shadow">Fas 0 — Shadow mode</option>
+													<option value="tool_gate">Fas 1 — Tool gate</option>
+													<option value="agent_auto">Fas 1b — Agent auto-select</option>
+													<option value="adaptive">Fas 2 — Adaptiva per-tool thresholds</option>
+													<option value="intent_finetune">
+														Fas 3 — Intent shortlist/vikter
+													</option>
+												</select>
+											</div>
+											<div className="space-y-1">
+												<Label>Tool candidate top-K</Label>
+												<Input
+													type="number"
+													step="1"
+													min={2}
+													max={10}
+													value={draftRetrievalTuning.tool_candidate_top_k ?? 5}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"tool_candidate_top_k",
+															Number.parseInt(e.target.value || "5", 10)
+														)
+													}
+												/>
+											</div>
+										</div>
+										<div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+											<div className="space-y-1">
+												<Label>Intent top-K</Label>
+												<Input
+													type="number"
+													step="1"
+													min={2}
+													max={8}
+													value={draftRetrievalTuning.intent_candidate_top_k ?? 3}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"intent_candidate_top_k",
+															Number.parseInt(e.target.value || "3", 10)
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label>Agent top-K</Label>
+												<Input
+													type="number"
+													step="1"
+													min={2}
+													max={8}
+													value={draftRetrievalTuning.agent_candidate_top_k ?? 3}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"agent_candidate_top_k",
+															Number.parseInt(e.target.value || "3", 10)
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label>Agent margin</Label>
+												<Input
+													type="number"
+													step="0.01"
+													value={draftRetrievalTuning.agent_auto_margin_threshold ?? 0.18}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"agent_auto_margin_threshold",
+															Number.parseFloat(e.target.value || "0")
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label>Agent top1 score</Label>
+												<Input
+													type="number"
+													step="0.01"
+													value={draftRetrievalTuning.agent_auto_score_threshold ?? 0.55}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"agent_auto_score_threshold",
+															Number.parseFloat(e.target.value || "0")
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label>Tool margin</Label>
+												<Input
+													type="number"
+													step="0.01"
+													value={draftRetrievalTuning.tool_auto_margin_threshold ?? 0.25}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"tool_auto_margin_threshold",
+															Number.parseFloat(e.target.value || "0")
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label>Tool top1 score</Label>
+												<Input
+													type="number"
+													step="0.01"
+													value={draftRetrievalTuning.tool_auto_score_threshold ?? 0.6}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"tool_auto_score_threshold",
+															Number.parseFloat(e.target.value || "0")
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label>Adaptive delta</Label>
+												<Input
+													type="number"
+													step="0.01"
+													value={draftRetrievalTuning.adaptive_threshold_delta ?? 0.08}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"adaptive_threshold_delta",
+															Number.parseFloat(e.target.value || "0")
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label>Adaptive min samples</Label>
+												<Input
+													type="number"
+													step="1"
+													min={1}
+													value={draftRetrievalTuning.adaptive_min_samples ?? 8}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"adaptive_min_samples",
+															Number.parseInt(e.target.value || "8", 10)
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label>Intent lexical vikt</Label>
+												<Input
+													type="number"
+													step="0.1"
+													value={draftRetrievalTuning.intent_lexical_weight ?? 1}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"intent_lexical_weight",
+															Number.parseFloat(e.target.value || "0")
+														)
+													}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label>Intent semantic vikt</Label>
+												<Input
+													type="number"
+													step="0.1"
+													value={draftRetrievalTuning.intent_embedding_weight ?? 1}
+													onChange={(e) =>
+														updateRetrievalTuningField(
+															"intent_embedding_weight",
+															Number.parseFloat(e.target.value || "0")
+														)
+													}
+												/>
+											</div>
+										</div>
+									</div>
 									<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
 										<div className="space-y-1">
 											<Label>Name match</Label>
@@ -2122,6 +2397,34 @@ export function ToolSettingsPage() {
 												onChange={(e) =>
 													updateRetrievalTuningField(
 														"embedding_weight",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Semantic embedding</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.semantic_embedding_weight ?? 0}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"semantic_embedding_weight",
+														Number.parseFloat(e.target.value || "0")
+													)
+												}
+											/>
+										</div>
+										<div className="space-y-1">
+											<Label>Structural embedding</Label>
+											<Input
+												type="number"
+												step="0.1"
+												value={draftRetrievalTuning.structural_embedding_weight ?? 0}
+												onChange={(e) =>
+													updateRetrievalTuningField(
+														"structural_embedding_weight",
 														Number.parseFloat(e.target.value || "0")
 													)
 												}
@@ -2268,6 +2571,10 @@ export function ToolSettingsPage() {
 							</CardContent>
 						</Card>
 					)}
+				</TabsContent>
+
+				<TabsContent value="metadata-catalog" className="space-y-6 mt-6">
+					<MetadataCatalogTab searchSpaceId={data?.search_space_id} />
 				</TabsContent>
 
 				<TabsContent value="evaluation" className="space-y-6 mt-6">
@@ -3607,6 +3914,14 @@ export function ToolSettingsPage() {
 											embedding: {evaluationResult.retrieval_tuning.embedding_weight}
 										</Badge>
 										<Badge variant="outline">
+											semantic:{" "}
+											{evaluationResult.retrieval_tuning.semantic_embedding_weight ?? "-"}
+										</Badge>
+										<Badge variant="outline">
+											structural:{" "}
+											{evaluationResult.retrieval_tuning.structural_embedding_weight ?? "-"}
+										</Badge>
+										<Badge variant="outline">
 											rerank_candidates:{" "}
 											{evaluationResult.retrieval_tuning.rerank_candidates}
 										</Badge>
@@ -3659,6 +3974,20 @@ export function ToolSettingsPage() {
 													{
 														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
 															.embedding_weight
+													}
+												</Badge>
+												<Badge variant="secondary">
+													semantic:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.semantic_embedding_weight
+													}
+												</Badge>
+												<Badge variant="secondary">
+													structural:{" "}
+													{
+														evaluationResult.retrieval_tuning_suggestion.proposed_tuning
+															.structural_embedding_weight
 													}
 												</Badge>
 												<Badge variant="secondary">

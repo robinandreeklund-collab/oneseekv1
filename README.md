@@ -9,20 +9,21 @@ Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalo
 
 1. [Plattformsoversikt](#plattformsoversikt)
 2. [Karnfunktioner](#karnfunktioner)
-3. [LangGraph-flode (Fas 1-4 + subagent A-F)](#langgraph-flode-fas-1-4--subagent-a-f)
-4. [Strict subagent isolation + DeerFlow-style context (A-F)](#strict-subagent-isolation--deerflow-style-context-a-f)
-5. [Intent + Bigtool + Namespace + Rerank](#intent--bigtool--namespace--rerank)
-6. [Realtidsdata och API-integrationer](#realtidsdata-och-api-integrationer)
-7. [Compare-lage](#compare-lage)
-8. [LangSmith + full transparens (trace)](#langsmith--full-transparens-trace)
-9. [Memory och feedback-loopar](#memory-och-feedback-loopar)
-10. [Eval-systemet](#eval-systemet)
-11. [SSE/Data Stream-events](#ssedata-stream-events)
-12. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
-13. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
-14. [Sandbox step-by-step guide](#sandbox-step-by-step-guide)
-15. [Copy-paste only quickstart (Docker + K8s)](#copy-paste-only-quickstart-docker--k8s)
-16. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
+3. [Senaste uppdateringar (denna PR)](#senaste-uppdateringar-denna-pr)
+4. [LangGraph-flode (Fas 1-4 + subagent A-F)](#langgraph-flode-fas-1-4--subagent-a-f)
+5. [Strict subagent isolation + DeerFlow-style context (A-F)](#strict-subagent-isolation--deerflow-style-context-a-f)
+6. [Intent + Bigtool + Namespace + Rerank](#intent--bigtool--namespace--rerank)
+7. [Realtidsdata och API-integrationer](#realtidsdata-och-api-integrationer)
+8. [Compare-lage](#compare-lage)
+9. [LangSmith + full transparens (trace)](#langsmith--full-transparens-trace)
+10. [Memory och feedback-loopar](#memory-och-feedback-loopar)
+11. [Eval-systemet](#eval-systemet)
+12. [SSE/Data Stream-events](#ssedata-stream-events)
+13. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
+14. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
+15. [Sandbox step-by-step guide](#sandbox-step-by-step-guide)
+16. [Copy-paste only quickstart (Docker + K8s)](#copy-paste-only-quickstart-docker--k8s)
+17. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
 
 ---
 
@@ -67,6 +68,183 @@ Tekniskt anvands:
   - route/agent/tool/API-input-eval
   - metadata/prompt/tuning-forslag
   - stage-jamforelse over tid
+
+---
+
+## Senaste uppdateringar (denna PR)
+
+Denna PR innehaller en stor uppgradering av admin-ytan for metadata-kvalitet och en kontrollerad live-rollout for routing.
+
+### 1) Metadata Catalog + Metadata Audit (admin)
+
+- Ny adminflik for metadata pa **intent/agent/tool** med edit/save och tydlig visning av effektiv metadata.
+- Metadata Audit kor i lager:
+  - `query -> intent retrieval -> agent retrieval -> tool retrieval`
+  - per lager loggas bl.a. `top1`, `top2`, `margin`, `score_breakdown`, `expected/predicted`.
+- Collision-analys med matriser for intent/agent/tool samt gemensam path-matris.
+- Konditionerade metriker:
+  - `agent precision givet korrekt intent`
+  - `tool precision givet korrekt intent+agent`
+- Vector recall-lager (top-K) och tool-aware embedding-context exponerade i audit-resultatet.
+- Steg A/B parallelism ar konfigurerbar i UI:
+  - probe generation parallelism
+  - suggestion parallelism
+- Granulara tidsdiagnoser:
+  - Steg 1 (prep/qgen/eval + per-layer I/A/T)
+  - Steg 2 (prep + tool/intent/agent stage)
+- Probe/exempelfrage-guardrails:
+  - naturlig svenska med korrekt diakritik
+  - strikt forbud mot tool_id/toolnamn/internala identifierare i genererade fragor
+- Autonomous audit-loop med stoppvillkor:
+  - max rounds, patience, abort-drop, target score
+  - valbar probe-history exclusion mellan rundor
+  - anchor probe-set mode for stabil jamforelse mellan rundor
+- Live-tabeller i UI:
+  - evolution (aldre vs nyare audit med delta/kommentar)
+  - ranking stability per tool mellan rundor
+
+### 2) Ranking stability + dual embeddings
+
+- Tool retrieval har nu separata embeddings:
+  - **semantic vector** (description/examples)
+  - **structural vector** (schema/required fields/input shape/output hint)
+- Vikterna ar separata och justerbara (`semantic_embedding_weight`, `structural_embedding_weight`).
+- Ranking stability-metriker i audit:
+  - rank shift mellan rundor
+  - margin mot narmaste konkurrent
+  - top1/topK-frekvens
+  - expected rank och expected margin per tool
+
+### 3) Live rollout med faser och admin-toggle
+
+Implementerad fasstyrd utrullning i produktion med central styrning via Retrieval Tuning:
+
+- **Fas 0 - shadow**: ingen beteendeforandring, endast loggning av top1/top2/margin.
+- **Fas 1 - tool_gate**: verktygsval med gate (auto top1 vid stark margin/score, annars top-K fallback).
+- **Fas 1b - agent_auto**: konservativ agent auto-select baserat pa margin + score.
+- **Fas 2 - adaptive**: adaptiva per-tool thresholds baserat pa utfallsfeedback.
+- **Fas 3 - intent_finetune**: intent shortlist + vikter (lexical/semantic) i intent resolver.
+
+Nya loggar ar tillagda for intent/agent/tool-selection och tool-outcome for att mojliggora skuggkorning och kontrollerad ramp-up.
+
+### 4) Praktisk korguide: Metadata Audit + BSSS + verifiering
+
+Folj detta for att fa jamforbara resultat och undvika att tolka "falska hopp" mellan rundor:
+
+1. **Baseline (single metadata audit)**
+   - Kor `Metadata Audit` en gang.
+   - Spara:
+     - intent/agent/tool-accuracy
+     - conditional metrics (`agent|intent`, `tool|intent+agent`)
+     - ranking stability-tabellen
+     - diagnostics (Steg1/Steg2 ms + probe-volym)
+
+2. **Separation (Bottom-up BSSS)**
+   - Kor `Bottom-up Separation` pa samma urval (tool_ids/prefix).
+   - Kontrollera i svaret:
+     - stage lock-status per lager
+     - baseline vs final summary
+     - diagnostics + antal skapade separation-locks
+
+3. **Autonomous metadata-loop (forbattringsfas)**
+   - Kor autonom loop (t.ex. 4-8 rundor) med tydliga stoppvillkor.
+   - For stabil trendtolkning:
+     - anvand **anchor probe-set mode** om du vill mata "samma frageset" mellan rundor
+     - anvand samma eval-konfiguration (max_tools, max_queries, hard negatives, prefix/tool_ids)
+
+4. **Verifiering efter loop**
+   - Kor en ny single audit.
+   - Jamfor:
+     - **Runda-mot-runda** (stabilitet over samma probes)
+     - **Single-run mot baseline** (generalisering pa nytt query-urval)
+
+#### Varfor kan single-run bli samre efter en stark auto-loop?
+
+Det ar normalt om single-run bygger ett **annat frageset** an auto-loopens interna jamforelse:
+
+- Auto-loop kan ge hog score pa ett stabilt/ankrat probe-set.
+- En ny single-run utan anchor/probe-likhet provar andra fragor (hard negatives, andra formuleringar).
+- Resultatet blir da en mer "out-of-sample" kontroll och kan falla tillbaka.
+
+Det betyder inte nodvandigtvis att forbattringen ar falsk - utan att robustheten inte ar jamn over hela query-rummet an.
+
+#### Rekommenderade guardrails
+
+- Hall eval-konfigurationen konstant nar du jamfor.
+- Tracka bade:
+  - **stabilitetsmetrik** (rank shift, churn, margin)
+  - **generalisering** (ny single-run utan anchor)
+- Vid stor skillnad: kor en extra BSSS-runda pa kvarvarande kollisionskluster och verifiera igen.
+- BSSS lock mode ar aktivt for att hindra att vanliga metadata-forslag aterintroducerar tidigare separation-kollisioner.
+
+#### Visuell rymdmodell: embedding -> separation -> lock -> overtrampsblock
+
+```mermaid
+flowchart TD
+    A[Metadata catalog<br/>intent/agent/tool] --> B[Embedding build]
+    B --> B1[Semantic vector]
+    B --> B2[Structural vector]
+    B1 --> C[Similarity matrices + conflict graph]
+    B2 --> C
+    C --> D[BSSS bottom-up<br/>intent -> agent -> tool]
+    D --> E[Candidate scoring<br/>alignment + separation + global check]
+    E --> F{Stage lock?}
+    F -->|No| G[Rollback stage]
+    F -->|Yes| H[Persist pair locks]
+    H --> I[Metadata audit suggestions]
+    I --> J{Lock validator}
+    J -->|Pass| K[Apply suggestion]
+    J -->|Reject| L[Block overtramp]
+```
+
+#### Embedding-space matrix (hur varje lager styrs och lases)
+
+| Lager | Primar alignment-signal | Primar separation-signal | Global safety | Locknyckel |
+|---|---|---|---|---|
+| Intent | likhet mot egna intent-fragor/metadata | avstand till narmaste andra intent | nearest-neighbor + cluster-balance | `(intent, item_a, item_b)` |
+| Agent | likhet givet korrekt intent | avstand till narmaste andra agent inom intent-rymden | upstream-check mot intent + global nn-check | `(agent, item_a, item_b)` |
+| Tool | likhet givet korrekt intent+agent | avstand till narmaste andra tool i kategori/cluster | local + global margin + cluster-balance | `(tool, item_a, item_b)` |
+
+#### Scoring-matris (bottom-up aggressivitet)
+
+| Lager | Score-formel |
+|---|---|
+| Intent | `0.7 * alignment + 0.3 * (1 - nearest_intent_similarity)` |
+| Agent | `0.6 * alignment + 0.4 * (1 - nearest_agent_similarity)` |
+| Tool | `0.5 * alignment + 0.5 * (1 - nearest_tool_similarity)` |
+
+#### Tool-lager: dual embedding-fusion (semantik + struktur)
+
+| Komponent | Innehall | Vikt |
+|---|---|---|
+| Semantic vector | description + keywords + example_queries | `semantic_embedding_weight` |
+| Structural vector | schema/required fields/input shape/output hints | `structural_embedding_weight` |
+| Fusion | viktad cosine-fusion | normaliserad summa av vikter |
+
+#### Overtramps-firewall (var overtramp stoppas)
+
+| Steg | Vad kommer in | Kontroll | Resultat vid fail |
+|---|---|---|---|
+| BSSS stage-gate | kandidatmetadata | local/global similarity + alignment drop + cluster-balance | stage rollback |
+| Suggestion-filter | Steg B-forslag | pair-lock validering i embedding-rummet | forslaget filtreras bort |
+| Metadata apply | PUT metadata-catalog | lock-validering innan persist | `409` block med rejected-lista |
+
+#### Vad du ska kontrollera i UI efter varje korning
+
+1. **Efter BSSS**
+   - stage reports: `locked=true` per lager
+   - similarity matrices: se att kritiska par/kluster separeras
+   - diagnostics: `separation_lock_new_pairs`, `separation_lock_total_pairs`
+2. **Efter metadata suggestions**
+   - diagnostics: `separation_lock_rejected_tool/intent/agent`
+   - forslagslistan: att blockerade overtramp inte dyker upp som applybara
+3. **Efter metadata apply**
+   - inga `409` lock-brott vid legitima uppdateringar
+   - om `409`: svaret innehaller `code=BSSS_LOCK_VIOLATION`, `message`, `conflicts[]` (lager + item/konkurrent + similarity/grans) och `rejected`
+   - anvand `conflicts[]` for att se exakt vilket lock som blockerat uppdateringen
+   - admin-UI visar en tabell **"Blockerade av lock"** med samma konfliktpar for snabb felsokning
+   - varje rad har knappen **"Applicera saker rename"** som provar minimal namnandring mot lock-validering innan den appliceras i draft
+   - vid behov finns en manuell override-toggle som kan ignorera locken vid save (rekommendation: kor BSSS igen direkt efterat)
 
 ---
 
@@ -243,21 +421,31 @@ Smart retrieval beraknar flera komponenter:
 - keyword-traf
 - beskrivningstraf
 - example-query-traf
-- embedding-likhet
+- embedding-likhet (semantic + structural)
 - namespace-boost
 - retrieval-feedback-boost
+- vector recall top-K (separat recall-lager fore hybrid/rerank)
 
 Pre-score:
 
 ```text
 pre_rerank_score =
   lexical_score
-  + (embedding_score * embedding_weight)
+  + (semantic_score * semantic_embedding_weight)
+  + (structural_score * structural_embedding_weight)
   + namespace_bonus
   + retrieval_feedback_boost
 ```
 
 Sedan rerankas kandidater med `RerankerService` och exponerar detaljer i breakdown/trace.
+
+I live-rollouten kan samma signaler anvandas for fasstyrd gating:
+
+- shadow: endast logga kandidater/margins
+- tool_gate: auto top1 eller top-K fallback
+- agent_auto: auto-select endast nar threshold passeras
+- adaptive: per-tool threshold justeras over tid
+- intent_finetune: intent shortlist + viktning aktiveras
 
 ---
 
@@ -472,6 +660,8 @@ Runtime-flaggor i chatflodet:
     "cross_session_memory_enabled": true,
     "cross_session_memory_max_items": 6,
     "cross_session_memory_max_chars": 1000,
+    "live_routing_enabled": false,
+    "live_routing_phase": "shadow",
     "sandbox_enabled": true,
     "sandbox_mode": "provisioner",
     "sandbox_provisioner_url": "http://sandbox-provisioner.oneseek-sandbox.svc.cluster.local:8002",
@@ -501,10 +691,15 @@ Runtime-flaggor i chatflodet:
 - `cross_session_memory_enabled=true`: selektiv injektion av persistent minne
 - `cross_session_memory_max_items`: max antal minnesposter per turn
 - `cross_session_memory_max_chars`: max tecken for minnesblock i prompt
+- `live_routing_enabled=false`: global toggle for fasstyrd live-routing
+- `live_routing_phase=shadow|tool_gate|agent_auto|adaptive|intent_finetune`: aktiv rollout-fas
 - `sandbox_enabled=true`: aktiverar sandbox-tools for code-agent
 - `sandbox_mode=provisioner`: kor via extern sandbox-provisioner (Kubernetes)
 - `sandbox_state_store=redis`: rekommenderat vid flera backend-replikor
 - `sandbox_scope=subagent`: explicit scope policy (kan satts automatiskt i strict mode)
+
+Notera: majoriteten av rollout-parametrar (top-K, thresholds, intent-vikter, adaptive-parametrar) styrs centralt i
+**Admin -> Tool Settings -> Retrieval Tuning** och persisteras som global retrieval tuning.
 
 ---
 
@@ -651,6 +846,9 @@ OneSeek ar nu en hybrid, transparent och eval-driven agentplattform med:
 - semantisk context compaction med `rolling_context_summary`
 - selektiv cross-session memory-injektion separerad fran aktiv session-kontekst
 - dynamiskt agent- och verktygsval med Bigtool namespaces + rerank
+- metadata audit med collision-analys, autonomous loop och granular diagnostik
+- dual semantic/structural embeddings och ranking stability-matris for tool-lagret
+- fasstyrd live-rollout (shadow -> tool gate -> agent auto -> adaptive -> intent finetune)
 - realtidsdata och compare-subgraf
 - LangSmith + intern trace for full observability
 - produktionsnara evalloop for kontinuerlig forbattring

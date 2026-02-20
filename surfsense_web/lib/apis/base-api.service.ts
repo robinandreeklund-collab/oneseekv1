@@ -16,6 +16,68 @@ enum ResponseType {
 	// Add more response types as needed
 }
 
+function _formatApiErrorDetail(detail: unknown): string {
+	if (typeof detail === "string") {
+		return detail;
+	}
+	if (Array.isArray(detail)) {
+		const first = detail[0];
+		if (typeof first === "string") {
+			return first;
+		}
+		try {
+			return JSON.stringify(detail);
+		} catch {
+			return "Request failed";
+		}
+	}
+	if (detail && typeof detail === "object") {
+		const payload = detail as Record<string, unknown>;
+		const message =
+			typeof payload.message === "string" && payload.message.trim().length > 0
+				? payload.message
+				: "";
+		const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+		if (message && conflicts.length > 0) {
+			const first = conflicts[0];
+			if (first && typeof first === "object") {
+				const row = first as Record<string, unknown>;
+				const layer = typeof row.layer === "string" ? row.layer : "?";
+				const item =
+					typeof row.item_label === "string"
+						? row.item_label
+						: typeof row.item_id === "string"
+							? row.item_id
+							: "?";
+				const competitor =
+					typeof row.competitor_label === "string"
+						? row.competitor_label
+						: typeof row.competitor_id === "string"
+							? row.competitor_id
+							: "?";
+				const similarity =
+					typeof row.similarity === "number" || typeof row.similarity === "string"
+						? String(row.similarity)
+						: "?";
+				const maxSimilarity =
+					typeof row.max_similarity === "number" || typeof row.max_similarity === "string"
+						? String(row.max_similarity)
+						: "?";
+				return `${message} [${layer}] ${item} -> ${competitor} (${similarity} > ${maxSimilarity})`;
+			}
+		}
+		if (message) {
+			return message;
+		}
+		try {
+			return JSON.stringify(detail);
+		} catch {
+			return "Request failed";
+		}
+	}
+	return "Request failed";
+}
+
 export type RequestOptions = {
 	method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 	headers?: Record<string, string>;
@@ -121,19 +183,57 @@ class BaseApiService {
 				}
 			}
 
-			let response: Response;
+			let response: Response | null = null;
+			let fallbackUrl: string | null = null;
+			if (typeof window !== "undefined") {
+				try {
+					const backendUrl = new URL(fullUrl);
+					const backendHost = backendUrl.hostname.toLocaleLowerCase();
+					const frontendHost = window.location.hostname.toLocaleLowerCase();
+					const localBackendHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+					const backendLooksLocal = localBackendHosts.has(backendHost);
+					const frontendIsDifferentHost = !localBackendHosts.has(frontendHost);
+					if (backendLooksLocal && frontendIsDifferentHost && url.startsWith("/")) {
+						// Fallback for cloud/container setups where browser cannot reach localhost:PORT.
+						fallbackUrl = url;
+					}
+				} catch {
+					fallbackUrl = null;
+				}
+			}
 			try {
 				response = await fetch(fullUrl, fetchOptions);
 			} catch (fetchError) {
 				// Browsers throw TypeError for DNS/CORS/connection failures.
-				if (fetchError instanceof TypeError) {
+				if (!(fetchError instanceof TypeError)) {
+					throw fetchError;
+				}
+				if (!fallbackUrl) {
 					throw new NetworkError(
 						`Could not reach backend (${fullUrl}). Check NEXT_PUBLIC_FASTAPI_BACKEND_URL, backend status, and CORS.`,
 						0,
 						"NETWORK_ERROR"
 					);
 				}
-				throw fetchError;
+				try {
+					response = await fetch(fallbackUrl, fetchOptions);
+				} catch (fallbackError) {
+					if (fallbackError instanceof TypeError) {
+						throw new NetworkError(
+							`Could not reach backend (${fullUrl}) and fallback (${fallbackUrl}). Check NEXT_PUBLIC_FASTAPI_BACKEND_URL, backend status, and CORS.`,
+							0,
+							"NETWORK_ERROR"
+						);
+					}
+					throw fallbackError;
+				}
+			}
+			if (!response) {
+				throw new NetworkError(
+					`Could not reach backend (${fullUrl}). Check NEXT_PUBLIC_FASTAPI_BACKEND_URL, backend status, and CORS.`,
+					0,
+					"NETWORK_ERROR"
+				);
 			}
 
 			/**
@@ -158,17 +258,23 @@ class BaseApiService {
 				if (response.status === 401) {
 					handleUnauthorized();
 					throw new AuthenticationError(
-						typeof data === "object" && "detail" in data
-							? data.detail
+						typeof data === "object" && data && "detail" in data
+							? _formatApiErrorDetail(data.detail)
 							: "You are not authenticated. Please login again.",
 						response.status,
-						response.statusText
+						response.statusText,
+						typeof data === "object" && data && "detail" in data ? data.detail : undefined
 					);
 				}
 
 				// For fastapi errors response
-				if (typeof data === "object" && "detail" in data) {
-					throw new AppError(data.detail, response.status, response.statusText);
+				if (typeof data === "object" && data && "detail" in data) {
+					throw new AppError(
+						_formatApiErrorDetail(data.detail),
+						response.status,
+						response.statusText,
+						data.detail
+					);
 				}
 
 				switch (response.status) {

@@ -25,6 +25,14 @@ _GUARD_STYLE_MARKERS = (
     "skicka gärna frågan igen",
     "strikt enkel exekvering",
 )
+_SYNTH_PLACEHOLDER_RESPONSES = {
+    "guardrail",
+    "no-data",
+    "not-found",
+    "n/a",
+    "none",
+    "ok",
+}
 
 
 def _should_passthrough_synthesizer(
@@ -55,6 +63,28 @@ def _candidate_conflicts_with_no_data(source_response: str, candidate: str) -> b
     if not candidate_lower:
         return True
     return not any(marker in candidate_lower for marker in _NO_DATA_MARKERS)
+
+
+def _candidate_is_degenerate(source_response: str, candidate: str) -> bool:
+    candidate_text = str(candidate or "").strip()
+    if not candidate_text:
+        return True
+    candidate_lower = candidate_text.lower()
+    source_lower = str(source_response or "").strip().lower()
+
+    # Never replace a meaningful source answer with generic placeholders.
+    if candidate_lower in _SYNTH_PLACEHOLDER_RESPONSES and candidate_lower != source_lower:
+        return True
+
+    # Single-token rewrites are almost always regressions in synthesis.
+    if (
+        len(candidate_text.split()) <= 2
+        and len(candidate_text) <= 24
+        and len(str(source_response or "").strip()) > len(candidate_text)
+    ):
+        return True
+
+    return False
 
 
 def build_synthesizer_node(
@@ -158,7 +188,11 @@ def build_synthesizer_node(
             )
             parsed = extract_first_json_object_fn(str(getattr(message, "content", "") or ""))
             candidate = str(parsed.get("response") or "").strip()
-            if candidate and not _candidate_conflicts_with_no_data(source_response, candidate):
+            if (
+                candidate
+                and not _candidate_conflicts_with_no_data(source_response, candidate)
+                and not _candidate_is_degenerate(source_response, candidate)
+            ):
                 refined_response = strip_critic_json_fn(candidate)
         except Exception:
             refined_response = source_response

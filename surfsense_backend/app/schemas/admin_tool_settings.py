@@ -37,8 +37,23 @@ class ToolRetrievalTuning(BaseModel):
     example_query_weight: float = 2.0
     namespace_boost: float = 3.0
     embedding_weight: float = 4.0
+    semantic_embedding_weight: float = 2.8
+    structural_embedding_weight: float = 1.2
     rerank_candidates: int = 24
     retrieval_feedback_db_enabled: bool = False
+    live_routing_enabled: bool = False
+    live_routing_phase: str = "shadow"
+    intent_candidate_top_k: int = 3
+    agent_candidate_top_k: int = 3
+    tool_candidate_top_k: int = 5
+    intent_lexical_weight: float = 1.0
+    intent_embedding_weight: float = 1.0
+    agent_auto_margin_threshold: float = 0.18
+    agent_auto_score_threshold: float = 0.55
+    tool_auto_margin_threshold: float = 0.25
+    tool_auto_score_threshold: float = 0.60
+    adaptive_threshold_delta: float = 0.08
+    adaptive_min_samples: int = 8
 
 
 class ToolLatestEvaluationSummary(BaseModel):
@@ -59,6 +74,142 @@ class ToolSettingsResponse(BaseModel):
 
 class ToolSettingsUpdateRequest(BaseModel):
     tools: list[ToolMetadataUpdateItem]
+
+
+class AgentMetadataItem(BaseModel):
+    agent_id: str
+    label: str
+    description: str
+    keywords: list[str]
+    prompt_key: str | None = None
+    namespace: list[str] = Field(default_factory=list)
+    has_override: bool = False
+
+
+class AgentMetadataUpdateItem(BaseModel):
+    agent_id: str
+    label: str
+    description: str
+    keywords: list[str]
+    prompt_key: str | None = None
+    namespace: list[str] = Field(default_factory=list)
+
+
+class IntentMetadataItem(BaseModel):
+    intent_id: str
+    label: str
+    route: str
+    description: str
+    keywords: list[str]
+    priority: int = 500
+    enabled: bool = True
+    has_override: bool = False
+
+
+class IntentMetadataUpdateItem(BaseModel):
+    intent_id: str
+    label: str
+    route: str
+    description: str
+    keywords: list[str]
+    priority: int = 500
+    enabled: bool = True
+
+
+class MetadataCatalogStabilityLockItem(BaseModel):
+    layer: str = "tool"
+    item_id: str
+    lock_level: str = "soft"
+    lock_reason: str | None = None
+    unlock_trigger: str | None = None
+    top1_rate: float | None = None
+    topk_rate: float | None = None
+    avg_margin: float | None = None
+    last_rank_shift: float | None = None
+    negative_margin_rounds: int = 0
+    locked_at: str | None = None
+    updated_at: str | None = None
+
+
+class MetadataCatalogStabilityLockSummary(BaseModel):
+    lock_mode_enabled: bool = True
+    auto_lock_enabled: bool = True
+    config: dict[str, Any] = Field(default_factory=dict)
+    locked_items: list[MetadataCatalogStabilityLockItem] = Field(default_factory=list)
+    locked_count: int = 0
+
+
+class MetadataCatalogResponse(BaseModel):
+    search_space_id: int
+    metadata_version_hash: str
+    tool_categories: list[ToolCategoryResponse] = Field(default_factory=list)
+    agents: list[AgentMetadataItem] = Field(default_factory=list)
+    intents: list[IntentMetadataItem] = Field(default_factory=list)
+    stability_locks: MetadataCatalogStabilityLockSummary = Field(
+        default_factory=MetadataCatalogStabilityLockSummary
+    )
+
+
+class MetadataCatalogUpdateRequest(BaseModel):
+    tools: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    agents: list[AgentMetadataUpdateItem] = Field(default_factory=list)
+    intents: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+    allow_lock_override: bool = False
+    lock_override_reason: str | None = None
+
+
+class MetadataCatalogSafeRenameSuggestionRequest(BaseModel):
+    search_space_id: int | None = None
+    layer: str = "tool"
+    item_id: str
+    competitor_id: str | None = None
+    desired_label: str | None = None
+    metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    intent_metadata_patch: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+    agent_metadata_patch: list[AgentMetadataUpdateItem] = Field(default_factory=list)
+
+
+class MetadataCatalogSafeRenameRejectedCandidate(BaseModel):
+    candidate: str
+    competitor_id: str | None = None
+    similarity: float | None = None
+    max_similarity: float | None = None
+    delta: float | None = None
+
+
+class MetadataCatalogSafeRenameSuggestionResponse(BaseModel):
+    layer: str
+    item_id: str
+    competitor_id: str | None = None
+    desired_label: str | None = None
+    suggested_label: str
+    validated: bool = False
+    reason: str
+    tested_candidates: list[str] = Field(default_factory=list)
+    rejected_candidates: list[MetadataCatalogSafeRenameRejectedCandidate] = Field(
+        default_factory=list
+    )
+
+
+class MetadataCatalogStabilityLockActionRequest(BaseModel):
+    search_space_id: int | None = None
+    item_ids: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class MetadataCatalogStabilityLockActionResponse(BaseModel):
+    search_space_id: int
+    changed: bool = False
+    monitored_tools: int = 0
+    newly_locked_item_ids: list[str] = Field(default_factory=list)
+    newly_unlocked_item_ids: list[str] = Field(default_factory=list)
+    robust_gate_ready: bool | None = None
+    robust_gate_blockers: list[str] = Field(default_factory=list)
+    robust_gate_snapshot: dict[str, Any] = Field(default_factory=dict)
+    robust_gate_requirements: dict[str, Any] = Field(default_factory=dict)
+    stability_locks: MetadataCatalogStabilityLockSummary = Field(
+        default_factory=MetadataCatalogStabilityLockSummary
+    )
 
 
 class ToolRetrievalTuningResponse(BaseModel):
@@ -578,6 +729,437 @@ class ToolApiInputApplyPromptSuggestionsRequest(BaseModel):
 
 class ToolApiInputApplyPromptSuggestionsResponse(BaseModel):
     applied_prompt_keys: list[str]
+
+
+class MetadataCatalogAuditConfusionPair(BaseModel):
+    expected_label: str
+    predicted_label: str
+    count: int
+
+
+class MetadataCatalogAuditPathConfusionPair(BaseModel):
+    expected_path: str
+    predicted_path: str
+    count: int
+
+
+class MetadataCatalogAuditLayerResult(BaseModel):
+    expected_label: str | None = None
+    predicted_label: str | None = None
+    top1: str | None = None
+    top2: str | None = None
+    expected_rank: int | None = None
+    expected_margin_vs_best_other: float | None = None
+    margin: float | None = None
+    score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class MetadataCatalogAuditToolVectorDiagnostics(BaseModel):
+    vector_top_k: int = 5
+    vector_selected_ids: list[str] = Field(default_factory=list)
+    predicted_tool_vector_selected: bool = False
+    predicted_tool_vector_rank: int | None = None
+    predicted_tool_vector_only: bool = False
+    predicted_tool_lexical_candidate: bool = False
+    expected_tool_vector_selected: bool = False
+    expected_tool_vector_rank: int | None = None
+    expected_tool_vector_only: bool = False
+    expected_tool_lexical_candidate: bool = False
+
+
+class MetadataCatalogAuditVectorRecallSummary(BaseModel):
+    top_k: int = 5
+    probes_with_vector_candidates: int = 0
+    probes_with_top1_from_vector: int = 0
+    probes_with_top1_vector_only: int = 0
+    probes_with_expected_tool_in_vector_top_k: int = 0
+    probes_with_expected_tool_vector_only: int = 0
+    probes_with_correct_tool_and_vector_support: int = 0
+    share_probes_with_vector_candidates: float = 0.0
+    share_top1_from_vector: float = 0.0
+    share_expected_tool_in_vector_top_k: float = 0.0
+
+
+class MetadataCatalogAuditToolEmbeddingContext(BaseModel):
+    enabled: bool = True
+    context_fields: list[str] = Field(default_factory=list)
+    semantic_fields: list[str] = Field(default_factory=list)
+    structural_fields: list[str] = Field(default_factory=list)
+    semantic_weight: float | None = None
+    structural_weight: float | None = None
+    description: str | None = None
+
+
+class MetadataCatalogAuditProbeItem(BaseModel):
+    probe_id: str
+    query: str
+    source: str
+    target_tool_id: str
+    expected_path: str
+    predicted_path: str
+    intent: MetadataCatalogAuditLayerResult
+    agent: MetadataCatalogAuditLayerResult
+    tool: MetadataCatalogAuditLayerResult
+    tool_vector_diagnostics: MetadataCatalogAuditToolVectorDiagnostics = Field(
+        default_factory=MetadataCatalogAuditToolVectorDiagnostics
+    )
+
+
+class MetadataCatalogAuditToolRankingItem(BaseModel):
+    tool_id: str
+    probes: int = 0
+    top1_hits: int = 0
+    topk_hits: int = 0
+    top1_rate: float = 0.0
+    topk_rate: float = 0.0
+    avg_expected_rank: float | None = None
+    avg_margin_vs_best_other: float | None = None
+
+
+class MetadataCatalogAuditToolRankingSummary(BaseModel):
+    top_k: int = 5
+    tools: list[MetadataCatalogAuditToolRankingItem] = Field(default_factory=list)
+
+
+class MetadataCatalogAuditSummary(BaseModel):
+    total_probes: int = 0
+    intent_accuracy: float = 0.0
+    agent_accuracy: float = 0.0
+    tool_accuracy: float = 0.0
+    agent_accuracy_given_intent_correct: float | None = None
+    tool_accuracy_given_intent_agent_correct: float | None = None
+    intent_confusion_matrix: list[MetadataCatalogAuditConfusionPair] = Field(
+        default_factory=list
+    )
+    agent_confusion_matrix: list[MetadataCatalogAuditConfusionPair] = Field(
+        default_factory=list
+    )
+    tool_confusion_matrix: list[MetadataCatalogAuditConfusionPair] = Field(
+        default_factory=list
+    )
+    path_confusion_matrix: list[MetadataCatalogAuditPathConfusionPair] = Field(
+        default_factory=list
+    )
+    vector_recall_summary: MetadataCatalogAuditVectorRecallSummary = Field(
+        default_factory=MetadataCatalogAuditVectorRecallSummary
+    )
+    tool_ranking_summary: MetadataCatalogAuditToolRankingSummary = Field(
+        default_factory=MetadataCatalogAuditToolRankingSummary
+    )
+    tool_embedding_context: MetadataCatalogAuditToolEmbeddingContext = Field(
+        default_factory=MetadataCatalogAuditToolEmbeddingContext
+    )
+
+
+class MetadataCatalogAuditRunDiagnostics(BaseModel):
+    total_ms: float = 0.0
+    preparation_ms: float = 0.0
+    probe_generation_ms: float = 0.0
+    evaluation_ms: float = 0.0
+    intent_layer_ms: float = 0.0
+    agent_layer_ms: float = 0.0
+    tool_layer_ms: float = 0.0
+    summary_build_ms: float = 0.0
+    selected_tools_count: int = 0
+    intent_candidate_count: int = 0
+    agent_candidate_count: int = 0
+    query_candidates_total: int = 0
+    existing_example_candidates: int = 0
+    llm_generated_candidates: int = 0
+    round_refresh_queries: int = 0
+    excluded_query_history_count: int = 0
+    excluded_query_duplicate_count: int = 0
+    evaluated_queries: int = 0
+    excluded_query_pool_size: int = 0
+    probe_generation_parallelism: int = 1
+    probe_round: int = 1
+    anchor_probe_mode: bool = False
+    anchor_probe_candidates: int = 0
+    anchor_probe_tools: int = 0
+    include_existing_examples: bool = True
+    include_llm_generated: bool = True
+
+
+class MetadataCatalogAuditAnchorProbeItem(BaseModel):
+    tool_id: str
+    query: str
+    source: str = "anchor"
+
+
+class MetadataCatalogAuditRunRequest(BaseModel):
+    search_space_id: int | None = None
+    metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    intent_metadata_patch: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+    agent_metadata_patch: list[AgentMetadataUpdateItem] = Field(default_factory=list)
+    tool_ids: list[str] = Field(default_factory=list)
+    tool_id_prefix: str | None = None
+    include_existing_examples: bool = True
+    include_llm_generated: bool = True
+    llm_queries_per_tool: int = 3
+    max_queries_per_tool: int = 6
+    hard_negatives_per_tool: int = 1
+    retrieval_limit: int = 5
+    max_tools: int = 25
+    probe_generation_parallelism: int = 1
+    probe_round: int = 1
+    exclude_probe_queries: list[str] = Field(default_factory=list)
+    anchor_probe_set: list[MetadataCatalogAuditAnchorProbeItem] = Field(default_factory=list)
+
+
+class MetadataCatalogAuditRunResponse(BaseModel):
+    search_space_id: int
+    metadata_version_hash: str
+    retrieval_tuning: ToolRetrievalTuning
+    probes: list[MetadataCatalogAuditProbeItem] = Field(default_factory=list)
+    summary: MetadataCatalogAuditSummary = Field(default_factory=MetadataCatalogAuditSummary)
+    diagnostics: MetadataCatalogAuditRunDiagnostics = Field(
+        default_factory=MetadataCatalogAuditRunDiagnostics
+    )
+    available_intent_ids: list[str] = Field(default_factory=list)
+    available_agent_ids: list[str] = Field(default_factory=list)
+    available_tool_ids: list[str] = Field(default_factory=list)
+    stability_locks: MetadataCatalogStabilityLockSummary = Field(
+        default_factory=MetadataCatalogStabilityLockSummary
+    )
+
+
+class MetadataCatalogAuditAnnotationItem(BaseModel):
+    probe_id: str
+    query: str
+    expected_intent_id: str | None = None
+    expected_agent_id: str | None = None
+    expected_tool_id: str | None = None
+    predicted_intent_id: str | None = None
+    predicted_agent_id: str | None = None
+    predicted_tool_id: str | None = None
+    intent_is_correct: bool = True
+    corrected_intent_id: str | None = None
+    agent_is_correct: bool = True
+    corrected_agent_id: str | None = None
+    tool_is_correct: bool = True
+    corrected_tool_id: str | None = None
+    intent_score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    agent_score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    tool_score_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    tool_vector_diagnostics: MetadataCatalogAuditToolVectorDiagnostics | None = None
+
+
+class MetadataCatalogIntentSuggestion(BaseModel):
+    intent_id: str
+    failed_probe_ids: list[str] = Field(default_factory=list)
+    rationale: str
+    current_metadata: IntentMetadataUpdateItem
+    proposed_metadata: IntentMetadataUpdateItem
+
+
+class MetadataCatalogAgentSuggestion(BaseModel):
+    agent_id: str
+    failed_probe_ids: list[str] = Field(default_factory=list)
+    rationale: str
+    current_metadata: AgentMetadataUpdateItem
+    proposed_metadata: AgentMetadataUpdateItem
+
+
+class MetadataCatalogAuditSuggestionRequest(BaseModel):
+    search_space_id: int | None = None
+    metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    intent_metadata_patch: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+    agent_metadata_patch: list[AgentMetadataUpdateItem] = Field(default_factory=list)
+    annotations: list[MetadataCatalogAuditAnnotationItem] = Field(default_factory=list)
+    max_suggestions: int = 20
+    llm_parallelism: int = 1
+
+
+class MetadataCatalogAuditSuggestionDiagnostics(BaseModel):
+    total_ms: float = 0.0
+    preparation_ms: float = 0.0
+    tool_stage_ms: float = 0.0
+    intent_stage_ms: float = 0.0
+    agent_stage_ms: float = 0.0
+    annotations_count: int = 0
+    annotations_payload_bytes: int = 0
+    tool_failure_candidates: int = 0
+    intent_failure_candidates: int = 0
+    agent_failure_candidates: int = 0
+    llm_parallelism: int = 1
+    llm_parallelism_effective: int = 1
+    max_suggestions: int = 20
+
+
+class MetadataCatalogAuditSuggestionResponse(BaseModel):
+    tool_suggestions: list[ToolMetadataSuggestion] = Field(default_factory=list)
+    intent_suggestions: list[MetadataCatalogIntentSuggestion] = Field(default_factory=list)
+    agent_suggestions: list[MetadataCatalogAgentSuggestion] = Field(default_factory=list)
+    total_annotations: int = 0
+    reviewed_intent_failures: int = 0
+    reviewed_agent_failures: int = 0
+    reviewed_tool_failures: int = 0
+    diagnostics: MetadataCatalogAuditSuggestionDiagnostics = Field(
+        default_factory=MetadataCatalogAuditSuggestionDiagnostics
+    )
+
+
+class MetadataCatalogSeparationLayerConfig(BaseModel):
+    enabled: bool = True
+    min_probes: int = 5
+    tier1_margin: float = -1.5
+    tier2_margin: float = 0.5
+    tier3_top1_threshold: float = 0.45
+    local_delta: float = 0.02
+    global_similarity_threshold: float = 0.85
+    epsilon_noise: float = 0.02
+    alignment_drop_max: float = 0.03
+    score_alignment_weight: float = 0.5
+    score_separation_weight: float = 0.5
+    min_metric_delta: float = 0.0
+    max_items: int = 24
+    llm_enabled: bool = True
+
+
+class MetadataCatalogSeparationCandidateDecision(BaseModel):
+    item_id: str
+    tier: str = "watch"
+    probes: int = 0
+    top1_rate: float = 0.0
+    avg_margin: float | None = None
+    primary_competitor: str | None = None
+    selected_source: str = "none"
+    local_check_passed: bool = False
+    global_check_passed: bool = False
+    selected_score: float | None = None
+    selected_margin: float | None = None
+    selected_alignment: float | None = None
+    selected_nearest_similarity: float | None = None
+    selected_similarity_to_primary: float | None = None
+    old_similarity_to_primary: float | None = None
+    old_margin: float | None = None
+    applied: bool = False
+    rejection_reasons: list[str] = Field(default_factory=list)
+
+
+class MetadataCatalogSeparationSimilarityMatrix(BaseModel):
+    scope_id: str
+    labels: list[str] = Field(default_factory=list)
+    values: list[list[float]] = Field(default_factory=list)
+
+
+class MetadataCatalogSeparationStageReport(BaseModel):
+    layer: str
+    enabled: bool = True
+    locked: bool = False
+    skipped_reason: str | None = None
+    before_metric: float | None = None
+    after_metric: float | None = None
+    delta_pp: float | None = None
+    before_total_accuracy: float | None = None
+    after_total_accuracy: float | None = None
+    applied_changes: int = 0
+    evaluated_items: int = 0
+    candidate_decisions: list[MetadataCatalogSeparationCandidateDecision] = Field(
+        default_factory=list
+    )
+    similarity_matrices: list[MetadataCatalogSeparationSimilarityMatrix] = Field(
+        default_factory=list
+    )
+    notes: list[str] = Field(default_factory=list)
+    mini_audit_summary: MetadataCatalogAuditSummary | None = None
+
+
+class MetadataCatalogContrastMemoryItem(BaseModel):
+    layer: str
+    item_id: str
+    competitor_id: str
+    memory_text: str
+    updated: bool = False
+
+
+class MetadataCatalogSeparationDiagnostics(BaseModel):
+    total_ms: float = 0.0
+    baseline_audit_ms: float = 0.0
+    final_audit_ms: float = 0.0
+    stage_total_ms: float = 0.0
+    stage_intent_ms: float = 0.0
+    stage_agent_ms: float = 0.0
+    stage_tool_ms: float = 0.0
+    candidate_count_total: int = 0
+    candidate_count_rule: int = 0
+    candidate_count_llm: int = 0
+    candidate_count_combined: int = 0
+    candidate_count_selected: int = 0
+    candidate_count_rejected: int = 0
+    llm_refinement_enabled: bool = True
+    llm_parallelism: int = 1
+    anchor_probe_count: int = 0
+
+
+class MetadataCatalogSeparationRequest(BaseModel):
+    search_space_id: int | None = None
+    metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    intent_metadata_patch: list[IntentMetadataUpdateItem] = Field(default_factory=list)
+    agent_metadata_patch: list[AgentMetadataUpdateItem] = Field(default_factory=list)
+    tool_ids: list[str] = Field(default_factory=list)
+    tool_id_prefix: str | None = None
+    retrieval_limit: int = 5
+    max_tools: int = 25
+    max_queries_per_tool: int = 6
+    hard_negatives_per_tool: int = 1
+    anchor_probe_set: list[MetadataCatalogAuditAnchorProbeItem] = Field(
+        default_factory=list
+    )
+    include_llm_refinement: bool = True
+    llm_parallelism: int = 4
+    intent_layer: MetadataCatalogSeparationLayerConfig = Field(
+        default_factory=lambda: MetadataCatalogSeparationLayerConfig(
+            score_alignment_weight=0.7,
+            score_separation_weight=0.3,
+            global_similarity_threshold=0.9,
+            local_delta=0.015,
+            max_items=16,
+        )
+    )
+    agent_layer: MetadataCatalogSeparationLayerConfig = Field(
+        default_factory=lambda: MetadataCatalogSeparationLayerConfig(
+            score_alignment_weight=0.6,
+            score_separation_weight=0.4,
+            global_similarity_threshold=0.88,
+            local_delta=0.02,
+            max_items=18,
+        )
+    )
+    tool_layer: MetadataCatalogSeparationLayerConfig = Field(
+        default_factory=lambda: MetadataCatalogSeparationLayerConfig(
+            score_alignment_weight=0.5,
+            score_separation_weight=0.5,
+            global_similarity_threshold=0.85,
+            local_delta=0.03,
+            max_items=28,
+        )
+    )
+
+
+class MetadataCatalogSeparationResponse(BaseModel):
+    search_space_id: int
+    metadata_version_hash: str
+    retrieval_tuning: ToolRetrievalTuning
+    baseline_summary: MetadataCatalogAuditSummary = Field(
+        default_factory=MetadataCatalogAuditSummary
+    )
+    final_summary: MetadataCatalogAuditSummary = Field(
+        default_factory=MetadataCatalogAuditSummary
+    )
+    stage_reports: list[MetadataCatalogSeparationStageReport] = Field(default_factory=list)
+    proposed_tool_metadata_patch: list[ToolMetadataUpdateItem] = Field(default_factory=list)
+    proposed_intent_metadata_patch: list[IntentMetadataUpdateItem] = Field(
+        default_factory=list
+    )
+    proposed_agent_metadata_patch: list[AgentMetadataUpdateItem] = Field(default_factory=list)
+    contrast_memory: list[MetadataCatalogContrastMemoryItem] = Field(default_factory=list)
+    diagnostics: MetadataCatalogSeparationDiagnostics = Field(
+        default_factory=MetadataCatalogSeparationDiagnostics
+    )
+    stability_locks: MetadataCatalogStabilityLockSummary = Field(
+        default_factory=MetadataCatalogStabilityLockSummary
+    )
 
 
 class ToolSuggestionRequest(BaseModel):

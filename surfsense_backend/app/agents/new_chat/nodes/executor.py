@@ -1,11 +1,304 @@
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.agents.new_chat.token_budget import TokenBudget
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_message_content(value: Any) -> str:
+    """Normalize message content to plain text for strict OpenAI templates."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        text_parts: list[str] = []
+        for part in value:
+            if part is None:
+                continue
+            if isinstance(part, str):
+                if part:
+                    text_parts.append(part)
+                continue
+            if isinstance(part, dict):
+                normalized = {k: v for k, v in part.items() if v is not None}
+                part_text = ""
+                if normalized.get("type") == "text" or "text" in normalized:
+                    part_text = str(normalized.get("text") or "")
+                elif "content" in normalized:
+                    part_text = str(normalized.get("content") or "")
+                elif "value" in normalized:
+                    part_text = str(normalized.get("value") or "")
+                elif normalized:
+                    try:
+                        part_text = json.dumps(normalized, ensure_ascii=False)
+                    except Exception:
+                        part_text = str(normalized)
+                if part_text:
+                    text_parts.append(part_text)
+                continue
+            text_parts.append(str(part))
+        return "\n".join(part for part in text_parts if part).strip()
+    return str(value)
+
+
+def _sanitize_template_value(value: Any) -> Any:
+    """Recursively sanitize values so strict templates don't receive null."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            if item is None:
+                continue
+            sanitized[str(key)] = _sanitize_template_value(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_template_value(item) for item in value if item is not None]
+    return value
+
+
+def _normalize_tool_call_dict(tool_call: Any, *, index: int) -> dict[str, Any] | None:
+    """Ensure tool call payload has non-null id/name/args for strict templates."""
+    if not isinstance(tool_call, dict):
+        return None
+    normalized = dict(tool_call)
+
+    raw_name = normalized.get("name")
+    if not raw_name and isinstance(normalized.get("function"), dict):
+        raw_name = normalized["function"].get("name")
+    name = str(raw_name or "").strip() or "tool_call"
+    call_id = str(normalized.get("id") or normalized.get("tool_call_id") or "").strip()
+    if not call_id:
+        call_id = f"call_{index}"
+
+    raw_args = normalized.get("args")
+    if raw_args is None:
+        args: dict[str, Any] = {}
+    elif isinstance(raw_args, dict):
+        args = raw_args
+    elif isinstance(raw_args, str):
+        payload = raw_args.strip()
+        if not payload:
+            args = {}
+        else:
+            try:
+                parsed = json.loads(payload)
+            except Exception:
+                args = {"value": payload}
+            else:
+                args = parsed if isinstance(parsed, dict) else {"value": payload}
+    else:
+        args = {"value": str(raw_args)}
+
+    normalized["id"] = call_id
+    normalized["name"] = name
+    normalized["args"] = _sanitize_template_value(args)
+    if isinstance(normalized.get("function"), dict):
+        function_payload = dict(normalized["function"])
+        function_payload["name"] = name
+        function_payload["arguments"] = json.dumps(normalized["args"], ensure_ascii=False)
+        normalized["function"] = function_payload
+    if normalized.get("type") is None:
+        normalized["type"] = "tool_call"
+    return _sanitize_template_value(normalized)
+
+
+def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
+    """
+    Guardrail for strict OpenAI-compatible templates (e.g. LM Studio Jinja).
+    Avoid NullValue in content/tool-call fields between turns.
+    """
+    normalized_messages: list[Any] = []
+    for message in messages:
+        if isinstance(message, AIMessage):
+            content = _normalize_message_content(getattr(message, "content", ""))
+            raw_tool_calls = getattr(message, "tool_calls", None)
+            tool_calls: list[dict[str, Any]] = []
+            if isinstance(raw_tool_calls, list):
+                for tool_idx, tool_call in enumerate(raw_tool_calls):
+                    normalized_tool_call = _normalize_tool_call_dict(
+                        tool_call,
+                        index=tool_idx,
+                    )
+                    if normalized_tool_call:
+                        tool_calls.append(normalized_tool_call)
+            try:
+                updated = {
+                    "content": content,
+                    "additional_kwargs": _sanitize_template_value(
+                        dict(getattr(message, "additional_kwargs", {}) or {})
+                    ),
+                    "response_metadata": _sanitize_template_value(
+                        dict(getattr(message, "response_metadata", {}) or {})
+                    ),
+                }
+                if isinstance(raw_tool_calls, list):
+                    updated["tool_calls"] = tool_calls
+                normalized_messages.append(message.model_copy(update=updated))
+            except Exception:
+                normalized_messages.append(
+                    AIMessage(
+                        content=content,
+                        tool_calls=tool_calls,
+                        additional_kwargs=_sanitize_template_value(
+                            dict(getattr(message, "additional_kwargs", {}) or {})
+                        ),
+                        response_metadata=_sanitize_template_value(
+                            dict(getattr(message, "response_metadata", {}) or {})
+                        ),
+                        id=getattr(message, "id", None),
+                    )
+                )
+            continue
+
+        if isinstance(message, ToolMessage):
+            content = _normalize_message_content(getattr(message, "content", ""))
+            name = str(getattr(message, "name", "") or "").strip() or "tool"
+            tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+            if not tool_call_id:
+                tool_call_id = f"tool_call_{idx}"
+            try:
+                normalized_messages.append(
+                    message.model_copy(
+                        update={
+                            "content": content,
+                            "name": name,
+                            "tool_call_id": tool_call_id,
+                        }
+                    )
+                )
+            except Exception:
+                normalized_messages.append(
+                    ToolMessage(
+                        content=content,
+                        name=name,
+                        tool_call_id=tool_call_id,
+                    )
+                )
+            continue
+
+        if isinstance(message, HumanMessage):
+            content = _normalize_message_content(getattr(message, "content", ""))
+            try:
+                normalized_messages.append(message.model_copy(update={"content": content}))
+            except Exception:
+                normalized_messages.append(HumanMessage(content=content))
+            continue
+
+        if isinstance(message, SystemMessage):
+            content = _normalize_message_content(getattr(message, "content", ""))
+            try:
+                normalized_messages.append(message.model_copy(update={"content": content}))
+            except Exception:
+                normalized_messages.append(SystemMessage(content=content))
+            continue
+
+        normalized_messages.append(message)
+    return normalized_messages
+
+
+def _is_jinja_nullvalue_error(error: Exception) -> bool:
+    text = str(error or "")
+    lowered = text.lower()
+    return (
+        "error rendering prompt with jinja template" in lowered
+        and "nullvalue" in lowered
+    ) or (
+        "cannot apply filter \"string\" to type: nullvalue" in lowered
+    )
+
+
+def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
+    """
+    Retry payload for strict templates:
+    - collapse ToolMessage blocks into one HumanMessage observation
+    - strip assistant tool_calls metadata from historical assistant messages
+    """
+    retried: list[Any] = []
+    pending_tool_lines: list[str] = []
+
+    def _flush_tool_lines() -> None:
+        if not pending_tool_lines:
+            return
+        retried.append(
+            HumanMessage(
+                content=(
+                    "<tool_results>\n"
+                    + "\n".join(pending_tool_lines)
+                    + "\n</tool_results>"
+                )
+            )
+        )
+        pending_tool_lines.clear()
+
+    for idx, message in enumerate(messages):
+        if isinstance(message, ToolMessage):
+            tool_name = str(getattr(message, "name", "") or "").strip() or "tool"
+            tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+            content = _normalize_message_content(getattr(message, "content", ""))
+            label = f"{tool_name}" + (f"#{tool_call_id}" if tool_call_id else "")
+            line = f"- {label}: {content or '(empty)'}"
+            pending_tool_lines.append(line)
+            continue
+
+        _flush_tool_lines()
+        if isinstance(message, AIMessage):
+            try:
+                retried.append(
+                    message.model_copy(
+                        update={
+                            "content": _normalize_message_content(
+                                getattr(message, "content", "")
+                            ),
+                            "tool_calls": [],
+                        }
+                    )
+                )
+            except Exception:
+                retried.append(
+                    AIMessage(
+                        content=_normalize_message_content(
+                            getattr(message, "content", "")
+                        ),
+                        additional_kwargs=dict(
+                            getattr(message, "additional_kwargs", {}) or {}
+                        ),
+                        response_metadata=dict(
+                            getattr(message, "response_metadata", {}) or {}
+                        ),
+                        id=getattr(message, "id", None),
+                    )
+                )
+            continue
+
+        if isinstance(message, HumanMessage):
+            retried.append(
+                HumanMessage(
+                    content=_normalize_message_content(getattr(message, "content", ""))
+                )
+            )
+            continue
+
+        if isinstance(message, SystemMessage):
+            retried.append(
+                SystemMessage(
+                    content=_normalize_message_content(getattr(message, "content", ""))
+                )
+            )
+            continue
+
+        retried.append(message)
+
+    _flush_tool_lines()
+    return retried
 
 
 def _build_executor_updates_for_new_user_turn(
@@ -148,7 +441,25 @@ def build_executor_nodes(
             new_user_turn = True
 
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
-        response = llm_with_tools.invoke(messages)
+        messages = _normalize_messages_for_provider_compat(messages)
+        try:
+            response = llm_with_tools.invoke(messages)
+        except Exception as exc:
+            if not _is_jinja_nullvalue_error(exc):
+                raise
+            retry_messages = _build_template_safe_retry_messages(messages)
+            logger.warning(
+                "Template NullValue in sync invoke; retrying with tool-result compaction"
+            )
+            try:
+                response = llm_with_tools.invoke(retry_messages)
+            except Exception as retry_exc:
+                if not _is_jinja_nullvalue_error(retry_exc):
+                    raise
+                logger.warning(
+                    "Template NullValue persisted after compaction; retrying without tools"
+                )
+                response = llm.invoke(retry_messages)
         response = coerce_supervisor_tool_calls_fn(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),
@@ -190,7 +501,25 @@ def build_executor_nodes(
             new_user_turn = True
 
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
-        response = await llm_with_tools.ainvoke(messages)
+        messages = _normalize_messages_for_provider_compat(messages)
+        try:
+            response = await llm_with_tools.ainvoke(messages)
+        except Exception as exc:
+            if not _is_jinja_nullvalue_error(exc):
+                raise
+            retry_messages = _build_template_safe_retry_messages(messages)
+            logger.warning(
+                "Template NullValue in async invoke; retrying with tool-result compaction"
+            )
+            try:
+                response = await llm_with_tools.ainvoke(retry_messages)
+            except Exception as retry_exc:
+                if not _is_jinja_nullvalue_error(retry_exc):
+                    raise
+                logger.warning(
+                    "Template NullValue persisted after compaction; retrying without tools"
+                )
+                response = await llm.ainvoke(retry_messages)
         response = coerce_supervisor_tool_calls_fn(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),

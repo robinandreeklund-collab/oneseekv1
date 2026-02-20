@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
+
+logger = logging.getLogger(__name__)
 
 
 def build_agent_resolver_node(
@@ -16,11 +19,13 @@ def build_agent_resolver_node(
     route_allowed_agents_fn: Callable[[str | None], set[str]],
     route_default_agent_fn: Callable[[str | None, set[str] | None], str],
     smart_retrieve_agents_fn: Callable[..., list[Any]],
+    smart_retrieve_agents_with_scores_fn: Callable[..., list[dict[str, Any]]] | None = None,
     agent_definitions: list[Any],
     agent_by_name: dict[str, Any],
     agent_payload_fn: Callable[[Any], dict[str, Any]],
     append_datetime_context_fn: Callable[[str], str],
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
+    live_routing_config: dict[str, Any] | None = None,
 ):
     async def resolve_agents_node(
         state: dict[str, Any],
@@ -54,27 +59,138 @@ def build_agent_resolver_node(
             for item in recent_calls[-3:]
             if isinstance(item, dict) and str(item.get("agent") or "").strip()
         ]
-        selected = smart_retrieve_agents_fn(
-            latest_user_query,
-            agent_definitions=agent_definitions,
-            recent_agents=recent_agents,
-            limit=3,
-        )
+        live_cfg = dict(live_routing_config or {})
+        live_enabled = bool(live_cfg.get("enabled", False))
+        phase_index = int(live_cfg.get("phase_index") or 0)
+        shortlist_k = max(2, min(int(live_cfg.get("agent_top_k") or 3), 8))
+        ranked_candidates: list[dict[str, Any]] = []
+        if smart_retrieve_agents_with_scores_fn is not None:
+            ranked_candidates = list(
+                smart_retrieve_agents_with_scores_fn(
+                    latest_user_query,
+                    agent_definitions=agent_definitions,
+                    recent_agents=recent_agents,
+                    limit=max(shortlist_k, 3),
+                )
+                or []
+            )
+        if not ranked_candidates:
+            selected = smart_retrieve_agents_fn(
+                latest_user_query,
+                agent_definitions=agent_definitions,
+                recent_agents=recent_agents,
+                limit=max(shortlist_k, 3),
+            )
+            ranked_candidates = [
+                {"definition": item, "score": float(max(0, len(selected) - idx))}
+                for idx, item in enumerate(selected)
+            ]
+        selected = [
+            item.get("definition")
+            for item in ranked_candidates
+            if isinstance(item, dict) and item.get("definition") is not None
+        ]
         if route_allowed:
             filtered = [agent for agent in selected if agent.name in route_allowed]
             if filtered:
                 selected = filtered
+                allowed_names = {agent.name for agent in filtered}
+                ranked_candidates = [
+                    item
+                    for item in ranked_candidates
+                    if isinstance(item, dict)
+                    and getattr(item.get("definition"), "name", "") in allowed_names
+                ]
             elif default_for_route in agent_by_name:
                 selected = [agent_by_name[default_for_route]]
+                ranked_candidates = [
+                    item
+                    for item in ranked_candidates
+                    if isinstance(item, dict)
+                    and getattr(item.get("definition"), "name", "") == default_for_route
+                ]
         selected_payload = [agent_payload_fn(agent) for agent in selected]
         if not selected_payload and default_for_route in agent_by_name:
             selected_payload = [agent_payload_fn(agent_by_name[default_for_route])]
+        selected_payload = selected_payload[: max(1, int(shortlist_k))]
+        top1 = ranked_candidates[0] if ranked_candidates else None
+        top2 = ranked_candidates[1] if len(ranked_candidates) > 1 else None
+        top1_name = (
+            getattr(top1.get("definition"), "name", "")
+            if isinstance(top1, dict)
+            else ""
+        )
+        top2_name = (
+            getattr(top2.get("definition"), "name", "")
+            if isinstance(top2, dict)
+            else ""
+        )
+        top1_score = float(top1.get("score") or 0.0) if isinstance(top1, dict) else 0.0
+        top2_score = float(top2.get("score") or 0.0) if isinstance(top2, dict) else 0.0
+        margin = (top1_score - top2_score) if top1 and top2 else None
 
         graph_complexity = str(state.get("graph_complexity") or "").strip().lower()
         if graph_complexity == "simple" and selected_payload:
             # For simple turns, avoid an extra resolver LLM call.
+            trace = dict(state.get("live_routing_trace") or {})
+            trace["agent"] = {
+                "mode": "simple_auto",
+                "phase": str(live_cfg.get("phase") or "shadow"),
+                "top1": top1_name,
+                "top2": top2_name,
+                "margin": margin,
+                "shortlist_size": len(selected_payload),
+                "selected": selected_payload[0].get("name") if selected_payload else None,
+            }
+            if live_enabled:
+                logger.info(
+                    "live-routing agent-selection phase=%s mode=%s top1=%s top2=%s margin=%s selected=%s",
+                    live_cfg.get("phase"),
+                    trace["agent"].get("mode"),
+                    top1_name,
+                    top2_name,
+                    margin,
+                    trace["agent"].get("selected"),
+                )
             return {
                 "selected_agents": selected_payload[:1],
+                "live_routing_trace": trace,
+                "orchestration_phase": "plan",
+            }
+
+        should_auto_select = bool(
+            live_enabled
+            and phase_index >= 2
+            and selected_payload
+            and margin is not None
+            and margin >= float(live_cfg.get("agent_auto_margin_threshold") or 0.18)
+            and top1_score >= float(live_cfg.get("agent_auto_score_threshold") or 0.55)
+        )
+        if should_auto_select:
+            selected_payload = selected_payload[:1]
+            trace = dict(state.get("live_routing_trace") or {})
+            trace["agent"] = {
+                "mode": "auto_select",
+                "phase": str(live_cfg.get("phase") or "shadow"),
+                "top1": top1_name,
+                "top2": top2_name,
+                "margin": margin,
+                "shortlist_size": len(selected_payload),
+                "selected": selected_payload[0].get("name") if selected_payload else None,
+            }
+            if live_enabled:
+                logger.info(
+                    "live-routing agent-selection phase=%s mode=%s top1=%s top2=%s margin=%s selected=%s",
+                    live_cfg.get("phase"),
+                    trace["agent"].get("mode"),
+                    top1_name,
+                    top2_name,
+                    margin,
+                    trace["agent"].get("selected"),
+                )
+            return {
+                "selected_agents": selected_payload[:1],
+                "live_routing_trace": trace,
                 "orchestration_phase": "plan",
             }
 
@@ -109,11 +225,32 @@ def build_agent_resolver_node(
                     if normalized and normalized in by_name:
                         ordered.append(by_name[normalized])
                 if ordered:
-                    selected_payload = ordered[:3]
+                    selected_payload = ordered[: max(1, int(shortlist_k))]
         except Exception:
             pass
+        trace = dict(state.get("live_routing_trace") or {})
+        trace["agent"] = {
+            "mode": "llm",
+            "phase": str(live_cfg.get("phase") or "shadow"),
+            "top1": top1_name,
+            "top2": top2_name,
+            "margin": margin,
+            "shortlist_size": len(selected_payload),
+            "selected": selected_payload[0].get("name") if selected_payload else None,
+        }
+        if live_enabled:
+            logger.info(
+                "live-routing agent-selection phase=%s mode=%s top1=%s top2=%s margin=%s selected=%s",
+                live_cfg.get("phase"),
+                trace["agent"].get("mode"),
+                top1_name,
+                top2_name,
+                margin,
+                trace["agent"].get("selected"),
+            )
         return {
-            "selected_agents": selected_payload[:3],
+            "selected_agents": selected_payload[: max(1, int(shortlist_k))],
+            "live_routing_trace": trace,
             "orchestration_phase": "plan",
         }
 
