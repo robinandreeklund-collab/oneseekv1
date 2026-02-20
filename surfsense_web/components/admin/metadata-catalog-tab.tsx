@@ -1108,8 +1108,12 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			await queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
 			await refetch();
 			toast.success("Metadata sparat.");
-		} catch (_error) {
-			toast.error("Kunde inte spara metadata.");
+		} catch (error) {
+			const message =
+				error instanceof Error && error.message && error.message !== "[object Object]"
+					? error.message
+					: "Kunde inte spara metadata.";
+			toast.error(message);
 		} finally {
 			setIsSaving(false);
 		}

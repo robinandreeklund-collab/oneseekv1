@@ -4010,18 +4010,102 @@ async def update_tool_settings_metadata_catalog(
             semantic_weight=semantic_weight,
             structural_weight=structural_weight,
         )
+
+        def _layer_label(layer: str, item_id: str) -> str:
+            normalized_layer = str(layer or "").strip().lower()
+            normalized_id = str(item_id or "").strip().lower()
+            if normalized_layer == "tool":
+                payload = current_tool_map.get(normalized_id) or {}
+                return str(payload.get("name") or normalized_id)
+            if normalized_layer == "intent":
+                payload = current_intent_map.get(normalized_id) or {}
+                return str(payload.get("label") or normalized_id)
+            if normalized_layer == "agent":
+                payload = current_agent_map.get(normalized_id) or {}
+                return str(payload.get("label") or normalized_id)
+            return normalized_id
+
+        def _format_layer_rejections(
+            layer: str,
+            rows: list[dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            formatted: list[dict[str, Any]] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                item_id = str(row.get("item_id") or "").strip().lower()
+                competitor_id = str(row.get("competitor_id") or "").strip().lower()
+                if not item_id or not competitor_id:
+                    continue
+                similarity = float(row.get("similarity") or 0.0)
+                max_similarity = float(row.get("max_similarity") or 0.0)
+                formatted.append(
+                    {
+                        "layer": layer,
+                        "item_id": item_id,
+                        "item_label": _layer_label(layer, item_id),
+                        "competitor_id": competitor_id,
+                        "competitor_label": _layer_label(layer, competitor_id),
+                        "similarity": round(similarity, 6),
+                        "max_similarity": round(max_similarity, 6),
+                        "delta": round(similarity - max_similarity, 6),
+                    }
+                )
+            formatted.sort(key=lambda item: float(item.get("delta") or 0.0), reverse=True)
+            return formatted
+
         lock_rejections = dict(lock_filtered.get("rejections") or {})
-        tool_rejected = list(lock_rejections.get("tool") or [])
-        intent_rejected = list(lock_rejections.get("intent") or [])
-        agent_rejected = list(lock_rejections.get("agent") or [])
+        tool_rejected = _format_layer_rejections(
+            "tool",
+            list(lock_rejections.get("tool") or []),
+        )
+        intent_rejected = _format_layer_rejections(
+            "intent",
+            list(lock_rejections.get("intent") or []),
+        )
+        agent_rejected = _format_layer_rejections(
+            "agent",
+            list(lock_rejections.get("agent") or []),
+        )
         if tool_rejected or intent_rejected or agent_rejected:
+            combined_rejections = [
+                *tool_rejected,
+                *intent_rejected,
+                *agent_rejected,
+            ]
+            combined_rejections.sort(
+                key=lambda item: float(item.get("delta") or 0.0),
+                reverse=True,
+            )
+            top_conflicts = combined_rejections[:8]
+            summary_parts: list[str] = []
+            if tool_rejected:
+                summary_parts.append(f"{len(tool_rejected)} tool")
+            if intent_rejected:
+                summary_parts.append(f"{len(intent_rejected)} intent")
+            if agent_rejected:
+                summary_parts.append(f"{len(agent_rejected)} agent")
+            summary_text = ", ".join(summary_parts) if summary_parts else "flera"
+            first_conflict = top_conflicts[0] if top_conflicts else None
+            first_conflict_hint = ""
+            if first_conflict:
+                first_conflict_hint = (
+                    f" First conflict: [{first_conflict.get('layer')}] "
+                    f"{first_conflict.get('item_label')} -> "
+                    f"{first_conflict.get('competitor_label')} "
+                    f"({first_conflict.get('similarity')} > "
+                    f"{first_conflict.get('max_similarity')})."
+                )
             raise HTTPException(
                 status_code=409,
                 detail={
+                    "code": "BSSS_LOCK_VIOLATION",
                     "message": (
                         "Metadata update blocked by BSSS lock mode. "
-                        "One or more updates violate persisted separation constraints."
+                        f"{summary_text} updates violate persisted separation constraints."
+                        f"{first_conflict_hint}"
                     ),
+                    "conflicts": top_conflicts,
                     "rejected": {
                         "tool": tool_rejected,
                         "intent": intent_rejected,

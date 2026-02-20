@@ -240,7 +240,8 @@ flowchart TD
    - forslagslistan: att blockerade overtramp inte dyker upp som applybara
 3. **Efter metadata apply**
    - inga `409` lock-brott vid legitima uppdateringar
-   - om `409`: granska `rejected`-payload och justera metadata utan doman-glidning
+   - om `409`: svaret innehaller `code=BSSS_LOCK_VIOLATION`, `message`, `conflicts[]` (lager + item/konkurrent + similarity/grans) och `rejected`
+   - anvand `conflicts[]` for att se exakt vilket lock som blockerat uppdateringen
 
 ---
 
