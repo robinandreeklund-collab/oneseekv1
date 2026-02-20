@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlparse
 
 import litellm
 from langchain_core.messages import HumanMessage
@@ -19,6 +20,151 @@ from app.services.llm_router_service import (
 litellm.drop_params = True
 
 logger = logging.getLogger(__name__)
+
+
+def _is_lm_studio_api_base(api_base: str | None) -> bool:
+    value = str(api_base or "").strip()
+    if not value:
+        return False
+    lowered = value.lower()
+    if "lmstudio" in lowered:
+        return True
+    try:
+        parsed = urlparse(value if "://" in value else f"http://{value}")
+    except Exception:
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    port = parsed.port
+    return host in {"localhost", "127.0.0.1", "::1"} and port == 1234
+
+
+class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
+    """
+    LM Studio chat templates are strict around null values in request payloads.
+    Sanitize every call so `None` never reaches Jinja rendering context.
+    """
+
+    @staticmethod
+    def _sanitize_schema_value(value):
+        if isinstance(value, dict):
+            sanitized: dict = {}
+            for key, item in value.items():
+                if item is None:
+                    continue
+                if key in {"anyOf", "oneOf", "allOf"} and isinstance(item, list):
+                    variants: list = []
+                    for variant in item:
+                        cleaned = LMStudioCompatibleChatLiteLLM._sanitize_schema_value(
+                            variant
+                        )
+                        if (
+                            isinstance(cleaned, dict)
+                            and str(cleaned.get("type") or "").strip().lower()
+                            == "null"
+                        ):
+                            continue
+                        variants.append(cleaned)
+                    if variants:
+                        sanitized[key] = variants
+                    continue
+                sanitized[key] = LMStudioCompatibleChatLiteLLM._sanitize_schema_value(
+                    item
+                )
+
+            properties = sanitized.get("properties")
+            required = sanitized.get("required")
+            if isinstance(properties, dict):
+                cleaned_properties: dict = {}
+                for prop_name, prop_schema in properties.items():
+                    normalized_name = str(prop_name or "").strip()
+                    if normalized_name == "state":
+                        # Injected runtime state should not be visible to the model schema.
+                        continue
+                    cleaned_properties[
+                        normalized_name
+                    ] = LMStudioCompatibleChatLiteLLM._sanitize_schema_value(prop_schema)
+                sanitized["properties"] = cleaned_properties
+
+                if isinstance(required, list):
+                    kept_required = [
+                        str(field).strip()
+                        for field in required
+                        if isinstance(field, str) and str(field).strip() in cleaned_properties
+                    ]
+                    if kept_required:
+                        sanitized["required"] = kept_required
+                    else:
+                        sanitized.pop("required", None)
+            return sanitized
+        if isinstance(value, list):
+            return [LMStudioCompatibleChatLiteLLM._sanitize_schema_value(item) for item in value if item is not None]
+        return value
+
+    @classmethod
+    def _sanitize_request_kwargs(cls, kwargs: dict) -> dict:
+        updated: dict = {}
+        for key, value in dict(kwargs or {}).items():
+            if value is None:
+                continue
+            updated[key] = value
+
+        if "tools" in updated:
+            tools_payload = updated.get("tools")
+            if isinstance(tools_payload, list):
+                updated["tools"] = [
+                    cls._sanitize_schema_value(tool_def)
+                    for tool_def in tools_payload
+                    if tool_def is not None
+                ]
+            else:
+                updated["tools"] = []
+        elif "functions" not in updated:
+            # Keep explicit empty tool list to avoid LM Studio null-tool handling bugs.
+            updated["tools"] = []
+
+        if updated.get("tools"):
+            if updated.get("tool_choice") is None:
+                updated["tool_choice"] = "auto"
+        else:
+            updated.pop("tool_choice", None)
+
+        return updated
+
+    @property
+    def _default_params(self):
+        base = super()._default_params
+        if not isinstance(base, dict):
+            return base
+        return self._sanitize_request_kwargs(dict(base))
+
+    def invoke(self, input, config=None, **kwargs):
+        return super().invoke(
+            input,
+            config=config,
+            **self._sanitize_request_kwargs(kwargs),
+        )
+
+    async def ainvoke(self, input, config=None, **kwargs):
+        return await super().ainvoke(
+            input,
+            config=config,
+            **self._sanitize_request_kwargs(kwargs),
+        )
+
+    def stream(self, input, config=None, **kwargs):
+        return super().stream(
+            input,
+            config=config,
+            **self._sanitize_request_kwargs(kwargs),
+        )
+
+    async def astream(self, input, config=None, **kwargs):
+        async for chunk in super().astream(
+            input,
+            config=config,
+            **self._sanitize_request_kwargs(kwargs),
+        ):
+            yield chunk
 
 
 def _ensure_auto_mode_router_initialized() -> bool:
@@ -149,7 +295,12 @@ async def validate_llm_config(
         if litellm_params:
             litellm_kwargs.update(litellm_params)
 
-        llm = ChatLiteLLM(**litellm_kwargs)
+        chat_cls = (
+            LMStudioCompatibleChatLiteLLM
+            if _is_lm_studio_api_base(api_base)
+            else ChatLiteLLM
+        )
+        llm = chat_cls(**litellm_kwargs)
 
         # Make a simple test call
         test_message = HumanMessage(content="Hello")
@@ -294,7 +445,12 @@ async def get_search_space_llm_instance(
             if global_config.get("litellm_params"):
                 litellm_kwargs.update(global_config["litellm_params"])
 
-            return ChatLiteLLM(**litellm_kwargs)
+            chat_cls = (
+                LMStudioCompatibleChatLiteLLM
+                if _is_lm_studio_api_base(global_config.get("api_base"))
+                else ChatLiteLLM
+            )
+            return chat_cls(**litellm_kwargs)
 
         # Get the LLM configuration from database (NewLLMConfig)
         result = await session.execute(
@@ -366,7 +522,12 @@ async def get_search_space_llm_instance(
         if llm_config.litellm_params:
             litellm_kwargs.update(llm_config.litellm_params)
 
-        return ChatLiteLLM(**litellm_kwargs)
+        chat_cls = (
+            LMStudioCompatibleChatLiteLLM
+            if _is_lm_studio_api_base(llm_config.api_base)
+            else ChatLiteLLM
+        )
+        return chat_cls(**litellm_kwargs)
 
     except Exception as e:
         logger.error(
