@@ -18,6 +18,10 @@ from langchain_litellm import ChatLiteLLM
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.llm_service import (
+    LMStudioCompatibleChatLiteLLM,
+    _is_lm_studio_api_base,
+)
 from app.services.llm_router_service import (
     AUTO_MODE_ID,
     ChatLiteLLMRouter,
@@ -386,7 +390,12 @@ def create_chat_litellm_from_config(llm_config: dict) -> ChatLiteLLM | None:
     if llm_config.get("litellm_params"):
         litellm_kwargs.update(llm_config["litellm_params"])
 
-    return ChatLiteLLM(**litellm_kwargs)
+    chat_cls = (
+        LMStudioCompatibleChatLiteLLM
+        if _is_lm_studio_api_base(api_base)
+        else ChatLiteLLM
+    )
+    return chat_cls(**litellm_kwargs)
 
 
 def create_chat_litellm_from_agent_config(
@@ -440,4 +449,9 @@ def create_chat_litellm_from_agent_config(
     if agent_config.litellm_params:
         litellm_kwargs.update(agent_config.litellm_params)
 
-    return ChatLiteLLM(**litellm_kwargs)
+    chat_cls = (
+        LMStudioCompatibleChatLiteLLM
+        if _is_lm_studio_api_base(api_base)
+        else ChatLiteLLM
+    )
+    return chat_cls(**litellm_kwargs)
