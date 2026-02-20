@@ -1895,8 +1895,18 @@ async def stream_new_chat(
         #             langchain_messages.append(AIMessage(content=msg.content))
         # else:
         # Fallback: just use the current user query with attachment context
-        if worker_system_prompt:
-            langchain_messages.append(SystemMessage(content=worker_system_prompt))
+        should_prefix_system_prompt = bool(worker_system_prompt) and (
+            needs_history_bootstrap or not routing_history
+        )
+        if should_prefix_system_prompt:
+            # LM Studio chat templates (OpenAI-compatible) often require exactly one
+            # optional system message at the beginning, then user/assistant alternation.
+            # Only inject it for the first turn (or bootstrap) to avoid mid-history
+            # system messages on follow-up turns when LangGraph memory is active.
+            langchain_messages = [
+                SystemMessage(content=worker_system_prompt),
+                *langchain_messages,
+            ]
         langchain_messages.append(HumanMessage(content=final_query))
         request_turn_id = uuid.uuid4().hex
 
