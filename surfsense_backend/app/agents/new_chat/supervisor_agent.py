@@ -95,6 +95,7 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
     DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
@@ -1788,6 +1789,11 @@ async def create_supervisor_agent(
         prompt_overrides,
         "supervisor.planner.system",
         DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    )
+    multi_domain_planner_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.planner.multi_domain.system",
+        DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
     )
     tool_resolver_prompt_template = resolve_prompt(
         prompt_overrides,
@@ -5351,6 +5357,7 @@ async def create_supervisor_agent(
     planner_node = build_planner_node(
         llm=llm,
         planner_prompt_template=planner_prompt_template,
+        multi_domain_planner_prompt_template=multi_domain_planner_prompt_template,
         latest_user_query_fn=_latest_user_query,
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
