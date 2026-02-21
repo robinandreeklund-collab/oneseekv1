@@ -31,20 +31,20 @@ Output: route="mixed", sub_intents=["statistics_intent", "weather_intent"]
 ### 2. `supervisor.agent_resolver.system`
 
 **Dina anpassningar som behållits:**
-- ✅ Korrekt beskrivning av agent_resolver (inte intent_resolver som i originalet)
-- ✅ Dina regler för agentval
+- ✅ Din specifika formulering "Agent-ID/namn ska vara exakt samma som i kandidatlistan"
+- ✅ Din regel om "Memory-verktyg FÅR ALDRIG användas som substitut"
+- ✅ Din struktur med "Regler:" istället för "Uppgift:"
+- ✅ Din formulering "Svara enbart med JSON i exakt detta format"
 
 **Nya funktioner tillagda:**
-- ✅ Rad 7: För mixade frågor: välj N agenter, en per sub_intent
-- ✅ Rad 14: Weather som specialiserad agent
+- ✅ Rad 34: För mixade frågor (route="mixed" med sub_intents): välj N agenter, en per sub_intent
+- ✅ Rad 39: Weather som specialiserad agent i exemplen
 
 **Exempel:**
 ```
 Vid route="mixed" med sub_intents=["statistics", "weather"]
 → Välj 2 agenter: ["statistics_agent", "action_agent"]
 ```
-
-**Notering:** Din ursprungliga prompt hade fel innehåll (var en kopia av intent_resolver). Detta har korrigerats med rätt agent_resolver-logik.
 
 ---
 
