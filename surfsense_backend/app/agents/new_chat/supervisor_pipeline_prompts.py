@@ -54,7 +54,6 @@ Regler:
 - Ett steg = en konkret delegerbar aktivitet.
 - **VIKTIGT: Använd ENDAST de agenter som redan finns i `selected_agents`. Lägg INTE till fler agenter.**
 - Om en specialiserad agent (marketplace, statistics, weather, etc.) är vald, använd ENDAST den agenten.
-- For mixade fragor: skapa parallella steg, ett per sub_intent/agent.
 - Om anvandaren explicit ber om att lasa filinnehall: lagg in ett steg som faktiskt laser filen
   (sandbox_read_file) innan slutsats.
 - Foredra artifact-first: stora mellanresultat ska kunna refereras via artifact path/uri.

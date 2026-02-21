@@ -435,6 +435,7 @@ def build_intent_resolver_node(
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
             updates["guard_parallel_preview"] = []
+            updates["subagent_handoffs"] = []
             updates["graph_complexity"] = graph_complexity
             updates["speculative_candidates"] = speculative_candidates
             updates["speculative_results"] = {}

@@ -117,7 +117,7 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
     Avoid NullValue in content/tool-call fields between turns.
     """
     normalized_messages: list[Any] = []
-    for message in messages:
+    for idx, message in enumerate(messages):
         if isinstance(message, AIMessage):
             content = _normalize_message_content(getattr(message, "content", ""))
             raw_tool_calls = getattr(message, "tool_calls", None)
