@@ -131,1214 +131,178 @@ from app.services.tool_metadata_service import get_global_tool_metadata_override
 logger = logging.getLogger(__name__)
 
 
-_AGENT_CACHE_TTL = timedelta(minutes=20)
-_AGENT_COMBO_CACHE: dict[str, tuple[datetime, list[str]]] = {}
-
-# Specialized agents that have their own WorkerConfig with specific primary_namespaces
-# These should NOT be overridden by route_policy if explicitly selected
-# This scales to 100s of APIs without needing regex patterns for each one
-_SPECIALIZED_AGENTS = {
-    "marketplace",  # Blocket/Tradera tools
-    "statistics",   # SCB/Kolada tools
-    "riksdagen",    # Parliament data tools
-    "bolag",        # Company registry tools
-    "trafik",       # Traffic/transport tools
-    "weather",      # Weather-specific tools
-    "kartor",       # Map generation tools
-    # Future specialized agents will be added here automatically
-    # as long as they have dedicated WorkerConfig entries
-}
-
-_AGENT_STOPWORDS = {
-    "hur",
-    "vad",
-    "var",
-    "när",
-    "nar",
-    "är",
-    "ar",
-    "och",
-    "eller",
-    "för",
-    "for",
-    "till",
-    "fran",
-    "från",
-    "en",
-    "ett",
-    "i",
-    "på",
-    "pa",
-    "av",
-    "med",
-    "som",
-    "om",
-    "den",
-    "det",
-    "de",
-}
-_EXTERNAL_MODEL_TOOL_NAMES = {spec.tool_name for spec in EXTERNAL_MODEL_SPECS}
-_AGENT_EMBED_CACHE: dict[str, list[float]] = {}
-AGENT_RERANK_CANDIDATES = 6
-AGENT_EMBEDDING_WEIGHT = 4.0
-_DYNAMIC_TOOL_QUERY_MARKERS = (
-    "skolverket",
-    "mcp",
-    "laroplan",
-    "läroplan",
-    "kursplan",
-    "amnesplan",
-    "ämnesplan",
-    "skolenhet",
-    "vuxenutbildning",
-    "komvux",
-    "syllabus",
-    "curriculum",
-    "blocket",
-    "tradera",
-    "begagnat",
-    "annons",
-    "marknadsplats",
+# Import from extracted modules
+from app.agents.new_chat.supervisor_constants import (
+    _AGENT_CACHE_TTL,
+    _AGENT_COMBO_CACHE,
+    _AGENT_EMBED_CACHE,
+    _AGENT_NAME_ALIAS_MAP,
+    _AGENT_STOPWORDS,
+    _AGENT_TOOL_PROFILE_BY_ID,
+    _AGENT_TOOL_PROFILES,
+    _ARTIFACT_CONTEXT_MAX_ITEMS,
+    _ARTIFACT_DEFAULT_MAX_ENTRIES,
+    _ARTIFACT_DEFAULT_OFFLOAD_THRESHOLD_CHARS,
+    _ARTIFACT_DEFAULT_STORAGE_MODE,
+    _ARTIFACT_INTERNAL_TOOL_NAMES,
+    _ARTIFACT_LOCAL_ROOT,
+    _ARTIFACT_OFFLOAD_PER_PASS_LIMIT,
+    _BLOCKED_RESPONSE_MARKERS,
+    _COMPARE_FOLLOWUP_RE,
+    _CONTEXT_COMPACTION_DEFAULT_STEP_KEEP,
+    _CONTEXT_COMPACTION_DEFAULT_SUMMARY_MAX_CHARS,
+    _CONTEXT_COMPACTION_DEFAULT_TRIGGER_RATIO,
+    _CONTEXT_COMPACTION_MIN_MESSAGES,
+    _DYNAMIC_TOOL_QUERY_MARKERS,
+    _EXPLICIT_FILE_READ_RE,
+    _EXTERNAL_MODEL_TOOL_NAMES,
+    _FILESYSTEM_INTENT_RE,
+    _FILESYSTEM_NOT_FOUND_MARKERS,
+    _LIVE_ROUTING_PHASE_ORDER,
+    _LOOP_GUARD_MAX_CONSECUTIVE,
+    _LOOP_GUARD_TOOL_NAMES,
+    _MAP_INTENT_RE,
+    _MARKETPLACE_INTENT_RE,
+    _MARKETPLACE_PROVIDER_RE,
+    _MAX_AGENT_HOPS_PER_TURN,
+    _MISSING_FIELD_HINTS,
+    _MISSING_SIGNAL_RE,
+    _RESULT_STATUS_VALUES,
+    _ROUTE_STRICT_AGENT_POLICIES,
+    _SANDBOX_ALIAS_TOOL_IDS,
+    _SANDBOX_CODE_TOOL_IDS,
+    _SPECIALIZED_AGENTS,
+    _SUBAGENT_ARTIFACT_RE,
+    _SUBAGENT_DEFAULT_CONTEXT_MAX_CHARS,
+    _SUBAGENT_DEFAULT_MAX_CONCURRENCY,
+    _SUBAGENT_DEFAULT_RESULT_MAX_CHARS,
+    _SUBAGENT_MAX_HANDOFFS_IN_PROMPT,
+    _TRAFFIC_INCIDENT_STRICT_RE,
+    _TRAFFIC_INTENT_RE,
+    _TRAFFIC_STRICT_INTENT_RE,
+    _UNAVAILABLE_RESPONSE_MARKERS,
+    _WEATHER_INTENT_RE,
+    _live_phase_enabled,
+    _normalize_live_routing_phase,
+    AGENT_EMBEDDING_WEIGHT,
+    AGENT_RERANK_CANDIDATES,
+    AgentToolProfile,
+    KEEP_TOOL_MSG_COUNT,
+    MESSAGE_PRUNING_THRESHOLD,
+    TOOL_CONTEXT_DROP_KEYS,
+    TOOL_CONTEXT_MAX_CHARS,
+    TOOL_CONTEXT_MAX_ITEMS,
+    TOOL_MSG_THRESHOLD,
+)
+from app.agents.new_chat.supervisor_types import (
+    AgentDefinition,
+    SupervisorState,
+    _append_artifact_manifest,
+    _append_compare_outputs,
+    _append_recent,
+    _append_subagent_handoffs,
+    _replace,
+)
+from app.agents.new_chat.supervisor_routing import (
+    _focused_tool_ids_for_agent,
+    _guess_agent_from_alias,
+    _has_filesystem_intent,
+    _has_map_intent,
+    _has_marketplace_intent,
+    _has_strict_trafik_intent,
+    _has_trafik_intent,
+    _has_weather_intent,
+    _is_weather_tool_id,
+    _looks_complete_unavailability_answer,
+    _normalize_agent_identifier,
+    _normalize_route_hint_value,
+    _route_allowed_agents,
+    _route_default_agent,
+    _score_tool_profile,
+    _select_focused_tool_profiles,
+    _tokenize_focus_terms,
+)
+from app.agents.new_chat.supervisor_text_utils import (
+    _coerce_confidence,
+    _coerce_float_range,
+    _coerce_int_range,
+    _dedupe_repeated_lines,
+    _extract_first_json_object,
+    _normalize_citation_spacing,
+    _normalize_line_for_dedupe,
+    _parse_hitl_confirmation,
+    _remove_inline_critic_payloads,
+    _render_hitl_message,
+    _safe_id_segment,
+    _safe_json,
+    _serialize_artifact_payload,
+    _strip_critic_json,
+    _truncate_for_prompt,
+)
+from app.agents.new_chat.supervisor_cache import (
+    _build_cache_key,
+    _fetch_cached_combo_db,
+    _get_cached_combo,
+    _set_cached_combo,
+    _store_cached_combo_db,
+    clear_agent_combo_cache,
+)
+from app.agents.new_chat.supervisor_agent_retrieval import (
+    _build_agent_rerank_text,
+    _cosine_similarity,
+    _get_agent_embedding,
+    _normalize_vector,
+    _rerank_agents,
+    _score_agent,
+    _smart_retrieve_agents,
+    _smart_retrieve_agents_with_breakdown,
+)
+from app.agents.new_chat.supervisor_tools import (
+    _build_scoped_prompt_for_agent,
+    _build_tool_prompt_block,
+    _default_prompt_for_tool_id,
+    _fallback_tool_ids_for_tool,
+    _format_prompt_template,
+    _normalize_tool_id_list,
+    _sanitize_selected_tool_ids_for_worker,
+    _tool_prompt_for_id,
+    _worker_available_tool_ids,
+)
+from app.agents.new_chat.supervisor_state_utils import (
+    _count_tools_since_last_user,
+    _format_artifact_manifest_context,
+    _format_compare_outputs_for_prompt,
+    _format_cross_session_memory_context,
+    _format_execution_strategy,
+    _format_intent_context,
+    _format_plan_context,
+    _format_recent_calls,
+    _format_resolved_tools_context,
+    _format_rolling_context_summary_context,
+    _format_route_hint,
+    _format_selected_agents_context,
+    _format_subagent_handoffs_context,
+    _tool_call_name_index,
+)
+from app.agents.new_chat.supervisor_memory import (
+    _artifact_runtime_hitl_thread_scope,
+    _persist_artifact_content,
+    _render_cross_session_memory_context,
+    _select_cross_session_memory_entries,
+    _tokenize_for_memory_relevance,
 )
 
-_LIVE_ROUTING_PHASE_ORDER = {
-    "shadow": 0,
-    "tool_gate": 1,
-    "agent_auto": 2,
-    "adaptive": 3,
-    "intent_finetune": 4,
-}
 
 
-def _normalize_live_routing_phase(value: Any) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized in _LIVE_ROUTING_PHASE_ORDER:
-        return normalized
-    return "shadow"
 
 
-def _live_phase_enabled(config: dict[str, Any], minimum_phase: str) -> bool:
-    enabled = bool(config.get("enabled", False))
-    if not enabled:
-        return False
-    current_phase = _normalize_live_routing_phase(config.get("phase"))
-    return _LIVE_ROUTING_PHASE_ORDER.get(current_phase, 0) >= _LIVE_ROUTING_PHASE_ORDER.get(
-        minimum_phase, 0
-    )
 
 
-@dataclass(frozen=True)
-class AgentToolProfile:
-    tool_id: str
-    category: str
-    description: str
-    keywords: tuple[str, ...]
 
 
-def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
-    profiles: dict[str, list[AgentToolProfile]] = {
-        "trafik": [],
-        "statistics": [],
-        "riksdagen": [],
-        "bolag": [],
-        "marketplace": [],
-    }
-    for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
-        profiles["trafik"].append(
-            AgentToolProfile(
-                tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "category", "trafik")),
-                description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
-            )
-        )
-    for definition in SCB_TOOL_DEFINITIONS:
-        profiles["statistics"].append(
-            AgentToolProfile(
-                tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "base_path", "statistics")),
-                description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
-            )
-        )
-    for definition in RIKSDAGEN_TOOL_DEFINITIONS:
-        profiles["riksdagen"].append(
-            AgentToolProfile(
-                tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "category", "riksdagen")),
-                description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
-            )
-        )
-    for definition in BOLAGSVERKET_TOOL_DEFINITIONS:
-        profiles["bolag"].append(
-            AgentToolProfile(
-                tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "category", "bolag")),
-                description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
-            )
-        )
-    for definition in MARKETPLACE_TOOL_DEFINITIONS:
-        profiles["marketplace"].append(
-            AgentToolProfile(
-                tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "category", "marketplace")),
-                description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
-            )
-        )
-    return profiles
 
 
-_AGENT_TOOL_PROFILES = _build_agent_tool_profiles()
-_AGENT_TOOL_PROFILE_BY_ID: dict[str, AgentToolProfile] = {
-    profile.tool_id: profile
-    for profiles in _AGENT_TOOL_PROFILES.values()
-    for profile in profiles
-    if profile.tool_id
-}
 
-# Message pruning constants for progressive context management
-MESSAGE_PRUNING_THRESHOLD = 20  # Start pruning when total messages exceed this
-TOOL_MSG_THRESHOLD = 8  # Trigger aggressive pruning when tool messages exceed this
-KEEP_TOOL_MSG_COUNT = 6  # Number of recent tool message exchanges to preserve
-TOOL_CONTEXT_MAX_CHARS = 1200
-TOOL_CONTEXT_MAX_ITEMS = 5
-_CONTEXT_COMPACTION_MIN_MESSAGES = 16
-_CONTEXT_COMPACTION_DEFAULT_TRIGGER_RATIO = 0.65
-_CONTEXT_COMPACTION_DEFAULT_SUMMARY_MAX_CHARS = 1600
-_CONTEXT_COMPACTION_DEFAULT_STEP_KEEP = 8
-TOOL_CONTEXT_DROP_KEYS = {
-    "raw",
-    "data",
-    "entries",
-    "matching_entries",
-    "results",
-    "content",
-    "chunks",
-    "documents",
-    "rows",
-    "timeSeries",
-    "origin_lookup",
-    "destination_lookup",
-    "timetable",
-}
-_LOOP_GUARD_TOOL_NAMES = {
-    "retrieve_agents",
-    "reflect_on_progress",
-    "write_todos",
-}
-_LOOP_GUARD_MAX_CONSECUTIVE = 12
-_MAX_AGENT_HOPS_PER_TURN = 3
-_SANDBOX_CODE_TOOL_IDS = (
-    "sandbox_write_file",
-    "sandbox_read_file",
-    "sandbox_ls",
-    "sandbox_replace",
-    "sandbox_execute",
-    "sandbox_release",
-)
-_AGENT_NAME_ALIAS_MAP = {
-    "weather": "weather",
-    "weather_agent": "weather",
-    "smhi": "weather",
-    "smhi_agent": "weather",
-    "traffic_information": "trafik",
-    "traffic_info": "trafik",
-    "traffic_agent": "trafik",
-    "road_works_planner": "trafik",
-    "roadworks_planner": "trafik",
-    "road_work_planner": "trafik",
-    "roadworks": "trafik",
-    "municipality_agent": "statistics",
-    "map_agent": "kartor",
-    "maps_agent": "kartor",
-    "statistic_agent": "statistics",
-    "statistics_agent": "statistics",
-    "parliament_agent": "riksdagen",
-    "company_agent": "bolag",
-    "code_agent": "code",
-    "marketplace_agent": "marketplace",
-    "market_agent": "marketplace",
-    "blocket_agent": "marketplace",
-    "tradera_agent": "marketplace",
-}
-
-_TRAFFIC_INTENT_RE = re.compile(
-    r"\b("
-    r"trafikverket|trafikinfo|trafik|"
-    r"olycka|storing|storning|störning|"
-    r"koer|köer|ko|kö|"
-    r"vagarbete|vägarbete|avstangning|avstängning|omledning|framkomlighet|"
-    r"tag|tåg|jarnvag|järnväg|"
-    r"kamera|kameror|"
-    r"vaglag|väglag|hastighet|"
-    r"e\d+|rv\s?\d+|riksvag|riksväg|vag\s?\d+|väg\s?\d+"
-    r")\b",
-    re.IGNORECASE,
-)
-_TRAFFIC_STRICT_INTENT_RE = re.compile(
-    r"\b("
-    r"trafikverket|"
-    r"olycka|storing|storning|störning|"
-    r"koer|köer|ko|kö|"
-    r"vagarbete|vägarbete|avstangning|avstängning|omledning|framkomlighet|"
-    r"kamera|kameror|"
-    r"vaglag|väglag|hastighet|"
-    r"e\d+|rv\s?\d+|riksvag|riksväg|vag\s?\d+|väg\s?\d+"
-    r")\b",
-    re.IGNORECASE,
-)
-_TRAFFIC_INCIDENT_STRICT_RE = re.compile(
-    r"\b("
-    r"trafikverket|"
-    r"olycka|storing|storning|störning|"
-    r"koer|köer|ko|kö|"
-    r"vagarbete|vägarbete|avstangning|avstängning|omledning|framkomlighet|"
-    r"kamera|kameror|"
-    r"tagforsening|tågförsening|forsening|försening|installd|inställd|"
-    r"trafikinfo"
-    r")\b",
-    re.IGNORECASE,
-)
-_WEATHER_INTENT_RE = re.compile(
-    r"\b("
-    r"smhi|vader|väder|temperatur|regn|sno|snö|vind|vindhastighet|"
-    r"halka|isrisk|vaglag|väglag|vagvader|vägväder|"
-    r"nederbord|nederbörd|prognos|sol|moln|luftfuktighet"
-    r")\b",
-    re.IGNORECASE,
-)
-_MAP_INTENT_RE = re.compile(
-    r"\b(karta|kartbild|kartor|map|marker|markor|pin|"
-    r"rutt|route|vagbeskrivning|vägbeskrivning)\b",
-    re.IGNORECASE,
-)
-_MARKETPLACE_INTENT_RE = re.compile(
-    r"\b("
-    r"blocket|tradera|marknadsplats|marknadsplatser|"
-    r"begagnat|begagnad|begagnade|annons|annonser|auktion|auktioner|"
-    r"prisj[aä]mf[oö]relse|j[aä]mf[oö]r pris|"
-    r"motorcykel|motorcyklar|mc|moped|bilar|båtar|batar|båt|bat"
-    r")\b",
-    re.IGNORECASE,
-)
-_MARKETPLACE_PROVIDER_RE = re.compile(
-    r"\b(blocket|tradera|marknadsplats|marknadsplatser|annons|annonser|auktion|auktioner)\b",
-    re.IGNORECASE,
-)
-_FILESYSTEM_INTENT_RE = re.compile(
-    r"((?:/tmp|/workspace)(?:/[A-Za-z0-9._\-]+)+)"
-    r"|"
-    r"\b("
-    r"fil|filer|file|files|filepath|filename|"
-    r"filsystem|filesystem|"
-    r"mapp|katalog|directory|folder|"
-    r"read_file|write_file|"
-    r"sandbox(?:_[a-z]+)?|"
-    r"touch|cat|chmod|chown|"
-    r"append|replace|ers[aä]tt|"
-    r"terminal|bash|shell"
-    r")\b",
-    re.IGNORECASE,
-)
-_EXPLICIT_FILE_READ_RE = re.compile(
-    r"(l[aä]s|read).*(hela|whole).*(fil|file)",
-    re.IGNORECASE,
-)
-_FILESYSTEM_NOT_FOUND_MARKERS = (
-    "does not exist",
-    "directory not found",
-    "no such file",
-    "finns inte",
-    "saknas",
-    "hittades inte",
-)
-_MISSING_SIGNAL_RE = re.compile(
-    r"\b(saknar|behöver|behover|ange|specificera|uppge|oklart|otydligt)\b",
-    re.IGNORECASE,
-)
-_UNAVAILABLE_RESPONSE_MARKERS = (
-    "finns inte tillganglig",
-    "finns inte tillgänglig",
-    "publiceras inte",
-    "inte tillganglig",
-    "inte tillgänglig",
-    "framtida ar",
-    "framtida år",
-    "har inte publicerats",
-    "saknas for",
-    "saknas för",
-)
-_ALTERNATIVE_RESPONSE_MARKERS = (
-    "senaste tillgangliga",
-    "senaste tillgängliga",
-    "istallet",
-    "istället",
-    "vill du ha",
-    "kan ge",
-    "kan visa",
-    "2023",
-    "2024",
-)
-_BLOCKED_RESPONSE_MARKERS = (
-    "jag kan inte",
-    "jag kunde inte",
-    "kan tyvarr inte",
-    "kan tyvärr inte",
-    "saknar tillgang",
-    "saknar tillgång",
-    "utan tillgang",
-    "utan tillgång",
-    "annan agent behovs",
-    "annan agent behövs",
-    "behover annan agent",
-    "behöver annan agent",
-)
-_MISSING_FIELD_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("datum", ("datum", "period", "vecka", "manad", "månad", "ar", "år")),
-    ("tid", ("tid", "klockslag", "timme", "avgangstid", "avgångstid")),
-    ("plats", ("plats", "ort", "stad", "kommun", "adress", "koordinat")),
-    ("stracka", ("stracka", "sträcka", "riktning", "vagnummer", "vägnummer")),
-    ("id", ("id", "organisationsnummer", "personnummer", "beteckning")),
-    ("kategori", ("kategori", "typ", "slag")),
-)
-_RESULT_STATUS_VALUES = {"success", "partial", "blocked", "error"}
-_ROUTE_STRICT_AGENT_POLICIES: dict[str, set[str]] = {
-    "statistics": {"statistics"},
-    "compare": {"synthesis", "statistics", "knowledge"},
-}
-_COMPARE_FOLLOWUP_RE = re.compile(
-    r"\b(jamfor|jämför|jamforelse|jämförelse|skillnad|dessa två|de två|båda|bada)\b",
-    re.IGNORECASE,
-)
-_SUBAGENT_ARTIFACT_RE = re.compile(
-    r"(artifact://[A-Za-z0-9._/\-]+|/workspace/[A-Za-z0-9._/\-]+)",
-    re.IGNORECASE,
-)
-_SUBAGENT_DEFAULT_CONTEXT_MAX_CHARS = 1400
-_SUBAGENT_DEFAULT_RESULT_MAX_CHARS = 1000
-_SUBAGENT_DEFAULT_MAX_CONCURRENCY = 3
-_SUBAGENT_MAX_HANDOFFS_IN_PROMPT = 6
-_ARTIFACT_DEFAULT_OFFLOAD_THRESHOLD_CHARS = 4_000
-_ARTIFACT_DEFAULT_MAX_ENTRIES = 36
-_ARTIFACT_OFFLOAD_PER_PASS_LIMIT = 2
-_ARTIFACT_CONTEXT_MAX_ITEMS = 6
-_ARTIFACT_LOCAL_ROOT = "/tmp/oneseek-artifacts"
-_ARTIFACT_DEFAULT_STORAGE_MODE = "auto"
-_ARTIFACT_INTERNAL_TOOL_NAMES = {
-    "call_agent",
-    "call_agents_parallel",
-    "retrieve_agents",
-    "write_todos",
-    "reflect_on_progress",
-}
-_SANDBOX_ALIAS_TOOL_IDS = {"list_directory"}
-
-
-def _has_trafik_intent(text: str) -> bool:
-    return bool(text and _TRAFFIC_INTENT_RE.search(text))
-
-
-def _has_map_intent(text: str) -> bool:
-    return bool(text and _MAP_INTENT_RE.search(text))
-
-
-def _has_marketplace_intent(text: str) -> bool:
-    return bool(text and _MARKETPLACE_INTENT_RE.search(text))
-
-
-def _has_filesystem_intent(text: str) -> bool:
-    return bool(text and _FILESYSTEM_INTENT_RE.search(text))
-
-
-def _has_strict_trafik_intent(text: str) -> bool:
-    if not text:
-        return False
-    if not _TRAFFIC_STRICT_INTENT_RE.search(text):
-        return False
-    if _has_weather_intent(text):
-        # For mixed weather+road queries, only keep strict traffic lock when
-        # clear incident/disruption intent exists.
-        return bool(_TRAFFIC_INCIDENT_STRICT_RE.search(text))
-    return True
-
-
-def _has_weather_intent(text: str) -> bool:
-    return bool(text and _WEATHER_INTENT_RE.search(text))
-
-
-def _is_weather_tool_id(tool_id: str) -> bool:
-    normalized = str(tool_id or "").strip().lower()
-    if not normalized:
-        return False
-    if normalized.startswith("smhi_"):
-        return True
-    if normalized.startswith("trafikverket_vader_"):
-        return True
-    return False
-
-
-def _normalize_route_hint_value(value: Any) -> str:
-    return str(value or "").strip().lower()
-
-
-def _route_allowed_agents(route_hint: str | None) -> set[str]:
-    route = _normalize_route_hint_value(route_hint)
-    return set(_ROUTE_STRICT_AGENT_POLICIES.get(route, set()))
-
-
-def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None) -> str:
-    route = _normalize_route_hint_value(route_hint)
-    defaults = {
-        "action": "action",
-        "knowledge": "knowledge",
-        "statistics": "statistics",
-        "compare": "synthesis",
-        "trafik": "trafik",
-    }
-    preferred = defaults.get(route, "knowledge")
-    if allowed:
-        if preferred in allowed:
-            return preferred
-        for name in ("statistics", "synthesis", "knowledge", "action", "trafik"):
-            if name in allowed:
-                return name
-    return preferred
-
-
-def _looks_complete_unavailability_answer(text: str) -> bool:
-    lowered = str(text or "").strip().lower()
-    if len(lowered) < 80:
-        return False
-    has_unavailable = any(marker in lowered for marker in _UNAVAILABLE_RESPONSE_MARKERS)
-    has_alternative = any(marker in lowered for marker in _ALTERNATIVE_RESPONSE_MARKERS)
-    return has_unavailable and has_alternative
-
-
-def _tokenize_focus_terms(text: str) -> set[str]:
-    tokens = re.findall(r"[a-zA-Z0-9åäöÅÄÖ]{3,}", str(text or "").lower())
-    return {token for token in tokens if token not in _AGENT_STOPWORDS}
-
-
-def _score_tool_profile(profile: AgentToolProfile, query_norm: str, tokens: set[str]) -> int:
-    score = 0
-    if profile.tool_id and profile.tool_id.lower() in query_norm:
-        score += 6
-    category_norm = _normalize_text(profile.category)
-    if category_norm and category_norm in query_norm:
-        score += 4
-    description_norm = _normalize_text(profile.description)
-    for keyword in profile.keywords:
-        keyword_norm = _normalize_text(keyword)
-        if keyword_norm and keyword_norm in query_norm:
-            score += 3
-    for token in tokens:
-        if token and description_norm and token in description_norm:
-            score += 1
-    return score
-
-
-def _select_focused_tool_profiles(
-    agent_name: str,
-    task: str,
-    *,
-    limit: int = 4,
-) -> list[AgentToolProfile]:
-    profiles = list(_AGENT_TOOL_PROFILES.get(str(agent_name or "").strip().lower(), []))
-    if not profiles:
-        return []
-    query_norm = _normalize_text(task)
-    tokens = _tokenize_focus_terms(task)
-    scored = [
-        (profile, _score_tool_profile(profile, query_norm, tokens))
-        for profile in profiles
-    ]
-    scored.sort(
-        key=lambda item: (
-            item[1],
-            len(item[0].keywords),
-            len(item[0].description),
-        ),
-        reverse=True,
-    )
-    selected = [profile for profile, score in scored if score > 0][: max(1, int(limit))]
-    if selected:
-        return selected
-    return profiles[: max(1, int(limit))]
-
-
-def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -> list[str]:
-    normalized_task = _normalize_text(task)
-    normalized_agent_name = str(agent_name or "").strip().lower()
-    if normalized_agent_name in {"knowledge", "statistics", "action"} and any(
-        marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS
-    ):
-        # Allow retrieve_tools to discover dynamic connector tools (for example MCP)
-        # instead of locking the worker to static profile IDs.
-        return []
-    focused = _select_focused_tool_profiles(agent_name, task, limit=limit)
-    return [profile.tool_id for profile in focused if profile.tool_id]
-
-
-def _worker_available_tool_ids(worker: Any) -> list[str]:
-    raw_ids = getattr(worker, "available_tool_ids", None)
-    if not isinstance(raw_ids, (list, tuple, set)):
-        return []
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for tool_id in raw_ids:
-        normalized = str(tool_id or "").strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        ordered.append(normalized)
-    return ordered
-
-
-def _normalize_tool_id_list(
-    tool_ids: list[str] | tuple[str, ...] | set[str] | None,
-    *,
-    limit: int = 8,
-) -> list[str]:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for tool_id in list(tool_ids or []):
-        normalized = str(tool_id or "").strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        ordered.append(normalized)
-        if len(ordered) >= max(1, int(limit)):
-            break
-    return ordered
-
-
-def _fallback_tool_ids_for_tool(tool_id: str) -> list[str]:
-    normalized = str(tool_id or "").strip().lower()
-    if normalized.startswith("smhi_") and normalized != "smhi_weather":
-        return ["smhi_weather"]
-    return []
-
-
-def _sanitize_selected_tool_ids_for_worker(
-    worker: Any,
-    selected_tool_ids: list[str],
-    *,
-    fallback_tool_ids: list[str] | None = None,
-    limit: int = 8,
-) -> list[str]:
-    normalized_selected = _normalize_tool_id_list(selected_tool_ids, limit=limit)
-    available_ids = _worker_available_tool_ids(worker)
-    if not available_ids:
-        return normalized_selected
-
-    available_set = set(available_ids)
-    filtered = [tool_id for tool_id in normalized_selected if tool_id in available_set]
-    if filtered:
-        return filtered[: max(1, int(limit))]
-
-    fallback_candidates = _normalize_tool_id_list(fallback_tool_ids, limit=limit)
-    fallback_filtered = [
-        tool_id for tool_id in fallback_candidates if tool_id in available_set
-    ]
-    if fallback_filtered:
-        return fallback_filtered[: max(1, int(limit))]
-
-    return []
-
-
-def _format_prompt_template(
-    template: str,
-    variables: dict[str, Any],
-) -> str | None:
-    normalized_template = str(template or "").strip()
-    if not normalized_template:
-        return None
-    try:
-        rendered = normalized_template.format(**variables)
-    except Exception:
-        return None
-    rendered_text = str(rendered or "").strip()
-    return rendered_text or None
-
-
-def _build_scoped_prompt_for_agent(
-    agent_name: str,
-    task: str,
-    *,
-    prompt_template: str = DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
-) -> str | None:
-    focused = _select_focused_tool_profiles(agent_name, task, limit=3)
-    if not focused:
-        return None
-    tool_lines: list[str] = []
-    for profile in focused:
-        keywords = ", ".join(profile.keywords[:4]) if profile.keywords else ""
-        snippet = profile.description.strip()
-        if len(snippet) > 140:
-            snippet = snippet[:137].rstrip() + "..."
-        tool_lines.append(
-            f"- {profile.tool_id} ({profile.category})"
-            + (f": {snippet}" if snippet else "")
-            + (f" [nyckelord: {keywords}]" if keywords else "")
-        )
-    rendered = _format_prompt_template(
-        prompt_template,
-        {
-            "tool_lines": "\n".join(tool_lines),
-            "agent_name": str(agent_name or "").strip(),
-            "task": str(task or "").strip(),
-        },
-    )
-    if rendered:
-        return rendered
-    return DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE.format(
-        tool_lines="\n".join(tool_lines)
-    )
-
-
-def _default_prompt_for_tool_id(
-    tool_id: str,
-    *,
-    prompt_template: str = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
-) -> str | None:
-    profile = _AGENT_TOOL_PROFILE_BY_ID.get(str(tool_id or "").strip())
-    if not profile:
-        return None
-    keywords = ", ".join(profile.keywords[:8]) if profile.keywords else "-"
-    description = profile.description.strip() or "-"
-    rendered = _format_prompt_template(
-        prompt_template,
-        {
-            "tool_id": profile.tool_id,
-            "category": profile.category,
-            "description": description,
-            "keywords": keywords,
-        },
-    )
-    if rendered:
-        return rendered
-    return DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE.format(
-        tool_id=profile.tool_id,
-        category=profile.category,
-        description=description,
-        keywords=keywords,
-    )
-
-
-def _tool_prompt_for_id(
-    tool_id: str,
-    tool_prompt_overrides: dict[str, str],
-    *,
-    default_prompt_template: str = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
-) -> str | None:
-    normalized_tool_id = str(tool_id or "").strip()
-    if not normalized_tool_id:
-        return None
-    override_key = f"tool.{normalized_tool_id}.system"
-    override = str(tool_prompt_overrides.get(override_key) or "").strip()
-    if override:
-        return override
-    return _default_prompt_for_tool_id(
-        normalized_tool_id,
-        prompt_template=default_prompt_template,
-    )
-
-
-def _build_tool_prompt_block(
-    selected_tool_ids: list[str],
-    tool_prompt_overrides: dict[str, str],
-    *,
-    max_tools: int = 2,
-    default_prompt_template: str = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
-) -> str | None:
-    blocks: list[str] = []
-    seen: set[str] = set()
-    for tool_id in selected_tool_ids:
-        normalized_tool_id = str(tool_id or "").strip()
-        if not normalized_tool_id or normalized_tool_id in seen:
-            continue
-        seen.add(normalized_tool_id)
-        prompt_text = _tool_prompt_for_id(
-            normalized_tool_id,
-            tool_prompt_overrides,
-            default_prompt_template=default_prompt_template,
-        )
-        if prompt_text:
-            blocks.append(prompt_text)
-        if len(blocks) >= max(1, int(max_tools)):
-            break
-    if not blocks:
-        return None
-    return "\n\n".join(blocks)
-
-
-@dataclass(frozen=True)
-class AgentDefinition:
-    name: str
-    description: str
-    keywords: list[str]
-    namespace: tuple[str, ...]
-    prompt_key: str
-
-
-def _score_agent(definition: AgentDefinition, query_norm: str, tokens: set[str]) -> int:
-    score = 0
-    name_norm = _normalize_text(definition.name)
-    desc_norm = _normalize_text(definition.description)
-    if name_norm and name_norm in query_norm:
-        score += 4
-    for keyword in definition.keywords:
-        if _normalize_text(keyword) in query_norm:
-            score += 3
-    for token in tokens:
-        if token and token in desc_norm:
-            score += 1
-    return score
-
-
-def _normalize_vector(vector: Any) -> list[float] | None:
-    if vector is None:
-        return None
-    if isinstance(vector, list):
-        return vector
-    try:
-        return [float(value) for value in vector]
-    except Exception:
-        return None
-
-
-def _cosine_similarity(left: list[float], right: list[float]) -> float:
-    if not left or not right or len(left) != len(right):
-        return 0.0
-    dot = 0.0
-    norm_left = 0.0
-    norm_right = 0.0
-    for a, b in zip(left, right):
-        dot += a * b
-        norm_left += a * a
-        norm_right += b * b
-    if norm_left == 0.0 or norm_right == 0.0:
-        return 0.0
-    return dot / ((norm_left**0.5) * (norm_right**0.5))
-
-
-def _build_agent_rerank_text(definition: AgentDefinition) -> str:
-    parts: list[str] = []
-    if definition.name:
-        parts.append(definition.name)
-    if definition.description:
-        parts.append(definition.description)
-    if definition.keywords:
-        parts.append("Keywords: " + ", ".join(definition.keywords))
-    return "\n".join(part for part in parts if part)
-
-
-def _get_agent_embedding(definition: AgentDefinition) -> list[float] | None:
-    if not is_cache_disabled():
-        cached = _AGENT_EMBED_CACHE.get(definition.name)
-        if cached is not None:
-            return cached
-    text = _build_agent_rerank_text(definition)
-    if not text:
-        return None
-    try:
-        from app.config import config
-
-        embedding = config.embedding_model_instance.embed(text)
-    except Exception:
-        return None
-    normalized = _normalize_vector(embedding)
-    if normalized is None:
-        return None
-    if not is_cache_disabled():
-        _AGENT_EMBED_CACHE[definition.name] = normalized
-    return normalized
-
-
-def _rerank_agents(
-    query: str,
-    *,
-    candidates: list[AgentDefinition],
-    scores_by_name: dict[str, float],
-) -> list[AgentDefinition]:
-    if len(candidates) <= 1:
-        return candidates
-    reranker = RerankerService.get_reranker_instance()
-    if not reranker:
-        return candidates
-    documents: list[dict[str, Any]] = []
-    for agent in candidates:
-        content = _build_agent_rerank_text(agent) or agent.name
-        documents.append(
-            {
-                "document_id": agent.name,
-                "content": content,
-                "score": float(scores_by_name.get(agent.name, 0.0)),
-                "document": {
-                    "id": agent.name,
-                    "title": agent.name,
-                    "document_type": "AGENT",
-                },
-            }
-        )
-    reranked = reranker.rerank_documents(query, documents)
-    if not reranked:
-        return candidates
-    reranked_names = [
-        str(doc.get("document_id"))
-        for doc in reranked
-        if doc.get("document_id")
-    ]
-    by_name = {agent.name: agent for agent in candidates}
-    ordered: list[AgentDefinition] = []
-    seen: set[str] = set()
-    for name in reranked_names:
-        if name in by_name and name not in seen:
-            ordered.append(by_name[name])
-            seen.add(name)
-    for agent in candidates:
-        if agent.name not in seen:
-            ordered.append(agent)
-            seen.add(agent.name)
-    return ordered
-
-
-def _smart_retrieve_agents_with_breakdown(
-    query: str,
-    *,
-    agent_definitions: list[AgentDefinition],
-    recent_agents: list[str] | None = None,
-    limit: int = 5,
-) -> list[dict[str, Any]]:
-    query_norm = _normalize_text(query)
-    tokens = set(_tokenize(query_norm))
-    query_embedding: list[float] | None = None
-    if query:
-        try:
-            from app.config import config
-
-            query_embedding = _normalize_vector(
-                config.embedding_model_instance.embed(query)
-            )
-        except Exception:
-            query_embedding = None
-    recent_agents = [agent for agent in (recent_agents or []) if agent]
-    scored: list[tuple[AgentDefinition, float]] = []
-    scores_by_name: dict[str, float] = {}
-    for definition in agent_definitions:
-        base_score = float(_score_agent(definition, query_norm, tokens))
-        semantic_score = 0.0
-        if query_embedding:
-            agent_embedding = _get_agent_embedding(definition)
-            if agent_embedding:
-                semantic_score = _cosine_similarity(query_embedding, agent_embedding)
-        total_score = base_score + (semantic_score * AGENT_EMBEDDING_WEIGHT)
-        scored.append((definition, total_score))
-        scores_by_name[definition.name] = total_score
-    if recent_agents:
-        for idx, (definition, score) in enumerate(scored):
-            if definition.name in recent_agents:
-                scored[idx] = (definition, score + 4)
-                scores_by_name[definition.name] = score + 4
-    scored.sort(key=lambda item: item[1], reverse=True)
-    candidates = [definition for definition, _ in scored[:AGENT_RERANK_CANDIDATES]]
-    reranked = _rerank_agents(
-        query, candidates=candidates, scores_by_name=scores_by_name
-    )
-    reranked = reranked[: max(1, int(limit))]
-    return [
-        {
-            "definition": definition,
-            "name": definition.name,
-            "score": float(scores_by_name.get(definition.name, 0.0)),
-        }
-        for definition in reranked
-    ]
-
-
-def _smart_retrieve_agents(
-    query: str,
-    *,
-    agent_definitions: list[AgentDefinition],
-    recent_agents: list[str] | None = None,
-    limit: int = 5,
-) -> list[AgentDefinition]:
-    ranked = _smart_retrieve_agents_with_breakdown(
-        query,
-        agent_definitions=agent_definitions,
-        recent_agents=recent_agents,
-        limit=limit,
-    )
-    return [
-        item.get("definition")
-        for item in ranked
-        if isinstance(item, dict) and item.get("definition") is not None
-    ]
-
-
-def _build_cache_key(
-    query: str,
-    route_hint: str | None,
-    recent_agents: list[str] | None,
-    sub_intents: list[str] | None = None,
-) -> tuple[str, str]:
-    tokens = [
-        token
-        for token in _tokenize(query)
-        if token and token not in _AGENT_STOPWORDS
-    ]
-    token_slice = " ".join(tokens[:6])
-    recent_slice = ",".join((recent_agents or [])[-2:])
-    # Include sorted sub_intents in cache key for multi-domain support
-    sub_intents_slice = ""
-    if sub_intents:
-        sorted_intents = sorted(str(i) for i in sub_intents if i)
-        sub_intents_slice = ",".join(sorted_intents)
-    pattern = f"{route_hint or 'none'}|{recent_slice}|{token_slice}|{sub_intents_slice}"
-    key = hashlib.sha256(pattern.encode("utf-8")).hexdigest()
-    return key, pattern
-
-
-def _get_cached_combo(cache_key: str) -> list[str] | None:
-    if is_cache_disabled():
-        return None
-    entry = _AGENT_COMBO_CACHE.get(cache_key)
-    if not entry:
-        return None
-    expires_at, agents = entry
-    if expires_at < datetime.now(UTC):
-        _AGENT_COMBO_CACHE.pop(cache_key, None)
-        return None
-    return agents
-
-
-def _set_cached_combo(cache_key: str, agents: list[str]) -> None:
-    if is_cache_disabled():
-        return
-    _AGENT_COMBO_CACHE[cache_key] = (datetime.now(UTC) + _AGENT_CACHE_TTL, agents)
-
-
-def clear_agent_combo_cache() -> None:
-    _AGENT_COMBO_CACHE.clear()
-    _AGENT_EMBED_CACHE.clear()
-
-
-async def _fetch_cached_combo_db(
-    session: AsyncSession | None, cache_key: str
-) -> list[str] | None:
-    if is_cache_disabled():
-        return None
-    if session is None:
-        return None
-    result = await session.execute(
-        select(AgentComboCache).where(AgentComboCache.cache_key == cache_key)
-    )
-    row = result.scalars().first()
-    if not row:
-        return None
-    agents = row.agents if isinstance(row.agents, list) else []
-    row.hit_count = int(row.hit_count or 0) + 1
-    row.last_used_at = datetime.now(UTC)
-    row.updated_at = datetime.now(UTC)
-    await session.commit()
-    return [str(agent) for agent in agents if agent]
-
-
-async def _store_cached_combo_db(
-    session: AsyncSession | None,
-    *,
-    cache_key: str,
-    route_hint: str | None,
-    pattern: str,
-    recent_agents: list[str],
-    agents: list[str],
-) -> None:
-    if is_cache_disabled():
-        return
-    if session is None:
-        return
-    result = await session.execute(
-        select(AgentComboCache).where(AgentComboCache.cache_key == cache_key)
-    )
-    row = result.scalars().first()
-    if row:
-        row.agents = agents
-        row.recent_agents = recent_agents
-        row.route_hint = route_hint
-        row.pattern = pattern
-        row.updated_at = datetime.now(UTC)
-        row.last_used_at = datetime.now(UTC)
-    else:
-        row = AgentComboCache(
-            cache_key=cache_key,
-            route_hint=route_hint,
-            pattern=pattern,
-            recent_agents=recent_agents,
-            agents=agents,
-            hit_count=0,
-            last_used_at=datetime.now(UTC),
-        )
-        session.add(row)
-    await session.commit()
-
-
-def _replace(left: Any, right: Any) -> Any:
-    return right
-
-
-def _append_recent(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    if right == []:
-        return []
-    merged = list(left or [])
-    merged.extend(right or [])
-    return merged[-3:]
-
-
-def _append_compare_outputs(
-    left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None
-) -> list[dict[str, Any]]:
-    if right == []:
-        return []
-    merged: dict[str, dict[str, Any]] = {}
-    for item in left or []:
-        tool_call_id = str(item.get("tool_call_id") or "")
-        if tool_call_id:
-            merged[tool_call_id] = item
-    for item in right or []:
-        tool_call_id = str(item.get("tool_call_id") or "")
-        if tool_call_id:
-            merged[tool_call_id] = item
-    return list(merged.values())
-
-
-def _append_subagent_handoffs(
-    left: list[dict[str, Any]] | None,
-    right: list[dict[str, Any]] | None,
-) -> list[dict[str, Any]]:
-    if right == []:
-        return []
-    merged: dict[str, dict[str, Any]] = {}
-    for item in left or []:
-        if not isinstance(item, dict):
-            continue
-        subagent_id = str(item.get("subagent_id") or item.get("id") or "").strip()
-        if not subagent_id:
-            continue
-        merged[subagent_id] = item
-    for item in right or []:
-        if not isinstance(item, dict):
-            continue
-        subagent_id = str(item.get("subagent_id") or item.get("id") or "").strip()
-        if not subagent_id:
-            continue
-        merged[subagent_id] = item
-    return list(merged.values())[-12:]
-
-
-def _append_artifact_manifest(
-    left: list[dict[str, Any]] | None,
-    right: list[dict[str, Any]] | None,
-) -> list[dict[str, Any]]:
-    if right == []:
-        return []
-    merged: dict[str, dict[str, Any]] = {}
-    for item in left or []:
-        if not isinstance(item, dict):
-            continue
-        artifact_id = str(item.get("id") or "").strip()
-        source_id = str(item.get("source_id") or "").strip()
-        key = artifact_id or source_id
-        if not key:
-            continue
-        merged[key] = item
-    for item in right or []:
-        if not isinstance(item, dict):
-            continue
-        artifact_id = str(item.get("id") or "").strip()
-        source_id = str(item.get("source_id") or "").strip()
-        key = artifact_id or source_id
-        if not key:
-            continue
-        merged[key] = item
-    limit = max(8, int(_ARTIFACT_DEFAULT_MAX_ENTRIES))
-    return list(merged.values())[-limit:]
-
-
-def _format_compare_outputs_for_prompt(compare_outputs: list[dict[str, Any]] | None) -> str:
-    if not compare_outputs:
-        return ""
-    blocks: list[str] = []
-    for output in compare_outputs:
-        model_name = (
-            output.get("model_display_name")
-            or output.get("model")
-            or output.get("tool_name")
-            or "Model"
-        )
-        response = output.get("response") or ""
-        if not isinstance(response, str):
-            response = str(response)
-        response = response.strip()
-        if not response:
-            continue
-        citation_ids = output.get("citation_chunk_ids") or []
-        if isinstance(citation_ids, str):
-            citation_ids = [citation_ids]
-        citation_hint = ", ".join([str(cid) for cid in citation_ids if cid])
-        cite_note = (
-            f" (citation_ids: {citation_hint})" if citation_hint else ""
-        )
-        blocks.append(f"MODEL_ANSWER ({model_name}){cite_note}:\n{response}")
-    if not blocks:
-        return ""
-    return "<compare_outputs>\n" + "\n\n".join(blocks) + "\n</compare_outputs>"
-
-
-class SupervisorState(TypedDict, total=False):
-    # Keep a typed message channel so LangGraph Studio enables Chat mode.
-    messages: Annotated[list[AnyMessage], add_messages]
-    turn_id: Annotated[str | None, _replace]
-    active_turn_id: Annotated[str | None, _replace]
-    resolved_intent: Annotated[dict[str, Any] | None, _replace]
-    graph_complexity: Annotated[str | None, _replace]
-    speculative_candidates: Annotated[list[dict[str, Any]], _replace]
-    speculative_results: Annotated[dict[str, Any], _replace]
-    execution_strategy: Annotated[str | None, _replace]
-    worker_results: Annotated[list[dict[str, Any]], _replace]
-    synthesis_drafts: Annotated[list[dict[str, Any]], _replace]
-    retrieval_feedback: Annotated[dict[str, Any], _replace]
-    live_routing_trace: Annotated[dict[str, Any], _replace]
-    targeted_missing_info: Annotated[list[str], _replace]
-    selected_agents: Annotated[list[dict[str, Any]], _replace]
-    resolved_tools_by_agent: Annotated[dict[str, list[str]], _replace]
-    query_embedding: Annotated[list[float] | None, _replace]
-    active_plan: Annotated[list[dict[str, Any]], _replace]
-    plan_step_index: Annotated[int | None, _replace]
-    plan_complete: Annotated[bool, _replace]
-    step_results: Annotated[list[dict[str, Any]], _replace]
-    recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
-    route_hint: Annotated[str | None, _replace]
-    compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
-    subagent_handoffs: Annotated[list[dict[str, Any]], _append_subagent_handoffs]
-    artifact_manifest: Annotated[list[dict[str, Any]], _append_artifact_manifest]
-    cross_session_memory_context: Annotated[str | None, _replace]
-    rolling_context_summary: Annotated[str | None, _replace]
-    final_agent_response: Annotated[str | None, _replace]
-    final_response: Annotated[str | None, _replace]
-    critic_decision: Annotated[str | None, _replace]
-    awaiting_confirmation: Annotated[bool | None, _replace]
-    pending_hitl_stage: Annotated[str | None, _replace]
-    pending_hitl_payload: Annotated[dict[str, Any] | None, _replace]
-    user_feedback: Annotated[dict[str, Any] | None, _replace]
-    replan_count: Annotated[int | None, _replace]
-    final_agent_name: Annotated[str | None, _replace]
-    orchestration_phase: Annotated[str | None, _replace]
-    agent_hops: Annotated[int | None, _replace]
-    no_progress_runs: Annotated[int | None, _replace]
-    guard_parallel_preview: Annotated[list[str], _replace]
 
 
 _MAX_TOOL_CALLS_PER_TURN = 12
@@ -1346,435 +310,15 @@ _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
 _MAX_REPLAN_ATTEMPTS = 2
 
 
-def _count_tools_since_last_user(messages: list[Any]) -> int:
-    count = 0
-    for message in reversed(messages):
-        if isinstance(message, HumanMessage):
-            break
-        if isinstance(message, ToolMessage):
-            count += 1
-    return count
-
-
-def _format_plan_context(state: dict[str, Any]) -> str | None:
-    plan = state.get("active_plan") or []
-    if not plan:
-        return None
-    status = "complete" if state.get("plan_complete") else "active"
-    lines = []
-    for item in plan:
-        content = str(item.get("content") or "").strip()
-        if not content:
-            continue
-        step_status = str(item.get("status") or "pending").lower()
-        lines.append(f"- [{step_status}] {content}")
-    if not lines:
-        return None
-    return f"<active_plan status=\"{status}\">\n" + "\n".join(lines) + "\n</active_plan>"
-
-
-def _format_recent_calls(state: dict[str, Any]) -> str | None:
-    recent_calls = state.get("recent_agent_calls") or []
-    if not recent_calls:
-        return None
-    lines = []
-    for call in recent_calls[-3:]:
-        agent = call.get("agent")
-        task = call.get("task")
-        response = call.get("response") or ""
-        if response and len(response) > 180:
-            response = response[:177] + "..."
-        lines.append(f"- {agent}: {task} → {response}")
-    if not lines:
-        return None
-    return "<recent_agent_calls>\n" + "\n".join(lines) + "\n</recent_agent_calls>"
-
-
-def _format_route_hint(state: dict[str, Any]) -> str | None:
-    hint = state.get("route_hint")
-    if not hint:
-        return None
-    return f"<route_hint>{hint}</route_hint>"
-
-
-def _format_execution_strategy(state: dict[str, Any]) -> str | None:
-    strategy = str(state.get("execution_strategy") or "").strip().lower()
-    if not strategy:
-        return None
-    return f"<execution_strategy>{strategy}</execution_strategy>"
-
-
-def _format_intent_context(state: dict[str, Any]) -> str | None:
-    intent = state.get("resolved_intent")
-    if not isinstance(intent, dict):
-        return None
-    intent_id = str(intent.get("intent_id") or "").strip()
-    route = str(intent.get("route") or "").strip()
-    reason = str(intent.get("reason") or "").strip()
-    if not (intent_id or route):
-        return None
-    lines = [f"intent_id={intent_id or 'unknown'}", f"route={route or 'unknown'}"]
-    if reason:
-        lines.append(f"reason={_truncate_for_prompt(reason, 180)}")
-    return "<resolved_intent>\n" + "\n".join(lines) + "\n</resolved_intent>"
-
-
-def _format_selected_agents_context(state: dict[str, Any]) -> str | None:
-    selected = state.get("selected_agents")
-    if not isinstance(selected, list) or not selected:
-        return None
-    lines: list[str] = []
-    for item in selected[:3]:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        if not name:
-            continue
-        description = str(item.get("description") or "").strip()
-        if description:
-            lines.append(f"- {name}: {_truncate_for_prompt(description, 140)}")
-        else:
-            lines.append(f"- {name}")
-    if not lines:
-        return None
-    return "<selected_agents>\n" + "\n".join(lines) + "\n</selected_agents>"
-
-
-def _format_resolved_tools_context(state: dict[str, Any]) -> str | None:
-    resolved = state.get("resolved_tools_by_agent")
-    if not isinstance(resolved, dict) or not resolved:
-        return None
-    lines: list[str] = []
-    for agent_name, tool_ids in list(resolved.items())[:3]:
-        normalized_agent = str(agent_name or "").strip()
-        if not normalized_agent:
-            continue
-        safe_tools = [
-            str(tool_id).strip()
-            for tool_id in (tool_ids if isinstance(tool_ids, list) else [])
-            if str(tool_id).strip()
-        ][:6]
-        if not safe_tools:
-            continue
-        lines.append(f"- {normalized_agent}: {', '.join(safe_tools)}")
-    if not lines:
-        return None
-    return "<resolved_tools>\n" + "\n".join(lines) + "\n</resolved_tools>"
-
-
-def _format_subagent_handoffs_context(state: dict[str, Any]) -> str | None:
-    handoffs = state.get("subagent_handoffs")
-    if not isinstance(handoffs, list) or not handoffs:
-        return None
-    lines: list[str] = []
-    for handoff in handoffs[-_SUBAGENT_MAX_HANDOFFS_IN_PROMPT:]:
-        if not isinstance(handoff, dict):
-            continue
-        subagent_id = str(handoff.get("subagent_id") or "").strip()
-        agent = str(handoff.get("agent") or "agent").strip() or "agent"
-        summary = _truncate_for_prompt(str(handoff.get("summary") or "").strip(), 220)
-        if not summary:
-            continue
-        artifact_refs_raw = handoff.get("artifact_refs")
-        artifact_refs = (
-            [
-                str(item).strip()
-                for item in artifact_refs_raw
-                if str(item).strip()
-            ][:3]
-            if isinstance(artifact_refs_raw, list)
-            else []
-        )
-        artifact_hint = f" artifacts={','.join(artifact_refs)}" if artifact_refs else ""
-        prefix = f"- {agent}"
-        if subagent_id:
-            prefix += f" ({subagent_id})"
-        lines.append(f"{prefix}: {summary}{artifact_hint}")
-    if not lines:
-        return None
-    return "<subagent_handoffs>\n" + "\n".join(lines) + "\n</subagent_handoffs>"
-
-
-def _format_artifact_manifest_context(state: dict[str, Any]) -> str | None:
-    artifacts = state.get("artifact_manifest")
-    if not isinstance(artifacts, list) or not artifacts:
-        return None
-    lines: list[str] = []
-    for item in artifacts[-_ARTIFACT_CONTEXT_MAX_ITEMS:]:
-        if not isinstance(item, dict):
-            continue
-        artifact_id = str(item.get("id") or "").strip()
-        tool_name = str(item.get("tool") or "").strip() or "tool"
-        summary = _truncate_for_prompt(str(item.get("summary") or "").strip(), 180)
-        artifact_uri = str(item.get("artifact_uri") or "").strip()
-        artifact_path = str(item.get("artifact_path") or "").strip()
-        size_bytes = int(item.get("size_bytes") or 0)
-        ref = artifact_uri or artifact_path
-        if not ref:
-            continue
-        label = f"- {tool_name}"
-        if artifact_id:
-            label += f" ({artifact_id})"
-        suffix: list[str] = [f"ref={ref}"]
-        if size_bytes > 0:
-            suffix.append(f"bytes={size_bytes}")
-        if summary:
-            suffix.append(f"summary={summary}")
-        lines.append(f"{label}: " + "; ".join(suffix))
-    if not lines:
-        return None
-    return "<artifact_manifest>\n" + "\n".join(lines) + "\n</artifact_manifest>"
-
-
-def _format_cross_session_memory_context(state: dict[str, Any]) -> str | None:
-    memory_context = _truncate_for_prompt(
-        str(state.get("cross_session_memory_context") or "").strip(),
-        1400,
-    )
-    if not memory_context:
-        return None
-    return "<cross_session_memory>\n" + memory_context + "\n</cross_session_memory>"
-
-
-def _format_rolling_context_summary_context(state: dict[str, Any]) -> str | None:
-    summary = _truncate_for_prompt(
-        str(state.get("rolling_context_summary") or "").strip(),
-        _CONTEXT_COMPACTION_DEFAULT_SUMMARY_MAX_CHARS,
-    )
-    if not summary:
-        return None
-    return "<rolling_context_summary>\n" + summary + "\n</rolling_context_summary>"
-
 
 _HITL_APPROVE_RE = re.compile(r"\b(ja|yes|ok|okej|kor|kör|go|fortsatt|fortsätt)\b", re.IGNORECASE)
 _HITL_REJECT_RE = re.compile(r"\b(nej|no|stopp|avbryt|stop|inte)\b", re.IGNORECASE)
 
 
-def _parse_hitl_confirmation(value: str) -> str | None:
-    text = str(value or "").strip().lower()
-    if not text:
-        return None
-    if _HITL_REJECT_RE.search(text):
-        return "reject"
-    if _HITL_APPROVE_RE.search(text):
-        return "approve"
-    return None
-
-
-def _render_hitl_message(template: str, **kwargs: Any) -> str:
-    safe_kwargs = {key: str(value or "").strip() for key, value in kwargs.items()}
-    try:
-        rendered = str(template or "").format(**safe_kwargs)
-    except Exception:
-        rendered = str(template or "")
-    return rendered.strip()
 
 
 
 
-def _safe_json(payload: Any) -> dict[str, Any]:
-    if isinstance(payload, dict):
-        return payload
-    if not payload:
-        return {}
-    try:
-        return json.loads(payload)
-    except (TypeError, ValueError):
-        return {}
-
-
-def _safe_id_segment(value: Any, *, fallback: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(value or "")).strip("-")
-    return normalized or fallback
-
-
-def _serialize_artifact_payload(payload: dict[str, Any]) -> str:
-    try:
-        return json.dumps(payload, ensure_ascii=True, sort_keys=True)
-    except Exception:
-        return str(payload)
-
-
-def _artifact_runtime_hitl_thread_scope(runtime_hitl: dict[str, Any] | None) -> dict[str, Any]:
-    scoped = dict(runtime_hitl or {})
-    scoped["sandbox_scope"] = "thread"
-    scoped.pop("sandbox_scope_id", None)
-    scoped.pop("subagent_scope_id", None)
-    return scoped
-
-
-def _persist_artifact_content(
-    *,
-    artifact_id: str,
-    content: str,
-    thread_id: Any,
-    turn_key: str,
-    sandbox_enabled: bool,
-    artifact_storage_mode: str,
-    runtime_hitl_cfg: dict[str, Any],
-) -> tuple[str, str, str]:
-    artifact_uri = f"artifact://{artifact_id}"
-    normalized_turn = _safe_id_segment(turn_key, fallback="turn")
-    normalized_thread = _safe_id_segment(thread_id, fallback="thread")
-    requested_mode = str(artifact_storage_mode or _ARTIFACT_DEFAULT_STORAGE_MODE).strip().lower()
-    if requested_mode not in {"auto", "sandbox", "local"}:
-        requested_mode = _ARTIFACT_DEFAULT_STORAGE_MODE
-    effective_mode = requested_mode
-    if requested_mode == "auto":
-        sandbox_mode = str(runtime_hitl_cfg.get("sandbox_mode") or "").strip().lower()
-        if sandbox_mode in {"provisioner", "remote"}:
-            effective_mode = "local"
-        else:
-            effective_mode = "sandbox"
-    if effective_mode == "sandbox" and sandbox_enabled:
-        artifact_path = f"/workspace/.artifacts/{normalized_turn}/{artifact_id}.json"
-        try:
-            written_path = sandbox_write_text_file(
-                thread_id=thread_id,
-                runtime_hitl=_artifact_runtime_hitl_thread_scope(runtime_hitl_cfg),
-                path=artifact_path,
-                content=content,
-                append=False,
-            )
-            return artifact_uri, str(written_path or artifact_path), "sandbox"
-        except Exception:
-            pass
-
-    local_root = Path(_ARTIFACT_LOCAL_ROOT).expanduser() / normalized_thread / normalized_turn
-    local_root.mkdir(parents=True, exist_ok=True)
-    local_path = local_root / f"{artifact_id}.json"
-    local_path.write_text(str(content or ""), encoding="utf-8")
-    return artifact_uri, str(local_path), "local"
-
-
-def _tokenize_for_memory_relevance(text: str) -> set[str]:
-    tokens = _tokenize(_normalize_text(str(text or "")))
-    return {
-        token
-        for token in tokens
-        if len(token) >= 3 and token not in _AGENT_STOPWORDS
-    }
-
-
-def _select_cross_session_memory_entries(
-    *,
-    entries: list[dict[str, Any]],
-    query: str,
-    max_items: int,
-) -> list[dict[str, Any]]:
-    if not entries:
-        return []
-    query_tokens = _tokenize_for_memory_relevance(query)
-    scored: list[tuple[int, int, dict[str, Any]]] = []
-    for index, entry in enumerate(entries):
-        if not isinstance(entry, dict):
-            continue
-        text = str(entry.get("memory_text") or "").strip()
-        if not text:
-            continue
-        category = str(entry.get("category") or "fact").strip().lower()
-        entry_tokens = _tokenize_for_memory_relevance(text)
-        overlap = len(query_tokens.intersection(entry_tokens))
-        score = overlap * 10 + max(0, len(entries) - index)
-        if category in {"instruction", "preference"}:
-            score += 2
-        if overlap == 0 and category not in {"instruction", "preference"}:
-            continue
-        scored.append((score, index, entry))
-    if not scored:
-        return [item for item in entries[: max(1, min(max_items, 2))] if isinstance(item, dict)]
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    selected: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for _score, _index, entry in scored:
-        key = str(entry.get("id") or "").strip() or hashlib.sha1(
-            str(entry.get("memory_text") or "").encode("utf-8", errors="ignore")
-        ).hexdigest()[:12]
-        if key in seen:
-            continue
-        seen.add(key)
-        selected.append(entry)
-        if len(selected) >= max(1, int(max_items)):
-            break
-    return selected
-
-
-def _render_cross_session_memory_context(
-    *,
-    entries: list[dict[str, Any]],
-    max_chars: int,
-) -> str:
-    if not entries:
-        return ""
-    lines: list[str] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        category = str(entry.get("category") or "fact").strip().lower()
-        memory_text = _truncate_for_prompt(str(entry.get("memory_text") or "").strip(), 220)
-        if not memory_text:
-            continue
-        lines.append(f"- [{category}] {memory_text}")
-    if not lines:
-        return ""
-    return _truncate_for_prompt("\n".join(lines), max(220, int(max_chars)))
-
-
-def _extract_first_json_object(text: str) -> dict[str, Any]:
-    value = str(text or "").strip()
-    if not value:
-        return {}
-    direct = _safe_json(value)
-    if direct:
-        return direct
-    start = value.find("{")
-    if start < 0:
-        return {}
-    segment = value[start:]
-    try:
-        decoded, _ = _CRITIC_JSON_DECODER.raw_decode(segment)
-        if isinstance(decoded, dict):
-            return decoded
-    except Exception:
-        pass
-    for end in range(start + 1, min(len(value), start + 4000)):
-        if value[end : end + 1] != "}":
-            continue
-        candidate = value[start : end + 1]
-        parsed = _safe_json(candidate)
-        if parsed:
-            return parsed
-        try:
-            literal = ast.literal_eval(candidate)
-            if isinstance(literal, dict):
-                return literal
-        except Exception:
-            continue
-    return {}
-
-
-def _coerce_confidence(value: Any, default: float = 0.5) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return round(max(0.0, min(1.0, parsed)), 2)
-
-
-def _tool_call_name_index(messages: list[Any] | None) -> dict[str, str]:
-    index: dict[str, str] = {}
-    for message in messages or []:
-        if not isinstance(message, AIMessage):
-            continue
-        tool_calls = getattr(message, "tool_calls", None) or []
-        for tool_call in tool_calls:
-            if not isinstance(tool_call, dict):
-                continue
-            tool_call_id = str(tool_call.get("id") or "").strip()
-            tool_name = str(tool_call.get("name") or "").strip()
-            if tool_call_id and tool_name and tool_call_id not in index:
-                index[tool_call_id] = tool_name
-    return index
 
 
 def _infer_tool_name_from_payload(payload: dict[str, Any]) -> str:
@@ -2211,115 +755,6 @@ def _format_tools_for_llm_binding(tools: list[Any]) -> list[dict[str, Any]]:
             formatted.append(cleaned)
     return formatted
 
-
-_CRITIC_SNIPPET_RE = re.compile(
-    r"\{\s*[\"']status[\"']\s*:\s*[\"'](?:ok|needs_more)[\"'][\s\S]*?[\"']reason[\"']\s*:\s*[\"'][\s\S]*?[\"']\s*\}",
-    re.IGNORECASE,
-)
-_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
-_CRITIC_JSON_DECODER = json.JSONDecoder()
-_LINE_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
-_CITATION_TOKEN_RE = re.compile(r"\[citation:[^\]]+\]", re.IGNORECASE)
-_CITATION_SPACING_RE = re.compile(r"\[citation:\s*([^\]]+?)\s*\]", re.IGNORECASE)
-
-
-def _remove_inline_critic_payloads(text: str) -> tuple[str, bool]:
-    if not text:
-        return text, False
-    parts: list[str] = []
-    idx = 0
-    removed = False
-    while idx < len(text):
-        start = text.find("{", idx)
-        if start == -1:
-            parts.append(text[idx:])
-            break
-        parts.append(text[idx:start])
-        segment = text[start:]
-        try:
-            decoded, consumed = _CRITIC_JSON_DECODER.raw_decode(segment)
-        except ValueError:
-            decoded = None
-            consumed = 0
-            for end in range(start + 1, min(len(text), start + 2400)):
-                if text[end : end + 1] != "}":
-                    continue
-                candidate = text[start : end + 1]
-                try:
-                    parsed = ast.literal_eval(candidate)
-                except Exception:
-                    continue
-                if isinstance(parsed, dict):
-                    decoded = parsed
-                    consumed = len(candidate)
-                    break
-            if decoded is None:
-                parts.append(text[start : start + 1])
-                idx = start + 1
-                continue
-        status = (
-            str(decoded.get("status") or "").strip().lower()
-            if isinstance(decoded, dict)
-            else ""
-        )
-        if isinstance(decoded, dict) and status in {"ok", "needs_more"} and "reason" in decoded:
-            removed = True
-            idx = start + consumed
-            continue
-        parts.append(text[start : start + consumed])
-        idx = start + consumed
-    return "".join(parts), removed
-
-
-def _normalize_line_for_dedupe(line: str) -> str:
-    value = str(line or "").strip()
-    value = _LINE_BULLET_PREFIX_RE.sub("", value)
-    value = _CITATION_TOKEN_RE.sub("", value)
-    value = re.sub(r"\s+", " ", value).strip(" ,.;:-").lower()
-    return value
-
-
-def _dedupe_repeated_lines(text: str) -> str:
-    lines = text.splitlines()
-    if len(lines) < 4:
-        return text.strip()
-    seen: set[str] = set()
-    deduped: list[str] = []
-    duplicates = 0
-    for line in lines:
-        normalized = _normalize_line_for_dedupe(line)
-        if normalized and len(normalized) >= 24:
-            if normalized in seen:
-                duplicates += 1
-                continue
-            seen.add(normalized)
-        deduped.append(line)
-    result = "\n".join(deduped).strip()
-    if duplicates > 0:
-        result = re.sub(r"\n{3,}", "\n\n", result)
-    return result.strip()
-
-
-def _normalize_citation_spacing(text: str) -> str:
-    if not text:
-        return text
-    return _CITATION_SPACING_RE.sub(
-        lambda match: f"[citation:{str(match.group(1) or '').strip()}]",
-        text,
-    )
-
-
-def _strip_critic_json(text: str) -> str:
-    if not text:
-        return text
-    cleaned = _CRITIC_SNIPPET_RE.sub("", text)
-    cleaned, removed_inline = _remove_inline_critic_payloads(cleaned)
-    if cleaned != text or removed_inline:
-        cleaned = _dedupe_repeated_lines(cleaned)
-    cleaned = _HTML_COMMENT_RE.sub("", cleaned)
-    cleaned = _normalize_citation_spacing(cleaned)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    return cleaned.rstrip()
 
 
 def _render_guard_message(template: str, preview_lines: list[str]) -> str:
@@ -2801,41 +1236,6 @@ def _best_actionable_entry(entries: list[dict[str, Any]]) -> tuple[str, str] | N
     return None
 
 
-def _truncate_for_prompt(text: str, max_chars: int = TOOL_CONTEXT_MAX_CHARS) -> str:
-    value = str(text or "").strip()
-    if len(value) <= max_chars:
-        return value
-    return value[: max_chars - 3].rstrip() + "..."
-
-
-def _coerce_int_range(
-    value: Any,
-    *,
-    default: int,
-    min_value: int,
-    max_value: int,
-) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(min_value, min(max_value, parsed))
-
-
-def _coerce_float_range(
-    value: Any,
-    *,
-    default: float,
-    min_value: float,
-    max_value: float,
-) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(min_value, min(max_value, parsed))
-
-
 def _build_subagent_id(
     *,
     base_thread_id: str,
@@ -2912,39 +1312,6 @@ def _build_subagent_handoff_payload(
         "error": _truncate_for_prompt(str(error_text or "").strip(), 240),
     }
 
-
-def _normalize_agent_identifier(value: str) -> str:
-    normalized = re.sub(r"[^a-z0-9åäö]+", "_", str(value or "").strip().lower())
-    normalized = re.sub(r"_+", "_", normalized).strip("_")
-    return normalized
-
-
-def _guess_agent_from_alias(alias: str) -> str | None:
-    normalized = _normalize_agent_identifier(alias)
-    if not normalized:
-        return None
-    direct = _AGENT_NAME_ALIAS_MAP.get(normalized)
-    if direct:
-        return direct
-    token_rules: list[tuple[tuple[str, ...], str]] = [
-        (("smhi", "weather", "vader", "väder", "temperatur", "regn", "sno", "snö", "vind"), "weather"),
-        (("trafik", "traffic", "road", "vag", "väg", "rail", "train"), "trafik"),
-        (("map", "kart", "geo"), "kartor"),
-        (("stat", "scb", "data"), "statistics"),
-        (("riks", "parliament", "politik"), "riksdagen"),
-        (("bolag", "company", "business", "org"), "bolag"),
-        (("blocket", "tradera", "annons", "begagnat", "köp", "sälj", "marknadsplats"), "marketplace"),
-        (("browser", "web", "scrape", "search"), "browser"),
-        (("media", "podcast", "image", "video"), "media"),
-        (("code", "python", "calc"), "code"),
-        (("synth", "compare", "samman"), "synthesis"),
-        (("knowledge", "docs", "internal", "external", "local"), "knowledge"),
-        (("action", "travel"), "action"),
-    ]
-    for tokens, resolved in token_rules:
-        if any(token in normalized for token in tokens):
-            return resolved
-    return None
 
 
 def _summarize_parallel_results(results: Any) -> str:
