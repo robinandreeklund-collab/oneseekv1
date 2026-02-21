@@ -2719,6 +2719,7 @@ async def create_supervisor_agent(
         "statistics": "statistics",
         "compare": "compare",
         "smalltalk": "smalltalk",
+        "mixed": "mixed",
     }
     route_to_speculative_tool_ids: dict[str, list[str]] = {
         "knowledge": ["search_knowledge_base", "search_surfsense_docs", "search_tavily"],
@@ -3016,7 +3017,7 @@ async def create_supervisor_agent(
         normalized_route = _normalize_route_hint_value(
             resolved.get("route") or route_hint
         )
-        if normalized_route in {"compare", "statistics"}:
+        if normalized_route in {"compare", "statistics", "mixed"}:
             return resolved
 
         override_route: str | None = None

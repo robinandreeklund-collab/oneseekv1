@@ -71,6 +71,11 @@ def classify_execution_strategy(
     next_step_text: str,
     subagent_enabled: bool = True,
 ) -> tuple[str, str]:
+    route_hint = str(state.get("route_hint") or "").strip().lower()
+    if route_hint == "mixed":
+        if not subagent_enabled:
+            return EXECUTION_STRATEGY_PARALLEL, "subagent_disabled:mixed_route"
+        return EXECUTION_STRATEGY_SUBAGENT, "mixed_route"
     selected_agents = _selected_agent_names(state)
     plan_steps = _plan_step_count(state)
     combined_text = " ".join(

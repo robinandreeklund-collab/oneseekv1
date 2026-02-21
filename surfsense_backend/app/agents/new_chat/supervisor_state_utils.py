@@ -78,9 +78,25 @@ def _format_intent_context(state: dict[str, Any]) -> str | None:
     intent_id = str(intent.get("intent_id") or "").strip()
     route = str(intent.get("route") or "").strip()
     reason = str(intent.get("reason") or "").strip()
+    sub_intents_raw = intent.get("sub_intents")
+    sub_intents: list[str] = []
+    if isinstance(sub_intents_raw, list):
+        sub_intents = [
+            str(item).strip()
+            for item in sub_intents_raw
+            if str(item).strip()
+        ][:4]
+    if not sub_intents and isinstance(state.get("sub_intents"), list):
+        sub_intents = [
+            str(item).strip()
+            for item in state.get("sub_intents")
+            if str(item).strip()
+        ][:4]
     if not (intent_id or route):
         return None
     lines = [f"intent_id={intent_id or 'unknown'}", f"route={route or 'unknown'}"]
+    if sub_intents:
+        lines.append("sub_intents=" + ",".join(sub_intents))
     if reason:
         lines.append(f"reason={_truncate_for_prompt(reason, 180)}")
     return "<resolved_intent>\n" + "\n".join(lines) + "\n</resolved_intent>"

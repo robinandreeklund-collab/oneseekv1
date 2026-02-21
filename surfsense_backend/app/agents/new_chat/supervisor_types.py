@@ -110,6 +110,7 @@ class SupervisorState(TypedDict, total=False):
     turn_id: Annotated[str | None, _replace]
     active_turn_id: Annotated[str | None, _replace]
     resolved_intent: Annotated[dict[str, Any] | None, _replace]
+    sub_intents: Annotated[list[str] | None, _replace]
     graph_complexity: Annotated[str | None, _replace]
     speculative_candidates: Annotated[list[dict[str, Any]], _replace]
     speculative_results: Annotated[dict[str, Any], _replace]

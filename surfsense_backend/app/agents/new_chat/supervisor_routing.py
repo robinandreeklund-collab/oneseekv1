@@ -86,6 +86,7 @@ def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None
         "statistics": "statistics",
         "compare": "synthesis",
         "trafik": "trafik",
+        "mixed": "knowledge",
     }
     preferred = defaults.get(route, "knowledge")
     if allowed:
