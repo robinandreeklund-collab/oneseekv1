@@ -55,7 +55,7 @@ def _persist_artifact_content(
     if requested_mode == "auto":
         sandbox_mode = str(runtime_hitl_cfg.get("sandbox_mode") or "").strip().lower()
         if sandbox_mode in {"provisioner", "remote"}:
-            effective_mode = "local"
+            effective_mode = "sandbox"
         else:
             effective_mode = "sandbox"
     if effective_mode == "sandbox" and sandbox_enabled:
