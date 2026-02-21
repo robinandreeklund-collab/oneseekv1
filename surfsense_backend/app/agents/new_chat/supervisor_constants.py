@@ -211,7 +211,7 @@ _LOOP_GUARD_TOOL_NAMES = {
     "reflect_on_progress",
     "write_todos",
 }
-_LOOP_GUARD_MAX_CONSECUTIVE = 12
+_LOOP_GUARD_MAX_CONSECUTIVE = 4  # Was 12 — unreachable given _MAX_AGENT_HOPS_PER_TURN=3
 _MAX_AGENT_HOPS_PER_TURN = 3
 _SANDBOX_CODE_TOOL_IDS = (
     "sandbox_write_file",
