@@ -8,3 +8,8 @@ venv/
 venv
 .pnpm-store
 surfsense_web/package-lock.json
+/.langgraph_api
+/eval
+/eval/api
+/eval/api/riksdagen
+/eval/api/riksdagen/all_categories
