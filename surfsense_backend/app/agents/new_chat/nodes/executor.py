@@ -525,7 +525,7 @@ def build_executor_nodes(
                     "args": {"calls": calls},
                 }
                 auto_response = AIMessage(content="", tool_calls=[tool_call])
-                updates = {"messages": [auto_response], "execution_strategy": "subagent"}
+                updates = {"messages": [auto_response], "execution_strategy": "parallel"}
                 if new_user_turn:
                     updates.update(
                         _build_executor_updates_for_new_user_turn(
