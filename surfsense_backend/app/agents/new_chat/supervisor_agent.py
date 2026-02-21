@@ -3807,6 +3807,22 @@ async def create_supervisor_agent(
         if not isinstance(messages_out, list) or not messages_out:
             return []
 
+        normalized_messages: list[ToolMessage] = []
+        for message in messages_out:
+            if isinstance(message, ToolMessage):
+                normalized_messages.append(message)
+                continue
+            if isinstance(message, dict) and str(message.get("type") or "").strip().lower() == "tool":
+                normalized_messages.append(
+                    ToolMessage(
+                        content=message.get("content") or "",
+                        name=message.get("name"),
+                        tool_call_id=message.get("tool_call_id"),
+                    )
+                )
+        if not normalized_messages:
+            return []
+
         storage_mode = artifact_offload_storage_mode
         if force_sandbox_for_auto and storage_mode == "auto":
             storage_mode = "sandbox"
@@ -3815,14 +3831,12 @@ async def create_supervisor_agent(
         current_turn_id = str(
             injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
         ).strip()
-        tool_call_index = _tool_call_name_index(messages_out)
+        tool_call_index = _tool_call_name_index(normalized_messages)
         seen_source_ids: set[str] = set()
         seen_digests: set[str] = set()
         new_entries: list[dict[str, Any]] = []
 
-        for message in reversed(messages_out):
-            if not isinstance(message, ToolMessage):
-                continue
+        for message in reversed(normalized_messages):
             tool_name = _resolve_tool_message_name(
                 message,
                 tool_call_index=tool_call_index,
