@@ -13,6 +13,7 @@ def build_tool_resolver_node(
     resolve_tool_selection_for_agent_fn: Callable[..., dict[str, Any]] | None = None,
     weather_tool_ids: list[str],
     trafik_tool_ids: list[str],
+    known_tool_ids: frozenset[str] | None = None,
 ):
     async def tool_resolver_node(
         state: dict[str, Any],
@@ -102,6 +103,8 @@ def build_tool_resolver_node(
                 deduped_ids.append(normalized)
                 if len(deduped_ids) >= 8:
                     break
+            if known_tool_ids is not None:
+                deduped_ids = [tid for tid in deduped_ids if tid in known_tool_ids]
             if deduped_ids:
                 resolved[agent_name] = deduped_ids
             tool_trace[agent_name] = {

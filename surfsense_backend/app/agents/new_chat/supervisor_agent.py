@@ -4204,6 +4204,11 @@ async def create_supervisor_agent(
             )
         except Exception:
             live_tool_index = []
+    known_tool_ids: frozenset[str] | None = (
+        frozenset(entry.tool_id for entry in live_tool_index)
+        if live_tool_index
+        else None
+    )
 
     def _adaptive_tool_margin_threshold(tool_id: str, base_threshold: float) -> float:
         if not _live_phase_enabled(live_routing_config, "adaptive"):
@@ -6989,6 +6994,7 @@ async def create_supervisor_agent(
         ),
         weather_tool_ids=weather_tool_ids,
         trafik_tool_ids=trafik_tool_ids,
+        known_tool_ids=known_tool_ids,
     )
     execution_router_node = build_execution_router_node(
         latest_user_query_fn=_latest_user_query,
