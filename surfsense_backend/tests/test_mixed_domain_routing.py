@@ -114,6 +114,47 @@ def test_weather_cache_not_invalidated_for_mixed_query() -> None:
     print("  ✓ sub_intents parameter added to _build_cache_key")
 
 
+def test_sub_intents_propagated_to_state() -> None:
+    """
+    Test that build_intent_resolver_node extracts sub_intents from the LLM response
+    and includes it in the state update.
+
+    This is a code inspection test that verifies the implementation in nodes/intent.py
+    extracts sub_intents from parsed JSON and adds it to the state update dict.
+    """
+    intent_path = project_root / "app" / "agents" / "new_chat" / "nodes" / "intent.py"
+    with open(intent_path, 'r') as f:
+        intent_code = f.read()
+
+    # Verify the extraction pattern: get sub_intents from resolved dict
+    assert 'resolved.get("sub_intents")' in intent_code, \
+        "nodes/intent.py should read sub_intents from the resolved intent dict"
+
+    # Verify sub_intents is included in the state update dict
+    assert '"sub_intents": sub_intents' in intent_code, \
+        'nodes/intent.py should include sub_intents in state updates: "sub_intents": sub_intents'
+
+    print("  ✓ sub_intents extraction and propagation verified in nodes/intent.py")
+
+
+def test_subagent_isolation_active_for_parallel_strategy() -> None:
+    """
+    Test that _subagent_isolation_active accepts "parallel" strategy after Fix C.
+
+    Verifies the fix that extends isolation support beyond just "subagent" strategy
+    by inspecting the source code for the updated condition.
+    """
+    supervisor_path = project_root / "app" / "agents" / "new_chat" / "supervisor_agent.py"
+    with open(supervisor_path, 'r') as f:
+        supervisor_code = f.read()
+
+    # Verify Fix C is in place: the set check should include "parallel"
+    assert 'not in {"subagent", "parallel"}' in supervisor_code, \
+        '_subagent_isolation_active should check: normalized not in {"subagent", "parallel"}'
+
+    print("  ✓ _subagent_isolation_active supports 'parallel' strategy")
+
+
 if __name__ == "__main__":
     print("Running test_mixed_weather_statistics_does_not_lock_to_weather...")
     test_mixed_weather_statistics_does_not_lock_to_weather()
@@ -129,6 +170,14 @@ if __name__ == "__main__":
 
     print("Running test_weather_cache_not_invalidated_for_mixed_query...")
     test_weather_cache_not_invalidated_for_mixed_query()
+    print("✓ Passed")
+
+    print("Running test_sub_intents_propagated_to_state...")
+    test_sub_intents_propagated_to_state()
+    print("✓ Passed")
+
+    print("Running test_subagent_isolation_active_for_parallel_strategy...")
+    test_subagent_isolation_active_for_parallel_strategy()
     print("✓ Passed")
 
     print("\nAll tests passed! ✓")

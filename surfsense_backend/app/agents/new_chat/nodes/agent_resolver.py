@@ -51,6 +51,11 @@ def build_agent_resolver_node(
         route_hint = normalize_route_hint_fn(
             intent_data.get("route") or state.get("route_hint")
         )
+        sub_intents: list[str] = [
+            str(s).strip()
+            for s in (state.get("sub_intents") or [])
+            if str(s).strip()
+        ]
         route_allowed = route_allowed_agents_fn(route_hint)
         default_for_route = route_default_agent_fn(route_hint, route_allowed)
         recent_calls = state.get("recent_agent_calls") or []
@@ -63,28 +68,58 @@ def build_agent_resolver_node(
         live_enabled = bool(live_cfg.get("enabled", False))
         phase_index = int(live_cfg.get("phase_index") or 0)
         shortlist_k = max(2, min(int(live_cfg.get("agent_top_k") or 3), 8))
-        ranked_candidates: list[dict[str, Any]] = []
-        if smart_retrieve_agents_with_scores_fn is not None:
-            ranked_candidates = list(
-                smart_retrieve_agents_with_scores_fn(
+
+        # Fix B: Multi-domain retrieval — run retrieval per sub_intent and merge candidates
+        if route_hint == "mixed" and sub_intents and smart_retrieve_agents_with_scores_fn is not None:
+            merged_by_name: dict[str, dict[str, Any]] = {}
+            for sub_route in sub_intents:
+                sub_allowed = route_allowed_agents_fn(sub_route)
+                sub_candidates = list(
+                    smart_retrieve_agents_with_scores_fn(
+                        latest_user_query,
+                        agent_definitions=agent_definitions,
+                        recent_agents=recent_agents,
+                        limit=max(shortlist_k, 3),
+                    )
+                    or []
+                )
+                if sub_allowed:
+                    sub_candidates = [
+                        item
+                        for item in sub_candidates
+                        if isinstance(item, dict)
+                        and getattr(item.get("definition"), "name", "") in sub_allowed
+                    ]
+                for item in sub_candidates:
+                    if not isinstance(item, dict):
+                        continue
+                    name = getattr(item.get("definition"), "name", "")
+                    if name and name not in merged_by_name:
+                        merged_by_name[name] = item
+            ranked_candidates: list[dict[str, Any]] = list(merged_by_name.values())
+        else:
+            ranked_candidates = []
+            if smart_retrieve_agents_with_scores_fn is not None:
+                ranked_candidates = list(
+                    smart_retrieve_agents_with_scores_fn(
+                        latest_user_query,
+                        agent_definitions=agent_definitions,
+                        recent_agents=recent_agents,
+                        limit=max(shortlist_k, 3),
+                    )
+                    or []
+                )
+            if not ranked_candidates:
+                selected = smart_retrieve_agents_fn(
                     latest_user_query,
                     agent_definitions=agent_definitions,
                     recent_agents=recent_agents,
                     limit=max(shortlist_k, 3),
                 )
-                or []
-            )
-        if not ranked_candidates:
-            selected = smart_retrieve_agents_fn(
-                latest_user_query,
-                agent_definitions=agent_definitions,
-                recent_agents=recent_agents,
-                limit=max(shortlist_k, 3),
-            )
-            ranked_candidates = [
-                {"definition": item, "score": float(max(0, len(selected) - idx))}
-                for idx, item in enumerate(selected)
-            ]
+                ranked_candidates = [
+                    {"definition": item, "score": float(max(0, len(selected) - idx))}
+                    for idx, item in enumerate(selected)
+                ]
         selected = [
             item.get("definition")
             for item in ranked_candidates

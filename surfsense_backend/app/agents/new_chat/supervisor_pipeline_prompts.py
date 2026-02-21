@@ -63,7 +63,7 @@ Regler:
 Returnera strikt JSON:
 {
   "steps": [
-    {"id": "step-1", "content": "text", "status": "pending"}
+    {"id": "step-1", "content": "text", "status": "pending", "parallel": false}
   ],
   "reason": "kort svensk motivering"
 }
@@ -115,6 +115,29 @@ Regler:
 Returnera strikt JSON:
 {
   "response": "forfinat svar",
+  "reason": "kort svensk motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT = """
+Du ar noden planner i supervisor-grafen for en mixed-domain fraga (route="mixed").
+Skapa en exekverbar plan dar varje sub_intent far ett eget parallellt steg.
+
+Regler:
+- Max 4 steg.
+- Steg for olika sub_intents (t.ex. statistics och action) ska ha parallel=true.
+- Avsluta med ett syntessteg (parallel=false) om flera agenter anvands.
+- **VIKTIGT: Anvand ENDAST agenter fran `selected_agents`.**
+- Hall stegen korta och pa svenska.
+
+Returnera strikt JSON:
+{
+  "steps": [
+    {"id": "step-1", "content": "text", "status": "pending", "parallel": true},
+    {"id": "step-2", "content": "text", "status": "pending", "parallel": true},
+    {"id": "step-3", "content": "Syntetisera resultat fran alla steg", "status": "pending", "parallel": false}
+  ],
   "reason": "kort svensk motivering"
 }
 """

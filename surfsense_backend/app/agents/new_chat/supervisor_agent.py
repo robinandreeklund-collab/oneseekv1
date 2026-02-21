@@ -3664,7 +3664,9 @@ async def create_supervisor_agent(
     def _subagent_isolation_active(execution_strategy: str) -> bool:
         if not subagent_enabled:
             return False
-        if str(execution_strategy or "").strip().lower() != "subagent":
+        normalized = str(execution_strategy or "").strip().lower()
+        # Allow isolation for both "subagent" and "parallel" (multi-agent runs)
+        if normalized not in {"subagent", "parallel"}:
             return False
         return bool(subagent_isolation_enabled)
 
