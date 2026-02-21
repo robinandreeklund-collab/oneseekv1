@@ -19,11 +19,18 @@ from app.agents.new_chat.supervisor_text_utils import (
 )
 
 
-def _artifact_runtime_hitl_thread_scope(runtime_hitl: dict[str, Any] | None) -> dict[str, Any]:
+def _artifact_runtime_hitl_thread_scope(
+    runtime_hitl: dict[str, Any] | None, *, subagent_id: str | None = None
+) -> dict[str, Any]:
     scoped = dict(runtime_hitl or {})
-    scoped["sandbox_scope"] = "thread"
-    scoped.pop("sandbox_scope_id", None)
-    scoped.pop("subagent_scope_id", None)
+    if subagent_id:
+        scoped["sandbox_scope"] = "subagent"
+        scoped["sandbox_scope_id"] = subagent_id
+        scoped.pop("subagent_scope_id", None)
+    else:
+        scoped["sandbox_scope"] = "thread"
+        scoped.pop("sandbox_scope_id", None)
+        scoped.pop("subagent_scope_id", None)
     return scoped
 
 
@@ -36,6 +43,7 @@ def _persist_artifact_content(
     sandbox_enabled: bool,
     artifact_storage_mode: str,
     runtime_hitl_cfg: dict[str, Any],
+    subagent_id: str | None = None,
 ) -> tuple[str, str, str]:
     artifact_uri = f"artifact://{artifact_id}"
     normalized_turn = _safe_id_segment(turn_key, fallback="turn")
@@ -55,7 +63,9 @@ def _persist_artifact_content(
         try:
             written_path = sandbox_write_text_file(
                 thread_id=thread_id,
-                runtime_hitl=_artifact_runtime_hitl_thread_scope(runtime_hitl_cfg),
+                runtime_hitl=_artifact_runtime_hitl_thread_scope(
+                    runtime_hitl_cfg, subagent_id=subagent_id
+                ),
                 path=artifact_path,
                 content=content,
                 append=False,

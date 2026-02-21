@@ -3800,6 +3800,7 @@ async def create_supervisor_agent(
         messages_out: list[Any],
         injected_state: dict[str, Any],
         force_sandbox_for_auto: bool = False,
+        subagent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         if not artifact_offload_enabled:
             return []
@@ -3863,6 +3864,7 @@ async def create_supervisor_agent(
                 sandbox_enabled=bool(sandbox_enabled),
                 artifact_storage_mode=storage_mode,
                 runtime_hitl_cfg=runtime_hitl_cfg,
+                subagent_id=subagent_id,
             )
             summary = _summarize_tool_payload(normalized_tool_name, payload)
             new_entries.append(
@@ -4494,7 +4496,8 @@ async def create_supervisor_agent(
         subagent_artifacts = _collect_subagent_artifacts_from_messages(
             messages_out=messages_out,
             injected_state=injected_state,
-            force_sandbox_for_auto=filesystem_sandbox_task,
+            force_sandbox_for_auto=(filesystem_sandbox_task or subagent_isolated),
+            subagent_id=subagent_id,
         )
         if filesystem_sandbox_task and not _uses_sandbox_tool(used_tool_names):
             response_text = (
@@ -5163,6 +5166,14 @@ async def create_supervisor_agent(
                             agent_name=agent_name,
                         ),
                     )
+                subagent_artifacts: list[dict[str, Any]] = []
+                if subagent_isolation_for_parallel:
+                    subagent_artifacts = _collect_subagent_artifacts_from_messages(
+                        messages_out=messages_out,
+                        injected_state=injected_state,
+                        force_sandbox_for_auto=True,
+                        subagent_id=subagent_id,
+                    )
                 subagent_handoff = (
                     _build_subagent_handoff_payload(
                         subagent_id=str(subagent_id or ""),
@@ -5189,13 +5200,14 @@ async def create_supervisor_agent(
                     "used_tools": used_tool_names,
                     "result_contract": result_contract,
                     "turn_id": current_turn_id,
-                    "execution_strategy": requested_strategy or "inline",
-                    "from_speculative_cache": False,
-                    "from_episodic_cache": False,
-                    "subagent_isolated": bool(subagent_isolation_for_parallel),
-                    "subagent_id": subagent_id,
-                    "subagent_handoff": subagent_handoff,
-                }
+                        "execution_strategy": requested_strategy or "inline",
+                        "from_speculative_cache": False,
+                        "from_episodic_cache": False,
+                        "subagent_isolated": bool(subagent_isolation_for_parallel),
+                        "subagent_id": subagent_id,
+                        "subagent_handoff": subagent_handoff,
+                        "artifacts": subagent_artifacts,
+                    }
             except Exception as exc:
                 error_message = str(exc)
                 result_contract = _build_agent_result_contract(
