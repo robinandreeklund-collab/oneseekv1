@@ -124,11 +124,47 @@ def _normalize_tool_call_dict(tool_call: Any, *, index: int) -> dict[str, Any] |
     return _sanitize_template_value(normalized)
 
 
+def _hoist_system_messages(messages: list[Any]) -> list[Any]:
+    """
+    Collapse all SystemMessages into a single one at position 0.
+
+    LangGraph's add_messages reducer can produce mid-conversation SystemMessages
+    when the same system prompt is re-injected on a retry or reload (e.g.
+    [system, user, system, user]).  Strict Jinja templates (LM Studio / nemotron)
+    fail with "Cannot apply filter 'string' to type: NullValue" in that case.
+
+    Strategy: collect every SystemMessage, join their content, and place a single
+    merged SystemMessage at the front while keeping all other messages in order.
+    """
+    system_parts: list[str] = []
+    rest: list[Any] = []
+    for msg in messages:
+        if isinstance(msg, SystemMessage):
+            part = _normalize_message_content(getattr(msg, "content", ""))
+            if part:
+                system_parts.append(part)
+        else:
+            rest.append(msg)
+    if not system_parts:
+        return rest
+    merged_content = "\n\n".join(system_parts)
+    try:
+        merged_system = messages[
+            next(i for i, m in enumerate(messages) if isinstance(m, SystemMessage))
+        ].model_copy(update={"content": merged_content})
+    except Exception:
+        merged_system = SystemMessage(content=merged_content)
+    return [merged_system, *rest]
+
+
 def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
     """
     Guardrail for strict OpenAI-compatible templates (e.g. LM Studio Jinja).
     Avoid NullValue in content/tool-call fields between turns.
     """
+    # Collapse multiple SystemMessages into one at position 0 first so that the
+    # per-message normalisation below never sees a mid-conversation system message.
+    messages = _hoist_system_messages(messages)
     normalized_messages: list[Any] = []
     for idx, message in enumerate(messages):
         if isinstance(message, AIMessage):
@@ -433,7 +469,23 @@ def build_executor_nodes(
             if item
         ]
         if system_bits:
-            messages = [SystemMessage(content="\n".join(system_bits))] + messages
+            extra = "\n".join(system_bits)
+            if messages and isinstance(messages[0], SystemMessage):
+                # Merge context bits into the existing leading system message to
+                # avoid a second SystemMessage appearing mid-conversation, which
+                # breaks strict Jinja templates (e.g. LM Studio / nemotron-3-nano).
+                existing = _normalize_message_content(
+                    getattr(messages[0], "content", "")
+                )
+                merged = (existing + "\n\n" + extra).strip() if existing else extra
+                try:
+                    messages = [
+                        messages[0].model_copy(update={"content": merged})
+                    ] + messages[1:]
+                except Exception:
+                    messages = [SystemMessage(content=merged)] + messages[1:]
+            else:
+                messages = [SystemMessage(content=extra)] + messages
         model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
         if model_name:
             budget = TokenBudget(model_name=str(model_name))
