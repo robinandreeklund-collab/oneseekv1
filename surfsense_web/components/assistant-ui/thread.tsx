@@ -53,6 +53,7 @@ import {
 	type ContextStatsEntry,
 } from "@/components/assistant-ui/context-stats";
 import {
+	ReasoningContext,
 	ThinkingStepsContext,
 	ThinkingStepsDisplay,
 } from "@/components/assistant-ui/thinking-steps";
@@ -82,6 +83,7 @@ const CYCLING_PLACEHOLDERS = [
 interface ThreadProps {
 	messageThinkingSteps?: Map<string, ThinkingStep[]>;
 	messageContextStats?: Map<string, ContextStatsEntry[]>;
+	messageReasoningMap?: Map<string, string>;
 	header?: React.ReactNode;
 	isPublicChat?: boolean;
 }
@@ -89,13 +91,16 @@ interface ThreadProps {
 export const Thread: FC<ThreadProps> = ({
 	messageThinkingSteps = new Map(),
 	messageContextStats = new Map(),
+	messageReasoningMap = new Map(),
 	header,
 	isPublicChat = false,
 }) => {
 	return (
 		<ContextStatsContext.Provider value={messageContextStats}>
 			<ThinkingStepsContext.Provider value={messageThinkingSteps}>
-				<ThreadContent header={header} isPublicChat={isPublicChat} />
+				<ReasoningContext.Provider value={messageReasoningMap}>
+					<ThreadContent header={header} isPublicChat={isPublicChat} />
+				</ReasoningContext.Provider>
 			</ThinkingStepsContext.Provider>
 		</ContextStatsContext.Provider>
 	);

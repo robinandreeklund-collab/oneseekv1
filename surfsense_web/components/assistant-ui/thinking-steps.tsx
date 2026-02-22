@@ -10,6 +10,9 @@ import { cn } from "@/lib/utils";
 // Context to pass thinking steps to AssistantMessage
 export const ThinkingStepsContext = createContext<Map<string, ThinkingStep[]>>(new Map());
 
+// Context to pass live reasoning text (from <think> tags / reasoning-delta events) to AssistantMessage
+export const ReasoningContext = createContext<Map<string, string>>(new Map());
+
 /**
  * Chain of thought display component - single collapsible dropdown design
  */

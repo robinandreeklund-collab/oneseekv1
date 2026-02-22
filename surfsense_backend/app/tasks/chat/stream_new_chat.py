@@ -1093,6 +1093,80 @@ def _coerce_runtime_flag(value: Any, *, default: bool = False) -> bool:
     return bool(default)
 
 
+class _ThinkStreamFilter:
+    """Stateful parser that splits streaming text at <think>…</think> boundaries.
+
+    Models like nvidia/nemotron emit reasoning tokens as plain text wrapped in
+    <think>…</think> tags.  This filter separates them so the streaming handler
+    can route them to ``reasoning-delta`` SSE events instead of ``text-delta``.
+
+    Tags may span multiple chunks (e.g. ``"<thi"`` + ``"nk>"``).  The filter
+    buffers the trailing bytes that could be the start of the next tag and only
+    emits them once the ambiguity is resolved.
+
+    Usage::
+
+        f = _ThinkStreamFilter()
+        for chunk in model_stream:
+            reasoning, text = f.feed(chunk)
+            # stream reasoning → reasoning-delta, text → text-delta
+        reasoning, text = f.flush()   # resolve any trailing buffer at end-of-stream
+    """
+
+    _OPEN = "<think>"
+    _CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self._in_think = False
+        self._buf = ""
+
+    @property
+    def in_think(self) -> bool:
+        return self._in_think
+
+    @staticmethod
+    def _longest_prefix_match(s: str, pattern: str) -> int:
+        """Return the length of the longest suffix of *s* that is a prefix of *pattern*."""
+        for length in range(min(len(pattern) - 1, len(s)), 0, -1):
+            if s.endswith(pattern[:length]):
+                return length
+        return 0
+
+    def feed(self, chunk: str) -> tuple[str, str]:
+        """Process *chunk* and return ``(reasoning_text, main_text)``."""
+        self._buf += chunk
+        reasoning_parts: list[str] = []
+        text_parts: list[str] = []
+
+        while self._buf:
+            tag = self._CLOSE if self._in_think else self._OPEN
+            idx = self._buf.find(tag)
+
+            if idx == -1:
+                # Tag not complete yet — keep any partial tag suffix buffered.
+                partial = self._longest_prefix_match(self._buf, tag)
+                safe = self._buf[:-partial] if partial else self._buf
+                (reasoning_parts if self._in_think else text_parts).append(safe)
+                self._buf = self._buf[-partial:] if partial else ""
+                break
+            else:
+                before = self._buf[:idx]
+                (reasoning_parts if self._in_think else text_parts).append(before)
+                self._buf = self._buf[idx + len(tag):]
+                self._in_think = not self._in_think
+
+        return "".join(reasoning_parts), "".join(text_parts)
+
+    def flush(self) -> tuple[str, str]:
+        """Drain any remaining buffer at end-of-stream."""
+        remaining, self._buf = self._buf, ""
+        if not remaining:
+            return "", ""
+        if self._in_think:
+            return remaining, ""
+        return "", remaining
+
+
 async def stream_new_chat(
     user_query: str,
     search_space_id: int,
@@ -1989,6 +2063,9 @@ async def stream_new_chat(
         emitted_synthesis_draft_signatures: set[str] = set()
         streamed_tool_call_ids: set[str] = set()  # Track tool calls already streamed to prevent duplicates
         stream_pipeline_prefix_buffer: str = ""
+        # Think-tag streaming state
+        _think_filter = _ThinkStreamFilter()
+        active_reasoning_id: str | None = None
 
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
@@ -2512,6 +2589,17 @@ async def stream_new_chat(
             if event_type == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
                 if chunk and hasattr(chunk, "content"):
+                    # Handle native reasoning_content (DeepSeek-R1 / models with separate field)
+                    native_reasoning: str | None = None
+                    if hasattr(chunk, "additional_kwargs"):
+                        native_reasoning = chunk.additional_kwargs.get("reasoning_content")
+                    if native_reasoning and isinstance(native_reasoning, str):
+                        if not (run_id and run_id in model_parent_chain_by_run_id):
+                            if active_reasoning_id is None:
+                                active_reasoning_id = streaming_service.generate_reasoning_id()
+                                yield streaming_service.format_reasoning_start(active_reasoning_id)
+                            yield streaming_service.format_reasoning_delta(active_reasoning_id, native_reasoning)
+
                     content = chunk.content
                     if content and isinstance(content, str):
                         if run_id and run_id in model_parent_chain_by_run_id:
@@ -2524,6 +2612,19 @@ async def stream_new_chat(
                                 )
                                 if trace_update:
                                     yield trace_update
+                            continue
+                        # Split <think>…</think> tags into reasoning vs. main text
+                        reasoning_chunk, content = _think_filter.feed(content)
+                        if reasoning_chunk:
+                            if active_reasoning_id is None:
+                                active_reasoning_id = streaming_service.generate_reasoning_id()
+                                yield streaming_service.format_reasoning_start(active_reasoning_id)
+                            yield streaming_service.format_reasoning_delta(active_reasoning_id, reasoning_chunk)
+                        # Close reasoning block the moment main text starts arriving
+                        if content and active_reasoning_id is not None:
+                            yield streaming_service.format_reasoning_end(active_reasoning_id)
+                            active_reasoning_id = None
+                        if not content:
                             continue
                         content = filter_critic_json(content)
                         if stream_pipeline_prefix_buffer:
@@ -2593,6 +2694,11 @@ async def stream_new_chat(
                 if current_text_id is not None:
                     yield streaming_service.format_text_end(current_text_id)
                     current_text_id = None
+
+                # End any active reasoning block
+                if active_reasoning_id is not None:
+                    yield streaming_service.format_reasoning_end(active_reasoning_id)
+                    active_reasoning_id = None
 
                 # Complete any previous step EXCEPT "Synthesizing response"
                 # (we want to reuse the Synthesizing step after tools complete)
@@ -3915,6 +4021,23 @@ async def stream_new_chat(
                 if event_type == "on_chain_end" and run_id:
                     chain_name_by_run_id.pop(run_id, None)
 
+        # Flush think-filter buffer and close any open reasoning block
+        flush_reasoning, flush_text = _think_filter.flush()
+        if flush_reasoning:
+            if active_reasoning_id is None:
+                active_reasoning_id = streaming_service.generate_reasoning_id()
+                yield streaming_service.format_reasoning_start(active_reasoning_id)
+            yield streaming_service.format_reasoning_delta(active_reasoning_id, flush_reasoning)
+        if flush_text:
+            if current_text_id is None:
+                current_text_id = streaming_service.generate_text_id()
+                yield streaming_service.format_text_start(current_text_id)
+            yield streaming_service.format_text_delta(current_text_id, flush_text)
+            accumulated_text += flush_text
+        if active_reasoning_id is not None:
+            yield streaming_service.format_reasoning_end(active_reasoning_id)
+            active_reasoning_id = None
+
         # Ensure text block is closed
         if repeat_buffer and not suppress_repeat:
             if current_text_id is None:
@@ -3969,6 +4092,11 @@ async def stream_new_chat(
         # Close any open text block
         if current_text_id is not None:
             yield streaming_service.format_text_end(current_text_id)
+
+        # Close any open reasoning block
+        if active_reasoning_id is not None:
+            yield streaming_service.format_reasoning_end(active_reasoning_id)
+            active_reasoning_id = None
 
         if trace_recorder:
             trace_end = await trace_recorder.end_span(

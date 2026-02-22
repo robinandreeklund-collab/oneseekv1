@@ -7,7 +7,7 @@ import {
 	useComposerRuntime,
 } from "@assistant-ui/react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Activity, CheckIcon, CopyIcon, DownloadIcon, MessageSquare, RefreshCwIcon } from "lucide-react";
+import { Activity, CheckIcon, ChevronRightIcon, CopyIcon, DownloadIcon, MessageSquare, RefreshCwIcon } from "lucide-react";
 import type { FC } from "react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -21,9 +21,11 @@ import { activeSearchSpaceIdAtom } from "@/atoms/search-spaces/search-space-quer
 import { BranchPicker } from "@/components/assistant-ui/branch-picker";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import {
+	ReasoningContext,
 	ThinkingStepsContext,
 	ThinkingStepsDisplay,
 } from "@/components/assistant-ui/thinking-steps";
+import { TextShimmerLoader } from "@/components/prompt-kit/loader";
 import { TracePanelContext } from "@/components/assistant-ui/trace-context";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
@@ -70,6 +72,61 @@ const ThinkingStepsPart: FC = () => {
 	);
 };
 
+
+/**
+ * Collapsible reasoning block - displays <think> tag / reasoning-delta content streamed from the model
+ */
+const ReasoningBlock: FC = () => {
+	const reasoningMap = useContext(ReasoningContext);
+	const messageId = useAssistantState(({ message }) => message?.id);
+	const reasoning = messageId ? (reasoningMap.get(messageId) ?? "") : "";
+	const isThreadRunning = useAssistantState(({ thread }) => thread.isRunning);
+	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
+	const isStreaming = isThreadRunning && isLastMessage;
+	const [isOpen, setIsOpen] = useState(true);
+
+	// Auto-collapse when streaming finishes
+	useEffect(() => {
+		if (!isStreaming && reasoning) {
+			setIsOpen(false);
+		}
+	}, [isStreaming, reasoning]);
+
+	if (!reasoning) return null;
+
+	return (
+		<div className="mx-auto w-full max-w-(--thread-max-width) px-2 pb-1">
+			<div className="rounded-lg">
+				<button
+					type="button"
+					onClick={() => setIsOpen(!isOpen)}
+					className="flex w-full items-center gap-1.5 text-left text-sm transition-colors text-muted-foreground hover:text-foreground"
+				>
+					{isStreaming ? (
+						<TextShimmerLoader text="Tänker..." size="sm" />
+					) : (
+						<span>Tankar</span>
+					)}
+					<ChevronRightIcon
+						className={cn("size-4 transition-transform duration-200", isOpen && "rotate-90")}
+					/>
+				</button>
+				<div
+					className={cn(
+						"grid transition-[grid-template-rows] duration-300 ease-out",
+						isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+					)}
+				>
+					<div className="overflow-hidden">
+						<div className="mt-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground font-mono whitespace-pre-wrap leading-relaxed">
+							{reasoning}
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+};
 
 type FollowUpSuggestion = { title: string; items: string[] };
 
@@ -201,6 +258,8 @@ const AssistantMessageInner: FC = () => {
 		<>
 			{/* Render thinking steps from message content - this ensures proper scroll tracking */}
 			<ThinkingStepsPart />
+			{/* Render live reasoning from <think> tags / reasoning-delta events */}
+			<ReasoningBlock />
 
 			<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
 				<MessagePrimitive.Parts
