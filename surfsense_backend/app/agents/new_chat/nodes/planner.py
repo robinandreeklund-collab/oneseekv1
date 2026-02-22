@@ -11,6 +11,7 @@ def build_planner_node(
     *,
     llm: Any,
     planner_prompt_template: str,
+    multi_domain_planner_prompt_template: str | None = None,
     latest_user_query_fn: Callable[[list[Any] | None], str],
     append_datetime_context_fn: Callable[[str], str],
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
@@ -48,6 +49,7 @@ def build_planner_node(
                         "id": "step-1",
                         "content": f"Kör uppgiften med {fallback_agent} och sammanfatta resultatet",
                         "status": "pending",
+                        "parallel": False,
                     }
                 ],
                 "plan_step_index": 0,
@@ -56,7 +58,24 @@ def build_planner_node(
                 "critic_decision": None,
             }
 
-        prompt = append_datetime_context_fn(planner_prompt_template)
+        # Select prompt: use multi-domain variant for mixed-route queries.
+        intent_data = state.get("resolved_intent") or {}
+        route_hint = str(
+            intent_data.get("route") or state.get("route_hint") or ""
+        ).strip().lower()
+        sub_intents: list[str] = [
+            str(s).strip()
+            for s in (state.get("sub_intents") or [])
+            if str(s).strip()
+        ]
+        is_mixed = route_hint == "mixed" and bool(sub_intents)
+        chosen_template = (
+            multi_domain_planner_prompt_template
+            if is_mixed and multi_domain_planner_prompt_template
+            else planner_prompt_template
+        )
+
+        prompt = append_datetime_context_fn(chosen_template)
         planner_input = json.dumps(
             {
                 "query": latest_user_query,
@@ -87,11 +106,13 @@ def build_planner_node(
                         status = str(step.get("status") or "pending").strip().lower()
                         if status not in {"pending", "in_progress", "completed", "cancelled"}:
                             status = "pending"
+                        parallel = bool(step.get("parallel", False))
                         new_plan.append(
                             {
                                 "id": step_id,
                                 "content": content,
                                 "status": status,
+                                "parallel": parallel,
                             }
                         )
         except Exception:
@@ -108,6 +129,7 @@ def build_planner_node(
                     "id": "step-1",
                     "content": f"Delegara huvuduppgiften till {fallback_agent}",
                     "status": "pending",
+                    "parallel": False,
                 }
             ]
         return {

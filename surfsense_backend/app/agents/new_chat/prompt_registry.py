@@ -33,6 +33,7 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
     DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
@@ -91,6 +92,7 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "supervisor.intent_resolver.system",
     "supervisor.agent_resolver.system",
     "supervisor.planner.system",
+    "supervisor.planner.multi_domain.system",
     "supervisor.tool_resolver.system",
     "supervisor.critic_gate.system",
     "supervisor.synthesizer.system",
@@ -183,6 +185,12 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Supervisor planner prompt",
         description="Prompt for planner node in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    ),
+    "supervisor.planner.multi_domain.system": PromptDefinition(
+        key="supervisor.planner.multi_domain.system",
+        label="Supervisor multi-domain planner prompt",
+        description="Prompt for planner node when route=mixed with multiple sub_intents.",
+        default_prompt=DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
     ),
     "supervisor.tool_resolver.system": PromptDefinition(
         key="supervisor.tool_resolver.system",

@@ -117,7 +117,7 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
     Avoid NullValue in content/tool-call fields between turns.
     """
     normalized_messages: list[Any] = []
-    for message in messages:
+    for idx, message in enumerate(messages):
         if isinstance(message, AIMessage):
             content = _normalize_message_content(getattr(message, "content", ""))
             raw_tool_calls = getattr(message, "tool_calls", None)
@@ -439,6 +439,105 @@ def build_executor_nodes(
         if not incoming_turn_id and final_response and isinstance(last_message, HumanMessage):
             # Legacy fallback when turn_id is missing.
             new_user_turn = True
+
+        def _latest_user_text(messages: list[Any]) -> str:
+            for message in reversed(messages or []):
+                if isinstance(message, HumanMessage):
+                    return _normalize_message_content(getattr(message, "content", ""))
+                if (
+                    isinstance(message, dict)
+                    and str(message.get("type") or "").strip().lower()
+                    in {"human", "user"}
+                ):
+                    return _normalize_message_content(message.get("content"))
+            return ""
+
+        def _has_tool_since_last_human(messages: list[Any]) -> bool:
+            for message in reversed(messages or []):
+                if isinstance(message, HumanMessage):
+                    return False
+                if isinstance(message, ToolMessage):
+                    return True
+            return False
+
+        route_hint = str(state.get("route_hint") or "").strip().lower()
+        resolved_intent = state.get("resolved_intent")
+        sub_intents: list[str] = []
+        if isinstance(resolved_intent, dict):
+            raw_subs = resolved_intent.get("sub_intents")
+            if isinstance(raw_subs, list):
+                sub_intents = [
+                    str(item).strip()
+                    for item in raw_subs
+                    if str(item).strip()
+                ][:4]
+        if not sub_intents and isinstance(state.get("sub_intents"), list):
+            sub_intents = [
+                str(item).strip()
+                for item in state.get("sub_intents")
+                if str(item).strip()
+            ][:4]
+        selected_agents: list[str] = []
+        seen_agents: set[str] = set()
+        for item in state.get("selected_agents") or []:
+            name = ""
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip().lower()
+            else:
+                name = str(item or "").strip().lower()
+            if not name or name in seen_agents:
+                continue
+            seen_agents.add(name)
+            selected_agents.append(name)
+
+        if (
+            route_hint == "mixed"
+            and len(selected_agents) >= 2
+            and not _has_tool_since_last_human(messages_state)
+        ):
+            latest_user_query = _latest_user_text(messages_state)
+            calls: list[dict[str, Any]] = []
+            for idx, agent_name in enumerate(selected_agents[:3]):
+                focus = ""
+                if idx < len(sub_intents):
+                    focus = sub_intents[idx]
+                elif sub_intents:
+                    focus = sub_intents[-1]
+                focus_line = f"Fokus: {focus}".strip() if focus else ""
+                task_parts = [
+                    part.strip()
+                    for part in [latest_user_query, focus_line]
+                    if str(part or "").strip()
+                ]
+                task_text = "\n".join(task_parts).strip()
+                if not task_text:
+                    task_text = "Hantera deluppgiften for denna domain."
+                calls.append(
+                    {
+                        "agent": agent_name,
+                        "task": task_text,
+                    }
+                )
+            if calls:
+                tool_call = {
+                    "id": "auto_mixed_parallel",
+                    "name": "call_agents_parallel",
+                    "args": {"calls": calls},
+                }
+                auto_response = AIMessage(content="", tool_calls=[tool_call])
+                updates = {"messages": [auto_response], "execution_strategy": "parallel"}
+                if new_user_turn:
+                    updates.update(
+                        _build_executor_updates_for_new_user_turn(
+                            incoming_turn_id=incoming_turn_id,
+                        )
+                    )
+                elif incoming_turn_id and not active_turn_id:
+                    updates["active_turn_id"] = incoming_turn_id
+                if final_response and new_user_turn:
+                    updates["final_agent_response"] = None
+                    updates["final_response"] = None
+                return updates
 
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
         messages = _normalize_messages_for_provider_compat(messages)

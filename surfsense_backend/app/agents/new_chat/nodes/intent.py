@@ -380,9 +380,19 @@ def build_intent_resolver_node(
             else None
         )
 
+        sub_intents: list[str] = []
+        raw_sub_intents = resolved.get("sub_intents") if isinstance(resolved, dict) else None
+        if isinstance(raw_sub_intents, list):
+            sub_intents = [
+                str(item).strip()
+                for item in raw_sub_intents
+                if str(item).strip()
+            ]
+
         updates: dict[str, Any] = {
             "resolved_intent": resolved,
             "route_hint": normalize_route_hint_fn(resolved.get("route")),
+            "sub_intents": sub_intents,
             "graph_complexity": graph_complexity,
             "speculative_candidates": speculative_candidates,
             "speculative_results": {},
@@ -425,6 +435,7 @@ def build_intent_resolver_node(
             updates["agent_hops"] = 0
             updates["no_progress_runs"] = 0
             updates["guard_parallel_preview"] = []
+            updates["subagent_handoffs"] = []
             updates["graph_complexity"] = graph_complexity
             updates["speculative_candidates"] = speculative_candidates
             updates["speculative_results"] = {}

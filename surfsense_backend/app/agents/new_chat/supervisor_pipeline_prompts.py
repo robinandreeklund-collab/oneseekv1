@@ -7,12 +7,15 @@ Uppgift:
 - Prioritera semantiskt bast matchande intent.
 - Fraga om aktuellt vader/prognos for plats/tid ska routas till `action`
   (for weather-verktyg), inte `knowledge`.
+- For mixade fragor (t.ex. "hur manga bor i Goteborg och vad ar det for vader?"):
+  satt route="mixed" och inkludera sub_intents array med alla deldomaner.
 - Hall motivering kort och pa svenska.
 
 Returnera strikt JSON:
 {
   "intent_id": "string",
-  "route": "knowledge|action|statistics|compare|smalltalk",
+  "route": "knowledge|action|statistics|compare|smalltalk|mixed",
+  "sub_intents": ["intent1", "intent2"],
   "reason": "kort svensk motivering",
   "confidence": 0.0
 }
@@ -25,11 +28,12 @@ Du far kandidatagenter fran retrieval.
 
 Uppgift:
 - Valj 1-3 agenter som bor anvandas i nasta steg.
+- For mixade fragor (route="mixed" med sub_intents): valj N agenter, en per sub_intent.
 - Agentnamn maste vara exakta och komma fran kandidaterna.
 - Om uppgiften galler filsystem, terminal, kod eller sandbox: prioritera `code`-agent.
 - Anvand aldrig memory-verktyg som ersattning for filsystemsoperationer.
 - Foredra specialiserad agent nar uppgiften tydligt ar domanspecifik
-  (t.ex. marketplace, statistik, trafik, riksdagen, bolag).
+  (t.ex. marketplace, statistik, trafik, riksdagen, bolag, weather).
 - Hall motivering kort och pa svenska.
 
 Returnera strikt JSON:
@@ -49,7 +53,7 @@ Regler:
 - Max 4 steg.
 - Ett steg = en konkret delegerbar aktivitet.
 - **VIKTIGT: Använd ENDAST de agenter som redan finns i `selected_agents`. Lägg INTE till fler agenter.**
-- Om en specialiserad agent (marketplace, statistics, etc.) är vald, använd ENDAST den agenten.
+- Om en specialiserad agent (marketplace, statistics, weather, etc.) är vald, använd ENDAST den agenten.
 - Om anvandaren explicit ber om att lasa filinnehall: lagg in ett steg som faktiskt laser filen
   (sandbox_read_file) innan slutsats.
 - Foredra artifact-first: stora mellanresultat ska kunna refereras via artifact path/uri.
@@ -58,7 +62,7 @@ Regler:
 Returnera strikt JSON:
 {
   "steps": [
-    {"id": "step-1", "content": "text", "status": "pending"}
+    {"id": "step-1", "content": "text", "status": "pending", "parallel": false}
   ],
   "reason": "kort svensk motivering"
 }
@@ -82,6 +86,7 @@ Bedom om aktuellt agentsvar ar tillrackligt for slutleverans.
 
 Vagledning:
 - Om planssteg aterstar: "needs_more".
+- For mixade fragor: verifiera att alla sub_intents tackts innan "ok".
 - Om svaret tydligt anger att path/data saknas (not found/does not exist/finns inte)
   och uppgiften faktiskt ar verifierad: "ok" (inte loopa i onodan).
 - Anvand "replan" endast nar planinriktningen ar fel, inte vid normal komplettering.
@@ -103,11 +108,35 @@ Regler:
 - Behall betydelse och fakta.
 - Kort och tydligt pa svenska.
 - Ingen intern process-text.
+- For mixade fragor: strukturera svaret i sektioner per deldoman.
 - Om kallsvaret innehaller guardrail/no-data/not-found: bevara det, hitta inte pa data.
 
 Returnera strikt JSON:
 {
   "response": "forfinat svar",
+  "reason": "kort svensk motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT = """
+Du ar noden planner i supervisor-grafen for en mixed-domain fraga (route="mixed").
+Skapa en exekverbar plan dar varje sub_intent far ett eget parallellt steg.
+
+Regler:
+- Max 4 steg.
+- Steg for olika sub_intents (t.ex. statistics och action) ska ha parallel=true.
+- Avsluta med ett syntessteg (parallel=false) om flera agenter anvands.
+- **VIKTIGT: Anvand ENDAST agenter fran `selected_agents`.**
+- Hall stegen korta och pa svenska.
+
+Returnera strikt JSON:
+{
+  "steps": [
+    {"id": "step-1", "content": "text", "status": "pending", "parallel": true},
+    {"id": "step-2", "content": "text", "status": "pending", "parallel": true},
+    {"id": "step-3", "content": "Syntetisera resultat fran alla steg", "status": "pending", "parallel": false}
+  ],
   "reason": "kort svensk motivering"
 }
 """

@@ -89,7 +89,6 @@ def build_smart_critic_node(
         **kwargs,
     ) -> dict[str, Any]:
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
-        _ = latest_user_query  # Keep hook for future adaptive rules.
         final_response = str(
             state.get("final_agent_response") or state.get("final_response") or ""
         ).strip()
@@ -153,7 +152,10 @@ def build_smart_critic_node(
         all_failed = all(status in {"error", "blocked"} for status in statuses)
         has_success = any(status == "success" for status in statuses)
 
-        if all_failed and replan_count < max_replan_attempts:
+        # Only replan when all agents failed AND there is no existing final
+        # response to fall back on. Discarding a valid partial response by
+        # setting final_response=None when we only want a replan is wrong.
+        if all_failed and not final_response and replan_count < max_replan_attempts:
             await _record_feedback(False)
             return {
                 "critic_decision": "replan",
