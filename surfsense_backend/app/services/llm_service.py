@@ -102,6 +102,58 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
         return value
 
     @staticmethod
+    def _sanitize_message_dicts(message_dicts: list) -> list:
+        """Post-process message dicts to replace null values for LM Studio's strict Jinja templates.
+
+        `_convert_message_to_dict` in langchain_litellm starts with
+        ``{"content": message.content}`` which can be ``None`` for tool-call
+        assistant turns. llama.cpp's Jinja evaluator cannot apply the ``|string``
+        filter to a NullValue, producing "Cannot apply filter 'string' to type:
+        NullValue". Same problem applies to tool call id/name/arguments.
+
+        This method is called from our ``_create_message_dicts`` override which
+        covers *all* code paths: _generate, _agenerate, _stream, and _astream.
+        """
+        result = []
+        for msg in message_dicts:
+            if not isinstance(msg, dict):
+                result.append(msg)
+                continue
+            msg = dict(msg)
+            # content: null → "" — the most common source of the NullValue error
+            if msg.get("content") is None:
+                msg["content"] = ""
+            # Sanitize tool_calls: id / function.name / function.arguments must be strings
+            raw_calls = msg.get("tool_calls")
+            if isinstance(raw_calls, list):
+                fixed = []
+                for idx, tc in enumerate(raw_calls):
+                    if not isinstance(tc, dict):
+                        fixed.append(tc)
+                        continue
+                    tc = dict(tc)
+                    # Ensure id is always a non-empty string
+                    if not tc.get("id"):
+                        tc["id"] = f"call_{idx}"
+                    if isinstance(tc.get("function"), dict):
+                        fn = dict(tc["function"])
+                        fn["name"] = fn.get("name") or "tool_call"
+                        if fn.get("arguments") is None:
+                            fn["arguments"] = "{}"
+                        tc["function"] = fn
+                    # Remove remaining null values (e.g. index: null from streaming chunks)
+                    tc = {k: v for k, v in tc.items() if v is not None}
+                    fixed.append(tc)
+                msg["tool_calls"] = fixed
+            result.append(msg)
+        return result
+
+    def _create_message_dicts(self, messages, stop):
+        """Override to sanitize message dicts right before they reach litellm."""
+        message_dicts, params = super()._create_message_dicts(messages, stop)
+        return self._sanitize_message_dicts(message_dicts), params
+
+    @staticmethod
     def _sanitize_input_messages(input_data: Any) -> Any:
         """Pre-sanitize LangChain message objects before internal dict conversion.
 
