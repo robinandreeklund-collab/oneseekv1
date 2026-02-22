@@ -196,7 +196,7 @@ class Config:
             "smhi_vaderprognoser_metfcst,smhi_vaderprognoser_snow1g,"
             "smhi_vaderanalyser_mesan2g,smhi_vaderobservationer_metobs,"
             "smhi_hydrologi_hydroobs,smhi_hydrologi_pthbv,smhi_oceanografi_ocobs,"
-            "smhi_brandrisk_fwif,smhi_brandrisk_fwia,"
+            "smhi_brandrisk_fwif,smhi_brandrisk_fwia,smhi_solstralning_strang,"
             "trafiklab_route,libris_search,jobad_links_search"
         ),
     )

@@ -16,6 +16,7 @@ SMHI_METANALYS_BASE_URL = "https://opendata-download-metanalys.smhi.se/api"
 SMHI_METOBS_BASE_URL = "https://opendata-download-metobs.smhi.se/api"
 SMHI_HYDROOBS_BASE_URL = "https://opendata-download-hydroobs.smhi.se/api"
 SMHI_OCOBS_BASE_URL = "https://opendata-download-ocobs.smhi.se/api"
+SMHI_STRANG_BASE_URL = "https://strang.smhi.se/api"
 
 _DEFAULT_USER_AGENT = "SurfSense/1.0 (+https://surfsense.ai)"
 _OBS_PERIOD_PRIORITY = (
@@ -430,6 +431,51 @@ class SmhiService:
             "data_links": data_links,
         }
 
+    async def fetch_strang_data(
+        self,
+        *,
+        parameter: int,
+        lat: float,
+        lon: float,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch solar radiation data from SMHI STRÅNG.
+
+        STRÅNG parameters:
+          116 = Global irradiance (W/m²)
+          117 = Direct normal irradiance (W/m²)
+          118 = Diffuse irradiance (W/m²)
+          120 = UV (W/m²)
+          122 = PAR – photosynthetically active radiation (W/m²)
+
+        Coverage: lat 52–70 N, lon 2–30 E (Sweden + Scandinavia).
+
+        Args:
+            parameter: STRÅNG parameter id.
+            lat: Latitude in decimal degrees.
+            lon: Longitude in decimal degrees.
+            from_date: Start datetime string (e.g. "2024-01-01T00:00:00", optional).
+            to_date: End datetime string (optional).
+
+        Returns:
+            Parsed JSON payload dict with "time" and "values" arrays.
+        """
+        url = f"{SMHI_STRANG_BASE_URL}/{parameter}"
+        params: dict[str, Any] = {"lat": lat, "lon": lon}
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+        request_headers = {"User-Agent": self.user_agent}
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(url, params=params, headers=request_headers)
+            response.raise_for_status()
+            payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("STRÅNG endpoint returned non-object JSON payload.")
+        return payload
+
     async def fetch_pthbv_data(
         self,
         *,
@@ -537,22 +583,66 @@ def build_source_url(
     return f"{url}?{urlencode(normalized_params, doseq=True)}"
 
 
+def _first_not_none(parameters: dict[str, Any], *keys: str) -> Any:
+    """Return the first value from *keys that is not None, or None if all absent."""
+    for key in keys:
+        value = parameters.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def summarize_parameter_maps(parameters: dict[str, Any]) -> dict[str, Any]:
+    """Extract a human-friendly summary from a flat SMHI parameter dict.
+
+    Covers parameters from pmp3g, snow1g, mesan2g, fwif1g/fwia1g and ocobs.
+    Uses None-safe first-match lookup so that valid zero values (e.g. 0 °C,
+    0 mm/h precipitation) are never silently replaced by a fallback key.
+    """
+
+    def get(*keys: str) -> Any:
+        return _first_not_none(parameters, *keys)
+
     return {
-        "temperature_c": parameters.get("t") or parameters.get("air_temperature"),
-        "wind_speed_m_s": parameters.get("ws") or parameters.get("wind_speed"),
-        "wind_gust_m_s": parameters.get("gust") or parameters.get("wind_speed_of_gust"),
-        "wind_direction_deg": parameters.get("wd") or parameters.get("wind_from_direction"),
-        "relative_humidity": parameters.get("r") or parameters.get("relative_humidity"),
-        "pressure_hpa": parameters.get("msl")
-        or parameters.get("air_pressure_at_mean_sea_level"),
-        "cloud_cover": parameters.get("tcc_mean")
-        or parameters.get("cloud_area_fraction"),
-        "weather_symbol": parameters.get("Wsymb2") or parameters.get("symbol_code"),
-        "precipitation_mean": parameters.get("pmean")
-        or parameters.get("precipitation_amount_mean"),
-        "fwi_index": parameters.get("fwiindex"),
-        "fwi": parameters.get("fwi"),
+        # --- Temperature ---
+        "temperature_c": get("t", "air_temperature"),
+        "dew_point_c": get("td", "dew_point_temperature"),
+        "temperature_max_c": get("tmax"),
+        "temperature_min_c": get("tmin"),
+        # --- Wind ---
+        "wind_speed_m_s": get("ws", "wind_speed"),
+        "wind_gust_m_s": get("gust", "wind_speed_of_gust"),
+        "wind_direction_deg": get("wd", "wind_from_direction"),
+        # --- Moisture / pressure ---
+        "relative_humidity": get("r", "relative_humidity"),
+        "pressure_hpa": get("msl", "air_pressure_at_mean_sea_level"),
+        # --- Cloud cover (octas) ---
+        "cloud_cover_total": get("tcc_mean", "cloud_area_fraction"),
+        "cloud_cover_low": get("lcc_mean"),
+        "cloud_cover_medium": get("mcc_mean"),
+        "cloud_cover_high": get("hcc_mean"),
+        # --- Precipitation ---
+        "precipitation_mean": get("pmean", "precipitation_amount_mean", "prec1h"),
+        "precipitation_min": get("pmin"),
+        "precipitation_max": get("pmax"),
+        "precipitation_median": get("pmedian"),
+        "precipitation_category": get("pcat"),
+        "snow_fraction_pct": get("spp"),
+        # --- Snow ---
+        "snow_depth_m": get("sd", "sno"),
+        # --- Visibility ---
+        "visibility_m": get("vis"),
+        # --- Fire Weather Index (fwif1g / fwia1g) ---
+        "fwi": get("fwi", "fwiindex"),
+        "isi": get("isi"),
+        "ffmc": get("ffmc"),
+        "dmc": get("dmc"),
+        "dc": get("dc"),
+        "bui": get("bui"),
+        # --- Weather symbol ---
+        "weather_symbol": get("Wsymb2", "Wsymb", "symbol_code"),
+        # --- Ocean / wave (ocobs) ---
+        "wave_height_m": get("hs"),
     }
 
 
@@ -585,10 +675,12 @@ __all__ = [
     "SMHI_METOBS_BASE_URL",
     "SMHI_HYDROOBS_BASE_URL",
     "SMHI_OCOBS_BASE_URL",
+    "SMHI_STRANG_BASE_URL",
     "SmhiService",
     "normalize_timeseries_entry",
     "extract_grid_point",
     "build_source_url",
+    "_first_not_none",
     "summarize_parameter_maps",
     "parse_observation_value",
 ]

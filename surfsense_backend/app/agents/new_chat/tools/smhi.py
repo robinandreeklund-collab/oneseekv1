@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -21,6 +22,7 @@ from app.services.smhi_service import (
     SMHI_METOBS_BASE_URL,
     SMHI_OCOBS_BASE_URL,
     SMHI_SOURCE,
+    SMHI_STRANG_BASE_URL,
     SmhiService,
     build_source_url,
     extract_grid_point,
@@ -37,6 +39,7 @@ SMHI_CATEGORY_VADERANALYS = "smhi_vaderanalyser"
 SMHI_CATEGORY_HYDROLOGI = "smhi_hydrologi"
 SMHI_CATEGORY_OCEANOGRAFI = "smhi_oceanografi"
 SMHI_CATEGORY_BRANDRISK = "smhi_brandrisk"
+SMHI_CATEGORY_SOLSTRALNING = "smhi_solstralning"
 
 
 @dataclass(frozen=True)
@@ -111,7 +114,22 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_vaderobservationer_metobs",
         name="SMHI Väderobservationer - Metobs",
         description=(
-            "Stationbaserade meteorologiska observationer (realtid/historik) från metobs."
+            "Stationsbaserade meteorologiska observationer (realtid/historik) från SMHI metobs.\n"
+            "Vanliga parameter_key-värden:\n"
+            "  1  = Lufttemperatur instant (°C)\n"
+            "  2  = Lufttemperatur dygnsmedel (°C)\n"
+            "  3  = Vindriktning 10 min (grader)\n"
+            "  4  = Vindhastighet 10 min (m/s)\n"
+            "  6  = Relativ fuktighet (%)\n"
+            "  7  = Nederbördsmängd (mm)\n"
+            "  8  = Snödjup (cm)\n"
+            "  9  = Lufttryck reducerat (hPa)\n"
+            "  10 = Solskenstid (h)\n"
+            "  12 = Sikt (m)\n"
+            "  13 = Byvind (m/s)\n"
+            "  16 = Total molntäckning (1/8)\n"
+            "  39 = Daggpunktstemperatur (°C)\n"
+            "Standard: parameter_key=1 (lufttemperatur). Välj station med lat/lon eller station_key."
         ),
         keywords=["metobs", "observation", "station", "lufttemperatur", "lufttryck"],
         example_queries=[
@@ -125,7 +143,14 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_hydrologi_hydroobs",
         name="SMHI Hydrologi - Hydroobs",
         description=(
-            "Hydrologiska observationer från stationer (vattenstånd, vattenföring, temperatur)."
+            "Hydrologiska observationer från stationer (vattenstånd, vattenföring, temperatur).\n"
+            "Vanliga parameter_key-värden:\n"
+            "  1 = Vattenstånd (cm)\n"
+            "  2 = Vattenföring (m³/s)\n"
+            "  3 = Vattentemperatur (°C)\n"
+            "  4 = Is\n"
+            "  5 = Grundvattenstånd\n"
+            "Standard: parameter_key=3 (vattentemperatur). Välj station med lat/lon eller station_key."
         ),
         keywords=["hydroobs", "vattenstand", "vattenstånd", "vattenforing", "hydrologi"],
         example_queries=[
@@ -153,7 +178,15 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_oceanografi_ocobs",
         name="SMHI Oceanografi - Ocobs",
         description=(
-            "Oceanografiska observationer (havsvattenstånd, vågor, temperatur, strömmar)."
+            "Oceanografiska observationer (havsvattenstånd, vågor, temperatur, strömmar).\n"
+            "Vanliga parameter_key-värden:\n"
+            "  1  = Havsvattenstånd (cm)\n"
+            "  6  = Havsvattentemperatur (°C)\n"
+            "  7  = Strömriktning (grader)\n"
+            "  8  = Strömhastighet (cm/s)\n"
+            "  15 = Salthalt (PSU)\n"
+            "  21 = Signifikant våghöjd (cm)\n"
+            "Standard: parameter_key=6 (havsvattentemperatur). Välj station med lat/lon eller station_key."
         ),
         keywords=["ocobs", "oceanografi", "hav", "vaghojd", "våghöjd", "havsniva"],
         example_queries=[
@@ -162,6 +195,29 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         ],
         category=SMHI_CATEGORY_OCEANOGRAFI,
         base_path="/api/version/latest/parameter/{parameter_key}/station/{station_key}/period/{period_key}/data.json",
+    ),
+    SmhiToolDefinition(
+        tool_id="smhi_solstralning_strang",
+        name="SMHI Solstrålning - STRÅNG",
+        description=(
+            "Solstrålningsdata från SMHI STRÅNG-modellen (timvärden). "
+            "Täckning: lat 52–70 N, lon 2–30 E (Sverige och Skandinavien).\n"
+            "Tillgängliga parameter-id:\n"
+            "  116 = Global irradians (W/m²) [standard]\n"
+            "  117 = Direkt normalirradians (W/m²)\n"
+            "  118 = Diffus irradians (W/m²)\n"
+            "  120 = UV-strålning (W/m²)\n"
+            "  122 = PAR – fotosyntetiskt aktiv strålning (W/m²)\n"
+            "Valfria filter: from_date/to_date (ISO datetime, t.ex. '2024-06-01T00:00:00')."
+        ),
+        keywords=["strang", "solstralning", "solstrålning", "uv", "par", "irradians", "sol", "solenergi"],
+        example_queries=[
+            "Hur mycket solstrålning är det i Göteborg idag?",
+            "UV-strålning i Stockholm senaste veckan",
+            "PAR-mätningar för Sundsvall i juni",
+        ],
+        category=SMHI_CATEGORY_SOLSTRALNING,
+        base_path="/api/{parameter}",
     ),
     SmhiToolDefinition(
         tool_id="smhi_brandrisk_fwif",
@@ -368,7 +424,14 @@ def _build_grid_payload(
     return result
 
 
+_SMHI_REGISTRY_CACHE: dict[str, BaseTool] | None = None
+
+
 def build_smhi_tool_registry() -> dict[str, BaseTool]:
+    global _SMHI_REGISTRY_CACHE
+    if _SMHI_REGISTRY_CACHE is not None:
+        return _SMHI_REGISTRY_CACHE
+
     service = SmhiService()
 
     async def _run_with_breaker(
@@ -960,15 +1023,33 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
             }
 
         limit_values = _coerce_int(limit_values, default=120, minimum=1, maximum=1000)
-        obs_payload = await service.fetch_observation_series(
-            base_url=base_url,
-            parameter_key=chosen_parameter_key,
-            station_key=station_key,
-            period_key=period_key,
-            lat=_parse_float(resolved_lat),
-            lon=_parse_float(resolved_lon),
-            limit_values=limit_values,
-        )
+
+        # Fetch observation series and (optionally) catalog in parallel.
+        if include_catalog:
+            obs_payload, catalog_raw = await asyncio.gather(
+                service.fetch_observation_series(
+                    base_url=base_url,
+                    parameter_key=chosen_parameter_key,
+                    station_key=station_key,
+                    period_key=period_key,
+                    lat=_parse_float(resolved_lat),
+                    lon=_parse_float(resolved_lon),
+                    limit_values=limit_values,
+                ),
+                service.fetch_latest_catalog(base_url=base_url),
+            )
+        else:
+            obs_payload = await service.fetch_observation_series(
+                base_url=base_url,
+                parameter_key=chosen_parameter_key,
+                station_key=station_key,
+                period_key=period_key,
+                lat=_parse_float(resolved_lat),
+                lon=_parse_float(resolved_lon),
+                limit_values=limit_values,
+            )
+            catalog_raw = None
+
         values = obs_payload.get("values")
         normalized_values: list[dict[str, Any]] = []
         if isinstance(values, list):
@@ -1000,12 +1081,11 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
             "value_count": obs_payload.get("value_count"),
             "truncated": obs_payload.get("truncated"),
         }
-        if include_catalog:
-            catalog = await service.fetch_latest_catalog(base_url=base_url)
-            resources = catalog.get("resource")
+        if catalog_raw is not None:
+            resources = catalog_raw.get("resource")
             result["catalog"] = {
-                "title": catalog.get("title"),
-                "updated": catalog.get("updated"),
+                "title": catalog_raw.get("title"),
+                "updated": catalog_raw.get("updated"),
                 "resource_count": len(resources) if isinstance(resources, list) else 0,
                 "resources": resources[:80] if isinstance(resources, list) else [],
             }
@@ -1249,7 +1329,103 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
             operation=_operation,
         )
 
-    return {
+    _STRANG_PARAMETER_NAMES: dict[int, str] = {
+        116: "Global irradians",
+        117: "Direkt normalirradians",
+        118: "Diffus irradians",
+        120: "UV-strålning",
+        122: "PAR (fotosyntetiskt aktiv strålning)",
+    }
+    _STRANG_ALLOWED_PARAMETERS: frozenset[int] = frozenset(_STRANG_PARAMETER_NAMES)
+
+    @tool(
+        "smhi_solstralning_strang",
+        description=_SMHI_TOOL_BY_ID["smhi_solstralning_strang"].description,
+    )
+    async def smhi_solstralning_strang(
+        location: str | None = None,
+        lat: float | None = None,
+        lon: float | None = None,
+        country_code: str | None = None,
+        parameter: int = 116,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> dict[str, Any]:
+        async def _operation() -> dict[str, Any]:
+            resolved_lat, resolved_lon, resolved_location = await _resolve_coordinates(
+                location=location,
+                lat=lat,
+                lon=lon,
+                country_code=country_code,
+            )
+            if resolved_lat is None or resolved_lon is None:
+                return resolved_location
+
+            resolved_parameter = (
+                parameter if parameter in _STRANG_ALLOWED_PARAMETERS else 116
+            )
+
+            payload = await service.fetch_strang_data(
+                parameter=resolved_parameter,
+                lat=resolved_lat,
+                lon=resolved_lon,
+                from_date=from_date,
+                to_date=to_date,
+            )
+
+            time_data = payload.get("time") if isinstance(payload, dict) else None
+            value_data = payload.get("values") if isinstance(payload, dict) else None
+
+            timeseries: list[dict[str, Any]] = []
+            if isinstance(time_data, list) and isinstance(value_data, list):
+                for t, v in zip(time_data, value_data, strict=False):
+                    timeseries.append({"time": t, "value_wm2": v})
+
+            source_url = f"{SMHI_STRANG_BASE_URL}/{resolved_parameter}?lat={resolved_lat}&lon={resolved_lon}"
+            if from_date:
+                source_url += f"&from={from_date}"
+            if to_date:
+                source_url += f"&to={to_date}"
+
+            return {
+                "status": "ok",
+                "tool": "smhi_solstralning_strang",
+                "category": SMHI_CATEGORY_SOLSTRALNING,
+                "attribution": "Data from SMHI STRÅNG",
+                "source": {
+                    "provider": SMHI_SOURCE,
+                    "url": source_url,
+                    "requested_point": {"lat": resolved_lat, "lon": resolved_lon},
+                },
+                "location": resolved_location,
+                "parameter": {
+                    "id": resolved_parameter,
+                    "name": _STRANG_PARAMETER_NAMES.get(resolved_parameter, str(resolved_parameter)),
+                    "unit": "W/m²",
+                },
+                "timeseries": timeseries,
+                "value_count": len(timeseries),
+                "query": {
+                    "from_date": from_date,
+                    "to_date": to_date,
+                },
+            }
+
+        return await _run_with_breaker(
+            tool_id="smhi_solstralning_strang",
+            query={
+                "location": location,
+                "lat": lat,
+                "lon": lon,
+                "country_code": country_code,
+                "parameter": parameter,
+                "from_date": from_date,
+                "to_date": to_date,
+            },
+            operation=_operation,
+        )
+
+    registry: dict[str, BaseTool] = {
         "smhi_weather": smhi_weather,
         "smhi_vaderprognoser_metfcst": smhi_vaderprognoser_metfcst,
         "smhi_vaderprognoser_snow1g": smhi_vaderprognoser_snow1g,
@@ -1260,7 +1436,10 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         "smhi_oceanografi_ocobs": smhi_oceanografi_ocobs,
         "smhi_brandrisk_fwif": smhi_brandrisk_fwif,
         "smhi_brandrisk_fwia": smhi_brandrisk_fwia,
+        "smhi_solstralning_strang": smhi_solstralning_strang,
     }
+    _SMHI_REGISTRY_CACHE = registry
+    return registry
 
 
 def create_smhi_tool(definition: SmhiToolDefinition) -> BaseTool:
