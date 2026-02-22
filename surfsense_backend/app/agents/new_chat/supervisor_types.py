@@ -29,12 +29,14 @@ def _append_compare_outputs(
     merged: dict[str, dict[str, Any]] = {}
     for item in left or []:
         tool_call_id = str(item.get("tool_call_id") or "")
-        if tool_call_id:
-            merged[tool_call_id] = item
+        # Fall back to a positional key so items without an explicit ID are
+        # not silently dropped (e.g. timeout results, Tavily error responses).
+        key = tool_call_id or f"__idx_{len(merged)}"
+        merged[key] = item
     for item in right or []:
         tool_call_id = str(item.get("tool_call_id") or "")
-        if tool_call_id:
-            merged[tool_call_id] = item
+        key = tool_call_id or f"__idx_{len(merged)}"
+        merged[key] = item
     return list(merged.values())
 
 

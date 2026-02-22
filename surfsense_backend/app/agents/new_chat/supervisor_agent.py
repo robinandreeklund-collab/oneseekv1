@@ -6166,6 +6166,9 @@ async def create_supervisor_agent(
                 return "execution_hitl_gate"
             if stage == "synthesis":
                 return "synthesis_hitl"
+            # Unknown/stale HITL stage — pause safely rather than proceeding
+            # without user approval.
+            return END
         resolved_intent = state.get("resolved_intent") or {}
         resolved_route = _normalize_route_hint_value(
             (resolved_intent.get("route") if isinstance(resolved_intent, dict) else None)
@@ -6233,7 +6236,10 @@ async def create_supervisor_agent(
             return "tool_resolver"
         if final_response:
             return "synthesis_hitl"
-        return "planner"
+        # Replan budget exhausted and guard-message may have produced an empty
+        # final_response — always exit towards synthesis rather than looping
+        # back to planner, which would create an unbounded replan cycle.
+        return "synthesis_hitl"
 
     def synthesis_hitl_should_continue(state: SupervisorState, *, store=None):
         awaiting = bool(state.get("awaiting_confirmation"))
@@ -6241,7 +6247,12 @@ async def create_supervisor_agent(
         if awaiting and stage == "synthesis":
             return END
         if hybrid_mode and not compare_mode:
-            return "progressive_synthesizer"
+            # Skip the progressive synthesizer for simple/trivial queries —
+            # they produce short responses that don't benefit from incremental
+            # streaming synthesis but do pay its latency cost.
+            complexity = str(state.get("graph_complexity") or "").strip().lower()
+            if complexity not in {"simple", "trivial"}:
+                return "progressive_synthesizer"
         return "synthesizer"
 
     if config_schema is not None:
@@ -6347,6 +6358,7 @@ async def create_supervisor_agent(
             "tool_resolver",
             "execution_hitl_gate",
             "synthesis_hitl",
+            END,
         ]
         if hybrid_mode and not compare_mode and speculative_enabled:
             resolve_intent_paths.append("speculative")
