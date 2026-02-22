@@ -1015,14 +1015,20 @@ export default function NewChatPage() {
 			// Map to track tool call indices for updating results
 			const toolCallIndices = new Map<string, number>();
 
-			// Helper to get or create the current text part for appending text
+			// Helper to get or create the current text part for appending text.
+			// Strips any <think>…</think> blocks that might slip through the
+			// backend filter (e.g. when the server hasn't been restarted yet).
 			const appendText = (delta: string) => {
+				const cleaned = delta
+					.replace(/<think>[\s\S]*?<\/think>/gi, "")
+					.replace(/<\/?think>/gi, "");
+				if (!cleaned) return;
 				if (currentTextPartIndex >= 0 && contentParts[currentTextPartIndex]?.type === "text") {
 					// Append to existing text part
-					(contentParts[currentTextPartIndex] as { type: "text"; text: string }).text += delta;
+					(contentParts[currentTextPartIndex] as { type: "text"; text: string }).text += cleaned;
 				} else {
 					// Create new text part
-					contentParts.push({ type: "text", text: delta });
+					contentParts.push({ type: "text", text: cleaned });
 					currentTextPartIndex = contentParts.length - 1;
 				}
 			};
@@ -1705,10 +1711,14 @@ export default function NewChatPage() {
 			const toolCallIndices = new Map<string, number>();
 
 			const appendText = (delta: string) => {
+				const cleaned = delta
+					.replace(/<think>[\s\S]*?<\/think>/gi, "")
+					.replace(/<\/?think>/gi, "");
+				if (!cleaned) return;
 				if (currentTextPartIndex >= 0 && contentParts[currentTextPartIndex]?.type === "text") {
-					(contentParts[currentTextPartIndex] as { type: "text"; text: string }).text += delta;
+					(contentParts[currentTextPartIndex] as { type: "text"; text: string }).text += cleaned;
 				} else {
-					contentParts.push({ type: "text", text: delta });
+					contentParts.push({ type: "text", text: cleaned });
 					currentTextPartIndex = contentParts.length - 1;
 				}
 			};
