@@ -126,21 +126,26 @@ def _normalize_tool_call_dict(tool_call: Any, *, index: int) -> dict[str, Any] |
 
 def _hoist_system_messages(messages: list[Any]) -> list[Any]:
     """
-    Collapse all SystemMessages into a single one at position 0, then drop
-    orphaned HumanMessages that appear consecutively without an intervening
-    AIMessage (these represent turns that failed before the model could respond).
+    Collapse all SystemMessages into a single one at position 0, drop
+    orphaned HumanMessages, and deduplicate HumanMessages by content.
 
     LangGraph's add_messages reducer can produce mid-conversation SystemMessages
     when the same system prompt is re-injected on a retry or reload (e.g.
     [system, user, system, user]).  Strict Jinja templates (LM Studio / nemotron)
     fail with "Cannot apply filter 'string' to type: NullValue" in that case.
-    After hoisting, [system, user1, user2] would still be invalid — user1 is an
-    orphan from the failed turn and must be removed.
+
+    The duplicate-user problem also arises in the tool-call loop: after a tool
+    executes the state may contain [system, user, asst(tool), tool, system, user]
+    (the last system+user being a stale re-injection of the turn start).  After
+    hoisting and dedup the sequence becomes [system, user, asst(tool), tool],
+    which every template handles correctly.
 
     Strategy:
     1. Collect every SystemMessage, join content, place single merged one at front.
     2. Walk the remaining messages and drop any HumanMessage that is immediately
        followed by another HumanMessage (no AIMessage in between).
+    3. Drop any subsequent HumanMessage whose content exactly duplicates an
+       earlier HumanMessage (keeps first occurrence, drops repeated ones).
     """
     system_parts: list[str] = []
     rest: list[Any] = []
@@ -166,8 +171,22 @@ def _hoist_system_messages(messages: list[Any]) -> list[Any]:
                 continue
         deduped.append(msg)
 
+    # Deduplicate HumanMessages by content: keep the first occurrence, drop
+    # any that appear again later.  This removes trailing duplicate user turns
+    # that can accumulate when LangGraph re-injects the turn-start context
+    # after a tool call (e.g. [user, asst(tool), tool, user] → [user, asst(tool), tool]).
+    seen_human: set[str] = set()
+    final: list[Any] = []
+    for msg in deduped:
+        if isinstance(msg, HumanMessage):
+            content_key = _normalize_message_content(getattr(msg, "content", ""))
+            if content_key in seen_human:
+                continue
+            seen_human.add(content_key)
+        final.append(msg)
+
     if not system_parts:
-        return deduped
+        return final
     merged_content = "\n\n".join(system_parts)
     try:
         merged_system = messages[
@@ -175,7 +194,7 @@ def _hoist_system_messages(messages: list[Any]) -> list[Any]:
         ].model_copy(update={"content": merged_content})
     except Exception:
         merged_system = SystemMessage(content=merged_content)
-    return [merged_system, *deduped]
+    return [merged_system, *final]
 
 
 def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
@@ -451,7 +470,17 @@ def build_executor_nodes(
         # turns or retries.  The worker system prompt is now stored under a
         # dedicated state key ("worker_system_prompt") so it never ends up in the
         # messages list and therefore never accumulates.
-        messages = [m for m in messages if not isinstance(m, SystemMessage)]
+        # Also handle messages stored as plain dicts (e.g. from old checkpoints)
+        # where isinstance(m, SystemMessage) would return False.
+        def _is_system_like(m: Any) -> bool:
+            if isinstance(m, SystemMessage):
+                return True
+            if isinstance(m, dict):
+                role = str(m.get("role") or m.get("type") or "").strip().lower()
+                return role == "system"
+            return False
+
+        messages = [m for m in messages if not _is_system_like(m)]
 
         # Base system prompt (stored once per chat, not repeated per turn).
         base_system_prompt = str(state.get("worker_system_prompt") or "").strip()
