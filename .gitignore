@@ -9,7 +9,10 @@ venv
 .pnpm-store
 surfsense_web/package-lock.json
 /.langgraph_api
+<<<<<<< Updated upstream
 /eval
 /eval/api
 /eval/api/riksdagen
 /eval/api/riksdagen/all_categories
+=======
+>>>>>>> Stashed changes

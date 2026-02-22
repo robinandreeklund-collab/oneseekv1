@@ -1,0 +1,331 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "skolverket-general",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Hur ser utbildningsstatistiken ut för grundskolan i Stockholm län för 2023?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Vilka ämnen ingår i gymnasiekursplanen för naturvetenskap i Malmö?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "docs",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Hur är läget med kollektivtrafiken i Göteborg idag?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "action",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "acceptable_agents": [
+          "trafik"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vilken statistik finns tillgänglig om bostadsbyggande i Uppsala län under 2022?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Hur är väderleksstatusen på E4 mellan Sundsvall och Gävle?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "action",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "weather",
+        "acceptable_agents": [
+          "weather"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilka nyheter finns om energipolitik i Sverige idag?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "smalltalk",
+        "route": "smalltalk",
+        "sub_route": "media",
+        "agent": "media",
+        "acceptable_agents": [
+          "media"
+        ],
+        "plan_requirements": [
+          "route:smalltalk",
+          "agent:media",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Hur ser läget med sjukvård i Norrköping ut i förhållande till nationella mål?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "docs",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Vilken trafikstatus har E20 mellan Örebro och Västerås idag?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "action",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "trafik",
+        "acceptable_agents": [
+          "trafik"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:trafik",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Hur har arbetslösheten utvecklats i Skåne län de senaste tre åren?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Vilka skolformer finns tillgängliga i grundskolan i Västerås?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "docs",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Hur är väderleksprognosen för morgondagens resa från Lund till Helsingborg?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "action",
+        "route": "action",
+        "sub_route": "external",
+        "agent": "weather",
+        "acceptable_agents": [
+          "weather"
+        ],
+        "plan_requirements": [
+          "route:action",
+          "agent:weather",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Finns det aktuella data om klimatpolitik i Sverige, särskilt inom energiområdet?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "health_check",
+        "category": "general",
+        "acceptable_tools": [
+          "health_check"
+        ],
+        "intent": "knowledge",
+        "route": "knowledge",
+        "sub_route": "data",
+        "agent": "knowledge",
+        "acceptable_agents": [
+          "knowledge"
+        ],
+        "plan_requirements": [
+          "route:knowledge",
+          "agent:knowledge",
+          "tool:health_check"
+        ]
+      },
+      "allowed_tools": [
+        "health_check"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}

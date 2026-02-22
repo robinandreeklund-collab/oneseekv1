@@ -1,0 +1,331 @@
+{
+  "eval_type": "tool_selection",
+  "eval_name": "skolverket-statistics",
+  "tests": [
+    {
+      "id": "case-1",
+      "question": "Vilket antal utbildningshändelser om energi och teknik planerades i Jönköping under 2024?",
+      "difficulty": "lätt",
+      "expected": {
+        "tool": "count_education_events",
+        "category": "statistics",
+        "acceptable_tools": [
+          "count_education_events"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:count_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "count_education_events"
+      ]
+    },
+    {
+      "id": "case-2",
+      "question": "Hur många SFI-kurser fanns i Uppsala län under 2024?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "count_adult_education_events",
+        "category": "statistics",
+        "acceptable_tools": [
+          "count_adult_education_events"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:count_adult_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "count_adult_education_events"
+      ]
+    },
+    {
+      "id": "case-3",
+      "question": "Vilka nationella statistikdata finns för gymnasieskolor i Stockholms län?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_national_statistics",
+        "category": "statistics",
+        "acceptable_tools": [
+          "get_national_statistics"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:get_national_statistics"
+        ]
+      },
+      "allowed_tools": [
+        "get_national_statistics"
+      ]
+    },
+    {
+      "id": "case-4",
+      "question": "Vilka skolformer finns i Malmö med statistik för antal elever per skolform?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "get_school_unit_statistics",
+        "category": "statistics",
+        "acceptable_tools": [
+          "get_school_unit_statistics"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:get_school_unit_statistics"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_unit_statistics"
+      ]
+    },
+    {
+      "id": "case-5",
+      "question": "Hur många gymnasieprogram i teknik och naturvetenskap finns i Västerås län enligt Skolverkets statistik?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_program_statistics",
+        "category": "statistics",
+        "acceptable_tools": [
+          "get_program_statistics"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:get_program_statistics"
+        ]
+      },
+      "allowed_tools": [
+        "get_program_statistics"
+      ]
+    },
+    {
+      "id": "case-6",
+      "question": "Vilken utveckling har arbetslösheten i Örebro län varit under de senaste tre åren enligt riksdagens statistik?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "get_national_statistics",
+        "category": "statistics",
+        "acceptable_tools": [
+          "get_national_statistics"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:get_national_statistics"
+        ]
+      },
+      "allowed_tools": [
+        "get_national_statistics"
+      ]
+    },
+    {
+      "id": "case-7",
+      "question": "Hur mycket bostadsbyggande har skett i Skåne län under 2023?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_school_unit_statistics",
+        "category": "statistics",
+        "acceptable_tools": [
+          "get_school_unit_statistics"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:get_school_unit_statistics"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_unit_statistics"
+      ]
+    },
+    {
+      "id": "case-8",
+      "question": "Vilka utbildningshändelser om klimatpolitik och energi planerades i Göteborg under 2024?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "count_education_events",
+        "category": "statistics",
+        "acceptable_tools": [
+          "count_education_events"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:count_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "count_education_events"
+      ]
+    },
+    {
+      "id": "case-9",
+      "question": "Vilken statistik finns för antal SFI-kurser i Norrköping och Sundsvall tillsammans under 2024?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "count_adult_education_events",
+        "category": "statistics",
+        "acceptable_tools": [
+          "count_adult_education_events"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:count_adult_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "count_adult_education_events"
+      ]
+    },
+    {
+      "id": "case-10",
+      "question": "Vilka program i gymnasieskolan finns i Umeå med fokus på naturvetenskap och teknik?",
+      "difficulty": "medel",
+      "expected": {
+        "tool": "get_program_statistics",
+        "category": "statistics",
+        "acceptable_tools": [
+          "get_program_statistics"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:get_program_statistics"
+        ]
+      },
+      "allowed_tools": [
+        "get_program_statistics"
+      ]
+    },
+    {
+      "id": "case-11",
+      "question": "Hur många utbildningshändelser om kollektivtrafik för vuxna planerades i Linköping under 2024?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "count_adult_education_events",
+        "category": "statistics",
+        "acceptable_tools": [
+          "count_adult_education_events"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:count_adult_education_events"
+        ]
+      },
+      "allowed_tools": [
+        "count_adult_education_events"
+      ]
+    },
+    {
+      "id": "case-12",
+      "question": "Vilken utveckling har sjukvärden i Lund visat under 2023 i fråga om antal patienter per hälsoenhet?",
+      "difficulty": "svår",
+      "expected": {
+        "tool": "get_school_unit_statistics",
+        "category": "statistics",
+        "acceptable_tools": [
+          "get_school_unit_statistics"
+        ],
+        "intent": "statistics",
+        "route": "statistics",
+        "sub_route": "data",
+        "agent": "statistics",
+        "acceptable_agents": [
+          "statistics"
+        ],
+        "plan_requirements": [
+          "route:statistics",
+          "agent:statistics",
+          "tool:get_school_unit_statistics"
+        ]
+      },
+      "allowed_tools": [
+        "get_school_unit_statistics"
+      ]
+    }
+  ],
+  "difficulty_profile": "blandad"
+}
