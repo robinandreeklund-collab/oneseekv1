@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -10,6 +11,18 @@ from langchain_core.runnables import RunnableConfig
 from app.agents.new_chat.token_budget import TokenBudget
 
 logger = logging.getLogger(__name__)
+
+# Matches <think>...</think> reasoning blocks emitted by models such as
+# nvidia/nemotron-3-nano, Qwen3 (thinking mode), DeepSeek-R1, etc.
+# We strip these from the *history* stored in agent state so accumulated
+# thinking tokens never contaminate the context window sent to the LLM.
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_thinking_tags(text: str) -> str:
+    """Remove <think>...</think> reasoning blocks from a string."""
+    stripped = _THINK_TAG_RE.sub("", text)
+    return stripped.strip()
 
 
 def _normalize_message_content(value: Any) -> str:
@@ -119,7 +132,9 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
     normalized_messages: list[Any] = []
     for idx, message in enumerate(messages):
         if isinstance(message, AIMessage):
-            content = _normalize_message_content(getattr(message, "content", ""))
+            content = _strip_thinking_tags(
+                _normalize_message_content(getattr(message, "content", ""))
+            )
             raw_tool_calls = getattr(message, "tool_calls", None)
             tool_calls: list[dict[str, Any]] = []
             if isinstance(raw_tool_calls, list):
@@ -255,8 +270,10 @@ def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
                 retried.append(
                     message.model_copy(
                         update={
-                            "content": _normalize_message_content(
-                                getattr(message, "content", "")
+                            "content": _strip_thinking_tags(
+                                _normalize_message_content(
+                                    getattr(message, "content", "")
+                                )
                             ),
                             "tool_calls": [],
                         }
@@ -265,8 +282,10 @@ def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
             except Exception:
                 retried.append(
                     AIMessage(
-                        content=_normalize_message_content(
-                            getattr(message, "content", "")
+                        content=_strip_thinking_tags(
+                            _normalize_message_content(
+                                getattr(message, "content", "")
+                            )
                         ),
                         additional_kwargs=dict(
                             getattr(message, "additional_kwargs", {}) or {}

@@ -100,6 +100,41 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
             return [LMStudioCompatibleChatLiteLLM._sanitize_schema_value(item) for item in value if item is not None]
         return value
 
+    @staticmethod
+    def _sanitize_input_messages(input_data: Any) -> Any:
+        """Pre-sanitize LangChain message objects before internal dict conversion.
+
+        LangChain/LiteLLM converts AIMessage(content="", tool_calls=[...]) to
+        {"content": null, "tool_calls": [...]} following OpenAI convention.
+        LM Studio's Jinja templates cannot apply the |string filter to null,
+        so we ensure content is always a string before conversion happens.
+        """
+        if not isinstance(input_data, list):
+            return input_data
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+        sanitized: list = []
+        for msg in input_data:
+            if isinstance(msg, AIMessage) and msg.content is None:
+                try:
+                    msg = msg.model_copy(update={"content": ""})
+                except Exception:
+                    msg = AIMessage(
+                        content="",
+                        tool_calls=getattr(msg, "tool_calls", []) or [],
+                        additional_kwargs=dict(getattr(msg, "additional_kwargs", {}) or {}),
+                        response_metadata=dict(getattr(msg, "response_metadata", {}) or {}),
+                        id=getattr(msg, "id", None),
+                    )
+            elif isinstance(msg, (HumanMessage, SystemMessage, ToolMessage)):
+                if getattr(msg, "content", None) is None:
+                    try:
+                        msg = msg.model_copy(update={"content": ""})
+                    except Exception:
+                        pass
+            sanitized.append(msg)
+        return sanitized
+
     @classmethod
     def _sanitize_request_kwargs(cls, kwargs: dict) -> dict:
         updated: dict = {}
@@ -139,28 +174,28 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
 
     def invoke(self, input, config=None, **kwargs):
         return super().invoke(
-            input,
+            self._sanitize_input_messages(input),
             config=config,
             **self._sanitize_request_kwargs(kwargs),
         )
 
     async def ainvoke(self, input, config=None, **kwargs):
         return await super().ainvoke(
-            input,
+            self._sanitize_input_messages(input),
             config=config,
             **self._sanitize_request_kwargs(kwargs),
         )
 
     def stream(self, input, config=None, **kwargs):
         return super().stream(
-            input,
+            self._sanitize_input_messages(input),
             config=config,
             **self._sanitize_request_kwargs(kwargs),
         )
 
     async def astream(self, input, config=None, **kwargs):
         async for chunk in super().astream(
-            input,
+            self._sanitize_input_messages(input),
             config=config,
             **self._sanitize_request_kwargs(kwargs),
         ):

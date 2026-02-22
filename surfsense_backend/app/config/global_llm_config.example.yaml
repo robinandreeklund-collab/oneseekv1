@@ -296,6 +296,45 @@ global_llm_configs:
     use_default_system_instructions: true
     citations_enabled: false
 
+  # ── LM Studio example ───────────────────────────────────────────────────
+  # LM Studio is auto-detected when api_base points to localhost:1234.
+  # The platform automatically uses a null-safe compatibility layer for LM
+  # Studio's strict Jinja chat templates (no content:null in messages).
+  #
+  # IMPORTANT: Use provider "CUSTOM" with custom_provider "openai".
+  # Do NOT use provider "OLLAMA" — it routes to /api/chat (Ollama protocol).
+  # LM Studio exposes /v1/chat/completions (OpenAI-compatible).
+  #
+  # Think mode (nvidia/nemotron-3-nano, DeepSeek-R1, etc.):
+  #   Enable thinking in LM Studio's UI toggle. The platform strips
+  #   <think>...</think> blocks from message history automatically so
+  #   they don't accumulate in context or interfere with tool calls.
+  #   Streaming <think> tokens ARE visible to the user in real-time.
+  #
+  # Jinja template error ("Cannot apply filter string to type: NullValue"):
+  #   This is a bug in some models' bundled Jinja template (e.g. early
+  #   nvidia/nemotron-3-nano). Fix: In LM Studio → My Models → model
+  #   settings → Prompt Template, search for `| string` and add a null-
+  #   guard: `{% if x is not none %}{{ x | string }}{% endif %}`.
+  #   Alternatively, download the model from lmstudio-community which
+  #   ships with corrected templates.
+  - id: -11
+    name: "LM Studio (local)"
+    description: "LM Studio local inference server – auto-detected on localhost:1234"
+    provider: "CUSTOM"
+    custom_provider: "openai"
+    model_name: "nvidia/nemotron-3-nano"  # Change to your loaded model
+    api_key: "lm-studio"                  # Any non-empty string works
+    api_base: "http://localhost:1234/v1"  # LM Studio default port
+    rpm: 9999
+    tpm: 9999999
+    litellm_params:
+      temperature: 0.6
+      max_tokens: 8192
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: true
+
   # ── Local vLLM example ──────────────────────────────────────────────────
   # IMPORTANT: Use custom_provider "openai" (NOT provider "OLLAMA") for vLLM.
   # The OLLAMA provider sends requests to /api/chat (Ollama's protocol).
