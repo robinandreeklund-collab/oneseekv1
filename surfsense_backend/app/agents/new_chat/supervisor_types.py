@@ -131,6 +131,7 @@ class SupervisorState(TypedDict, total=False):
     step_results: Annotated[list[dict[str, Any]], _replace]
     recent_agent_calls: Annotated[list[dict[str, Any]], _append_recent]
     route_hint: Annotated[str | None, _replace]
+    worker_system_prompt: Annotated[str | None, _replace]
     compare_outputs: Annotated[list[dict[str, Any]], _append_compare_outputs]
     subagent_handoffs: Annotated[list[dict[str, Any]], _append_subagent_handoffs]
     artifact_manifest: Annotated[list[dict[str, Any]], _append_artifact_manifest]

@@ -126,15 +126,21 @@ def _normalize_tool_call_dict(tool_call: Any, *, index: int) -> dict[str, Any] |
 
 def _hoist_system_messages(messages: list[Any]) -> list[Any]:
     """
-    Collapse all SystemMessages into a single one at position 0.
+    Collapse all SystemMessages into a single one at position 0, then drop
+    orphaned HumanMessages that appear consecutively without an intervening
+    AIMessage (these represent turns that failed before the model could respond).
 
     LangGraph's add_messages reducer can produce mid-conversation SystemMessages
     when the same system prompt is re-injected on a retry or reload (e.g.
     [system, user, system, user]).  Strict Jinja templates (LM Studio / nemotron)
     fail with "Cannot apply filter 'string' to type: NullValue" in that case.
+    After hoisting, [system, user1, user2] would still be invalid — user1 is an
+    orphan from the failed turn and must be removed.
 
-    Strategy: collect every SystemMessage, join their content, and place a single
-    merged SystemMessage at the front while keeping all other messages in order.
+    Strategy:
+    1. Collect every SystemMessage, join content, place single merged one at front.
+    2. Walk the remaining messages and drop any HumanMessage that is immediately
+       followed by another HumanMessage (no AIMessage in between).
     """
     system_parts: list[str] = []
     rest: list[Any] = []
@@ -145,8 +151,23 @@ def _hoist_system_messages(messages: list[Any]) -> list[Any]:
                 system_parts.append(part)
         else:
             rest.append(msg)
+
+    # Drop orphaned HumanMessages: any HumanMessage whose next non-system
+    # neighbour in `rest` is also a HumanMessage.
+    deduped: list[Any] = []
+    for i, msg in enumerate(rest):
+        if isinstance(msg, HumanMessage):
+            next_msg = next(
+                (m for m in rest[i + 1 :] if not isinstance(m, SystemMessage)),
+                None,
+            )
+            if isinstance(next_msg, HumanMessage):
+                # This user turn never got a response — skip it.
+                continue
+        deduped.append(msg)
+
     if not system_parts:
-        return rest
+        return deduped
     merged_content = "\n\n".join(system_parts)
     try:
         merged_system = messages[
@@ -154,7 +175,7 @@ def _hoist_system_messages(messages: list[Any]) -> list[Any]:
         ].model_copy(update={"content": merged_content})
     except Exception:
         merged_system = SystemMessage(content=merged_content)
-    return [merged_system, *rest]
+    return [merged_system, *deduped]
 
 
 def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
@@ -426,6 +447,15 @@ def build_executor_nodes(
         new_user_turn: bool,
     ) -> list[Any]:
         messages = sanitize_messages_fn(list(state.get("messages") or []))
+        # Strip any SystemMessages that accumulated in the LangGraph state across
+        # turns or retries.  The worker system prompt is now stored under a
+        # dedicated state key ("worker_system_prompt") so it never ends up in the
+        # messages list and therefore never accumulates.
+        messages = [m for m in messages if not isinstance(m, SystemMessage)]
+
+        # Base system prompt (stored once per chat, not repeated per turn).
+        base_system_prompt = str(state.get("worker_system_prompt") or "").strip()
+
         plan_context = None if new_user_turn else format_plan_context_fn(state)
         recent_context = None if new_user_turn else format_recent_calls_fn(state)
         route_context = format_route_hint_fn(state)
@@ -468,24 +498,12 @@ def build_executor_nodes(
             )
             if item
         ]
-        if system_bits:
-            extra = "\n".join(system_bits)
-            if messages and isinstance(messages[0], SystemMessage):
-                # Merge context bits into the existing leading system message to
-                # avoid a second SystemMessage appearing mid-conversation, which
-                # breaks strict Jinja templates (e.g. LM Studio / nemotron-3-nano).
-                existing = _normalize_message_content(
-                    getattr(messages[0], "content", "")
-                )
-                merged = (existing + "\n\n" + extra).strip() if existing else extra
-                try:
-                    messages = [
-                        messages[0].model_copy(update={"content": merged})
-                    ] + messages[1:]
-                except Exception:
-                    messages = [SystemMessage(content=merged)] + messages[1:]
-            else:
-                messages = [SystemMessage(content=extra)] + messages
+        # Build a single SystemMessage from the base prompt + any context bits.
+        all_system_parts = [
+            p for p in [base_system_prompt, *system_bits] if p
+        ]
+        if all_system_parts:
+            messages = [SystemMessage(content="\n\n".join(all_system_parts))] + messages
         model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
         if model_name:
             budget = TokenBudget(model_name=str(model_name))

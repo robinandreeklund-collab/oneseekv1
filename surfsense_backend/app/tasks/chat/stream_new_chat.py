@@ -1969,27 +1969,25 @@ async def stream_new_chat(
         #             langchain_messages.append(AIMessage(content=msg.content))
         # else:
         # Fallback: just use the current user query with attachment context
-        should_prefix_system_prompt = bool(worker_system_prompt) and (
-            needs_history_bootstrap or not routing_history
-        )
-        if should_prefix_system_prompt:
-            # LM Studio chat templates (OpenAI-compatible) often require exactly one
-            # optional system message at the beginning, then user/assistant alternation.
-            # Only inject it for the first turn (or bootstrap) to avoid mid-history
-            # system messages on follow-up turns when LangGraph memory is active.
-            langchain_messages = [
-                SystemMessage(content=worker_system_prompt),
-                *langchain_messages,
-            ]
         langchain_messages.append(HumanMessage(content=final_query))
         request_turn_id = uuid.uuid4().hex
 
-        input_state = {
+        input_state: dict = {
             # Lets not pass this message atm because we are using the checkpointer to manage the conversation history
             # We will use this to simulate group chat functionality in the future
             "messages": langchain_messages,
             "turn_id": request_turn_id,
         }
+        # Store the worker system prompt as a dedicated state key so that the
+        # executor can always inject it as the leading SystemMessage without
+        # ever embedding it inside the `messages` list.  Putting a SystemMessage
+        # into `messages` causes LangGraph's add_messages reducer to accumulate
+        # one extra SystemMessage per turn, ultimately producing invalid
+        # [system, user, system, user] sequences that crash strict Jinja
+        # templates (LM Studio / nemotron "Cannot apply filter 'string' to type:
+        # NullValue").
+        if worker_system_prompt:
+            input_state["worker_system_prompt"] = worker_system_prompt
         if route == Route.SMALLTALK:
             input_state["search_space_id"] = search_space_id
         else:
