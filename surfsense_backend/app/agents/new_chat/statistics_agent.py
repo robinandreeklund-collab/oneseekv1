@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 import re
@@ -968,9 +969,13 @@ def _build_scb_tool(
                     ensure_ascii=True,
                 )
 
+            raw_results = await asyncio.gather(
+                *(scb_service.query_table(table.path, p) for p in payloads)
+            )
             data_batches: list[dict[str, Any]] = []
-            for index, payload in enumerate(payloads, start=1):
-                data = await scb_service.query_table(table.path, payload)
+            for index, (data, payload) in enumerate(
+                zip(raw_results, payloads, strict=False), start=1
+            ):
                 entry: dict[str, Any] = {"batch": index, "data": data}
                 if index - 1 < len(batch_summaries):
                     entry["selection"] = batch_summaries[index - 1]

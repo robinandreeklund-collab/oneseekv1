@@ -296,6 +296,36 @@ global_llm_configs:
     use_default_system_instructions: true
     citations_enabled: false
 
+  # ── Local vLLM example ──────────────────────────────────────────────────
+  # IMPORTANT: Use custom_provider "openai" (NOT provider "OLLAMA") for vLLM.
+  # The OLLAMA provider sends requests to /api/chat (Ollama's protocol).
+  # vLLM exposes the OpenAI-compatible /v1/chat/completions endpoint only.
+  #
+  # Start vLLM for maximum GPU utilisation:
+  #   python -m vllm.entrypoints.openai.api_server \
+  #     --model <your-model> --port 8000 --host 0.0.0.0 \
+  #     --dtype bfloat16 --gpu-memory-utilization 0.95 \
+  #     --max-num-batched-tokens 32768 --max-num-seqs 256 \
+  #     --enable-chunked-prefill --max-model-len 16384
+  #
+  # Also raise subagent_max_concurrency to 10-20 in ONESEEK_RUNTIME_HITL_DEFAULT_JSON.
+  - id: -10
+    name: "Local vLLM"
+    description: "Local vLLM server via OpenAI-compatible API"
+    provider: "CUSTOM"
+    custom_provider: "openai"
+    model_name: "meta-llama/Meta-Llama-3-8B-Instruct"  # Change to your model
+    api_key: "EMPTY"
+    api_base: "http://localhost:8000/v1"
+    rpm: 9999    # vLLM has no external rate limit; set high to avoid router throttling
+    tpm: 9999999
+    litellm_params:
+      temperature: 0.7
+      max_tokens: 8192    # Set to your model's context length; low values waste GPU
+    system_instructions: ""
+    use_default_system_instructions: true
+    citations_enabled: true
+
 # Notes:
 # - ID 0 is reserved for "Auto" mode - uses LiteLLM Router for load balancing
 # - Use negative IDs to distinguish global configs from user configs (NewLLMConfig in DB)
