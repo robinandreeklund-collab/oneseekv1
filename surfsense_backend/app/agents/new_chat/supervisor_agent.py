@@ -646,11 +646,22 @@ def _sanitize_openai_tool_schema(value: Any) -> Any:
     """
     Remove null defaults/variants from tool schemas for strict Jinja templates.
     LM Studio templates can fail on `default: null` or explicit `type: null`.
+
+    ``description`` fields are preserved with an empty string rather than
+    dropped — the nemotron-3-nano Jinja template accesses
+    ``tool.function.description | string`` unconditionally.  A missing key
+    resolves to NullValue in LM Studio's Jinja engine, crashing the template.
     """
+    # Keys that model templates access unconditionally.  Dropping them causes
+    # "Cannot apply filter 'string' to type: NullValue" in LM Studio.
+    _KEEP_AS_EMPTY_STRING = {"description"}
+
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
             if item is None:
+                if key in _KEEP_AS_EMPTY_STRING:
+                    sanitized[key] = ""
                 continue
             if key == "default" and item is None:
                 continue
@@ -753,6 +764,11 @@ def _format_tools_for_llm_binding(tools: list[Any]) -> list[dict[str, Any]]:
             continue
         cleaned = _sanitize_openai_tool_schema(raw)
         if isinstance(cleaned, dict):
+            # Guarantee that function.description always exists — strict Jinja
+            # templates (nemotron-3-nano) access it without null guards.
+            func = cleaned.get("function")
+            if isinstance(func, dict) and "description" not in func:
+                func["description"] = ""
             formatted.append(cleaned)
     return formatted
 
@@ -4536,7 +4552,7 @@ async def create_supervisor_agent(
         critic_input = f"Uppgift: {task}\nSvar: {response_text}"
         try:
             critic_msg = await llm.ainvoke(
-                [SystemMessage(content=critic_prompt), HumanMessage(content=critic_input)]
+                [SystemMessage(content=str(critic_prompt or "")), HumanMessage(content=str(critic_input or ""))]
             )
             critic_text = str(getattr(critic_msg, "content", "") or "").strip()
             critic_payload = _safe_json(critic_text)

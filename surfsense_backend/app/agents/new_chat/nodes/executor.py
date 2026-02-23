@@ -780,6 +780,87 @@ def build_executor_nodes(
     return call_model, acall_model
 
 
+def _deep_replace_none_in_tool(value: Any) -> Any:
+    """Recursively replace None → '' in dicts/lists (tool schema variant)."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return {k: _deep_replace_none_in_tool(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_deep_replace_none_in_tool(item) for item in value]
+    return value
+
+
+def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
+    """Sanitize an OpenAI-format tool dict for strict Jinja templates.
+
+    1. Remove ``type: null`` variants from ``anyOf``/``oneOf``/``allOf``.
+    2. Drop ``default: null`` from parameter schemas.
+    3. Deep-replace any remaining ``None`` → ``""`` as a safety net.
+    4. Ensure ``function.name``, ``function.description``, and
+       ``function.parameters`` always exist — templates access them
+       unconditionally.
+    5. Remove the injected ``state`` property so the model never sees it.
+    """
+    if not isinstance(tool_def, dict):
+        return tool_def
+
+    def _clean_schema(schema: Any) -> Any:
+        if not isinstance(schema, dict):
+            return _deep_replace_none_in_tool(schema)
+        cleaned: dict[str, Any] = {}
+        for key, item in schema.items():
+            if item is None:
+                if key == "description":
+                    cleaned[key] = ""
+                # Drop null defaults and other null keys
+                continue
+            if key in {"anyOf", "oneOf", "allOf"} and isinstance(item, list):
+                variants = [
+                    _clean_schema(v)
+                    for v in item
+                    if not (
+                        isinstance(v, dict)
+                        and str(v.get("type") or "").strip().lower() == "null"
+                    )
+                ]
+                if variants:
+                    cleaned[key] = variants
+                continue
+            cleaned[key] = _clean_schema(item)
+        # Strip injected 'state' property
+        properties = cleaned.get("properties")
+        if isinstance(properties, dict):
+            properties.pop("state", None)
+            required = cleaned.get("required")
+            if isinstance(required, list):
+                cleaned["required"] = [
+                    r for r in required
+                    if isinstance(r, str) and r.strip() != "state" and r.strip() in properties
+                ]
+                if not cleaned["required"]:
+                    cleaned.pop("required", None)
+        return cleaned
+
+    tool_def = _clean_schema(tool_def)
+    # Deep-replace any leftover None as final safety net.
+    tool_def = _deep_replace_none_in_tool(tool_def)
+    tool_def.setdefault("type", "function")
+    func = tool_def.get("function")
+    if not isinstance(func, dict):
+        func = {}
+        tool_def["function"] = func
+    func.setdefault("name", "tool")
+    func.setdefault("description", "")
+    params = func.get("parameters")
+    if not isinstance(params, dict):
+        func["parameters"] = {"type": "object", "properties": {}}
+    else:
+        params.setdefault("type", "object")
+        params.setdefault("properties", {})
+    return tool_def
+
+
 class NormalizingChatWrapper:
     """Wraps any LanguageModelLike and normalizes messages before every invocation.
 
@@ -807,8 +888,34 @@ class NormalizingChatWrapper:
         return getattr(self._llm, item)
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> "NormalizingChatWrapper":
-        """Return a new wrapper around the tool-bound LLM."""
-        return NormalizingChatWrapper(self._llm.bind_tools(tools, **kwargs))
+        """Return a new wrapper around the tool-bound LLM.
+
+        Tool schemas from ``convert_to_openai_tool`` can contain null values
+        (e.g. ``"default": null``, ``"description": null``) that crash strict
+        Jinja templates in LM Studio.  We convert the tools ourselves, sanitize
+        the resulting OpenAI-format dicts, and call ``bind`` (not
+        ``bind_tools``) to avoid double-converting.
+        """
+        try:
+            from langchain_core.utils.function_calling import convert_to_openai_tool
+
+            formatted = []
+            for tool_def in tools or []:
+                try:
+                    raw = (
+                        tool_def
+                        if isinstance(tool_def, dict)
+                        else convert_to_openai_tool(tool_def)
+                    )
+                except Exception:
+                    raw = tool_def
+                formatted.append(_sanitize_tool_schema_for_strict_templates(raw))
+            return NormalizingChatWrapper(
+                self._llm.bind(tools=formatted, **kwargs)
+            )
+        except Exception:
+            # Fallback: let the underlying LLM handle bind_tools directly.
+            return NormalizingChatWrapper(self._llm.bind_tools(tools, **kwargs))
 
     def bind(self, **kwargs: Any) -> "NormalizingChatWrapper":
         """Return a new wrapper around the kwarg-bound LLM."""
