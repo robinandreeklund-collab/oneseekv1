@@ -1053,6 +1053,146 @@ def _build_rerank_text(entry: ToolIndexEntry) -> str:
     return "\n".join(part for part in parts if part)
 
 
+# ---------------------------------------------------------------------------
+# Contrastive tool description builder
+# ---------------------------------------------------------------------------
+# Tools within the same namespace often share domain vocabulary which causes
+# embedding collisions.  Contrastive descriptions add explicit exclusion
+# sections so that embedding models can separate near-neighbours.
+
+# Map from namespace prefix → dict of tool_id → list of exclusion terms.
+# The exclusion terms are domain concepts that belong to *other* tools in the
+# same namespace cluster and should NOT be associated with this tool.
+TOOL_CONTRASTIVE_EXCLUSIONS: dict[str, dict[str, list[str]]] = {
+    # --- Trafikverket trafikinfo cluster ---
+    "tools.trafik.trafikverket_trafikinfo": {
+        "trafikverket_trafikinfo_storningar": [
+            "olycka", "krock", "kö", "trängsel", "vägarbete", "omledning",
+            "hastighet", "prognos", "tåg", "väder",
+        ],
+        "trafikverket_trafikinfo_olyckor": [
+            "störning", "driftstörning", "signalproblem", "kö", "trängsel",
+            "vägarbete", "omledning", "hastighet", "prognos",
+        ],
+        "trafikverket_trafikinfo_koer": [
+            "olycka", "krock", "störning", "hinder", "vägarbete",
+            "omledning", "hastighet", "prognos", "underhåll",
+        ],
+        "trafikverket_trafikinfo_vagarbeten": [
+            "olycka", "krock", "störning", "kö", "trängsel",
+            "hastighet", "prognos", "underhåll", "tåg",
+        ],
+    },
+    # --- Trafikverket tåg cluster ---
+    "tools.trafik.trafikverket_tag": {
+        "trafikverket_tag_forseningar": [
+            "tidtabell", "avgång planerad", "stationsinfo", "inställd",
+            "kamera", "vägarbete", "väder",
+        ],
+        "trafikverket_tag_tidtabell": [
+            "försening", "försenad", "inställd", "störning",
+            "kamera", "vägarbete", "väder",
+        ],
+        "trafikverket_tag_stationer": [
+            "försening", "tidtabell", "inställd", "avgång",
+            "kamera", "vägarbete", "väder",
+        ],
+        "trafikverket_tag_installda": [
+            "tidtabell", "stationsinfo", "försening pågående",
+            "kamera", "vägarbete", "väder",
+        ],
+    },
+    # --- Trafikverket väg cluster ---
+    "tools.trafik.trafikverket_vag": {
+        "trafikverket_vag_status": [
+            "underhåll", "reparation", "hastighet", "fartgräns",
+            "avstängning", "prognos", "olycka",
+        ],
+        "trafikverket_vag_underhall": [
+            "trafikflöde", "hastighet", "fartgräns",
+            "avstängning", "prognos", "olycka", "kö",
+        ],
+        "trafikverket_vag_hastighet": [
+            "trafikflöde", "underhåll", "reparation",
+            "avstängning", "prognos", "olycka", "kö",
+        ],
+        "trafikverket_vag_avstangningar": [
+            "trafikflöde", "underhåll", "reparation",
+            "hastighet", "fartgräns", "prognos",
+        ],
+    },
+    # --- Trafikverket prognos cluster ---
+    "tools.trafik.trafikverket_prognos": {
+        "trafikverket_prognos_trafik": [
+            "vägprognos", "planerade arbeten", "tåg", "tågposition",
+            "väder", "kamera",
+        ],
+        "trafikverket_prognos_vag": [
+            "trafikprognos", "restid", "belastning", "tåg",
+            "tågposition", "väder", "kamera",
+        ],
+        "trafikverket_prognos_tag": [
+            "trafikprognos", "restid", "belastning", "vägprognos",
+            "planerade arbeten", "väder", "kamera",
+        ],
+    },
+    # --- Trafikverket väder cluster (also competes with SMHI) ---
+    "tools.weather.trafikverket_vader": {
+        "trafikverket_vader_stationer": [
+            "halka", "isrisk", "vind", "temperatur", "prognos",
+            "SMHI", "väderprognos",
+        ],
+        "trafikverket_vader_halka": [
+            "väderstation", "mätpunkt", "vind", "temperatur",
+            "SMHI", "väderprognos",
+        ],
+        "trafikverket_vader_vind": [
+            "väderstation", "mätpunkt", "halka", "isrisk", "temperatur",
+            "SMHI", "väderprognos",
+        ],
+        "trafikverket_vader_temperatur": [
+            "väderstation", "mätpunkt", "halka", "isrisk", "vind",
+            "SMHI", "väderprognos",
+        ],
+    },
+}
+
+
+def _get_contrastive_exclusions(entry: ToolIndexEntry) -> list[str]:
+    """Return exclusion terms for a tool based on its namespace cluster."""
+    namespace_key = ".".join(entry.namespace)
+    for prefix, exclusions_by_tool in TOOL_CONTRASTIVE_EXCLUSIONS.items():
+        if namespace_key.startswith(prefix) or namespace_key == prefix:
+            return list(exclusions_by_tool.get(entry.tool_id, []))
+    return []
+
+
+def build_contrastive_description(entry: ToolIndexEntry) -> str:
+    """Build a contrastive embedding text that maximises separation from
+    neighbouring tools in the same namespace cluster.
+
+    Template:
+        [NAME]
+        [DESCRIPTION]
+        Keywords: [keywords]
+        Examples: [example_queries]
+        Excludes: [contrastive exclusion terms]
+    """
+    parts: list[str] = []
+    if entry.name:
+        parts.append(entry.name)
+    if entry.description:
+        parts.append(entry.description)
+    if entry.keywords:
+        parts.append("Keywords: " + ", ".join(entry.keywords))
+    if entry.example_queries:
+        parts.append("Examples: " + " | ".join(entry.example_queries))
+    exclusions = _get_contrastive_exclusions(entry)
+    if exclusions:
+        parts.append("Excludes: " + ", ".join(exclusions))
+    return "\n".join(part for part in parts if part)
+
+
 def _tool_input_schema(tool: BaseTool) -> dict[str, Any]:
     args_schema = getattr(tool, "args_schema", None)
     if args_schema is not None and hasattr(args_schema, "model_json_schema"):
@@ -1155,6 +1295,11 @@ def _tool_aware_output_hint(entry: ToolIndexEntry) -> str:
 
 
 def _build_tool_semantic_embedding_text(entry: ToolIndexEntry) -> str:
+    # Use contrastive description when exclusions are available so that
+    # embedding vectors are pushed apart for tools sharing a namespace.
+    exclusions = _get_contrastive_exclusions(entry)
+    if exclusions:
+        return build_contrastive_description(entry)
     return _build_rerank_text(entry)
 
 
@@ -1294,7 +1439,9 @@ def _rerank_tool_candidates(
         entry = tool_index_by_id.get(tool_id)
         if not entry:
             continue
-        content = _build_rerank_text(entry) or entry.name or tool_id
+        # Prefer contrastive description for reranking when available so that
+        # the cross-encoder can leverage exclusion signals.
+        content = build_contrastive_description(entry) or _build_rerank_text(entry) or entry.name or tool_id
         documents.append(
             {
                 "document_id": tool_id,
@@ -1938,6 +2085,113 @@ def build_tool_index(
             )
         )
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Namespace-aware tool exposure
+# ---------------------------------------------------------------------------
+# When a bounded agent (e.g. "trafik") is resolved, instead of relying
+# solely on retrieval to pick the right tool among close neighbours, we
+# expose *all* tools in that agent's namespace to the LLM and attach
+# retrieval scores as guidance hints.
+
+# Max tools to expose without retrieval filtering.
+_NAMESPACE_FULL_EXPOSURE_THRESHOLD = 30
+
+# Agent name → namespace prefixes whose tools should be fully exposed.
+AGENT_NAMESPACE_MAP: dict[str, list[tuple[str, ...]]] = {
+    "trafik": [("tools", "trafik")],
+    "weather": [("tools", "weather")],
+    "statistics": [("tools", "statistics")],
+    "bolag": [("tools", "bolag")],
+    "kartor": [("tools", "kartor")],
+    "riksdagen": [("tools", "politik")],
+    "marketplace": [("tools", "marketplace")],
+    "media": [("tools", "action", "media")],
+    "code": [("tools", "code")],
+}
+
+
+def get_namespace_tool_ids(
+    agent_name: str,
+    tool_index: list[ToolIndexEntry],
+) -> list[str] | None:
+    """Return all tool IDs belonging to an agent's namespace.
+
+    Returns *None* if the agent is not namespace-bounded (i.e. the caller
+    should fall back to retrieval-based selection).
+
+    When the namespace contains more tools than ``_NAMESPACE_FULL_EXPOSURE_THRESHOLD``,
+    returns *None* so that the caller applies retrieval filtering first.
+    """
+    prefixes = AGENT_NAMESPACE_MAP.get(str(agent_name or "").strip().lower())
+    if not prefixes:
+        return None
+    matching_ids: list[str] = []
+    for entry in tool_index:
+        for prefix in prefixes:
+            if _match_namespace(entry.namespace, prefix):
+                matching_ids.append(entry.tool_id)
+                break
+    if len(matching_ids) > _NAMESPACE_FULL_EXPOSURE_THRESHOLD:
+        return None
+    return matching_ids if matching_ids else None
+
+
+def get_namespace_tool_ids_with_retrieval_hints(
+    agent_name: str,
+    query: str,
+    *,
+    tool_index: list[ToolIndexEntry],
+    tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
+    trace_key: str | None = None,
+) -> tuple[list[str], dict[str, dict[str, Any]]] | None:
+    """Return all namespace tools with retrieval scores as guidance hints.
+
+    Returns a tuple of (all_tool_ids, {tool_id: score_breakdown}) or
+    *None* if the agent is not namespace-bounded.
+
+    The LLM receives all tools but can use the score hints to weight its
+    decision.  This combines the coverage of full-namespace exposure with
+    the signal quality of embedding + reranker scoring.
+    """
+    all_ids = get_namespace_tool_ids(agent_name, tool_index)
+    if all_ids is None:
+        return None
+
+    # Compute retrieval scores for ranking guidance.
+    prefixes = AGENT_NAMESPACE_MAP.get(str(agent_name or "").strip().lower(), [])
+    _ranked_ids, breakdown = _run_smart_retrieval(
+        query,
+        tool_index=tool_index,
+        primary_namespaces=prefixes,
+        limit=len(all_ids),
+        trace_key=trace_key,
+        tuning=tuning,
+    )
+    hints: dict[str, dict[str, Any]] = {}
+    for item in breakdown:
+        tid = str(item.get("tool_id") or "")
+        if tid:
+            hints[tid] = {
+                "retrieval_rank": int(item.get("rank", 999)),
+                "pre_rerank_score": float(item.get("pre_rerank_score", 0.0)),
+                "rerank_score": item.get("rerank_score"),
+                "system_confidence": "high" if item.get("rank", 999) <= 3 else "low",
+            }
+
+    # Order: retrieval-ranked first, then remaining namespace tools.
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for tid in _ranked_ids:
+        if tid not in seen:
+            ordered.append(tid)
+            seen.add(tid)
+    for tid in all_ids:
+        if tid not in seen:
+            ordered.append(tid)
+            seen.add(tid)
+    return ordered, hints
 
 
 def build_bigtool_store(tool_index: Iterable[ToolIndexEntry]) -> InMemoryStore:

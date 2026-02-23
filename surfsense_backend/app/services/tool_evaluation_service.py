@@ -358,6 +358,179 @@ def _build_difficulty_breakdown(
     return rows
 
 
+# ---------------------------------------------------------------------------
+# Per-namespace confusion matrix
+# ---------------------------------------------------------------------------
+
+def build_namespace_confusion_matrix(
+    evaluation_results: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Build a confusion matrix grouped by namespace prefix.
+
+    Returns a dict keyed by namespace prefix (e.g. "trafikverket_trafikinfo"),
+    each containing:
+        - ``matrix``: dict[expected_tool, dict[predicted_tool, count]]
+        - ``tools``: sorted list of tool IDs in this namespace
+        - ``accuracy``: per-tool accuracy dict
+        - ``total``: total test cases in this namespace
+        - ``correct``: correct predictions
+    """
+    # Collect (expected, predicted) pairs and infer namespace from tool_id.
+    pairs: list[tuple[str, str, str]] = []  # (namespace_prefix, expected, predicted)
+    for result in evaluation_results:
+        expected = str(result.get("expected_tool") or "").strip()
+        predicted = str(result.get("selected_tool") or "").strip()
+        if not expected:
+            continue
+        # Derive namespace prefix from tool_id: e.g. "trafikverket_trafikinfo_koer" → "trafikverket_trafikinfo"
+        parts = expected.split("_")
+        if len(parts) >= 3:
+            ns_prefix = "_".join(parts[:2])
+        elif len(parts) == 2:
+            ns_prefix = parts[0]
+        else:
+            ns_prefix = expected
+        pairs.append((ns_prefix, expected, predicted or "(none)"))
+
+    # Group by namespace prefix.
+    from collections import defaultdict
+    ns_groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for ns_prefix, expected, predicted in pairs:
+        ns_groups[ns_prefix].append((expected, predicted))
+
+    # Only build matrices for namespaces with ≥2 distinct expected tools
+    # (single-tool namespaces cannot have intra-namespace confusion).
+    matrices: dict[str, dict[str, Any]] = {}
+    for ns_prefix, group_pairs in sorted(ns_groups.items()):
+        distinct_expected = {e for e, _ in group_pairs}
+        if len(distinct_expected) < 2:
+            continue
+        all_tools = sorted({t for pair in group_pairs for t in pair})
+        matrix: dict[str, dict[str, int]] = {
+            tool: {t: 0 for t in all_tools} for tool in distinct_expected
+        }
+        for expected, predicted in group_pairs:
+            if predicted in matrix.get(expected, {}):
+                matrix[expected][predicted] += 1
+            else:
+                matrix.setdefault(expected, {})[predicted] = (
+                    matrix.get(expected, {}).get(predicted, 0) + 1
+                )
+        total = len(group_pairs)
+        correct = sum(1 for e, p in group_pairs if e == p)
+        per_tool_accuracy: dict[str, float] = {}
+        for tool in distinct_expected:
+            tool_total = sum(matrix.get(tool, {}).values())
+            tool_correct = matrix.get(tool, {}).get(tool, 0)
+            per_tool_accuracy[tool] = (
+                (tool_correct / tool_total) if tool_total > 0 else 0.0
+            )
+        matrices[ns_prefix] = {
+            "matrix": matrix,
+            "tools": all_tools,
+            "accuracy": per_tool_accuracy,
+            "total": total,
+            "correct": correct,
+            "overall_accuracy": (correct / total) if total > 0 else 0.0,
+        }
+    return matrices
+
+
+# ---------------------------------------------------------------------------
+# Contrastive probe generation
+# ---------------------------------------------------------------------------
+
+def generate_contrastive_probes(
+    tool_index: list[ToolIndexEntry],
+    *,
+    max_probes_per_pair: int = 2,
+    max_total: int = 200,
+) -> list[dict[str, Any]]:
+    """Generate contrastive test probes for tool pairs that share a namespace.
+
+    For every pair of tools (A, B) that belong to the same namespace cluster
+    (based on the first two segments of tool_id), generates probe entries that
+    include an ``expected_tool`` and a ``hard_negative`` — the most likely
+    wrong tool.
+
+    Each probe uses the example_queries of tool A with hard_negative = tool B
+    and vice versa, which tests the system's ability to discriminate between
+    close neighbours.
+
+    Returns a list of eval-compatible test case dicts::
+
+        {
+            "id": "contrastive-{tool_a}-vs-{tool_b}-{idx}",
+            "question": str,
+            "difficulty": "svår",
+            "expected": {
+                "tool": tool_a_id,
+            },
+            "hard_negative": tool_b_id,
+            "discriminating_signal": str,
+            "allowed_tools": [tool_a_id, tool_b_id],
+        }
+    """
+    from collections import defaultdict
+
+    # Group tools by namespace prefix (first 2 segments of tool_id).
+    ns_groups: dict[str, list[ToolIndexEntry]] = defaultdict(list)
+    for entry in tool_index:
+        parts = entry.tool_id.split("_")
+        if len(parts) >= 3:
+            prefix = "_".join(parts[:2])
+        elif len(parts) == 2:
+            prefix = parts[0]
+        else:
+            continue
+        ns_groups[prefix].append(entry)
+
+    probes: list[dict[str, Any]] = []
+    for _ns_prefix, entries in sorted(ns_groups.items()):
+        if len(entries) < 2:
+            continue
+        for i, entry_a in enumerate(entries):
+            for entry_b in entries[i + 1 :]:
+                # Generate probes from A's examples testing against B
+                a_examples = list(entry_a.example_queries or [])[:max_probes_per_pair]
+                b_examples = list(entry_b.example_queries or [])[:max_probes_per_pair]
+                a_unique_kw = set(entry_a.keywords or []) - set(entry_b.keywords or [])
+                b_unique_kw = set(entry_b.keywords or []) - set(entry_a.keywords or [])
+                signal = (
+                    f"{entry_a.tool_id} keywords: {', '.join(list(a_unique_kw)[:4])} "
+                    f"vs {entry_b.tool_id} keywords: {', '.join(list(b_unique_kw)[:4])}"
+                )
+                for idx, question in enumerate(a_examples):
+                    probes.append(
+                        {
+                            "id": f"contrastive-{entry_a.tool_id}-vs-{entry_b.tool_id}-{idx}",
+                            "question": question,
+                            "difficulty": "svår",
+                            "expected": {"tool": entry_a.tool_id},
+                            "hard_negative": entry_b.tool_id,
+                            "discriminating_signal": signal,
+                            "allowed_tools": [entry_a.tool_id, entry_b.tool_id],
+                        }
+                    )
+                    if len(probes) >= max_total:
+                        return probes
+                for idx, question in enumerate(b_examples):
+                    probes.append(
+                        {
+                            "id": f"contrastive-{entry_b.tool_id}-vs-{entry_a.tool_id}-{idx}",
+                            "question": question,
+                            "difficulty": "svår",
+                            "expected": {"tool": entry_b.tool_id},
+                            "hard_negative": entry_a.tool_id,
+                            "discriminating_signal": signal,
+                            "allowed_tools": [entry_a.tool_id, entry_b.tool_id],
+                        }
+                    )
+                    if len(probes) >= max_total:
+                        return probes
+    return probes
+
+
 def _looks_english_text(text: str) -> bool:
     tokens = re.findall(r"[a-zA-ZåäöÅÄÖ]{3,}", str(text or "").lower())
     if not tokens:
@@ -2750,6 +2923,7 @@ async def run_tool_evaluation(
             else None
         ),
         "difficulty_breakdown": _build_difficulty_breakdown(difficulty_buckets),
+        "namespace_confusion": build_namespace_confusion_matrix(results),
     }
     return {"metrics": metrics, "results": results}
 

@@ -33,6 +33,8 @@ def _query_pattern_hash(query: str) -> str:
 class FeedbackSignal:
     successes: int = 0
     failures: int = 0
+    # Track which competitor tools won when this tool lost.
+    competitor_wins: dict[str, int] | None = None
 
     @property
     def score(self) -> float:
@@ -40,6 +42,22 @@ class FeedbackSignal:
         if total <= 0:
             return 0.0
         return (self.successes - self.failures) / total
+
+    def record_competitor(self, competitor_tool_id: str) -> None:
+        """Record that *competitor_tool_id* was selected instead of this tool."""
+        if not competitor_tool_id:
+            return
+        if self.competitor_wins is None:
+            self.competitor_wins = {}
+        normalized = str(competitor_tool_id).strip().lower()
+        self.competitor_wins[normalized] = self.competitor_wins.get(normalized, 0) + 1
+
+    @property
+    def top_competitors(self) -> list[tuple[str, int]]:
+        """Return competitors sorted by win count descending."""
+        if not self.competitor_wins:
+            return []
+        return sorted(self.competitor_wins.items(), key=lambda x: x[1], reverse=True)
 
 
 class RetrievalFeedbackStore:
@@ -55,7 +73,14 @@ class RetrievalFeedbackStore:
             return None
         return normalized_tool_id, pattern_hash
 
-    def record(self, *, tool_id: str, query: str, success: bool) -> None:
+    def record(
+        self,
+        *,
+        tool_id: str,
+        query: str,
+        success: bool,
+        competitor_tool_id: str | None = None,
+    ) -> None:
         key = self._key(tool_id, query)
         if key is None:
             return
@@ -68,6 +93,8 @@ class RetrievalFeedbackStore:
                 signal.successes = int(signal.successes) + 1
             else:
                 signal.failures = int(signal.failures) + 1
+                if competitor_tool_id:
+                    signal.record_competitor(competitor_tool_id)
             self._signals.move_to_end(key)
             while len(self._signals) > self._max_patterns:
                 self._signals.popitem(last=False)
@@ -90,15 +117,19 @@ class RetrievalFeedbackStore:
         with self._lock:
             rows: list[dict[str, Any]] = []
             for (tool_id, pattern_hash), signal in self._signals.items():
-                rows.append(
-                    {
-                        "tool_id": tool_id,
-                        "query_pattern_hash": pattern_hash,
-                        "successes": int(signal.successes),
-                        "failures": int(signal.failures),
-                        "score": float(signal.score),
-                    }
-                )
+                row: dict[str, Any] = {
+                    "tool_id": tool_id,
+                    "query_pattern_hash": pattern_hash,
+                    "successes": int(signal.successes),
+                    "failures": int(signal.failures),
+                    "score": float(signal.score),
+                }
+                if signal.top_competitors:
+                    row["top_competitors"] = [
+                        {"tool_id": cid, "wins": wins}
+                        for cid, wins in signal.top_competitors[:5]
+                    ]
+                rows.append(row)
             return {"rows": rows, "count": len(rows)}
 
     def clear(self) -> None:
