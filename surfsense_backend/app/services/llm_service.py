@@ -194,6 +194,14 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
                             fn["arguments"] = "{}"
                     fixed.append(tc)
                 msg["tool_calls"] = fixed
+            # Ensure content is always a string (never null/missing)
+            if "content" not in msg or msg["content"] is None:
+                msg["content"] = ""
+            # Tool messages: ensure name and tool_call_id are present
+            if msg.get("role") == "tool":
+                if not msg.get("tool_call_id"):
+                    msg["tool_call_id"] = "unknown"
+                msg.setdefault("name", "tool")
             result.append(msg)
         return result
 
@@ -238,6 +246,39 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
         return sanitized
 
     @classmethod
+    def _ensure_tool_completeness(cls, tool_def: Any) -> Any:
+        """Ensure every tool dict has all fields that strict Jinja templates access.
+
+        Nemotron-3-nano (and similar LM Studio templates) access
+        ``tool.function.name``, ``tool.function.description``, and
+        ``tool.function.parameters`` unconditionally.  If any of these keys
+        are missing (e.g. because ``_sanitize_schema_value`` dropped a null
+        value), Jinja resolves them to NullValue which crashes the
+        ``| string`` filter.
+
+        This method also deep-replaces any remaining ``None`` → ``""`` in the
+        entire tool dict as a final safety net.
+        """
+        if not isinstance(tool_def, dict):
+            return tool_def
+        # Deep-replace any leftover None values in the entire tool dict.
+        tool_def = cls._deep_replace_none(tool_def)
+        tool_def.setdefault("type", "function")
+        func = tool_def.get("function")
+        if not isinstance(func, dict):
+            func = {}
+            tool_def["function"] = func
+        func.setdefault("name", "tool")
+        func.setdefault("description", "")
+        params = func.get("parameters")
+        if not isinstance(params, dict):
+            func["parameters"] = {"type": "object", "properties": {}}
+        else:
+            params.setdefault("type", "object")
+            params.setdefault("properties", {})
+        return tool_def
+
+    @classmethod
     def _sanitize_request_kwargs(cls, kwargs: dict) -> dict:
         updated: dict = {}
         for key, value in dict(kwargs or {}).items():
@@ -249,17 +290,12 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
             tools_payload = updated.get("tools")
             if isinstance(tools_payload, list):
                 sanitized_tools = [
-                    cls._sanitize_schema_value(tool_def)
+                    cls._ensure_tool_completeness(
+                        cls._sanitize_schema_value(tool_def)
+                    )
                     for tool_def in tools_payload
                     if tool_def is not None
                 ]
-                # Guarantee function.description exists — strict templates
-                # (nemotron-3-nano) access it without null guards.
-                for tool in sanitized_tools:
-                    if isinstance(tool, dict):
-                        func = tool.get("function")
-                        if isinstance(func, dict) and "description" not in func:
-                            func["description"] = ""
                 updated["tools"] = sanitized_tools
             else:
                 updated["tools"] = []
