@@ -347,6 +347,23 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
         ):
             yield chunk
 
+    def completion_with_retry(self, run_manager=None, **kwargs):
+        """Final null-safety pass right before litellm.completion().
+
+        Even after _create_message_dicts and _sanitize_request_kwargs,
+        litellm's internal processing can re-introduce None values
+        (e.g. via skip_empty_text_blocks or prompt template helpers).
+        Deep-replacing None → '' in the entire kwargs dict at this point
+        guarantees no null reaches LM Studio's strict Jinja template.
+        """
+        kwargs = self._deep_replace_none(kwargs)
+        return super().completion_with_retry(run_manager=run_manager, **kwargs)
+
+    async def acompletion_with_retry(self, run_manager=None, **kwargs):
+        """Async variant of the final null-safety pass."""
+        kwargs = self._deep_replace_none(kwargs)
+        return await super().acompletion_with_retry(run_manager=run_manager, **kwargs)
+
 
 def _ensure_auto_mode_router_initialized() -> bool:
     if LLMRouterService.is_initialized():
