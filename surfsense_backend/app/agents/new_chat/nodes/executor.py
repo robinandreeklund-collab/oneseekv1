@@ -778,3 +778,62 @@ def build_executor_nodes(
         return updates
 
     return call_model, acall_model
+
+
+class NormalizingChatWrapper:
+    """Wraps any LanguageModelLike and normalizes messages before every invocation.
+
+    ``langgraph_bigtool``'s internal ``call_model`` calls
+    ``llm_with_tools.invoke(state["messages"])`` directly without any
+    null-value sanitization.  Wrapping the LLM with this class ensures that
+    ``_normalize_messages_for_provider_compat`` is applied at the point of
+    invocation regardless of which graph node initiated the call.
+
+    Usage::
+
+        from app.agents.new_chat.nodes.executor import NormalizingChatWrapper
+        wrapped_llm = NormalizingChatWrapper(base_llm)
+        graph = create_bigtool_agent(wrapped_llm, tool_registry, ...)
+    """
+
+    def __init__(self, llm: Any) -> None:
+        self._llm = llm
+
+    # ------------------------------------------------------------------ #
+    # Delegate attribute access to the wrapped LLM so that LangChain /
+    # LangGraph introspection (e.g. checking for .name, .model, etc.) works.
+    # ------------------------------------------------------------------ #
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._llm, item)
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "NormalizingChatWrapper":
+        """Return a new wrapper around the tool-bound LLM."""
+        return NormalizingChatWrapper(self._llm.bind_tools(tools, **kwargs))
+
+    def bind(self, **kwargs: Any) -> "NormalizingChatWrapper":
+        """Return a new wrapper around the kwarg-bound LLM."""
+        return NormalizingChatWrapper(self._llm.bind(**kwargs))
+
+    def with_config(self, *args: Any, **kwargs: Any) -> "NormalizingChatWrapper":
+        return NormalizingChatWrapper(self._llm.with_config(*args, **kwargs))
+
+    def _normalize(self, input_: Any) -> Any:
+        """Normalize a messages list or a dict with a 'messages' key."""
+        if isinstance(input_, list):
+            return _normalize_messages_for_provider_compat(input_)
+        if isinstance(input_, dict) and "messages" in input_:
+            return {**input_, "messages": _normalize_messages_for_provider_compat(input_["messages"])}
+        return input_
+
+    def invoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
+        return self._llm.invoke(self._normalize(input_), config, **kwargs)
+
+    async def ainvoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
+        return await self._llm.ainvoke(self._normalize(input_), config, **kwargs)
+
+    def stream(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
+        return self._llm.stream(self._normalize(input_), config, **kwargs)
+
+    async def astream(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
+        async for chunk in self._llm.astream(self._normalize(input_), config, **kwargs):
+            yield chunk

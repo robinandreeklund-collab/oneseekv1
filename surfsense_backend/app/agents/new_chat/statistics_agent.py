@@ -13,6 +13,7 @@ from langgraph.types import Checkpointer
 from langgraph_bigtool import create_agent as create_bigtool_agent
 from langgraph_bigtool.graph import ToolNode as BigtoolToolNode
 from langgraph.prebuilt.tool_node import ToolRuntime
+from app.agents.new_chat.nodes.executor import NormalizingChatWrapper
 
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
 from app.services.connector_service import ConnectorService
@@ -1136,7 +1137,7 @@ def create_statistics_agent(
     )
     store = build_scb_tool_store()
     graph = create_bigtool_agent(
-        llm,
+        NormalizingChatWrapper(llm),
         tool_registry,
         limit=2,
         retrieve_tools_function=retrieve_scb_tools,
