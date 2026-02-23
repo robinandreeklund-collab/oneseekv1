@@ -20,6 +20,31 @@ from app.services.llm_router_service import (
 # Configure litellm to automatically drop unsupported parameters
 litellm.drop_params = True
 
+# ---------------------------------------------------------------------------
+# Monkey-patch litellm's skip_empty_text_blocks to prevent it from converting
+# content: "" → content: null on assistant messages with tool_calls.
+#
+# LM Studio's Jinja templates crash with
+#   "Cannot apply filter 'string' to type: NullValue"
+# when content is null.  Our LMStudioCompatibleChatLiteLLM._sanitize_message_dicts
+# sets content to "" for exactly this reason, but litellm's internal
+# skip_empty_text_blocks (called from process_empty_text_blocks during
+# litellm.completion) reverts the fix.  Patching the function to be a no-op
+# is safe: it only skips cosmetic cleanup that the OpenAI API doesn't require.
+# ---------------------------------------------------------------------------
+try:
+    import litellm.litellm_core_utils.prompt_templates.factory as _prompt_factory
+
+    _original_skip_empty_text_blocks = _prompt_factory.skip_empty_text_blocks
+
+    def _patched_skip_empty_text_blocks(message):
+        """Return message unchanged — preserve content: '' for LM Studio."""
+        return message
+
+    _prompt_factory.skip_empty_text_blocks = _patched_skip_empty_text_blocks
+except Exception:
+    pass  # Non-critical: worst-case the original NullValue error surfaces
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,12 +70,18 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
     Sanitize every call so `None` never reaches Jinja rendering context.
     """
 
+    # Keys that model templates access unconditionally — dropping them produces
+    # NullValue in LM Studio's Jinja engine.
+    _KEEP_AS_EMPTY_STRING = {"description"}
+
     @staticmethod
     def _sanitize_schema_value(value):
         if isinstance(value, dict):
             sanitized: dict = {}
             for key, item in value.items():
                 if item is None:
+                    if key in LMStudioCompatibleChatLiteLLM._KEEP_AS_EMPTY_STRING:
+                        sanitized[key] = ""
                     continue
                 if key in {"anyOf", "oneOf", "allOf"} and isinstance(item, list):
                     variants: list = []
@@ -102,6 +133,28 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
         return value
 
     @staticmethod
+    def _deep_replace_none(value: Any) -> Any:
+        """Recursively replace None with '' in dicts/lists.
+
+        LM Studio's Jinja templates crash on NullValue for *any* field,
+        not just ``content``.  A recursive pass is the safest way to
+        guarantee no null value reaches the template engine.
+        """
+        if value is None:
+            return ""
+        if isinstance(value, dict):
+            return {
+                k: LMStudioCompatibleChatLiteLLM._deep_replace_none(v)
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                LMStudioCompatibleChatLiteLLM._deep_replace_none(item)
+                for item in value
+            ]
+        return value
+
+    @staticmethod
     def _sanitize_message_dicts(message_dicts: list) -> list:
         """Post-process message dicts to replace null values for LM Studio's strict Jinja templates.
 
@@ -109,7 +162,8 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
         ``{"content": message.content}`` which can be ``None`` for tool-call
         assistant turns. llama.cpp's Jinja evaluator cannot apply the ``|string``
         filter to a NullValue, producing "Cannot apply filter 'string' to type:
-        NullValue". Same problem applies to tool call id/name/arguments.
+        NullValue". Same problem applies to tool call id/name/arguments and
+        any other field the model template accesses.
 
         This method is called from our ``_create_message_dicts`` override which
         covers *all* code paths: _generate, _agenerate, _stream, and _astream.
@@ -119,11 +173,9 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
             if not isinstance(msg, dict):
                 result.append(msg)
                 continue
-            msg = dict(msg)
-            # content: null → "" — the most common source of the NullValue error
-            if msg.get("content") is None:
-                msg["content"] = ""
-            # Sanitize tool_calls: id / function.name / function.arguments must be strings
+            # Deep-replace all None values recursively
+            msg = LMStudioCompatibleChatLiteLLM._deep_replace_none(msg)
+            # Ensure tool_calls have sensible defaults for required fields
             raw_calls = msg.get("tool_calls")
             if isinstance(raw_calls, list):
                 fixed = []
@@ -131,18 +183,15 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
                     if not isinstance(tc, dict):
                         fixed.append(tc)
                         continue
-                    tc = dict(tc)
                     # Ensure id is always a non-empty string
                     if not tc.get("id"):
                         tc["id"] = f"call_{idx}"
                     if isinstance(tc.get("function"), dict):
-                        fn = dict(tc["function"])
-                        fn["name"] = fn.get("name") or "tool_call"
-                        if fn.get("arguments") is None:
+                        fn = tc["function"]
+                        if not fn.get("name"):
+                            fn["name"] = "tool_call"
+                        if not fn.get("arguments"):
                             fn["arguments"] = "{}"
-                        tc["function"] = fn
-                    # Remove remaining null values (e.g. index: null from streaming chunks)
-                    tc = {k: v for k, v in tc.items() if v is not None}
                     fixed.append(tc)
                 msg["tool_calls"] = fixed
             result.append(msg)
@@ -199,11 +248,19 @@ class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
         if "tools" in updated:
             tools_payload = updated.get("tools")
             if isinstance(tools_payload, list):
-                updated["tools"] = [
+                sanitized_tools = [
                     cls._sanitize_schema_value(tool_def)
                     for tool_def in tools_payload
                     if tool_def is not None
                 ]
+                # Guarantee function.description exists — strict templates
+                # (nemotron-3-nano) access it without null guards.
+                for tool in sanitized_tools:
+                    if isinstance(tool, dict):
+                        func = tool.get("function")
+                        if isinstance(func, dict) and "description" not in func:
+                            func["description"] = ""
+                updated["tools"] = sanitized_tools
             else:
                 updated["tools"] = []
         elif "functions" not in updated:
