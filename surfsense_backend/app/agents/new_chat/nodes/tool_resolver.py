@@ -55,6 +55,7 @@ def build_tool_resolver_node(
             resolver_query = latest_user_query or step_text
 
         resolved: dict[str, list[str]] = {}
+        retrieval_hints: dict[str, list[str]] = {}
         tool_trace: dict[str, Any] = {}
         for agent_name in selected_agent_names[:3]:
             resolution_payload: dict[str, Any] = {}
@@ -82,6 +83,11 @@ def build_tool_resolver_node(
                 "candidate_shortlist",
             }
             if agent_name == "weather":
+                # Capture reranker's top suggestions as hints before namespace override
+                ranked_weather = [tid for tid in focused_ids if tid in weather_tool_ids]
+                if ranked_weather:
+                    retrieval_hints[agent_name] = ranked_weather[:3]
+                # Always expose full weather namespace so the LLM can choose
                 if live_gate_mode:
                     focused_ids = [tool_id for tool_id in focused_ids if tool_id in weather_tool_ids]
                     if not focused_ids:
@@ -89,6 +95,11 @@ def build_tool_resolver_node(
                 else:
                     focused_ids = list(weather_tool_ids)
             elif agent_name == "trafik":
+                # Capture reranker's top suggestions as hints before namespace override
+                ranked_trafik = [tid for tid in focused_ids if tid in trafik_tool_ids]
+                if ranked_trafik:
+                    retrieval_hints[agent_name] = ranked_trafik[:3]
+                # Always expose full trafik namespace so the LLM can choose
                 focused_ids = [tool_id for tool_id in focused_ids if tool_id in trafik_tool_ids]
                 if not focused_ids:
                     focused_ids = list(trafik_tool_ids)
@@ -111,6 +122,7 @@ def build_tool_resolver_node(
                 "margin": resolution_payload.get("margin"),
                 "auto_selected": bool(resolution_payload.get("auto_selected", False)),
                 "selected": deduped_ids,
+                "hints": retrieval_hints.get(agent_name, []),
             }
 
         if not resolved:
@@ -119,6 +131,7 @@ def build_tool_resolver_node(
         trace["tool"] = tool_trace
         return {
             "resolved_tools_by_agent": resolved,
+            "retrieval_hints_by_agent": retrieval_hints,
             "live_routing_trace": trace,
             "orchestration_phase": "execute",
             "targeted_missing_info": [],

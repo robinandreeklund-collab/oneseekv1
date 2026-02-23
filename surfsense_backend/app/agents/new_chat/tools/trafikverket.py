@@ -32,7 +32,12 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_storningar",
         name="Trafikverket Trafikinfo - Störningar",
-        description="Allmänna störningar i väg- och järnvägstrafik (hinder, avbrott, incidenter).",
+        description=(
+            "Aktiva trafikstörningar på väg och järnväg: hinder, avbrott, signalproblem "
+            "och driftstörningar i realtid. "
+            "INKLUDERAR: störning, trafikhinder, signalfel, spårfel, driftstörning, avbruten trafik. "
+            "EXKLUDERAR: trafikolyckor, köbildning, vägarbeten, hastighetsgränser, väderdata, tågförseningar."
+        ),
         keywords=[
             "störning",
             "störningar",
@@ -48,8 +53,9 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
         ],
         example_queries=[
             "Störningar på E4 vid Södertälje",
-            "Trafikstörningar i Stockholm",
+            "Trafikstörningar i Stockholm just nu",
             "Störningar i tågtrafiken mellan Stockholm och Uppsala",
+            "Är det några hinder på E18 just nu?",
         ],
         base_path="/data.json",
         category="trafikverket_trafikinfo",
@@ -61,7 +67,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_olyckor",
         name="Trafikverket Trafikinfo - Olyckor",
-        description="Olyckor och incidenter i trafiken (väg).",
+        description=(
+            "Trafikolyckor och kollisioner på vägnätet i realtid. "
+            "INKLUDERAR: olycka, trafikolycka, krock, singelolycka, personskada, räddningsinsats. "
+            "EXKLUDERAR: störningar utan olycka, köbildning, vägarbeten, tågproblem, hastighetsgränser."
+        ),
         keywords=[
             "olycka",
             "trafikolycka",
@@ -76,6 +86,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Olycka på E6 vid Kungsbacka",
             "Trafikolyckor i Skåne idag",
             "Olycka på riksväg 40",
+            "Krock på motorvägen",
         ],
         base_path="/data.json",
         category="trafikverket_trafikinfo",
@@ -87,7 +98,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_koer",
         name="Trafikverket Trafikinfo - Köer",
-        description="Köer och framkomlighetsproblem på vägar.",
+        description=(
+            "Köer, trafikstockning och framkomlighetsproblem på vägnätet i realtid. "
+            "INKLUDERAR: kö, trafikstockning, låg hastighet, trängsel, restidsförlängning, stillastående trafik. "
+            "EXKLUDERAR: olyckor, vägarbeten, trafikstörningar utan köpåverkan, tågtrafik."
+        ),
         keywords=[
             "kö",
             "köer",
@@ -102,6 +117,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Var är det köer i Göteborg just nu?",
             "Köer på E18 mot Stockholm",
             "Trafikstockning på Essingeleden",
+            "Hur lång kö är det på E4 söderut?",
         ],
         base_path="/data.json",
         category="trafikverket_trafikinfo",
@@ -113,7 +129,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_trafikinfo_vagarbeten",
         name="Trafikverket Trafikinfo - Vägarbeten",
-        description="Planerade och pågående vägarbeten samt omledningar.",
+        description=(
+            "Pågående och planerade vägarbeten, reparationer och omledningar på vägnätet. "
+            "INKLUDERAR: vägarbete, underhållsarbete, omledning, tillfällig körbaneändring, asfaltering. "
+            "EXKLUDERAR: olyckor, trafikstörningar utan arbete, köer, hastighetsgränser, tågtrafik."
+        ),
         keywords=[
             "vägarbete",
             "vägarbeten",
@@ -128,6 +148,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Vägarbeten på E4 mot Helsingborg",
             "Pågående vägarbeten i Skåne län",
             "Vägarbete på riksväg 50",
+            "Omledning vid E20 idag",
         ],
         base_path="/data.json",
         category="trafikverket_trafikinfo",
@@ -139,7 +160,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_tag_forseningar",
         name="Trafikverket Tåg - Förseningar",
-        description="Tågförseningar per station eller sträcka.",
+        description=(
+            "Försenade tåg per järnvägsstation eller sträcka i realtid. "
+            "INKLUDERAR: försening, försenad avgång, försenad ankomst, förseningsskäl, förseningsminuter. "
+            "EXKLUDERAR: inställda tåg (ej försenade), tidtabell utan försening, stationslista, tågposition."
+        ),
         keywords=[
             "tåg",
             "tågförsening",
@@ -154,6 +179,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Tågförseningar Stockholm C just nu",
             "Försenade tåg mot Göteborg",
             "Förseningar på Västra stambanan",
+            "Hur mycket är tåget försenat?",
         ],
         base_path="/data.json",
         category="trafikverket_tag",
@@ -164,7 +190,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_tag_tidtabell",
         name="Trafikverket Tåg - Tidtabell",
-        description="Tidtabell för tågavgångar och ankomster.",
+        description=(
+            "Tågavgångar och tågankomster per station enligt planerad tidtabell. "
+            "INKLUDERAR: avgångstid, ankomsttid, perrong, spår, tågnummer, operatör. "
+            "EXKLUDERAR: förseningar (se förseningsverktyg), inställda tåg, stationssökning, tågposition."
+        ),
         keywords=[
             "tidtabell",
             "avgång",
@@ -178,6 +208,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Avgångar från Malmö C",
             "Ankomster till Göteborg C",
             "Tidtabell Uppsala C imorgon",
+            "Nästa tåg från Lund till Stockholm",
         ],
         base_path="/data.json",
         category="trafikverket_tag",
@@ -188,7 +219,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_tag_stationer",
         name="Trafikverket Tåg - Stationer",
-        description="Järnvägsstationer och hållplatser för tåg.",
+        description=(
+            "Sök och lista järnvägsstationer och hållplatser i Sverige. "
+            "INKLUDERAR: stationsnamn, stationskod, länsuppgift, koordinater. "
+            "EXKLUDERAR: avgångar, ankomster, förseningar, inställda tåg, trafiktillstånd."
+        ),
         keywords=[
             "station",
             "stationer",
@@ -201,6 +236,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Tågstationer i Uppsala län",
             "Stationer som börjar med 'Sundsvall'",
             "Lista stationer i Stockholm",
+            "Finns det en station i Boden?",
         ],
         base_path="/data.json",
         category="trafikverket_tag",
@@ -212,12 +248,17 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_tag_installda",
         name="Trafikverket Tåg - Inställda",
-        description="Inställda tåg per station eller sträcka.",
+        description=(
+            "Inställda (indragna) tåg per station eller sträcka i realtid. "
+            "INKLUDERAR: inställd avgång, inställd ankomst, ersättningstrafik, indraget tåg. "
+            "EXKLUDERAR: försenade (ej inställda) tåg, normal tidtabell, stationslista, tågposition."
+        ),
         keywords=["inställd", "inställda", "installd", "tåg", "avgång", "ankomst"],
         example_queries=[
             "Inställda tåg i Göteborg",
             "Inställda avgångar Stockholm C",
             "Inställda tåg mot Malmö",
+            "Är tåget inställt?",
         ],
         base_path="/data.json",
         category="trafikverket_tag",
@@ -228,7 +269,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_vag_status",
         name="Trafikverket Väg - Status",
-        description="Trafikflöde och vägstatus för vägsträckor eller regioner.",
+        description=(
+            "Aktuellt trafikflöde och vägstatus för specifika vägsträckor i realtid. "
+            "INKLUDERAR: trafikflöde, fordonshastighet, trafikläge, framkomlighetsindex. "
+            "EXKLUDERAR: störningar, olyckor, vägarbeten, hastighetsgränser, vägunderhållsstatus."
+        ),
         keywords=[
             "vägstatus",
             "vagstatus",
@@ -242,6 +287,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Trafikläge på E4 vid Stockholm",
             "Vägstatus i Västra Götaland",
             "Framkomlighet på Essingeleden",
+            "Hur flödar trafiken på E6?",
         ],
         base_path="/data.json",
         category="trafikverket_vag",
@@ -253,7 +299,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_vag_underhall",
         name="Trafikverket Väg - Underhåll",
-        description="Underhållsinformation och vägskick för vägar.",
+        description=(
+            "Underhållsstatus och vägkvalitet för vägar och beläggning (ej aktiva arbeten). "
+            "INKLUDERAR: beläggningsskick, vägkvalitet, underhållsplan, spårdjup, ojämnhet. "
+            "EXKLUDERAR: aktiva vägarbeten i trafik, olyckor, störningar, trafikflöde."
+        ),
         keywords=[
             "underhåll",
             "underhall",
@@ -266,6 +316,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Planerat underhåll på E18",
             "Underhållsarbeten i Skåne",
             "Vägskick på riksväg 70",
+            "Hur är beläggningen på E45?",
         ],
         base_path="/data.json",
         category="trafikverket_vag",
@@ -277,7 +328,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_vag_hastighet",
         name="Trafikverket Väg - Hastighet",
-        description="Gällande hastighetsgränser (inklusive temporära).",
+        description=(
+            "Gällande och tillfälliga hastighetsgränser på svenska vägar. "
+            "INKLUDERAR: hastighetsgräns, fartgräns, tillfällig hastighet, skyltad maxhastighet. "
+            "EXKLUDERAR: trafikflöde, köer, störningar, vägarbeten, olyckor, vägunderhåll."
+        ),
         keywords=[
             "hastighet",
             "hastighetsgräns",
@@ -290,6 +345,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Hastighetsgräns på E6",
             "Tillfälliga hastigheter på E4",
             "Fartgräns i Stockholm innerstad",
+            "Vad är hastighetsgränsen på riksväg 73?",
         ],
         base_path="/data.json",
         category="trafikverket_vag",
@@ -301,7 +357,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_vag_avstangningar",
         name="Trafikverket Väg - Avstängningar",
-        description="Vägavstängningar, avspärrningar och omledningar.",
+        description=(
+            "Permanenta och tillfälliga vägavstängningar, avspärrningar och bommade vägar. "
+            "INKLUDERAR: fullständig avstängning, avspärrning, bommad väg, stängd körbana. "
+            "EXKLUDERAR: vägarbeten med öppen körning, störningar utan stängning, köer, hastighetssänkning."
+        ),
         keywords=[
             "avstängning",
             "avstängningar",
@@ -315,6 +375,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Avstängningar på E20",
             "Omledning vid väg 73",
             "Vägavstängning i Uppsala",
+            "Är E4 stängd vid Arlanda?",
         ],
         base_path="/data.json",
         category="trafikverket_vag",
@@ -326,7 +387,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_stationer",
         name="Trafikverket Väder - Stationer",
-        description="Väderstationer och mätpunkter kopplade till trafiknät.",
+        description=(
+            "Lista och sök vägväderstationer och mätpunkter längs svenska vägnätet. "
+            "INKLUDERAR: stationsnamn, stationskod, koordinater, länsuppgift, vägnummer. "
+            "EXKLUDERAR: väderobservationer, temperatur, halka, vind (hämta från respektive observationsverktyg)."
+        ),
         keywords=[
             "väderstation",
             "vaderstation",
@@ -340,6 +405,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Väderstationer i Norrbotten",
             "Mätstationer längs E4",
             "Vägväderstationer i Skåne",
+            "Finns det en väderstation vid Sundsvall?",
         ],
         base_path="/data.json",
         category="trafikverket_vader",
@@ -351,7 +417,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_halka",
         name="Trafikverket Väder - Halka",
-        description="Halka, isrisk och väglag kopplat till väder.",
+        description=(
+            "Halka, isrisk och väglag längs vägnätet från trafikverkets väderstationer. "
+            "INKLUDERAR: halka, is, väglag, halkrisk, frystemperatur, snöyta, halt väglag. "
+            "EXKLUDERAR: lufttemperatur (se temperaturverktyg), vinddata, stationslista, trafik."
+        ),
         keywords=[
             "halka",
             "is",
@@ -365,6 +435,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Risk för halka i Västerbotten",
             "Väglag på E45",
             "Halkvarning i Dalarna",
+            "Är det halt på E4 norr om Uppsala?",
         ],
         base_path="/data.json",
         category="trafikverket_vader",
@@ -376,12 +447,17 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_vind",
         name="Trafikverket Väder - Vind",
-        description="Vindinformation och vindbyar för trafikleder.",
+        description=(
+            "Vindstyrka och vindbyar längs trafikleder, broar och kustnära vägar. "
+            "INKLUDERAR: vind, vindstyrka, vindby, vindriktning, stormvarning vid bro. "
+            "EXKLUDERAR: lufttemperatur, halka, nederbörd, trafikflöde, stationslista."
+        ),
         keywords=["vind", "vindstyrka", "vindby", "blåst", "storm", "vader", "väder"],
         example_queries=[
             "Vind på Öresundsbron",
             "Vindstyrka vid Högakustenbron",
             "Blåst i Skåne",
+            "Stormvarning längs E6 i Bohuslän",
         ],
         base_path="/data.json",
         category="trafikverket_vader",
@@ -393,12 +469,17 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_vader_temperatur",
         name="Trafikverket Väder - Temperatur",
-        description="Temperaturer från väderstationer vid vägnätet.",
+        description=(
+            "Luft- och vägtemperatur från Trafikverkets väderstationer vid vägnätet. "
+            "INKLUDERAR: lufttemperatur, vägtemperatur, minusgrader, frysrisk, köldrekord. "
+            "EXKLUDERAR: vinddata, halka (se halkaverktyg), stationslistning, trafikflöde."
+        ),
         keywords=["temperatur", "grader", "minus", "kall", "varm", "vader", "väder"],
         example_queries=[
             "Temperatur på E4 idag",
             "Temperaturer i Dalarna",
             "Minusgrader i Norrbotten",
+            "Hur kallt är det vid E45 i natt?",
         ],
         base_path="/data.json",
         category="trafikverket_vader",
@@ -410,7 +491,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_kameror_lista",
         name="Trafikverket Kameror - Lista",
-        description="Lista trafikkameror per region, plats eller väg.",
+        description=(
+            "Lista och sök trafikkameror per region, plats eller vägnummer. "
+            "INKLUDERAR: kameraförteckning, kamera-id, kameraposition, vägnummer, region. "
+            "EXKLUDERAR: kamerabild/snapshot (se snapshot-verktyg), kamerastatus (se statusverktyg)."
+        ),
         keywords=[
             "kamera",
             "trafikkamera",
@@ -424,6 +509,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Visa trafikkameror i Stockholm",
             "Kameror längs E4",
             "Lista kameror vid Essingeleden",
+            "Vilka kameror finns vid Södertälje?",
         ],
         base_path="/data.json",
         category="trafikverket_kameror",
@@ -435,12 +521,17 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_kameror_snapshot",
         name="Trafikverket Kameror - Snapshot",
-        description="Hämta senaste bild/snapshot från en trafikkamera.",
+        description=(
+            "Hämta aktuell bild (snapshot) från en specifik trafikkamera via kamera-id. "
+            "INKLUDERAR: livebild, senaste stillbild, tidsstämpel, bildkvalitet. "
+            "EXKLUDERAR: kameraförteckning (se lista-verktyg), kamerastatus (se statusverktyg)."
+        ),
         keywords=["kamera", "snapshot", "livebild", "senaste bild", "bild", "trafikkamera"],
         example_queries=[
             "Snapshot för kamera 12345",
             "Senaste bild från kamera E6-01",
             "Livebild kamera vid Slussen",
+            "Visa aktuell bild från kamera vid Essingeleden",
         ],
         base_path="/data.json",
         category="trafikverket_kameror",
@@ -452,12 +543,17 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_kameror_status",
         name="Trafikverket Kameror - Status",
-        description="Status för trafikkamera (online/offline/drift).",
+        description=(
+            "Driftstatus för trafikkamera: online, offline eller felsökningsstatus. "
+            "INKLUDERAR: online/offline-status, drifttillstånd, felinformation, tillgänglighet. "
+            "EXKLUDERAR: kamerabild/snapshot (se snapshot-verktyg), kameraförteckning (se lista-verktyg)."
+        ),
         keywords=["kamera", "status", "online", "offline", "drift", "tillgänglig"],
         example_queries=[
             "Status för kamera 12345",
             "Är kamera E4-10 online?",
             "Driftstatus trafikkamera vid E6",
+            "Fungerar kameran vid Södertälje?",
         ],
         base_path="/data.json",
         category="trafikverket_kameror",
@@ -469,12 +565,17 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_prognos_trafik",
         name="Trafikverket Prognos - Trafik",
-        description="Trafikprognoser per region/väg (belastning/restider).",
+        description=(
+            "Framtida trafikbelastning och restidsprognoser per väg eller region. "
+            "INKLUDERAR: trafikprognos, belastningsprognos, framtida restid, köprognos. "
+            "EXKLUDERAR: realtidsläge (se vägstatus), aktuella störningar, olyckor, aktuella köer."
+        ),
         keywords=["prognos", "trafik", "framtid", "belastning", "restid", "kö"],
         example_queries=[
             "Trafikprognos för E4 nästa vecka",
             "Prognos för trafik i Stockholm",
             "Restidsprognos på E6",
+            "Hur blir trafiken på E18 på fredag?",
         ],
         base_path="/data.json",
         category="trafikverket_prognos",
@@ -486,7 +587,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_prognos_vag",
         name="Trafikverket Prognos - Väg",
-        description="Vägprognoser och planerade arbeten.",
+        description=(
+            "Prognoser och planering för vägåtgärder och väginfrastruktur framöver. "
+            "INKLUDERAR: vägprojekt, planerade vägåtgärder, infrastrukturprognos, framtida underhåll. "
+            "EXKLUDERAR: realtidsstörningar, aktuella vägarbeten (se vägarbeten), olyckor, köer."
+        ),
         keywords=[
             "vägprognos",
             "prognos",
@@ -499,6 +604,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Vägprognos E18",
             "Planerade arbeten kommande vecka",
             "Vägprojekt i Skåne län",
+            "Framtida vägarbeten på E4 nästa år",
         ],
         base_path="/data.json",
         category="trafikverket_prognos",
@@ -510,7 +616,11 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
     TrafikverketToolDefinition(
         tool_id="trafikverket_prognos_tag",
         name="Trafikverket Prognos - Tåg",
-        description="Tågprognoser och förväntade förseningar/positioner.",
+        description=(
+            "Tågprognoser: förväntade förseningar och GPS-positioner för tåg i rörelse. "
+            "INKLUDERAR: tågposition, GPS-läge, beräknad ankomst, förväntad försening. "
+            "EXKLUDERAR: bekräftade förseningar (se förseningsverktyg), normal tidtabell, inställda tåg."
+        ),
         keywords=[
             "tågprognos",
             "prognos",
@@ -524,6 +634,7 @@ TRAFIKVERKET_TOOL_DEFINITIONS: list[TrafikverketToolDefinition] = [
             "Tågprognos Stockholm C",
             "Förväntade förseningar till Göteborg",
             "Var är tåg 12345 nu?",
+            "Beräknad ankomst för tåg 833",
         ],
         base_path="/data.json",
         category="trafikverket_prognos",

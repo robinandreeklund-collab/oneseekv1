@@ -127,6 +127,7 @@ def _format_resolved_tools_context(state: dict[str, Any]) -> str | None:
     resolved = state.get("resolved_tools_by_agent")
     if not isinstance(resolved, dict) or not resolved:
         return None
+    hints_map = state.get("retrieval_hints_by_agent") or {}
     lines: list[str] = []
     for agent_name, tool_ids in list(resolved.items())[:3]:
         normalized_agent = str(agent_name or "").strip()
@@ -139,7 +140,17 @@ def _format_resolved_tools_context(state: dict[str, Any]) -> str | None:
         ][:6]
         if not safe_tools:
             continue
-        lines.append(f"- {normalized_agent}: {', '.join(safe_tools)}")
+        hints = [
+            str(h).strip()
+            for h in (hints_map.get(normalized_agent) or [])
+            if str(h).strip()
+        ][:3]
+        if hints:
+            lines.append(
+                f"- {normalized_agent} [systemrekommendation: {', '.join(hints)}]: {', '.join(safe_tools)}"
+            )
+        else:
+            lines.append(f"- {normalized_agent}: {', '.join(safe_tools)}")
     if not lines:
         return None
     return "<resolved_tools>\n" + "\n".join(lines) + "\n</resolved_tools>"
