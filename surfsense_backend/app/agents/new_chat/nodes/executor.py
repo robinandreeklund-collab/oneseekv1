@@ -63,16 +63,17 @@ def _normalize_message_content(value: Any) -> str:
 
 
 def _sanitize_template_value(value: Any) -> Any:
-    """Recursively sanitize values so strict templates don't receive null."""
+    """Recursively sanitize values so strict templates don't receive null.
+
+    Dict keys whose values are None are replaced with "" rather than dropped.
+    Dropping the key (previous behaviour) caused Jinja templates to see an
+    undefined attribute (which is also NullValue) when they access a required
+    field such as tool_call.function.arguments.
+    """
     if value is None:
         return ""
     if isinstance(value, dict):
-        sanitized: dict[str, Any] = {}
-        for key, item in value.items():
-            if item is None:
-                continue
-            sanitized[str(key)] = _sanitize_template_value(item)
-        return sanitized
+        return {str(k): _sanitize_template_value(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_sanitize_template_value(item) for item in value if item is not None]
     return value
@@ -221,12 +222,22 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
                     )
                     if normalized_tool_call:
                         tool_calls.append(normalized_tool_call)
+            # Sanitize additional_kwargs and strip tool_call related keys so
+            # that LiteLLM cannot fall back to raw (potentially null-containing)
+            # additional_kwargs["tool_calls"] when message.tool_calls is falsy.
+            # LiteLLM prefers message.tool_calls when truthy, but silently uses
+            # additional_kwargs["tool_calls"] otherwise — that raw data may carry
+            # null function.arguments values that crash strict Jinja templates.
+            sanitized_kwargs: dict[str, Any] = _sanitize_template_value(
+                dict(getattr(message, "additional_kwargs", {}) or {})
+            )
+            if isinstance(raw_tool_calls, list):
+                sanitized_kwargs.pop("tool_calls", None)
+                sanitized_kwargs.pop("function_call", None)
             try:
                 updated = {
                     "content": content,
-                    "additional_kwargs": _sanitize_template_value(
-                        dict(getattr(message, "additional_kwargs", {}) or {})
-                    ),
+                    "additional_kwargs": sanitized_kwargs,
                     "response_metadata": _sanitize_template_value(
                         dict(getattr(message, "response_metadata", {}) or {})
                     ),
@@ -239,9 +250,7 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
                     AIMessage(
                         content=content,
                         tool_calls=tool_calls,
-                        additional_kwargs=_sanitize_template_value(
-                            dict(getattr(message, "additional_kwargs", {}) or {})
-                        ),
+                        additional_kwargs=sanitized_kwargs,
                         response_metadata=_sanitize_template_value(
                             dict(getattr(message, "response_metadata", {}) or {})
                         ),
@@ -342,6 +351,16 @@ def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
 
         _flush_tool_lines()
         if isinstance(message, AIMessage):
+            # Strip tool_calls from additional_kwargs so LiteLLM cannot fall
+            # back to raw additional_kwargs["tool_calls"] (which may contain
+            # null values) when message.tool_calls is [] (falsy).
+            retry_kwargs: dict[str, Any] = {
+                k: v
+                for k, v in (
+                    getattr(message, "additional_kwargs", {}) or {}
+                ).items()
+                if k not in {"tool_calls", "function_call"}
+            }
             try:
                 retried.append(
                     message.model_copy(
@@ -352,6 +371,7 @@ def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
                                 )
                             ),
                             "tool_calls": [],
+                            "additional_kwargs": retry_kwargs,
                         }
                     )
                 )
@@ -363,9 +383,7 @@ def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
                                 getattr(message, "content", "")
                             )
                         ),
-                        additional_kwargs=dict(
-                            getattr(message, "additional_kwargs", {}) or {}
-                        ),
+                        additional_kwargs=retry_kwargs,
                         response_metadata=dict(
                             getattr(message, "response_metadata", {}) or {}
                         ),
