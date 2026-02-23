@@ -103,7 +103,58 @@ Denna PR innehaller en stor uppgradering av admin-ytan for metadata-kvalitet och
   - evolution (aldre vs nyare audit med delta/kommentar)
   - ranking stability per tool mellan rundor
 
-### 2) Ranking stability + dual embeddings
+### 2) Kontrastiva tool-descriptions + namespace-aware exposure
+
+Ny optimering av retrieval-systemet for att losa embedding-kollisioner mellan tools som delar domanvokabular (t.ex. 22 Trafikverket-tools som alla handlar om "trafik").
+
+#### Kontrastiva descriptions
+
+Tools inom samma namespace-kluster far nu en `Excludes:`-sektion i sin embedding-text som pushar isar vektorer:
+
+```text
+trafikverket_trafikinfo_koer
+Koer, trafikstockning och trangsel pa vagar i realtid.
+Keywords: ko, trafikstockning, trangsel, framkomlighet
+Examples: Ar det ko pa E4? | Hur ser trafiklaget ut i Goteborg?
+Excludes: olycka, krock, storning, hinder, vagarbete, omledning, hastighet, prognos
+```
+
+- `TOOL_CONTRASTIVE_EXCLUSIONS` i `bigtool_store.py`: map med exkluderingstermer per namespace-kluster
+- `build_contrastive_description()`: bygger kontrastiv text for embedding + reranker
+- Tacker alla Trafikverket-kluster: trafikinfo, tag, vag, vader, kameror, prognos
+- Anvands av bade semantic embedding och reranker (cross-encoder)
+
+#### Namespace-aware tool exposure
+
+Istallet for att retrieval filtrerar till top-5 tools, exponeras nu alla tools i agentens namespace direkt till LLM:en med retrieval-scores som guidance:
+
+- `AGENT_NAMESPACE_MAP`: definierar vilka agenter som har begransade namespaces (trafik, weather, statistics, etc.)
+- `get_namespace_tool_ids()`: returnerar alla tool-IDs i en agents namespace
+- `get_namespace_tool_ids_with_retrieval_hints()`: returnerar alla tools + retrieval-score-breakdown som hints
+- Troskel: max 30 tools per namespace, over det faller systemet tillbaka till retrieval-filtrering
+- `tool_resolver` far ny `namespace_tool_ids_fn` callback och anvander `namespace_full` mode
+
+**Princip**: Retrieval-systemet bestammer *ranking* (vilka tools systemet tror ar bast), men LLM:en far se *alla* och gora slutvalet.
+
+#### Eval-forbattringar
+
+- `build_namespace_confusion_matrix()`: per-namespace confusion matrix (expected vs predicted) i eval-output
+- `generate_contrastive_probes()`: auto-genererar hard-negative testfall fran tools' example_queries
+- Ny metrik `namespace_confusion` i eval metrics-output
+
+#### Competitor tracking i retrieval feedback
+
+- `FeedbackSignal.competitor_wins`: sparar vilken competitor-tool som vann vid failures
+- `record(competitor_tool_id=...)`: ny parameter for att logga vilken tool som valdes istallet
+- `snapshot()` inkluderar `top_competitors` per signal for debugging
+
+**Filer:**
+- `bigtool_store.py`: `TOOL_CONTRASTIVE_EXCLUSIONS`, `build_contrastive_description()`, `AGENT_NAMESPACE_MAP`, `get_namespace_tool_ids()`, `get_namespace_tool_ids_with_retrieval_hints()`
+- `nodes/tool_resolver.py`: `namespace_tool_ids_fn`, `namespace_full` mode
+- `tool_evaluation_service.py`: `build_namespace_confusion_matrix()`, `generate_contrastive_probes()`
+- `retrieval_feedback.py`: `competitor_wins`, `record_competitor()`, `top_competitors`
+
+### 3) Ranking stability + dual embeddings
 
 - Tool retrieval har nu separata embeddings:
   - **semantic vector** (description/examples)
@@ -421,9 +472,9 @@ Smart retrieval beraknar flera komponenter:
 - keyword-traf
 - beskrivningstraf
 - example-query-traf
-- embedding-likhet (semantic + structural)
+- embedding-likhet (semantic + structural, med kontrastiva descriptions)
 - namespace-boost
-- retrieval-feedback-boost
+- retrieval-feedback-boost (med competitor tracking)
 - vector recall top-K (separat recall-lager fore hybrid/rerank)
 
 Pre-score:
@@ -437,7 +488,20 @@ pre_rerank_score =
   + retrieval_feedback_boost
 ```
 
-Sedan rerankas kandidater med `RerankerService` och exponerar detaljer i breakdown/trace.
+Sedan rerankas kandidater med `RerankerService` (anvander kontrastiv text med `Excludes:`-sektion nar tillganglig) och exponerar detaljer i breakdown/trace.
+
+#### Namespace-aware tool exposure
+
+For begransade agenter (trafik, weather, etc.) exponeras alla tools i agentens namespace till LLM:en med retrieval-scores som guidance-hints:
+
+```text
+agent=trafik
+  -> alla 22 trafikverket-tools synliga for LLM
+  -> retrieval-systemet bifogar ranking som hints (top1/top2/confidence)
+  -> LLM:en gor slutvalet med full kontext
+```
+
+Troskel: max 30 tools per namespace for full exposure, annars retrieval-filtrering.
 
 I live-rollouten kan samma signaler anvandas for fasstyrd gating:
 
@@ -546,6 +610,7 @@ Detta ger praktisk "fran fraga till svar"-transparens, inklusive verktygsinput/v
 - success/failure-signal per query/tool
 - score -> boost/penalty i retrievalrankingen
 - stanger loopen mellan utfall och framtida verktygsval
+- competitor tracking: sparar vilken tool som vann vid failures for att identifiera systematiska kollisioner
 
 ### Speculative reuse (Fas 4)
 
@@ -598,6 +663,8 @@ Evalsystemet kan generera:
 - retrieval tuning-forslag
 - intent-definition-forslag
 - stage-jamforelse med trend/guidance
+- **namespace confusion matrix** (per-namespace expected-vs-predicted matris)
+- **kontrastiva probes** (auto-genererade hard-negative testfall for namespace-grannar)
 
 ---
 
@@ -846,8 +913,12 @@ OneSeek ar nu en hybrid, transparent och eval-driven agentplattform med:
 - semantisk context compaction med `rolling_context_summary`
 - selektiv cross-session memory-injektion separerad fran aktiv session-kontekst
 - dynamiskt agent- och verktygsval med Bigtool namespaces + rerank
+- **kontrastiva tool-descriptions** med `Excludes:`-sektion for embedding-separation
+- **namespace-aware tool exposure** som exponerar alla namespace-tools till LLM med retrieval-hints
 - metadata audit med collision-analys, autonomous loop och granular diagnostik
 - dual semantic/structural embeddings och ranking stability-matris for tool-lagret
+- **namespace confusion matrix** och **kontrastiva probes** i eval-systemet
+- **competitor tracking** i retrieval feedback for att spara kollisionskallor
 - fasstyrd live-rollout (shadow -> tool gate -> agent auto -> adaptive -> intent finetune)
 - realtidsdata och compare-subgraf
 - LangSmith + intern trace for full observability
