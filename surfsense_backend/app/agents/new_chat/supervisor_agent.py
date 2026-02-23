@@ -4552,7 +4552,7 @@ async def create_supervisor_agent(
         critic_input = f"Uppgift: {task}\nSvar: {response_text}"
         try:
             critic_msg = await llm.ainvoke(
-                [SystemMessage(content=critic_prompt), HumanMessage(content=critic_input)]
+                [SystemMessage(content=str(critic_prompt or "")), HumanMessage(content=str(critic_input or ""))]
             )
             critic_text = str(getattr(critic_msg, "content", "") or "").strip()
             critic_payload = _safe_json(critic_text)
