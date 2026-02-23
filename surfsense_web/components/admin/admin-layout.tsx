@@ -3,18 +3,25 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { 
-	Settings, 
-	MessageSquare, 
-	Database, 
+import {
+	Settings,
+	MessageSquare,
+	Database,
 	Wrench,
 	ToggleLeft,
-	ChevronRight 
+	ChevronRight,
+	GitBranch,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const ADMIN_NAV_ITEMS = [
+	{
+		title: "Flow Overview",
+		href: "/admin/flow",
+		icon: GitBranch,
+		description: "Visuell vy av intent \u2192 agent \u2192 tool",
+	},
 	{
 		title: "Agent Prompts",
 		href: "/admin/prompts",
@@ -25,7 +32,7 @@ const ADMIN_NAV_ITEMS = [
 		title: "Tool Settings",
 		href: "/admin/tools",
 		icon: Wrench,
-		description: "Hantera verktygsmetadata och inställningar",
+		description: "Hantera verktygsmetadata och inst\u00e4llningar",
 	},
 	{
 		title: "Tool Lifecycle",
