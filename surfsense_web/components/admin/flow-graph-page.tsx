@@ -34,9 +34,21 @@ import { ToolGraphNode } from "./flow-nodes/tool-node";
 import { ToolGroupNode } from "./flow-nodes/tool-group-node";
 import { PipelineGraphNodeMemo } from "./flow-nodes/pipeline-node";
 import { FlowDetailPanel } from "./flow-detail-panel";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+	DialogTrigger,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 
 type ViewMode = "pipeline" | "routing";
@@ -400,6 +412,17 @@ export function FlowGraphPage() {
 	const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([] as Edge[]);
 	const [selectedNode, setSelectedNode] = useState<SelectedNodeData>(null);
 	const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+	const [showCreateAgent, setShowCreateAgent] = useState(false);
+	const [newAgent, setNewAgent] = useState({
+		agent_id: "",
+		label: "",
+		description: "",
+		keywords: "",
+		prompt_key: "",
+		namespace: "agents/",
+		routes: "",
+	});
+	const [creatingAgent, setCreatingAgent] = useState(false);
 
 	const fetchData = useCallback(async () => {
 		setLoading(true);
@@ -417,6 +440,35 @@ export function FlowGraphPage() {
 			setLoading(false);
 		}
 	}, []);
+
+	const handleCreateAgent = useCallback(async () => {
+		const agentId = newAgent.agent_id.trim().toLowerCase();
+		if (!agentId) {
+			toast.error("Agent ID krävs");
+			return;
+		}
+		setCreatingAgent(true);
+		try {
+			await adminFlowGraphApiService.upsertAgent({
+				agent_id: agentId,
+				label: newAgent.label.trim() || agentId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+				description: newAgent.description.trim(),
+				keywords: newAgent.keywords.split(",").map((k) => k.trim()).filter(Boolean),
+				prompt_key: newAgent.prompt_key.trim() || undefined,
+				namespace: newAgent.namespace.split("/").map((s) => s.trim()).filter(Boolean),
+				routes: newAgent.routes.split(",").map((r) => r.trim()).filter(Boolean),
+				flow_tools: [],
+			});
+			toast.success(`Agent "${agentId}" skapad`);
+			setShowCreateAgent(false);
+			setNewAgent({ agent_id: "", label: "", description: "", keywords: "", prompt_key: "", namespace: "agents/", routes: "" });
+			fetchData();
+		} catch {
+			toast.error("Kunde inte skapa agent");
+		} finally {
+			setCreatingAgent(false);
+		}
+	}, [newAgent, fetchData]);
 
 	const totalToolCount = useMemo(() => {
 		if (!catalogData) return graphData?.tools.length ?? 0;
@@ -710,6 +762,100 @@ export function FlowGraphPage() {
 										Verktyg ({totalToolCount})
 									</span>
 								</div>
+							)}
+
+							{viewMode === "routing" && (
+								<Dialog open={showCreateAgent} onOpenChange={setShowCreateAgent}>
+									<DialogTrigger asChild>
+										<Button variant="outline" size="sm" className="h-7 text-xs px-2.5">
+											<Plus className="h-3.5 w-3.5 mr-1" /> Agent
+										</Button>
+									</DialogTrigger>
+									<DialogContent className="sm:max-w-[440px]">
+										<DialogHeader>
+											<DialogTitle>Skapa ny agent</DialogTitle>
+											<DialogDescription>
+												Fyll i fälten nedan. Du kan tilldela verktyg och redigera detaljer efteråt.
+											</DialogDescription>
+										</DialogHeader>
+										<div className="space-y-3 py-2">
+											<div className="space-y-1">
+												<Label className="text-xs">Agent ID</Label>
+												<Input
+													value={newAgent.agent_id}
+													onChange={(e) => setNewAgent((p) => ({ ...p, agent_id: e.target.value }))}
+													className="text-xs h-8"
+													placeholder="t.ex. skolverket"
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label className="text-xs">Label</Label>
+												<Input
+													value={newAgent.label}
+													onChange={(e) => setNewAgent((p) => ({ ...p, label: e.target.value }))}
+													className="text-xs h-8"
+													placeholder="Skolverket"
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label className="text-xs">Beskrivning</Label>
+												<Textarea
+													value={newAgent.description}
+													onChange={(e) => setNewAgent((p) => ({ ...p, description: e.target.value }))}
+													className="text-xs min-h-[60px]"
+													placeholder="Beskriv vad agenten gör..."
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label className="text-xs">Nyckelord (komma-separerade)</Label>
+												<Input
+													value={newAgent.keywords}
+													onChange={(e) => setNewAgent((p) => ({ ...p, keywords: e.target.value }))}
+													className="text-xs h-8"
+													placeholder="skolverket, skola, laroplan, amnesplan"
+												/>
+											</div>
+											<div className="grid grid-cols-2 gap-2">
+												<div className="space-y-1">
+													<Label className="text-xs">Prompt-nyckel</Label>
+													<Input
+														value={newAgent.prompt_key}
+														onChange={(e) => setNewAgent((p) => ({ ...p, prompt_key: e.target.value }))}
+														className="text-xs h-8"
+														placeholder="skolverket"
+													/>
+												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Namespace</Label>
+													<Input
+														value={newAgent.namespace}
+														onChange={(e) => setNewAgent((p) => ({ ...p, namespace: e.target.value }))}
+														className="text-xs h-8"
+														placeholder="agents/skolverket"
+													/>
+												</div>
+											</div>
+											<div className="space-y-1">
+												<Label className="text-xs">Routes / intents (komma-separerade)</Label>
+												<Input
+													value={newAgent.routes}
+													onChange={(e) => setNewAgent((p) => ({ ...p, routes: e.target.value }))}
+													className="text-xs h-8"
+													placeholder="kunskap, jämförelse"
+												/>
+											</div>
+										</div>
+										<DialogFooter>
+											<Button variant="ghost" size="sm" onClick={() => setShowCreateAgent(false)}>
+												Avbryt
+											</Button>
+											<Button size="sm" onClick={handleCreateAgent} disabled={creatingAgent}>
+												{creatingAgent ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1.5" />}
+												Skapa agent
+											</Button>
+										</DialogFooter>
+									</DialogContent>
+								</Dialog>
 							)}
 
 							<Button

@@ -384,8 +384,72 @@ class UpdateIntentRequest(BaseModel):
     enabled: bool | None = None
 
 
+class UpsertAgentRequest(BaseModel):
+    agent_id: str
+    label: str | None = None
+    description: str | None = None
+    keywords: list[str] | None = None
+    prompt_key: str | None = None
+    namespace: list[str] | None = None
+    routes: list[str] | None = None
+    flow_tools: list[FlowToolEntry] | None = None
+
+
+class DeleteAgentRequest(BaseModel):
+    agent_id: str
+
+
 class DeleteIntentRequest(BaseModel):
     intent_id: str
+
+
+@router.put("/flow-graph/agent")
+async def upsert_agent(
+    request: UpsertAgentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Create or update an agent definition."""
+    await _require_admin(session, user)
+    payload: dict[str, Any] = {}
+    if request.label is not None:
+        payload["label"] = request.label
+    if request.description is not None:
+        payload["description"] = request.description
+    if request.keywords is not None:
+        payload["keywords"] = request.keywords
+    if request.prompt_key is not None:
+        payload["prompt_key"] = request.prompt_key
+    if request.namespace is not None:
+        payload["namespace"] = request.namespace
+    if request.routes is not None:
+        payload["routes"] = request.routes
+    if request.flow_tools is not None:
+        payload["flow_tools"] = [t.model_dump() for t in request.flow_tools]
+    await upsert_global_agent_metadata_overrides(
+        session,
+        [(request.agent_id, payload)],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/flow-graph/agent")
+async def delete_agent(
+    request: DeleteAgentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Delete an agent definition override (reverts to default if exists)."""
+    await _require_admin(session, user)
+    await upsert_global_agent_metadata_overrides(
+        session,
+        [(request.agent_id, None)],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
 
 
 @router.patch("/flow-graph/agent-routes")

@@ -56,6 +56,31 @@ class AdminFlowGraphApiService {
 			{ body: { intent_id: intentId } }
 		);
 	};
+
+	upsertAgent = async (agent: {
+		agent_id: string;
+		label?: string;
+		description?: string;
+		keywords?: string[];
+		prompt_key?: string;
+		namespace?: string[];
+		routes?: string[];
+		flow_tools?: FlowToolEntry[];
+	}) => {
+		return baseApiService.put(
+			`/api/v1/admin/flow-graph/agent`,
+			statusResponse,
+			{ body: agent }
+		);
+	};
+
+	deleteAgent = async (agentId: string) => {
+		return baseApiService.delete(
+			`/api/v1/admin/flow-graph/agent`,
+			statusResponse,
+			{ body: { agent_id: agentId } }
+		);
+	};
 }
 
 export const adminFlowGraphApiService = new AdminFlowGraphApiService();

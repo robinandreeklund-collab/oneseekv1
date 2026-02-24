@@ -492,11 +492,16 @@ function AgentDetail({
 	toolCount: number;
 	onDataChanged?: () => void;
 }) {
-	const [editingRoutes, setEditingRoutes] = useState(false);
-	const [selectedRoutes, setSelectedRoutes] = useState<string[]>(agent.routes ?? []);
-	const [savingRoutes, setSavingRoutes] = useState(false);
-	const [editingDesc, setEditingDesc] = useState(false);
+	const [editing, setEditing] = useState(false);
+	const [label, setLabel] = useState(agent.label);
 	const [description, setDescription] = useState(agent.description);
+	const [keywords, setKeywords] = useState(agent.keywords.join(", "));
+	const [promptKey, setPromptKey] = useState(agent.prompt_key);
+	const [namespace, setNamespace] = useState(agent.namespace.join("/"));
+	const [selectedRoutes, setSelectedRoutes] = useState<string[]>(agent.routes ?? []);
+	const [saving, setSaving] = useState(false);
+	const [deleting, setDeleting] = useState(false);
+	const [confirmDelete, setConfirmDelete] = useState(false);
 
 	const handleToggleRoute = useCallback((route: string, checked: boolean) => {
 		setSelectedRoutes((prev) =>
@@ -504,19 +509,41 @@ function AgentDetail({
 		);
 	}, []);
 
-	const handleSaveRoutes = useCallback(async () => {
-		setSavingRoutes(true);
+	const handleSave = useCallback(async () => {
+		setSaving(true);
 		try {
-			await adminFlowGraphApiService.updateAgentRoutes(agent.agent_id, selectedRoutes);
-			toast.success("Routes sparade");
-			setEditingRoutes(false);
+			await adminFlowGraphApiService.upsertAgent({
+				agent_id: agent.agent_id,
+				label,
+				description,
+				keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+				prompt_key: promptKey || undefined,
+				namespace: namespace.split("/").map((s) => s.trim()).filter(Boolean),
+				routes: selectedRoutes,
+			});
+			toast.success("Agent sparad");
+			setEditing(false);
 			onDataChanged?.();
 		} catch {
-			toast.error("Kunde inte spara routes");
+			toast.error("Kunde inte spara agent");
 		} finally {
-			setSavingRoutes(false);
+			setSaving(false);
 		}
-	}, [agent.agent_id, selectedRoutes, onDataChanged]);
+	}, [agent.agent_id, label, description, keywords, promptKey, namespace, selectedRoutes, onDataChanged]);
+
+	const handleDelete = useCallback(async () => {
+		setDeleting(true);
+		try {
+			await adminFlowGraphApiService.deleteAgent(agent.agent_id);
+			toast.success("Agent borttagen");
+			onDataChanged?.();
+		} catch {
+			toast.error("Kunde inte ta bort agent");
+		} finally {
+			setDeleting(false);
+			setConfirmDelete(false);
+		}
+	}, [agent.agent_id, onDataChanged]);
 
 	// Determine the prompt key for this agent
 	const agentPromptKey = agent.prompt_key
@@ -556,106 +583,128 @@ function AgentDetail({
 
 			<Separator />
 
-			{/* Routes (editable) */}
-			<div className="space-y-2">
-				<div className="flex items-center justify-between">
-					<Label className="text-xs flex items-center gap-1.5">
-						<Zap className="h-3 w-3" /> Tillhör intents
-					</Label>
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-6 text-xs px-2"
-						onClick={() => {
-							if (editingRoutes) {
-								setSelectedRoutes(agent.routes ?? []);
-							}
-							setEditingRoutes(!editingRoutes);
-						}}
-					>
-						{editingRoutes ? "Avbryt" : "Redigera"}
+			{/* Edit mode toggle */}
+			<div className="flex items-center justify-between">
+				<Label className="text-xs font-semibold">Redigera agent</Label>
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-6 text-xs px-2"
+					onClick={() => {
+						if (editing) {
+							setLabel(agent.label);
+							setDescription(agent.description);
+							setKeywords(agent.keywords.join(", "));
+							setPromptKey(agent.prompt_key);
+							setNamespace(agent.namespace.join("/"));
+							setSelectedRoutes(agent.routes ?? []);
+						}
+						setEditing(!editing);
+					}}
+				>
+					{editing ? "Avbryt" : "Redigera"}
+				</Button>
+			</div>
+
+			{editing ? (
+				<div className="space-y-3">
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground">Label</Label>
+						<Input value={label} onChange={(e) => setLabel(e.target.value)} className="text-xs h-8" />
+					</div>
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground">Beskrivning</Label>
+						<Textarea
+							value={description}
+							onChange={(e) => setDescription(e.target.value)}
+							className="text-xs min-h-[80px] font-mono leading-5"
+							placeholder="Beskriv agenten..."
+						/>
+					</div>
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground">Nyckelord (komma-separerade)</Label>
+						<Textarea
+							value={keywords}
+							onChange={(e) => setKeywords(e.target.value)}
+							className="text-xs min-h-[60px]"
+						/>
+					</div>
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground">Prompt-nyckel</Label>
+						<Input value={promptKey} onChange={(e) => setPromptKey(e.target.value)} className="text-xs h-8" placeholder="t.ex. weather, code, knowledge" />
+					</div>
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground">Namespace (sökväg med /)</Label>
+						<Input value={namespace} onChange={(e) => setNamespace(e.target.value)} className="text-xs h-8" placeholder="agents/weather" />
+					</div>
+					{/* Routes */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground">Tillhör intents</Label>
+						<div className="space-y-1.5">
+							{ALL_ROUTES.map((route) => (
+								<div key={route} className="flex items-center gap-2">
+									<Checkbox
+										id={`agent-route-${route}`}
+										checked={selectedRoutes.includes(route)}
+										onCheckedChange={(checked) =>
+											handleToggleRoute(route, checked === true)
+										}
+									/>
+									<label htmlFor={`agent-route-${route}`} className="text-xs cursor-pointer">
+										{route}
+									</label>
+								</div>
+							))}
+						</div>
+					</div>
+					<Button size="sm" className="h-7 text-xs w-full" onClick={handleSave} disabled={saving}>
+						{saving ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Save className="h-3 w-3 mr-1.5" />}
+						Spara agent
 					</Button>
 				</div>
-				{editingRoutes ? (
+			) : (
+				<>
+					{/* Routes (read-only) */}
 					<div className="space-y-2">
-						{ALL_ROUTES.map((route) => (
-							<div key={route} className="flex items-center gap-2">
-								<Checkbox
-									id={`route-${route}`}
-									checked={selectedRoutes.includes(route)}
-									onCheckedChange={(checked) =>
-										handleToggleRoute(route, checked === true)
-									}
-								/>
-								<label htmlFor={`route-${route}`} className="text-xs cursor-pointer">
-									{route}
-								</label>
-							</div>
-						))}
-						<Button
-							size="sm"
-							className="h-7 text-xs"
-							onClick={handleSaveRoutes}
-							disabled={savingRoutes}
-						>
-							{savingRoutes ? (
-								<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+						<Label className="text-xs flex items-center gap-1.5">
+							<Zap className="h-3 w-3" /> Tillhör intents
+						</Label>
+						<div className="flex flex-wrap gap-1">
+							{(agent.routes ?? []).length > 0 ? (
+								(agent.routes ?? []).map((r) => (
+									<Badge key={r} variant="secondary" className="text-[10px] px-1.5 py-0">{r}</Badge>
+								))
 							) : (
-								<Save className="h-3 w-3 mr-1.5" />
+								<span className="text-xs text-muted-foreground">Inga intents</span>
 							)}
-							Spara
-						</Button>
+						</div>
 					</div>
-				) : (
-					<div className="flex flex-wrap gap-1">
-						{(agent.routes ?? []).length > 0 ? (
-							(agent.routes ?? []).map((r) => (
-								<Badge key={r} variant="secondary" className="text-[10px] px-1.5 py-0">{r}</Badge>
-							))
-						) : (
-							<span className="text-xs text-muted-foreground">Inga intents</span>
-						)}
+
+					<Separator />
+
+					{/* Description */}
+					<div className="space-y-2">
+						<Label className="text-xs flex items-center gap-1.5">
+							<FileText className="h-3 w-3" /> Beskrivning
+						</Label>
+						<p className="text-xs text-muted-foreground whitespace-pre-wrap">
+							{agent.description || "Ingen beskrivning"}
+						</p>
 					</div>
-				)}
-			</div>
 
-			<Separator />
-
-			{/* Description */}
-			<div className="space-y-2">
-				<div className="flex items-center justify-between">
-					<Label className="text-xs flex items-center gap-1.5">
-						<FileText className="h-3 w-3" /> Beskrivning
-					</Label>
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-6 text-xs px-2"
-						onClick={() => setEditingDesc(!editingDesc)}
-					>
-						{editingDesc ? "Stäng" : "Visa"}
-					</Button>
-				</div>
-				{editingDesc ? (
-					<p className="text-xs text-muted-foreground whitespace-pre-wrap rounded-md border bg-muted/40 p-2">
-						{agent.description || "Ingen beskrivning"}
-					</p>
-				) : (
-					<p className="text-xs text-muted-foreground line-clamp-2">{agent.description || "Ingen beskrivning"}</p>
-				)}
-			</div>
-
-			{/* Keywords */}
-			<div className="space-y-2">
-				<Label className="text-xs flex items-center gap-1.5">
-					<Tag className="h-3 w-3" /> Nyckelord
-				</Label>
-				<div className="flex flex-wrap gap-1">
-					{agent.keywords.map((kw) => (
-						<Badge key={kw} variant="outline" className="text-[10px] px-1.5 py-0">{kw}</Badge>
-					))}
-				</div>
-			</div>
+					{/* Keywords */}
+					<div className="space-y-2">
+						<Label className="text-xs flex items-center gap-1.5">
+							<Tag className="h-3 w-3" /> Nyckelord
+						</Label>
+						<div className="flex flex-wrap gap-1">
+							{agent.keywords.map((kw) => (
+								<Badge key={kw} variant="outline" className="text-[10px] px-1.5 py-0">{kw}</Badge>
+							))}
+						</div>
+					</div>
+				</>
+			)}
 
 			{/* Agent Prompt */}
 			{agentPromptKey && (
@@ -663,6 +712,46 @@ function AgentDetail({
 					<Separator />
 					<InlinePromptEditor promptKey={agentPromptKey} onSaved={onDataChanged} />
 				</>
+			)}
+
+			<Separator />
+
+			{/* Delete */}
+			{!confirmDelete ? (
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-7 text-xs text-destructive hover:text-destructive w-full"
+					onClick={() => setConfirmDelete(true)}
+				>
+					<Trash2 className="h-3 w-3 mr-1.5" /> Ta bort agent
+				</Button>
+			) : (
+				<div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-2">
+					<p className="text-xs text-destructive">
+						Bekräfta borttagning av <strong>{agent.label}</strong>?
+					</p>
+					<div className="flex gap-2">
+						<Button
+							variant="destructive"
+							size="sm"
+							className="h-7 text-xs flex-1"
+							onClick={handleDelete}
+							disabled={deleting}
+						>
+							{deleting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Trash2 className="h-3 w-3 mr-1.5" />}
+							Ja, ta bort
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 text-xs"
+							onClick={() => setConfirmDelete(false)}
+						>
+							Avbryt
+						</Button>
+					</div>
+				</div>
 			)}
 		</div>
 	);
