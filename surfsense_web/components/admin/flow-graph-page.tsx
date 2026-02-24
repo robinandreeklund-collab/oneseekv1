@@ -501,6 +501,10 @@ export function FlowGraphPage() {
 							setEdges(buildRoutingEdges(graphData));
 						}
 					}}
+					onDataChanged={() => {
+						setSelectedNode(null);
+						fetchData();
+					}}
 				/>
 			)}
 		</div>

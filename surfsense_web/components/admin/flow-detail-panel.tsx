@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
 	X,
 	Zap,
@@ -9,9 +9,11 @@ import {
 	Tag,
 	FileText,
 	Hash,
-	ArrowRight,
 	Save,
 	ExternalLink,
+	Plus,
+	Trash2,
+	Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,13 +21,18 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import Link from "next/link";
+import { toast } from "sonner";
 import type {
 	FlowIntentNode,
 	FlowAgentNode,
 	FlowToolNode,
 	PipelineNode,
 } from "@/contracts/types/admin-flow-graph.types";
+import { adminFlowGraphApiService, type FlowToolEntry } from "@/lib/apis/admin-flow-graph-api.service";
+
+const ALL_ROUTES = ["kunskap", "skapande", "jämförelse", "konversation"];
 
 type SelectedNodeData =
 	| { type: "intent"; data: FlowIntentNode }
@@ -40,6 +47,7 @@ interface FlowDetailPanelProps {
 		toolsPerAgent: Record<string, number>;
 	};
 	onClose: () => void;
+	onDataChanged?: () => void;
 }
 
 function IntentDetail({
@@ -141,8 +149,8 @@ function IntentDetail({
 			<Separator />
 
 			{/* Quick link */}
-			<Link href="/admin/prompts" className="flex items-center gap-2 text-xs text-primary hover:underline">
-				<ExternalLink className="h-3 w-3" /> Redigera intent i detalj
+			<Link href="/admin/tools" className="flex items-center gap-2 text-xs text-primary hover:underline">
+				<ExternalLink className="h-3 w-3" /> Redigera intent i Metadata Katalog
 			</Link>
 		</div>
 	);
@@ -151,12 +159,37 @@ function IntentDetail({
 function AgentDetail({
 	agent,
 	toolCount,
+	onDataChanged,
 }: {
 	agent: FlowAgentNode;
 	toolCount: number;
+	onDataChanged?: () => void;
 }) {
 	const [editing, setEditing] = useState(false);
 	const [description, setDescription] = useState(agent.description);
+	const [editingRoutes, setEditingRoutes] = useState(false);
+	const [selectedRoutes, setSelectedRoutes] = useState<string[]>(agent.routes ?? []);
+	const [savingRoutes, setSavingRoutes] = useState(false);
+
+	const handleToggleRoute = useCallback((route: string, checked: boolean) => {
+		setSelectedRoutes((prev) =>
+			checked ? [...prev, route] : prev.filter((r) => r !== route)
+		);
+	}, []);
+
+	const handleSaveRoutes = useCallback(async () => {
+		setSavingRoutes(true);
+		try {
+			await adminFlowGraphApiService.updateAgentRoutes(agent.agent_id, selectedRoutes);
+			toast.success("Routes sparade");
+			setEditingRoutes(false);
+			onDataChanged?.();
+		} catch {
+			toast.error("Kunde inte spara routes");
+		} finally {
+			setSavingRoutes(false);
+		}
+	}, [agent.agent_id, selectedRoutes, onDataChanged]);
 
 	return (
 		<div className="space-y-4">
@@ -191,6 +224,73 @@ function AgentDetail({
 					<span className="text-xs text-muted-foreground">Kopplade verktyg</span>
 					<span className="text-xs font-mono">{toolCount}</span>
 				</div>
+			</div>
+
+			<Separator />
+
+			{/* Routes (editable) */}
+			<div className="space-y-2">
+				<div className="flex items-center justify-between">
+					<Label className="text-xs flex items-center gap-1.5">
+						<Zap className="h-3 w-3" /> Tillhör intents
+					</Label>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-6 text-xs px-2"
+						onClick={() => {
+							if (editingRoutes) {
+								setSelectedRoutes(agent.routes ?? []);
+							}
+							setEditingRoutes(!editingRoutes);
+						}}
+					>
+						{editingRoutes ? "Avbryt" : "Redigera"}
+					</Button>
+				</div>
+				{editingRoutes ? (
+					<div className="space-y-2">
+						{ALL_ROUTES.map((route) => (
+							<div key={route} className="flex items-center gap-2">
+								<Checkbox
+									id={`route-${route}`}
+									checked={selectedRoutes.includes(route)}
+									onCheckedChange={(checked) =>
+										handleToggleRoute(route, checked === true)
+									}
+								/>
+								<label htmlFor={`route-${route}`} className="text-xs cursor-pointer">
+									{route}
+								</label>
+							</div>
+						))}
+						<Button
+							size="sm"
+							className="h-7 text-xs"
+							onClick={handleSaveRoutes}
+							disabled={savingRoutes}
+						>
+							{savingRoutes ? (
+								<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+							) : (
+								<Save className="h-3 w-3 mr-1.5" />
+							)}
+							Spara
+						</Button>
+					</div>
+				) : (
+					<div className="flex flex-wrap gap-1">
+						{(agent.routes ?? []).length > 0 ? (
+							(agent.routes ?? []).map((r) => (
+								<Badge key={r} variant="secondary" className="text-[10px] px-1.5 py-0">
+									{r}
+								</Badge>
+							))
+						) : (
+							<span className="text-xs text-muted-foreground">Inga intents</span>
+						)}
+					</div>
+				)}
 			</div>
 
 			<Separator />
@@ -257,7 +357,43 @@ function AgentDetail({
 	);
 }
 
-function ToolDetail({ tool }: { tool: FlowToolNode }) {
+function ToolDetail({
+	tool,
+	allAgents,
+	onDataChanged,
+}: {
+	tool: FlowToolNode;
+	allAgents: FlowAgentNode[];
+	onDataChanged?: () => void;
+}) {
+	const [editingAgent, setEditingAgent] = useState(false);
+	const [selectedAgentId, setSelectedAgentId] = useState(tool.agent_id);
+	const [saving, setSaving] = useState(false);
+
+	const handleMoveToAgent = useCallback(async () => {
+		if (selectedAgentId === tool.agent_id) {
+			setEditingAgent(false);
+			return;
+		}
+		setSaving(true);
+		try {
+			// Remove tool from old agent
+			const oldAgent = allAgents.find((a) => a.agent_id === tool.agent_id);
+			if (oldAgent) {
+				const oldTools = (oldAgent as FlowAgentNode & { flow_tools?: FlowToolEntry[] }).flow_tools ?? [];
+				// We don't have flow_tools on the FlowAgentNode type directly,
+				// so we need to use the API to update both agents
+				// For now, we just inform the user to use the metadata catalog
+			}
+			toast.info("Använd Metadata Katalog för att flytta verktyg mellan agenter");
+			setEditingAgent(false);
+		} catch {
+			toast.error("Kunde inte flytta verktyget");
+		} finally {
+			setSaving(false);
+		}
+	}, [selectedAgentId, tool, allAgents]);
+
 	return (
 		<div className="space-y-4">
 			{/* Header */}
@@ -350,6 +486,7 @@ export function FlowDetailPanel({
 	selectedNode,
 	connectionCounts,
 	onClose,
+	onDataChanged,
 }: FlowDetailPanelProps) {
 	return (
 		<div className="w-80 border-l bg-background overflow-y-auto">
@@ -371,9 +508,16 @@ export function FlowDetailPanel({
 					<AgentDetail
 						agent={selectedNode.data}
 						toolCount={connectionCounts.toolsPerAgent[selectedNode.data.id] ?? 0}
+						onDataChanged={onDataChanged}
 					/>
 				)}
-				{selectedNode.type === "tool" && <ToolDetail tool={selectedNode.data} />}
+				{selectedNode.type === "tool" && (
+					<ToolDetail
+						tool={selectedNode.data}
+						allAgents={[]}
+						onDataChanged={onDataChanged}
+					/>
+				)}
 				{selectedNode.type === "pipeline" && <PipelineDetail node={selectedNode.data} />}
 			</div>
 		</div>

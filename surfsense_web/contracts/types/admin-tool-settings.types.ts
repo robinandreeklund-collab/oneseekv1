@@ -187,6 +187,11 @@ export const toolSettingsUpdateRequest = z.object({
 	tools: z.array(toolMetadataUpdateItem),
 });
 
+export const flowToolEntry = z.object({
+	tool_id: z.string(),
+	label: z.string(),
+});
+
 export const agentMetadataItem = z.object({
 	agent_id: z.string(),
 	label: z.string(),
@@ -194,6 +199,8 @@ export const agentMetadataItem = z.object({
 	keywords: z.array(z.string()),
 	prompt_key: z.string().nullable().optional(),
 	namespace: z.array(z.string()).optional().default([]),
+	routes: z.array(z.string()).optional().default([]),
+	flow_tools: z.array(flowToolEntry).optional().default([]),
 	has_override: z.boolean().optional().default(false),
 });
 
@@ -204,6 +211,8 @@ export const agentMetadataUpdateItem = z.object({
 	keywords: z.array(z.string()),
 	prompt_key: z.string().nullable().optional(),
 	namespace: z.array(z.string()).optional().default([]),
+	routes: z.array(z.string()).optional().default([]),
+	flow_tools: z.array(flowToolEntry).optional().default([]),
 });
 
 export const intentMetadataItem = z.object({

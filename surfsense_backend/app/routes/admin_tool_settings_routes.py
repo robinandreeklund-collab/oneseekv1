@@ -31,6 +31,7 @@ from app.db import (
 )
 from app.schemas.admin_tool_settings import (
     AgentMetadataItem,
+    FlowToolEntry,
     IntentMetadataItem,
     MetadataCatalogAuditRunRequest,
     MetadataCatalogAuditRunResponse,
@@ -3339,6 +3340,15 @@ def _agent_metadata_item_from_payload(
         agent_id=payload.get("agent_id"),
         default_payload=default_payload,
     )
+    flow_tools_raw = normalized.get("flow_tools") or []
+    flow_tools = [
+        FlowToolEntry(
+            tool_id=str(entry.get("tool_id") or ""),
+            label=str(entry.get("label") or entry.get("tool_id") or ""),
+        )
+        for entry in flow_tools_raw
+        if isinstance(entry, dict) and entry.get("tool_id")
+    ]
     return AgentMetadataItem(
         agent_id=str(normalized.get("agent_id") or ""),
         label=str(normalized.get("label") or ""),
@@ -3348,6 +3358,8 @@ def _agent_metadata_item_from_payload(
             str(normalized.get("prompt_key") or "").strip() or None
         ),
         namespace=[str(value) for value in (normalized.get("namespace") or []) if value],
+        routes=[str(r) for r in (normalized.get("routes") or []) if r],
+        flow_tools=flow_tools,
         has_override=has_override,
     )
 

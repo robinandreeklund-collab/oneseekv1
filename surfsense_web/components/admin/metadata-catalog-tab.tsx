@@ -73,6 +73,8 @@ function toAgentUpdateItem(
 		keywords: [...item.keywords],
 		prompt_key: item.prompt_key ?? null,
 		namespace: [...(item.namespace ?? [])],
+		routes: [...(item.routes ?? [])],
+		flow_tools: [...(item.flow_tools ?? [])].map((t) => ({ ...t })),
 	};
 }
 
@@ -102,6 +104,17 @@ function isEqualToolMetadata(left: ToolMetadataUpdateItem, right: ToolMetadataUp
 	);
 }
 
+function isEqualFlowTools(
+	left: Array<{ tool_id: string; label: string }>,
+	right: Array<{ tool_id: string; label: string }>
+) {
+	if (left.length !== right.length) return false;
+	for (let i = 0; i < left.length; i += 1) {
+		if (left[i].tool_id !== right[i].tool_id || left[i].label !== right[i].label) return false;
+	}
+	return true;
+}
+
 function isEqualAgentMetadata(left: AgentMetadataUpdateItem, right: AgentMetadataUpdateItem) {
 	return (
 		left.agent_id === right.agent_id &&
@@ -109,7 +122,9 @@ function isEqualAgentMetadata(left: AgentMetadataUpdateItem, right: AgentMetadat
 		left.description === right.description &&
 		(left.prompt_key ?? null) === (right.prompt_key ?? null) &&
 		isEqualStringArray(left.keywords, right.keywords) &&
-		isEqualStringArray(left.namespace ?? [], right.namespace ?? [])
+		isEqualStringArray(left.namespace ?? [], right.namespace ?? []) &&
+		isEqualStringArray(left.routes ?? [], right.routes ?? []) &&
+		isEqualFlowTools(left.flow_tools ?? [], right.flow_tools ?? [])
 	);
 }
 
@@ -1760,6 +1775,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					...item,
 					keywords: [...item.keywords],
 					namespace: [...(item.namespace ?? [])],
+					routes: [...(item.routes ?? [])],
+					flow_tools: [...(item.flow_tools ?? [])].map((t) => ({ ...t })),
 				};
 			}
 			return next;

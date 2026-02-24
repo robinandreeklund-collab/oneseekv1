@@ -45,6 +45,7 @@ export const flowAgentNode = z.object({
 	keywords: z.array(z.string()),
 	prompt_key: z.string(),
 	namespace: z.array(z.string()),
+	routes: z.array(z.string()).default([]),
 });
 
 export const flowToolNode = z.object({

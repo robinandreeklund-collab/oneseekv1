@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -12,7 +13,14 @@ from app.db import (
     User,
     get_async_session,
 )
-from app.services.agent_metadata_service import get_effective_agent_metadata
+from app.services.agent_metadata_service import (
+    get_effective_agent_metadata,
+    upsert_global_agent_metadata_overrides,
+)
+from app.services.intent_definition_service import (
+    get_effective_intent_definitions,
+    upsert_global_intent_definition_overrides,
+)
 from app.users import current_active_user
 
 logger = logging.getLogger(__name__)
@@ -214,105 +222,6 @@ _PIPELINE_STAGES: list[dict[str, str]] = [
 ]
 
 
-# ── Intent → Route → Agent policy mapping ──────────────────────────────
-_ROUTE_AGENT_POLICIES: dict[str, list[str]] = {
-    "kunskap": [
-        "kunskap", "webb", "väder", "trafik", "statistik",
-        "bolag", "riksdagen", "marknad",
-    ],
-    "skapande": ["media", "kartor", "kod"],
-    "jämförelse": ["syntes", "statistik", "kunskap"],
-    "konversation": [],
-}
-
-# ── Agent → Tool mapping (hardcoded tool IDs per agent namespace) ──────
-_AGENT_TOOL_MAP: dict[str, list[dict[str, str]]] = {
-    "kunskap": [
-        {"tool_id": "search_surfsense_docs", "label": "SurfSense Docs"},
-        {"tool_id": "save_memory", "label": "Spara Minne"},
-        {"tool_id": "recall_memory", "label": "Hämta Minne"},
-        {"tool_id": "tavily_search", "label": "Tavily Sök"},
-    ],
-    "webb": [
-        {"tool_id": "scrape_webpage", "label": "Scrape Webbsida"},
-        {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
-        {"tool_id": "public_web_search", "label": "Webbsökning"},
-    ],
-    "väder": [
-        {"tool_id": "smhi_weather", "label": "SMHI Prognos"},
-        {"tool_id": "smhi_vaderprognoser_metfcst", "label": "SMHI MetFcst"},
-        {"tool_id": "smhi_vaderprognoser_snow1g", "label": "SMHI Snö"},
-        {"tool_id": "smhi_vaderanalyser_mesan2g", "label": "SMHI MESAN"},
-        {"tool_id": "smhi_vaderobservationer_metobs", "label": "SMHI MetObs"},
-        {"tool_id": "smhi_hydrologi_hydroobs", "label": "SMHI HydroObs"},
-        {"tool_id": "smhi_hydrologi_pthbv", "label": "SMHI PTHBV"},
-        {"tool_id": "smhi_oceanografi_ocobs", "label": "SMHI Oceanografi"},
-        {"tool_id": "smhi_brandrisk_fwif", "label": "SMHI Brandrisk FWIF"},
-        {"tool_id": "smhi_brandrisk_fwia", "label": "SMHI Brandrisk FWIA"},
-    ],
-    "trafik": [
-        {"tool_id": "trafikverket_situation", "label": "Trafikläge"},
-        {"tool_id": "trafikverket_road_condition", "label": "Väglag"},
-        {"tool_id": "trafikverket_camera", "label": "Kameror"},
-        {"tool_id": "trafikverket_ferry", "label": "Färjor"},
-        {"tool_id": "trafikverket_railway", "label": "Järnväg"},
-        {"tool_id": "trafiklab_route", "label": "Resplanerare"},
-    ],
-    "kartor": [
-        {"tool_id": "geoapify_static_map", "label": "Statisk Karta"},
-    ],
-    "marknad": [
-        {"tool_id": "marketplace_unified_search", "label": "Unified Search"},
-        {"tool_id": "marketplace_blocket_search", "label": "Blocket Sök"},
-        {"tool_id": "marketplace_blocket_cars", "label": "Blocket Bilar"},
-        {"tool_id": "marketplace_blocket_boats", "label": "Blocket Båtar"},
-        {"tool_id": "marketplace_blocket_mc", "label": "Blocket MC"},
-        {"tool_id": "marketplace_tradera_search", "label": "Tradera Sök"},
-        {"tool_id": "marketplace_compare_prices", "label": "Prisjämförelse"},
-    ],
-    "statistik": [
-        {"tool_id": "scb_befolkning", "label": "SCB Befolkning"},
-        {"tool_id": "scb_arbetsmarknad", "label": "SCB Arbetsmarknad"},
-        {"tool_id": "scb_boende_byggande", "label": "SCB Boende"},
-        {"tool_id": "scb_priser_konsumtion", "label": "SCB Priser"},
-        {"tool_id": "scb_utbildning", "label": "SCB Utbildning"},
-        {"tool_id": "kolada_municipality", "label": "Kolada Kommun"},
-    ],
-    "media": [
-        {"tool_id": "generate_podcast", "label": "Podcast"},
-        {"tool_id": "display_image", "label": "Visa Bild"},
-    ],
-    "kod": [
-        {"tool_id": "sandbox_execute", "label": "Sandbox Execute"},
-        {"tool_id": "sandbox_write_file", "label": "Sandbox Write"},
-        {"tool_id": "sandbox_read_file", "label": "Sandbox Read"},
-        {"tool_id": "sandbox_ls", "label": "Sandbox LS"},
-        {"tool_id": "sandbox_replace", "label": "Sandbox Replace"},
-        {"tool_id": "sandbox_release", "label": "Sandbox Release"},
-    ],
-    "bolag": [
-        {"tool_id": "bolagsverket_info_basic", "label": "Företagsinfo"},
-        {"tool_id": "bolagsverket_info_status", "label": "Företagsstatus"},
-        {"tool_id": "bolagsverket_sok_namn", "label": "Sök Namn"},
-        {"tool_id": "bolagsverket_sok_orgnr", "label": "Sök Orgnr"},
-        {"tool_id": "bolagsverket_ekonomi_bokslut", "label": "Bokslut"},
-    ],
-    "riksdagen": [
-        {"tool_id": "riksdagen_dokument_sok", "label": "Dokument Sök"},
-        {"tool_id": "riksdagen_votering", "label": "Voteringar"},
-        {"tool_id": "riksdagen_ledamot", "label": "Ledamöter"},
-    ],
-    "åtgärd": [
-        {"tool_id": "search_knowledge_base", "label": "Kunskapsbas"},
-        {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
-        {"tool_id": "scrape_webpage", "label": "Scrape Webbsida"},
-    ],
-    "syntes": [
-        {"tool_id": "external_model_compare", "label": "Modelljämförelse"},
-    ],
-}
-
-
 async def _require_admin(
     session: AsyncSession,
     user: User,
@@ -332,86 +241,79 @@ async def _require_admin(
         )
 
 
-_ROUTE_LABELS: dict[str, str] = {
-    "kunskap": "Kunskap",
-    "skapande": "Skapande",
-    "jämförelse": "Jämförelse",
-    "konversation": "Konversation",
-}
-
-_ROUTE_DESCRIPTIONS: dict[str, str] = {
-    "kunskap": (
-        "Informationssökande frågor – väder, trafik, statistik, bolag, riksdagen, marknad, webb."
-    ),
-    "skapande": "Skapar eller genererar något – podcast, karta, kod, filer.",
-    "jämförelse": "Jämför alternativ eller modeller via /compare.",
-    "konversation": "Hälsningar och enkel konversation utan verktyg.",
-}
-
-
 @router.get("/flow-graph")
 async def get_flow_graph(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, Any]:
-    """Return the LangGraph pipeline graph and intent → agent → tool routing data."""
+    """Return the LangGraph pipeline graph and intent → agent → tool routing data.
+
+    All routing data (intents, agents, tools, edges) is built dynamically from
+    DB-backed services — nothing is hardcoded.
+    """
     await _require_admin(session, user)
 
+    # ── Read from DB ──
+    intents = await get_effective_intent_definitions(session)
     agents = await get_effective_agent_metadata(session)
-    agent_map = {a["agent_id"]: a for a in agents}
 
+    # ── Build intent nodes ──
     intent_nodes: list[dict[str, Any]] = []
-    agent_nodes: list[dict[str, Any]] = []
-    tool_nodes: list[dict[str, Any]] = []
-    intent_agent_edges: list[dict[str, str]] = []
-    agent_tool_edges: list[dict[str, str]] = []
-    seen_agents: set[str] = set()
-    seen_tools: set[str] = set()
-
-    # Build exactly 4 route nodes from the canonical policy map (ignore DB overrides)
-    for route_id, agent_ids in _ROUTE_AGENT_POLICIES.items():
+    for intent in intents:
+        intent_id = intent.get("intent_id", "")
         intent_nodes.append({
-            "id": f"intent:{route_id}",
+            "id": f"intent:{intent_id}",
             "type": "intent",
-            "intent_id": route_id,
-            "label": _ROUTE_LABELS.get(route_id, route_id.title()),
-            "description": _ROUTE_DESCRIPTIONS.get(route_id, ""),
-            "route": route_id,
-            "keywords": [],
-            "priority": 0,
-            "enabled": True,
+            "intent_id": intent_id,
+            "label": intent.get("label", intent_id),
+            "description": intent.get("description", ""),
+            "route": intent.get("route", ""),
+            "keywords": intent.get("keywords", []),
+            "priority": intent.get("priority", 500),
+            "enabled": intent.get("enabled", True),
         })
+    intent_ids = {intent.get("intent_id", "") for intent in intents}
 
-        for agent_id in agent_ids:
-            intent_agent_edges.append({
-                "source": f"intent:{route_id}",
-                "target": f"agent:{agent_id}",
-            })
-            if agent_id not in seen_agents:
-                seen_agents.add(agent_id)
-                meta = agent_map.get(agent_id, {})
-                agent_nodes.append({
-                    "id": f"agent:{agent_id}",
-                    "type": "agent",
-                    "agent_id": agent_id,
-                    "label": meta.get("label", agent_id),
-                    "description": meta.get("description", ""),
-                    "keywords": meta.get("keywords", []),
-                    "prompt_key": meta.get("prompt_key", ""),
-                    "namespace": meta.get("namespace", []),
+    # ── Build agent nodes & intent→agent edges from agent.routes ──
+    agent_nodes: list[dict[str, Any]] = []
+    intent_agent_edges: list[dict[str, str]] = []
+    for agent in agents:
+        agent_id = agent.get("agent_id", "")
+        agent_nodes.append({
+            "id": f"agent:{agent_id}",
+            "type": "agent",
+            "agent_id": agent_id,
+            "label": agent.get("label", agent_id),
+            "description": agent.get("description", ""),
+            "keywords": agent.get("keywords", []),
+            "prompt_key": agent.get("prompt_key", ""),
+            "namespace": agent.get("namespace", []),
+            "routes": agent.get("routes", []),
+        })
+        for route_id in agent.get("routes", []):
+            if route_id in intent_ids:
+                intent_agent_edges.append({
+                    "source": f"intent:{route_id}",
+                    "target": f"agent:{agent_id}",
                 })
 
-    for agent_id in seen_agents:
-        tools = _AGENT_TOOL_MAP.get(agent_id, [])
-        for tool in tools:
-            tool_id = tool["tool_id"]
+    # ── Build tool nodes & agent→tool edges from agent.flow_tools ──
+    tool_nodes: list[dict[str, Any]] = []
+    agent_tool_edges: list[dict[str, str]] = []
+    seen_tools: set[str] = set()
+    for agent in agents:
+        agent_id = agent.get("agent_id", "")
+        for tool_entry in agent.get("flow_tools", []):
+            tool_id = tool_entry.get("tool_id", "")
+            if not tool_id:
+                continue
             if tool_id not in seen_tools:
                 seen_tools.add(tool_id)
                 tool_nodes.append({
                     "id": f"tool:{tool_id}",
                     "type": "tool",
                     "tool_id": tool_id,
-                    "label": tool.get("label", tool_id),
+                    "label": tool_entry.get("label", tool_id),
                     "agent_id": agent_id,
                 })
             agent_tool_edges.append({
@@ -431,3 +333,119 @@ async def get_flow_graph(
         "intent_agent_edges": intent_agent_edges,
         "agent_tool_edges": agent_tool_edges,
     }
+
+
+# ── Save endpoints ────────────────────────────────────────────────────
+
+
+class FlowToolEntry(BaseModel):
+    tool_id: str
+    label: str
+
+
+class UpdateAgentRoutesRequest(BaseModel):
+    agent_id: str
+    routes: list[str]
+
+
+class UpdateAgentToolsRequest(BaseModel):
+    agent_id: str
+    flow_tools: list[FlowToolEntry]
+
+
+class UpdateIntentRequest(BaseModel):
+    intent_id: str
+    label: str | None = None
+    route: str | None = None
+    description: str | None = None
+    keywords: list[str] | None = None
+    priority: int | None = None
+    enabled: bool | None = None
+
+
+class DeleteIntentRequest(BaseModel):
+    intent_id: str
+
+
+@router.patch("/flow-graph/agent-routes")
+async def update_agent_routes(
+    request: UpdateAgentRoutesRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Update which routes/intents an agent is assigned to."""
+    await _require_admin(session, user)
+    await upsert_global_agent_metadata_overrides(
+        session,
+        [(request.agent_id, {"routes": request.routes})],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.patch("/flow-graph/agent-tools")
+async def update_agent_tools(
+    request: UpdateAgentToolsRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Update which tools belong to an agent in the flow graph."""
+    await _require_admin(session, user)
+    await upsert_global_agent_metadata_overrides(
+        session,
+        [(
+            request.agent_id,
+            {"flow_tools": [t.model_dump() for t in request.flow_tools]},
+        )],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.put("/flow-graph/intent")
+async def upsert_intent(
+    request: UpdateIntentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Create or update an intent definition."""
+    await _require_admin(session, user)
+    payload: dict[str, Any] = {}
+    if request.label is not None:
+        payload["label"] = request.label
+    if request.route is not None:
+        payload["route"] = request.route
+    if request.description is not None:
+        payload["description"] = request.description
+    if request.keywords is not None:
+        payload["keywords"] = request.keywords
+    if request.priority is not None:
+        payload["priority"] = request.priority
+    if request.enabled is not None:
+        payload["enabled"] = request.enabled
+    await upsert_global_intent_definition_overrides(
+        session,
+        [(request.intent_id, payload)],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/flow-graph/intent")
+async def delete_intent(
+    request: DeleteIntentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Delete an intent definition override (reverts to default if exists)."""
+    await _require_admin(session, user)
+    await upsert_global_intent_definition_overrides(
+        session,
+        [(request.intent_id, None)],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}

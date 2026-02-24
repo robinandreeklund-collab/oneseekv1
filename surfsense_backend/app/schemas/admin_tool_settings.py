@@ -76,6 +76,11 @@ class ToolSettingsUpdateRequest(BaseModel):
     tools: list[ToolMetadataUpdateItem]
 
 
+class FlowToolEntry(BaseModel):
+    tool_id: str
+    label: str
+
+
 class AgentMetadataItem(BaseModel):
     agent_id: str
     label: str
@@ -83,6 +88,8 @@ class AgentMetadataItem(BaseModel):
     keywords: list[str]
     prompt_key: str | None = None
     namespace: list[str] = Field(default_factory=list)
+    routes: list[str] = Field(default_factory=list)
+    flow_tools: list[FlowToolEntry] = Field(default_factory=list)
     has_override: bool = False
 
 
@@ -93,6 +100,8 @@ class AgentMetadataUpdateItem(BaseModel):
     keywords: list[str]
     prompt_key: str | None = None
     namespace: list[str] = Field(default_factory=list)
+    routes: list[str] = Field(default_factory=list)
+    flow_tools: list[FlowToolEntry] = Field(default_factory=list)
 
 
 class IntentMetadataItem(BaseModel):
