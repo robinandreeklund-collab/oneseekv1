@@ -151,3 +151,5 @@ class SupervisorState(TypedDict, total=False):
     no_progress_runs: Annotated[int | None, _replace]
     guard_parallel_preview: Annotated[list[str], _replace]
     domain_fan_out_trace: Annotated[dict[str, Any] | None, _replace]
+    domain_plans: Annotated[dict[str, Any] | None, _replace]
+    response_mode: Annotated[str | None, _replace]

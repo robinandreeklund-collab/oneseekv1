@@ -104,8 +104,15 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "id": "node:execution_router",
         "label": "Execution Router",
         "stage": "tool_resolution",
-        "description": "Bestämmer exekverings-strategi (inline/subagent/parallel).",
+        "description": "Bestämmer exekverings-strategi (inline/subagent/parallel) per gren.",
         "prompt_key": None,
+    },
+    {
+        "id": "node:domain_planner",
+        "label": "Domain Planner",
+        "stage": "tool_resolution",
+        "description": "LLM-driven mikro-plan per domänagent: vilka sub-verktyg och om de körs parallellt eller sekventiellt (Nivå 2 agentplan).",
+        "prompt_key": "supervisor.domain_planner.system",
     },
     # ── Execution ──
     {
@@ -185,8 +192,15 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "id": "node:synthesizer",
         "label": "Synthesizer",
         "stage": "synthesis",
-        "description": "Slutgiltig förfining och formatering av svaret. → END",
+        "description": "Slutgiltig förfining och formatering av svaret.",
         "prompt_key": "supervisor.synthesizer.system",
+    },
+    {
+        "id": "node:response_layer",
+        "label": "Response Layer",
+        "stage": "synthesis",
+        "description": "Nivå 4: väljer presentationsformat för svaret — kunskap, analys, syntes eller visualisering. → END",
+        "prompt_key": None,
     },
 ]
 
@@ -205,10 +219,11 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:agent_resolver", "target": "node:planner", "type": "normal"},
     {"source": "node:planner", "target": "node:planner_hitl_gate", "type": "normal"},
     {"source": "node:planner_hitl_gate", "target": "node:tool_resolver", "type": "conditional", "label": "godkänd"},
-    # ── Tool resolution → execution ──
+    # ── Tool resolution → domain planner → execution ──
     {"source": "node:tool_resolver", "target": "node:speculative_merge", "type": "normal"},
     {"source": "node:speculative_merge", "target": "node:execution_router", "type": "normal"},
-    {"source": "node:execution_router", "target": "node:execution_hitl_gate", "type": "normal"},
+    {"source": "node:execution_router", "target": "node:domain_planner", "type": "normal"},
+    {"source": "node:domain_planner", "target": "node:execution_hitl_gate", "type": "normal"},
     {"source": "node:execution_hitl_gate", "target": "node:executor", "type": "conditional", "label": "godkänd"},
     # ── Executor loop ──
     {"source": "node:executor", "target": "node:tools", "type": "conditional", "label": "tool_calls"},
@@ -223,10 +238,11 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},
     {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more"},
     {"source": "node:critic", "target": "node:planner", "type": "conditional", "label": "replan"},
-    # ── Synthesis ──
+    # ── Synthesis → response layer ──
     {"source": "node:synthesis_hitl", "target": "node:progressive_synthesizer", "type": "conditional", "label": "komplex"},
     {"source": "node:synthesis_hitl", "target": "node:synthesizer", "type": "conditional", "label": "enkel"},
     {"source": "node:progressive_synthesizer", "target": "node:synthesizer", "type": "normal"},
+    {"source": "node:synthesizer", "target": "node:response_layer", "type": "normal"},
 ]
 
 # Stage metadata for frontend grouping and coloring
@@ -235,11 +251,11 @@ _PIPELINE_STAGES: list[dict[str, str]] = [
     {"id": "fast_path", "label": "Snabbsvar", "color": "amber"},
     {"id": "speculative", "label": "Spekulativ", "color": "slate"},
     {"id": "planning", "label": "Planering", "color": "blue"},
-    {"id": "tool_resolution", "label": "Verktygsval", "color": "cyan"},
+    {"id": "tool_resolution", "label": "Verktygsval / Domänplan", "color": "cyan"},
     {"id": "execution", "label": "Exekvering", "color": "emerald"},
     {"id": "post_processing", "label": "Efterbehandling", "color": "slate"},
     {"id": "evaluation", "label": "Utvärdering", "color": "orange"},
-    {"id": "synthesis", "label": "Syntes", "color": "rose"},
+    {"id": "synthesis", "label": "Syntes / Response Layer", "color": "rose"},
 ]
 
 

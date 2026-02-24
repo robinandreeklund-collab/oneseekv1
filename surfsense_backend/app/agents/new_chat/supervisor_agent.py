@@ -40,6 +40,7 @@ from app.agents.new_chat.bigtool_workers import WorkerConfig
 from app.agents.new_chat.nodes import (
     build_agent_resolver_node,
     build_critic_node,
+    build_domain_planner_node,
     build_execution_router_node,
     build_executor_nodes,
     build_execution_hitl_gate_node,
@@ -47,6 +48,7 @@ from app.agents.new_chat.nodes import (
     build_planner_hitl_gate_node,
     build_planner_node,
     build_progressive_synthesizer_node,
+    build_response_layer_node,
     build_smart_critic_node,
     build_speculative_merge_node,
     build_speculative_node,
@@ -91,6 +93,7 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
 from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
@@ -1825,6 +1828,11 @@ async def create_supervisor_agent(
         prompt_overrides,
         "supervisor.critic_gate.system",
         DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    )
+    domain_planner_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.domain_planner.system",
+        DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     )
     synthesizer_prompt_template = resolve_prompt(
         prompt_overrides,
@@ -5522,6 +5530,18 @@ async def create_supervisor_agent(
         truncate_for_prompt_fn=_truncate_for_prompt,
     )
 
+    domain_planner_node = build_domain_planner_node(
+        llm=llm,
+        domain_planner_prompt_template=domain_planner_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+    )
+
+    response_layer_node = build_response_layer_node(
+        latest_user_query_fn=_latest_user_query,
+    )
+
     call_model, acall_model = build_executor_nodes(
         llm=llm,
         llm_with_tools=llm_with_tools,
@@ -6427,6 +6447,8 @@ async def create_supervisor_agent(
                 RunnableCallable(None, progressive_synthesizer_node),
             )
         graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
+        graph_builder.add_node("domain_planner", RunnableCallable(None, domain_planner_node))
+        graph_builder.add_node("response_layer", RunnableCallable(None, response_layer_node))
         graph_builder.set_entry_point("resolve_intent")
         resolve_intent_paths = [
             "smalltalk",
@@ -6459,12 +6481,13 @@ async def create_supervisor_agent(
         if hybrid_mode and not compare_mode and speculative_enabled:
             graph_builder.add_edge("tool_resolver", "speculative_merge")
             graph_builder.add_edge("speculative_merge", "execution_router")
-            graph_builder.add_edge("execution_router", "execution_hitl_gate")
+            graph_builder.add_edge("execution_router", "domain_planner")
         elif hybrid_mode and not compare_mode:
             graph_builder.add_edge("tool_resolver", "execution_router")
-            graph_builder.add_edge("execution_router", "execution_hitl_gate")
+            graph_builder.add_edge("execution_router", "domain_planner")
         else:
-            graph_builder.add_edge("tool_resolver", "execution_hitl_gate")
+            graph_builder.add_edge("tool_resolver", "domain_planner")
+        graph_builder.add_edge("domain_planner", "execution_hitl_gate")
         graph_builder.add_conditional_edges(
             "execution_hitl_gate",
             execution_hitl_should_continue,
@@ -6500,6 +6523,7 @@ async def create_supervisor_agent(
         )
         if hybrid_mode and not compare_mode:
             graph_builder.add_edge("progressive_synthesizer", "synthesizer")
-        graph_builder.add_edge("synthesizer", END)
+        graph_builder.add_edge("synthesizer", "response_layer")
+        graph_builder.add_edge("response_layer", END)
 
     return graph_builder.compile(checkpointer=checkpointer, name="supervisor-agent")

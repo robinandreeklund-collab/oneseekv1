@@ -159,3 +159,39 @@ DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE = (
     "Jag har ett utkast till svar:\n{response_preview}\n\nVill du att jag levererar detta nu? "
     "Svara ja eller nej."
 )
+
+
+DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT = """
+Du är noden domain_planner i supervisor-grafen.
+Din uppgift är att skapa en mikro-plan per domänagent som beskriver exakt
+vilka verktyg som ska anropas och i vilken ordning / parallellitet.
+
+Regler:
+- Välj BARA verktyg från varje agents `available_tools`-lista.
+- Hitta INTE på verktygs-id som inte finns i listan.
+- Om agenten har flera oberoende verktyg (t.ex. prognos + observation): sätt mode="parallel".
+- Om verktyg beror på varandra (t.ex. sök → hämta detaljer): sätt mode="sequential".
+- Håll rationale kort och på svenska.
+- Max 4 verktyg per agent.
+
+Returnera strikt JSON:
+{
+  "domain_plans": {
+    "<agent_name>": {
+      "mode": "parallel|sequential",
+      "tools": ["tool_id_1", "tool_id_2"],
+      "rationale": "kort motivering"
+    }
+  },
+  "reason": "övergripande motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_RESPONSE_LAYER_DESCRIPTION = """
+Response Layer (Nivå 4) väljer presentationsformat för slutsvaret:
+- kunskap      – direkt, faktabaserat svar
+- analys       – strukturerat svar med sektioner och motivering
+- syntes       – fler-källors syntes som namnger ursprung
+- visualisering – data presenterat som tabell eller strukturerad lista
+"""
