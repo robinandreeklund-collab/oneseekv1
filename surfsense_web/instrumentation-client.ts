@@ -15,7 +15,7 @@ if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
 		loaded: (posthog) => {
 			// Expose PostHog to window for console access and toolbar
 			if (typeof window !== "undefined") {
-				window.posthog = posthog;
+				(window as any).posthog = posthog;
 			}
 		},
 	});
@@ -24,5 +24,5 @@ if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
 // Always expose posthog to window for debugging/toolbar access
 // This allows testing feature flags even without POSTHOG_KEY configured
 if (typeof window !== "undefined") {
-	window.posthog = posthog;
+	(window as any).posthog = posthog;
 }

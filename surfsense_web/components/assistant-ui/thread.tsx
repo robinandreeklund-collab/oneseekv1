@@ -237,7 +237,7 @@ const ThreadWelcome: FC = () => {
 			</div>
 			{/* Composer - top edge fixed, expands downward only */}
 			<div className="fade-in slide-in-from-bottom-3 animate-in delay-200 duration-500 ease-out fill-mode-both w-full flex items-start justify-center absolute top-[calc(50%-3.5rem)] left-0 right-0">
-				<Composer />
+				<Composer isPublicChat={false} />
 			</div>
 		</div>
 	);

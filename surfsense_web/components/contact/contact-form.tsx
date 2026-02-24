@@ -56,7 +56,7 @@ export function ContactFormGridWithDetails() {
 				</div>
 
 				<div className="div relative mt-20 flex w-[600px] flex-shrink-0 items-center justify-center [perspective:800px] [transform-style:preserve-3d]">
-					<Pin className="h-30 w-85 top-0 left-0" />
+					<Pin className="h-30 w-85 top-0 left-0" t={t} />
 
 					<Image
 						src="/contact/world.svg"
@@ -71,7 +71,7 @@ export function ContactFormGridWithDetails() {
 	);
 }
 
-const Pin = ({ className }: { className?: string }) => {
+const Pin = ({ className, t }: { className?: string; t: (key: string) => string }) => {
 	return (
 		<motion.div
 			style={{ transform: "translateZ(1px)" }}

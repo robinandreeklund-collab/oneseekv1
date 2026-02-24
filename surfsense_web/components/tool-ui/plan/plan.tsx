@@ -10,7 +10,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import type { Action, ActionsConfig } from "../shared/schema";
-import type { TodoStatus } from "./schema";
+import type { TodoStatus } from "../plan/schema";
 
 // ============================================================================
 // Status Icon Component

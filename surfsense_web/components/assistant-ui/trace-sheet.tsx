@@ -206,7 +206,7 @@ export function TraceSheet({
 
 	useEffect(() => {
 		if (!isDragging) return;
-		const handlePointerMove = (event: PointerEvent) => {
+		const handlePointerMove = (event: globalThis.PointerEvent) => {
 			const delta =
 				dock === "right" ? startXRef.current - event.clientX : event.clientX - startXRef.current;
 			const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidthRef.current + delta));

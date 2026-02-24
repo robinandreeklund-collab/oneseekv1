@@ -74,7 +74,7 @@ export function useConnectorsElectric(searchSpaceId: number | string | null) {
 			try {
 				console.log("[useConnectorsElectric] Starting sync for search space:", searchSpaceId);
 
-				const handle = await electricClient.syncShape({
+				const handle = await electricClient!.syncShape({
 					table: "search_source_connectors",
 					where: `search_space_id = ${searchSpaceId}`,
 					primaryKey: ["id"],
@@ -120,7 +120,7 @@ export function useConnectorsElectric(searchSpaceId: number | string | null) {
 
 		async function fetchConnectors() {
 			try {
-				const result = await electricClient.db.query(
+				const result = await electricClient!.db.query(
 					`SELECT * FROM search_source_connectors WHERE search_space_id = $1 ORDER BY created_at DESC`,
 					[searchSpaceId]
 				);
@@ -135,7 +135,7 @@ export function useConnectorsElectric(searchSpaceId: number | string | null) {
 		async function setupLiveQuery() {
 			try {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				const db = electricClient.db as any;
+				const db = electricClient!.db as any;
 
 				if (db.live?.query && typeof db.live.query === "function") {
 					const liveQuery = await db.live.query(
@@ -194,7 +194,7 @@ export function useConnectorsElectric(searchSpaceId: number | string | null) {
 	const refreshConnectors = useCallback(async () => {
 		if (!electricClient) return;
 		try {
-			const result = await electricClient.db.query(
+			const result = await electricClient!.db.query(
 				`SELECT * FROM search_source_connectors WHERE search_space_id = $1 ORDER BY created_at DESC`,
 				[searchSpaceId]
 			);

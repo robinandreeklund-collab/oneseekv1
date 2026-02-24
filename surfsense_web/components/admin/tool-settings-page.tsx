@@ -1191,6 +1191,7 @@ export function ToolSettingsPage() {
 					? null
 					: generationProvider,
 				category_id: generationMode === "category" ? generationCategory : null,
+				weather_suite_mode: "mixed",
 				question_count: Math.max(1, Math.min(100, Math.round(normalizedQuestionCount))),
 				difficulty_profile: generationDifficultyProfile,
 				eval_name: generationEvalName.trim() || null,
@@ -1256,6 +1257,7 @@ export function ToolSettingsPage() {
 							? null
 							: generationProvider,
 					category_id: generationMode === "category" ? generationCategory : null,
+					weather_suite_mode: "mixed",
 					question_count: Math.max(1, Math.min(100, Math.round(normalizedQuestionCount))),
 					difficulty_profile: generationDifficultyProfile,
 					eval_name: generationEvalName.trim() || null,
@@ -1450,7 +1452,7 @@ export function ToolSettingsPage() {
 			allowed_tools: Array.isArray(item.allowed_tools)
 				? item.allowed_tools.map((value: unknown) => String(value))
 				: [],
-		}));
+		})) as ToolApiInputEvaluationTestCase[];
 	};
 
 	const parseApiInputEvalInput = (): {

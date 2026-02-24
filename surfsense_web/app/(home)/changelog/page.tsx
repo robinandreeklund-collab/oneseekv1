@@ -14,7 +14,8 @@ interface ChangelogData {
 	date: string;
 	version?: string;
 	tags?: string[];
-	body: React.ComponentType<{ components?: Record<string, React.ComponentType> }>;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	body: React.ComponentType<{ components?: any }>;
 }
 
 interface ChangelogPageItem {
@@ -56,7 +57,7 @@ export default async function ChangelogPage() {
 					{sortedChangelogs.map((changelog) => {
 						const MDX = changelog.data.body;
 						const date = new Date(changelog.data.date);
-						const formattedDate = formatDate(date, locale);
+						const formattedDate = formatDate(date, locale as "sv");
 
 						return (
 							<div key={changelog.url} className="relative">
