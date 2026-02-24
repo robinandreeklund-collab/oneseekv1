@@ -37,6 +37,7 @@ class AdminFlowGraphApiService {
 		intent_id: string;
 		label?: string;
 		route?: string;
+		graph_route?: string;
 		description?: string;
 		keywords?: string[];
 		priority?: number;

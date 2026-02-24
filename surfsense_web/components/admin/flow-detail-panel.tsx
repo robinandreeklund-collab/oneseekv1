@@ -267,6 +267,8 @@ function IntentDetail({
 	const [keywords, setKeywords] = useState(intent.keywords.join(", "));
 	const [priority, setPriority] = useState(String(intent.priority));
 	const [enabled, setEnabled] = useState(intent.enabled);
+	const [route, setRoute] = useState(intent.route);
+	const [graphRoute, setGraphRoute] = useState(intent.graph_route ?? intent.route);
 	const [mainIdentifier, setMainIdentifier] = useState(intent.main_identifier ?? "");
 	const [coreActivity, setCoreActivity] = useState(intent.core_activity ?? "");
 	const [uniqueScope, setUniqueScope] = useState(intent.unique_scope ?? "");
@@ -286,6 +288,8 @@ function IntentDetail({
 				keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
 				priority: parseInt(priority, 10) || 500,
 				enabled,
+				route: route.trim().toLowerCase() || graphRoute,
+				graph_route: graphRoute,
 				main_identifier: mainIdentifier.trim(),
 				core_activity: coreActivity.trim(),
 				unique_scope: uniqueScope.trim(),
@@ -300,7 +304,7 @@ function IntentDetail({
 		} finally {
 			setSaving(false);
 		}
-	}, [intent.intent_id, label, description, keywords, priority, enabled, mainIdentifier, coreActivity, uniqueScope, geographicScope, excludes, onDataChanged]);
+	}, [intent.intent_id, label, description, keywords, priority, enabled, route, graphRoute, mainIdentifier, coreActivity, uniqueScope, geographicScope, excludes, onDataChanged]);
 
 	const handleDelete = useCallback(async () => {
 		setDeleting(true);
@@ -339,8 +343,21 @@ function IntentDetail({
 				</div>
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-muted-foreground">Route</span>
-					<Badge variant="secondary" className="text-xs">{intent.route}</Badge>
+					<div className="flex items-center gap-1.5">
+						<Badge variant="secondary" className="text-xs">{intent.route}</Badge>
+						{intent.is_custom_route && (
+							<Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-500/40 text-amber-600">
+								Custom
+							</Badge>
+						)}
+					</div>
 				</div>
+				{intent.is_custom_route && intent.graph_route && intent.graph_route !== intent.route && (
+					<div className="flex items-center justify-between">
+						<span className="text-xs text-muted-foreground">Graf-route</span>
+						<Badge variant="outline" className="text-xs">{intent.graph_route}</Badge>
+					</div>
+				)}
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-muted-foreground">Kopplade agenter</span>
 					<span className="text-xs font-mono">{agentCount}</span>
@@ -363,6 +380,8 @@ function IntentDetail({
 							setKeywords(intent.keywords.join(", "));
 							setPriority(String(intent.priority));
 							setEnabled(intent.enabled);
+							setRoute(intent.route);
+							setGraphRoute(intent.graph_route ?? intent.route);
 							setMainIdentifier(intent.main_identifier ?? "");
 							setCoreActivity(intent.core_activity ?? "");
 							setUniqueScope(intent.unique_scope ?? "");
@@ -381,6 +400,37 @@ function IntentDetail({
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Label</Label>
 						<Input value={label} onChange={(e) => setLabel(e.target.value)} className="text-xs h-8" />
+					</div>
+					{/* Route fields */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground">Route (valfri custom sträng)</Label>
+						<Input
+							value={route}
+							onChange={(e) => setRoute(e.target.value)}
+							className="text-xs h-8"
+							placeholder="t.ex. skolverket, myndighetsfrågor"
+							list="intent-detail-route-suggestions"
+						/>
+						<datalist id="intent-detail-route-suggestions">
+							<option value="kunskap" />
+							<option value="skapande" />
+							<option value="jämförelse" />
+							<option value="konversation" />
+						</datalist>
+						<p className="text-[10px] text-muted-foreground">Custom routes är dokumenterade men kräver graf-implementation för faktisk körning.</p>
+					</div>
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground">Graf-route (körning i LangGraph)</Label>
+						<select
+							value={graphRoute}
+							onChange={(e) => setGraphRoute(e.target.value)}
+							className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						>
+							<option value="kunskap">kunskap</option>
+							<option value="skapande">skapande</option>
+							<option value="jämförelse">jämförelse</option>
+							<option value="konversation">konversation</option>
+						</select>
 					</div>
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Beskrivning</Label>

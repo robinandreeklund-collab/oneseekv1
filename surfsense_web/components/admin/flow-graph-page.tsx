@@ -429,7 +429,8 @@ export function FlowGraphPage() {
 		label: "",
 		description: "",
 		keywords: "",
-		route: "kunskap",
+		route: "",
+		graph_route: "kunskap",
 		priority: "500",
 	});
 	const [creatingIntent, setCreatingIntent] = useState(false);
@@ -488,18 +489,20 @@ export function FlowGraphPage() {
 		}
 		setCreatingIntent(true);
 		try {
+			const routeValue = newIntent.route.trim().toLowerCase() || newIntent.graph_route.trim() || "kunskap";
 			await adminFlowGraphApiService.upsertIntent({
 				intent_id: intentId,
 				label: newIntent.label.trim() || intentId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
 				description: newIntent.description.trim(),
 				keywords: newIntent.keywords.split(",").map((k) => k.trim()).filter(Boolean),
-				route: newIntent.route.trim() || "kunskap",
+				route: routeValue,
+				graph_route: newIntent.graph_route.trim() || "kunskap",
 				priority: parseInt(newIntent.priority, 10) || 500,
 				enabled: true,
 			});
 			toast.success(`Intent "${intentId}" skapad`);
 			setShowCreateIntent(false);
-			setNewIntent({ intent_id: "", label: "", description: "", keywords: "", route: "kunskap", priority: "500" });
+			setNewIntent({ intent_id: "", label: "", description: "", keywords: "", route: "", graph_route: "kunskap", priority: "500" });
 			fetchData();
 		} catch {
 			toast.error("Kunde inte skapa intent");
@@ -854,12 +857,31 @@ export function FlowGraphPage() {
 														placeholder="skola, laroplan, betyg"
 													/>
 												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Route (valfri custom sträng)</Label>
+													<Input
+														value={newIntent.route}
+														onChange={(e) => setNewIntent((p) => ({ ...p, route: e.target.value }))}
+														className="text-xs h-8"
+														placeholder="t.ex. skolverket, myndighetsfrågor (tomt = graf-route)"
+														list="intent-route-suggestions"
+													/>
+													<datalist id="intent-route-suggestions">
+														<option value="kunskap" />
+														<option value="skapande" />
+														<option value="jämförelse" />
+														<option value="konversation" />
+													</datalist>
+													<p className="text-[10px] text-muted-foreground">
+														Custom route sparas som metadatabeskrivning. Välj nedan vilken LangGraph-route som används vid körning.
+													</p>
+												</div>
 												<div className="grid grid-cols-2 gap-2">
 													<div className="space-y-1">
-														<Label className="text-xs">Route</Label>
+														<Label className="text-xs">Graf-route (körning)</Label>
 														<select
-															value={newIntent.route}
-															onChange={(e) => setNewIntent((p) => ({ ...p, route: e.target.value }))}
+															value={newIntent.graph_route}
+															onChange={(e) => setNewIntent((p) => ({ ...p, graph_route: e.target.value }))}
 															className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 														>
 															<option value="kunskap">kunskap</option>

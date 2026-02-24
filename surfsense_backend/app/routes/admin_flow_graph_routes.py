@@ -305,6 +305,8 @@ async def get_flow_graph(
             "label": intent.get("label", intent_id),
             "description": intent.get("description", ""),
             "route": intent.get("route", ""),
+            "graph_route": intent.get("graph_route", intent.get("route", "")),
+            "is_custom_route": bool(intent.get("is_custom_route", False)),
             "keywords": intent.get("keywords", []),
             "priority": intent.get("priority", 500),
             "enabled": intent.get("enabled", True),
@@ -404,6 +406,7 @@ class UpdateIntentRequest(BaseModel):
     intent_id: str
     label: str | None = None
     route: str | None = None
+    graph_route: str | None = None
     description: str | None = None
     keywords: list[str] | None = None
     priority: int | None = None
@@ -548,6 +551,8 @@ async def upsert_intent(
         payload["label"] = request.label
     if request.route is not None:
         payload["route"] = request.route
+    if request.graph_route is not None:
+        payload["graph_route"] = request.graph_route
     if request.description is not None:
         payload["description"] = request.description
     if request.keywords is not None:

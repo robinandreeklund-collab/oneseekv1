@@ -188,7 +188,9 @@ def normalize_intent_definition_payload(
     route_value = _normalize_text(payload.get("route")).lower()
     # Accept old English route names transparently
     route_value = _COMPAT_ROUTE_MAP.get(route_value, route_value)
-    if route_value not in _ROUTE_VALUES:
+    # Allow custom route strings (unknown routes are stored as-is and treated
+    # as kunskap in the LangGraph execution until a dedicated graph route exists)
+    if not route_value:
         route_value = Route.KUNSKAP.value
     label = _normalize_optional_text(payload.get("label")) or resolved_intent_id.replace(
         "_", " "
@@ -202,9 +204,21 @@ def normalize_intent_definition_payload(
     unique_scope = _normalize_identity_field(payload.get("unique_scope", ""), 120)
     geographic_scope = _normalize_identity_field(payload.get("geographic_scope", ""), 80)
     excludes = _normalize_excludes(payload.get("excludes", []))
+    # graph_route: the actual LangGraph route used at runtime.
+    # For known system routes it matches route_value; for custom routes it
+    # falls back to kunskap until a dedicated graph route is implemented.
+    is_system_route = route_value in _ROUTE_VALUES
+    graph_route_raw = _normalize_text(payload.get("graph_route")).lower()
+    graph_route_raw = _COMPAT_ROUTE_MAP.get(graph_route_raw, graph_route_raw)
+    if graph_route_raw in _ROUTE_VALUES:
+        graph_route = graph_route_raw
+    else:
+        graph_route = route_value if is_system_route else Route.KUNSKAP.value
     return {
         "intent_id": resolved_intent_id,
         "route": route_value,
+        "graph_route": graph_route,
+        "is_custom_route": not is_system_route,
         "label": label,
         "description": description,
         "keywords": keywords,

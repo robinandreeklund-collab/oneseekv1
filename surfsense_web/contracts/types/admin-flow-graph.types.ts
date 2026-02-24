@@ -32,6 +32,8 @@ export const flowIntentNode = z.object({
 	label: z.string(),
 	description: z.string(),
 	route: z.string(),
+	graph_route: z.string().optional().default(""),
+	is_custom_route: z.boolean().optional().default(false),
 	keywords: z.array(z.string()),
 	priority: z.number(),
 	enabled: z.boolean(),
