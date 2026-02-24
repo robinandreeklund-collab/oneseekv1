@@ -60,6 +60,11 @@ function toToolUpdateItem(item: ToolMetadataItem | ToolMetadataUpdateItem): Tool
 		example_queries: [...item.example_queries],
 		category: item.category,
 		base_path: item.base_path ?? null,
+		main_identifier: item.main_identifier ?? "",
+		core_activity: item.core_activity ?? "",
+		unique_scope: item.unique_scope ?? "",
+		geographic_scope: item.geographic_scope ?? "",
+		excludes: [...(item.excludes ?? [])],
 	};
 }
 

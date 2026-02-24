@@ -94,6 +94,11 @@ function toUpdateItem(tool: ToolMetadataItem | ToolMetadataUpdateItem): ToolMeta
 		example_queries: [...tool.example_queries],
 		category: tool.category,
 		base_path: tool.base_path ?? null,
+		main_identifier: tool.main_identifier ?? "",
+		core_activity: tool.core_activity ?? "",
+		unique_scope: tool.unique_scope ?? "",
+		geographic_scope: tool.geographic_scope ?? "",
+		excludes: [...(tool.excludes ?? [])],
 	};
 }
 

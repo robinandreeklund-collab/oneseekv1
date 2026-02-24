@@ -11,6 +11,11 @@ class ToolMetadataItem(BaseModel):
     example_queries: list[str]
     category: str
     base_path: str | None = None
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
     has_override: bool = False
 
 
@@ -22,6 +27,11 @@ class ToolMetadataUpdateItem(BaseModel):
     example_queries: list[str]
     category: str
     base_path: str | None = None
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
 
 
 class ToolCategoryResponse(BaseModel):

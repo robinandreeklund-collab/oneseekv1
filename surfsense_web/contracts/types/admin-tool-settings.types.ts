@@ -8,6 +8,11 @@ export const toolMetadataItem = z.object({
 	example_queries: z.array(z.string()),
 	category: z.string(),
 	base_path: z.string().nullable().optional(),
+	main_identifier: z.string().optional().default(""),
+	core_activity: z.string().optional().default(""),
+	unique_scope: z.string().optional().default(""),
+	geographic_scope: z.string().optional().default(""),
+	excludes: z.array(z.string()).optional().default([]),
 	has_override: z.boolean().optional().default(false),
 });
 
@@ -19,6 +24,11 @@ export const toolMetadataUpdateItem = z.object({
 	example_queries: z.array(z.string()),
 	category: z.string(),
 	base_path: z.string().nullable().optional(),
+	main_identifier: z.string().optional().default(""),
+	core_activity: z.string().optional().default(""),
+	unique_scope: z.string().optional().default(""),
+	geographic_scope: z.string().optional().default(""),
+	excludes: z.array(z.string()).optional().default([]),
 });
 
 export const toolCategoryResponse = z.object({

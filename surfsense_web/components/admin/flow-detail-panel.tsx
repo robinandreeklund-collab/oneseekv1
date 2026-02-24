@@ -19,6 +19,11 @@ import {
 	MessageSquare,
 	Link,
 	FolderOpen,
+	Target,
+	Activity,
+	ShieldOff,
+	MapPin,
+	Ban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,9 +47,6 @@ import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 
 const ALL_ROUTES = ["kunskap", "skapande", "jämförelse", "konversation"];
-
-const DESCRIPTION_TEMPLATE_PLACEHOLDER =
-	"[HUVUDIDENTIFIERARE] [KÄRNAKTIVITET]\n[STARKASTE KEYWORDS]\n[UNIK AVGRÄNSNING]\n[KOMMUN/SVERIGE]\n[EXEMPEL FRÅGOR]\n[EXKLUDERAR: ...]";
 
 type SelectedNodeData =
 	| { type: "intent"; data: FlowIntentNode }
@@ -371,11 +373,8 @@ function IntentDetail({
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}
 							className="text-xs min-h-[80px] font-mono leading-5"
-							placeholder={DESCRIPTION_TEMPLATE_PLACEHOLDER}
+							placeholder="Beskriv intenten..."
 						/>
-						<p className="text-[10px] text-muted-foreground">
-							Använd mallen: HUVUDIDENTIFIERARE, KÄRNAKTIVITET, KEYWORDS, AVGRÄNSNING, EXEMPEL
-						</p>
 					</div>
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Nyckelord (komma-separerade)</Label>
@@ -699,6 +698,11 @@ function ToolDetail({
 	const [exampleQueries, setExampleQueries] = useState((catalogTool?.example_queries ?? []).join("\n"));
 	const [category, setCategory] = useState(catalogTool?.category ?? tool.agent_id);
 	const [basePath, setBasePath] = useState(catalogTool?.base_path ?? "");
+	const [mainIdentifier, setMainIdentifier] = useState(catalogTool?.main_identifier ?? "");
+	const [coreActivity, setCoreActivity] = useState(catalogTool?.core_activity ?? "");
+	const [uniqueScope, setUniqueScope] = useState(catalogTool?.unique_scope ?? "");
+	const [geographicScope, setGeographicScope] = useState(catalogTool?.geographic_scope ?? "");
+	const [excludes, setExcludes] = useState((catalogTool?.excludes ?? []).join(", "));
 	const [selectedAgentId, setSelectedAgentId] = useState(tool.agent_id);
 	const [saving, setSaving] = useState(false);
 
@@ -710,6 +714,11 @@ function ToolDetail({
 		setExampleQueries((catalogTool?.example_queries ?? []).join("\n"));
 		setCategory(catalogTool?.category ?? tool.agent_id);
 		setBasePath(catalogTool?.base_path ?? "");
+		setMainIdentifier(catalogTool?.main_identifier ?? "");
+		setCoreActivity(catalogTool?.core_activity ?? "");
+		setUniqueScope(catalogTool?.unique_scope ?? "");
+		setGeographicScope(catalogTool?.geographic_scope ?? "");
+		setExcludes((catalogTool?.excludes ?? []).join(", "));
 		setSelectedAgentId(tool.agent_id);
 		setEditing(false);
 	}, [tool.tool_id, tool.label, tool.agent_id, catalogTool]);
@@ -729,6 +738,11 @@ function ToolDetail({
 							example_queries: exampleQueries.split("\n").map((q) => q.trim()).filter(Boolean),
 							category: category.trim(),
 							base_path: basePath.trim() || null,
+							main_identifier: mainIdentifier.trim(),
+							core_activity: coreActivity.trim(),
+							unique_scope: uniqueScope.trim(),
+							geographic_scope: geographicScope.trim(),
+							excludes: excludes.split(",").map((e) => e.trim()).filter(Boolean),
 						}],
 					},
 					catalogData.search_space_id,
@@ -775,6 +789,11 @@ function ToolDetail({
 		exampleQueries,
 		category,
 		basePath,
+		mainIdentifier,
+		coreActivity,
+		uniqueScope,
+		geographicScope,
+		excludes,
 		selectedAgentId,
 		onDataChanged,
 	]);
@@ -786,6 +805,11 @@ function ToolDetail({
 		setExampleQueries((catalogTool?.example_queries ?? []).join("\n"));
 		setCategory(catalogTool?.category ?? tool.agent_id);
 		setBasePath(catalogTool?.base_path ?? "");
+		setMainIdentifier(catalogTool?.main_identifier ?? "");
+		setCoreActivity(catalogTool?.core_activity ?? "");
+		setUniqueScope(catalogTool?.unique_scope ?? "");
+		setGeographicScope(catalogTool?.geographic_scope ?? "");
+		setExcludes((catalogTool?.excludes ?? []).join(", "));
 		setSelectedAgentId(tool.agent_id);
 		setEditing(false);
 	}, [catalogTool, tool]);
@@ -866,6 +890,34 @@ function ToolDetail({
 						/>
 					</div>
 
+					{/* Main Identifier */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Target className="h-3 w-3" /> Huvudidentifierare
+						</Label>
+						<Input
+							value={mainIdentifier}
+							onChange={(e) => setMainIdentifier(e.target.value)}
+							className="text-xs h-8"
+							placeholder="Vad verktyget fundamentalt är, t.ex. 'SMHI Väderprognostjänst'"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad verktyget fundamentalt är/representerar</p>
+					</div>
+
+					{/* Core Activity */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Activity className="h-3 w-3" /> Kärnaktivitet
+						</Label>
+						<Input
+							value={coreActivity}
+							onChange={(e) => setCoreActivity(e.target.value)}
+							className="text-xs h-8"
+							placeholder="Vad verktyget gör, t.ex. 'Hämtar detaljerade väderprognoser'"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad verktyget gör / dess huvudsakliga funktion</p>
+					</div>
+
 					{/* Description */}
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -874,12 +926,9 @@ function ToolDetail({
 						<Textarea
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}
-							className="text-xs min-h-[120px] font-mono leading-5"
-							placeholder={DESCRIPTION_TEMPLATE_PLACEHOLDER}
+							className="text-xs min-h-[80px] font-mono leading-5"
+							placeholder="Fri beskrivning av verktyget..."
 						/>
-						<p className="text-[10px] text-muted-foreground">
-							Mall: [HUVUDIDENTIFIERARE] [KÄRNAKTIVITET] [STARKASTE KEYWORDS] [UNIK AVGRÄNSNING] [KOMMUN/SVERIGE] [EXEMPEL FRÅGOR] [EXKLUDERAR: ...]
-						</p>
 					</div>
 
 					{/* Keywords */}
@@ -895,6 +944,34 @@ function ToolDetail({
 						/>
 					</div>
 
+					{/* Unique Scope */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<ShieldOff className="h-3 w-3" /> Unik avgränsning
+						</Label>
+						<Input
+							value={uniqueScope}
+							onChange={(e) => setUniqueScope(e.target.value)}
+							className="text-xs h-8"
+							placeholder="Vad som unikt avgränsar detta verktyg från andra"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad som skiljer detta verktyg från liknande</p>
+					</div>
+
+					{/* Geographic Scope */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<MapPin className="h-3 w-3" /> Kommun / Sverige
+						</Label>
+						<Input
+							value={geographicScope}
+							onChange={(e) => setGeographicScope(e.target.value)}
+							className="text-xs h-8"
+							placeholder="t.ex. 'Sverige', 'Norrköping kommun', 'Norden'"
+						/>
+						<p className="text-[10px] text-muted-foreground">Geografiskt omfång / tillämpningsområde</p>
+					</div>
+
 					{/* Example queries */}
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -906,6 +983,20 @@ function ToolDetail({
 							className="text-xs min-h-[80px]"
 							placeholder={"Vad blir vädret imorgon i Stockholm?\nVisa temperatur för Göteborg\nRegnar det idag?"}
 						/>
+					</div>
+
+					{/* Excludes */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Ban className="h-3 w-3" /> Exkluderar (komma-separerade)
+						</Label>
+						<Textarea
+							value={excludes}
+							onChange={(e) => setExcludes(e.target.value)}
+							className="text-xs min-h-[60px]"
+							placeholder="historiska data, klimatstatistik, radarprognoser"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad verktyget INTE hanterar</p>
 					</div>
 
 					{/* Category */}
@@ -997,6 +1088,26 @@ function ToolDetail({
 								<p className="text-xs">{catalogTool.name}</p>
 							</div>
 
+							{/* Main Identifier */}
+							{catalogTool.main_identifier && (
+								<div className="space-y-1">
+									<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+										<Target className="h-3 w-3" /> Huvudidentifierare
+									</Label>
+									<p className="text-xs">{catalogTool.main_identifier}</p>
+								</div>
+							)}
+
+							{/* Core Activity */}
+							{catalogTool.core_activity && (
+								<div className="space-y-1">
+									<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+										<Activity className="h-3 w-3" /> Kärnaktivitet
+									</Label>
+									<p className="text-xs">{catalogTool.core_activity}</p>
+								</div>
+							)}
+
 							{/* Description */}
 							<div className="space-y-1">
 								<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -1025,6 +1136,26 @@ function ToolDetail({
 								</div>
 							</div>
 
+							{/* Unique Scope */}
+							{catalogTool.unique_scope && (
+								<div className="space-y-1">
+									<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+										<ShieldOff className="h-3 w-3" /> Unik avgränsning
+									</Label>
+									<p className="text-xs">{catalogTool.unique_scope}</p>
+								</div>
+							)}
+
+							{/* Geographic Scope */}
+							{catalogTool.geographic_scope && (
+								<div className="space-y-1">
+									<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+										<MapPin className="h-3 w-3" /> Kommun / Sverige
+									</Label>
+									<p className="text-xs">{catalogTool.geographic_scope}</p>
+								</div>
+							)}
+
 							{/* Example queries */}
 							<div className="space-y-1">
 								<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -1043,6 +1174,22 @@ function ToolDetail({
 									<span className="text-[10px] text-muted-foreground italic">Inga exempelfrågor</span>
 								)}
 							</div>
+
+							{/* Excludes */}
+							{catalogTool.excludes && catalogTool.excludes.length > 0 && (
+								<div className="space-y-1">
+									<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+										<Ban className="h-3 w-3" /> Exkluderar
+									</Label>
+									<div className="flex flex-wrap gap-1">
+										{catalogTool.excludes.map((ex) => (
+											<Badge key={ex} variant="outline" className="text-[10px] px-1.5 py-0 border-destructive/30 text-destructive">
+												{ex}
+											</Badge>
+										))}
+									</div>
+								</div>
+							)}
 
 							{/* Category */}
 							<div className="flex items-center justify-between">
