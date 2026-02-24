@@ -423,6 +423,16 @@ export function FlowGraphPage() {
 		routes: "",
 	});
 	const [creatingAgent, setCreatingAgent] = useState(false);
+	const [showCreateIntent, setShowCreateIntent] = useState(false);
+	const [newIntent, setNewIntent] = useState({
+		intent_id: "",
+		label: "",
+		description: "",
+		keywords: "",
+		route: "kunskap",
+		priority: "500",
+	});
+	const [creatingIntent, setCreatingIntent] = useState(false);
 
 	const fetchData = useCallback(async () => {
 		setLoading(true);
@@ -469,6 +479,34 @@ export function FlowGraphPage() {
 			setCreatingAgent(false);
 		}
 	}, [newAgent, fetchData]);
+
+	const handleCreateIntent = useCallback(async () => {
+		const intentId = newIntent.intent_id.trim().toLowerCase();
+		if (!intentId) {
+			toast.error("Intent ID krävs");
+			return;
+		}
+		setCreatingIntent(true);
+		try {
+			await adminFlowGraphApiService.upsertIntent({
+				intent_id: intentId,
+				label: newIntent.label.trim() || intentId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+				description: newIntent.description.trim(),
+				keywords: newIntent.keywords.split(",").map((k) => k.trim()).filter(Boolean),
+				route: newIntent.route.trim() || "kunskap",
+				priority: parseInt(newIntent.priority, 10) || 500,
+				enabled: true,
+			});
+			toast.success(`Intent "${intentId}" skapad`);
+			setShowCreateIntent(false);
+			setNewIntent({ intent_id: "", label: "", description: "", keywords: "", route: "kunskap", priority: "500" });
+			fetchData();
+		} catch {
+			toast.error("Kunde inte skapa intent");
+		} finally {
+			setCreatingIntent(false);
+		}
+	}, [newIntent, fetchData]);
 
 	const totalToolCount = useMemo(() => {
 		if (!catalogData) return graphData?.tools.length ?? 0;
@@ -765,97 +803,186 @@ export function FlowGraphPage() {
 							)}
 
 							{viewMode === "routing" && (
-								<Dialog open={showCreateAgent} onOpenChange={setShowCreateAgent}>
-									<DialogTrigger asChild>
-										<Button variant="outline" size="sm" className="h-7 text-xs px-2.5">
-											<Plus className="h-3.5 w-3.5 mr-1" /> Agent
-										</Button>
-									</DialogTrigger>
-									<DialogContent className="sm:max-w-[440px]">
-										<DialogHeader>
-											<DialogTitle>Skapa ny agent</DialogTitle>
-											<DialogDescription>
-												Fyll i fälten nedan. Du kan tilldela verktyg och redigera detaljer efteråt.
-											</DialogDescription>
-										</DialogHeader>
-										<div className="space-y-3 py-2">
-											<div className="space-y-1">
-												<Label className="text-xs">Agent ID</Label>
-												<Input
-													value={newAgent.agent_id}
-													onChange={(e) => setNewAgent((p) => ({ ...p, agent_id: e.target.value }))}
-													className="text-xs h-8"
-													placeholder="t.ex. skolverket"
-												/>
-											</div>
-											<div className="space-y-1">
-												<Label className="text-xs">Label</Label>
-												<Input
-													value={newAgent.label}
-													onChange={(e) => setNewAgent((p) => ({ ...p, label: e.target.value }))}
-													className="text-xs h-8"
-													placeholder="Skolverket"
-												/>
-											</div>
-											<div className="space-y-1">
-												<Label className="text-xs">Beskrivning</Label>
-												<Textarea
-													value={newAgent.description}
-													onChange={(e) => setNewAgent((p) => ({ ...p, description: e.target.value }))}
-													className="text-xs min-h-[60px]"
-													placeholder="Beskriv vad agenten gör..."
-												/>
-											</div>
-											<div className="space-y-1">
-												<Label className="text-xs">Nyckelord (komma-separerade)</Label>
-												<Input
-													value={newAgent.keywords}
-													onChange={(e) => setNewAgent((p) => ({ ...p, keywords: e.target.value }))}
-													className="text-xs h-8"
-													placeholder="skolverket, skola, laroplan, amnesplan"
-												/>
-											</div>
-											<div className="grid grid-cols-2 gap-2">
+								<>
+									<Dialog open={showCreateIntent} onOpenChange={setShowCreateIntent}>
+										<DialogTrigger asChild>
+											<Button variant="outline" size="sm" className="h-7 text-xs px-2.5">
+												<Plus className="h-3.5 w-3.5 mr-1" /> Intent
+											</Button>
+										</DialogTrigger>
+										<DialogContent className="sm:max-w-[440px]">
+											<DialogHeader>
+												<DialogTitle>Skapa ny intent</DialogTitle>
+												<DialogDescription>
+													Fyll i fälten nedan. Du kan koppla agenter och redigera detaljer efteråt.
+												</DialogDescription>
+											</DialogHeader>
+											<div className="space-y-3 py-2">
 												<div className="space-y-1">
-													<Label className="text-xs">Prompt-nyckel</Label>
+													<Label className="text-xs">Intent ID</Label>
 													<Input
-														value={newAgent.prompt_key}
-														onChange={(e) => setNewAgent((p) => ({ ...p, prompt_key: e.target.value }))}
+														value={newIntent.intent_id}
+														onChange={(e) => setNewIntent((p) => ({ ...p, intent_id: e.target.value }))}
 														className="text-xs h-8"
-														placeholder="skolverket"
+														placeholder="t.ex. skolverket_fraga"
 													/>
 												</div>
 												<div className="space-y-1">
-													<Label className="text-xs">Namespace</Label>
+													<Label className="text-xs">Label</Label>
 													<Input
-														value={newAgent.namespace}
-														onChange={(e) => setNewAgent((p) => ({ ...p, namespace: e.target.value }))}
+														value={newIntent.label}
+														onChange={(e) => setNewIntent((p) => ({ ...p, label: e.target.value }))}
 														className="text-xs h-8"
-														placeholder="agents/skolverket"
+														placeholder="Skolverket-fråga"
+													/>
+												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Beskrivning</Label>
+													<Textarea
+														value={newIntent.description}
+														onChange={(e) => setNewIntent((p) => ({ ...p, description: e.target.value }))}
+														className="text-xs min-h-[60px]"
+														placeholder="Beskriv vad denna intent fångar..."
+													/>
+												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Nyckelord (komma-separerade)</Label>
+													<Input
+														value={newIntent.keywords}
+														onChange={(e) => setNewIntent((p) => ({ ...p, keywords: e.target.value }))}
+														className="text-xs h-8"
+														placeholder="skola, laroplan, betyg"
+													/>
+												</div>
+												<div className="grid grid-cols-2 gap-2">
+													<div className="space-y-1">
+														<Label className="text-xs">Route</Label>
+														<select
+															value={newIntent.route}
+															onChange={(e) => setNewIntent((p) => ({ ...p, route: e.target.value }))}
+															className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+														>
+															<option value="kunskap">kunskap</option>
+															<option value="skapande">skapande</option>
+															<option value="jämförelse">jämförelse</option>
+															<option value="konversation">konversation</option>
+														</select>
+													</div>
+													<div className="space-y-1">
+														<Label className="text-xs">Prioritet</Label>
+														<Input
+															type="number"
+															value={newIntent.priority}
+															onChange={(e) => setNewIntent((p) => ({ ...p, priority: e.target.value }))}
+															className="text-xs h-8"
+														/>
+													</div>
+												</div>
+											</div>
+											<DialogFooter>
+												<Button variant="ghost" size="sm" onClick={() => setShowCreateIntent(false)}>
+													Avbryt
+												</Button>
+												<Button size="sm" onClick={handleCreateIntent} disabled={creatingIntent}>
+													{creatingIntent ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1.5" />}
+													Skapa intent
+												</Button>
+											</DialogFooter>
+										</DialogContent>
+									</Dialog>
+
+									<Dialog open={showCreateAgent} onOpenChange={setShowCreateAgent}>
+										<DialogTrigger asChild>
+											<Button variant="outline" size="sm" className="h-7 text-xs px-2.5">
+												<Plus className="h-3.5 w-3.5 mr-1" /> Agent
+											</Button>
+										</DialogTrigger>
+										<DialogContent className="sm:max-w-[440px]">
+											<DialogHeader>
+												<DialogTitle>Skapa ny agent</DialogTitle>
+												<DialogDescription>
+													Fyll i fälten nedan. Du kan tilldela verktyg och redigera detaljer efteråt.
+												</DialogDescription>
+											</DialogHeader>
+											<div className="space-y-3 py-2">
+												<div className="space-y-1">
+													<Label className="text-xs">Agent ID</Label>
+													<Input
+														value={newAgent.agent_id}
+														onChange={(e) => setNewAgent((p) => ({ ...p, agent_id: e.target.value }))}
+														className="text-xs h-8"
+														placeholder="t.ex. skolverket"
+													/>
+												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Label</Label>
+													<Input
+														value={newAgent.label}
+														onChange={(e) => setNewAgent((p) => ({ ...p, label: e.target.value }))}
+														className="text-xs h-8"
+														placeholder="Skolverket"
+													/>
+												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Beskrivning</Label>
+													<Textarea
+														value={newAgent.description}
+														onChange={(e) => setNewAgent((p) => ({ ...p, description: e.target.value }))}
+														className="text-xs min-h-[60px]"
+														placeholder="Beskriv vad agenten gör..."
+													/>
+												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Nyckelord (komma-separerade)</Label>
+													<Input
+														value={newAgent.keywords}
+														onChange={(e) => setNewAgent((p) => ({ ...p, keywords: e.target.value }))}
+														className="text-xs h-8"
+														placeholder="skolverket, skola, laroplan, amnesplan"
+													/>
+												</div>
+												<div className="grid grid-cols-2 gap-2">
+													<div className="space-y-1">
+														<Label className="text-xs">Prompt-nyckel</Label>
+														<Input
+															value={newAgent.prompt_key}
+															onChange={(e) => setNewAgent((p) => ({ ...p, prompt_key: e.target.value }))}
+															className="text-xs h-8"
+															placeholder="skolverket"
+														/>
+													</div>
+													<div className="space-y-1">
+														<Label className="text-xs">Namespace</Label>
+														<Input
+															value={newAgent.namespace}
+															onChange={(e) => setNewAgent((p) => ({ ...p, namespace: e.target.value }))}
+															className="text-xs h-8"
+															placeholder="agents/skolverket"
+														/>
+													</div>
+												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Routes / intents (komma-separerade)</Label>
+													<Input
+														value={newAgent.routes}
+														onChange={(e) => setNewAgent((p) => ({ ...p, routes: e.target.value }))}
+														className="text-xs h-8"
+														placeholder="kunskap, jämförelse"
 													/>
 												</div>
 											</div>
-											<div className="space-y-1">
-												<Label className="text-xs">Routes / intents (komma-separerade)</Label>
-												<Input
-													value={newAgent.routes}
-													onChange={(e) => setNewAgent((p) => ({ ...p, routes: e.target.value }))}
-													className="text-xs h-8"
-													placeholder="kunskap, jämförelse"
-												/>
-											</div>
-										</div>
-										<DialogFooter>
-											<Button variant="ghost" size="sm" onClick={() => setShowCreateAgent(false)}>
-												Avbryt
-											</Button>
-											<Button size="sm" onClick={handleCreateAgent} disabled={creatingAgent}>
-												{creatingAgent ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1.5" />}
-												Skapa agent
-											</Button>
-										</DialogFooter>
-									</DialogContent>
-								</Dialog>
+											<DialogFooter>
+												<Button variant="ghost" size="sm" onClick={() => setShowCreateAgent(false)}>
+													Avbryt
+												</Button>
+												<Button size="sm" onClick={handleCreateAgent} disabled={creatingAgent}>
+													{creatingAgent ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1.5" />}
+													Skapa agent
+												</Button>
+											</DialogFooter>
+										</DialogContent>
+									</Dialog>
+								</>
 							)}
 
 							<Button
