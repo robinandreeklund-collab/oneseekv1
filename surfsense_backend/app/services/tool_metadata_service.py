@@ -47,6 +47,11 @@ def normalize_tool_metadata_payload(
         "example_queries": _normalize_text_list(payload.get("example_queries")),
         "category": _normalize_text(payload.get("category")),
         "base_path": _normalize_optional_text(payload.get("base_path")),
+        "main_identifier": _normalize_text(payload.get("main_identifier")),
+        "core_activity": _normalize_text(payload.get("core_activity")),
+        "unique_scope": _normalize_text(payload.get("unique_scope")),
+        "geographic_scope": _normalize_text(payload.get("geographic_scope")),
+        "excludes": _normalize_text_list(payload.get("excludes")),
     }
 
 

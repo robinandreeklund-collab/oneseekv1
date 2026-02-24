@@ -1,0 +1,536 @@
+"""Admin endpoint that returns the LangGraph pipeline graph and routing data."""
+
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+from app.db import (
+    SearchSpaceMembership,
+    User,
+    get_async_session,
+)
+from app.services.agent_metadata_service import (
+    get_effective_agent_metadata,
+    upsert_global_agent_metadata_overrides,
+)
+from app.services.intent_definition_service import (
+    get_effective_intent_definitions,
+    upsert_global_intent_definition_overrides,
+)
+from app.users import current_active_user
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+# ─── LangGraph pipeline: nodes & edges ───────────────────────────────
+# Mirrors the StateGraph built in supervisor_agent.py.
+
+_PIPELINE_NODES: list[dict[str, Any]] = [
+    # ── Entry ──
+    {
+        "id": "node:resolve_intent",
+        "label": "Resolve Intent",
+        "stage": "entry",
+        "description": "Klassificerar frågan → route (kunskap/skapande/jämförelse/konversation) + confidence.",
+        "prompt_key": "supervisor.intent_resolver.system",
+    },
+    {
+        "id": "node:memory_context",
+        "label": "Memory Context",
+        "stage": "entry",
+        "description": "Laddar minneskontext och samtalshistorik.",
+        "prompt_key": None,
+    },
+    # ── Fast paths ──
+    {
+        "id": "node:smalltalk",
+        "label": "Smalltalk",
+        "stage": "fast_path",
+        "description": "Snabb hälsningssvar (konversation-route). → END",
+        "prompt_key": "agent.smalltalk.system",
+    },
+    # ── Speculative ──
+    {
+        "id": "node:speculative",
+        "label": "Speculative",
+        "stage": "speculative",
+        "description": "Förberäknar troliga verktyg parallellt (hybrid-läge, komplex fråga).",
+        "prompt_key": None,
+    },
+    # ── Planning ──
+    {
+        "id": "node:agent_resolver",
+        "label": "Agent Resolver",
+        "stage": "planning",
+        "description": "Hämtar och väljer agenter via vektor-retrieval + LLM-rankning.",
+        "prompt_key": "supervisor.agent_resolver.system",
+    },
+    {
+        "id": "node:planner",
+        "label": "Planner",
+        "stage": "planning",
+        "description": "Skapar exekverbar plan (max 4 steg) baserat på valda agenter.",
+        "prompt_key": "supervisor.planner.system",
+    },
+    {
+        "id": "node:planner_hitl_gate",
+        "label": "Planner HITL",
+        "stage": "planning",
+        "description": "Human-in-the-loop: pausar för användarens godkännande av planen.",
+        "prompt_key": "supervisor.hitl.planner.message",
+    },
+    # ── Tool resolution ──
+    {
+        "id": "node:tool_resolver",
+        "label": "Tool Resolver",
+        "stage": "tool_resolution",
+        "description": "Matchar plansteg → verktyg via vektor-retrieval.",
+        "prompt_key": "supervisor.tool_resolver.system",
+    },
+    {
+        "id": "node:speculative_merge",
+        "label": "Speculative Merge",
+        "stage": "tool_resolution",
+        "description": "Mergar spekulativa verktygskandidater med resolver-resultat.",
+        "prompt_key": None,
+    },
+    {
+        "id": "node:execution_router",
+        "label": "Execution Router",
+        "stage": "tool_resolution",
+        "description": "Bestämmer exekverings-strategi (inline/subagent/parallel).",
+        "prompt_key": None,
+    },
+    # ── Execution ──
+    {
+        "id": "node:execution_hitl_gate",
+        "label": "Execution HITL",
+        "stage": "execution",
+        "description": "Human-in-the-loop: pausar för godkännande innan verktygsanrop.",
+        "prompt_key": "supervisor.hitl.execution.message",
+    },
+    {
+        "id": "node:executor",
+        "label": "Executor (LLM)",
+        "stage": "execution",
+        "description": "LLM-anrop som genererar svar eller tool_calls.",
+        "prompt_key": "agent.supervisor.system",
+    },
+    {
+        "id": "node:tools",
+        "label": "Tools",
+        "stage": "execution",
+        "description": "Kör verktygsanrop (SMHI, SCB, Trafikverket, sandbox, etc.).",
+        "prompt_key": None,
+    },
+    {
+        "id": "node:post_tools",
+        "label": "Post-Tools",
+        "stage": "execution",
+        "description": "Efterbehandling av verktygsresultat.",
+        "prompt_key": None,
+    },
+    # ── Post-processing ──
+    {
+        "id": "node:artifact_indexer",
+        "label": "Artifact Indexer",
+        "stage": "post_processing",
+        "description": "Indexerar artefakter (filer, data) för framtida referens.",
+        "prompt_key": None,
+    },
+    {
+        "id": "node:context_compactor",
+        "label": "Context Compactor",
+        "stage": "post_processing",
+        "description": "Komprimerar kontext för att hålla sig inom token-budget.",
+        "prompt_key": None,
+    },
+    {
+        "id": "node:orchestration_guard",
+        "label": "Orchestration Guard",
+        "stage": "post_processing",
+        "description": "Loop-guard och verktygs-limit-guard mot oändliga loopar.",
+        "prompt_key": "supervisor.loop_guard.message",
+    },
+    # ── Evaluation ──
+    {
+        "id": "node:critic",
+        "label": "Critic",
+        "stage": "evaluation",
+        "description": "Bedömer om svaret är tillräckligt (ok/needs_more/replan).",
+        "prompt_key": "supervisor.critic.system",
+    },
+    # ── Synthesis ──
+    {
+        "id": "node:synthesis_hitl",
+        "label": "Synthesis HITL",
+        "stage": "synthesis",
+        "description": "Human-in-the-loop: pausar för godkännande innan leverans.",
+        "prompt_key": "supervisor.hitl.synthesis.message",
+    },
+    {
+        "id": "node:progressive_synthesizer",
+        "label": "Progressive Synthesizer",
+        "stage": "synthesis",
+        "description": "Inkrementell streaming-syntes för komplexa svar.",
+        "prompt_key": "supervisor.synthesizer.system",
+    },
+    {
+        "id": "node:synthesizer",
+        "label": "Synthesizer",
+        "stage": "synthesis",
+        "description": "Slutgiltig förfining och formatering av svaret. → END",
+        "prompt_key": "supervisor.synthesizer.system",
+    },
+]
+
+_PIPELINE_EDGES: list[dict[str, Any]] = [
+    # ── Main flow ──
+    {"source": "node:resolve_intent", "target": "node:memory_context", "type": "normal"},
+    # ── Conditional from memory_context (route_after_intent) ──
+    {"source": "node:memory_context", "target": "node:smalltalk", "type": "conditional", "label": "konversation"},
+    {"source": "node:memory_context", "target": "node:speculative", "type": "conditional", "label": "komplex"},
+    {"source": "node:memory_context", "target": "node:agent_resolver", "type": "conditional", "label": "default"},
+    {"source": "node:memory_context", "target": "node:tool_resolver", "type": "conditional", "label": "enkel"},
+    {"source": "node:memory_context", "target": "node:synthesis_hitl", "type": "conditional", "label": "finalize"},
+    # ── Speculative → planning ──
+    {"source": "node:speculative", "target": "node:agent_resolver", "type": "normal"},
+    # ── Planning flow ──
+    {"source": "node:agent_resolver", "target": "node:planner", "type": "normal"},
+    {"source": "node:planner", "target": "node:planner_hitl_gate", "type": "normal"},
+    {"source": "node:planner_hitl_gate", "target": "node:tool_resolver", "type": "conditional", "label": "godkänd"},
+    # ── Tool resolution → execution ──
+    {"source": "node:tool_resolver", "target": "node:speculative_merge", "type": "normal"},
+    {"source": "node:speculative_merge", "target": "node:execution_router", "type": "normal"},
+    {"source": "node:execution_router", "target": "node:execution_hitl_gate", "type": "normal"},
+    {"source": "node:execution_hitl_gate", "target": "node:executor", "type": "conditional", "label": "godkänd"},
+    # ── Executor loop ──
+    {"source": "node:executor", "target": "node:tools", "type": "conditional", "label": "tool_calls"},
+    {"source": "node:executor", "target": "node:critic", "type": "conditional", "label": "svar klart"},
+    # ── Tool processing chain ──
+    {"source": "node:tools", "target": "node:post_tools", "type": "normal"},
+    {"source": "node:post_tools", "target": "node:artifact_indexer", "type": "normal"},
+    {"source": "node:artifact_indexer", "target": "node:context_compactor", "type": "normal"},
+    {"source": "node:context_compactor", "target": "node:orchestration_guard", "type": "normal"},
+    {"source": "node:orchestration_guard", "target": "node:critic", "type": "normal"},
+    # ── Critic decisions ──
+    {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},
+    {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more"},
+    {"source": "node:critic", "target": "node:planner", "type": "conditional", "label": "replan"},
+    # ── Synthesis ──
+    {"source": "node:synthesis_hitl", "target": "node:progressive_synthesizer", "type": "conditional", "label": "komplex"},
+    {"source": "node:synthesis_hitl", "target": "node:synthesizer", "type": "conditional", "label": "enkel"},
+    {"source": "node:progressive_synthesizer", "target": "node:synthesizer", "type": "normal"},
+]
+
+# Stage metadata for frontend grouping and coloring
+_PIPELINE_STAGES: list[dict[str, str]] = [
+    {"id": "entry", "label": "Ingång", "color": "violet"},
+    {"id": "fast_path", "label": "Snabbsvar", "color": "amber"},
+    {"id": "speculative", "label": "Spekulativ", "color": "slate"},
+    {"id": "planning", "label": "Planering", "color": "blue"},
+    {"id": "tool_resolution", "label": "Verktygsval", "color": "cyan"},
+    {"id": "execution", "label": "Exekvering", "color": "emerald"},
+    {"id": "post_processing", "label": "Efterbehandling", "color": "slate"},
+    {"id": "evaluation", "label": "Utvärdering", "color": "orange"},
+    {"id": "synthesis", "label": "Syntes", "color": "rose"},
+]
+
+
+async def _require_admin(
+    session: AsyncSession,
+    user: User,
+) -> None:
+    result = await session.execute(
+        select(SearchSpaceMembership)
+        .filter(
+            SearchSpaceMembership.user_id == user.id,
+            SearchSpaceMembership.is_owner.is_(True),
+        )
+        .limit(1)
+    )
+    if result.scalars().first() is None:
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to access flow graph",
+        )
+
+
+@router.get("/flow-graph")
+async def get_flow_graph(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """Return the LangGraph pipeline graph and intent → agent → tool routing data.
+
+    All routing data (intents, agents, tools, edges) is built dynamically from
+    DB-backed services — nothing is hardcoded.
+    """
+    await _require_admin(session, user)
+
+    # ── Read from DB ──
+    intents = await get_effective_intent_definitions(session)
+    agents = await get_effective_agent_metadata(session)
+
+    # ── Build intent nodes ──
+    intent_nodes: list[dict[str, Any]] = []
+    for intent in intents:
+        intent_id = intent.get("intent_id", "")
+        intent_nodes.append({
+            "id": f"intent:{intent_id}",
+            "type": "intent",
+            "intent_id": intent_id,
+            "label": intent.get("label", intent_id),
+            "description": intent.get("description", ""),
+            "route": intent.get("route", ""),
+            "keywords": intent.get("keywords", []),
+            "priority": intent.get("priority", 500),
+            "enabled": intent.get("enabled", True),
+        })
+    intent_ids = {intent.get("intent_id", "") for intent in intents}
+
+    # ── Build agent nodes & intent→agent edges from agent.routes ──
+    agent_nodes: list[dict[str, Any]] = []
+    intent_agent_edges: list[dict[str, str]] = []
+    for agent in agents:
+        agent_id = agent.get("agent_id", "")
+        agent_nodes.append({
+            "id": f"agent:{agent_id}",
+            "type": "agent",
+            "agent_id": agent_id,
+            "label": agent.get("label", agent_id),
+            "description": agent.get("description", ""),
+            "keywords": agent.get("keywords", []),
+            "prompt_key": agent.get("prompt_key", ""),
+            "namespace": agent.get("namespace", []),
+            "routes": agent.get("routes", []),
+        })
+        for route_id in agent.get("routes", []):
+            if route_id in intent_ids:
+                intent_agent_edges.append({
+                    "source": f"intent:{route_id}",
+                    "target": f"agent:{agent_id}",
+                })
+
+    # ── Build tool nodes & agent→tool edges from agent.flow_tools ──
+    tool_nodes: list[dict[str, Any]] = []
+    agent_tool_edges: list[dict[str, str]] = []
+    seen_tools: set[str] = set()
+    for agent in agents:
+        agent_id = agent.get("agent_id", "")
+        for tool_entry in agent.get("flow_tools", []):
+            tool_id = tool_entry.get("tool_id", "")
+            if not tool_id:
+                continue
+            if tool_id not in seen_tools:
+                seen_tools.add(tool_id)
+                tool_nodes.append({
+                    "id": f"tool:{tool_id}",
+                    "type": "tool",
+                    "tool_id": tool_id,
+                    "label": tool_entry.get("label", tool_id),
+                    "agent_id": agent_id,
+                })
+            agent_tool_edges.append({
+                "source": f"agent:{agent_id}",
+                "target": f"tool:{tool_id}",
+            })
+
+    return {
+        # Pipeline (LangGraph execution flow)
+        "pipeline_nodes": _PIPELINE_NODES,
+        "pipeline_edges": _PIPELINE_EDGES,
+        "pipeline_stages": _PIPELINE_STAGES,
+        # Routing (intent → agent → tool)
+        "intents": intent_nodes,
+        "agents": agent_nodes,
+        "tools": tool_nodes,
+        "intent_agent_edges": intent_agent_edges,
+        "agent_tool_edges": agent_tool_edges,
+    }
+
+
+# ── Save endpoints ────────────────────────────────────────────────────
+
+
+class FlowToolEntry(BaseModel):
+    tool_id: str
+    label: str
+
+
+class UpdateAgentRoutesRequest(BaseModel):
+    agent_id: str
+    routes: list[str]
+
+
+class UpdateAgentToolsRequest(BaseModel):
+    agent_id: str
+    flow_tools: list[FlowToolEntry]
+
+
+class UpdateIntentRequest(BaseModel):
+    intent_id: str
+    label: str | None = None
+    route: str | None = None
+    description: str | None = None
+    keywords: list[str] | None = None
+    priority: int | None = None
+    enabled: bool | None = None
+
+
+class UpsertAgentRequest(BaseModel):
+    agent_id: str
+    label: str | None = None
+    description: str | None = None
+    keywords: list[str] | None = None
+    prompt_key: str | None = None
+    namespace: list[str] | None = None
+    routes: list[str] | None = None
+    flow_tools: list[FlowToolEntry] | None = None
+
+
+class DeleteAgentRequest(BaseModel):
+    agent_id: str
+
+
+class DeleteIntentRequest(BaseModel):
+    intent_id: str
+
+
+@router.put("/flow-graph/agent")
+async def upsert_agent(
+    request: UpsertAgentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Create or update an agent definition."""
+    await _require_admin(session, user)
+    payload: dict[str, Any] = {}
+    if request.label is not None:
+        payload["label"] = request.label
+    if request.description is not None:
+        payload["description"] = request.description
+    if request.keywords is not None:
+        payload["keywords"] = request.keywords
+    if request.prompt_key is not None:
+        payload["prompt_key"] = request.prompt_key
+    if request.namespace is not None:
+        payload["namespace"] = request.namespace
+    if request.routes is not None:
+        payload["routes"] = request.routes
+    if request.flow_tools is not None:
+        payload["flow_tools"] = [t.model_dump() for t in request.flow_tools]
+    await upsert_global_agent_metadata_overrides(
+        session,
+        [(request.agent_id, payload)],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/flow-graph/agent")
+async def delete_agent(
+    request: DeleteAgentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Delete an agent definition override (reverts to default if exists)."""
+    await _require_admin(session, user)
+    await upsert_global_agent_metadata_overrides(
+        session,
+        [(request.agent_id, None)],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.patch("/flow-graph/agent-routes")
+async def update_agent_routes(
+    request: UpdateAgentRoutesRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Update which routes/intents an agent is assigned to."""
+    await _require_admin(session, user)
+    await upsert_global_agent_metadata_overrides(
+        session,
+        [(request.agent_id, {"routes": request.routes})],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.patch("/flow-graph/agent-tools")
+async def update_agent_tools(
+    request: UpdateAgentToolsRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Update which tools belong to an agent in the flow graph."""
+    await _require_admin(session, user)
+    await upsert_global_agent_metadata_overrides(
+        session,
+        [(
+            request.agent_id,
+            {"flow_tools": [t.model_dump() for t in request.flow_tools]},
+        )],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.put("/flow-graph/intent")
+async def upsert_intent(
+    request: UpdateIntentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Create or update an intent definition."""
+    await _require_admin(session, user)
+    payload: dict[str, Any] = {}
+    if request.label is not None:
+        payload["label"] = request.label
+    if request.route is not None:
+        payload["route"] = request.route
+    if request.description is not None:
+        payload["description"] = request.description
+    if request.keywords is not None:
+        payload["keywords"] = request.keywords
+    if request.priority is not None:
+        payload["priority"] = request.priority
+    if request.enabled is not None:
+        payload["enabled"] = request.enabled
+    await upsert_global_intent_definition_overrides(
+        session,
+        [(request.intent_id, payload)],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/flow-graph/intent")
+async def delete_intent(
+    request: DeleteIntentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """Delete an intent definition override (reverts to default if exists)."""
+    await _require_admin(session, user)
+    await upsert_global_intent_definition_overrides(
+        session,
+        [(request.intent_id, None)],
+        updated_by_id=str(user.id),
+    )
+    await session.commit()
+    return {"status": "ok"}

@@ -69,6 +69,7 @@ const AGENT_ORDER = [
 	"bolag",
 	"trafik",
 	"riksdagen",
+	"marketplace",
 	"synthesis",
 	"smalltalk",
 ];
@@ -152,25 +153,18 @@ const SYSTEM_NODES = [
 ];
 
 const AGENT_NODES = [
-	{
-		label: "Knowledge",
-		agent: "knowledge",
-		keys: ["agent.knowledge.system"],
-	},
-	{
-		label: "Action",
-		agent: "action",
-		keys: ["agent.action.system"],
-	},
+	{ label: "Kunskap", agent: "knowledge", keys: ["agent.knowledge.system"] },
+	{ label: "Åtgärd", agent: "action", keys: ["agent.action.system"] },
 	{ label: "Media", agent: "media", keys: ["agent.media.system"] },
-	{ label: "Browser", agent: "browser", keys: ["agent.browser.system"] },
-	{ label: "Code", agent: "code", keys: ["agent.code.system"] },
+	{ label: "Webb", agent: "browser", keys: ["agent.browser.system"] },
+	{ label: "Kod", agent: "code", keys: ["agent.code.system"] },
 	{ label: "Kartor", agent: "kartor", keys: ["agent.kartor.system"] },
-	{ label: "Statistics", agent: "statistics", keys: ["agent.statistics.system"] },
+	{ label: "Statistik", agent: "statistics", keys: ["agent.statistics.system"] },
 	{ label: "Bolag", agent: "bolag", keys: ["agent.bolag.system"] },
 	{ label: "Trafik", agent: "trafik", keys: ["agent.trafik.system"] },
 	{ label: "Riksdagen", agent: "riksdagen", keys: ["agent.riksdagen.system"] },
-	{ label: "Synthesis", agent: "synthesis", keys: ["agent.synthesis.system"] },
+	{ label: "Marknad", agent: "marketplace", keys: ["agent.marketplace.system"] },
+	{ label: "Syntes", agent: "synthesis", keys: ["agent.synthesis.system"] },
 	{ label: "Smalltalk", agent: "smalltalk", keys: ["agent.smalltalk.system"] },
 ];
 

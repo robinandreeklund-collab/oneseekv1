@@ -12,7 +12,14 @@ from langchain_core.tools import BaseTool
 
 from app.agents.new_chat.action_router import ActionRoute, dispatch_action_route
 from app.agents.new_chat.bigtool_store import (
+    METADATA_MAX_DESCRIPTION_CHARS,
+    METADATA_MAX_EXAMPLE_QUERIES,
+    METADATA_MAX_EXAMPLE_QUERY_CHARS,
+    METADATA_MAX_EXCLUDES,
+    METADATA_MAX_KEYWORD_CHARS,
+    METADATA_MAX_KEYWORDS,
     ToolIndexEntry,
+    enforce_metadata_limits,
     get_tool_embedding_context_fields,
     get_vector_recall_top_k,
     normalize_retrieval_tuning,
@@ -105,33 +112,33 @@ _SWEDISH_SIGNAL_WORDS = {
     "utvärdering",
 }
 _EVAL_AGENT_CHOICES = (
-    "statistics",
+    "statistik",
     "riksdagen",
-    "weather",
+    "väder",
     "trafik",
     "bolag",
-    "marketplace",
+    "marknad",
     "kartor",
     "media",
-    "browser",
-    "knowledge",
-    "action",
-    "synthesis",
+    "webb",
+    "kunskap",
+    "åtgärd",
+    "syntes",
 )
 
 _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
-    "statistics": "SCB/statistics and official data in Sweden.",
-    "riksdagen": "Swedish parliament and political documents.",
-    "weather": "SMHI weather forecasts and weather context for Swedish cities/regions.",
-    "trafik": "Traffic, roads, incidents, rail and transport context.",
-    "bolag": "Swedish company/organization registry context.",
-    "marketplace": "Blocket/Tradera marketplace search and price comparison tasks.",
-    "kartor": "Geospatial/maps/geocoding context.",
-    "media": "Podcast and media generation context.",
-    "browser": "Web browsing, URL scraping, and page lookup tasks.",
-    "knowledge": "Knowledge lookup in docs/internal/external sources.",
-    "action": "General action/data tasks not covered by a specialist agent.",
-    "synthesis": "Cross-source compare/synthesis tasks.",
+    "statistik": "SCB/statistik och officiell data i Sverige.",
+    "riksdagen": "Riksdagens öppna data och politiska dokument.",
+    "väder": "SMHI-väderprognoser och väderkontext för svenska orter.",
+    "trafik": "Trafik, vägar, incidenter, järnväg och transport.",
+    "bolag": "Bolagsverket och företagsregister.",
+    "marknad": "Blocket/Tradera marknadsplatssökning och prisjämförelse.",
+    "kartor": "Geospatial/kartor/geokodning.",
+    "media": "Podcast och media-generering.",
+    "webb": "Webbsökning, URL-scraping och siduppslag.",
+    "kunskap": "Kunskapssökning i docs/interna/externa källor.",
+    "åtgärd": "Generella åtgärder som inte täcks av specialistagenter.",
+    "syntes": "Jämförelse och syntes från flera källor och modeller.",
 }
 _DIFFICULTY_ORDER = ("lätt", "medel", "svår")
 _GRAPH_COMPLEXITY_VALUES = {
@@ -358,6 +365,179 @@ def _build_difficulty_breakdown(
     return rows
 
 
+# ---------------------------------------------------------------------------
+# Per-namespace confusion matrix
+# ---------------------------------------------------------------------------
+
+def build_namespace_confusion_matrix(
+    evaluation_results: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Build a confusion matrix grouped by namespace prefix.
+
+    Returns a dict keyed by namespace prefix (e.g. "trafikverket_trafikinfo"),
+    each containing:
+        - ``matrix``: dict[expected_tool, dict[predicted_tool, count]]
+        - ``tools``: sorted list of tool IDs in this namespace
+        - ``accuracy``: per-tool accuracy dict
+        - ``total``: total test cases in this namespace
+        - ``correct``: correct predictions
+    """
+    # Collect (expected, predicted) pairs and infer namespace from tool_id.
+    pairs: list[tuple[str, str, str]] = []  # (namespace_prefix, expected, predicted)
+    for result in evaluation_results:
+        expected = str(result.get("expected_tool") or "").strip()
+        predicted = str(result.get("selected_tool") or "").strip()
+        if not expected:
+            continue
+        # Derive namespace prefix from tool_id: e.g. "trafikverket_trafikinfo_koer" → "trafikverket_trafikinfo"
+        parts = expected.split("_")
+        if len(parts) >= 3:
+            ns_prefix = "_".join(parts[:2])
+        elif len(parts) == 2:
+            ns_prefix = parts[0]
+        else:
+            ns_prefix = expected
+        pairs.append((ns_prefix, expected, predicted or "(none)"))
+
+    # Group by namespace prefix.
+    from collections import defaultdict
+    ns_groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for ns_prefix, expected, predicted in pairs:
+        ns_groups[ns_prefix].append((expected, predicted))
+
+    # Only build matrices for namespaces with ≥2 distinct expected tools
+    # (single-tool namespaces cannot have intra-namespace confusion).
+    matrices: dict[str, dict[str, Any]] = {}
+    for ns_prefix, group_pairs in sorted(ns_groups.items()):
+        distinct_expected = {e for e, _ in group_pairs}
+        if len(distinct_expected) < 2:
+            continue
+        all_tools = sorted({t for pair in group_pairs for t in pair})
+        matrix: dict[str, dict[str, int]] = {
+            tool: {t: 0 for t in all_tools} for tool in distinct_expected
+        }
+        for expected, predicted in group_pairs:
+            if predicted in matrix.get(expected, {}):
+                matrix[expected][predicted] += 1
+            else:
+                matrix.setdefault(expected, {})[predicted] = (
+                    matrix.get(expected, {}).get(predicted, 0) + 1
+                )
+        total = len(group_pairs)
+        correct = sum(1 for e, p in group_pairs if e == p)
+        per_tool_accuracy: dict[str, float] = {}
+        for tool in distinct_expected:
+            tool_total = sum(matrix.get(tool, {}).values())
+            tool_correct = matrix.get(tool, {}).get(tool, 0)
+            per_tool_accuracy[tool] = (
+                (tool_correct / tool_total) if tool_total > 0 else 0.0
+            )
+        matrices[ns_prefix] = {
+            "matrix": matrix,
+            "tools": all_tools,
+            "accuracy": per_tool_accuracy,
+            "total": total,
+            "correct": correct,
+            "overall_accuracy": (correct / total) if total > 0 else 0.0,
+        }
+    return matrices
+
+
+# ---------------------------------------------------------------------------
+# Contrastive probe generation
+# ---------------------------------------------------------------------------
+
+def generate_contrastive_probes(
+    tool_index: list[ToolIndexEntry],
+    *,
+    max_probes_per_pair: int = 2,
+    max_total: int = 200,
+) -> list[dict[str, Any]]:
+    """Generate contrastive test probes for tool pairs that share a namespace.
+
+    For every pair of tools (A, B) that belong to the same namespace cluster
+    (based on the first two segments of tool_id), generates probe entries that
+    include an ``expected_tool`` and a ``hard_negative`` — the most likely
+    wrong tool.
+
+    Each probe uses the example_queries of tool A with hard_negative = tool B
+    and vice versa, which tests the system's ability to discriminate between
+    close neighbours.
+
+    Returns a list of eval-compatible test case dicts::
+
+        {
+            "id": "contrastive-{tool_a}-vs-{tool_b}-{idx}",
+            "question": str,
+            "difficulty": "svår",
+            "expected": {
+                "tool": tool_a_id,
+            },
+            "hard_negative": tool_b_id,
+            "discriminating_signal": str,
+            "allowed_tools": [tool_a_id, tool_b_id],
+        }
+    """
+    from collections import defaultdict
+
+    # Group tools by namespace prefix (first 2 segments of tool_id).
+    ns_groups: dict[str, list[ToolIndexEntry]] = defaultdict(list)
+    for entry in tool_index:
+        parts = entry.tool_id.split("_")
+        if len(parts) >= 3:
+            prefix = "_".join(parts[:2])
+        elif len(parts) == 2:
+            prefix = parts[0]
+        else:
+            continue
+        ns_groups[prefix].append(entry)
+
+    probes: list[dict[str, Any]] = []
+    for _ns_prefix, entries in sorted(ns_groups.items()):
+        if len(entries) < 2:
+            continue
+        for i, entry_a in enumerate(entries):
+            for entry_b in entries[i + 1 :]:
+                # Generate probes from A's examples testing against B
+                a_examples = list(entry_a.example_queries or [])[:max_probes_per_pair]
+                b_examples = list(entry_b.example_queries or [])[:max_probes_per_pair]
+                a_unique_kw = set(entry_a.keywords or []) - set(entry_b.keywords or [])
+                b_unique_kw = set(entry_b.keywords or []) - set(entry_a.keywords or [])
+                signal = (
+                    f"{entry_a.tool_id} keywords: {', '.join(list(a_unique_kw)[:4])} "
+                    f"vs {entry_b.tool_id} keywords: {', '.join(list(b_unique_kw)[:4])}"
+                )
+                for idx, question in enumerate(a_examples):
+                    probes.append(
+                        {
+                            "id": f"contrastive-{entry_a.tool_id}-vs-{entry_b.tool_id}-{idx}",
+                            "question": question,
+                            "difficulty": "svår",
+                            "expected": {"tool": entry_a.tool_id},
+                            "hard_negative": entry_b.tool_id,
+                            "discriminating_signal": signal,
+                            "allowed_tools": [entry_a.tool_id, entry_b.tool_id],
+                        }
+                    )
+                    if len(probes) >= max_total:
+                        return probes
+                for idx, question in enumerate(b_examples):
+                    probes.append(
+                        {
+                            "id": f"contrastive-{entry_b.tool_id}-vs-{entry_a.tool_id}-{idx}",
+                            "question": question,
+                            "difficulty": "svår",
+                            "expected": {"tool": entry_b.tool_id},
+                            "hard_negative": entry_a.tool_id,
+                            "discriminating_signal": signal,
+                            "allowed_tools": [entry_a.tool_id, entry_b.tool_id],
+                        }
+                    )
+                    if len(probes) >= max_total:
+                        return probes
+    return probes
+
+
 def _looks_english_text(text: str) -> bool:
     tokens = re.findall(r"[a-zA-ZåäöÅÄÖ]{3,}", str(text or "").lower())
     if not tokens:
@@ -468,11 +648,18 @@ def _apply_prompt_architecture_guard(
 
 def _normalize_route_value(value: Any) -> str | None:
     route = str(value or "").strip().lower()
-    if route in {Route.KNOWLEDGE.value, Route.ACTION.value, Route.SMALLTALK.value, Route.STATISTICS.value, Route.COMPARE.value}:
+    if route in {Route.KUNSKAP.value, Route.SKAPANDE.value, Route.KONVERSATION.value, Route.JAMFORELSE.value}:
         return route
-    if route in {"statistik", "statistics"}:
-        return Route.STATISTICS.value
-    return None
+    # Backward compat: map old English names to new Swedish values
+    _COMPAT: dict[str, str] = {
+        "knowledge": Route.KUNSKAP.value,
+        "action": Route.SKAPANDE.value,
+        "smalltalk": Route.KONVERSATION.value,
+        "compare": Route.JAMFORELSE.value,
+        "statistics": Route.KUNSKAP.value,
+        "statistik": Route.KUNSKAP.value,
+    }
+    return _COMPAT.get(route)
 
 
 def _normalize_sub_route_value(value: Any) -> str | None:
@@ -572,14 +759,17 @@ def _normalize_agent_name(value: Any) -> str | None:
         return None
     normalized_token = _normalize_token_for_match(agent)
     aliases = {
-        "statistik": "statistics",
-        "stats": "statistics",
-        "scb": "statistics",
+        # Swedish → canonical
+        "statistik": "statistik",
+        "stats": "statistik",
+        "scb": "statistik",
+        "statistics": "statistik",
         "riksdag": "riksdagen",
         "traffic": "trafik",
         "trafikverket": "trafik",
-        "weather": "weather",
-        "smhi": "weather",
+        "weather": "väder",
+        "smhi": "väder",
+        "vader": "väder",
         "maps": "kartor",
         "map": "kartor",
         "geo": "kartor",
@@ -587,28 +777,31 @@ def _normalize_agent_name(value: Any) -> str | None:
         "bolagsverket": "bolag",
         "companies": "bolag",
         "company": "bolag",
-        "web": "browser",
-        "docs": "knowledge",
-        "internal": "knowledge",
-        "external": "knowledge",
-        "compare": "synthesis",
-        "marketplace": "marketplace",
-        "marknadsplats": "marketplace",
-        "marknadsplatser": "marketplace",
-        "blocket": "marketplace",
-        "tradera": "marketplace",
-        "marketplace_agent": "marketplace",
-        "marketplace_worker": "marketplace",
-        "marketplace_search": "marketplace",
-        "marketplace_compare": "marketplace",
-        "marketplace_reference": "marketplace",
-        "marketplace_vehicles": "marketplace",
-        "marketplace_vehicles_agent": "marketplace",
-        "marketplace_vehicles_worker": "marketplace",
+        "web": "webb",
+        "browser": "webb",
+        "docs": "kunskap",
+        "internal": "kunskap",
+        "external": "kunskap",
+        "knowledge": "kunskap",
+        "compare": "syntes",
+        "synthesis": "syntes",
+        "marketplace": "marknad",
+        "marknadsplats": "marknad",
+        "marknadsplatser": "marknad",
+        "blocket": "marknad",
+        "tradera": "marknad",
+        "marketplace_agent": "marknad",
+        "marketplace_worker": "marknad",
+        "marketplace_search": "marknad",
+        "marketplace_compare": "marknad",
+        "marketplace_reference": "marknad",
+        "marketplace_vehicles": "marknad",
+        "code": "kod",
+        "action": "åtgärd",
     }
     normalized = aliases.get(agent, aliases.get(normalized_token, normalized_token))
     if normalized.startswith("marketplace_"):
-        normalized = "marketplace"
+        normalized = "marknad"
     return normalized if normalized in _EVAL_AGENT_CHOICES else None
 
 
@@ -627,22 +820,22 @@ def _is_weather_domain_tool(tool_id: str | None, category: str | None = None) ->
 def _agent_for_route_hint(route_value: str | None, sub_route_value: str | None) -> str | None:
     route_norm = _normalize_route_value(route_value)
     sub_norm = _normalize_sub_route_value(sub_route_value)
-    if route_norm == Route.STATISTICS.value:
-        return "statistics"
-    if route_norm == Route.COMPARE.value:
-        return "synthesis"
-    if route_norm == Route.KNOWLEDGE.value:
-        return "knowledge"
-    if route_norm == Route.ACTION.value:
+    if route_norm == Route.KUNSKAP.value:
+        return "statistik"
+    if route_norm == Route.JAMFORELSE.value:
+        return "syntes"
+    if route_norm == Route.KUNSKAP.value:
+        return "kunskap"
+    if route_norm == Route.SKAPANDE.value:
         if sub_norm == ActionRoute.TRAVEL.value:
             return "trafik"
         if sub_norm == ActionRoute.WEB.value:
-            return "browser"
+            return "webb"
         if sub_norm == ActionRoute.MEDIA.value:
             return "media"
         if sub_norm == ActionRoute.DATA.value:
-            return "action"
-        return "action"
+            return "åtgärd"
+        return "åtgärd"
     return None
 
 
@@ -657,14 +850,14 @@ def _agent_for_tool(
     if tool in _SKOLVERKET_TOOL_IDS:
         skolverket_category = _SKOLVERKET_TOOL_CATEGORY_BY_ID.get(tool, cat)
         if skolverket_category == "statistics":
-            return "statistics"
-        return "knowledge"
+            return "statistik"
+        return "kunskap"
     if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
-        return "statistics"
+        return "statistik"
     if tool.startswith("riksdag_") or cat.startswith("riksdag"):
         return "riksdagen"
     if _is_weather_domain_tool(tool, cat):
-        return "weather"
+        return "väder"
     if tool.startswith("trafikverket_") or tool == "trafiklab_route":
         return "trafik"
     if tool.startswith("bolagsverket_"):
@@ -672,13 +865,13 @@ def _agent_for_tool(
     if tool.startswith("geoapify_"):
         return "kartor"
     if tool.startswith("marketplace_") or cat.startswith("marketplace"):
-        return "marketplace"
+        return "marknad"
     if tool in {"generate_podcast", "display_image"}:
         return "media"
     if tool in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
-        return "browser"
+        return "webb"
     if tool in {"search_surfsense_docs", "search_knowledge_base"}:
-        return "knowledge"
+        return "kunskap"
     return _agent_for_route_hint(route_value, sub_route_value)
 
 
@@ -730,7 +923,7 @@ def _coerce_weather_agent_choice(
     is_weather_tool = _is_weather_domain_tool(tool_id, category)
     if not is_weather_tool:
         return normalized_selected_agent, False
-    if route_norm == Route.ACTION.value and sub_route_norm in {
+    if route_norm == Route.SKAPANDE.value and sub_route_norm in {
         ActionRoute.TRAVEL.value,
         None,
     }:
@@ -750,27 +943,27 @@ def _route_sub_route_for_tool(
     if tool in _SKOLVERKET_TOOL_IDS:
         skolverket_category = _SKOLVERKET_TOOL_CATEGORY_BY_ID.get(tool, cat)
         if skolverket_category == "statistics":
-            return Route.STATISTICS.value, None
-        return Route.KNOWLEDGE.value, KnowledgeRoute.EXTERNAL.value
+            return Route.KUNSKAP.value, None
+        return Route.KUNSKAP.value, KnowledgeRoute.EXTERNAL.value
     if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
-        return Route.STATISTICS.value, None
+        return Route.KUNSKAP.value, None
     if tool == "trafiklab_route" or _is_weather_domain_tool(tool, cat):
-        return Route.ACTION.value, ActionRoute.TRAVEL.value
+        return Route.SKAPANDE.value, ActionRoute.TRAVEL.value
     if tool.startswith("trafikverket_"):
-        return Route.ACTION.value, ActionRoute.TRAVEL.value
+        return Route.SKAPANDE.value, ActionRoute.TRAVEL.value
     if tool in {"scrape_webpage", "link_preview", "search_web", "search_tavily"}:
-        return Route.ACTION.value, ActionRoute.WEB.value
+        return Route.SKAPANDE.value, ActionRoute.WEB.value
     if tool in {"generate_podcast", "display_image"}:
-        return Route.ACTION.value, ActionRoute.MEDIA.value
+        return Route.SKAPANDE.value, ActionRoute.MEDIA.value
     if tool in {"libris_search", "jobad_links_search"}:
-        return Route.ACTION.value, ActionRoute.DATA.value
+        return Route.SKAPANDE.value, ActionRoute.DATA.value
     if tool.startswith("marketplace_") or cat.startswith("marketplace"):
-        return Route.ACTION.value, ActionRoute.DATA.value
+        return Route.SKAPANDE.value, ActionRoute.DATA.value
     if tool.startswith("bolagsverket_") or tool.startswith("riksdag_"):
-        return Route.ACTION.value, ActionRoute.DATA.value
+        return Route.SKAPANDE.value, ActionRoute.DATA.value
     if tool in {"search_surfsense_docs", "search_knowledge_base"}:
-        return Route.KNOWLEDGE.value, KnowledgeRoute.INTERNAL.value
-    return Route.ACTION.value, ActionRoute.DATA.value
+        return Route.KUNSKAP.value, KnowledgeRoute.INTERNAL.value
+    return Route.SKAPANDE.value, ActionRoute.DATA.value
 
 
 def _repair_expected_routing(
@@ -792,15 +985,15 @@ def _repair_expected_routing(
     if route is None and inferred_route is not None:
         route = inferred_route
 
-    if route == Route.ACTION.value:
-        if inferred_route == Route.ACTION.value and inferred_sub_route:
+    if route == Route.SKAPANDE.value:
+        if inferred_route == Route.SKAPANDE.value and inferred_sub_route:
             # If expected tool implies an action sub-route, trust that mapping
             # over mislabeled sub-routes in eval payloads (e.g. web vs travel).
             sub_route = inferred_sub_route
-    elif route == Route.KNOWLEDGE.value:
-        if inferred_route == Route.KNOWLEDGE.value and inferred_sub_route:
+    elif route == Route.KUNSKAP.value:
+        if inferred_route == Route.KUNSKAP.value and inferred_sub_route:
             sub_route = inferred_sub_route
-    elif route == Route.STATISTICS.value:
+    elif route == Route.KUNSKAP.value:
         sub_route = None
 
     if inferred_route and route and route != inferred_route:
@@ -816,13 +1009,13 @@ def _candidate_agents_for_route(
 ) -> list[str]:
     route_norm = _normalize_route_value(route_value)
     sub_norm = _normalize_sub_route_value(sub_route_value)
-    if route_norm == Route.STATISTICS.value:
+    if route_norm == Route.KUNSKAP.value:
         return ["statistics", "riksdagen", "knowledge"]
-    if route_norm == Route.COMPARE.value:
+    if route_norm == Route.JAMFORELSE.value:
         return ["synthesis", "statistics", "knowledge"]
-    if route_norm == Route.KNOWLEDGE.value:
+    if route_norm == Route.KUNSKAP.value:
         return ["knowledge", "riksdagen", "statistics", "browser"]
-    if route_norm == Route.ACTION.value:
+    if route_norm == Route.SKAPANDE.value:
         if sub_norm == ActionRoute.TRAVEL.value:
             return ["weather", "trafik", "action", "kartor"]
         if sub_norm == ActionRoute.WEB.value:
@@ -981,11 +1174,11 @@ async def _dispatch_route_from_start(
 ) -> tuple[str | None, str | None, str | None, dict[str, Any]]:
     def _fallback_intent_id(route_value: str | None) -> str | None:
         mapping = {
-            Route.KNOWLEDGE.value: "knowledge",
-            Route.ACTION.value: "action",
-            Route.STATISTICS.value: "statistics",
-            Route.COMPARE.value: "compare",
-            Route.SMALLTALK.value: "smalltalk",
+            Route.KUNSKAP.value: "knowledge",
+            Route.SKAPANDE.value: "action",
+            Route.KUNSKAP.value: "statistics",
+            Route.JAMFORELSE.value: "compare",
+            Route.KONVERSATION.value: "smalltalk",
         }
         return mapping.get(_normalize_route_value(route_value))
 
@@ -1050,7 +1243,7 @@ async def _dispatch_route_from_start(
         else _normalize_route_value(selected_route)
     )
     selected_sub_route: str | None = None
-    if route_value == Route.ACTION.value:
+    if route_value == Route.SKAPANDE.value:
         action_route = await dispatch_action_route(
             question,
             llm,
@@ -1061,7 +1254,7 @@ async def _dispatch_route_from_start(
             if hasattr(action_route, "value")
             else _normalize_sub_route_value(action_route)
         )
-    elif route_value == Route.KNOWLEDGE.value:
+    elif route_value == Route.KUNSKAP.value:
         knowledge_route = await dispatch_knowledge_route(
             question,
             llm,
@@ -1118,11 +1311,11 @@ def _infer_expected_intent_id(
         if resolved:
             return resolved
     fallback = {
-        Route.KNOWLEDGE.value: "knowledge",
-        Route.ACTION.value: "action",
-        Route.STATISTICS.value: "statistics",
-        Route.COMPARE.value: "compare",
-        Route.SMALLTALK.value: "smalltalk",
+        Route.KUNSKAP.value: "knowledge",
+        Route.SKAPANDE.value: "action",
+        Route.KUNSKAP.value: "statistics",
+        Route.JAMFORELSE.value: "compare",
+        Route.KONVERSATION.value: "smalltalk",
     }
     return fallback.get(normalized_route)
 
@@ -1168,7 +1361,7 @@ def _route_requirement_matches(
 
     if expected in {"travel", "weather"}:
         if not (
-            selected_route == Route.ACTION.value
+            selected_route == Route.SKAPANDE.value
             and selected_sub_route == ActionRoute.TRAVEL.value
         ):
             return False
@@ -1186,7 +1379,7 @@ def _route_requirement_matches(
         ActionRoute.DATA.value,
     }:
         return bool(
-            selected_route == Route.ACTION.value and selected_sub_route == expected
+            selected_route == Route.SKAPANDE.value and selected_sub_route == expected
         )
 
     if expected in {
@@ -1195,7 +1388,7 @@ def _route_requirement_matches(
         KnowledgeRoute.EXTERNAL.value,
     }:
         return bool(
-            selected_route == Route.KNOWLEDGE.value
+            selected_route == Route.KUNSKAP.value
             and selected_sub_route == expected
         )
 
@@ -1208,7 +1401,7 @@ def _route_requirement_matches(
         if trailing == "weather":
             trailing = ActionRoute.TRAVEL.value
         return bool(
-            selected_route == Route.ACTION.value and selected_sub_route == trailing
+            selected_route == Route.SKAPANDE.value and selected_sub_route == trailing
         )
 
     if expected.startswith("knowledge/") or expected.startswith("knowledge:"):
@@ -1218,7 +1411,7 @@ def _route_requirement_matches(
             else expected.split(":", 1)[1]
         ).strip().casefold()
         return bool(
-            selected_route == Route.KNOWLEDGE.value and selected_sub_route == trailing
+            selected_route == Route.KUNSKAP.value and selected_sub_route == trailing
         )
 
     return False
@@ -1708,6 +1901,11 @@ def _serialize_tool(entry: ToolIndexEntry) -> dict[str, Any]:
         "description": entry.description,
         "keywords": list(entry.keywords),
         "example_queries": list(entry.example_queries),
+        "main_identifier": entry.main_identifier or "",
+        "core_activity": entry.core_activity or "",
+        "unique_scope": entry.unique_scope or "",
+        "geographic_scope": entry.geographic_scope or "",
+        "excludes": list(entry.excludes) if entry.excludes else [],
     }
 
 
@@ -1833,13 +2031,13 @@ def _build_fallback_suggestion(
             continue
         proposed_keywords.append(token)
         existing_keyword_set.add(token.casefold())
-        if len(proposed_keywords) >= 25:
+        if len(proposed_keywords) >= METADATA_MAX_KEYWORDS:
             break
 
     proposed_examples = list(current.get("example_queries") or [])
     seen_examples = {str(example).casefold() for example in proposed_examples}
     for question in questions:
-        cleaned = question.strip()
+        cleaned = question.strip()[:METADATA_MAX_EXAMPLE_QUERY_CHARS]
         if not cleaned:
             continue
         if _contains_forbidden_tool_reference(
@@ -1852,7 +2050,7 @@ def _build_fallback_suggestion(
             continue
         proposed_examples.append(cleaned)
         seen_examples.add(key)
-        if len(proposed_examples) >= 12:
+        if len(proposed_examples) >= METADATA_MAX_EXAMPLE_QUERIES:
             break
     proposed_examples = _sanitize_example_queries_no_tool_refs(
         proposed_examples,
@@ -1867,7 +2065,7 @@ def _build_fallback_suggestion(
         if marker not in description:
             description = f"{description} {marker}".strip()
 
-    proposed = {
+    proposed = enforce_metadata_limits({
         "tool_id": tool_id,
         "name": str(current.get("name") or "").strip(),
         "description": description,
@@ -1875,7 +2073,12 @@ def _build_fallback_suggestion(
         "example_queries": proposed_examples,
         "category": str(current.get("category") or "").strip(),
         "base_path": current.get("base_path"),
-    }
+        "main_identifier": str(current.get("main_identifier") or "").strip(),
+        "core_activity": str(current.get("core_activity") or "").strip(),
+        "unique_scope": str(current.get("unique_scope") or "").strip(),
+        "geographic_scope": str(current.get("geographic_scope") or "").strip(),
+        "excludes": _safe_string_list(current.get("excludes")),
+    })
     rationale = (
         f"Fallback-förslag baserat på {failed_count} misslyckade testfall: "
         "utökade nyckelord och exempelfrågor med återkommande termer."
@@ -1915,6 +2118,19 @@ async def _build_llm_suggestion(
         "Exempelfrågor måste vara naturlig svenska och skrivna som riktiga användarfrågor.\n"
         "Strikt förbud: tool_id, toolnamn, funktionsnamn, endpoint- eller interna identifierare i exempelfrågor.\n"
         "Använd aldrig snake_case eller identifierare med underscore i exempelfrågor.\n"
+        "Fälten main_identifier, core_activity, unique_scope, geographic_scope och excludes är "
+        "separata identitetsfält som används för embedding-separation och retrieval-precision.\n"
+        "- main_identifier: Vad verktyget fundamentalt är/representerar.\n"
+        "- core_activity: Vad verktyget gör / dess huvudsakliga funktion.\n"
+        "- unique_scope: Vad som unikt avgränsar detta verktyg från liknande.\n"
+        "- geographic_scope: Geografiskt omfång (t.ex. kommun, Sverige, Norden).\n"
+        "- excludes: Lista med domänbegrepp som verktyget INTE hanterar (separationsstöd).\n"
+        "HÅRDA BEGRÄNSNINGAR (överskrid ALDRIG):\n"
+        f"- description: max {METADATA_MAX_DESCRIPTION_CHARS} tecken.\n"
+        f"- keywords: max {METADATA_MAX_KEYWORDS} stycken, max {METADATA_MAX_KEYWORD_CHARS} tecken/keyword.\n"
+        f"- example_queries: max {METADATA_MAX_EXAMPLE_QUERIES} stycken, max {METADATA_MAX_EXAMPLE_QUERY_CHARS} tecken/fråga.\n"
+        f"- excludes: max {METADATA_MAX_EXCLUDES} stycken.\n"
+        "Separation ska uppnås genom PRECISION, inte genom mer text.\n"
         "Returnera strikt JSON:\n"
         "{\n"
         '  "name": "string",\n'
@@ -1922,6 +2138,11 @@ async def _build_llm_suggestion(
         '  "keywords": ["svenska termer"],\n'
         '  "example_queries": ["svenska frågor"],\n'
         '  "category": "string",\n'
+        '  "main_identifier": "string på svenska",\n'
+        '  "core_activity": "string på svenska",\n'
+        '  "unique_scope": "string på svenska",\n'
+        '  "geographic_scope": "string på svenska",\n'
+        '  "excludes": ["svenska termer"],\n'
         '  "rationale": "kort motivering på svenska"\n'
         "}\n"
         "Ingen markdown."
@@ -1986,7 +2207,7 @@ async def _build_llm_suggestion(
             list(current.get("example_queries") or []),
             forbidden_markers=forbidden_markers,
         )
-        suggested = {
+        suggested = enforce_metadata_limits({
             "tool_id": tool_id,
             "name": str(parsed.get("name") or current.get("name") or "").strip(),
             "description": _prefer_swedish_text(
@@ -2000,7 +2221,21 @@ async def _build_llm_suggestion(
                 parsed.get("category") or current.get("category") or ""
             ).strip(),
             "base_path": current.get("base_path"),
-        }
+            "main_identifier": str(
+                parsed.get("main_identifier") or current.get("main_identifier") or ""
+            ).strip(),
+            "core_activity": str(
+                parsed.get("core_activity") or current.get("core_activity") or ""
+            ).strip(),
+            "unique_scope": str(
+                parsed.get("unique_scope") or current.get("unique_scope") or ""
+            ).strip(),
+            "geographic_scope": str(
+                parsed.get("geographic_scope") or current.get("geographic_scope") or ""
+            ).strip(),
+            "excludes": _safe_string_list(parsed.get("excludes"))
+            or _safe_string_list(current.get("excludes")),
+        })
         rationale = _prefer_swedish_text(
             str(parsed.get("rationale") or "").strip(),
             fallback_rationale
@@ -2021,6 +2256,11 @@ def _metadata_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
         "example_queries": _safe_string_list(left.get("example_queries")),
         "category": str(left.get("category") or "").strip(),
         "base_path": (str(left.get("base_path")).strip() if left.get("base_path") else None),
+        "main_identifier": str(left.get("main_identifier") or "").strip(),
+        "core_activity": str(left.get("core_activity") or "").strip(),
+        "unique_scope": str(left.get("unique_scope") or "").strip(),
+        "geographic_scope": str(left.get("geographic_scope") or "").strip(),
+        "excludes": _safe_string_list(left.get("excludes")),
     }
     right_payload = {
         "name": str(right.get("name") or "").strip(),
@@ -2031,6 +2271,11 @@ def _metadata_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
         "base_path": (
             str(right.get("base_path")).strip() if right.get("base_path") else None
         ),
+        "main_identifier": str(right.get("main_identifier") or "").strip(),
+        "core_activity": str(right.get("core_activity") or "").strip(),
+        "unique_scope": str(right.get("unique_scope") or "").strip(),
+        "geographic_scope": str(right.get("geographic_scope") or "").strip(),
+        "excludes": _safe_string_list(right.get("excludes")),
     }
     return left_payload == right_payload
 
@@ -2086,8 +2331,31 @@ def _enrich_metadata_suggestion_fields(
     else:
         merged["example_queries"] = proposed_examples
 
+    # Propagate identity fields from proposed or fallback
+    for field in ("main_identifier", "core_activity", "unique_scope", "geographic_scope"):
+        current_val = str(current.get(field) or "").strip()
+        proposed_val = str(merged.get(field) or "").strip()
+        fallback_val = str(fallback.get(field) or "").strip()
+        if proposed_val == current_val and fallback_val and fallback_val != current_val:
+            merged[field] = fallback_val
+            enriched = True
+        elif proposed_val:
+            merged[field] = proposed_val
+
+    current_excludes = _safe_string_list(current.get("excludes"))
+    proposed_excludes = _safe_string_list(merged.get("excludes"))
+    fallback_excludes = _safe_string_list(fallback.get("excludes"))
+    if proposed_excludes == current_excludes and fallback_excludes != current_excludes:
+        merged["excludes"] = fallback_excludes
+        enriched = True
+    elif proposed_excludes:
+        merged["excludes"] = proposed_excludes
+
     if "tool_id" not in merged:
         merged["tool_id"] = str(current.get("tool_id") or "")
+    # Final safety net — enforce central limits on the merged output so that
+    # no suggestion exceeds the metadata budget regardless of source.
+    merged = enforce_metadata_limits(merged)
     return merged, enriched
 
 
@@ -2750,6 +3018,7 @@ async def run_tool_evaluation(
             else None
         ),
         "difficulty_breakdown": _build_difficulty_breakdown(difficulty_buckets),
+        "namespace_confusion": build_namespace_confusion_matrix(results),
     }
     return {"metrics": metrics, "results": results}
 
@@ -2919,7 +3188,7 @@ async def suggest_intent_definition_improvements(
             continue
         definitions_by_id[intent_id] = {
             "intent_id": intent_id,
-            "route": _normalize_route_value(definition.get("route")) or Route.KNOWLEDGE.value,
+            "route": _normalize_route_value(definition.get("route")) or Route.KUNSKAP.value,
             "label": str(definition.get("label") or intent_id).strip(),
             "description": str(definition.get("description") or "").strip(),
             "keywords": _safe_string_list(definition.get("keywords")),
@@ -2964,7 +3233,7 @@ async def suggest_intent_definition_improvements(
             break
         current_definition = definitions_by_id.get(intent_id) or {
             "intent_id": intent_id,
-            "route": str(bucket.get("expected_route") or Route.KNOWLEDGE.value),
+            "route": str(bucket.get("expected_route") or Route.KUNSKAP.value),
             "label": intent_id.replace("_", " ").title(),
             "description": "",
             "keywords": [],
@@ -2986,7 +3255,7 @@ async def suggest_intent_definition_improvements(
                 continue
             proposed_keywords.append(token)
             existing_set.add(token.casefold())
-            if len(proposed_keywords) >= 20:
+            if len(proposed_keywords) >= METADATA_MAX_KEYWORDS:
                 break
         proposed_description = str(current_definition.get("description") or "").strip()
         if sorted_tokens:
@@ -3082,7 +3351,7 @@ async def suggest_intent_definition_improvements(
                         )
                         candidate_route = (
                             _normalize_route_value(candidate_definition.get("route"))
-                            or str(current_definition.get("route") or Route.KNOWLEDGE.value)
+                            or str(current_definition.get("route") or Route.KUNSKAP.value)
                         )
                         proposed_definition = {
                             "intent_id": candidate_intent_id,

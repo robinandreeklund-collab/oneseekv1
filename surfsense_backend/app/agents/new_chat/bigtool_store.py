@@ -58,6 +58,11 @@ class ToolIndexEntry:
     semantic_embedding: list[float] | None = None
     structural_embedding: list[float] | None = None
     base_path: str | None = None
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: tuple[str, ...] = ()
 
 
 TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
@@ -455,6 +460,26 @@ DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
 _TOOL_EMBED_CACHE: dict[tuple[str, str], tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
 _VECTOR_RECALL_TOP_K = 5
+
+# ---------------------------------------------------------------------------
+# Central metadata field limits
+# ---------------------------------------------------------------------------
+# These constants are the single source of truth for maximum sizes of tool
+# metadata fields.  All pipelines (admin UI, BSSS separation, LLM suggestions,
+# audit probes, evaluation fallback) MUST honour these limits so that no tool
+# gains an unfair scoring advantage by having more keywords or a longer
+# description than its neighbours.
+METADATA_MAX_DESCRIPTION_CHARS: int = 300
+METADATA_MAX_KEYWORDS: int = 20
+METADATA_MAX_EXAMPLE_QUERIES: int = 10
+METADATA_MAX_EXCLUDES: int = 15
+METADATA_MAX_KEYWORD_CHARS: int = 40
+METADATA_MAX_EXAMPLE_QUERY_CHARS: int = 120
+METADATA_MAX_MAIN_IDENTIFIER_CHARS: int = 80
+METADATA_MAX_CORE_ACTIVITY_CHARS: int = 120
+METADATA_MAX_UNIQUE_SCOPE_CHARS: int = 120
+METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS: int = 80
+METADATA_MAX_EMBEDDING_TEXT_CHARS: int = 800
 _LIVE_ROUTING_PHASES = {
     "shadow",
     "tool_gate",
@@ -490,6 +515,68 @@ def get_tool_embedding_context_split_fields() -> dict[str, list[str]]:
         "semantic": list(_TOOL_AWARE_SEMANTIC_EMBEDDING_CONTEXT_FIELDS),
         "structural": list(_TOOL_AWARE_STRUCTURAL_EMBEDDING_CONTEXT_FIELDS),
     }
+
+
+def enforce_metadata_limits(payload: dict[str, Any]) -> dict[str, Any]:
+    """Clamp all metadata fields in *payload* to the central limits.
+
+    Returns a new dict – the original is not mutated.
+    """
+    out = dict(payload)
+
+    # Description
+    desc = str(out.get("description") or "").strip()
+    if len(desc) > METADATA_MAX_DESCRIPTION_CHARS:
+        # Truncate at last sentence boundary within limit, or hard-cut
+        cut = desc[:METADATA_MAX_DESCRIPTION_CHARS]
+        last_dot = cut.rfind(".")
+        if last_dot > METADATA_MAX_DESCRIPTION_CHARS * 0.6:
+            desc = cut[: last_dot + 1]
+        else:
+            desc = cut.rstrip()
+    out["description"] = desc
+
+    # Keywords
+    raw_kw = out.get("keywords")
+    if isinstance(raw_kw, list):
+        clamped: list[str] = []
+        for kw in raw_kw:
+            item = str(kw).strip()[:METADATA_MAX_KEYWORD_CHARS]
+            if item:
+                clamped.append(item)
+            if len(clamped) >= METADATA_MAX_KEYWORDS:
+                break
+        out["keywords"] = clamped
+
+    # Example queries
+    raw_eq = out.get("example_queries")
+    if isinstance(raw_eq, list):
+        clamped_eq: list[str] = []
+        for eq in raw_eq:
+            item = str(eq).strip()[:METADATA_MAX_EXAMPLE_QUERY_CHARS]
+            if item:
+                clamped_eq.append(item)
+            if len(clamped_eq) >= METADATA_MAX_EXAMPLE_QUERIES:
+                break
+        out["example_queries"] = clamped_eq
+
+    # Excludes
+    raw_ex = out.get("excludes")
+    if isinstance(raw_ex, (list, tuple)):
+        out["excludes"] = [str(e).strip() for e in raw_ex if str(e).strip()][:METADATA_MAX_EXCLUDES]
+
+    # Identity fields
+    for field, limit in (
+        ("main_identifier", METADATA_MAX_MAIN_IDENTIFIER_CHARS),
+        ("core_activity", METADATA_MAX_CORE_ACTIVITY_CHARS),
+        ("unique_scope", METADATA_MAX_UNIQUE_SCOPE_CHARS),
+        ("geographic_scope", METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS),
+    ):
+        val = out.get(field)
+        if isinstance(val, str) and len(val) > limit:
+            out[field] = val[:limit].rstrip()
+
+    return out
 
 
 def _normalize_text(text: str) -> str:
@@ -730,7 +817,7 @@ def _keywords_from_text(text: str, *, max_keywords: int = 18) -> list[str]:
 def _unique_keywords(
     keywords: Iterable[str],
     *,
-    max_keywords: int = 20,
+    max_keywords: int = METADATA_MAX_KEYWORDS,
 ) -> list[str]:
     results: list[str] = []
     seen: set[str] = set()
@@ -782,7 +869,7 @@ def _keywords_for_mcp_tool(
             ]
         )
 
-    return _unique_keywords(generated, max_keywords=24)
+    return _unique_keywords(generated, max_keywords=METADATA_MAX_KEYWORDS)
 
 
 def _category_for_namespace(namespace: tuple[str, ...]) -> str:
@@ -1013,18 +1100,29 @@ def _score_entry_components(
     name_norm = _normalize_text(entry.name)
     desc_norm = _normalize_text(entry.description)
     name_match_hits = 1 if name_norm and name_norm in query_norm else 0
-    keyword_hits = 0
+    keyword_hits_raw = 0
     for keyword in entry.keywords:
         if _normalize_text(keyword) in query_norm:
-            keyword_hits += 1
-    description_hits = 0
-    for token in query_tokens:
-        if token and token in desc_norm:
-            description_hits += 1
-    example_hits = 0
+            keyword_hits_raw += 1
+    # Normalize keyword hits by count so that tools with more keywords do not
+    # gain an unfair scoring advantage over tools with fewer keywords.
+    keyword_count = max(1, len(entry.keywords))
+    keyword_hits = keyword_hits_raw / keyword_count
+
+    description_tokens = set(_tokenize(desc_norm))
+    description_hits_raw = len(query_tokens & description_tokens) if query_tokens else 0
+    # Normalize description hits by token count so that longer descriptions do
+    # not produce inflated scores.
+    description_token_count = max(1, len(description_tokens))
+    description_hits = description_hits_raw / description_token_count
+
+    example_hits_raw = 0
     for example in entry.example_queries:
         if _normalize_text(example) in query_norm:
-            example_hits += 1
+            example_hits_raw += 1
+    example_count = max(1, len(entry.example_queries))
+    example_hits = example_hits_raw / example_count
+
     lexical_score = (
         (name_match_hits * tuning.name_match_weight)
         + (keyword_hits * tuning.keyword_weight)
@@ -1033,9 +1131,12 @@ def _score_entry_components(
     )
     return {
         "name_match_hits": int(name_match_hits),
-        "keyword_hits": int(keyword_hits),
-        "description_hits": int(description_hits),
-        "example_hits": int(example_hits),
+        "keyword_hits": float(keyword_hits),
+        "keyword_hits_raw": int(keyword_hits_raw),
+        "description_hits": float(description_hits),
+        "description_hits_raw": int(description_hits_raw),
+        "example_hits": float(example_hits),
+        "example_hits_raw": int(example_hits_raw),
         "lexical_score": float(lexical_score),
     }
 
@@ -1044,12 +1145,177 @@ def _build_rerank_text(entry: ToolIndexEntry) -> str:
     parts: list[str] = []
     if entry.name:
         parts.append(entry.name)
+    if entry.main_identifier:
+        parts.append(entry.main_identifier)
+    if entry.core_activity:
+        parts.append(entry.core_activity)
     if entry.description:
         parts.append(entry.description)
     if entry.keywords:
         parts.append("Keywords: " + ", ".join(entry.keywords))
+    if entry.unique_scope:
+        parts.append("Scope: " + entry.unique_scope)
+    if entry.geographic_scope:
+        parts.append("Geography: " + entry.geographic_scope)
     if entry.example_queries:
         parts.append("Examples: " + " | ".join(entry.example_queries))
+    if entry.excludes:
+        parts.append("Excludes: " + ", ".join(entry.excludes))
+    return "\n".join(part for part in parts if part)
+
+
+# ---------------------------------------------------------------------------
+# Contrastive tool description builder
+# ---------------------------------------------------------------------------
+# Tools within the same namespace often share domain vocabulary which causes
+# embedding collisions.  Contrastive descriptions add explicit exclusion
+# sections so that embedding models can separate near-neighbours.
+
+# Map from namespace prefix → dict of tool_id → list of exclusion terms.
+# The exclusion terms are domain concepts that belong to *other* tools in the
+# same namespace cluster and should NOT be associated with this tool.
+TOOL_CONTRASTIVE_EXCLUSIONS: dict[str, dict[str, list[str]]] = {
+    # --- Trafikverket trafikinfo cluster ---
+    "tools.trafik.trafikverket_trafikinfo": {
+        "trafikverket_trafikinfo_storningar": [
+            "olycka", "krock", "kö", "trängsel", "vägarbete", "omledning",
+            "hastighet", "prognos", "tåg", "väder",
+        ],
+        "trafikverket_trafikinfo_olyckor": [
+            "störning", "driftstörning", "signalproblem", "kö", "trängsel",
+            "vägarbete", "omledning", "hastighet", "prognos",
+        ],
+        "trafikverket_trafikinfo_koer": [
+            "olycka", "krock", "störning", "hinder", "vägarbete",
+            "omledning", "hastighet", "prognos", "underhåll",
+        ],
+        "trafikverket_trafikinfo_vagarbeten": [
+            "olycka", "krock", "störning", "kö", "trängsel",
+            "hastighet", "prognos", "underhåll", "tåg",
+        ],
+    },
+    # --- Trafikverket tåg cluster ---
+    "tools.trafik.trafikverket_tag": {
+        "trafikverket_tag_forseningar": [
+            "tidtabell", "avgång planerad", "stationsinfo", "inställd",
+            "kamera", "vägarbete", "väder",
+        ],
+        "trafikverket_tag_tidtabell": [
+            "försening", "försenad", "inställd", "störning",
+            "kamera", "vägarbete", "väder",
+        ],
+        "trafikverket_tag_stationer": [
+            "försening", "tidtabell", "inställd", "avgång",
+            "kamera", "vägarbete", "väder",
+        ],
+        "trafikverket_tag_installda": [
+            "tidtabell", "stationsinfo", "försening pågående",
+            "kamera", "vägarbete", "väder",
+        ],
+    },
+    # --- Trafikverket väg cluster ---
+    "tools.trafik.trafikverket_vag": {
+        "trafikverket_vag_status": [
+            "underhåll", "reparation", "hastighet", "fartgräns",
+            "avstängning", "prognos", "olycka",
+        ],
+        "trafikverket_vag_underhall": [
+            "trafikflöde", "hastighet", "fartgräns",
+            "avstängning", "prognos", "olycka", "kö",
+        ],
+        "trafikverket_vag_hastighet": [
+            "trafikflöde", "underhåll", "reparation",
+            "avstängning", "prognos", "olycka", "kö",
+        ],
+        "trafikverket_vag_avstangningar": [
+            "trafikflöde", "underhåll", "reparation",
+            "hastighet", "fartgräns", "prognos",
+        ],
+    },
+    # --- Trafikverket prognos cluster ---
+    "tools.trafik.trafikverket_prognos": {
+        "trafikverket_prognos_trafik": [
+            "vägprognos", "planerade arbeten", "tåg", "tågposition",
+            "väder", "kamera",
+        ],
+        "trafikverket_prognos_vag": [
+            "trafikprognos", "restid", "belastning", "tåg",
+            "tågposition", "väder", "kamera",
+        ],
+        "trafikverket_prognos_tag": [
+            "trafikprognos", "restid", "belastning", "vägprognos",
+            "planerade arbeten", "väder", "kamera",
+        ],
+    },
+    # --- Trafikverket väder cluster (also competes with SMHI) ---
+    "tools.weather.trafikverket_vader": {
+        "trafikverket_vader_stationer": [
+            "halka", "isrisk", "vind", "temperatur", "prognos",
+            "SMHI", "väderprognos",
+        ],
+        "trafikverket_vader_halka": [
+            "väderstation", "mätpunkt", "vind", "temperatur",
+            "SMHI", "väderprognos",
+        ],
+        "trafikverket_vader_vind": [
+            "väderstation", "mätpunkt", "halka", "isrisk", "temperatur",
+            "SMHI", "väderprognos",
+        ],
+        "trafikverket_vader_temperatur": [
+            "väderstation", "mätpunkt", "halka", "isrisk", "vind",
+            "SMHI", "väderprognos",
+        ],
+    },
+}
+
+
+def _get_contrastive_exclusions(entry: ToolIndexEntry) -> list[str]:
+    """Return exclusion terms for a tool based on its namespace cluster."""
+    namespace_key = ".".join(entry.namespace)
+    for prefix, exclusions_by_tool in TOOL_CONTRASTIVE_EXCLUSIONS.items():
+        if namespace_key.startswith(prefix) or namespace_key == prefix:
+            return list(exclusions_by_tool.get(entry.tool_id, []))
+    return []
+
+
+def build_contrastive_description(entry: ToolIndexEntry) -> str:
+    """Build a contrastive embedding text that maximises separation from
+    neighbouring tools in the same namespace cluster.
+
+    Template:
+        [NAME]
+        [MAIN_IDENTIFIER]
+        [CORE_ACTIVITY]
+        [DESCRIPTION]
+        Keywords: [keywords]
+        Scope: [unique_scope]
+        Geography: [geographic_scope]
+        Examples: [example_queries]
+        Excludes: [contrastive exclusion terms + metadata excludes]
+    """
+    parts: list[str] = []
+    if entry.name:
+        parts.append(entry.name)
+    if entry.main_identifier:
+        parts.append(entry.main_identifier)
+    if entry.core_activity:
+        parts.append(entry.core_activity)
+    if entry.description:
+        parts.append(entry.description)
+    if entry.keywords:
+        parts.append("Keywords: " + ", ".join(entry.keywords))
+    if entry.unique_scope:
+        parts.append("Scope: " + entry.unique_scope)
+    if entry.geographic_scope:
+        parts.append("Geography: " + entry.geographic_scope)
+    if entry.example_queries:
+        parts.append("Examples: " + " | ".join(entry.example_queries))
+    # Merge contrastive exclusions with metadata-level excludes
+    exclusions = _get_contrastive_exclusions(entry)
+    metadata_excludes = list(entry.excludes) if entry.excludes else []
+    all_excludes = list(dict.fromkeys([*exclusions, *metadata_excludes]))
+    if all_excludes:
+        parts.append("Excludes: " + ", ".join(all_excludes))
     return "\n".join(part for part in parts if part)
 
 
@@ -1155,7 +1421,18 @@ def _tool_aware_output_hint(entry: ToolIndexEntry) -> str:
 
 
 def _build_tool_semantic_embedding_text(entry: ToolIndexEntry) -> str:
-    return _build_rerank_text(entry)
+    # Use contrastive description when exclusions are available so that
+    # embedding vectors are pushed apart for tools sharing a namespace.
+    exclusions = _get_contrastive_exclusions(entry)
+    if exclusions:
+        text = build_contrastive_description(entry)
+    else:
+        text = _build_rerank_text(entry)
+    # Cap the embedding text so that tools with verbose metadata do not
+    # dominate the embedding space.
+    if len(text) > METADATA_MAX_EMBEDDING_TEXT_CHARS:
+        text = text[:METADATA_MAX_EMBEDDING_TEXT_CHARS].rstrip()
+    return text
 
 
 def _build_tool_structural_embedding_text(
@@ -1294,7 +1571,9 @@ def _rerank_tool_candidates(
         entry = tool_index_by_id.get(tool_id)
         if not entry:
             continue
-        content = _build_rerank_text(entry) or entry.name or tool_id
+        # Prefer contrastive description for reranking when available so that
+        # the cross-encoder can leverage exclusion signals.
+        content = build_contrastive_description(entry) or _build_rerank_text(entry) or entry.name or tool_id
         documents.append(
             {
                 "document_id": tool_id,
@@ -1845,6 +2124,12 @@ def build_tool_index(
         if _is_weather_tool(tool_id) and not tool_id.startswith("smhi_"):
             # Keep weather tools grouped together across providers.
             category = "weather"
+        # New metadata identity fields (populated from overrides)
+        main_identifier = ""
+        core_activity = ""
+        unique_scope = ""
+        geographic_scope = ""
+        excludes: tuple[str, ...] = ()
         if metadata_overrides and tool_id in metadata_overrides:
             override = metadata_overrides[tool_id]
             override_name = str(override.get("name") or "").strip()
@@ -1876,6 +2161,25 @@ def build_tool_index(
                     for example in override_examples
                     if isinstance(example, str) and example.strip()
                 ]
+            override_main_identifier = str(override.get("main_identifier") or "").strip()
+            if override_main_identifier:
+                main_identifier = override_main_identifier
+            override_core_activity = str(override.get("core_activity") or "").strip()
+            if override_core_activity:
+                core_activity = override_core_activity
+            override_unique_scope = str(override.get("unique_scope") or "").strip()
+            if override_unique_scope:
+                unique_scope = override_unique_scope
+            override_geographic_scope = str(override.get("geographic_scope") or "").strip()
+            if override_geographic_scope:
+                geographic_scope = override_geographic_scope
+            override_excludes = override.get("excludes")
+            if isinstance(override_excludes, list):
+                excludes = tuple(
+                    item.strip()
+                    for item in override_excludes
+                    if isinstance(item, str) and item.strip()
+                )
         if _is_weather_tool(tool_id) and str(category or "").strip().lower() in {
             "",
             "weather",
@@ -1893,9 +2197,29 @@ def build_tool_index(
                 metadata=metadata,
                 description=description,
             )
-            keywords = _unique_keywords([*keywords, *inferred_keywords], max_keywords=24)
+            keywords = _unique_keywords([*keywords, *inferred_keywords], max_keywords=METADATA_MAX_KEYWORDS)
             if str(category or "").strip().lower() in {"", "general"}:
                 category = _category_for_namespace(namespace)
+        # Enforce central metadata limits before building the entry so that
+        # every tool in the index respects the same field-size budget.
+        _clamped = enforce_metadata_limits({
+            "description": description,
+            "keywords": keywords,
+            "example_queries": example_queries,
+            "excludes": list(excludes),
+            "main_identifier": main_identifier,
+            "core_activity": core_activity,
+            "unique_scope": unique_scope,
+            "geographic_scope": geographic_scope,
+        })
+        description = _clamped["description"]
+        keywords = _clamped["keywords"]
+        example_queries = _clamped["example_queries"]
+        excludes = tuple(_clamped.get("excludes") or ())
+        main_identifier = _clamped.get("main_identifier", "")
+        core_activity = _clamped.get("core_activity", "")
+        unique_scope = _clamped.get("unique_scope", "")
+        geographic_scope = _clamped.get("geographic_scope", "")
         entry = ToolIndexEntry(
             tool_id=tool_id,
             namespace=namespace,
@@ -1904,6 +2228,11 @@ def build_tool_index(
             keywords=keywords,
             example_queries=example_queries,
             category=category,
+            main_identifier=main_identifier,
+            core_activity=core_activity,
+            unique_scope=unique_scope,
+            geographic_scope=geographic_scope,
+            excludes=excludes,
         )
         tool_schema = _tool_input_schema(tool)
         semantic_embedding_text = _build_tool_semantic_embedding_text(entry)
@@ -1935,9 +2264,125 @@ def build_tool_index(
                 semantic_embedding=semantic_embedding,
                 structural_embedding=structural_embedding,
                 base_path=base_path,
+                main_identifier=entry.main_identifier,
+                core_activity=entry.core_activity,
+                unique_scope=entry.unique_scope,
+                geographic_scope=entry.geographic_scope,
+                excludes=entry.excludes,
             )
         )
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Namespace-aware tool exposure
+# ---------------------------------------------------------------------------
+# When a bounded agent (e.g. "trafik") is resolved, instead of relying
+# solely on retrieval to pick the right tool among close neighbours, we
+# expose *all* tools in that agent's namespace to the LLM and attach
+# retrieval scores as guidance hints.
+
+# Max tools to expose without retrieval filtering.
+_NAMESPACE_FULL_EXPOSURE_THRESHOLD = 30
+
+# Agent name → namespace prefixes whose tools should be fully exposed.
+AGENT_NAMESPACE_MAP: dict[str, list[tuple[str, ...]]] = {
+    "trafik": [("tools", "trafik")],
+    "weather": [("tools", "weather")],
+    "väder": [("tools", "weather")],
+    "statistics": [("tools", "statistics")],
+    "statistik": [("tools", "statistics")],
+    "bolag": [("tools", "bolag")],
+    "kartor": [("tools", "kartor")],
+    "riksdagen": [("tools", "politik")],
+    "marketplace": [("tools", "marketplace")],
+    "marknad": [("tools", "marketplace")],
+    "media": [("tools", "action", "media")],
+    "code": [("tools", "code")],
+    "kod": [("tools", "code")],
+}
+
+
+def get_namespace_tool_ids(
+    agent_name: str,
+    tool_index: list[ToolIndexEntry],
+) -> list[str] | None:
+    """Return all tool IDs belonging to an agent's namespace.
+
+    Returns *None* if the agent is not namespace-bounded (i.e. the caller
+    should fall back to retrieval-based selection).
+
+    When the namespace contains more tools than ``_NAMESPACE_FULL_EXPOSURE_THRESHOLD``,
+    returns *None* so that the caller applies retrieval filtering first.
+    """
+    prefixes = AGENT_NAMESPACE_MAP.get(str(agent_name or "").strip().lower())
+    if not prefixes:
+        return None
+    matching_ids: list[str] = []
+    for entry in tool_index:
+        for prefix in prefixes:
+            if _match_namespace(entry.namespace, prefix):
+                matching_ids.append(entry.tool_id)
+                break
+    if len(matching_ids) > _NAMESPACE_FULL_EXPOSURE_THRESHOLD:
+        return None
+    return matching_ids if matching_ids else None
+
+
+def get_namespace_tool_ids_with_retrieval_hints(
+    agent_name: str,
+    query: str,
+    *,
+    tool_index: list[ToolIndexEntry],
+    tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
+    trace_key: str | None = None,
+) -> tuple[list[str], dict[str, dict[str, Any]]] | None:
+    """Return all namespace tools with retrieval scores as guidance hints.
+
+    Returns a tuple of (all_tool_ids, {tool_id: score_breakdown}) or
+    *None* if the agent is not namespace-bounded.
+
+    The LLM receives all tools but can use the score hints to weight its
+    decision.  This combines the coverage of full-namespace exposure with
+    the signal quality of embedding + reranker scoring.
+    """
+    all_ids = get_namespace_tool_ids(agent_name, tool_index)
+    if all_ids is None:
+        return None
+
+    # Compute retrieval scores for ranking guidance.
+    prefixes = AGENT_NAMESPACE_MAP.get(str(agent_name or "").strip().lower(), [])
+    _ranked_ids, breakdown = _run_smart_retrieval(
+        query,
+        tool_index=tool_index,
+        primary_namespaces=prefixes,
+        limit=len(all_ids),
+        trace_key=trace_key,
+        tuning=tuning,
+    )
+    hints: dict[str, dict[str, Any]] = {}
+    for item in breakdown:
+        tid = str(item.get("tool_id") or "")
+        if tid:
+            hints[tid] = {
+                "retrieval_rank": int(item.get("rank", 999)),
+                "pre_rerank_score": float(item.get("pre_rerank_score", 0.0)),
+                "rerank_score": item.get("rerank_score"),
+                "system_confidence": "high" if item.get("rank", 999) <= 3 else "low",
+            }
+
+    # Order: retrieval-ranked first, then remaining namespace tools.
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for tid in _ranked_ids:
+        if tid not in seen:
+            ordered.append(tid)
+            seen.add(tid)
+    for tid in all_ids:
+        if tid not in seen:
+            ordered.append(tid)
+            seen.add(tid)
+    return ordered, hints
 
 
 def build_bigtool_store(tool_index: Iterable[ToolIndexEntry]) -> InMemoryStore:

@@ -11,7 +11,15 @@ from statistics import median
 from time import perf_counter
 from typing import Any, Awaitable, Callable
 
-from app.agents.new_chat.bigtool_store import ToolIndexEntry, normalize_retrieval_tuning
+from app.agents.new_chat.bigtool_store import (
+    METADATA_MAX_DESCRIPTION_CHARS,
+    METADATA_MAX_EXAMPLE_QUERIES,
+    METADATA_MAX_EXCLUDES,
+    METADATA_MAX_KEYWORDS,
+    ToolIndexEntry,
+    enforce_metadata_limits,
+    normalize_retrieval_tuning,
+)
 from app.services.metadata_audit_service import (
     generate_agent_metadata_suggestions_from_annotations,
     generate_intent_metadata_suggestions_from_annotations,
@@ -238,9 +246,14 @@ def _tool_semantic_text(payload: dict[str, Any]) -> str:
         [
             _normalize_text(payload.get("tool_id")),
             _normalize_text(payload.get("name")),
+            _normalize_text(payload.get("main_identifier")),
+            _normalize_text(payload.get("core_activity")),
             _normalize_text(payload.get("description")),
             " ".join(_safe_string_list(payload.get("keywords"))),
+            _normalize_text(payload.get("unique_scope")),
+            _normalize_text(payload.get("geographic_scope")),
             " ".join(_safe_string_list(payload.get("example_queries"))),
+            " ".join(_safe_string_list(payload.get("excludes"))),
         ]
     ).strip()
 
@@ -254,6 +267,11 @@ def _serialize_tool_entry(entry: ToolIndexEntry) -> dict[str, Any]:
         "example_queries": _safe_string_list(getattr(entry, "example_queries", [])),
         "category": _normalize_text(getattr(entry, "category", "")),
         "base_path": _normalize_text(getattr(entry, "base_path", "")) or None,
+        "main_identifier": _normalize_text(getattr(entry, "main_identifier", "")),
+        "core_activity": _normalize_text(getattr(entry, "core_activity", "")),
+        "unique_scope": _normalize_text(getattr(entry, "unique_scope", "")),
+        "geographic_scope": _normalize_text(getattr(entry, "geographic_scope", "")),
+        "excludes": _safe_string_list(getattr(entry, "excludes", ())),
     }
 
 
@@ -651,7 +669,7 @@ def _rule_patch_candidate(
                 break
         if removable_idx is not None:
             keywords.pop(removable_idx)
-    candidate["keywords"] = _dedupe_strings(keywords, max_items=25)
+    candidate["keywords"] = _dedupe_strings(keywords, max_items=METADATA_MAX_KEYWORDS)
 
     description = _normalize_text(candidate.get("description"))
     if competitor_id:
@@ -664,6 +682,13 @@ def _rule_patch_candidate(
             break
     candidate["description"] = description
 
+    if len(candidate.get("description", "")) > METADATA_MAX_DESCRIPTION_CHARS:
+        desc = candidate["description"][:METADATA_MAX_DESCRIPTION_CHARS]
+        last_dot = desc.rfind(".")
+        if last_dot > METADATA_MAX_DESCRIPTION_CHARS * 0.6:
+            desc = desc[:last_dot + 1]
+        candidate["description"] = desc.rstrip()
+
     if layer == "tool":
         examples = _safe_string_list(candidate.get("example_queries"))
         existing_example_keys = {value.lower() for value in examples}
@@ -673,7 +698,7 @@ def _rule_patch_candidate(
                 continue
             examples.append(normalized)
             existing_example_keys.add(normalized.lower())
-            if len(examples) >= 12:
+            if len(examples) >= METADATA_MAX_EXAMPLE_QUERIES:
                 break
         candidate["example_queries"] = examples
     return candidate
@@ -696,7 +721,7 @@ def _merge_candidates(
             *_safe_string_list(llm_candidate.get("keywords")),
             *_safe_string_list(rule_candidate.get("keywords")),
         ],
-        max_items=25,
+        max_items=METADATA_MAX_KEYWORDS,
     )
     if layer == "tool":
         merged["example_queries"] = _dedupe_strings(
@@ -704,8 +729,9 @@ def _merge_candidates(
                 *_safe_string_list(llm_candidate.get("example_queries")),
                 *_safe_string_list(rule_candidate.get("example_queries")),
             ],
-            max_items=12,
+            max_items=METADATA_MAX_EXAMPLE_QUERIES,
         )
+    merged = enforce_metadata_limits(merged)
     return merged
 
 

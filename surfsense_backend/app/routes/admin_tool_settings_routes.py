@@ -21,8 +21,11 @@ from app.agents.new_chat.bigtool_store import (
 )
 from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
 from app.db import (
+    GlobalAgentPromptOverride,
+    GlobalIntentDefinition,
     GlobalToolEvaluationStageRun,
     GlobalToolEvaluationRun,
+    GlobalToolMetadataOverride,
     GlobalToolMetadataOverrideHistory,
     SearchSpaceMembership,
     User,
@@ -31,6 +34,7 @@ from app.db import (
 )
 from app.schemas.admin_tool_settings import (
     AgentMetadataItem,
+    FlowToolEntry,
     IntentMetadataItem,
     MetadataCatalogAuditRunRequest,
     MetadataCatalogAuditRunResponse,
@@ -42,6 +46,8 @@ from app.schemas.admin_tool_settings import (
     MetadataCatalogStabilityLockActionResponse,
     MetadataCatalogSeparationRequest,
     MetadataCatalogSeparationResponse,
+    MetadataCatalogResetRequest,
+    MetadataCatalogResetResponse,
     MetadataCatalogResponse,
     MetadataCatalogUpdateRequest,
     ToolAutoLoopJobStatusResponse,
@@ -149,6 +155,7 @@ from app.services.tool_retrieval_tuning_service import (
     upsert_global_tool_retrieval_tuning,
 )
 from app.users import current_active_user
+from sqlalchemy import delete
 from sqlalchemy.future import select
 
 logger = logging.getLogger(__name__)
@@ -639,40 +646,44 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
             normalized_category,
         )
         if skolverket_category == "statistics":
-            return "statistics", None
-        return "knowledge", "external"
+            return "kunskap", "statistik"
+        return "kunskap", "external"
     if normalized_tool.startswith("scb_") or normalized_category in {"statistics", "scb_statistics"}:
-        return "statistics", None
+        return "kunskap", "statistik"
     if normalized_tool in {"trafiklab_route"} or _is_weather_domain_tool(
         normalized_tool,
         normalized_category,
     ):
-        return "action", "travel"
+        return "kunskap", "väder"
     if normalized_tool.startswith("trafikverket_"):
-        return "action", "travel"
+        return "kunskap", "trafik"
     if normalized_tool in {"scrape_webpage", "link_preview", "search_web", "search_tavily"}:
-        return "action", "web"
+        return "kunskap", "webb"
     if normalized_tool in {"generate_podcast", "display_image"}:
-        return "action", "media"
+        return "skapande", "media"
     if normalized_tool in {"libris_search", "jobad_links_search"}:
-        return "action", "data"
-    # Marketplace tools (including reference tools like categories/regions) map to ACTION
-    # because they're part of the marketplace agent which handles all marketplace operations
+        return "kunskap", "data"
+    # Marketplace tools map to kunskap (information retrieval)
     if normalized_tool.startswith(("bolagsverket_", "riksdag_", "marketplace_")):
-        return "action", "data"
+        return "kunskap", "data"
     if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
-        return "knowledge", "internal"
-    return "action", "data"
+        return "kunskap", "internal"
+    return "kunskap", "data"
 
 
 def _infer_intent_for_route(route: str | None) -> str | None:
     normalized_route = str(route or "").strip().lower()
     mapping = {
-        "knowledge": "knowledge",
-        "action": "action",
-        "statistics": "statistics",
-        "compare": "compare",
-        "smalltalk": "smalltalk",
+        "kunskap": "kunskap",
+        "skapande": "skapande",
+        "jämförelse": "jämförelse",
+        "konversation": "konversation",
+        # Backward compat
+        "knowledge": "kunskap",
+        "action": "skapande",
+        "statistics": "kunskap",
+        "compare": "jämförelse",
+        "smalltalk": "konversation",
     }
     return mapping.get(normalized_route)
 
@@ -735,11 +746,11 @@ def _infer_agent_for_tool(
     normalized_route = str(route or "").strip().lower()
     normalized_sub_route = str(sub_route or "").strip().lower()
     if normalized_tool.startswith("scb_") or normalized_category in {"statistics", "scb_statistics"}:
-        return "statistics"
+        return "statistik"
     if normalized_tool.startswith("riksdag_") or normalized_category.startswith("riksdag"):
         return "riksdagen"
     if _is_weather_domain_tool(normalized_tool, normalized_category):
-        return "weather"
+        return "väder"
     if normalized_tool.startswith("trafikverket_") or normalized_tool in {"trafiklab_route"}:
         return "trafik"
     if normalized_tool.startswith("bolagsverket_"):
@@ -747,28 +758,28 @@ def _infer_agent_for_tool(
     if normalized_tool.startswith("geoapify_"):
         return "kartor"
     if normalized_tool.startswith("marketplace_"):
-        return "marketplace"
+        return "marknad"
     if normalized_tool in {"generate_podcast", "display_image"}:
         return "media"
     if normalized_tool in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
-        return "browser"
+        return "webb"
     if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
-        return "knowledge"
-    if normalized_route == "statistics":
-        return "statistics"
-    if normalized_route == "compare":
-        return "synthesis"
-    if normalized_route == "knowledge":
-        return "knowledge"
-    if normalized_route == "action" and normalized_sub_route == "travel":
+        return "kunskap"
+    if normalized_route in {"kunskap", "knowledge"} and normalized_sub_route == "statistik":
+        return "statistik"
+    if normalized_route in {"jämförelse", "compare"}:
+        return "syntes"
+    if normalized_route in {"kunskap", "knowledge"}:
+        return "kunskap"
+    if normalized_route in {"skapande", "action"} and normalized_sub_route in {"trafik", "travel", "väder"}:
         return "trafik"
-    if normalized_route == "action" and normalized_sub_route == "web":
-        return "browser"
-    if normalized_route == "action" and normalized_sub_route == "media":
+    if normalized_route in {"skapande", "action"} and normalized_sub_route in {"webb", "web"}:
+        return "webb"
+    if normalized_route in {"skapande", "action"} and normalized_sub_route == "media":
         return "media"
-    if normalized_route == "action":
-        return "action"
-    return "action"
+    if normalized_route in {"skapande", "action"}:
+        return "åtgärd"
+    return "åtgärd"
 
 
 def _dedupe_non_empty(values: list[str]) -> list[str]:
@@ -1008,16 +1019,16 @@ def _normalize_single_eval_test_for_consistency(
 
     mixed_weather = bool(
         _is_mixed_weather_question(question)
-        and str(normalized_expected.get("route") or "").strip().lower() == "action"
+        and str(normalized_expected.get("route") or "").strip().lower() in {"kunskap", "skapande", "action"}
         and str(normalized_expected.get("sub_route") or "").strip().lower() in {"travel", ""}
     )
     if mixed_weather:
-        expanded_agents = _dedupe_non_empty(["weather", "trafik", *acceptable_agents])
+        expanded_agents = _dedupe_non_empty(["väder", "trafik", *acceptable_agents])
         if expanded_agents != acceptable_agents:
             acceptable_agents = expanded_agents
             normalized = True
             warnings.append(
-                "Mixed väder/trafik-fråga upptäckt; acceptable_agents utökades till weather+trafik."
+                "Mixed väder/trafik-fråga upptäckt; acceptable_agents utökades till väder+trafik."
             )
         weather_retrieval_candidates: list[str] = []
         for tool_id in retrieved_ids:
@@ -1199,7 +1210,7 @@ def _sweden_focus_hint_for_entry(entry: Any) -> str:
     tool_id = str(getattr(entry, "tool_id", "") or "").strip().lower()
     category = str(getattr(entry, "category", "") or "").strip().lower()
     route, sub_route = _infer_route_for_tool(tool_id, category)
-    if tool_id.startswith("scb_") or route == "statistics":
+    if tool_id.startswith("scb_") or route in {"kunskap", "statistics"} and sub_route in {"statistik", None}:
         return (
             "Frågan ska handla om Sverige och använda svenska kommuner/län "
             "samt officiell statistik-kontext."
@@ -1237,7 +1248,7 @@ def _build_swedish_question_for_entry(entry: Any, index: int) -> str:
     region = _pick_reference(_SWEDISH_REGIONS, index)
     road = _pick_reference(_SWEDISH_ROADS, index)
     topic = _pick_reference(_SWEDISH_POLITICS_TOPICS, index)
-    if tool_id.startswith("scb_") or route == "statistics":
+    if tool_id.startswith("scb_") or route in {"kunskap", "statistics"} and sub_route in {"statistik", None}:
         return (
             f"Hur har {topic} utvecklats i {city} kommun och {region} "
             "de senaste fem åren?"
@@ -1248,7 +1259,7 @@ def _build_swedish_question_for_entry(entry: Any, index: int) -> str:
             "under det senaste året?"
         )
     if tool_id in _SKOLVERKET_TOOL_IDS:
-        if route == "statistics":
+        if sub_route in {"statistik", "statistics"}:
             return (
                 f"Vilken statistik finns om gymnasieutbildningar i {city} "
                 f"och {region} enligt Skolverket?"
@@ -1368,17 +1379,17 @@ def _normalize_generated_tests(
             expected_category or str(getattr(entry, "category", "")).strip(),
         )
         # For marketplace tools, always use inferred values (don't trust LLM)
-        # to ensure consistency: all marketplace tools → action/data/marketplace
+        # to ensure consistency: all marketplace tools → kunskap/data/marknad
         if expected_tool.startswith("marketplace_"):
-            expected_route = inferred_route  # Always "action"
+            expected_route = inferred_route  # Always "kunskap"
             expected_sub_route = inferred_sub_route  # Always "data"
-            expected_intent = _infer_intent_for_route(inferred_route)  # Always "action"
+            expected_intent = _infer_intent_for_route(inferred_route)  # Always "kunskap"
             expected_agent = _infer_agent_for_tool(
                 expected_tool,
                 expected_category or str(getattr(entry, "category", "")).strip(),
                 inferred_route,
                 inferred_sub_route,
-            )  # Always "marketplace"
+            )  # Always "marknad"
         else:
             expected_route = str(
                 expected.get("route") or source.get("expected_route") or inferred_route
@@ -1871,11 +1882,11 @@ async def _generate_eval_tests(
         '      "expected": {\n'
         '        "tool": "tool_id",\n'
         '        "category": "category",\n'
-        '        "intent": "knowledge|action|statistics|smalltalk|compare",\n'
-        '        "route": "action|knowledge|statistics|smalltalk|compare",\n'
-        '        "sub_route": "web|media|travel|data|docs|internal|external|null",\n'
-        '        "agent": "weather|trafik|statistics|riksdagen|bolag|kartor|marketplace|media|browser|knowledge|action|synthesis",\n'
-        '        "plan_requirements": ["route:action", "agent:agent_id", "tool:tool_id"]\n'
+        '        "intent": "kunskap|skapande|jämförelse|konversation",\n'
+        '        "route": "kunskap|skapande|jämförelse|konversation",\n'
+        '        "sub_route": "webb|media|trafik|väder|statistik|data|internal|external|null",\n'
+        '        "agent": "väder|trafik|statistik|riksdagen|bolag|kartor|marknad|media|webb|kunskap|åtgärd|kod|syntes",\n'
+        '        "plan_requirements": ["route:kunskap", "agent:agent_id", "tool:tool_id"]\n'
         "      },\n"
         '      "allowed_tools": ["tool_id"]\n'
         "    }\n"
@@ -2856,6 +2867,11 @@ def _metadata_payload_from_item(item: ToolMetadataUpdateItem) -> dict[str, Any]:
             "example_queries": item.example_queries,
             "category": item.category,
             "base_path": item.base_path,
+            "main_identifier": item.main_identifier,
+            "core_activity": item.core_activity,
+            "unique_scope": item.unique_scope,
+            "geographic_scope": item.geographic_scope,
+            "excludes": item.excludes,
         }
     )
 
@@ -2869,6 +2885,11 @@ def _metadata_payload_from_entry(entry) -> dict[str, Any]:
             "example_queries": list(entry.example_queries),
             "category": entry.category,
             "base_path": entry.base_path,
+            "main_identifier": getattr(entry, "main_identifier", "") or "",
+            "core_activity": getattr(entry, "core_activity", "") or "",
+            "unique_scope": getattr(entry, "unique_scope", "") or "",
+            "geographic_scope": getattr(entry, "geographic_scope", "") or "",
+            "excludes": list(getattr(entry, "excludes", ()) or ()),
         }
     )
 
@@ -2946,6 +2967,11 @@ def _tool_item_from_entry(entry, *, has_override: bool) -> ToolMetadataItem:
         example_queries=list(entry.example_queries),
         category=entry.category,
         base_path=entry.base_path,
+        main_identifier=getattr(entry, "main_identifier", "") or "",
+        core_activity=getattr(entry, "core_activity", "") or "",
+        unique_scope=getattr(entry, "unique_scope", "") or "",
+        geographic_scope=getattr(entry, "geographic_scope", "") or "",
+        excludes=list(getattr(entry, "excludes", ()) or ()),
         has_override=has_override,
     )
 
@@ -3335,6 +3361,15 @@ def _agent_metadata_item_from_payload(
         agent_id=payload.get("agent_id"),
         default_payload=default_payload,
     )
+    flow_tools_raw = normalized.get("flow_tools") or []
+    flow_tools = [
+        FlowToolEntry(
+            tool_id=str(entry.get("tool_id") or ""),
+            label=str(entry.get("label") or entry.get("tool_id") or ""),
+        )
+        for entry in flow_tools_raw
+        if isinstance(entry, dict) and entry.get("tool_id")
+    ]
     return AgentMetadataItem(
         agent_id=str(normalized.get("agent_id") or ""),
         label=str(normalized.get("label") or ""),
@@ -3344,6 +3379,8 @@ def _agent_metadata_item_from_payload(
             str(normalized.get("prompt_key") or "").strip() or None
         ),
         namespace=[str(value) for value in (normalized.get("namespace") or []) if value],
+        routes=[str(r) for r in (normalized.get("routes") or []) if r],
+        flow_tools=flow_tools,
         has_override=has_override,
     )
 
@@ -4348,6 +4385,112 @@ async def update_tool_settings_metadata_catalog(
 
 
 @router.post(
+    "/tool-settings/metadata-catalog/reset",
+    response_model=MetadataCatalogResetResponse,
+)
+async def reset_metadata_catalog(
+    payload: MetadataCatalogResetRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Clear all metadata overrides, separation pair locks, and stability locks.
+
+    Returns the metadata catalog in its default (code-defined) state.
+    """
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+
+    reason = str(payload.reason or "").strip() or "manual reset from metadata catalog UI"
+    logger.warning(
+        "Metadata catalog reset requested by user_id=%s search_space_id=%s reason=%s",
+        str(user.id),
+        int(resolved_search_space_id),
+        reason,
+    )
+
+    try:
+        # 1. Count and delete tool metadata overrides
+        tool_result = await session.execute(select(GlobalToolMetadataOverride))
+        tool_rows = tool_result.scalars().all()
+        cleared_tool_overrides = len(tool_rows)
+        if cleared_tool_overrides > 0:
+            await session.execute(delete(GlobalToolMetadataOverride))
+
+        # 2. Count and delete intent definition overrides
+        intent_result = await session.execute(select(GlobalIntentDefinition))
+        intent_rows = intent_result.scalars().all()
+        cleared_intent_overrides = len(intent_rows)
+        if cleared_intent_overrides > 0:
+            await session.execute(delete(GlobalIntentDefinition))
+
+        # 3. Count and delete agent metadata overrides (stored as prompt overrides
+        #    with key prefix "agent.metadata.")
+        agent_prefix = "agent.metadata."
+        agent_result = await session.execute(
+            select(GlobalAgentPromptOverride).filter(
+                GlobalAgentPromptOverride.key.like(f"{agent_prefix}%")
+            )
+        )
+        agent_rows = agent_result.scalars().all()
+        cleared_agent_overrides = len(agent_rows)
+        for row in agent_rows:
+            await session.delete(row)
+
+        # 4. Clear separation pair locks and stability locks from lock registry
+        lock_registry = await _load_metadata_separation_lock_registry(session)
+        cleared_lock_pairs = len(lock_registry.get("pair_locks") or [])
+        empty_registry = normalize_metadata_separation_lock_registry({
+            "lock_mode_enabled": False,
+            "stability_lock_mode_enabled": False,
+            "stability_auto_lock_enabled": False,
+            "pair_locks": [],
+            "stability_item_locks": {},
+            "stability_config": {},
+        })
+        await upsert_metadata_separation_lock_registry(
+            session,
+            empty_registry,
+            updated_by_id=user.id,
+        )
+
+        await session.commit()
+        clear_tool_caches()
+        try:
+            from app.agents.new_chat.supervisor_agent import clear_agent_combo_cache
+
+            clear_agent_combo_cache()
+        except Exception:
+            logger.exception("Failed to clear agent combo cache after metadata reset")
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to reset metadata catalog")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reset metadata catalog: {exc!s}",
+        ) from exc
+
+    catalog = await _build_metadata_catalog_response(
+        session,
+        user,
+        search_space_id=resolved_search_space_id,
+    )
+    return MetadataCatalogResetResponse(
+        search_space_id=resolved_search_space_id,
+        cleared_tool_overrides=cleared_tool_overrides,
+        cleared_intent_overrides=cleared_intent_overrides,
+        cleared_agent_overrides=cleared_agent_overrides,
+        cleared_lock_pairs=cleared_lock_pairs,
+        catalog=catalog,
+    )
+
+
+@router.post(
     "/tool-settings/metadata-catalog/safe-rename-suggestion",
     response_model=MetadataCatalogSafeRenameSuggestionResponse,
 )
@@ -4712,7 +4855,7 @@ async def run_metadata_catalog_audit(
             intent=None,
         )
         expected_intent_by_tool[str(getattr(entry, "tool_id", "") or "")] = (
-            str(intent_id or "").strip().lower() or "action"
+            str(intent_id or "").strip().lower() or "kunskap"
         )
         expected_agent_by_tool[str(getattr(entry, "tool_id", "") or "")] = (
             _infer_agent_for_tool(
@@ -5226,7 +5369,7 @@ async def run_metadata_catalog_separation(
         if not normalized_tool_id:
             continue
         expected_intent_by_tool[normalized_tool_id] = (
-            str(intent_id or "").strip().lower() or "action"
+            str(intent_id or "").strip().lower() or "kunskap"
         )
         expected_agent_by_tool[normalized_tool_id] = _infer_agent_for_tool(
             normalized_tool_id,

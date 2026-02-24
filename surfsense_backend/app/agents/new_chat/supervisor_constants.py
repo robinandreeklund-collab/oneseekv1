@@ -20,16 +20,26 @@ _AGENT_COMBO_CACHE: dict[str, tuple[datetime, list[str]]] = {}
 # These should NOT be overridden by route_policy if explicitly selected
 # This scales to 100s of APIs without needing regex patterns for each one
 _SPECIALIZED_AGENTS = {
-    "marketplace",  # Blocket/Tradera tools
-    "statistics",   # SCB/Kolada tools
+    "marknad",      # Blocket/Tradera tools
+    "statistik",    # SCB/Kolada tools
     "riksdagen",    # Parliament data tools
     "bolag",        # Company registry tools
     "trafik",       # Traffic/transport tools
-    "weather",      # Weather-specific tools
+    "väder",        # Weather-specific tools
     "kartor",       # Map generation tools
-    # Future specialized agents will be added here automatically
-    # as long as they have dedicated WorkerConfig entries
 }
+# Backward compat: accept old English agent names
+_COMPAT_AGENT_NAMES: dict[str, str] = {
+    "action": "åtgärd",
+    "weather": "väder",
+    "statistics": "statistik",
+    "knowledge": "kunskap",
+    "browser": "webb",
+    "code": "kod",
+    "marketplace": "marknad",
+    "synthesis": "syntes",
+}
+_COMPAT_AGENT_NAMES_REVERSE: dict[str, str] = {v: k for k, v in _COMPAT_AGENT_NAMES.items()}
 
 _AGENT_STOPWORDS = {
     "hur",
@@ -120,10 +130,10 @@ class AgentToolProfile:
 def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
     profiles: dict[str, list[AgentToolProfile]] = {
         "trafik": [],
-        "statistics": [],
+        "statistik": [],
         "riksdagen": [],
         "bolag": [],
-        "marketplace": [],
+        "marknad": [],
     }
     for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
         profiles["trafik"].append(
@@ -135,10 +145,10 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
             )
         )
     for definition in SCB_TOOL_DEFINITIONS:
-        profiles["statistics"].append(
+        profiles["statistik"].append(
             AgentToolProfile(
                 tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "base_path", "statistics")),
+                category=str(getattr(definition, "base_path", "statistik")),
                 description=str(getattr(definition, "description", "")),
                 keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
             )
@@ -162,10 +172,10 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
             )
         )
     for definition in MARKETPLACE_TOOL_DEFINITIONS:
-        profiles["marketplace"].append(
+        profiles["marknad"].append(
             AgentToolProfile(
                 tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "category", "marketplace")),
+                category=str(getattr(definition, "category", "marknad")),
                 description=str(getattr(definition, "description", "")),
                 keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
             )
@@ -222,10 +232,13 @@ _SANDBOX_CODE_TOOL_IDS = (
     "sandbox_release",
 )
 _AGENT_NAME_ALIAS_MAP = {
-    "weather": "weather",
-    "weather_agent": "weather",
-    "smhi": "weather",
-    "smhi_agent": "weather",
+    # Weather → väder
+    "weather": "väder",
+    "weather_agent": "väder",
+    "smhi": "väder",
+    "smhi_agent": "väder",
+    "vader": "väder",
+    # Traffic
     "traffic_information": "trafik",
     "traffic_info": "trafik",
     "traffic_agent": "trafik",
@@ -233,18 +246,39 @@ _AGENT_NAME_ALIAS_MAP = {
     "roadworks_planner": "trafik",
     "road_work_planner": "trafik",
     "roadworks": "trafik",
-    "municipality_agent": "statistics",
+    # Statistics → statistik
+    "municipality_agent": "statistik",
+    "statistic_agent": "statistik",
+    "statistics_agent": "statistik",
+    "statistics": "statistik",
+    # Maps
     "map_agent": "kartor",
     "maps_agent": "kartor",
-    "statistic_agent": "statistics",
-    "statistics_agent": "statistics",
+    # Parliament
     "parliament_agent": "riksdagen",
+    # Company
     "company_agent": "bolag",
-    "code_agent": "code",
-    "marketplace_agent": "marketplace",
-    "market_agent": "marketplace",
-    "blocket_agent": "marketplace",
-    "tradera_agent": "marketplace",
+    # Code → kod
+    "code_agent": "kod",
+    "code": "kod",
+    # Marketplace → marknad
+    "marketplace_agent": "marknad",
+    "market_agent": "marknad",
+    "blocket_agent": "marknad",
+    "tradera_agent": "marknad",
+    "marketplace": "marknad",
+    # Knowledge → kunskap
+    "knowledge": "kunskap",
+    "knowledge_agent": "kunskap",
+    # Browser → webb
+    "browser": "webb",
+    "browser_agent": "webb",
+    # Synthesis → syntes
+    "synthesis": "syntes",
+    "synthesis_agent": "syntes",
+    # Action → åtgärd (legacy)
+    "action": "åtgärd",
+    "action_agent": "åtgärd",
 }
 
 _TRAFFIC_INTENT_RE = re.compile(
@@ -286,9 +320,11 @@ _TRAFFIC_INCIDENT_STRICT_RE = re.compile(
 )
 _WEATHER_INTENT_RE = re.compile(
     r"\b("
-    r"smhi|vader|väder|temperatur|regn|sno|snö|vind|vindhastighet|"
-    r"halka|isrisk|vaglag|väglag|vagvader|vägväder|"
-    r"nederbord|nederbörd|prognos|sol|moln|luftfuktighet"
+    r"smhi|vader(et)?|väder(et)?|temperatur(en)?|regn(et)?|sno(n)?|snö(n)?|"
+    r"vind(en|ar)?|vindhastighet(en)?|"
+    r"halka(n)?|isrisk(en)?|vaglag(et)?|väglag(et)?|vagvader|vägväder|"
+    r"nederbord(en)?|nederbörd(en)?|prognos(en)?|sol(en)?|moln(et|en)?|"
+    r"luftfuktighet(en)?|graderna|grader"
     r")\b",
     re.IGNORECASE,
 )
@@ -388,8 +424,10 @@ _MISSING_FIELD_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 _RESULT_STATUS_VALUES = {"success", "partial", "blocked", "error"}
 _ROUTE_STRICT_AGENT_POLICIES: dict[str, set[str]] = {
-    "statistics": {"statistics"},
-    "compare": {"synthesis", "statistics", "knowledge"},
+    # Jämförelse locks to syntes + relevant kunskap agents
+    "jämförelse": {"syntes", "statistik", "kunskap"},
+    # Backward compat for old string values
+    "compare": {"syntes", "statistik", "kunskap"},
 }
 _COMPARE_FOLLOWUP_RE = re.compile(
     r"\b(jamfor|jämför|jamforelse|jämförelse|skillnad|dessa två|de två|båda|bada)\b",

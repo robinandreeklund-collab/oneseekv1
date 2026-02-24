@@ -95,7 +95,7 @@ export const DisplayImageGalleryToolUI = makeAssistantToolUI<
 					const parsed = parseSerializableImage(image);
 					return (
 						<ImageErrorBoundary key={parsed.id ?? `${parsed.src}-${index}`}>
-							<Image {...parsed} maxWidth="100%" />
+							<Image {...(parsed as any)} maxWidth="100%" />
 						</ImageErrorBoundary>
 					);
 				})}

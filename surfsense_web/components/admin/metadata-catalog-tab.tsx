@@ -1,9 +1,19 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RotateCcw, Save, X } from "lucide-react";
+import { Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -60,6 +70,11 @@ function toToolUpdateItem(item: ToolMetadataItem | ToolMetadataUpdateItem): Tool
 		example_queries: [...item.example_queries],
 		category: item.category,
 		base_path: item.base_path ?? null,
+		main_identifier: item.main_identifier ?? "",
+		core_activity: item.core_activity ?? "",
+		unique_scope: item.unique_scope ?? "",
+		geographic_scope: item.geographic_scope ?? "",
+		excludes: [...(item.excludes ?? [])],
 	};
 }
 
@@ -73,6 +88,8 @@ function toAgentUpdateItem(
 		keywords: [...item.keywords],
 		prompt_key: item.prompt_key ?? null,
 		namespace: [...(item.namespace ?? [])],
+		routes: [...(item.routes ?? [])],
+		flow_tools: [...(item.flow_tools ?? [])].map((t) => ({ ...t })),
 	};
 }
 
@@ -102,6 +119,17 @@ function isEqualToolMetadata(left: ToolMetadataUpdateItem, right: ToolMetadataUp
 	);
 }
 
+function isEqualFlowTools(
+	left: Array<{ tool_id: string; label: string }>,
+	right: Array<{ tool_id: string; label: string }>
+) {
+	if (left.length !== right.length) return false;
+	for (let i = 0; i < left.length; i += 1) {
+		if (left[i].tool_id !== right[i].tool_id || left[i].label !== right[i].label) return false;
+	}
+	return true;
+}
+
 function isEqualAgentMetadata(left: AgentMetadataUpdateItem, right: AgentMetadataUpdateItem) {
 	return (
 		left.agent_id === right.agent_id &&
@@ -109,7 +137,9 @@ function isEqualAgentMetadata(left: AgentMetadataUpdateItem, right: AgentMetadat
 		left.description === right.description &&
 		(left.prompt_key ?? null) === (right.prompt_key ?? null) &&
 		isEqualStringArray(left.keywords, right.keywords) &&
-		isEqualStringArray(left.namespace ?? [], right.namespace ?? [])
+		isEqualStringArray(left.namespace ?? [], right.namespace ?? []) &&
+		isEqualStringArray(left.routes ?? [], right.routes ?? []) &&
+		isEqualFlowTools(left.flow_tools ?? [], right.flow_tools ?? [])
 	);
 }
 
@@ -685,6 +715,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	const [isLockingStableItems, setIsLockingStableItems] = useState(false);
 	const [isUnlockingStableItems, setIsUnlockingStableItems] = useState(false);
 	const [unlockingToolId, setUnlockingToolId] = useState<string | null>(null);
+	const [isResettingMetadata, setIsResettingMetadata] = useState(false);
+	const [showResetConfirm, setShowResetConfirm] = useState(false);
 
 	const { data, isLoading, error, refetch } = useQuery({
 		queryKey: ["admin-tool-metadata-catalog", searchSpaceId],
@@ -1459,6 +1491,38 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		}
 	};
 
+	const resetAllMetadata = async () => {
+		if (!data?.search_space_id) return;
+		setIsResettingMetadata(true);
+		try {
+			const response = await adminToolSettingsApiService.resetMetadataCatalog({
+				search_space_id: data.search_space_id,
+				reason: "manual reset from metadata catalog UI",
+			});
+			setStabilityLocks(response.catalog.stability_locks ?? EMPTY_STABILITY_LOCK_SUMMARY);
+			await queryClient.invalidateQueries({
+				queryKey: ["admin-tool-metadata-catalog", searchSpaceId],
+			});
+			await refetch();
+			const parts: string[] = [];
+			if (response.cleared_tool_overrides > 0) parts.push(`${response.cleared_tool_overrides} tool`);
+			if (response.cleared_intent_overrides > 0) parts.push(`${response.cleared_intent_overrides} intent`);
+			if (response.cleared_agent_overrides > 0) parts.push(`${response.cleared_agent_overrides} agent`);
+			if (response.cleared_lock_pairs > 0) parts.push(`${response.cleared_lock_pairs} lås`);
+			const detail = parts.length > 0 ? parts.join(", ") : "inga overrides";
+			toast.success(`Metadata återställd till standard. Rensade: ${detail}.`);
+		} catch (error) {
+			const message =
+				error instanceof Error && error.message
+					? error.message
+					: "Kunde inte återställa metadata.";
+			toast.error(message);
+		} finally {
+			setIsResettingMetadata(false);
+			setShowResetConfirm(false);
+		}
+	};
+
 	const runAudit = async () => {
 		if (!data?.search_space_id) return;
 		setIsRunningAudit(true);
@@ -1760,6 +1824,8 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					...item,
 					keywords: [...item.keywords],
 					namespace: [...(item.namespace ?? [])],
+					routes: [...(item.routes ?? [])],
+					flow_tools: [...(item.flow_tools ?? [])].map((t) => ({ ...t })),
 				};
 			}
 			return next;
@@ -2269,6 +2335,16 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 							disabled={isUnlockingStableItems || stabilityLockRows.length === 0}
 						>
 							{isUnlockingStableItems && !unlockingToolId ? "Låser upp..." : "Lås upp alla"}
+						</Button>
+						<Button
+							type="button"
+							variant="outline"
+							className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10"
+							onClick={() => setShowResetConfirm(true)}
+							disabled={isResettingMetadata || isSaving}
+						>
+							<Trash2 className="h-4 w-4" />
+							{isResettingMetadata ? "Återställer..." : "Återställ allt"}
 						</Button>
 						<Button
 							type="button"
@@ -4064,6 +4140,28 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					) : null}
 				</TabsContent>
 			</Tabs>
+			<AlertDialog open={showResetConfirm} onOpenChange={setShowResetConfirm}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Återställ all metadata?</AlertDialogTitle>
+						<AlertDialogDescription>
+							Detta tar bort alla manuella overrides för tools, agents och intents,
+							rensar alla stabilitetslås och separationslås, och återställer metadata
+							till koddefinierade standardvärden. Historik bevaras.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={isResettingMetadata}>Avbryt</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={resetAllMetadata}
+							disabled={isResettingMetadata}
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+						>
+							{isResettingMetadata ? "Återställer..." : "Ja, återställ allt"}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	);
 }

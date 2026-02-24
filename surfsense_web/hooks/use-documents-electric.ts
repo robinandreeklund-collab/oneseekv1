@@ -64,7 +64,7 @@ export function useDocumentsElectric(searchSpaceId: number | string | null) {
 			try {
 				console.log("[useDocumentsElectric] Starting sync for search space:", searchSpaceId);
 
-				const handle = await electricClient.syncShape({
+				const handle = await electricClient!.syncShape({
 					table: "documents",
 					where: `search_space_id = ${searchSpaceId}`,
 					columns: ["id", "document_type", "search_space_id", "created_at"],
@@ -111,7 +111,7 @@ export function useDocumentsElectric(searchSpaceId: number | string | null) {
 
 		async function fetchDocuments() {
 			try {
-				const result = await electricClient.db.query<Document>(
+				const result = await electricClient!.db.query<Document>(
 					`SELECT id, document_type, search_space_id, created_at FROM documents WHERE search_space_id = $1 ORDER BY created_at DESC`,
 					[searchSpaceId]
 				);
@@ -126,7 +126,7 @@ export function useDocumentsElectric(searchSpaceId: number | string | null) {
 		async function setupLiveQuery() {
 			try {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				const db = electricClient.db as any;
+				const db = electricClient!.db as any;
 
 				if (db.live?.query && typeof db.live.query === "function") {
 					const liveQuery = await db.live.query(

@@ -102,17 +102,17 @@ export function parseSerializableArticle(data: unknown): ArticleProps {
 	const parsed = result.data;
 	return {
 		id: parsed.id,
-		assetId: parsed.assetId,
+		assetId: parsed.assetId ?? undefined,
 		title: parsed.title,
-		description: parsed.description,
-		content: parsed.content,
-		href: parsed.href,
-		domain: parsed.domain,
-		author: parsed.author,
-		date: parsed.date,
-		wordCount: parsed.word_count ?? parsed.wordCount,
-		wasTruncated: parsed.was_truncated ?? parsed.wasTruncated,
-		error: parsed.error,
+		description: parsed.description ?? undefined,
+		content: parsed.content ?? undefined,
+		href: parsed.href ?? undefined,
+		domain: parsed.domain ?? undefined,
+		author: parsed.author ?? undefined,
+		date: parsed.date ?? undefined,
+		wordCount: (parsed.word_count ?? parsed.wordCount) ?? undefined,
+		wasTruncated: (parsed.was_truncated ?? parsed.wasTruncated) ?? undefined,
+		error: parsed.error ?? undefined,
 	};
 }
 

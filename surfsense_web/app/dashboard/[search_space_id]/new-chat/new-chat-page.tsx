@@ -1427,7 +1427,7 @@ export default function NewChatPage() {
 						if (currentTraceSessionId) {
 							try {
 								await chatTraceApiService.attachTraceSession({
-									thread_id: threadId,
+									thread_id: threadId!,
 									trace_session_id: currentTraceSessionId,
 									message_id: savedMessage.id,
 								});
@@ -1440,16 +1440,6 @@ export default function NewChatPage() {
 					}
 
 
-					setMessageReasoningMap((prev) => {
-						const reasoning = prev.get(assistantMsgId);
-						if (reasoning) {
-							const newMap = new Map(prev);
-							newMap.delete(assistantMsgId);
-							newMap.set(newMsgId, reasoning);
-							return newMap;
-						}
-						return prev;
-					});
 					// Track successful response
 					trackChatResponseReceived(searchSpaceId, currentThreadId);
 				}
@@ -1695,6 +1685,7 @@ export default function NewChatPage() {
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
 			let currentReasoningText = "";
 			let currentTraceSessionId: string | null = null;
+			let compareSummary: unknown | null = null;
 
 			// Content parts tracking (same as onNew)
 			type ContentPart =
@@ -2276,7 +2267,7 @@ export default function NewChatPage() {
 											size="sm"
 											className="gap-2"
 											disabled={!lastAssistantMessageId}
-											onClick={() => openTraceForMessage(lastAssistantMessageId)}
+											onClick={() => openTraceForMessage(lastAssistantMessageId ?? null)}
 										>
 											<Activity
 												className={cn("size-4", isTraceOpen ? "animate-pulse" : "")}
