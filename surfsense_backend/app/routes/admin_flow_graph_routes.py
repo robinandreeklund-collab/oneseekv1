@@ -38,12 +38,14 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "label": "Resolve Intent",
         "stage": "entry",
         "description": "Klassificerar frågan → route (kunskap/skapande/jämförelse/konversation) + confidence.",
+        "prompt_key": "supervisor.intent_resolver.system",
     },
     {
         "id": "node:memory_context",
         "label": "Memory Context",
         "stage": "entry",
         "description": "Laddar minneskontext och samtalshistorik.",
+        "prompt_key": None,
     },
     # ── Fast paths ──
     {
@@ -51,6 +53,7 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "label": "Smalltalk",
         "stage": "fast_path",
         "description": "Snabb hälsningssvar (konversation-route). → END",
+        "prompt_key": "agent.smalltalk.system",
     },
     # ── Speculative ──
     {
@@ -58,6 +61,7 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "label": "Speculative",
         "stage": "speculative",
         "description": "Förberäknar troliga verktyg parallellt (hybrid-läge, komplex fråga).",
+        "prompt_key": None,
     },
     # ── Planning ──
     {
@@ -65,18 +69,21 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "label": "Agent Resolver",
         "stage": "planning",
         "description": "Hämtar och väljer agenter via vektor-retrieval + LLM-rankning.",
+        "prompt_key": "supervisor.agent_resolver.system",
     },
     {
         "id": "node:planner",
         "label": "Planner",
         "stage": "planning",
         "description": "Skapar exekverbar plan (max 4 steg) baserat på valda agenter.",
+        "prompt_key": "supervisor.planner.system",
     },
     {
         "id": "node:planner_hitl_gate",
         "label": "Planner HITL",
         "stage": "planning",
         "description": "Human-in-the-loop: pausar för användarens godkännande av planen.",
+        "prompt_key": "supervisor.hitl.planner.message",
     },
     # ── Tool resolution ──
     {
@@ -84,18 +91,21 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "label": "Tool Resolver",
         "stage": "tool_resolution",
         "description": "Matchar plansteg → verktyg via vektor-retrieval.",
+        "prompt_key": "supervisor.tool_resolver.system",
     },
     {
         "id": "node:speculative_merge",
         "label": "Speculative Merge",
         "stage": "tool_resolution",
         "description": "Mergar spekulativa verktygskandidater med resolver-resultat.",
+        "prompt_key": None,
     },
     {
         "id": "node:execution_router",
         "label": "Execution Router",
         "stage": "tool_resolution",
         "description": "Bestämmer exekverings-strategi (inline/subagent/parallel).",
+        "prompt_key": None,
     },
     # ── Execution ──
     {
@@ -103,24 +113,28 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "label": "Execution HITL",
         "stage": "execution",
         "description": "Human-in-the-loop: pausar för godkännande innan verktygsanrop.",
+        "prompt_key": "supervisor.hitl.execution.message",
     },
     {
         "id": "node:executor",
         "label": "Executor (LLM)",
         "stage": "execution",
         "description": "LLM-anrop som genererar svar eller tool_calls.",
+        "prompt_key": "agent.supervisor.system",
     },
     {
         "id": "node:tools",
         "label": "Tools",
         "stage": "execution",
         "description": "Kör verktygsanrop (SMHI, SCB, Trafikverket, sandbox, etc.).",
+        "prompt_key": None,
     },
     {
         "id": "node:post_tools",
         "label": "Post-Tools",
         "stage": "execution",
         "description": "Efterbehandling av verktygsresultat.",
+        "prompt_key": None,
     },
     # ── Post-processing ──
     {
@@ -128,18 +142,21 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "label": "Artifact Indexer",
         "stage": "post_processing",
         "description": "Indexerar artefakter (filer, data) för framtida referens.",
+        "prompt_key": None,
     },
     {
         "id": "node:context_compactor",
         "label": "Context Compactor",
         "stage": "post_processing",
         "description": "Komprimerar kontext för att hålla sig inom token-budget.",
+        "prompt_key": None,
     },
     {
         "id": "node:orchestration_guard",
         "label": "Orchestration Guard",
         "stage": "post_processing",
         "description": "Loop-guard och verktygs-limit-guard mot oändliga loopar.",
+        "prompt_key": "supervisor.loop_guard.message",
     },
     # ── Evaluation ──
     {
@@ -147,6 +164,7 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "label": "Critic",
         "stage": "evaluation",
         "description": "Bedömer om svaret är tillräckligt (ok/needs_more/replan).",
+        "prompt_key": "supervisor.critic.system",
     },
     # ── Synthesis ──
     {
@@ -154,18 +172,21 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "label": "Synthesis HITL",
         "stage": "synthesis",
         "description": "Human-in-the-loop: pausar för godkännande innan leverans.",
+        "prompt_key": "supervisor.hitl.synthesis.message",
     },
     {
         "id": "node:progressive_synthesizer",
         "label": "Progressive Synthesizer",
         "stage": "synthesis",
         "description": "Inkrementell streaming-syntes för komplexa svar.",
+        "prompt_key": "supervisor.synthesizer.system",
     },
     {
         "id": "node:synthesizer",
         "label": "Synthesizer",
         "stage": "synthesis",
         "description": "Slutgiltig förfining och formatering av svaret. → END",
+        "prompt_key": "supervisor.synthesizer.system",
     },
 ]
 

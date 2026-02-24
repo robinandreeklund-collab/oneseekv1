@@ -18,6 +18,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { adminFlowGraphApiService } from "@/lib/apis/admin-flow-graph-api.service";
+import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 import type {
 	FlowGraphResponse,
 	FlowIntentNode,
@@ -25,11 +26,12 @@ import type {
 	FlowToolNode,
 	PipelineNode as PipelineNodeData,
 	PipelineEdge as PipelineEdgeData,
-	PipelineStage,
 } from "@/contracts/types/admin-flow-graph.types";
+import type { MetadataCatalogResponse } from "@/contracts/types/admin-tool-settings.types";
 import { IntentGraphNode } from "./flow-nodes/intent-node";
 import { AgentGraphNode } from "./flow-nodes/agent-node";
 import { ToolGraphNode } from "./flow-nodes/tool-node";
+import { ToolGroupNode } from "./flow-nodes/tool-group-node";
 import { PipelineGraphNodeMemo } from "./flow-nodes/pipeline-node";
 import { FlowDetailPanel } from "./flow-detail-panel";
 import { Loader2, RefreshCw } from "lucide-react";
@@ -42,6 +44,7 @@ const nodeTypes: NodeTypes = {
 	intentNode: IntentGraphNode,
 	agentNode: AgentGraphNode,
 	toolNode: ToolGraphNode,
+	toolGroupNode: ToolGroupNode,
 	pipelineNode: PipelineGraphNodeMemo,
 };
 
@@ -49,14 +52,61 @@ const nodeTypes: NodeTypes = {
 
 const INTENT_X = 50;
 const AGENT_X = 450;
+const TOOL_GROUP_X = 830;
 const TOOL_X = 850;
 const ROW_GAP = 100;
 const INTENT_ROW_GAP = 120;
-const TOOL_ROW_GAP = 56;
+const TOOL_ROW_GAP = 44;
+const TOOL_GROUP_PAD_TOP = 28;
+const TOOL_GROUP_PAD_BOTTOM = 10;
+const TOOL_GROUP_GAP = 16;
+const TOOL_NODE_WIDTH = 180;
 
-function buildRoutingNodes(data: FlowGraphResponse): Node[] {
+// Map catalog tool categories to agents by heuristic
+function _inferAgentForCatalogTool(
+	category: string,
+	agents: FlowAgentNode[],
+): string {
+	const cat = (category || "").toLowerCase();
+	for (const a of agents) {
+		if (cat.includes(a.agent_id)) return a.agent_id;
+	}
+	const categoryMap: Record<string, string> = {
+		weather: "väder",
+		smhi: "väder",
+		maps: "kartor",
+		statistics: "statistik",
+		scb: "statistik",
+		kolada: "statistik",
+		traffic: "trafik",
+		trafikverket: "trafik",
+		media: "media",
+		podcast: "media",
+		code: "kod",
+		sandbox: "kod",
+		browser: "webb",
+		web: "webb",
+		company: "bolag",
+		bolagsverket: "bolag",
+		riksdag: "riksdagen",
+		parliament: "riksdagen",
+		marketplace: "marknad",
+		blocket: "marknad",
+		tradera: "marknad",
+	};
+	for (const [key, agentId] of Object.entries(categoryMap)) {
+		if (cat.includes(key)) return agentId;
+	}
+	return "";
+}
+
+function buildRoutingNodes(
+	data: FlowGraphResponse,
+	catalog: MetadataCatalogResponse | null,
+): Node[] {
 	const nodes: Node[] = [];
 
+	// ── Intent nodes ──
 	data.intents.forEach((intent, i) => {
 		nodes.push({
 			id: intent.id,
@@ -68,6 +118,7 @@ function buildRoutingNodes(data: FlowGraphResponse): Node[] {
 		});
 	});
 
+	// ── Agent nodes ──
 	data.agents.forEach((agent, i) => {
 		nodes.push({
 			id: agent.id,
@@ -79,26 +130,117 @@ function buildRoutingNodes(data: FlowGraphResponse): Node[] {
 		});
 	});
 
-	const toolsByAgent: Record<string, typeof data.tools> = {};
-	for (const tool of data.tools) {
-		const agentId = tool.agent_id;
-		if (!toolsByAgent[agentId]) toolsByAgent[agentId] = [];
-		toolsByAgent[agentId].push(tool);
+	// ── Build tools: flow graph tools + catalog supplements ──
+	const flowToolIds = new Set(data.tools.map((t) => t.tool_id));
+	const allTools: FlowToolNode[] = [...data.tools];
+
+	if (catalog) {
+		for (const cat of catalog.tool_categories) {
+			for (const tool of cat.tools) {
+				if (!flowToolIds.has(tool.tool_id)) {
+					flowToolIds.add(tool.tool_id);
+					const agentId = _inferAgentForCatalogTool(tool.category, data.agents);
+					allTools.push({
+						id: `tool:${tool.tool_id}`,
+						type: "tool",
+						tool_id: tool.tool_id,
+						label: tool.name || tool.tool_id,
+						agent_id: agentId,
+					});
+				}
+			}
+		}
 	}
 
-	let toolIndex = 0;
+	// ── Group tools by agent ──
+	const toolsByAgent: Record<string, FlowToolNode[]> = {};
+	const unassignedTools: FlowToolNode[] = [];
+	for (const tool of allTools) {
+		const agentId = tool.agent_id;
+		if (agentId && data.agents.some((a) => a.agent_id === agentId)) {
+			if (!toolsByAgent[agentId]) toolsByAgent[agentId] = [];
+			toolsByAgent[agentId].push(tool);
+		} else {
+			unassignedTools.push(tool);
+		}
+	}
+
+	// ── Create tool group boxes + tool nodes ──
+	let currentY = 20;
+
 	for (const agent of data.agents) {
 		const agentTools = toolsByAgent[agent.agent_id] || [];
-		for (const tool of agentTools) {
+		if (agentTools.length === 0) continue;
+
+		const groupHeight =
+			TOOL_GROUP_PAD_TOP + agentTools.length * TOOL_ROW_GAP + TOOL_GROUP_PAD_BOTTOM;
+
+		nodes.push({
+			id: `toolgroup:${agent.agent_id}`,
+			type: "toolGroupNode",
+			position: { x: TOOL_GROUP_X, y: currentY },
+			data: {
+				label: agent.label,
+				agent_id: agent.agent_id,
+				tool_count: agentTools.length,
+				width: TOOL_NODE_WIDTH + 40,
+				height: groupHeight,
+			},
+			draggable: false,
+			selectable: false,
+		});
+
+		for (let j = 0; j < agentTools.length; j++) {
+			const tool = agentTools[j];
 			nodes.push({
 				id: tool.id,
 				type: "toolNode",
-				position: { x: TOOL_X, y: 20 + toolIndex * TOOL_ROW_GAP },
+				position: {
+					x: TOOL_X,
+					y: currentY + TOOL_GROUP_PAD_TOP + j * TOOL_ROW_GAP,
+				},
 				data: { ...tool },
 				sourcePosition: Position.Right,
 				targetPosition: Position.Left,
 			});
-			toolIndex++;
+		}
+
+		currentY += groupHeight + TOOL_GROUP_GAP;
+	}
+
+	// ── Unassigned tools ──
+	if (unassignedTools.length > 0) {
+		const groupHeight =
+			TOOL_GROUP_PAD_TOP + unassignedTools.length * TOOL_ROW_GAP + TOOL_GROUP_PAD_BOTTOM;
+
+		nodes.push({
+			id: "toolgroup:__unassigned",
+			type: "toolGroupNode",
+			position: { x: TOOL_GROUP_X, y: currentY },
+			data: {
+				label: "Övriga",
+				agent_id: "__unassigned",
+				tool_count: unassignedTools.length,
+				width: TOOL_NODE_WIDTH + 40,
+				height: groupHeight,
+			},
+			draggable: false,
+			selectable: false,
+		});
+
+		for (let j = 0; j < unassignedTools.length; j++) {
+			const tool = unassignedTools[j];
+			nodes.push({
+				id: tool.id,
+				type: "toolNode",
+				position: {
+					x: TOOL_X,
+					y: currentY + TOOL_GROUP_PAD_TOP + j * TOOL_ROW_GAP,
+				},
+				data: { ...tool },
+				sourcePosition: Position.Right,
+				targetPosition: Position.Left,
+			});
 		}
 	}
 
@@ -148,90 +290,50 @@ function buildRoutingEdges(data: FlowGraphResponse): Edge[] {
 // ── Pipeline graph layout ───────────────────────────────────────────
 
 const STAGE_COLORS: Record<string, string> = {
-	entry: "hsl(263 70% 55%)",       // violet
-	fast_path: "hsl(38 92% 50%)",    // amber
-	speculative: "hsl(215 14% 50%)", // slate
-	planning: "hsl(217 91% 60%)",    // blue
-	tool_resolution: "hsl(189 94% 43%)", // cyan
-	execution: "hsl(160 84% 39%)",   // emerald
-	post_processing: "hsl(215 14% 50%)", // slate
-	evaluation: "hsl(25 95% 53%)",   // orange
-	synthesis: "hsl(350 89% 60%)",   // rose
+	entry: "hsl(263 70% 55%)",
+	fast_path: "hsl(38 92% 50%)",
+	speculative: "hsl(215 14% 50%)",
+	planning: "hsl(217 91% 60%)",
+	tool_resolution: "hsl(189 94% 43%)",
+	execution: "hsl(160 84% 39%)",
+	post_processing: "hsl(215 14% 50%)",
+	evaluation: "hsl(25 95% 53%)",
+	synthesis: "hsl(350 89% 60%)",
 };
 
-// Pipeline layout: group nodes by stage in columns
-const STAGE_ORDER = [
-	"entry",
-	"fast_path",
-	"speculative",
-	"planning",
-	"tool_resolution",
-	"execution",
-	"post_processing",
-	"evaluation",
-	"synthesis",
-];
-
-function buildPipelineNodes(
-	pipelineNodes: PipelineNodeData[],
-): Node[] {
-	const nodes: Node[] = [];
-
-	// Group nodes by stage
-	const nodesByStage: Record<string, PipelineNodeData[]> = {};
-	for (const node of pipelineNodes) {
-		if (!nodesByStage[node.stage]) nodesByStage[node.stage] = [];
-		nodesByStage[node.stage].push(node);
-	}
-
-	// Lay out in a roughly left-to-right flow
-	// We use a custom layout for a nice pipeline look
+function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 	const nodePositions: Record<string, { x: number; y: number }> = {
-		// Entry
 		"node:resolve_intent": { x: 0, y: 200 },
 		"node:memory_context": { x: 220, y: 200 },
-		// Fast path
 		"node:smalltalk": { x: 440, y: 0 },
-		// Speculative
 		"node:speculative": { x: 440, y: 100 },
-		// Planning
 		"node:agent_resolver": { x: 440, y: 220 },
 		"node:planner": { x: 660, y: 220 },
 		"node:planner_hitl_gate": { x: 880, y: 220 },
-		// Tool resolution
 		"node:tool_resolver": { x: 440, y: 360 },
 		"node:speculative_merge": { x: 660, y: 360 },
 		"node:execution_router": { x: 880, y: 360 },
-		// Execution
 		"node:execution_hitl_gate": { x: 1100, y: 280 },
 		"node:executor": { x: 1320, y: 280 },
 		"node:tools": { x: 1540, y: 200 },
 		"node:post_tools": { x: 1540, y: 340 },
-		// Post-processing
 		"node:artifact_indexer": { x: 1760, y: 340 },
 		"node:context_compactor": { x: 1760, y: 460 },
 		"node:orchestration_guard": { x: 1540, y: 460 },
-		// Evaluation
 		"node:critic": { x: 1320, y: 460 },
-		// Synthesis
 		"node:synthesis_hitl": { x: 1100, y: 560 },
 		"node:progressive_synthesizer": { x: 1320, y: 620 },
 		"node:synthesizer": { x: 1540, y: 620 },
 	};
 
-	for (const node of pipelineNodes) {
-		const pos = nodePositions[node.id] ?? { x: 0, y: 0 };
-		nodes.push({
-			id: node.id,
-			type: "pipelineNode",
-			position: pos,
-			data: { ...node },
-			sourcePosition: Position.Right,
-			targetPosition: Position.Left,
-		});
-	}
-
-	return nodes;
+	return pipelineNodes.map((node) => ({
+		id: node.id,
+		type: "pipelineNode",
+		position: nodePositions[node.id] ?? { x: 0, y: 0 },
+		data: { ...node },
+		sourcePosition: Position.Right,
+		targetPosition: Position.Left,
+	}));
 }
 
 function buildPipelineEdges(
@@ -286,6 +388,7 @@ type SelectedNodeData =
 
 export function FlowGraphPage() {
 	const [graphData, setGraphData] = useState<FlowGraphResponse | null>(null);
+	const [catalogData, setCatalogData] = useState<MetadataCatalogResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [viewMode, setViewMode] = useState<ViewMode>("pipeline");
@@ -297,8 +400,12 @@ export function FlowGraphPage() {
 		setLoading(true);
 		setError(null);
 		try {
-			const data = await adminFlowGraphApiService.getFlowGraph();
-			setGraphData(data);
+			const [flowData, catalog] = await Promise.all([
+				adminFlowGraphApiService.getFlowGraph(),
+				adminToolSettingsApiService.getMetadataCatalog().catch(() => null),
+			]);
+			setGraphData(flowData);
+			setCatalogData(catalog);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to load flow graph");
 		} finally {
@@ -306,18 +413,26 @@ export function FlowGraphPage() {
 		}
 	}, []);
 
-	// Rebuild nodes/edges when data or view changes
+	const totalToolCount = useMemo(() => {
+		if (!catalogData) return graphData?.tools.length ?? 0;
+		let count = 0;
+		for (const cat of catalogData.tool_categories) {
+			count += cat.tools.length;
+		}
+		return count;
+	}, [catalogData, graphData]);
+
 	useEffect(() => {
 		if (!graphData) return;
 		if (viewMode === "pipeline") {
 			setNodes(buildPipelineNodes(graphData.pipeline_nodes));
 			setEdges(buildPipelineEdges(graphData.pipeline_edges, graphData.pipeline_nodes));
 		} else {
-			setNodes(buildRoutingNodes(graphData));
+			setNodes(buildRoutingNodes(graphData, catalogData));
 			setEdges(buildRoutingEdges(graphData));
 		}
 		setSelectedNode(null);
-	}, [graphData, viewMode, setNodes, setEdges]);
+	}, [graphData, catalogData, viewMode, setNodes, setEdges]);
 
 	useEffect(() => {
 		fetchData();
@@ -328,6 +443,9 @@ export function FlowGraphPage() {
 			if (!graphData) return;
 
 			const nodeId = node.id;
+
+			// Skip group nodes
+			if (nodeId.startsWith("toolgroup:")) return;
 
 			if (viewMode === "pipeline") {
 				const found = graphData.pipeline_nodes.find((n) => n.id === nodeId);
@@ -340,7 +458,17 @@ export function FlowGraphPage() {
 					const found = graphData.agents.find((a) => a.id === nodeId);
 					if (found) setSelectedNode({ type: "agent", data: found });
 				} else if (nodeId.startsWith("tool:")) {
-					const found = graphData.tools.find((t) => t.id === nodeId);
+					let found = graphData.tools.find((t) => t.id === nodeId);
+					if (!found) {
+						const toolId = nodeId.replace("tool:", "");
+						found = {
+							id: nodeId,
+							type: "tool",
+							tool_id: toolId,
+							label: (node.data as { label?: string })?.label ?? toolId,
+							agent_id: (node.data as { agent_id?: string })?.agent_id ?? "",
+						};
+					}
 					if (found) setSelectedNode({ type: "tool", data: found });
 				}
 			}
@@ -386,12 +514,11 @@ export function FlowGraphPage() {
 		return { agentsPerIntent, toolsPerAgent };
 	}, [graphData]);
 
-	// Stage legend for pipeline view
 	const stages = graphData?.pipeline_stages ?? [];
 
 	if (loading) {
 		return (
-			<div className="flex items-center justify-center h-[calc(100vh-8rem)]">
+			<div className="flex items-center justify-center h-screen">
 				<Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
 			</div>
 		);
@@ -399,7 +526,7 @@ export function FlowGraphPage() {
 
 	if (error) {
 		return (
-			<div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)] gap-4">
+			<div className="flex flex-col items-center justify-center h-screen gap-4">
 				<p className="text-sm text-destructive">{error}</p>
 				<Button variant="outline" size="sm" onClick={fetchData}>
 					<RefreshCw className="mr-2 h-4 w-4" /> Retry
@@ -409,8 +536,8 @@ export function FlowGraphPage() {
 	}
 
 	return (
-		<div className="flex h-[calc(100vh-8rem)]">
-			<div className="flex-1 relative">
+		<div className="flex h-screen">
+			<div className="flex-1 relative min-w-0">
 				<ReactFlow
 					nodes={nodes}
 					edges={edges}
@@ -421,7 +548,7 @@ export function FlowGraphPage() {
 					nodeTypes={nodeTypes}
 					fitView
 					fitViewOptions={{ padding: 0.15 }}
-					minZoom={0.15}
+					minZoom={0.1}
 					maxZoom={2}
 					proOptions={{ hideAttribution: true }}
 				>
@@ -470,7 +597,7 @@ export function FlowGraphPage() {
 									</span>
 									<span className="flex items-center gap-1.5">
 										<span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-										Verktyg ({graphData?.tools.length ?? 0})
+										Verktyg ({totalToolCount})
 									</span>
 								</div>
 							)}

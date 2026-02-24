@@ -54,11 +54,12 @@ interface AdminLayoutProps {
 
 export function AdminLayout({ children }: AdminLayoutProps) {
 	const pathname = usePathname();
+	const isFlowPage = pathname === "/admin/flow" || pathname?.startsWith("/admin/flow/");
 
 	return (
 		<div className="flex min-h-screen">
 			{/* Sidebar */}
-			<div className="w-64 border-r bg-muted/40">
+			<div className="w-64 border-r bg-muted/40 shrink-0">
 				<div className="flex h-full flex-col">
 					{/* Header */}
 					<div className="flex h-16 items-center border-b px-6">
@@ -105,8 +106,8 @@ export function AdminLayout({ children }: AdminLayoutProps) {
 			</div>
 
 			{/* Main content */}
-			<div className="flex-1">
-				<div className="container mx-auto p-6 max-w-7xl">
+			<div className="flex-1 min-w-0">
+				<div className={isFlowPage ? "h-full" : "container mx-auto p-6 max-w-7xl"}>
 					{children}
 				</div>
 			</div>

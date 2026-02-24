@@ -7,6 +7,7 @@ export const pipelineNode = z.object({
 	label: z.string(),
 	stage: z.string(),
 	description: z.string(),
+	prompt_key: z.string().nullable().optional(),
 });
 
 export const pipelineEdge = z.object({
