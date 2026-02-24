@@ -72,6 +72,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "smhi_oceanografi_ocobs", "label": "SMHI Oceanografi"},
             {"tool_id": "smhi_brandrisk_fwif", "label": "SMHI Brandrisk FWIF"},
             {"tool_id": "smhi_brandrisk_fwia", "label": "SMHI Brandrisk FWIA"},
+            {"tool_id": "smhi_solstralning_strang", "label": "SMHI Solstrålning"},
+            {"tool_id": "trafikverket_vader_stationer", "label": "Trafikverket Väder Stationer"},
+            {"tool_id": "trafikverket_vader_halka", "label": "Trafikverket Väder Halka"},
+            {"tool_id": "trafikverket_vader_vind", "label": "Trafikverket Väder Vind"},
+            {"tool_id": "trafikverket_vader_temperatur", "label": "Trafikverket Väder Temperatur"},
         ],
     },
     {
