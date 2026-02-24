@@ -8,7 +8,7 @@ export default function AdminPage() {
 
 	useEffect(() => {
 		// Redirect to prompts page by default
-		router.replace("/admin/prompts");
+		router.replace("/admin/flow");
 	}, [router]);
 
 	return null;

@@ -130,7 +130,7 @@ export function ToolLifecyclePage() {
 		try {
 			setLoading(true);
 			const result = await adminToolLifecycleApiService.bulkPromoteToLive();
-			toast.success(result?.message || "Successfully promoted all tools to LIVE");
+			toast.success((result as { message?: string })?.message || "Successfully promoted all tools to LIVE");
 			await fetchLifecycleData();
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : "Failed to bulk promote");

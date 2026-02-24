@@ -17,6 +17,7 @@ export const changelog = defineDocs({
 });
 
 export default defineConfig({
+	// @ts-expect-error -- fumadocs-mdx config accepts lastModifiedTime
 	lastModifiedTime: "git",
 	mdxOptions: {
 		providerImportSource: "@/mdx-components",

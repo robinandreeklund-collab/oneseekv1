@@ -1,24 +1,52 @@
 import { z } from "zod";
 
+// ---------------------------------------------------------------------------
+// Central metadata field limits — must stay in sync with bigtool_store.py
+// ---------------------------------------------------------------------------
+export const METADATA_MAX_DESCRIPTION_CHARS = 300;
+export const METADATA_MAX_KEYWORDS = 20;
+export const METADATA_MAX_EXAMPLE_QUERIES = 10;
+export const METADATA_MAX_EXCLUDES = 15;
+export const METADATA_MAX_KEYWORD_CHARS = 40;
+export const METADATA_MAX_EXAMPLE_QUERY_CHARS = 120;
+export const METADATA_MAX_MAIN_IDENTIFIER_CHARS = 80;
+export const METADATA_MAX_CORE_ACTIVITY_CHARS = 120;
+export const METADATA_MAX_UNIQUE_SCOPE_CHARS = 120;
+export const METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS = 80;
+
 export const toolMetadataItem = z.object({
 	tool_id: z.string(),
 	name: z.string(),
-	description: z.string(),
-	keywords: z.array(z.string()),
-	example_queries: z.array(z.string()),
+	description: z.string().max(METADATA_MAX_DESCRIPTION_CHARS),
+	keywords: z.array(z.string().max(METADATA_MAX_KEYWORD_CHARS)).max(METADATA_MAX_KEYWORDS),
+	example_queries: z
+		.array(z.string().max(METADATA_MAX_EXAMPLE_QUERY_CHARS))
+		.max(METADATA_MAX_EXAMPLE_QUERIES),
 	category: z.string(),
 	base_path: z.string().nullable().optional(),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 	has_override: z.boolean().optional().default(false),
 });
 
 export const toolMetadataUpdateItem = z.object({
 	tool_id: z.string(),
 	name: z.string(),
-	description: z.string(),
-	keywords: z.array(z.string()),
-	example_queries: z.array(z.string()),
+	description: z.string().max(METADATA_MAX_DESCRIPTION_CHARS),
+	keywords: z.array(z.string().max(METADATA_MAX_KEYWORD_CHARS)).max(METADATA_MAX_KEYWORDS),
+	example_queries: z
+		.array(z.string().max(METADATA_MAX_EXAMPLE_QUERY_CHARS))
+		.max(METADATA_MAX_EXAMPLE_QUERIES),
 	category: z.string(),
 	base_path: z.string().nullable().optional(),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 });
 
 export const toolCategoryResponse = z.object({
@@ -187,6 +215,11 @@ export const toolSettingsUpdateRequest = z.object({
 	tools: z.array(toolMetadataUpdateItem),
 });
 
+export const flowToolEntry = z.object({
+	tool_id: z.string(),
+	label: z.string(),
+});
+
 export const agentMetadataItem = z.object({
 	agent_id: z.string(),
 	label: z.string(),
@@ -194,6 +227,8 @@ export const agentMetadataItem = z.object({
 	keywords: z.array(z.string()),
 	prompt_key: z.string().nullable().optional(),
 	namespace: z.array(z.string()).optional().default([]),
+	routes: z.array(z.string()).optional().default([]),
+	flow_tools: z.array(flowToolEntry).optional().default([]),
 	has_override: z.boolean().optional().default(false),
 });
 
@@ -204,6 +239,8 @@ export const agentMetadataUpdateItem = z.object({
 	keywords: z.array(z.string()),
 	prompt_key: z.string().nullable().optional(),
 	namespace: z.array(z.string()).optional().default([]),
+	routes: z.array(z.string()).optional().default([]),
+	flow_tools: z.array(flowToolEntry).optional().default([]),
 });
 
 export const intentMetadataItem = z.object({
@@ -326,6 +363,23 @@ export const metadataCatalogStabilityLockActionResponse = z.object({
 	robust_gate_requirements: z.record(z.string(), z.unknown()).optional().default({}),
 	stability_locks: metadataCatalogResponse.shape.stability_locks,
 });
+
+export const metadataCatalogResetRequest = z.object({
+	search_space_id: z.number().nullable().optional(),
+	reason: z.string().nullable().optional(),
+});
+
+export const metadataCatalogResetResponse = z.object({
+	search_space_id: z.number(),
+	cleared_tool_overrides: z.number().int().optional().default(0),
+	cleared_intent_overrides: z.number().int().optional().default(0),
+	cleared_agent_overrides: z.number().int().optional().default(0),
+	cleared_lock_pairs: z.number().int().optional().default(0),
+	catalog: metadataCatalogResponse,
+});
+
+export type MetadataCatalogResetRequest = z.input<typeof metadataCatalogResetRequest>;
+export type MetadataCatalogResetResponse = z.infer<typeof metadataCatalogResetResponse>;
 
 export const metadataCatalogAuditConfusionPair = z.object({
 	expected_label: z.string(),

@@ -471,10 +471,10 @@ export function ModelConfigSidebar({
 										initialData={{
 											name: config.name,
 											description: config.description,
-											provider: config.provider,
+											provider: config.provider as any,
 											custom_provider: config.custom_provider,
 											model_name: config.model_name,
-											api_key: config.api_key,
+											api_key: (config as { api_key?: string }).api_key ?? "",
 											api_base: config.api_base,
 											litellm_params: config.litellm_params,
 											system_instructions: config.system_instructions,

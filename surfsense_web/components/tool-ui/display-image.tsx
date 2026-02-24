@@ -90,7 +90,7 @@ function ImageCancelledState({ src }: { src: string }) {
 function ParsedImage({ result }: { result: unknown }) {
 	const image = parseSerializableImage(result);
 
-	return <Image {...image} maxWidth="100%" />;
+	return <Image {...(image as any)} maxWidth="100%" />;
 }
 
 /**

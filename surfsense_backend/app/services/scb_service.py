@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from datetime import datetime, UTC
@@ -380,15 +381,20 @@ class ScbService:
 
         tables.sort(key=rank, reverse=True)
         top_candidates = tables[:metadata_limit]
-        scored: list[tuple[ScbTable, float]] = []
 
-        for table in top_candidates:
-            base_score = rank(table)[0]
+        async def _fetch_metadata_safe(table: ScbTable) -> dict[str, Any]:
             try:
-                metadata = await self.get_table_metadata(table.path)
+                return await self.get_table_metadata(table.path)
             except httpx.HTTPError:
-                scored.append((table, float(base_score)))
-                continue
+                return {}
+
+        metadatas = await asyncio.gather(
+            *(_fetch_metadata_safe(t) for t in top_candidates)
+        )
+
+        scored: list[tuple[ScbTable, float]] = []
+        for table, metadata in zip(top_candidates, metadatas, strict=False):
+            base_score = rank(table)[0]
             meta_score = _score_table_metadata(
                 metadata=metadata,
                 query_tokens=query_tokens,

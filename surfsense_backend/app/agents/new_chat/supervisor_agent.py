@@ -107,6 +107,11 @@ from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
+from app.agents.new_chat.domain_fan_out import (
+    execute_domain_fan_out,
+    format_fan_out_context,
+    is_fan_out_enabled,
+)
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
     EXTERNAL_MODEL_SPECS,
@@ -528,7 +533,7 @@ def _coerce_redundant_retrieve_call(
     only_call = tool_calls[0]
     if str(only_call.get("name") or "").strip() != "retrieve_agents":
         return tool_calls, False
-    if str(_normalize_route_hint_value(state.get("route_hint")) or "") == "compare":
+    if str(_normalize_route_hint_value(state.get("route_hint")) or "") in {"jämförelse", "compare"}:
         return tool_calls, False
     selected_agents = _selected_agent_names_from_state(state)
     if len(selected_agents) != 1:
@@ -646,11 +651,22 @@ def _sanitize_openai_tool_schema(value: Any) -> Any:
     """
     Remove null defaults/variants from tool schemas for strict Jinja templates.
     LM Studio templates can fail on `default: null` or explicit `type: null`.
+
+    ``description`` fields are preserved with an empty string rather than
+    dropped — the nemotron-3-nano Jinja template accesses
+    ``tool.function.description | string`` unconditionally.  A missing key
+    resolves to NullValue in LM Studio's Jinja engine, crashing the template.
     """
+    # Keys that model templates access unconditionally.  Dropping them causes
+    # "Cannot apply filter 'string' to type: NullValue" in LM Studio.
+    _KEEP_AS_EMPTY_STRING = {"description"}
+
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
             if item is None:
+                if key in _KEEP_AS_EMPTY_STRING:
+                    sanitized[key] = ""
                 continue
             if key == "default" and item is None:
                 continue
@@ -753,6 +769,11 @@ def _format_tools_for_llm_binding(tools: list[Any]) -> list[dict[str, Any]]:
             continue
         cleaned = _sanitize_openai_tool_schema(raw)
         if isinstance(cleaned, dict):
+            # Guarantee that function.description always exists — strict Jinja
+            # templates (nemotron-3-nano) access it without null guards.
+            func = cleaned.get("function")
+            if isinstance(func, dict) and "description" not in func:
+                func["description"] = ""
             formatted.append(cleaned)
     return formatted
 
@@ -1045,7 +1066,7 @@ def _should_finalize_from_contract(
     response = _strip_critic_json(str(response_text or "").strip())
     if not response:
         return False
-    if str(route_hint or "").strip().lower() == "compare":
+    if str(route_hint or "").strip().lower() in {"jämförelse", "compare"}:
         return False
 
     status = _normalize_result_status(contract.get("status"))
@@ -1062,7 +1083,7 @@ def _should_finalize_from_contract(
 
     normalized_agent = str(agent_name or "").strip().lower()
     if (
-        str(route_hint or "").strip().lower() == "action"
+        str(route_hint or "").strip().lower() in {"action", "skapande"}
         and normalized_agent == "trafik"
         and _has_strict_trafik_intent(latest_user_query)
         and actionable
@@ -1836,8 +1857,8 @@ async def create_supervisor_agent(
         SMALLTALK_INSTRUCTIONS,
     )
     worker_configs: dict[str, WorkerConfig] = {
-        "knowledge": WorkerConfig(
-            name="knowledge-worker",
+        "kunskap": WorkerConfig(
+            name="kunskap-worker",
             primary_namespaces=[("tools", "knowledge")],
             fallback_namespaces=[
                 ("tools", "action"),
@@ -1845,8 +1866,8 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "action": WorkerConfig(
-            name="action-worker",
+        "åtgärd": WorkerConfig(
+            name="åtgärd-worker",
             primary_namespaces=[("tools", "action")],
             fallback_namespaces=[
                 ("tools", "knowledge"),
@@ -1855,8 +1876,8 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "weather": WorkerConfig(
-            name="weather-worker",
+        "väder": WorkerConfig(
+            name="väder-worker",
             primary_namespaces=[("tools", "weather")],
             fallback_namespaces=[
                 ("tools", "action"),
@@ -1883,8 +1904,8 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "statistics": WorkerConfig(
-            name="statistics-worker",
+        "statistik": WorkerConfig(
+            name="statistik-worker",
             primary_namespaces=[("tools", "statistics")],
             fallback_namespaces=[
                 ("tools", "action"),
@@ -1892,8 +1913,8 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "browser": WorkerConfig(
-            name="browser-worker",
+        "webb": WorkerConfig(
+            name="webb-worker",
             primary_namespaces=[("tools", "knowledge", "web")],
             fallback_namespaces=[
                 ("tools", "knowledge"),
@@ -1902,8 +1923,8 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "code": WorkerConfig(
-            name="code-worker",
+        "kod": WorkerConfig(
+            name="kod-worker",
             primary_namespaces=[("tools", "code")],
             fallback_namespaces=[
                 ("tools", "general"),
@@ -1940,19 +1961,16 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "marketplace": WorkerConfig(
-            name="marketplace-worker",
-            # Primary: marketplace-specific tools (blocket_cars, blocket_search, tradera_search, etc.)
-            # Fallback: knowledge and general tools only (excludes action/browser to prevent tavily delegation)
+        "marknad": WorkerConfig(
+            name="marknad-worker",
             primary_namespaces=[("tools", "marketplace")],
             fallback_namespaces=[
-                # ("tools", "action"),  # REMOVED: Prevents browser/tavily tools from being selected
                 ("tools", "knowledge"),
                 ("tools", "general"),
             ],
         ),
-        "synthesis": WorkerConfig(
-            name="synthesis-worker",
+        "syntes": WorkerConfig(
+            name="syntes-worker",
             primary_namespaces=[("tools", "knowledge")],
             fallback_namespaces=[
                 ("tools", "statistics"),
@@ -1963,20 +1981,20 @@ async def create_supervisor_agent(
     }
 
     worker_prompts: dict[str, str] = {
-        "knowledge": knowledge_prompt,
-        "action": action_prompt,
-        "weather": action_prompt,
+        "kunskap": knowledge_prompt,
+        "åtgärd": action_prompt,
+        "väder": action_prompt,
         "kartor": action_prompt,
         "media": media_prompt or action_prompt,
-        "statistics": statistics_prompt,
-        "browser": browser_prompt or knowledge_prompt,
-        "code": code_prompt or knowledge_prompt,
+        "statistik": statistics_prompt,
+        "webb": browser_prompt or knowledge_prompt,
+        "kod": code_prompt or knowledge_prompt,
         "bolag": bolag_prompt or knowledge_prompt,
         "trafik": trafik_prompt or action_prompt,
         "kartor": kartor_prompt or action_prompt,
         "riksdagen": riksdagen_prompt or knowledge_prompt,
-        "marketplace": marketplace_prompt or action_prompt,
-        "synthesis": synthesis_prompt or statistics_prompt or knowledge_prompt,
+        "marknad": marketplace_prompt or action_prompt,
+        "syntes": synthesis_prompt or statistics_prompt or knowledge_prompt,
     }
 
     # Create/get process-level shared worker pool for this runtime signature.
@@ -1989,8 +2007,8 @@ async def create_supervisor_agent(
 
     agent_definitions = [
         AgentDefinition(
-            name="action",
-            description="Realtime actions som vader, resor och verktygskorningar",
+            name="åtgärd",
+            description="Realtime-åtgärder som väder, resor och verktygskörningar",
             keywords=[
                 "vader",
                 "vadret",
@@ -2013,12 +2031,14 @@ async def create_supervisor_agent(
             prompt_key="action",
         ),
         AgentDefinition(
-            name="weather",
-            description="SMHI-vaderprognoser och Trafikverkets vagvaderdata for svenska orter och vagar",
+            name="väder",
+            description="SMHI-väderprognoser och Trafikverkets vägväderdata för svenska orter och vägar",
             keywords=[
                 "smhi",
                 "vader",
                 "väder",
+                "vädret",
+                "vadret",
                 "temperatur",
                 "regn",
                 "snö",
@@ -2055,7 +2075,7 @@ async def create_supervisor_agent(
             prompt_key="kartor",
         ),
         AgentDefinition(
-            name="statistics",
+            name="statistik",
             description="SCB och officiell svensk statistik samt Kolada kommundata",
             keywords=[
                 "statistik",
@@ -2087,7 +2107,7 @@ async def create_supervisor_agent(
             prompt_key="media",
         ),
         AgentDefinition(
-            name="knowledge",
+            name="kunskap",
             description="SurfSense, Tavily och generell kunskap",
             keywords=[
                 "kunskap",
@@ -2109,14 +2129,14 @@ async def create_supervisor_agent(
             prompt_key="knowledge",
         ),
         AgentDefinition(
-            name="browser",
-            description="Webbsokning och scraping",
+            name="webb",
+            description="Webbsökning och scraping",
             keywords=["webb", "browser", "sok", "nyheter", "url"],
             namespace=("agents", "browser"),
             prompt_key="browser",
         ),
         AgentDefinition(
-            name="code",
+            name="kod",
             description="Kalkyler och kodrelaterade uppgifter",
             keywords=[
                 "kod",
@@ -2212,7 +2232,7 @@ async def create_supervisor_agent(
             prompt_key="riksdagen",
         ),
         AgentDefinition(
-            name="marketplace",
+            name="marknad",
             description="Sök och jämför annonser på Blocket och Tradera för begagnade varor, bilar, båtar, motorcyklar",
             keywords=[
                 "blocket",
@@ -2252,7 +2272,7 @@ async def create_supervisor_agent(
             prompt_key="agent.marketplace.system",
         ),
         AgentDefinition(
-            name="synthesis",
+            name="syntes",
             description="Syntes och jämförelser av flera källor och modeller",
             keywords=["synthesis", "syntes", "jämför", "compare", "sammanfatta"],
             namespace=("agents", "synthesis"),
@@ -2570,12 +2590,14 @@ async def create_supervisor_agent(
         if definition.tool_id not in weather_tool_id_set
     ]
     live_tool_index = []
+    _tool_registry_for_fan_out: dict[str, Any] = {}
     if isinstance(db_session, AsyncSession):
         try:
             global_tool_registry = await build_global_tool_registry(
                 dependencies=dependencies,
                 include_mcp_tools=True,
             )
+            _tool_registry_for_fan_out = global_tool_registry
             metadata_overrides = await get_global_tool_metadata_overrides(db_session)
             live_tool_index = build_tool_index(
                 global_tool_registry,
@@ -2720,24 +2742,29 @@ async def create_supervisor_agent(
         return any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
 
     route_to_intent_id = {
-        "knowledge": "knowledge",
-        "action": "action",
-        "statistics": "statistics",
-        "compare": "compare",
-        "smalltalk": "smalltalk",
+        "kunskap": "kunskap",
+        "skapande": "skapande",
+        "jämförelse": "jämförelse",
+        "konversation": "konversation",
+        # Backward compat
+        "knowledge": "kunskap",
+        "action": "skapande",
+        "statistics": "kunskap",
+        "compare": "jämförelse",
+        "smalltalk": "konversation",
         "mixed": "mixed",
     }
     route_to_speculative_tool_ids: dict[str, list[str]] = {
-        "knowledge": ["search_knowledge_base", "search_surfsense_docs", "search_tavily"],
-        "action": list(dict.fromkeys((weather_tool_ids[:2] + trafik_tool_ids[:2]))),
-        "weather": weather_tool_ids[:6],
+        "kunskap": ["search_knowledge_base", "search_surfsense_docs", "search_tavily"],
+        "åtgärd": list(dict.fromkeys((weather_tool_ids[:2] + trafik_tool_ids[:2]))),
+        "väder": weather_tool_ids[:6],
         "trafik": trafik_tool_ids[:6],
-        "statistics": [
+        "statistik": [
             str(definition.tool_id).strip()
             for definition in SCB_TOOL_DEFINITIONS[:6]
             if str(definition.tool_id).strip()
         ],
-        "marketplace": [
+        "marknad": [
             str(definition.tool_id).strip()
             for definition in MARKETPLACE_TOOL_DEFINITIONS[:6]
             if str(definition.tool_id).strip()
@@ -2751,19 +2778,19 @@ async def create_supervisor_agent(
     ) -> str:
         normalized_tool_id = str(tool_id or "").strip().lower()
         if not normalized_tool_id:
-            return "knowledge"
+            return "kunskap"
         if normalized_tool_id in {str(item).strip().lower() for item in weather_tool_ids}:
-            return "weather"
+            return "väder"
         if normalized_tool_id in {str(item).strip().lower() for item in trafik_tool_ids}:
             return "trafik"
         if normalized_tool_id.startswith(("scb_", "kolada_", "skolverket_")):
-            return "statistics"
+            return "statistik"
         if normalized_tool_id.startswith("riksdag_"):
             return "riksdagen"
         if normalized_tool_id.startswith("bolagsverket_"):
             return "bolag"
         if normalized_tool_id.startswith("marketplace_"):
-            return "marketplace"
+            return "marknad"
         if normalized_tool_id.startswith("geoapify_"):
             return "kartor"
         if normalized_tool_id in {"generate_podcast", "display_image"}:
@@ -2774,7 +2801,7 @@ async def create_supervisor_agent(
             "search_tavily",
             "recall_memory",
         }:
-            return "knowledge"
+            return "kunskap"
         state_route = str(
             ((state or {}).get("resolved_intent") or {}).get("route")
             or (state or {}).get("route_hint")
@@ -2981,10 +3008,10 @@ async def create_supervisor_agent(
 
     def _intent_from_route(route_value: str | None) -> dict[str, Any]:
         normalized = _normalize_route_hint_value(route_value)
-        intent_id = route_to_intent_id.get(normalized, "knowledge")
+        intent_id = route_to_intent_id.get(normalized, "kunskap")
         return {
             "intent_id": intent_id,
-            "route": normalized or "knowledge",
+            "route": normalized or "kunskap",
             "reason": "Fallback baserad pa route_hint.",
             "confidence": 0.5,
         }
@@ -2994,16 +3021,17 @@ async def create_supervisor_agent(
         latest_user_query: str = "",
     ) -> str:
         normalized = _normalize_route_hint_value(route_value)
-        if normalized == "action":
+        if normalized in {"skapande", "action", "kunskap", "knowledge"}:
             if sandbox_enabled and _has_filesystem_intent(latest_user_query):
-                return "code"
-            # Weather removed: let LLM/retrieval choose agent
+                return "kod"
+            if _has_weather_intent(latest_user_query):
+                return "väder"
             if _has_strict_trafik_intent(latest_user_query):
                 return "trafik"
             if _has_map_intent(latest_user_query):
                 return "kartor"
             if _has_marketplace_intent(latest_user_query):
-                return "marketplace"
+                return "marknad"
         allowed = _route_allowed_agents(normalized)
         return _route_default_agent(normalized, allowed)
 
@@ -3023,31 +3051,37 @@ async def create_supervisor_agent(
         normalized_route = _normalize_route_hint_value(
             resolved.get("route") or route_hint
         )
-        if normalized_route in {"compare", "statistics", "mixed"}:
+        if normalized_route in {"jämförelse", "compare", "mixed"}:
             return resolved
 
         override_route: str | None = None
         override_reason = ""
-        # Weather removed: should be handled by LLM classification, not regex override
-        if _has_strict_trafik_intent(query):
-            override_route = "action"
+        # Weather, traffic, filesystem, marketplace, map overrides
+        # (agent-level routing picks the right specialist agent)
+        if _has_weather_intent(query):
+            override_route = "kunskap"
             override_reason = (
-                "Heuristisk override: trafikfraga ska routas till action/trafik."
+                "Heuristisk override: vaderfraga ska routas till kunskap/vader."
+            )
+        elif _has_strict_trafik_intent(query):
+            override_route = "kunskap"
+            override_reason = (
+                "Heuristisk override: trafikfraga ska routas till kunskap/trafik."
             )
         elif sandbox_enabled and _has_filesystem_intent(query):
-            override_route = "action"
+            override_route = "skapande"
             override_reason = (
-                "Heuristisk override: filsystem/sandbox-fraga ska routas till action/code."
+                "Heuristisk override: filsystem/sandbox-fraga ska routas till skapande/code."
             )
         elif _has_marketplace_intent(query):
-            override_route = "action"
+            override_route = "kunskap"
             override_reason = (
-                "Heuristisk override: marknadsplatsfraga ska routas till action/marketplace."
+                "Heuristisk override: marknadsplatsfraga ska routas till kunskap/marketplace."
             )
         elif _has_map_intent(query):
-            override_route = "action"
+            override_route = "skapande"
             override_reason = (
-                "Heuristisk override: kart/rutt-fraga ska routas till action."
+                "Heuristisk override: kart/rutt-fraga ska routas till skapande."
             )
         if not override_route:
             return resolved
@@ -3175,60 +3209,55 @@ async def create_supervisor_agent(
             return None
 
         # Soft preference for weather-capable agents on weather tasks
-        if route_hint == "action" and weather_task and not strict_trafik_task:
-            if requested_raw in agent_by_name and requested_raw != "weather":
+        if route_hint in {"kunskap", "skapande", "action", "knowledge"} and weather_task and not strict_trafik_task:
+            if requested_raw in agent_by_name and requested_raw != "väder":
                 # Check if requested agent has SMHI tools via its WorkerConfig
                 requested_worker = worker_configs.get(requested_raw)
                 has_weather_tools = False
                 if requested_worker:
-                    # Check if agent has weather namespace in primary or fallback
                     all_namespaces = list(requested_worker.primary_namespaces or [])
                     all_namespaces.extend(requested_worker.fallback_namespaces or [])
                     has_weather_tools = any(
                         ("weather" in ns or "smhi" in str(ns).lower())
                         for ns in all_namespaces
                     )
-                # Only lock if requested agent lacks weather tools
                 if not has_weather_tools:
-                    return "weather", f"weather_soft_lock:{requested_raw}->weather"
-        if route_hint == "action" and strict_trafik_task:
-            allowed_for_strict = {"trafik", "kartor", "action"}
+                    return "väder", f"weather_soft_lock:{requested_raw}->väder"
+        if route_hint in {"kunskap", "skapande", "action", "knowledge"} and strict_trafik_task:
+            allowed_for_strict = {"trafik", "kartor", "åtgärd"}
             if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
                 return "trafik", f"strict_trafik_lock:{requested_raw}->trafik"
         # For explicit marketplace tasks, keep execution on marketplace to avoid
         # drifting into browser/web-search aliases mid-plan.
         if (
-            route_hint == "action"
+            route_hint in {"kunskap", "skapande", "action", "knowledge"}
             and marketplace_task
             and not weather_task
             and not strict_trafik_task
-            and (explicit_marketplace_provider or "marketplace" in selected_agent_set)
-            and "marketplace" in agent_by_name
-            and requested_raw != "marketplace"
+            and (explicit_marketplace_provider or "marknad" in selected_agent_set)
+            and "marknad" in agent_by_name
+            and requested_raw != "marknad"
         ):
-            return "marketplace", f"marketplace_lock:{requested_raw}->marketplace"
+            return "marknad", f"marketplace_lock:{requested_raw}->marknad"
         # For filesystem operations in sandbox mode, always execute through code agent.
-        # This prevents fallback/alias drift to generic action agents that may answer
-        # textually without invoking sandbox_* tools.
         if (
             sandbox_enabled
             and filesystem_task
-            and "code" in agent_by_name
-            and requested_raw != "code"
+            and "kod" in agent_by_name
+            and requested_raw != "kod"
         ):
-            return "code", f"filesystem_hard_lock:{requested_raw}->code"
+            return "kod", f"filesystem_hard_lock:{requested_raw}->kod"
         # SCALABLE FIX: If requested agent is a specialized agent with dedicated tools,
         # respect that choice and DON'T override with route_policy.
         # This scales to 100s of APIs without needing regex patterns.
         if requested_raw in agent_by_name:
             if selected_agent_set and requested_raw not in selected_agent_set:
                 fallback = _selected_fallback(
-                    "marketplace" if marketplace_task else default_for_route
+                    "marknad" if marketplace_task else default_for_route
                 )
                 if fallback and fallback in agent_by_name:
                     return fallback, f"selected_agents_lock:{requested_raw}->{fallback}"
             if requested_raw in _SPECIALIZED_AGENTS:
-                # Specialized agents bypass route restrictions
                 return requested_raw, None
             if route_allowed and requested_raw not in route_allowed:
                 if default_for_route in agent_by_name:
@@ -3239,7 +3268,7 @@ async def create_supervisor_agent(
         if alias_guess and alias_guess in agent_by_name:
             if selected_agent_set and alias_guess not in selected_agent_set:
                 fallback = _selected_fallback(
-                    "marketplace" if marketplace_task else default_for_route
+                    "marknad" if marketplace_task else default_for_route
                 )
                 if fallback and fallback in agent_by_name:
                     return fallback, f"selected_agents_lock_alias:{requested_raw}->{fallback}"
@@ -3277,19 +3306,22 @@ async def create_supervisor_agent(
             retrieved = [agent for agent in retrieved if agent.name in selected_agent_set]
         if route_hint:
             preferred = {
-                "action": ["action", "media"],
-                "knowledge": ["knowledge", "browser"],
-                "statistics": ["statistics"],
-                "compare": ["synthesis", "knowledge", "statistics"],
+                "kunskap": ["kunskap", "webb"],
+                "skapande": ["åtgärd", "media"],
+                "jämförelse": ["syntes", "kunskap", "statistik"],
+                # Backward compat
+                "action": ["åtgärd", "media"],
+                "knowledge": ["kunskap", "webb"],
+                "statistics": ["statistik"],
+                "compare": ["syntes", "kunskap", "statistik"],
             }.get(str(route_hint), [])
-            if marketplace_task and "marketplace" not in preferred:
-                preferred.insert(0, "marketplace")
-            if str(route_hint) == "action":
-                # Weather preference removed: rely on retrieval
+            if marketplace_task and "marknad" not in preferred:
+                preferred.insert(0, "marknad")
+            if str(route_hint) in {"skapande", "action"}:
                 if sandbox_enabled and filesystem_task:
-                    preferred = ["code", "action"]
-                if marketplace_task and "marketplace" not in preferred:
-                    preferred.insert(0, "marketplace")
+                    preferred = ["kod", "åtgärd"]
+                if marketplace_task and "marknad" not in preferred:
+                    preferred.insert(0, "marknad")
                 if _has_map_intent(task) and "kartor" not in preferred:
                     preferred.insert(0, "kartor")
                 if _has_trafik_intent(task) and not weather_task and "trafik" not in preferred:
@@ -3305,7 +3337,7 @@ async def create_supervisor_agent(
             return retrieved[0].name, f"retrieval:{requested_raw}->{retrieved[0].name}"
         if selected_agent_names:
             fallback = _selected_fallback(
-                "marketplace" if marketplace_task else default_for_route
+                "marknad" if marketplace_task else default_for_route
             )
             if fallback and fallback in agent_by_name:
                 return fallback, f"selected_agents_fallback:{requested_raw}->{fallback}"
@@ -3364,8 +3396,8 @@ async def create_supervisor_agent(
         call_agent/call_agents_parallel instead of retrieving again.
 
         IMPORTANT: Reuse agent names exactly as returned in `agents[].name`.
-        Allowed internal ids include: action, weather, kartor, statistics, media, knowledge,
-        browser, code, bolag, trafik, riksdagen, marketplace, synthesis.
+        Allowed internal ids include: åtgärd, väder, kartor, statistik, media, kunskap,
+        webb, kod, bolag, trafik, riksdagen, marknad, syntes.
         """
         try:
             limit = int(limit)
@@ -3410,7 +3442,7 @@ async def create_supervisor_agent(
         route_allowed = _route_allowed_agents(route_hint)
         default_for_route = _route_default_agent(route_hint, route_allowed)
         # Weather limit removed: should be controlled by graph_complexity like other routes
-        if route_hint == "statistics":
+        if route_hint in {"statistik", "statistics"}:  # Statistics agents chosen by agent_resolver, not route
             limit = 1
 
         # Extract sub_intents from state for multi-domain cache key
@@ -3425,18 +3457,17 @@ async def create_supervisor_agent(
                 _set_cached_combo(cache_key, cached_agents)
         if (
             cached_agents
-            and route_hint == "action"
+            and route_hint in {"kunskap", "skapande", "action", "knowledge"}
             and has_strict_trafik_intent
         ):
             # Avoid stale non-traffic combos on hard traffic queries.
             cached_agents = None
         if cached_agents and has_trafik_intent and "trafik" not in cached_agents:
             cached_agents = None
-        # Weather cache invalidation removed: let LLM classification handle routing
         if (
             cached_agents
             and has_marketplace_intent
-            and "marketplace" not in cached_agents
+            and "marknad" not in cached_agents
         ):
             cached_agents = None
 
@@ -3455,20 +3486,23 @@ async def create_supervisor_agent(
             )
             if route_hint:
                 preferred = {
-                    "action": ["action", "media"],
-                    "knowledge": ["knowledge", "browser"],
-                    "statistics": ["statistics"],
-                    "compare": ["synthesis", "knowledge", "statistics"],
-                    "trafik": ["trafik", "action"],
+                    "kunskap": ["kunskap", "webb"],
+                    "skapande": ["åtgärd", "media"],
+                    "jämförelse": ["syntes", "kunskap", "statistik"],
+                    # Backward compat
+                    "action": ["åtgärd", "media"],
+                    "knowledge": ["kunskap", "webb"],
+                    "statistics": ["statistik"],
+                    "compare": ["syntes", "kunskap", "statistik"],
+                    "trafik": ["trafik", "åtgärd"],
                 }.get(str(route_hint), [])
-                if has_marketplace_intent and "marketplace" not in preferred:
-                    preferred.insert(0, "marketplace")
-                if str(route_hint) == "action":
-                    # Weather preference removed: rely on retrieval and LLM classification
+                if has_marketplace_intent and "marknad" not in preferred:
+                    preferred.insert(0, "marknad")
+                if str(route_hint) in {"skapande", "action", "kunskap", "knowledge"}:
                     if sandbox_enabled and has_filesystem_intent:
-                        preferred = ["code", "action"]
-                    if has_marketplace_intent and "marketplace" not in preferred:
-                        preferred.insert(0, "marketplace")
+                        preferred = ["kod", "åtgärd"]
+                    if has_marketplace_intent and "marknad" not in preferred:
+                        preferred.insert(0, "marknad")
                     # Keep route_hint as advisory only unless action intent is explicit.
                     if not (
                         has_map_intent
@@ -3477,7 +3511,7 @@ async def create_supervisor_agent(
                     ):
                         preferred = []
                         if has_marketplace_intent:
-                            preferred = ["marketplace"]
+                            preferred = ["marknad"]
                     if has_map_intent and "kartor" not in preferred:
                         preferred.insert(0, "kartor")
                     if (
@@ -3499,14 +3533,14 @@ async def create_supervisor_agent(
             if (
                 has_trafik_intent
                 and not has_weather_intent
-                and route_hint in {"action", "trafik"}
+                and route_hint in {"kunskap", "skapande", "action", "knowledge", "trafik"}
             ):
                 trafik_agent = agent_by_name.get("trafik")
                 if trafik_agent and trafik_agent not in selected:
                     selected.insert(0, trafik_agent)
                     selected = selected[:limit]
-            if route_hint == "action" and sandbox_enabled and has_filesystem_intent:
-                code_agent = agent_by_name.get("code")
+            if route_hint in {"kunskap", "skapande", "action", "knowledge"} and sandbox_enabled and has_filesystem_intent:
+                code_agent = agent_by_name.get("kod")
                 if code_agent:
                     if code_agent in selected:
                         selected = [agent for agent in selected if agent != code_agent]
@@ -3540,22 +3574,22 @@ async def create_supervisor_agent(
 
         selected = selected[:limit]
         if (
-            route_hint == "action"
+            route_hint in {"kunskap", "skapande", "action", "knowledge"}
             and has_marketplace_intent
             and not has_weather_intent
             and not has_strict_trafik_intent
         ):
-            marketplace_order = ["marketplace"]
+            marketplace_order = ["marknad"]
             marketplace_selected = [
                 agent_by_name[name] for name in marketplace_order if name in agent_by_name
             ]
             selected = marketplace_selected[:limit] if marketplace_selected else selected
         # Weather order removed: selection should be based on retrieval and LLM classification
-        if route_hint == "action" and has_strict_trafik_intent:
+        if route_hint in {"kunskap", "skapande", "action", "knowledge"} and has_strict_trafik_intent:
             strict_order = ["trafik"]
             if has_map_intent:
                 strict_order.append("kartor")
-            strict_order.append("action")
+            strict_order.append("åtgärd")
             strict_selected = [
                 agent_by_name[name] for name in strict_order if name in agent_by_name
             ]
@@ -3749,7 +3783,7 @@ async def create_supervisor_agent(
 
     def _is_filesystem_task(agent_name: str, task: str) -> bool:
         return (
-            str(agent_name or "").strip().lower() == "code"
+            str(agent_name or "").strip().lower() in {"kod", "code"}
             and _has_filesystem_intent(task)
         )
 
@@ -4033,7 +4067,7 @@ async def create_supervisor_agent(
                 },
                 ensure_ascii=True,
             )
-        if name == "synthesis" and injected_state:
+        if name in {"syntes", "synthesis"} and injected_state:
             task = _prepare_task_for_synthesis(task, injected_state)
         task_for_worker = task
         if subagent_isolated and subagent_id:
@@ -4068,7 +4102,7 @@ async def create_supervisor_agent(
                 if str(tool_id).strip()
             ][:8]
         live_tool_gate_active = _live_phase_enabled(live_routing_config, "tool_gate")
-        if name == "weather":
+        if name in {"väder", "weather"}:
             if live_tool_gate_active:
                 selected_tool_ids = [
                     tool_id for tool_id in selected_tool_ids if tool_id in weather_tool_ids
@@ -4090,7 +4124,7 @@ async def create_supervisor_agent(
             limit=8,
         )
         fallback_tool_ids: list[str] = []
-        if name == "weather":
+        if name in {"väder", "weather"}:
             fallback_tool_ids = list(weather_tool_ids)
         elif name == "trafik":
             fallback_tool_ids = list(trafik_tool_ids)
@@ -4277,6 +4311,28 @@ async def create_supervisor_agent(
                 f"{prompt.rstrip()}\n\n{tool_prompt_block}".strip()
                 if prompt
                 else tool_prompt_block
+            )
+        # --- Domain fan-out: pre-fetch data in parallel ---
+        fan_out_context = ""
+        if is_fan_out_enabled(name) and not filesystem_sandbox_task:
+            try:
+                fan_out_results = await execute_domain_fan_out(
+                    agent_name=name,
+                    query=task,
+                    tool_registry=_tool_registry_for_fan_out,
+                )
+                fan_out_context = format_fan_out_context(fan_out_results)
+            except Exception as fan_out_exc:
+                logger.warning(
+                    "domain-fan-out failed for agent=%s: %s",
+                    name,
+                    fan_out_exc,
+                )
+        if fan_out_context:
+            prompt = (
+                f"{prompt.rstrip()}\n\n{fan_out_context}".strip()
+                if prompt
+                else fan_out_context
             )
         messages = []
         if prompt:
@@ -4536,7 +4592,7 @@ async def create_supervisor_agent(
         critic_input = f"Uppgift: {task}\nSvar: {response_text}"
         try:
             critic_msg = await llm.ainvoke(
-                [SystemMessage(content=critic_prompt), HumanMessage(content=critic_input)]
+                [SystemMessage(content=str(critic_prompt or "")), HumanMessage(content=str(critic_input or ""))]
             )
             critic_text = str(getattr(critic_msg, "content", "") or "").strip()
             critic_payload = _safe_json(critic_text)
@@ -4812,7 +4868,7 @@ async def create_supervisor_agent(
                 }
             try:
                 # Reuse same worker invocation logic as call_agent
-                if agent_name == "synthesis" and injected_state:
+                if agent_name in {"syntes", "synthesis"} and injected_state:
                     task = _prepare_task_for_synthesis(task, injected_state)
                 task_for_worker = task
                 if subagent_isolation_for_parallel and subagent_id:
@@ -4853,7 +4909,7 @@ async def create_supervisor_agent(
                         limit=6,
                     )
                 live_tool_gate_active = _live_phase_enabled(live_routing_config, "tool_gate")
-                if agent_name == "weather":
+                if agent_name in {"väder", "weather"}:
                     if live_tool_gate_active:
                         selected_tool_ids = [
                             tool_id for tool_id in selected_tool_ids if tool_id in weather_tool_ids
@@ -4875,7 +4931,7 @@ async def create_supervisor_agent(
                     limit=8,
                 )
                 fallback_tool_ids: list[str] = []
-                if agent_name == "weather":
+                if agent_name in {"väder", "weather"}:
                     fallback_tool_ids = list(weather_tool_ids)
                 elif agent_name == "trafik":
                     fallback_tool_ids = list(trafik_tool_ids)
@@ -5044,6 +5100,28 @@ async def create_supervisor_agent(
                         f"{prompt.rstrip()}\n\n{tool_prompt_block}".strip()
                         if prompt
                         else tool_prompt_block
+                    )
+                # --- Domain fan-out: pre-fetch data in parallel ---
+                fan_out_context = ""
+                if is_fan_out_enabled(agent_name) and not filesystem_sandbox_task:
+                    try:
+                        fan_out_results = await execute_domain_fan_out(
+                            agent_name=agent_name,
+                            query=task,
+                            tool_registry=_tool_registry_for_fan_out,
+                        )
+                        fan_out_context = format_fan_out_context(fan_out_results)
+                    except Exception as fan_out_exc:
+                        logger.warning(
+                            "domain-fan-out failed for agent=%s: %s",
+                            agent_name,
+                            fan_out_exc,
+                        )
+                if fan_out_context:
+                    prompt = (
+                        f"{prompt.rstrip()}\n\n{fan_out_context}".strip()
+                        if prompt
+                        else fan_out_context
                     )
                 messages = []
                 if prompt:
@@ -5997,7 +6075,7 @@ async def create_supervisor_agent(
         if (
             "final_agent_response" not in updates
             and call_entries
-            and route_hint != "compare"
+            and route_hint not in {"jämförelse", "compare"}
             and not pending_followup_steps
         ):
             last_entry = call_entries[-1]
@@ -6022,7 +6100,7 @@ async def create_supervisor_agent(
 
         if (
             "final_agent_response" not in updates
-            and route_hint != "compare"
+            and route_hint not in {"jämförelse", "compare"}
             and not pending_followup_steps
         ):
             ai_fallback = _latest_actionable_ai_response(
@@ -6174,7 +6252,7 @@ async def create_supervisor_agent(
             (resolved_intent.get("route") if isinstance(resolved_intent, dict) else None)
             or state.get("route_hint")
         )
-        if resolved_route == "smalltalk":
+        if resolved_route in {"konversation", "smalltalk"}:
             return "smalltalk"
         phase = str(state.get("orchestration_phase") or "").strip().lower()
         has_final = bool(

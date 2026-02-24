@@ -5,8 +5,8 @@ Uppgift:
 - Valt intent MASTE vara ett av kandidaterna.
 - Route ska vara konsistent med valt intent och route_hint om mojligt.
 - Prioritera semantiskt bast matchande intent.
-- Fraga om aktuellt vader/prognos for plats/tid ska routas till `action`
-  (for weather-verktyg), inte `knowledge`.
+- Fraga om aktuellt vader/prognos for plats/tid ska routas till `kunskap`
+  (for vader-agenten), inte skapande.
 - For mixade fragor (t.ex. "hur manga bor i Goteborg och vad ar det for vader?"):
   satt route="mixed" och inkludera sub_intents array med alla deldomaner.
 - Hall motivering kort och pa svenska.
@@ -14,7 +14,7 @@ Uppgift:
 Returnera strikt JSON:
 {
   "intent_id": "string",
-  "route": "knowledge|action|statistics|compare|smalltalk|mixed",
+  "route": "kunskap|skapande|jämförelse|konversation|mixed",
   "sub_intents": ["intent1", "intent2"],
   "reason": "kort svensk motivering",
   "confidence": 0.0
@@ -30,10 +30,10 @@ Uppgift:
 - Valj 1-3 agenter som bor anvandas i nasta steg.
 - For mixade fragor (route="mixed" med sub_intents): valj N agenter, en per sub_intent.
 - Agentnamn maste vara exakta och komma fran kandidaterna.
-- Om uppgiften galler filsystem, terminal, kod eller sandbox: prioritera `code`-agent.
+- Om uppgiften galler filsystem, terminal, kod eller sandbox: prioritera `kod`-agenten.
 - Anvand aldrig memory-verktyg som ersattning for filsystemsoperationer.
 - Foredra specialiserad agent nar uppgiften tydligt ar domanspecifik
-  (t.ex. marketplace, statistik, trafik, riksdagen, bolag, weather).
+  (t.ex. marknad, statistik, trafik, riksdagen, bolag, vader).
 - Hall motivering kort och pa svenska.
 
 Returnera strikt JSON:
@@ -53,7 +53,7 @@ Regler:
 - Max 4 steg.
 - Ett steg = en konkret delegerbar aktivitet.
 - **VIKTIGT: Använd ENDAST de agenter som redan finns i `selected_agents`. Lägg INTE till fler agenter.**
-- Om en specialiserad agent (marketplace, statistics, weather, etc.) är vald, använd ENDAST den agenten.
+- Om en specialiserad agent (marknad, statistik, väder, etc.) är vald, använd ENDAST den agenten.
 - Om anvandaren explicit ber om att lasa filinnehall: lagg in ett steg som faktiskt laser filen
   (sandbox_read_file) innan slutsats.
 - Foredra artifact-first: stora mellanresultat ska kunna refereras via artifact path/uri.
@@ -125,7 +125,7 @@ Skapa en exekverbar plan dar varje sub_intent far ett eget parallellt steg.
 
 Regler:
 - Max 4 steg.
-- Steg for olika sub_intents (t.ex. statistics och action) ska ha parallel=true.
+- Steg for olika sub_intents (t.ex. statistik och kunskap) ska ha parallel=true.
 - Avsluta med ett syntessteg (parallel=false) om flera agenter anvands.
 - **VIKTIGT: Anvand ENDAST agenter fran `selected_agents`.**
 - Hall stegen korta och pa svenska.

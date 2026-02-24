@@ -65,16 +65,16 @@ def classify_graph_complexity(
     if looks_trivial_query(query_text):
         return GRAPH_COMPLEXITY_TRIVIAL
 
-    if route == "smalltalk" and confidence >= 0.75:
+    if route in {"konversation", "smalltalk"} and confidence >= 0.75:
         return GRAPH_COMPLEXITY_TRIVIAL
 
-    if route in {"compare", "statistics"}:
+    if route in {"jämförelse", "compare"}:
         return GRAPH_COMPLEXITY_COMPLEX
 
     if _BULK_QUERY_RE.search(query_text):
         return GRAPH_COMPLEXITY_COMPLEX
 
-    if confidence >= 0.72 and route in {"knowledge", "action", "weather", "trafik"}:
+    if confidence >= 0.72 and route in {"kunskap", "knowledge", "åtgärd", "action", "väder", "weather", "trafik"}:
         if len(query_tokens) <= 18:
             return GRAPH_COMPLEXITY_SIMPLE
 

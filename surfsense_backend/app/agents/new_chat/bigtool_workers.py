@@ -14,6 +14,7 @@ from app.agents.new_chat.bigtool_store import (
     build_tool_index,
     make_smart_retriever,
 )
+from app.agents.new_chat.nodes.executor import NormalizingChatWrapper
 from app.services.tool_retrieval_tuning_service import (
     get_global_tool_retrieval_tuning,
 )
@@ -96,7 +97,7 @@ async def create_bigtool_worker(
         retrieval_tuning=retrieval_tuning,
     )
     graph = create_bigtool_agent(
-        llm,
+        NormalizingChatWrapper(llm),
         tool_registry,
         limit=config.tool_limit,
         retrieve_tools_function=retrieve_tools,

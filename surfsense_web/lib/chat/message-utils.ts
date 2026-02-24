@@ -37,6 +37,16 @@ function extractPersistedAttachments(content: unknown): PersistedAttachment[] {
 	return [];
 }
 
+// Strips <think>...</think> blocks (including their content) from text.
+// Used to clean up messages that were persisted before the backend streaming
+// filter was introduced, or as a safety net for any that slip through.
+const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
+const THINK_TAG_RE = /<\/?think>/gi;
+
+function stripThinkBlocks(text: string): string {
+	return text.replace(THINK_BLOCK_RE, "").replace(THINK_TAG_RE, "").trim();
+}
+
 /**
  * Convert backend message to assistant-ui ThreadMessageLike format
  * Filters out 'thinking-steps' part as it's handled separately via messageThinkingSteps
@@ -46,26 +56,41 @@ export function convertToThreadMessage(msg: MessageRecord): ThreadMessageLike {
 	let content: ThreadMessageLike["content"];
 
 	if (typeof msg.content === "string") {
-		content = [{ type: "text", text: msg.content }];
+		content = [{ type: "text", text: stripThinkBlocks(msg.content) }];
 	} else if (Array.isArray(msg.content)) {
 		// Filter out custom metadata parts - they're handled separately
-		const filteredContent = msg.content.filter((part: unknown) => {
-			if (typeof part !== "object" || part === null || !("type" in part)) return true;
-			const partType = (part as { type: string }).type;
-			// Filter out thinking-steps, mentioned-documents, and attachments
-			return (
-				partType !== "thinking-steps" &&
-				partType !== "mentioned-documents" &&
-				partType !== "attachments" &&
-				partType !== "compare-summary"
-			);
-		});
+		const filteredContent = msg.content
+			.filter((part: unknown) => {
+				if (typeof part !== "object" || part === null || !("type" in part)) return true;
+				const partType = (part as { type: string }).type;
+				// Filter out thinking-steps, mentioned-documents, and attachments
+				return (
+					partType !== "thinking-steps" &&
+					partType !== "mentioned-documents" &&
+					partType !== "attachments" &&
+					partType !== "compare-summary"
+				);
+			})
+			.map((part: unknown) => {
+				// Strip <think> blocks from text parts
+				if (
+					typeof part === "object" &&
+					part !== null &&
+					"type" in part &&
+					(part as { type: string }).type === "text" &&
+					"text" in part &&
+					typeof (part as { text: unknown }).text === "string"
+				) {
+					return { ...(part as object), text: stripThinkBlocks((part as { text: string }).text) };
+				}
+				return part;
+			});
 		content =
 			filteredContent.length > 0
 				? (filteredContent as ThreadMessageLike["content"])
 				: [{ type: "text", text: "" }];
 	} else {
-		content = [{ type: "text", text: String(msg.content) }];
+		content = [{ type: "text", text: stripThinkBlocks(String(msg.content)) }];
 	}
 
 	// Restore attachments for user messages

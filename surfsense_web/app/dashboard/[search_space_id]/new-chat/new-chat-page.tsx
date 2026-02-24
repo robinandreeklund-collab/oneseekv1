@@ -303,6 +303,7 @@ export default function NewChatPage() {
 	const [messageContextStats, setMessageContextStats] = useState<
 		Map<string, ContextStatsEntry[]>
 	>(new Map());
+	const [messageReasoningMap, setMessageReasoningMap] = useState<Map<string, string>>(new Map());
 	const [messageTraceSessions, setMessageTraceSessions] = useState<Map<string, string>>(
 		new Map()
 	);
@@ -991,6 +992,7 @@ export default function NewChatPage() {
 			// Prepare assistant message
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
+			let currentReasoningText = "";
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 
@@ -1013,14 +1015,20 @@ export default function NewChatPage() {
 			// Map to track tool call indices for updating results
 			const toolCallIndices = new Map<string, number>();
 
-			// Helper to get or create the current text part for appending text
+			// Helper to get or create the current text part for appending text.
+			// Strips any <think>…</think> blocks that might slip through the
+			// backend filter (e.g. when the server hasn't been restarted yet).
 			const appendText = (delta: string) => {
+				const cleaned = delta
+					.replace(/<think>[\s\S]*?<\/think>/gi, "")
+					.replace(/<\/?think>/gi, "");
+				if (!cleaned) return;
 				if (currentTextPartIndex >= 0 && contentParts[currentTextPartIndex]?.type === "text") {
 					// Append to existing text part
-					(contentParts[currentTextPartIndex] as { type: "text"; text: string }).text += delta;
+					(contentParts[currentTextPartIndex] as { type: "text"; text: string }).text += cleaned;
 				} else {
 					// Create new text part
-					contentParts.push({ type: "text", text: delta });
+					contentParts.push({ type: "text", text: cleaned });
 					currentTextPartIndex = contentParts.length - 1;
 				}
 			};
@@ -1327,6 +1335,19 @@ export default function NewChatPage() {
 											break;
 										}
 
+
+										case "reasoning-delta": {
+											if (parsed.delta) {
+												currentReasoningText += parsed.delta;
+												setMessageReasoningMap((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, currentReasoningText);
+													return newMap;
+												});
+											}
+											break;
+										}
+
 										case "error":
 											throw new Error(parsed.errorText || "Server error");
 									}
@@ -1379,6 +1400,17 @@ export default function NewChatPage() {
 							return prev;
 						});
 
+
+						setMessageReasoningMap((prev) => {
+							const reasoning = prev.get(assistantMsgId);
+							if (reasoning) {
+								const newMap = new Map(prev);
+								newMap.delete(assistantMsgId);
+								newMap.set(newMsgId, reasoning);
+								return newMap;
+							}
+							return prev;
+						});
 						setMessageTraceSessions((prev) => {
 							const traceSessionId = prev.get(assistantMsgId);
 							if (!traceSessionId) return prev;
@@ -1395,7 +1427,7 @@ export default function NewChatPage() {
 						if (currentTraceSessionId) {
 							try {
 								await chatTraceApiService.attachTraceSession({
-									thread_id: threadId,
+									thread_id: threadId!,
 									trace_session_id: currentTraceSessionId,
 									message_id: savedMessage.id,
 								});
@@ -1406,6 +1438,7 @@ export default function NewChatPage() {
 					} catch (err) {
 						console.error("Failed to persist assistant message:", err);
 					}
+
 
 					// Track successful response
 					trackChatResponseReceived(searchSpaceId, currentThreadId);
@@ -1447,6 +1480,17 @@ export default function NewChatPage() {
 									const newMap = new Map(prev);
 									newMap.delete(assistantMsgId);
 									newMap.set(newMsgId, stats);
+									return newMap;
+								}
+								return prev;
+							});
+
+							setMessageReasoningMap((prev) => {
+								const reasoning = prev.get(assistantMsgId);
+								if (reasoning) {
+									const newMap = new Map(prev);
+									newMap.delete(assistantMsgId);
+									newMap.set(newMsgId, reasoning);
 									return newMap;
 								}
 								return prev;
@@ -1639,7 +1683,9 @@ export default function NewChatPage() {
 			const userMsgId = `msg-user-${Date.now()}`;
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
+			let currentReasoningText = "";
 			let currentTraceSessionId: string | null = null;
+			let compareSummary: unknown | null = null;
 
 			// Content parts tracking (same as onNew)
 			type ContentPart =
@@ -1656,10 +1702,14 @@ export default function NewChatPage() {
 			const toolCallIndices = new Map<string, number>();
 
 			const appendText = (delta: string) => {
+				const cleaned = delta
+					.replace(/<think>[\s\S]*?<\/think>/gi, "")
+					.replace(/<\/?think>/gi, "");
+				if (!cleaned) return;
 				if (currentTextPartIndex >= 0 && contentParts[currentTextPartIndex]?.type === "text") {
-					(contentParts[currentTextPartIndex] as { type: "text"; text: string }).text += delta;
+					(contentParts[currentTextPartIndex] as { type: "text"; text: string }).text += cleaned;
 				} else {
-					contentParts.push({ type: "text", text: delta });
+					contentParts.push({ type: "text", text: cleaned });
 					currentTextPartIndex = contentParts.length - 1;
 				}
 			};
@@ -1914,6 +1964,19 @@ export default function NewChatPage() {
 											break;
 										}
 
+
+										case "reasoning-delta": {
+											if (parsed.delta) {
+												currentReasoningText += parsed.delta;
+												setMessageReasoningMap((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, currentReasoningText);
+													return newMap;
+												});
+											}
+											break;
+										}
+
 										case "error":
 											throw new Error(parsed.errorText || "Server error");
 									}
@@ -1971,7 +2034,18 @@ export default function NewChatPage() {
 							return prev;
 						});
 
-						// Track successful response
+					setMessageReasoningMap((prev) => {
+						const reasoning = prev.get(assistantMsgId);
+						if (reasoning) {
+							const newMap = new Map(prev);
+							newMap.delete(assistantMsgId);
+							newMap.set(newMsgId, reasoning);
+							return newMap;
+						}
+						return prev;
+					});
+
+					// Track successful response
 						trackChatResponseReceived(searchSpaceId, threadId);
 					} catch (err) {
 						console.error("Failed to persist regenerated message:", err);
@@ -2182,6 +2256,7 @@ export default function NewChatPage() {
 						<Thread
 							messageThinkingSteps={messageThinkingSteps}
 							messageContextStats={messageContextStats}
+							messageReasoningMap={messageReasoningMap}
 							isPublicChat={isPublicChat}
 							header={
 								<div className="flex items-center justify-between gap-2">
@@ -2192,7 +2267,7 @@ export default function NewChatPage() {
 											size="sm"
 											className="gap-2"
 											disabled={!lastAssistantMessageId}
-											onClick={() => openTraceForMessage(lastAssistantMessageId)}
+											onClick={() => openTraceForMessage(lastAssistantMessageId ?? null)}
 										>
 											<Activity
 												className={cn("size-4", isTraceOpen ? "animate-pulse" : "")}

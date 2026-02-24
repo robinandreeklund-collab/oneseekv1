@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -10,6 +11,18 @@ from langchain_core.runnables import RunnableConfig
 from app.agents.new_chat.token_budget import TokenBudget
 
 logger = logging.getLogger(__name__)
+
+# Matches <think>...</think> reasoning blocks emitted by models such as
+# nvidia/nemotron-3-nano, Qwen3 (thinking mode), DeepSeek-R1, etc.
+# We strip these from the *history* stored in agent state so accumulated
+# thinking tokens never contaminate the context window sent to the LLM.
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_thinking_tags(text: str) -> str:
+    """Remove <think>...</think> reasoning blocks from a string."""
+    stripped = _THINK_TAG_RE.sub("", text)
+    return stripped.strip()
 
 
 def _normalize_message_content(value: Any) -> str:
@@ -50,16 +63,17 @@ def _normalize_message_content(value: Any) -> str:
 
 
 def _sanitize_template_value(value: Any) -> Any:
-    """Recursively sanitize values so strict templates don't receive null."""
+    """Recursively sanitize values so strict templates don't receive null.
+
+    Dict keys whose values are None are replaced with "" rather than dropped.
+    Dropping the key (previous behaviour) caused Jinja templates to see an
+    undefined attribute (which is also NullValue) when they access a required
+    field such as tool_call.function.arguments.
+    """
     if value is None:
         return ""
     if isinstance(value, dict):
-        sanitized: dict[str, Any] = {}
-        for key, item in value.items():
-            if item is None:
-                continue
-            sanitized[str(key)] = _sanitize_template_value(item)
-        return sanitized
+        return {str(k): _sanitize_template_value(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_sanitize_template_value(item) for item in value if item is not None]
     return value
@@ -111,15 +125,93 @@ def _normalize_tool_call_dict(tool_call: Any, *, index: int) -> dict[str, Any] |
     return _sanitize_template_value(normalized)
 
 
+def _hoist_system_messages(messages: list[Any]) -> list[Any]:
+    """
+    Collapse all SystemMessages into a single one at position 0, drop
+    orphaned HumanMessages, and deduplicate HumanMessages by content.
+
+    LangGraph's add_messages reducer can produce mid-conversation SystemMessages
+    when the same system prompt is re-injected on a retry or reload (e.g.
+    [system, user, system, user]).  Strict Jinja templates (LM Studio / nemotron)
+    fail with "Cannot apply filter 'string' to type: NullValue" in that case.
+
+    The duplicate-user problem also arises in the tool-call loop: after a tool
+    executes the state may contain [system, user, asst(tool), tool, system, user]
+    (the last system+user being a stale re-injection of the turn start).  After
+    hoisting and dedup the sequence becomes [system, user, asst(tool), tool],
+    which every template handles correctly.
+
+    Strategy:
+    1. Collect every SystemMessage, join content, place single merged one at front.
+    2. Walk the remaining messages and drop any HumanMessage that is immediately
+       followed by another HumanMessage (no AIMessage in between).
+    3. Drop any subsequent HumanMessage whose content exactly duplicates an
+       earlier HumanMessage (keeps first occurrence, drops repeated ones).
+    """
+    system_parts: list[str] = []
+    rest: list[Any] = []
+    for msg in messages:
+        if isinstance(msg, SystemMessage):
+            part = _normalize_message_content(getattr(msg, "content", ""))
+            if part:
+                system_parts.append(part)
+        else:
+            rest.append(msg)
+
+    # Drop orphaned HumanMessages: any HumanMessage whose next non-system
+    # neighbour in `rest` is also a HumanMessage.
+    deduped: list[Any] = []
+    for i, msg in enumerate(rest):
+        if isinstance(msg, HumanMessage):
+            next_msg = next(
+                (m for m in rest[i + 1 :] if not isinstance(m, SystemMessage)),
+                None,
+            )
+            if isinstance(next_msg, HumanMessage):
+                # This user turn never got a response — skip it.
+                continue
+        deduped.append(msg)
+
+    # Deduplicate HumanMessages by content: keep the first occurrence, drop
+    # any that appear again later.  This removes trailing duplicate user turns
+    # that can accumulate when LangGraph re-injects the turn-start context
+    # after a tool call (e.g. [user, asst(tool), tool, user] → [user, asst(tool), tool]).
+    seen_human: set[str] = set()
+    final: list[Any] = []
+    for msg in deduped:
+        if isinstance(msg, HumanMessage):
+            content_key = _normalize_message_content(getattr(msg, "content", ""))
+            if content_key in seen_human:
+                continue
+            seen_human.add(content_key)
+        final.append(msg)
+
+    if not system_parts:
+        return final
+    merged_content = "\n\n".join(system_parts)
+    try:
+        merged_system = messages[
+            next(i for i, m in enumerate(messages) if isinstance(m, SystemMessage))
+        ].model_copy(update={"content": merged_content})
+    except Exception:
+        merged_system = SystemMessage(content=merged_content)
+    return [merged_system, *final]
+
+
 def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
     """
     Guardrail for strict OpenAI-compatible templates (e.g. LM Studio Jinja).
     Avoid NullValue in content/tool-call fields between turns.
     """
+    # Collapse multiple SystemMessages into one at position 0 first so that the
+    # per-message normalisation below never sees a mid-conversation system message.
+    messages = _hoist_system_messages(messages)
     normalized_messages: list[Any] = []
     for idx, message in enumerate(messages):
         if isinstance(message, AIMessage):
-            content = _normalize_message_content(getattr(message, "content", ""))
+            content = _strip_thinking_tags(
+                _normalize_message_content(getattr(message, "content", ""))
+            )
             raw_tool_calls = getattr(message, "tool_calls", None)
             tool_calls: list[dict[str, Any]] = []
             if isinstance(raw_tool_calls, list):
@@ -130,12 +222,22 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
                     )
                     if normalized_tool_call:
                         tool_calls.append(normalized_tool_call)
+            # Sanitize additional_kwargs and strip tool_call related keys so
+            # that LiteLLM cannot fall back to raw (potentially null-containing)
+            # additional_kwargs["tool_calls"] when message.tool_calls is falsy.
+            # LiteLLM prefers message.tool_calls when truthy, but silently uses
+            # additional_kwargs["tool_calls"] otherwise — that raw data may carry
+            # null function.arguments values that crash strict Jinja templates.
+            sanitized_kwargs: dict[str, Any] = _sanitize_template_value(
+                dict(getattr(message, "additional_kwargs", {}) or {})
+            )
+            if isinstance(raw_tool_calls, list):
+                sanitized_kwargs.pop("tool_calls", None)
+                sanitized_kwargs.pop("function_call", None)
             try:
                 updated = {
                     "content": content,
-                    "additional_kwargs": _sanitize_template_value(
-                        dict(getattr(message, "additional_kwargs", {}) or {})
-                    ),
+                    "additional_kwargs": sanitized_kwargs,
                     "response_metadata": _sanitize_template_value(
                         dict(getattr(message, "response_metadata", {}) or {})
                     ),
@@ -148,9 +250,7 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
                     AIMessage(
                         content=content,
                         tool_calls=tool_calls,
-                        additional_kwargs=_sanitize_template_value(
-                            dict(getattr(message, "additional_kwargs", {}) or {})
-                        ),
+                        additional_kwargs=sanitized_kwargs,
                         response_metadata=_sanitize_template_value(
                             dict(getattr(message, "response_metadata", {}) or {})
                         ),
@@ -251,26 +351,39 @@ def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
 
         _flush_tool_lines()
         if isinstance(message, AIMessage):
+            # Strip tool_calls from additional_kwargs so LiteLLM cannot fall
+            # back to raw additional_kwargs["tool_calls"] (which may contain
+            # null values) when message.tool_calls is [] (falsy).
+            retry_kwargs: dict[str, Any] = {
+                k: v
+                for k, v in (
+                    getattr(message, "additional_kwargs", {}) or {}
+                ).items()
+                if k not in {"tool_calls", "function_call"}
+            }
             try:
                 retried.append(
                     message.model_copy(
                         update={
-                            "content": _normalize_message_content(
-                                getattr(message, "content", "")
+                            "content": _strip_thinking_tags(
+                                _normalize_message_content(
+                                    getattr(message, "content", "")
+                                )
                             ),
                             "tool_calls": [],
+                            "additional_kwargs": retry_kwargs,
                         }
                     )
                 )
             except Exception:
                 retried.append(
                     AIMessage(
-                        content=_normalize_message_content(
-                            getattr(message, "content", "")
+                        content=_strip_thinking_tags(
+                            _normalize_message_content(
+                                getattr(message, "content", "")
+                            )
                         ),
-                        additional_kwargs=dict(
-                            getattr(message, "additional_kwargs", {}) or {}
-                        ),
+                        additional_kwargs=retry_kwargs,
                         response_metadata=dict(
                             getattr(message, "response_metadata", {}) or {}
                         ),
@@ -371,6 +484,25 @@ def build_executor_nodes(
         new_user_turn: bool,
     ) -> list[Any]:
         messages = sanitize_messages_fn(list(state.get("messages") or []))
+        # Strip any SystemMessages that accumulated in the LangGraph state across
+        # turns or retries.  The worker system prompt is now stored under a
+        # dedicated state key ("worker_system_prompt") so it never ends up in the
+        # messages list and therefore never accumulates.
+        # Also handle messages stored as plain dicts (e.g. from old checkpoints)
+        # where isinstance(m, SystemMessage) would return False.
+        def _is_system_like(m: Any) -> bool:
+            if isinstance(m, SystemMessage):
+                return True
+            if isinstance(m, dict):
+                role = str(m.get("role") or m.get("type") or "").strip().lower()
+                return role == "system"
+            return False
+
+        messages = [m for m in messages if not _is_system_like(m)]
+
+        # Base system prompt (stored once per chat, not repeated per turn).
+        base_system_prompt = str(state.get("worker_system_prompt") or "").strip()
+
         plan_context = None if new_user_turn else format_plan_context_fn(state)
         recent_context = None if new_user_turn else format_recent_calls_fn(state)
         route_context = format_route_hint_fn(state)
@@ -413,8 +545,12 @@ def build_executor_nodes(
             )
             if item
         ]
-        if system_bits:
-            messages = [SystemMessage(content="\n".join(system_bits))] + messages
+        # Build a single SystemMessage from the base prompt + any context bits.
+        all_system_parts = [
+            p for p in [base_system_prompt, *system_bits] if p
+        ]
+        if all_system_parts:
+            messages = [SystemMessage(content="\n\n".join(all_system_parts))] + messages
         model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
         if model_name:
             budget = TokenBudget(model_name=str(model_name))
@@ -642,3 +778,169 @@ def build_executor_nodes(
         return updates
 
     return call_model, acall_model
+
+
+def _deep_replace_none_in_tool(value: Any) -> Any:
+    """Recursively replace None → '' in dicts/lists (tool schema variant)."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return {k: _deep_replace_none_in_tool(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_deep_replace_none_in_tool(item) for item in value]
+    return value
+
+
+def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
+    """Sanitize an OpenAI-format tool dict for strict Jinja templates.
+
+    1. Remove ``type: null`` variants from ``anyOf``/``oneOf``/``allOf``.
+    2. Drop ``default: null`` from parameter schemas.
+    3. Deep-replace any remaining ``None`` → ``""`` as a safety net.
+    4. Ensure ``function.name``, ``function.description``, and
+       ``function.parameters`` always exist — templates access them
+       unconditionally.
+    5. Remove the injected ``state`` property so the model never sees it.
+    """
+    if not isinstance(tool_def, dict):
+        return tool_def
+
+    def _clean_schema(schema: Any) -> Any:
+        if not isinstance(schema, dict):
+            return _deep_replace_none_in_tool(schema)
+        cleaned: dict[str, Any] = {}
+        for key, item in schema.items():
+            if item is None:
+                if key == "description":
+                    cleaned[key] = ""
+                # Drop null defaults and other null keys
+                continue
+            if key in {"anyOf", "oneOf", "allOf"} and isinstance(item, list):
+                variants = [
+                    _clean_schema(v)
+                    for v in item
+                    if not (
+                        isinstance(v, dict)
+                        and str(v.get("type") or "").strip().lower() == "null"
+                    )
+                ]
+                if variants:
+                    cleaned[key] = variants
+                continue
+            cleaned[key] = _clean_schema(item)
+        # Strip injected 'state' property
+        properties = cleaned.get("properties")
+        if isinstance(properties, dict):
+            properties.pop("state", None)
+            required = cleaned.get("required")
+            if isinstance(required, list):
+                cleaned["required"] = [
+                    r for r in required
+                    if isinstance(r, str) and r.strip() != "state" and r.strip() in properties
+                ]
+                if not cleaned["required"]:
+                    cleaned.pop("required", None)
+        return cleaned
+
+    tool_def = _clean_schema(tool_def)
+    # Deep-replace any leftover None as final safety net.
+    tool_def = _deep_replace_none_in_tool(tool_def)
+    tool_def.setdefault("type", "function")
+    func = tool_def.get("function")
+    if not isinstance(func, dict):
+        func = {}
+        tool_def["function"] = func
+    func.setdefault("name", "tool")
+    func.setdefault("description", "")
+    params = func.get("parameters")
+    if not isinstance(params, dict):
+        func["parameters"] = {"type": "object", "properties": {}}
+    else:
+        params.setdefault("type", "object")
+        params.setdefault("properties", {})
+    return tool_def
+
+
+class NormalizingChatWrapper:
+    """Wraps any LanguageModelLike and normalizes messages before every invocation.
+
+    ``langgraph_bigtool``'s internal ``call_model`` calls
+    ``llm_with_tools.invoke(state["messages"])`` directly without any
+    null-value sanitization.  Wrapping the LLM with this class ensures that
+    ``_normalize_messages_for_provider_compat`` is applied at the point of
+    invocation regardless of which graph node initiated the call.
+
+    Usage::
+
+        from app.agents.new_chat.nodes.executor import NormalizingChatWrapper
+        wrapped_llm = NormalizingChatWrapper(base_llm)
+        graph = create_bigtool_agent(wrapped_llm, tool_registry, ...)
+    """
+
+    def __init__(self, llm: Any) -> None:
+        self._llm = llm
+
+    # ------------------------------------------------------------------ #
+    # Delegate attribute access to the wrapped LLM so that LangChain /
+    # LangGraph introspection (e.g. checking for .name, .model, etc.) works.
+    # ------------------------------------------------------------------ #
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._llm, item)
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "NormalizingChatWrapper":
+        """Return a new wrapper around the tool-bound LLM.
+
+        Tool schemas from ``convert_to_openai_tool`` can contain null values
+        (e.g. ``"default": null``, ``"description": null``) that crash strict
+        Jinja templates in LM Studio.  We convert the tools ourselves, sanitize
+        the resulting OpenAI-format dicts, and call ``bind`` (not
+        ``bind_tools``) to avoid double-converting.
+        """
+        try:
+            from langchain_core.utils.function_calling import convert_to_openai_tool
+
+            formatted = []
+            for tool_def in tools or []:
+                try:
+                    raw = (
+                        tool_def
+                        if isinstance(tool_def, dict)
+                        else convert_to_openai_tool(tool_def)
+                    )
+                except Exception:
+                    raw = tool_def
+                formatted.append(_sanitize_tool_schema_for_strict_templates(raw))
+            return NormalizingChatWrapper(
+                self._llm.bind(tools=formatted, **kwargs)
+            )
+        except Exception:
+            # Fallback: let the underlying LLM handle bind_tools directly.
+            return NormalizingChatWrapper(self._llm.bind_tools(tools, **kwargs))
+
+    def bind(self, **kwargs: Any) -> "NormalizingChatWrapper":
+        """Return a new wrapper around the kwarg-bound LLM."""
+        return NormalizingChatWrapper(self._llm.bind(**kwargs))
+
+    def with_config(self, *args: Any, **kwargs: Any) -> "NormalizingChatWrapper":
+        return NormalizingChatWrapper(self._llm.with_config(*args, **kwargs))
+
+    def _normalize(self, input_: Any) -> Any:
+        """Normalize a messages list or a dict with a 'messages' key."""
+        if isinstance(input_, list):
+            return _normalize_messages_for_provider_compat(input_)
+        if isinstance(input_, dict) and "messages" in input_:
+            return {**input_, "messages": _normalize_messages_for_provider_compat(input_["messages"])}
+        return input_
+
+    def invoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
+        return self._llm.invoke(self._normalize(input_), config, **kwargs)
+
+    async def ainvoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
+        return await self._llm.ainvoke(self._normalize(input_), config, **kwargs)
+
+    def stream(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
+        return self._llm.stream(self._normalize(input_), config, **kwargs)
+
+    async def astream(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
+        async for chunk in self._llm.astream(self._normalize(input_), config, **kwargs):
+            yield chunk

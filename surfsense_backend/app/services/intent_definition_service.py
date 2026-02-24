@@ -11,12 +11,26 @@ from app.db import GlobalIntentDefinition, GlobalIntentDefinitionHistory
 
 
 _ROUTE_VALUES = {route.value for route in Route}
+
+# ── Backward-compat: accept old route values during normalization ─────
+_COMPAT_ROUTE_MAP: dict[str, str] = {
+    "knowledge": Route.KUNSKAP.value,
+    "action": Route.SKAPANDE.value,
+    "smalltalk": Route.KONVERSATION.value,
+    "compare": Route.JAMFORELSE.value,
+    "statistics": Route.KUNSKAP.value,  # merged into kunskap
+}
+
 _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "knowledge": {
-        "intent_id": "knowledge",
-        "route": Route.KNOWLEDGE.value,
+    "kunskap": {
+        "intent_id": "kunskap",
+        "route": Route.KUNSKAP.value,
         "label": "Kunskap",
-        "description": "Frågor som kräver sökning i kunskapskällor, dokument eller minne.",
+        "description": (
+            "Användaren vill ha information eller kunskap om något – "
+            "oavsett källa (interna dokument, väder, trafik, statistik, "
+            "bolagsinfo, marknadsplatser, riksdagen, webb)."
+        ),
         "keywords": [
             "dokument",
             "docs",
@@ -27,77 +41,83 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
             "slack",
             "github",
             "sammanfatta",
-        ],
-        "priority": 200,
-        "enabled": True,
-    },
-    "action": {
-        "intent_id": "action",
-        "route": Route.ACTION.value,
-        "label": "Action",
-        "description": (
-            "Realtidsuppgifter och verktygskörningar som väder, trafik, media, "
-            "webb och marknadsplatser (Blocket/Tradera)."
-        ),
-        "keywords": [
             "väder",
+            "vädret",
+            "vader",
+            "vadret",
             "smhi",
+            "temperatur",
+            "regn",
+            "prognos",
             "trafik",
-            "resa",
-            "rutt",
-            "webb",
-            "länk",
-            "podcast",
-            "bild",
-            "verktyg",
+            "trafiken",
+            "trafikverket",
+            "statistik",
+            "scb",
+            "befolkning",
+            "kolada",
+            "bolag",
+            "bolagsverket",
+            "riksdagen",
+            "proposition",
             "blocket",
             "tradera",
             "marknadsplats",
             "annons",
             "begagnat",
-            "auktion",
-            "motorcykel",
-            "mc",
-            "bilar",
-            "båtar",
-            "prisjämförelse",
+            "webb",
+            "länk",
+            "nyheter",
+            "kolla",
+            "vad är",
+            "hur mycket",
+            "hur många",
+        ],
+        "priority": 200,
+        "enabled": True,
+    },
+    "skapande": {
+        "intent_id": "skapande",
+        "route": Route.SKAPANDE.value,
+        "label": "Skapande",
+        "description": (
+            "Användaren vill att systemet skapar eller genererar något – "
+            "podcast, kartbilder, kod, filer."
+        ),
+        "keywords": [
+            "skapa",
+            "generera",
+            "gör",
+            "rita",
+            "podcast",
+            "bild",
+            "karta",
+            "kartbild",
+            "kod",
+            "script",
+            "python",
+            "sandbox",
+            "fil",
+            "skriv",
         ],
         "priority": 300,
         "enabled": True,
     },
-    "statistics": {
-        "intent_id": "statistics",
-        "route": Route.STATISTICS.value,
-        "label": "Statistik",
-        "description": "SCB och officiell svensk statistik.",
-        "keywords": [
-            "statistik",
-            "scb",
-            "befolkning",
-            "inflation",
-            "arbetslöshet",
-            "kpi",
-            "kommun",
-            "län",
-        ],
-        "priority": 100,
-        "enabled": True,
-    },
-    "compare": {
-        "intent_id": "compare",
-        "route": Route.COMPARE.value,
-        "label": "Compare",
+    "jämförelse": {
+        "intent_id": "jämförelse",
+        "route": Route.JAMFORELSE.value,
+        "label": "Jämförelse",
         "description": "Jämförelse-läge när användaren explicit efterfrågar compare.",
-        "keywords": ["/compare", "compare", "jämför", "jamfor"],
+        "keywords": ["/compare", "compare", "jämför", "jamfor", "jämförelse"],
         "priority": 50,
         "enabled": True,
     },
-    "smalltalk": {
-        "intent_id": "smalltalk",
-        "route": Route.SMALLTALK.value,
-        "label": "Smalltalk",
+    "konversation": {
+        "intent_id": "konversation",
+        "route": Route.KONVERSATION.value,
+        "label": "Konversation",
         "description": "Hälsningar och enkel konversation utan verktyg.",
-        "keywords": ["hej", "tjena", "hallå", "hur mår du", "smalltalk"],
+        "keywords": ["hej", "tjena", "hallå", "hur mår du", "konversation", "smalltalk"],
         "priority": 400,
         "enabled": True,
     },
@@ -149,8 +169,10 @@ def normalize_intent_definition_payload(
     if not resolved_intent_id:
         resolved_intent_id = "custom"
     route_value = _normalize_text(payload.get("route")).lower()
+    # Accept old English route names transparently
+    route_value = _COMPAT_ROUTE_MAP.get(route_value, route_value)
     if route_value not in _ROUTE_VALUES:
-        route_value = Route.KNOWLEDGE.value
+        route_value = Route.KUNSKAP.value
     label = _normalize_optional_text(payload.get("label")) or resolved_intent_id.replace(
         "_", " "
     ).title()

@@ -15,12 +15,10 @@ _AGENT_METADATA_OVERRIDE_PREFIX = "agent.metadata."
 
 _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
     {
-        "agent_id": "action",
-        "label": "Action",
+        "agent_id": "åtgärd",
+        "label": "Åtgärd",
         "description": "Realtime actions som vader, resor och verktygskorningar.",
         "keywords": [
-            "vader",
-            "vadret",
             "vader",
             "vadret",
             "smhi",
@@ -37,10 +35,16 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "action"],
         "prompt_key": "action",
+        "routes": ["kunskap"],
+        "flow_tools": [
+            {"tool_id": "search_knowledge_base", "label": "Kunskapsbas"},
+            {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
+            {"tool_id": "scrape_webpage", "label": "Scrape Webbsida"},
+        ],
     },
     {
-        "agent_id": "weather",
-        "label": "Weather",
+        "agent_id": "väder",
+        "label": "Väder",
         "description": "SMHI-vaderprognoser och Trafikverkets vagvaderdata for svenska orter och vagar.",
         "keywords": [
             "smhi",
@@ -56,6 +60,24 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "weather"],
         "prompt_key": "action",
+        "routes": ["kunskap"],
+        "flow_tools": [
+            {"tool_id": "smhi_weather", "label": "SMHI Prognos"},
+            {"tool_id": "smhi_vaderprognoser_metfcst", "label": "SMHI MetFcst"},
+            {"tool_id": "smhi_vaderprognoser_snow1g", "label": "SMHI Snö"},
+            {"tool_id": "smhi_vaderanalyser_mesan2g", "label": "SMHI MESAN"},
+            {"tool_id": "smhi_vaderobservationer_metobs", "label": "SMHI MetObs"},
+            {"tool_id": "smhi_hydrologi_hydroobs", "label": "SMHI HydroObs"},
+            {"tool_id": "smhi_hydrologi_pthbv", "label": "SMHI PTHBV"},
+            {"tool_id": "smhi_oceanografi_ocobs", "label": "SMHI Oceanografi"},
+            {"tool_id": "smhi_brandrisk_fwif", "label": "SMHI Brandrisk FWIF"},
+            {"tool_id": "smhi_brandrisk_fwia", "label": "SMHI Brandrisk FWIA"},
+            {"tool_id": "smhi_solstralning_strang", "label": "SMHI Solstrålning"},
+            {"tool_id": "trafikverket_vader_stationer", "label": "Trafikverket Väder Stationer"},
+            {"tool_id": "trafikverket_vader_halka", "label": "Trafikverket Väder Halka"},
+            {"tool_id": "trafikverket_vader_vind", "label": "Trafikverket Väder Vind"},
+            {"tool_id": "trafikverket_vader_temperatur", "label": "Trafikverket Väder Temperatur"},
+        ],
     },
     {
         "agent_id": "kartor",
@@ -76,10 +98,14 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "kartor"],
         "prompt_key": "kartor",
+        "routes": ["skapande"],
+        "flow_tools": [
+            {"tool_id": "geoapify_static_map", "label": "Statisk Karta"},
+        ],
     },
     {
-        "agent_id": "statistics",
-        "label": "Statistics",
+        "agent_id": "statistik",
+        "label": "Statistik",
         "description": "SCB och officiell svensk statistik samt Kolada kommundata.",
         "keywords": [
             "statistik",
@@ -99,6 +125,15 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "statistics"],
         "prompt_key": "statistics",
+        "routes": ["kunskap", "jämförelse"],
+        "flow_tools": [
+            {"tool_id": "scb_befolkning", "label": "SCB Befolkning"},
+            {"tool_id": "scb_arbetsmarknad", "label": "SCB Arbetsmarknad"},
+            {"tool_id": "scb_boende_byggande", "label": "SCB Boende"},
+            {"tool_id": "scb_priser_konsumtion", "label": "SCB Priser"},
+            {"tool_id": "scb_utbildning", "label": "SCB Utbildning"},
+            {"tool_id": "kolada_municipality", "label": "Kolada Kommun"},
+        ],
     },
     {
         "agent_id": "media",
@@ -107,10 +142,15 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "keywords": ["podcast", "podd", "media", "bild", "ljud"],
         "namespace": ["agents", "media"],
         "prompt_key": "media",
+        "routes": ["skapande"],
+        "flow_tools": [
+            {"tool_id": "generate_podcast", "label": "Podcast"},
+            {"tool_id": "display_image", "label": "Visa Bild"},
+        ],
     },
     {
-        "agent_id": "knowledge",
-        "label": "Knowledge",
+        "agent_id": "kunskap",
+        "label": "Kunskap",
         "description": "SurfSense, Tavily och generell kunskap.",
         "keywords": [
             "kunskap",
@@ -128,18 +168,31 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "knowledge"],
         "prompt_key": "knowledge",
+        "routes": ["kunskap", "jämförelse"],
+        "flow_tools": [
+            {"tool_id": "search_surfsense_docs", "label": "SurfSense Docs"},
+            {"tool_id": "save_memory", "label": "Spara Minne"},
+            {"tool_id": "recall_memory", "label": "Hämta Minne"},
+            {"tool_id": "tavily_search", "label": "Tavily Sök"},
+        ],
     },
     {
-        "agent_id": "browser",
-        "label": "Browser",
+        "agent_id": "webb",
+        "label": "Webb",
         "description": "Webbsokning och scraping.",
         "keywords": ["webb", "browser", "sok", "nyheter", "url"],
         "namespace": ["agents", "browser"],
         "prompt_key": "browser",
+        "routes": ["kunskap"],
+        "flow_tools": [
+            {"tool_id": "scrape_webpage", "label": "Scrape Webbsida"},
+            {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
+            {"tool_id": "public_web_search", "label": "Webbsökning"},
+        ],
     },
     {
-        "agent_id": "code",
-        "label": "Code",
+        "agent_id": "kod",
+        "label": "Kod",
         "description": "Kalkyler och kodrelaterade uppgifter.",
         "keywords": [
             "kod",
@@ -163,6 +216,15 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "code"],
         "prompt_key": "code",
+        "routes": ["skapande"],
+        "flow_tools": [
+            {"tool_id": "sandbox_execute", "label": "Sandbox Execute"},
+            {"tool_id": "sandbox_write_file", "label": "Sandbox Write"},
+            {"tool_id": "sandbox_read_file", "label": "Sandbox Read"},
+            {"tool_id": "sandbox_ls", "label": "Sandbox LS"},
+            {"tool_id": "sandbox_replace", "label": "Sandbox Replace"},
+            {"tool_id": "sandbox_release", "label": "Sandbox Release"},
+        ],
     },
     {
         "agent_id": "bolag",
@@ -183,6 +245,14 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "bolag"],
         "prompt_key": "bolag",
+        "routes": ["kunskap"],
+        "flow_tools": [
+            {"tool_id": "bolagsverket_info_basic", "label": "Företagsinfo"},
+            {"tool_id": "bolagsverket_info_status", "label": "Företagsstatus"},
+            {"tool_id": "bolagsverket_sok_namn", "label": "Sök Namn"},
+            {"tool_id": "bolagsverket_sok_orgnr", "label": "Sök Orgnr"},
+            {"tool_id": "bolagsverket_ekonomi_bokslut", "label": "Bokslut"},
+        ],
     },
     {
         "agent_id": "trafik",
@@ -200,6 +270,15 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "trafik"],
         "prompt_key": "trafik",
+        "routes": ["kunskap"],
+        "flow_tools": [
+            {"tool_id": "trafikverket_situation", "label": "Trafikläge"},
+            {"tool_id": "trafikverket_road_condition", "label": "Väglag"},
+            {"tool_id": "trafikverket_camera", "label": "Kameror"},
+            {"tool_id": "trafikverket_ferry", "label": "Färjor"},
+            {"tool_id": "trafikverket_railway", "label": "Järnväg"},
+            {"tool_id": "trafiklab_route", "label": "Resplanerare"},
+        ],
     },
     {
         "agent_id": "riksdagen",
@@ -229,10 +308,16 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "riksdagen"],
         "prompt_key": "riksdagen",
+        "routes": ["kunskap"],
+        "flow_tools": [
+            {"tool_id": "riksdagen_dokument_sok", "label": "Dokument Sök"},
+            {"tool_id": "riksdagen_votering", "label": "Voteringar"},
+            {"tool_id": "riksdagen_ledamot", "label": "Ledamöter"},
+        ],
     },
     {
-        "agent_id": "marketplace",
-        "label": "Marketplace",
+        "agent_id": "marknad",
+        "label": "Marknad",
         "description": "Sok och jamfor annonser pa Blocket och Tradera for begagnade varor.",
         "keywords": [
             "blocket",
@@ -260,14 +345,28 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "marketplace"],
         "prompt_key": "agent.marketplace.system",
+        "routes": ["kunskap"],
+        "flow_tools": [
+            {"tool_id": "marketplace_unified_search", "label": "Unified Search"},
+            {"tool_id": "marketplace_blocket_search", "label": "Blocket Sök"},
+            {"tool_id": "marketplace_blocket_cars", "label": "Blocket Bilar"},
+            {"tool_id": "marketplace_blocket_boats", "label": "Blocket Båtar"},
+            {"tool_id": "marketplace_blocket_mc", "label": "Blocket MC"},
+            {"tool_id": "marketplace_tradera_search", "label": "Tradera Sök"},
+            {"tool_id": "marketplace_compare_prices", "label": "Prisjämförelse"},
+        ],
     },
     {
-        "agent_id": "synthesis",
-        "label": "Synthesis",
+        "agent_id": "syntes",
+        "label": "Syntes",
         "description": "Syntes och jamforelser av flera kallor och modeller.",
         "keywords": ["synthesis", "syntes", "jamfor", "compare", "sammanfatta"],
         "namespace": ["agents", "synthesis"],
         "prompt_key": "synthesis",
+        "routes": ["jämförelse"],
+        "flow_tools": [
+            {"tool_id": "external_model_compare", "label": "Modelljämförelse"},
+        ],
     },
 )
 
@@ -311,6 +410,36 @@ def _normalize_namespace(values: Any) -> list[str]:
     return normalized
 
 
+def _normalize_routes(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        text = _normalize_text(raw).lower()
+        if text and text not in seen:
+            seen.add(text)
+            normalized.append(text)
+    return normalized
+
+
+def _normalize_flow_tools(values: Any) -> list[dict[str, str]]:
+    if not isinstance(values, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, dict):
+            continue
+        tool_id = _normalize_text(raw.get("tool_id"))
+        if not tool_id or tool_id in seen:
+            continue
+        seen.add(tool_id)
+        label = _normalize_text(raw.get("label")) or tool_id
+        normalized.append({"tool_id": tool_id, "label": label})
+    return normalized
+
+
 def normalize_agent_metadata_payload(
     payload: Mapping[str, Any],
     *,
@@ -329,11 +458,19 @@ def normalize_agent_metadata_payload(
     fallback_keywords = _normalize_keywords(default_payload.get("keywords"))
     fallback_prompt_key = _normalize_optional_text(default_payload.get("prompt_key"))
     fallback_namespace = _normalize_namespace(default_payload.get("namespace"))
+    fallback_routes = _normalize_routes(default_payload.get("routes"))
+    fallback_flow_tools = _normalize_flow_tools(default_payload.get("flow_tools"))
     label = _normalize_optional_text(payload.get("label")) or fallback_label
     description = _normalize_optional_text(payload.get("description")) or fallback_description
     keywords = _normalize_keywords(payload.get("keywords")) or fallback_keywords
     prompt_key = _normalize_optional_text(payload.get("prompt_key")) or fallback_prompt_key
     namespace = _normalize_namespace(payload.get("namespace")) or fallback_namespace
+    routes = _normalize_routes(payload.get("routes")) if "routes" in payload else fallback_routes
+    flow_tools = (
+        _normalize_flow_tools(payload.get("flow_tools"))
+        if "flow_tools" in payload
+        else fallback_flow_tools
+    )
     return {
         "agent_id": resolved_agent_id,
         "label": label,
@@ -341,6 +478,8 @@ def normalize_agent_metadata_payload(
         "keywords": keywords,
         "prompt_key": prompt_key,
         "namespace": namespace,
+        "routes": routes,
+        "flow_tools": flow_tools,
     }
 
 
