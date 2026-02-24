@@ -15,8 +15,8 @@ _AGENT_METADATA_OVERRIDE_PREFIX = "agent.metadata."
 
 _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
     {
-        "agent_id": "action",
-        "label": "Action",
+        "agent_id": "åtgärd",
+        "label": "Åtgärd",
         "description": "Realtime actions som vader, resor och verktygskorningar.",
         "keywords": [
             "vader",
@@ -39,8 +39,8 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "prompt_key": "action",
     },
     {
-        "agent_id": "weather",
-        "label": "Weather",
+        "agent_id": "väder",
+        "label": "Väder",
         "description": "SMHI-vaderprognoser och Trafikverkets vagvaderdata for svenska orter och vagar.",
         "keywords": [
             "smhi",
@@ -78,8 +78,8 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "prompt_key": "kartor",
     },
     {
-        "agent_id": "statistics",
-        "label": "Statistics",
+        "agent_id": "statistik",
+        "label": "Statistik",
         "description": "SCB och officiell svensk statistik samt Kolada kommundata.",
         "keywords": [
             "statistik",
@@ -109,8 +109,8 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "prompt_key": "media",
     },
     {
-        "agent_id": "knowledge",
-        "label": "Knowledge",
+        "agent_id": "kunskap",
+        "label": "Kunskap",
         "description": "SurfSense, Tavily och generell kunskap.",
         "keywords": [
             "kunskap",
@@ -130,16 +130,16 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "prompt_key": "knowledge",
     },
     {
-        "agent_id": "browser",
-        "label": "Browser",
+        "agent_id": "webb",
+        "label": "Webb",
         "description": "Webbsokning och scraping.",
         "keywords": ["webb", "browser", "sok", "nyheter", "url"],
         "namespace": ["agents", "browser"],
         "prompt_key": "browser",
     },
     {
-        "agent_id": "code",
-        "label": "Code",
+        "agent_id": "kod",
+        "label": "Kod",
         "description": "Kalkyler och kodrelaterade uppgifter.",
         "keywords": [
             "kod",
@@ -231,8 +231,8 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "prompt_key": "riksdagen",
     },
     {
-        "agent_id": "marketplace",
-        "label": "Marketplace",
+        "agent_id": "marknad",
+        "label": "Marknad",
         "description": "Sok och jamfor annonser pa Blocket och Tradera for begagnade varor.",
         "keywords": [
             "blocket",
@@ -262,8 +262,8 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "prompt_key": "agent.marketplace.system",
     },
     {
-        "agent_id": "synthesis",
-        "label": "Synthesis",
+        "agent_id": "syntes",
+        "label": "Syntes",
         "description": "Syntes och jamforelser av flera kallor och modeller.",
         "keywords": ["synthesis", "syntes", "jamfor", "compare", "sammanfatta"],
         "namespace": ["agents", "synthesis"],

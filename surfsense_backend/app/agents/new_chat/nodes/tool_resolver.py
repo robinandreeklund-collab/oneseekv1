@@ -100,7 +100,7 @@ def build_tool_resolver_node(
                 "auto_select",
                 "candidate_shortlist",
             }
-            if agent_name == "weather":
+            if agent_name in {"väder", "weather"}:
                 if live_gate_mode:
                     focused_ids = [tool_id for tool_id in focused_ids if tool_id in weather_tool_ids]
                     if not focused_ids:

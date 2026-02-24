@@ -46,16 +46,19 @@ _TOOL_AUDIT_STOPWORDS = {
 }
 
 _ACTION_AGENTS = {
+    "åtgärd",
     "action",
+    "väder",
     "weather",
     "kartor",
     "media",
     "trafik",
+    "marknad",
     "marketplace",
 }
-_KNOWLEDGE_AGENTS = {"knowledge", "browser", "bolag", "riksdagen"}
-_STATISTICS_AGENTS = {"statistics"}
-_COMPARE_AGENTS = {"synthesis"}
+_KNOWLEDGE_AGENTS = {"kunskap", "knowledge", "webb", "browser", "bolag", "riksdagen"}
+_STATISTICS_AGENTS = {"statistik", "statistics"}
+_COMPARE_AGENTS = {"syntes", "synthesis"}
 _MAX_INTENT_FAILURES_FOR_LLM = 20
 _MAX_AGENT_FAILURES_FOR_LLM = 20
 _PROBE_QUERY_LLM_TIMEOUT_SECONDS = 18.0
