@@ -12,7 +12,14 @@ from langchain_core.tools import BaseTool
 
 from app.agents.new_chat.action_router import ActionRoute, dispatch_action_route
 from app.agents.new_chat.bigtool_store import (
+    METADATA_MAX_DESCRIPTION_CHARS,
+    METADATA_MAX_EXAMPLE_QUERIES,
+    METADATA_MAX_EXAMPLE_QUERY_CHARS,
+    METADATA_MAX_EXCLUDES,
+    METADATA_MAX_KEYWORD_CHARS,
+    METADATA_MAX_KEYWORDS,
     ToolIndexEntry,
+    enforce_metadata_limits,
     get_tool_embedding_context_fields,
     get_vector_recall_top_k,
     normalize_retrieval_tuning,
@@ -2024,13 +2031,13 @@ def _build_fallback_suggestion(
             continue
         proposed_keywords.append(token)
         existing_keyword_set.add(token.casefold())
-        if len(proposed_keywords) >= 25:
+        if len(proposed_keywords) >= METADATA_MAX_KEYWORDS:
             break
 
     proposed_examples = list(current.get("example_queries") or [])
     seen_examples = {str(example).casefold() for example in proposed_examples}
     for question in questions:
-        cleaned = question.strip()
+        cleaned = question.strip()[:METADATA_MAX_EXAMPLE_QUERY_CHARS]
         if not cleaned:
             continue
         if _contains_forbidden_tool_reference(
@@ -2043,7 +2050,7 @@ def _build_fallback_suggestion(
             continue
         proposed_examples.append(cleaned)
         seen_examples.add(key)
-        if len(proposed_examples) >= 12:
+        if len(proposed_examples) >= METADATA_MAX_EXAMPLE_QUERIES:
             break
     proposed_examples = _sanitize_example_queries_no_tool_refs(
         proposed_examples,
@@ -2058,7 +2065,7 @@ def _build_fallback_suggestion(
         if marker not in description:
             description = f"{description} {marker}".strip()
 
-    proposed = {
+    proposed = enforce_metadata_limits({
         "tool_id": tool_id,
         "name": str(current.get("name") or "").strip(),
         "description": description,
@@ -2071,7 +2078,7 @@ def _build_fallback_suggestion(
         "unique_scope": str(current.get("unique_scope") or "").strip(),
         "geographic_scope": str(current.get("geographic_scope") or "").strip(),
         "excludes": _safe_string_list(current.get("excludes")),
-    }
+    })
     rationale = (
         f"Fallback-förslag baserat på {failed_count} misslyckade testfall: "
         "utökade nyckelord och exempelfrågor med återkommande termer."
@@ -2118,6 +2125,12 @@ async def _build_llm_suggestion(
         "- unique_scope: Vad som unikt avgränsar detta verktyg från liknande.\n"
         "- geographic_scope: Geografiskt omfång (t.ex. kommun, Sverige, Norden).\n"
         "- excludes: Lista med domänbegrepp som verktyget INTE hanterar (separationsstöd).\n"
+        "HÅRDA BEGRÄNSNINGAR (överskrid ALDRIG):\n"
+        f"- description: max {METADATA_MAX_DESCRIPTION_CHARS} tecken.\n"
+        f"- keywords: max {METADATA_MAX_KEYWORDS} stycken, max {METADATA_MAX_KEYWORD_CHARS} tecken/keyword.\n"
+        f"- example_queries: max {METADATA_MAX_EXAMPLE_QUERIES} stycken, max {METADATA_MAX_EXAMPLE_QUERY_CHARS} tecken/fråga.\n"
+        f"- excludes: max {METADATA_MAX_EXCLUDES} stycken.\n"
+        "Separation ska uppnås genom PRECISION, inte genom mer text.\n"
         "Returnera strikt JSON:\n"
         "{\n"
         '  "name": "string",\n'
@@ -2194,7 +2207,7 @@ async def _build_llm_suggestion(
             list(current.get("example_queries") or []),
             forbidden_markers=forbidden_markers,
         )
-        suggested = {
+        suggested = enforce_metadata_limits({
             "tool_id": tool_id,
             "name": str(parsed.get("name") or current.get("name") or "").strip(),
             "description": _prefer_swedish_text(
@@ -2222,7 +2235,7 @@ async def _build_llm_suggestion(
             ).strip(),
             "excludes": _safe_string_list(parsed.get("excludes"))
             or _safe_string_list(current.get("excludes")),
-        }
+        })
         rationale = _prefer_swedish_text(
             str(parsed.get("rationale") or "").strip(),
             fallback_rationale
@@ -2340,6 +2353,9 @@ def _enrich_metadata_suggestion_fields(
 
     if "tool_id" not in merged:
         merged["tool_id"] = str(current.get("tool_id") or "")
+    # Final safety net — enforce central limits on the merged output so that
+    # no suggestion exceeds the metadata budget regardless of source.
+    merged = enforce_metadata_limits(merged)
     return merged, enriched
 
 
@@ -3239,7 +3255,7 @@ async def suggest_intent_definition_improvements(
                 continue
             proposed_keywords.append(token)
             existing_set.add(token.casefold())
-            if len(proposed_keywords) >= 20:
+            if len(proposed_keywords) >= METADATA_MAX_KEYWORDS:
                 break
         proposed_description = str(current_definition.get("description") or "").strip()
         if sorted_tokens:

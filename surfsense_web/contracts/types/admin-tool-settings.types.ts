@@ -1,34 +1,52 @@
 import { z } from "zod";
 
+// ---------------------------------------------------------------------------
+// Central metadata field limits — must stay in sync with bigtool_store.py
+// ---------------------------------------------------------------------------
+export const METADATA_MAX_DESCRIPTION_CHARS = 300;
+export const METADATA_MAX_KEYWORDS = 20;
+export const METADATA_MAX_EXAMPLE_QUERIES = 10;
+export const METADATA_MAX_EXCLUDES = 15;
+export const METADATA_MAX_KEYWORD_CHARS = 40;
+export const METADATA_MAX_EXAMPLE_QUERY_CHARS = 120;
+export const METADATA_MAX_MAIN_IDENTIFIER_CHARS = 80;
+export const METADATA_MAX_CORE_ACTIVITY_CHARS = 120;
+export const METADATA_MAX_UNIQUE_SCOPE_CHARS = 120;
+export const METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS = 80;
+
 export const toolMetadataItem = z.object({
 	tool_id: z.string(),
 	name: z.string(),
-	description: z.string(),
-	keywords: z.array(z.string()),
-	example_queries: z.array(z.string()),
+	description: z.string().max(METADATA_MAX_DESCRIPTION_CHARS),
+	keywords: z.array(z.string().max(METADATA_MAX_KEYWORD_CHARS)).max(METADATA_MAX_KEYWORDS),
+	example_queries: z
+		.array(z.string().max(METADATA_MAX_EXAMPLE_QUERY_CHARS))
+		.max(METADATA_MAX_EXAMPLE_QUERIES),
 	category: z.string(),
 	base_path: z.string().nullable().optional(),
-	main_identifier: z.string().optional().default(""),
-	core_activity: z.string().optional().default(""),
-	unique_scope: z.string().optional().default(""),
-	geographic_scope: z.string().optional().default(""),
-	excludes: z.array(z.string()).optional().default([]),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 	has_override: z.boolean().optional().default(false),
 });
 
 export const toolMetadataUpdateItem = z.object({
 	tool_id: z.string(),
 	name: z.string(),
-	description: z.string(),
-	keywords: z.array(z.string()),
-	example_queries: z.array(z.string()),
+	description: z.string().max(METADATA_MAX_DESCRIPTION_CHARS),
+	keywords: z.array(z.string().max(METADATA_MAX_KEYWORD_CHARS)).max(METADATA_MAX_KEYWORDS),
+	example_queries: z
+		.array(z.string().max(METADATA_MAX_EXAMPLE_QUERY_CHARS))
+		.max(METADATA_MAX_EXAMPLE_QUERIES),
 	category: z.string(),
 	base_path: z.string().nullable().optional(),
-	main_identifier: z.string().optional().default(""),
-	core_activity: z.string().optional().default(""),
-	unique_scope: z.string().optional().default(""),
-	geographic_scope: z.string().optional().default(""),
-	excludes: z.array(z.string()).optional().default([]),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 });
 
 export const toolCategoryResponse = z.object({

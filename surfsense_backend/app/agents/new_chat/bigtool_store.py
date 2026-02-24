@@ -460,6 +460,26 @@ DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
 _TOOL_EMBED_CACHE: dict[tuple[str, str], tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
 _VECTOR_RECALL_TOP_K = 5
+
+# ---------------------------------------------------------------------------
+# Central metadata field limits
+# ---------------------------------------------------------------------------
+# These constants are the single source of truth for maximum sizes of tool
+# metadata fields.  All pipelines (admin UI, BSSS separation, LLM suggestions,
+# audit probes, evaluation fallback) MUST honour these limits so that no tool
+# gains an unfair scoring advantage by having more keywords or a longer
+# description than its neighbours.
+METADATA_MAX_DESCRIPTION_CHARS: int = 300
+METADATA_MAX_KEYWORDS: int = 20
+METADATA_MAX_EXAMPLE_QUERIES: int = 10
+METADATA_MAX_EXCLUDES: int = 15
+METADATA_MAX_KEYWORD_CHARS: int = 40
+METADATA_MAX_EXAMPLE_QUERY_CHARS: int = 120
+METADATA_MAX_MAIN_IDENTIFIER_CHARS: int = 80
+METADATA_MAX_CORE_ACTIVITY_CHARS: int = 120
+METADATA_MAX_UNIQUE_SCOPE_CHARS: int = 120
+METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS: int = 80
+METADATA_MAX_EMBEDDING_TEXT_CHARS: int = 800
 _LIVE_ROUTING_PHASES = {
     "shadow",
     "tool_gate",
@@ -495,6 +515,68 @@ def get_tool_embedding_context_split_fields() -> dict[str, list[str]]:
         "semantic": list(_TOOL_AWARE_SEMANTIC_EMBEDDING_CONTEXT_FIELDS),
         "structural": list(_TOOL_AWARE_STRUCTURAL_EMBEDDING_CONTEXT_FIELDS),
     }
+
+
+def enforce_metadata_limits(payload: dict[str, Any]) -> dict[str, Any]:
+    """Clamp all metadata fields in *payload* to the central limits.
+
+    Returns a new dict – the original is not mutated.
+    """
+    out = dict(payload)
+
+    # Description
+    desc = str(out.get("description") or "").strip()
+    if len(desc) > METADATA_MAX_DESCRIPTION_CHARS:
+        # Truncate at last sentence boundary within limit, or hard-cut
+        cut = desc[:METADATA_MAX_DESCRIPTION_CHARS]
+        last_dot = cut.rfind(".")
+        if last_dot > METADATA_MAX_DESCRIPTION_CHARS * 0.6:
+            desc = cut[: last_dot + 1]
+        else:
+            desc = cut.rstrip()
+    out["description"] = desc
+
+    # Keywords
+    raw_kw = out.get("keywords")
+    if isinstance(raw_kw, list):
+        clamped: list[str] = []
+        for kw in raw_kw:
+            item = str(kw).strip()[:METADATA_MAX_KEYWORD_CHARS]
+            if item:
+                clamped.append(item)
+            if len(clamped) >= METADATA_MAX_KEYWORDS:
+                break
+        out["keywords"] = clamped
+
+    # Example queries
+    raw_eq = out.get("example_queries")
+    if isinstance(raw_eq, list):
+        clamped_eq: list[str] = []
+        for eq in raw_eq:
+            item = str(eq).strip()[:METADATA_MAX_EXAMPLE_QUERY_CHARS]
+            if item:
+                clamped_eq.append(item)
+            if len(clamped_eq) >= METADATA_MAX_EXAMPLE_QUERIES:
+                break
+        out["example_queries"] = clamped_eq
+
+    # Excludes
+    raw_ex = out.get("excludes")
+    if isinstance(raw_ex, (list, tuple)):
+        out["excludes"] = [str(e).strip() for e in raw_ex if str(e).strip()][:METADATA_MAX_EXCLUDES]
+
+    # Identity fields
+    for field, limit in (
+        ("main_identifier", METADATA_MAX_MAIN_IDENTIFIER_CHARS),
+        ("core_activity", METADATA_MAX_CORE_ACTIVITY_CHARS),
+        ("unique_scope", METADATA_MAX_UNIQUE_SCOPE_CHARS),
+        ("geographic_scope", METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS),
+    ):
+        val = out.get(field)
+        if isinstance(val, str) and len(val) > limit:
+            out[field] = val[:limit].rstrip()
+
+    return out
 
 
 def _normalize_text(text: str) -> str:
@@ -735,7 +817,7 @@ def _keywords_from_text(text: str, *, max_keywords: int = 18) -> list[str]:
 def _unique_keywords(
     keywords: Iterable[str],
     *,
-    max_keywords: int = 20,
+    max_keywords: int = METADATA_MAX_KEYWORDS,
 ) -> list[str]:
     results: list[str] = []
     seen: set[str] = set()
@@ -787,7 +869,7 @@ def _keywords_for_mcp_tool(
             ]
         )
 
-    return _unique_keywords(generated, max_keywords=24)
+    return _unique_keywords(generated, max_keywords=METADATA_MAX_KEYWORDS)
 
 
 def _category_for_namespace(namespace: tuple[str, ...]) -> str:
@@ -1018,18 +1100,29 @@ def _score_entry_components(
     name_norm = _normalize_text(entry.name)
     desc_norm = _normalize_text(entry.description)
     name_match_hits = 1 if name_norm and name_norm in query_norm else 0
-    keyword_hits = 0
+    keyword_hits_raw = 0
     for keyword in entry.keywords:
         if _normalize_text(keyword) in query_norm:
-            keyword_hits += 1
-    description_hits = 0
-    for token in query_tokens:
-        if token and token in desc_norm:
-            description_hits += 1
-    example_hits = 0
+            keyword_hits_raw += 1
+    # Normalize keyword hits by count so that tools with more keywords do not
+    # gain an unfair scoring advantage over tools with fewer keywords.
+    keyword_count = max(1, len(entry.keywords))
+    keyword_hits = keyword_hits_raw / keyword_count
+
+    description_tokens = set(_tokenize(desc_norm))
+    description_hits_raw = len(query_tokens & description_tokens) if query_tokens else 0
+    # Normalize description hits by token count so that longer descriptions do
+    # not produce inflated scores.
+    description_token_count = max(1, len(description_tokens))
+    description_hits = description_hits_raw / description_token_count
+
+    example_hits_raw = 0
     for example in entry.example_queries:
         if _normalize_text(example) in query_norm:
-            example_hits += 1
+            example_hits_raw += 1
+    example_count = max(1, len(entry.example_queries))
+    example_hits = example_hits_raw / example_count
+
     lexical_score = (
         (name_match_hits * tuning.name_match_weight)
         + (keyword_hits * tuning.keyword_weight)
@@ -1038,9 +1131,12 @@ def _score_entry_components(
     )
     return {
         "name_match_hits": int(name_match_hits),
-        "keyword_hits": int(keyword_hits),
-        "description_hits": int(description_hits),
-        "example_hits": int(example_hits),
+        "keyword_hits": float(keyword_hits),
+        "keyword_hits_raw": int(keyword_hits_raw),
+        "description_hits": float(description_hits),
+        "description_hits_raw": int(description_hits_raw),
+        "example_hits": float(example_hits),
+        "example_hits_raw": int(example_hits_raw),
         "lexical_score": float(lexical_score),
     }
 
@@ -1329,8 +1425,14 @@ def _build_tool_semantic_embedding_text(entry: ToolIndexEntry) -> str:
     # embedding vectors are pushed apart for tools sharing a namespace.
     exclusions = _get_contrastive_exclusions(entry)
     if exclusions:
-        return build_contrastive_description(entry)
-    return _build_rerank_text(entry)
+        text = build_contrastive_description(entry)
+    else:
+        text = _build_rerank_text(entry)
+    # Cap the embedding text so that tools with verbose metadata do not
+    # dominate the embedding space.
+    if len(text) > METADATA_MAX_EMBEDDING_TEXT_CHARS:
+        text = text[:METADATA_MAX_EMBEDDING_TEXT_CHARS].rstrip()
+    return text
 
 
 def _build_tool_structural_embedding_text(
@@ -2095,9 +2197,29 @@ def build_tool_index(
                 metadata=metadata,
                 description=description,
             )
-            keywords = _unique_keywords([*keywords, *inferred_keywords], max_keywords=24)
+            keywords = _unique_keywords([*keywords, *inferred_keywords], max_keywords=METADATA_MAX_KEYWORDS)
             if str(category or "").strip().lower() in {"", "general"}:
                 category = _category_for_namespace(namespace)
+        # Enforce central metadata limits before building the entry so that
+        # every tool in the index respects the same field-size budget.
+        _clamped = enforce_metadata_limits({
+            "description": description,
+            "keywords": keywords,
+            "example_queries": example_queries,
+            "excludes": list(excludes),
+            "main_identifier": main_identifier,
+            "core_activity": core_activity,
+            "unique_scope": unique_scope,
+            "geographic_scope": geographic_scope,
+        })
+        description = _clamped["description"]
+        keywords = _clamped["keywords"]
+        example_queries = _clamped["example_queries"]
+        excludes = tuple(_clamped.get("excludes") or ())
+        main_identifier = _clamped.get("main_identifier", "")
+        core_activity = _clamped.get("core_activity", "")
+        unique_scope = _clamped.get("unique_scope", "")
+        geographic_scope = _clamped.get("geographic_scope", "")
         entry = ToolIndexEntry(
             tool_id=tool_id,
             namespace=namespace,

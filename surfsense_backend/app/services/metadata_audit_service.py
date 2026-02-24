@@ -10,7 +10,11 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.new_chat.bigtool_store import (
+    METADATA_MAX_DESCRIPTION_CHARS,
+    METADATA_MAX_EXAMPLE_QUERIES,
+    METADATA_MAX_KEYWORDS,
     ToolIndexEntry,
+    enforce_metadata_limits,
     get_tool_embedding_context_split_fields,
     get_tool_embedding_context_fields,
     get_vector_recall_top_k,
@@ -412,7 +416,7 @@ def _query_domain_terms(entry: ToolIndexEntry, *, limit: int = 80) -> set[str]:
             if len(terms) >= effective_limit:
                 return
 
-    for keyword in list(entry.keywords or [])[:30]:
+    for keyword in list(entry.keywords or [])[:METADATA_MAX_KEYWORDS]:
         _extend(str(keyword))
         if len(terms) >= effective_limit:
             break
@@ -2172,7 +2176,7 @@ def _fallback_intent_metadata_suggestion(
             continue
         keywords.append(token)
         seen.add(token.casefold())
-        if len(keywords) >= 25:
+        if len(keywords) >= METADATA_MAX_KEYWORDS:
             break
     description = _normalize_text(current.get("description"))
     if wrong_intents:
@@ -2188,6 +2192,7 @@ def _fallback_intent_metadata_suggestion(
         "priority": int(current.get("priority") or 500),
         "enabled": bool(current.get("enabled", True)),
     }
+    proposed = enforce_metadata_limits(proposed)
     rationale = (
         "Metadataforslag baserat pa granskade intent-kollisioner: "
         "forstarkt nyckelord och tydligare avgransning mot forvaxlade intents."
@@ -2216,7 +2221,7 @@ def _fallback_agent_metadata_suggestion(
             continue
         keywords.append(token)
         seen.add(token.casefold())
-        if len(keywords) >= 25:
+        if len(keywords) >= METADATA_MAX_KEYWORDS:
             break
     description = _normalize_text(current.get("description"))
     if wrong_agents:
@@ -2231,6 +2236,7 @@ def _fallback_agent_metadata_suggestion(
         "prompt_key": _normalize_text(current.get("prompt_key")) or None,
         "namespace": _safe_string_list(current.get("namespace")),
     }
+    proposed = enforce_metadata_limits(proposed)
     rationale = (
         "Metadataforslag baserat pa granskade agent-kollisioner: "
         "forstarkt nyckelord och tydligare avgransning mot forvaxlade agenter."
@@ -2266,6 +2272,7 @@ async def _build_llm_intent_metadata_suggestion(
         '  "enabled": true,\n'
         '  "rationale": "kort motivering pa svenska"\n'
         "}\n"
+        f"Begränsningar: beskrivning max {METADATA_MAX_DESCRIPTION_CHARS} tecken, keywords max {METADATA_MAX_KEYWORDS} stycken.\n"
         "Ingen markdown."
     )
     payload = {
@@ -2333,6 +2340,7 @@ async def _build_llm_agent_metadata_suggestion(
         '  "keywords": ["svenska termer"],\n'
         '  "rationale": "kort motivering pa svenska"\n'
         "}\n"
+        f"Begränsningar: beskrivning max {METADATA_MAX_DESCRIPTION_CHARS} tecken, keywords max {METADATA_MAX_KEYWORDS} stycken.\n"
         "Ingen markdown."
     )
     payload = {
