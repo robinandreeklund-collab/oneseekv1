@@ -2861,6 +2861,11 @@ def _metadata_payload_from_item(item: ToolMetadataUpdateItem) -> dict[str, Any]:
             "example_queries": item.example_queries,
             "category": item.category,
             "base_path": item.base_path,
+            "main_identifier": item.main_identifier,
+            "core_activity": item.core_activity,
+            "unique_scope": item.unique_scope,
+            "geographic_scope": item.geographic_scope,
+            "excludes": item.excludes,
         }
     )
 
@@ -2874,6 +2879,11 @@ def _metadata_payload_from_entry(entry) -> dict[str, Any]:
             "example_queries": list(entry.example_queries),
             "category": entry.category,
             "base_path": entry.base_path,
+            "main_identifier": getattr(entry, "main_identifier", "") or "",
+            "core_activity": getattr(entry, "core_activity", "") or "",
+            "unique_scope": getattr(entry, "unique_scope", "") or "",
+            "geographic_scope": getattr(entry, "geographic_scope", "") or "",
+            "excludes": list(getattr(entry, "excludes", ()) or ()),
         }
     )
 
@@ -2951,6 +2961,11 @@ def _tool_item_from_entry(entry, *, has_override: bool) -> ToolMetadataItem:
         example_queries=list(entry.example_queries),
         category=entry.category,
         base_path=entry.base_path,
+        main_identifier=getattr(entry, "main_identifier", "") or "",
+        core_activity=getattr(entry, "core_activity", "") or "",
+        unique_scope=getattr(entry, "unique_scope", "") or "",
+        geographic_scope=getattr(entry, "geographic_scope", "") or "",
+        excludes=list(getattr(entry, "excludes", ()) or ()),
         has_override=has_override,
     )
 

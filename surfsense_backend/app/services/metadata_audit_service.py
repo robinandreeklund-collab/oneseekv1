@@ -402,29 +402,42 @@ def _has_time_or_year_reference(query: str) -> bool:
 
 def _query_domain_terms(entry: ToolIndexEntry, *, limit: int = 80) -> set[str]:
     terms: set[str] = set()
+    effective_limit = max(10, int(limit))
 
     def _extend(value: str) -> None:
         for token in _tokenize(value):
             if token in _GENERIC_QUERY_TERMS:
                 continue
             terms.add(token)
-            if len(terms) >= max(10, int(limit)):
+            if len(terms) >= effective_limit:
                 return
 
     for keyword in list(entry.keywords or [])[:30]:
         _extend(str(keyword))
-        if len(terms) >= max(10, int(limit)):
+        if len(terms) >= effective_limit:
             break
-    if len(terms) < max(10, int(limit)):
+    if len(terms) < effective_limit:
         _extend(entry.category or "")
-    if len(terms) < max(10, int(limit)):
+    if len(terms) < effective_limit:
         _extend(entry.description or "")
-    if len(terms) < max(10, int(limit)):
+    if len(terms) < effective_limit:
         _extend(entry.name or "")
+    if len(terms) < effective_limit:
+        _extend(getattr(entry, "main_identifier", "") or "")
+    if len(terms) < effective_limit:
+        _extend(getattr(entry, "core_activity", "") or "")
+    if len(terms) < effective_limit:
+        _extend(getattr(entry, "unique_scope", "") or "")
+    if len(terms) < effective_limit:
+        _extend(getattr(entry, "geographic_scope", "") or "")
     for sample in list(entry.example_queries or [])[:8]:
-        if len(terms) >= max(10, int(limit)):
+        if len(terms) >= effective_limit:
             break
         _extend(str(sample))
+    for exclude_term in list(getattr(entry, "excludes", ()) or ()):
+        if len(terms) >= effective_limit:
+            break
+        _extend(str(exclude_term))
     return terms
 
 
@@ -915,14 +928,25 @@ async def _generate_probe_queries_for_tool(
         "Q1 2025",
         "under sommaren",
     ]
+    tool_context: dict[str, Any] = {
+        "name": entry.name,
+        "category": entry.category,
+        "description": entry.description,
+        "keywords": entry.keywords,
+        "example_queries": entry.example_queries[:8],
+    }
+    if getattr(entry, "main_identifier", ""):
+        tool_context["main_identifier"] = entry.main_identifier
+    if getattr(entry, "core_activity", ""):
+        tool_context["core_activity"] = entry.core_activity
+    if getattr(entry, "unique_scope", ""):
+        tool_context["unique_scope"] = entry.unique_scope
+    if getattr(entry, "geographic_scope", ""):
+        tool_context["geographic_scope"] = entry.geographic_scope
+    if getattr(entry, "excludes", ()):
+        tool_context["excludes"] = list(entry.excludes)
     payload = {
-        "tool_context": {
-            "name": entry.name,
-            "category": entry.category,
-            "description": entry.description,
-            "keywords": entry.keywords,
-            "example_queries": entry.example_queries[:8],
-        },
+        "tool_context": tool_context,
         "target_quality_profile": {
             "language": "naturlig svenska",
             "style": "konkret och verklighetsnära användarfråga",

@@ -1894,6 +1894,11 @@ def _serialize_tool(entry: ToolIndexEntry) -> dict[str, Any]:
         "description": entry.description,
         "keywords": list(entry.keywords),
         "example_queries": list(entry.example_queries),
+        "main_identifier": entry.main_identifier or "",
+        "core_activity": entry.core_activity or "",
+        "unique_scope": entry.unique_scope or "",
+        "geographic_scope": entry.geographic_scope or "",
+        "excludes": list(entry.excludes) if entry.excludes else [],
     }
 
 
@@ -2061,6 +2066,11 @@ def _build_fallback_suggestion(
         "example_queries": proposed_examples,
         "category": str(current.get("category") or "").strip(),
         "base_path": current.get("base_path"),
+        "main_identifier": str(current.get("main_identifier") or "").strip(),
+        "core_activity": str(current.get("core_activity") or "").strip(),
+        "unique_scope": str(current.get("unique_scope") or "").strip(),
+        "geographic_scope": str(current.get("geographic_scope") or "").strip(),
+        "excludes": _safe_string_list(current.get("excludes")),
     }
     rationale = (
         f"Fallback-förslag baserat på {failed_count} misslyckade testfall: "
@@ -2101,6 +2111,13 @@ async def _build_llm_suggestion(
         "Exempelfrågor måste vara naturlig svenska och skrivna som riktiga användarfrågor.\n"
         "Strikt förbud: tool_id, toolnamn, funktionsnamn, endpoint- eller interna identifierare i exempelfrågor.\n"
         "Använd aldrig snake_case eller identifierare med underscore i exempelfrågor.\n"
+        "Fälten main_identifier, core_activity, unique_scope, geographic_scope och excludes är "
+        "separata identitetsfält som används för embedding-separation och retrieval-precision.\n"
+        "- main_identifier: Vad verktyget fundamentalt är/representerar.\n"
+        "- core_activity: Vad verktyget gör / dess huvudsakliga funktion.\n"
+        "- unique_scope: Vad som unikt avgränsar detta verktyg från liknande.\n"
+        "- geographic_scope: Geografiskt omfång (t.ex. kommun, Sverige, Norden).\n"
+        "- excludes: Lista med domänbegrepp som verktyget INTE hanterar (separationsstöd).\n"
         "Returnera strikt JSON:\n"
         "{\n"
         '  "name": "string",\n'
@@ -2108,6 +2125,11 @@ async def _build_llm_suggestion(
         '  "keywords": ["svenska termer"],\n'
         '  "example_queries": ["svenska frågor"],\n'
         '  "category": "string",\n'
+        '  "main_identifier": "string på svenska",\n'
+        '  "core_activity": "string på svenska",\n'
+        '  "unique_scope": "string på svenska",\n'
+        '  "geographic_scope": "string på svenska",\n'
+        '  "excludes": ["svenska termer"],\n'
         '  "rationale": "kort motivering på svenska"\n'
         "}\n"
         "Ingen markdown."
@@ -2186,6 +2208,20 @@ async def _build_llm_suggestion(
                 parsed.get("category") or current.get("category") or ""
             ).strip(),
             "base_path": current.get("base_path"),
+            "main_identifier": str(
+                parsed.get("main_identifier") or current.get("main_identifier") or ""
+            ).strip(),
+            "core_activity": str(
+                parsed.get("core_activity") or current.get("core_activity") or ""
+            ).strip(),
+            "unique_scope": str(
+                parsed.get("unique_scope") or current.get("unique_scope") or ""
+            ).strip(),
+            "geographic_scope": str(
+                parsed.get("geographic_scope") or current.get("geographic_scope") or ""
+            ).strip(),
+            "excludes": _safe_string_list(parsed.get("excludes"))
+            or _safe_string_list(current.get("excludes")),
         }
         rationale = _prefer_swedish_text(
             str(parsed.get("rationale") or "").strip(),
@@ -2207,6 +2243,11 @@ def _metadata_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
         "example_queries": _safe_string_list(left.get("example_queries")),
         "category": str(left.get("category") or "").strip(),
         "base_path": (str(left.get("base_path")).strip() if left.get("base_path") else None),
+        "main_identifier": str(left.get("main_identifier") or "").strip(),
+        "core_activity": str(left.get("core_activity") or "").strip(),
+        "unique_scope": str(left.get("unique_scope") or "").strip(),
+        "geographic_scope": str(left.get("geographic_scope") or "").strip(),
+        "excludes": _safe_string_list(left.get("excludes")),
     }
     right_payload = {
         "name": str(right.get("name") or "").strip(),
@@ -2217,6 +2258,11 @@ def _metadata_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
         "base_path": (
             str(right.get("base_path")).strip() if right.get("base_path") else None
         ),
+        "main_identifier": str(right.get("main_identifier") or "").strip(),
+        "core_activity": str(right.get("core_activity") or "").strip(),
+        "unique_scope": str(right.get("unique_scope") or "").strip(),
+        "geographic_scope": str(right.get("geographic_scope") or "").strip(),
+        "excludes": _safe_string_list(right.get("excludes")),
     }
     return left_payload == right_payload
 
@@ -2271,6 +2317,26 @@ def _enrich_metadata_suggestion_fields(
         enriched = True
     else:
         merged["example_queries"] = proposed_examples
+
+    # Propagate identity fields from proposed or fallback
+    for field in ("main_identifier", "core_activity", "unique_scope", "geographic_scope"):
+        current_val = str(current.get(field) or "").strip()
+        proposed_val = str(merged.get(field) or "").strip()
+        fallback_val = str(fallback.get(field) or "").strip()
+        if proposed_val == current_val and fallback_val and fallback_val != current_val:
+            merged[field] = fallback_val
+            enriched = True
+        elif proposed_val:
+            merged[field] = proposed_val
+
+    current_excludes = _safe_string_list(current.get("excludes"))
+    proposed_excludes = _safe_string_list(merged.get("excludes"))
+    fallback_excludes = _safe_string_list(fallback.get("excludes"))
+    if proposed_excludes == current_excludes and fallback_excludes != current_excludes:
+        merged["excludes"] = fallback_excludes
+        enriched = True
+    elif proposed_excludes:
+        merged["excludes"] = proposed_excludes
 
     if "tool_id" not in merged:
         merged["tool_id"] = str(current.get("tool_id") or "")

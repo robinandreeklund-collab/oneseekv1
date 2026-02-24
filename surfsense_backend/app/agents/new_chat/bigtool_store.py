@@ -58,6 +58,11 @@ class ToolIndexEntry:
     semantic_embedding: list[float] | None = None
     structural_embedding: list[float] | None = None
     base_path: str | None = None
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: tuple[str, ...] = ()
 
 
 TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
@@ -1044,12 +1049,22 @@ def _build_rerank_text(entry: ToolIndexEntry) -> str:
     parts: list[str] = []
     if entry.name:
         parts.append(entry.name)
+    if entry.main_identifier:
+        parts.append(entry.main_identifier)
+    if entry.core_activity:
+        parts.append(entry.core_activity)
     if entry.description:
         parts.append(entry.description)
     if entry.keywords:
         parts.append("Keywords: " + ", ".join(entry.keywords))
+    if entry.unique_scope:
+        parts.append("Scope: " + entry.unique_scope)
+    if entry.geographic_scope:
+        parts.append("Geography: " + entry.geographic_scope)
     if entry.example_queries:
         parts.append("Examples: " + " | ".join(entry.example_queries))
+    if entry.excludes:
+        parts.append("Excludes: " + ", ".join(entry.excludes))
     return "\n".join(part for part in parts if part)
 
 
@@ -1173,23 +1188,38 @@ def build_contrastive_description(entry: ToolIndexEntry) -> str:
 
     Template:
         [NAME]
+        [MAIN_IDENTIFIER]
+        [CORE_ACTIVITY]
         [DESCRIPTION]
         Keywords: [keywords]
+        Scope: [unique_scope]
+        Geography: [geographic_scope]
         Examples: [example_queries]
-        Excludes: [contrastive exclusion terms]
+        Excludes: [contrastive exclusion terms + metadata excludes]
     """
     parts: list[str] = []
     if entry.name:
         parts.append(entry.name)
+    if entry.main_identifier:
+        parts.append(entry.main_identifier)
+    if entry.core_activity:
+        parts.append(entry.core_activity)
     if entry.description:
         parts.append(entry.description)
     if entry.keywords:
         parts.append("Keywords: " + ", ".join(entry.keywords))
+    if entry.unique_scope:
+        parts.append("Scope: " + entry.unique_scope)
+    if entry.geographic_scope:
+        parts.append("Geography: " + entry.geographic_scope)
     if entry.example_queries:
         parts.append("Examples: " + " | ".join(entry.example_queries))
+    # Merge contrastive exclusions with metadata-level excludes
     exclusions = _get_contrastive_exclusions(entry)
-    if exclusions:
-        parts.append("Excludes: " + ", ".join(exclusions))
+    metadata_excludes = list(entry.excludes) if entry.excludes else []
+    all_excludes = list(dict.fromkeys([*exclusions, *metadata_excludes]))
+    if all_excludes:
+        parts.append("Excludes: " + ", ".join(all_excludes))
     return "\n".join(part for part in parts if part)
 
 
@@ -1992,6 +2022,12 @@ def build_tool_index(
         if _is_weather_tool(tool_id) and not tool_id.startswith("smhi_"):
             # Keep weather tools grouped together across providers.
             category = "weather"
+        # New metadata identity fields (populated from overrides)
+        main_identifier = ""
+        core_activity = ""
+        unique_scope = ""
+        geographic_scope = ""
+        excludes: tuple[str, ...] = ()
         if metadata_overrides and tool_id in metadata_overrides:
             override = metadata_overrides[tool_id]
             override_name = str(override.get("name") or "").strip()
@@ -2023,6 +2059,25 @@ def build_tool_index(
                     for example in override_examples
                     if isinstance(example, str) and example.strip()
                 ]
+            override_main_identifier = str(override.get("main_identifier") or "").strip()
+            if override_main_identifier:
+                main_identifier = override_main_identifier
+            override_core_activity = str(override.get("core_activity") or "").strip()
+            if override_core_activity:
+                core_activity = override_core_activity
+            override_unique_scope = str(override.get("unique_scope") or "").strip()
+            if override_unique_scope:
+                unique_scope = override_unique_scope
+            override_geographic_scope = str(override.get("geographic_scope") or "").strip()
+            if override_geographic_scope:
+                geographic_scope = override_geographic_scope
+            override_excludes = override.get("excludes")
+            if isinstance(override_excludes, list):
+                excludes = tuple(
+                    item.strip()
+                    for item in override_excludes
+                    if isinstance(item, str) and item.strip()
+                )
         if _is_weather_tool(tool_id) and str(category or "").strip().lower() in {
             "",
             "weather",
@@ -2051,6 +2106,11 @@ def build_tool_index(
             keywords=keywords,
             example_queries=example_queries,
             category=category,
+            main_identifier=main_identifier,
+            core_activity=core_activity,
+            unique_scope=unique_scope,
+            geographic_scope=geographic_scope,
+            excludes=excludes,
         )
         tool_schema = _tool_input_schema(tool)
         semantic_embedding_text = _build_tool_semantic_embedding_text(entry)
@@ -2082,6 +2142,11 @@ def build_tool_index(
                 semantic_embedding=semantic_embedding,
                 structural_embedding=structural_embedding,
                 base_path=base_path,
+                main_identifier=entry.main_identifier,
+                core_activity=entry.core_activity,
+                unique_scope=entry.unique_scope,
+                geographic_scope=entry.geographic_scope,
+                excludes=entry.excludes,
             )
         )
     return entries

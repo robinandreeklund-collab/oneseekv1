@@ -238,9 +238,14 @@ def _tool_semantic_text(payload: dict[str, Any]) -> str:
         [
             _normalize_text(payload.get("tool_id")),
             _normalize_text(payload.get("name")),
+            _normalize_text(payload.get("main_identifier")),
+            _normalize_text(payload.get("core_activity")),
             _normalize_text(payload.get("description")),
             " ".join(_safe_string_list(payload.get("keywords"))),
+            _normalize_text(payload.get("unique_scope")),
+            _normalize_text(payload.get("geographic_scope")),
             " ".join(_safe_string_list(payload.get("example_queries"))),
+            " ".join(_safe_string_list(payload.get("excludes"))),
         ]
     ).strip()
 
@@ -254,6 +259,11 @@ def _serialize_tool_entry(entry: ToolIndexEntry) -> dict[str, Any]:
         "example_queries": _safe_string_list(getattr(entry, "example_queries", [])),
         "category": _normalize_text(getattr(entry, "category", "")),
         "base_path": _normalize_text(getattr(entry, "base_path", "")) or None,
+        "main_identifier": _normalize_text(getattr(entry, "main_identifier", "")),
+        "core_activity": _normalize_text(getattr(entry, "core_activity", "")),
+        "unique_scope": _normalize_text(getattr(entry, "unique_scope", "")),
+        "geographic_scope": _normalize_text(getattr(entry, "geographic_scope", "")),
+        "excludes": _safe_string_list(getattr(entry, "excludes", ())),
     }
 
 
