@@ -2102,13 +2102,17 @@ _NAMESPACE_FULL_EXPOSURE_THRESHOLD = 30
 AGENT_NAMESPACE_MAP: dict[str, list[tuple[str, ...]]] = {
     "trafik": [("tools", "trafik")],
     "weather": [("tools", "weather")],
+    "väder": [("tools", "weather")],
     "statistics": [("tools", "statistics")],
+    "statistik": [("tools", "statistics")],
     "bolag": [("tools", "bolag")],
     "kartor": [("tools", "kartor")],
     "riksdagen": [("tools", "politik")],
     "marketplace": [("tools", "marketplace")],
+    "marknad": [("tools", "marketplace")],
     "media": [("tools", "action", "media")],
     "code": [("tools", "code")],
+    "kod": [("tools", "code")],
 }
 
 

@@ -156,6 +156,10 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
         [("tools", "knowledge")],
         [("tools", "action"), ("tools", "statistics"), ("tools", "general")],
     ),
+    "kunskap": (
+        [("tools", "knowledge")],
+        [("tools", "action"), ("tools", "statistics"), ("tools", "general")],
+    ),
     "action": (
         [("tools", "action")],
         [
@@ -165,7 +169,20 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
             ("tools", "general"),
         ],
     ),
+    "åtgärd": (
+        [("tools", "action")],
+        [
+            ("tools", "knowledge"),
+            ("tools", "statistics"),
+            ("tools", "kartor"),
+            ("tools", "general"),
+        ],
+    ),
     "weather": (
+        [("tools", "weather")],
+        [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
+    ),
+    "väder": (
         [("tools", "weather")],
         [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
     ),
@@ -186,6 +203,10 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
         [("tools", "statistics")],
         [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
     ),
+    "statistik": (
+        [("tools", "statistics")],
+        [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
+    ),
     "browser": (
         [("tools", "knowledge", "web")],
         [
@@ -195,7 +216,25 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
             ("tools", "general"),
         ],
     ),
+    "webb": (
+        [("tools", "knowledge", "web")],
+        [
+            ("tools", "knowledge"),
+            ("tools", "action"),
+            ("tools", "statistics"),
+            ("tools", "general"),
+        ],
+    ),
     "code": (
+        [("tools", "code")],
+        [
+            ("tools", "general"),
+            ("tools", "knowledge"),
+            ("tools", "action"),
+            ("tools", "statistics"),
+        ],
+    ),
+    "kod": (
         [("tools", "code")],
         [
             ("tools", "general"),
@@ -225,7 +264,15 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
         [("tools", "marketplace")],
         [("tools", "knowledge"), ("tools", "general")],
     ),
+    "marknad": (
+        [("tools", "marketplace")],
+        [("tools", "knowledge"), ("tools", "general")],
+    ),
     "synthesis": (
+        [("tools", "knowledge")],
+        [("tools", "statistics"), ("tools", "action"), ("tools", "general")],
+    ),
+    "syntes": (
         [("tools", "knowledge")],
         [("tools", "statistics"), ("tools", "action"), ("tools", "general")],
     ),
