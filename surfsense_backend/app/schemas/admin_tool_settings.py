@@ -321,6 +321,20 @@ class MetadataCatalogStabilityLockActionResponse(BaseModel):
     )
 
 
+class MetadataCatalogResetRequest(BaseModel):
+    search_space_id: int | None = None
+    reason: str | None = None
+
+
+class MetadataCatalogResetResponse(BaseModel):
+    search_space_id: int
+    cleared_tool_overrides: int = 0
+    cleared_intent_overrides: int = 0
+    cleared_agent_overrides: int = 0
+    cleared_lock_pairs: int = 0
+    catalog: MetadataCatalogResponse
+
+
 class ToolRetrievalTuningResponse(BaseModel):
     tuning: ToolRetrievalTuning
 

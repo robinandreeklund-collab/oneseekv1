@@ -364,6 +364,23 @@ export const metadataCatalogStabilityLockActionResponse = z.object({
 	stability_locks: metadataCatalogResponse.shape.stability_locks,
 });
 
+export const metadataCatalogResetRequest = z.object({
+	search_space_id: z.number().nullable().optional(),
+	reason: z.string().nullable().optional(),
+});
+
+export const metadataCatalogResetResponse = z.object({
+	search_space_id: z.number(),
+	cleared_tool_overrides: z.number().int().optional().default(0),
+	cleared_intent_overrides: z.number().int().optional().default(0),
+	cleared_agent_overrides: z.number().int().optional().default(0),
+	cleared_lock_pairs: z.number().int().optional().default(0),
+	catalog: metadataCatalogResponse,
+});
+
+export type MetadataCatalogResetRequest = z.input<typeof metadataCatalogResetRequest>;
+export type MetadataCatalogResetResponse = z.infer<typeof metadataCatalogResetResponse>;
+
 export const metadataCatalogAuditConfusionPair = z.object({
 	expected_label: z.string(),
 	predicted_label: z.string(),

@@ -21,8 +21,11 @@ from app.agents.new_chat.bigtool_store import (
 )
 from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
 from app.db import (
+    GlobalAgentPromptOverride,
+    GlobalIntentDefinition,
     GlobalToolEvaluationStageRun,
     GlobalToolEvaluationRun,
+    GlobalToolMetadataOverride,
     GlobalToolMetadataOverrideHistory,
     SearchSpaceMembership,
     User,
@@ -43,6 +46,8 @@ from app.schemas.admin_tool_settings import (
     MetadataCatalogStabilityLockActionResponse,
     MetadataCatalogSeparationRequest,
     MetadataCatalogSeparationResponse,
+    MetadataCatalogResetRequest,
+    MetadataCatalogResetResponse,
     MetadataCatalogResponse,
     MetadataCatalogUpdateRequest,
     ToolAutoLoopJobStatusResponse,
@@ -150,6 +155,7 @@ from app.services.tool_retrieval_tuning_service import (
     upsert_global_tool_retrieval_tuning,
 )
 from app.users import current_active_user
+from sqlalchemy import delete
 from sqlalchemy.future import select
 
 logger = logging.getLogger(__name__)
@@ -4375,6 +4381,112 @@ async def update_tool_settings_metadata_catalog(
         session,
         user,
         search_space_id=resolved_search_space_id,
+    )
+
+
+@router.post(
+    "/tool-settings/metadata-catalog/reset",
+    response_model=MetadataCatalogResetResponse,
+)
+async def reset_metadata_catalog(
+    payload: MetadataCatalogResetRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Clear all metadata overrides, separation pair locks, and stability locks.
+
+    Returns the metadata catalog in its default (code-defined) state.
+    """
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=payload.search_space_id,
+    )
+
+    reason = str(payload.reason or "").strip() or "manual reset from metadata catalog UI"
+    logger.warning(
+        "Metadata catalog reset requested by user_id=%s search_space_id=%s reason=%s",
+        str(user.id),
+        int(resolved_search_space_id),
+        reason,
+    )
+
+    try:
+        # 1. Count and delete tool metadata overrides
+        tool_result = await session.execute(select(GlobalToolMetadataOverride))
+        tool_rows = tool_result.scalars().all()
+        cleared_tool_overrides = len(tool_rows)
+        if cleared_tool_overrides > 0:
+            await session.execute(delete(GlobalToolMetadataOverride))
+
+        # 2. Count and delete intent definition overrides
+        intent_result = await session.execute(select(GlobalIntentDefinition))
+        intent_rows = intent_result.scalars().all()
+        cleared_intent_overrides = len(intent_rows)
+        if cleared_intent_overrides > 0:
+            await session.execute(delete(GlobalIntentDefinition))
+
+        # 3. Count and delete agent metadata overrides (stored as prompt overrides
+        #    with key prefix "agent.metadata.")
+        agent_prefix = "agent.metadata."
+        agent_result = await session.execute(
+            select(GlobalAgentPromptOverride).filter(
+                GlobalAgentPromptOverride.key.like(f"{agent_prefix}%")
+            )
+        )
+        agent_rows = agent_result.scalars().all()
+        cleared_agent_overrides = len(agent_rows)
+        for row in agent_rows:
+            await session.delete(row)
+
+        # 4. Clear separation pair locks and stability locks from lock registry
+        lock_registry = await _load_metadata_separation_lock_registry(session)
+        cleared_lock_pairs = len(lock_registry.get("pair_locks") or [])
+        empty_registry = normalize_metadata_separation_lock_registry({
+            "lock_mode_enabled": False,
+            "stability_lock_mode_enabled": False,
+            "stability_auto_lock_enabled": False,
+            "pair_locks": [],
+            "stability_item_locks": {},
+            "stability_config": {},
+        })
+        await upsert_metadata_separation_lock_registry(
+            session,
+            empty_registry,
+            updated_by_id=user.id,
+        )
+
+        await session.commit()
+        clear_tool_caches()
+        try:
+            from app.agents.new_chat.supervisor_agent import clear_agent_combo_cache
+
+            clear_agent_combo_cache()
+        except Exception:
+            logger.exception("Failed to clear agent combo cache after metadata reset")
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to reset metadata catalog")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reset metadata catalog: {exc!s}",
+        ) from exc
+
+    catalog = await _build_metadata_catalog_response(
+        session,
+        user,
+        search_space_id=resolved_search_space_id,
+    )
+    return MetadataCatalogResetResponse(
+        search_space_id=resolved_search_space_id,
+        cleared_tool_overrides=cleared_tool_overrides,
+        cleared_intent_overrides=cleared_intent_overrides,
+        cleared_agent_overrides=cleared_agent_overrides,
+        cleared_lock_pairs=cleared_lock_pairs,
+        catalog=catalog,
     )
 
 
