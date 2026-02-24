@@ -12,7 +12,6 @@ from app.db import (
     User,
     get_async_session,
 )
-from app.services.intent_definition_service import get_effective_intent_definitions
 from app.services.agent_metadata_service import get_effective_agent_metadata
 from app.users import current_active_user
 
@@ -333,6 +332,23 @@ async def _require_admin(
         )
 
 
+_ROUTE_LABELS: dict[str, str] = {
+    "kunskap": "Kunskap",
+    "skapande": "Skapande",
+    "jämförelse": "Jämförelse",
+    "konversation": "Konversation",
+}
+
+_ROUTE_DESCRIPTIONS: dict[str, str] = {
+    "kunskap": (
+        "Informationssökande frågor – väder, trafik, statistik, bolag, riksdagen, marknad, webb."
+    ),
+    "skapande": "Skapar eller genererar något – podcast, karta, kod, filer.",
+    "jämförelse": "Jämför alternativ eller modeller via /compare.",
+    "konversation": "Hälsningar och enkel konversation utan verktyg.",
+}
+
+
 @router.get("/flow-graph")
 async def get_flow_graph(
     session: AsyncSession = Depends(get_async_session),
@@ -341,7 +357,6 @@ async def get_flow_graph(
     """Return the LangGraph pipeline graph and intent → agent → tool routing data."""
     await _require_admin(session, user)
 
-    intents = await get_effective_intent_definitions(session)
     agents = await get_effective_agent_metadata(session)
     agent_map = {a["agent_id"]: a for a in agents}
 
@@ -353,25 +368,23 @@ async def get_flow_graph(
     seen_agents: set[str] = set()
     seen_tools: set[str] = set()
 
-    for intent in intents:
-        intent_id = intent.get("intent_id", "")
-        route = intent.get("route", "")
+    # Build exactly 4 route nodes from the canonical policy map (ignore DB overrides)
+    for route_id, agent_ids in _ROUTE_AGENT_POLICIES.items():
         intent_nodes.append({
-            "id": f"intent:{intent_id}",
+            "id": f"intent:{route_id}",
             "type": "intent",
-            "intent_id": intent_id,
-            "label": intent.get("label", intent_id),
-            "description": intent.get("description", ""),
-            "route": route,
-            "keywords": intent.get("keywords", []),
-            "priority": intent.get("priority", 500),
-            "enabled": intent.get("enabled", True),
+            "intent_id": route_id,
+            "label": _ROUTE_LABELS.get(route_id, route_id.title()),
+            "description": _ROUTE_DESCRIPTIONS.get(route_id, ""),
+            "route": route_id,
+            "keywords": [],
+            "priority": 0,
+            "enabled": True,
         })
 
-        agent_ids = _ROUTE_AGENT_POLICIES.get(route, [])
         for agent_id in agent_ids:
             intent_agent_edges.append({
-                "source": f"intent:{intent_id}",
+                "source": f"intent:{route_id}",
                 "target": f"agent:{agent_id}",
             })
             if agent_id not in seen_agents:
@@ -387,21 +400,6 @@ async def get_flow_graph(
                     "prompt_key": meta.get("prompt_key", ""),
                     "namespace": meta.get("namespace", []),
                 })
-
-    for agent in agents:
-        agent_id = agent["agent_id"]
-        if agent_id not in seen_agents:
-            seen_agents.add(agent_id)
-            agent_nodes.append({
-                "id": f"agent:{agent_id}",
-                "type": "agent",
-                "agent_id": agent_id,
-                "label": agent.get("label", agent_id),
-                "description": agent.get("description", ""),
-                "keywords": agent.get("keywords", []),
-                "prompt_key": agent.get("prompt_key", ""),
-                "namespace": agent.get("namespace", []),
-            })
 
     for agent_id in seen_agents:
         tools = _AGENT_TOOL_MAP.get(agent_id, [])
