@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
 	X,
 	Zap,
@@ -16,6 +16,9 @@ import {
 	ChevronRight,
 	History,
 	RotateCcw,
+	MessageSquare,
+	Link,
+	FolderOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,10 +36,15 @@ import type {
 	PipelineNode,
 } from "@/contracts/types/admin-flow-graph.types";
 import type { AgentPromptItem, AgentPromptHistoryItem } from "@/contracts/types/agent-prompts.types";
+import type { MetadataCatalogResponse, ToolMetadataItem } from "@/contracts/types/admin-tool-settings.types";
 import { adminFlowGraphApiService } from "@/lib/apis/admin-flow-graph-api.service";
 import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
+import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 
 const ALL_ROUTES = ["kunskap", "skapande", "jämförelse", "konversation"];
+
+const DESCRIPTION_TEMPLATE_PLACEHOLDER =
+	"[HUVUDIDENTIFIERARE] [KÄRNAKTIVITET]\n[STARKASTE KEYWORDS]\n[UNIK AVGRÄNSNING]\n[KOMMUN/SVERIGE]\n[EXEMPEL FRÅGOR]\n[EXKLUDERAR: ...]";
 
 type SelectedNodeData =
 	| { type: "intent"; data: FlowIntentNode }
@@ -50,6 +58,8 @@ interface FlowDetailPanelProps {
 		agentsPerIntent: Record<string, number>;
 		toolsPerAgent: Record<string, number>;
 	};
+	catalogData: MetadataCatalogResponse | null;
+	agents: FlowAgentNode[];
 	onClose: () => void;
 	onDataChanged?: () => void;
 }
@@ -361,7 +371,7 @@ function IntentDetail({
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}
 							className="text-xs min-h-[80px] font-mono leading-5"
-							placeholder="[HUVUDIDENTIFIERARE] [KÄRNAKTIVITET]&#10;[STARKASTE KEYWORDS]&#10;[UNIK AVGRÄNSNING]&#10;[KOMMUN/SVERIGE]&#10;[EXEMPEL FRÅGOR]&#10;[EXKLUDERAR: ...]"
+							placeholder={DESCRIPTION_TEMPLATE_PLACEHOLDER}
 						/>
 						<p className="text-[10px] text-muted-foreground">
 							Använd mallen: HUVUDIDENTIFIERARE, KÄRNAKTIVITET, KEYWORDS, AVGRÄNSNING, EXEMPEL
@@ -659,13 +669,127 @@ function AgentDetail({
 	);
 }
 
-// ── Tool Detail ────────────────────────────────────────────────────
+// ── Tool Detail (Full editing) ─────────────────────────────────────
 
 function ToolDetail({
 	tool,
+	catalogData,
+	agents,
+	onDataChanged,
 }: {
 	tool: FlowToolNode;
+	catalogData: MetadataCatalogResponse | null;
+	agents: FlowAgentNode[];
+	onDataChanged?: () => void;
 }) {
+	// Find the full metadata from catalog
+	const catalogTool = useMemo((): ToolMetadataItem | null => {
+		if (!catalogData) return null;
+		for (const cat of catalogData.tool_categories) {
+			const found = cat.tools.find((t) => t.tool_id === tool.tool_id);
+			if (found) return found;
+		}
+		return null;
+	}, [catalogData, tool.tool_id]);
+
+	const [editing, setEditing] = useState(false);
+	const [name, setName] = useState(catalogTool?.name ?? tool.label);
+	const [description, setDescription] = useState(catalogTool?.description ?? "");
+	const [keywords, setKeywords] = useState((catalogTool?.keywords ?? []).join(", "));
+	const [exampleQueries, setExampleQueries] = useState((catalogTool?.example_queries ?? []).join("\n"));
+	const [category, setCategory] = useState(catalogTool?.category ?? tool.agent_id);
+	const [basePath, setBasePath] = useState(catalogTool?.base_path ?? "");
+	const [selectedAgentId, setSelectedAgentId] = useState(tool.agent_id);
+	const [saving, setSaving] = useState(false);
+
+	// Reset form when tool changes
+	useEffect(() => {
+		setName(catalogTool?.name ?? tool.label);
+		setDescription(catalogTool?.description ?? "");
+		setKeywords((catalogTool?.keywords ?? []).join(", "));
+		setExampleQueries((catalogTool?.example_queries ?? []).join("\n"));
+		setCategory(catalogTool?.category ?? tool.agent_id);
+		setBasePath(catalogTool?.base_path ?? "");
+		setSelectedAgentId(tool.agent_id);
+		setEditing(false);
+	}, [tool.tool_id, tool.label, tool.agent_id, catalogTool]);
+
+	const handleSave = useCallback(async () => {
+		setSaving(true);
+		try {
+			// Update metadata catalog
+			if (catalogData) {
+				await adminToolSettingsApiService.updateMetadataCatalog(
+					{
+						tools: [{
+							tool_id: tool.tool_id,
+							name: name.trim(),
+							description: description.trim(),
+							keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+							example_queries: exampleQueries.split("\n").map((q) => q.trim()).filter(Boolean),
+							category: category.trim(),
+							base_path: basePath.trim() || null,
+						}],
+					},
+					catalogData.search_space_id,
+				);
+			}
+
+			// If agent assignment changed, update flow graph
+			if (selectedAgentId !== tool.agent_id) {
+				// Remove from old agent
+				if (tool.agent_id) {
+					const sourceTools = (catalogData?.agents ?? [])
+						.find((a) => a.agent_id === tool.agent_id)
+						?.flow_tools?.filter((t) => t.tool_id !== tool.tool_id)
+						.map((t) => ({ tool_id: t.tool_id, label: t.label })) ?? [];
+					await adminFlowGraphApiService.updateAgentTools(tool.agent_id, sourceTools);
+				}
+
+				// Add to new agent
+				if (selectedAgentId) {
+					const targetFlowTools = (catalogData?.agents ?? [])
+						.find((a) => a.agent_id === selectedAgentId)
+						?.flow_tools?.map((t) => ({ tool_id: t.tool_id, label: t.label })) ?? [];
+					targetFlowTools.push({ tool_id: tool.tool_id, label: name.trim() || tool.label });
+					await adminFlowGraphApiService.updateAgentTools(selectedAgentId, targetFlowTools);
+				}
+			}
+
+			toast.success("Verktyg uppdaterat");
+			setEditing(false);
+			onDataChanged?.();
+		} catch {
+			toast.error("Kunde inte spara verktyg");
+		} finally {
+			setSaving(false);
+		}
+	}, [
+		tool.tool_id,
+		tool.agent_id,
+		tool.label,
+		catalogData,
+		name,
+		description,
+		keywords,
+		exampleQueries,
+		category,
+		basePath,
+		selectedAgentId,
+		onDataChanged,
+	]);
+
+	const handleCancel = useCallback(() => {
+		setName(catalogTool?.name ?? tool.label);
+		setDescription(catalogTool?.description ?? "");
+		setKeywords((catalogTool?.keywords ?? []).join(", "));
+		setExampleQueries((catalogTool?.example_queries ?? []).join("\n"));
+		setCategory(catalogTool?.category ?? tool.agent_id);
+		setBasePath(catalogTool?.base_path ?? "");
+		setSelectedAgentId(tool.agent_id);
+		setEditing(false);
+	}, [catalogTool, tool]);
+
 	return (
 		<div className="space-y-4">
 			{/* Header */}
@@ -681,7 +805,7 @@ function ToolDetail({
 
 			<Separator />
 
-			{/* Properties */}
+			{/* Always-visible properties */}
 			<div className="space-y-3">
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-muted-foreground">Tool ID</span>
@@ -689,9 +813,265 @@ function ToolDetail({
 				</div>
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-muted-foreground">Agent</span>
-					<Badge variant="secondary" className="text-xs">{tool.agent_id}</Badge>
+					<Badge variant="secondary" className="text-xs">{tool.agent_id || "Ej tilldelad"}</Badge>
 				</div>
+				{catalogTool?.category && (
+					<div className="flex items-center justify-between">
+						<span className="text-xs text-muted-foreground">Kategori</span>
+						<Badge variant="outline" className="text-xs">{catalogTool.category}</Badge>
+					</div>
+				)}
+				{catalogTool?.has_override && (
+					<div className="flex items-center justify-between">
+						<span className="text-xs text-muted-foreground">Override</span>
+						<Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-700">
+							Har override
+						</Badge>
+					</div>
+				)}
 			</div>
+
+			<Separator />
+
+			{/* Edit toggle */}
+			<div className="flex items-center justify-between">
+				<Label className="text-xs font-semibold">Redigera verktyg</Label>
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-6 text-xs px-2"
+					onClick={() => {
+						if (editing) {
+							handleCancel();
+						} else {
+							setEditing(true);
+						}
+					}}
+				>
+					{editing ? "Avbryt" : "Redigera"}
+				</Button>
+			</div>
+
+			{editing ? (
+				<div className="space-y-3">
+					{/* Name */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Tag className="h-3 w-3" /> Namn
+						</Label>
+						<Input
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							className="text-xs h-8"
+						/>
+					</div>
+
+					{/* Description */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<FileText className="h-3 w-3" /> Beskrivning
+						</Label>
+						<Textarea
+							value={description}
+							onChange={(e) => setDescription(e.target.value)}
+							className="text-xs min-h-[120px] font-mono leading-5"
+							placeholder={DESCRIPTION_TEMPLATE_PLACEHOLDER}
+						/>
+						<p className="text-[10px] text-muted-foreground">
+							Mall: [HUVUDIDENTIFIERARE] [KÄRNAKTIVITET] [STARKASTE KEYWORDS] [UNIK AVGRÄNSNING] [KOMMUN/SVERIGE] [EXEMPEL FRÅGOR] [EXKLUDERAR: ...]
+						</p>
+					</div>
+
+					{/* Keywords */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Tag className="h-3 w-3" /> Nyckelord (komma-separerade)
+						</Label>
+						<Textarea
+							value={keywords}
+							onChange={(e) => setKeywords(e.target.value)}
+							className="text-xs min-h-[60px]"
+							placeholder="väder, temperatur, prognos, SMHI"
+						/>
+					</div>
+
+					{/* Example queries */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<MessageSquare className="h-3 w-3" /> Exempelfrågor (en per rad)
+						</Label>
+						<Textarea
+							value={exampleQueries}
+							onChange={(e) => setExampleQueries(e.target.value)}
+							className="text-xs min-h-[80px]"
+							placeholder={"Vad blir vädret imorgon i Stockholm?\nVisa temperatur för Göteborg\nRegnar det idag?"}
+						/>
+					</div>
+
+					{/* Category */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<FolderOpen className="h-3 w-3" /> Kategori
+						</Label>
+						<Input
+							value={category}
+							onChange={(e) => setCategory(e.target.value)}
+							className="text-xs h-8"
+							placeholder="weather, maps, statistics..."
+						/>
+					</div>
+
+					{/* Agent assignment */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Bot className="h-3 w-3" /> Agent-tilldelning
+						</Label>
+						<select
+							value={selectedAgentId}
+							onChange={(e) => setSelectedAgentId(e.target.value)}
+							className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+						>
+							<option value="">Ej tilldelad</option>
+							{agents.map((a) => (
+								<option key={a.agent_id} value={a.agent_id}>
+									{a.label} ({a.agent_id})
+								</option>
+							))}
+						</select>
+						{selectedAgentId !== tool.agent_id && (
+							<p className="text-[10px] text-amber-600">
+								Namespace ändras: {tool.agent_id || "(ingen)"} → {selectedAgentId || "(ingen)"}
+							</p>
+						)}
+					</div>
+
+					{/* Base path */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Link className="h-3 w-3" /> Base path
+						</Label>
+						<Input
+							value={basePath}
+							onChange={(e) => setBasePath(e.target.value)}
+							className="text-xs h-8 font-mono"
+							placeholder="/api/v1/..."
+						/>
+					</div>
+
+					{/* Save / Cancel buttons */}
+					<div className="flex gap-2">
+						<Button
+							size="sm"
+							className="h-7 text-xs flex-1"
+							onClick={handleSave}
+							disabled={saving}
+						>
+							{saving ? (
+								<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+							) : (
+								<Save className="h-3 w-3 mr-1.5" />
+							)}
+							Spara ändringar
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 text-xs"
+							onClick={handleCancel}
+							disabled={saving}
+						>
+							Avbryt
+						</Button>
+					</div>
+				</div>
+			) : (
+				/* Read-only view of all metadata */
+				<div className="space-y-3">
+					{catalogTool ? (
+						<>
+							{/* Name */}
+							<div className="space-y-1">
+								<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+									<Tag className="h-3 w-3" /> Namn
+								</Label>
+								<p className="text-xs">{catalogTool.name}</p>
+							</div>
+
+							{/* Description */}
+							<div className="space-y-1">
+								<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+									<FileText className="h-3 w-3" /> Beskrivning
+								</Label>
+								<p className="text-xs text-muted-foreground whitespace-pre-wrap rounded-md border bg-muted/40 p-2">
+									{catalogTool.description || "Ingen beskrivning"}
+								</p>
+							</div>
+
+							{/* Keywords */}
+							<div className="space-y-1">
+								<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+									<Tag className="h-3 w-3" /> Nyckelord
+								</Label>
+								<div className="flex flex-wrap gap-1">
+									{catalogTool.keywords.length > 0 ? (
+										catalogTool.keywords.map((kw) => (
+											<Badge key={kw} variant="outline" className="text-[10px] px-1.5 py-0">
+												{kw}
+											</Badge>
+										))
+									) : (
+										<span className="text-[10px] text-muted-foreground italic">Inga nyckelord</span>
+									)}
+								</div>
+							</div>
+
+							{/* Example queries */}
+							<div className="space-y-1">
+								<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+									<MessageSquare className="h-3 w-3" /> Exempelfrågor
+								</Label>
+								{catalogTool.example_queries.length > 0 ? (
+									<ul className="space-y-0.5">
+										{catalogTool.example_queries.map((q, i) => (
+											<li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+												<span className="text-muted-foreground/50 shrink-0">•</span>
+												<span>{q}</span>
+											</li>
+										))}
+									</ul>
+								) : (
+									<span className="text-[10px] text-muted-foreground italic">Inga exempelfrågor</span>
+								)}
+							</div>
+
+							{/* Category */}
+							<div className="flex items-center justify-between">
+								<span className="text-xs text-muted-foreground flex items-center gap-1">
+									<FolderOpen className="h-3 w-3" /> Kategori
+								</span>
+								<span className="text-xs font-mono">{catalogTool.category}</span>
+							</div>
+
+							{/* Base path */}
+							{catalogTool.base_path && (
+								<div className="flex items-center justify-between">
+									<span className="text-xs text-muted-foreground flex items-center gap-1">
+										<Link className="h-3 w-3" /> Base path
+									</span>
+									<span className="text-xs font-mono truncate max-w-[180px]">
+										{catalogTool.base_path}
+									</span>
+								</div>
+							)}
+						</>
+					) : (
+						<p className="text-xs text-muted-foreground italic">
+							Ingen metadata hittad i katalogen för detta verktyg.
+							Klicka "Redigera" för att lägga till metadata.
+						</p>
+					)}
+				</div>
+			)}
 		</div>
 	);
 }
@@ -762,6 +1142,8 @@ function PipelineDetail({
 export function FlowDetailPanel({
 	selectedNode,
 	connectionCounts,
+	catalogData,
+	agents,
 	onClose,
 	onDataChanged,
 }: FlowDetailPanelProps) {
@@ -790,7 +1172,12 @@ export function FlowDetailPanel({
 					/>
 				)}
 				{selectedNode.type === "tool" && (
-					<ToolDetail tool={selectedNode.data} />
+					<ToolDetail
+						tool={selectedNode.data}
+						catalogData={catalogData}
+						agents={agents}
+						onDataChanged={onDataChanged}
+					/>
 				)}
 				{selectedNode.type === "pipeline" && (
 					<PipelineDetail node={selectedNode.data} onDataChanged={onDataChanged} />
