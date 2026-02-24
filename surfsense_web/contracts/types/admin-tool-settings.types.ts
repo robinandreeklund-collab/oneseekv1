@@ -223,34 +223,49 @@ export const flowToolEntry = z.object({
 export const agentMetadataItem = z.object({
 	agent_id: z.string(),
 	label: z.string(),
-	description: z.string(),
-	keywords: z.array(z.string()),
+	description: z.string().max(METADATA_MAX_DESCRIPTION_CHARS),
+	keywords: z.array(z.string().max(METADATA_MAX_KEYWORD_CHARS)).max(METADATA_MAX_KEYWORDS),
 	prompt_key: z.string().nullable().optional(),
 	namespace: z.array(z.string()).optional().default([]),
 	routes: z.array(z.string()).optional().default([]),
 	flow_tools: z.array(flowToolEntry).optional().default([]),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 	has_override: z.boolean().optional().default(false),
 });
 
 export const agentMetadataUpdateItem = z.object({
 	agent_id: z.string(),
 	label: z.string(),
-	description: z.string(),
-	keywords: z.array(z.string()),
+	description: z.string().max(METADATA_MAX_DESCRIPTION_CHARS),
+	keywords: z.array(z.string().max(METADATA_MAX_KEYWORD_CHARS)).max(METADATA_MAX_KEYWORDS),
 	prompt_key: z.string().nullable().optional(),
 	namespace: z.array(z.string()).optional().default([]),
 	routes: z.array(z.string()).optional().default([]),
 	flow_tools: z.array(flowToolEntry).optional().default([]),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 });
 
 export const intentMetadataItem = z.object({
 	intent_id: z.string(),
 	label: z.string(),
 	route: z.string(),
-	description: z.string(),
-	keywords: z.array(z.string()),
+	description: z.string().max(METADATA_MAX_DESCRIPTION_CHARS),
+	keywords: z.array(z.string().max(METADATA_MAX_KEYWORD_CHARS)).max(METADATA_MAX_KEYWORDS),
 	priority: z.number().int().optional().default(500),
 	enabled: z.boolean().optional().default(true),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 	has_override: z.boolean().optional().default(false),
 });
 
@@ -258,10 +273,15 @@ export const intentMetadataUpdateItem = z.object({
 	intent_id: z.string(),
 	label: z.string(),
 	route: z.string(),
-	description: z.string(),
-	keywords: z.array(z.string()),
+	description: z.string().max(METADATA_MAX_DESCRIPTION_CHARS),
+	keywords: z.array(z.string().max(METADATA_MAX_KEYWORD_CHARS)).max(METADATA_MAX_KEYWORDS),
 	priority: z.number().int().optional().default(500),
 	enabled: z.boolean().optional().default(true),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 });
 
 export const metadataCatalogResponse = z.object({

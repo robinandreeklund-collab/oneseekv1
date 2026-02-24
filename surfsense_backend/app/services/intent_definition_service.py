@@ -160,6 +160,23 @@ def _normalize_keywords(values: Any) -> list[str]:
     return deduped
 
 
+def _normalize_identity_field(value: Any, max_chars: int) -> str:
+    text = _normalize_text(value)
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    last_dot = cut.rfind(".")
+    if last_dot > max_chars * 0.6:
+        return cut[: last_dot + 1]
+    return cut.rstrip()
+
+
+def _normalize_excludes(values: Any, max_items: int = 15) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(e).strip() for e in values if str(e).strip()][:max_items]
+
+
 def normalize_intent_definition_payload(
     payload: Mapping[str, Any],
     *,
@@ -180,6 +197,11 @@ def normalize_intent_definition_payload(
     keywords = _normalize_keywords(payload.get("keywords"))
     priority = _normalize_int(payload.get("priority"), default=500)
     enabled = bool(payload.get("enabled", True))
+    main_identifier = _normalize_identity_field(payload.get("main_identifier", ""), 80)
+    core_activity = _normalize_identity_field(payload.get("core_activity", ""), 120)
+    unique_scope = _normalize_identity_field(payload.get("unique_scope", ""), 120)
+    geographic_scope = _normalize_identity_field(payload.get("geographic_scope", ""), 80)
+    excludes = _normalize_excludes(payload.get("excludes", []))
     return {
         "intent_id": resolved_intent_id,
         "route": route_value,
@@ -188,6 +210,11 @@ def normalize_intent_definition_payload(
         "keywords": keywords,
         "priority": priority,
         "enabled": enabled,
+        "main_identifier": main_identifier,
+        "core_activity": core_activity,
+        "unique_scope": unique_scope,
+        "geographic_scope": geographic_scope,
+        "excludes": excludes,
     }
 
 

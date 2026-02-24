@@ -41,6 +41,11 @@ class AdminFlowGraphApiService {
 		keywords?: string[];
 		priority?: number;
 		enabled?: boolean;
+		main_identifier?: string;
+		core_activity?: string;
+		unique_scope?: string;
+		geographic_scope?: string;
+		excludes?: string[];
 	}) => {
 		return baseApiService.put(
 			`/api/v1/admin/flow-graph/intent`,
@@ -66,6 +71,11 @@ class AdminFlowGraphApiService {
 		namespace?: string[];
 		routes?: string[];
 		flow_tools?: FlowToolEntry[];
+		main_identifier?: string;
+		core_activity?: string;
+		unique_scope?: string;
+		geographic_scope?: string;
+		excludes?: string[];
 	}) => {
 		return baseApiService.put(
 			`/api/v1/admin/flow-graph/agent`,

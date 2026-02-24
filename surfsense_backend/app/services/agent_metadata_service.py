@@ -440,6 +440,23 @@ def _normalize_flow_tools(values: Any) -> list[dict[str, str]]:
     return normalized
 
 
+def _normalize_identity_field(value: Any, max_chars: int) -> str:
+    text = _normalize_text(value)
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    last_dot = cut.rfind(".")
+    if last_dot > max_chars * 0.6:
+        return cut[: last_dot + 1]
+    return cut.rstrip()
+
+
+def _normalize_excludes(values: Any, max_items: int = 15) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(e).strip() for e in values if str(e).strip()][:max_items]
+
+
 def normalize_agent_metadata_payload(
     payload: Mapping[str, Any],
     *,
@@ -471,6 +488,11 @@ def normalize_agent_metadata_payload(
         if "flow_tools" in payload
         else fallback_flow_tools
     )
+    main_identifier = _normalize_identity_field(payload.get("main_identifier", default_payload.get("main_identifier", "")), 80)
+    core_activity = _normalize_identity_field(payload.get("core_activity", default_payload.get("core_activity", "")), 120)
+    unique_scope = _normalize_identity_field(payload.get("unique_scope", default_payload.get("unique_scope", "")), 120)
+    geographic_scope = _normalize_identity_field(payload.get("geographic_scope", default_payload.get("geographic_scope", "")), 80)
+    excludes = _normalize_excludes(payload.get("excludes", default_payload.get("excludes", [])))
     return {
         "agent_id": resolved_agent_id,
         "label": label,
@@ -480,6 +502,11 @@ def normalize_agent_metadata_payload(
         "namespace": namespace,
         "routes": routes,
         "flow_tools": flow_tools,
+        "main_identifier": main_identifier,
+        "core_activity": core_activity,
+        "unique_scope": unique_scope,
+        "geographic_scope": geographic_scope,
+        "excludes": excludes,
     }
 
 

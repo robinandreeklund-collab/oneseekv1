@@ -184,34 +184,90 @@ class FlowToolEntry(BaseModel):
 class AgentMetadataItem(BaseModel):
     agent_id: str
     label: str
-    description: str
-    keywords: list[str]
+    description: str = Field("", max_length=METADATA_MAX_DESCRIPTION_CHARS)
+    keywords: list[str] = Field(default_factory=list, max_length=METADATA_MAX_KEYWORDS)
     prompt_key: str | None = None
     namespace: list[str] = Field(default_factory=list)
     routes: list[str] = Field(default_factory=list)
     flow_tools: list[FlowToolEntry] = Field(default_factory=list)
+    main_identifier: str = Field("", max_length=METADATA_MAX_MAIN_IDENTIFIER_CHARS)
+    core_activity: str = Field("", max_length=METADATA_MAX_CORE_ACTIVITY_CHARS)
+    unique_scope: str = Field("", max_length=METADATA_MAX_UNIQUE_SCOPE_CHARS)
+    geographic_scope: str = Field("", max_length=METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS)
+    excludes: list[str] = Field(default_factory=list, max_length=METADATA_MAX_EXCLUDES)
     has_override: bool = False
 
 
 class AgentMetadataUpdateItem(BaseModel):
     agent_id: str
     label: str
-    description: str
-    keywords: list[str]
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
     prompt_key: str | None = None
     namespace: list[str] = Field(default_factory=list)
     routes: list[str] = Field(default_factory=list)
     flow_tools: list[FlowToolEntry] = Field(default_factory=list)
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def clamp_agent_description(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_DESCRIPTION_CHARS)
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def clamp_agent_keywords(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return _clamp_string_list(
+            v, max_items=METADATA_MAX_KEYWORDS, max_item_chars=METADATA_MAX_KEYWORD_CHARS
+        )
+
+    @field_validator("excludes", mode="before")
+    @classmethod
+    def clamp_agent_excludes(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return [str(e).strip() for e in v if str(e).strip()][:METADATA_MAX_EXCLUDES]
+
+    @field_validator("main_identifier", mode="before")
+    @classmethod
+    def clamp_agent_main_identifier(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_MAIN_IDENTIFIER_CHARS)
+
+    @field_validator("core_activity", mode="before")
+    @classmethod
+    def clamp_agent_core_activity(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_CORE_ACTIVITY_CHARS)
+
+    @field_validator("unique_scope", mode="before")
+    @classmethod
+    def clamp_agent_unique_scope(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_UNIQUE_SCOPE_CHARS)
+
+    @field_validator("geographic_scope", mode="before")
+    @classmethod
+    def clamp_agent_geographic_scope(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS)
 
 
 class IntentMetadataItem(BaseModel):
     intent_id: str
     label: str
     route: str
-    description: str
-    keywords: list[str]
+    description: str = Field("", max_length=METADATA_MAX_DESCRIPTION_CHARS)
+    keywords: list[str] = Field(default_factory=list, max_length=METADATA_MAX_KEYWORDS)
     priority: int = 500
     enabled: bool = True
+    main_identifier: str = Field("", max_length=METADATA_MAX_MAIN_IDENTIFIER_CHARS)
+    core_activity: str = Field("", max_length=METADATA_MAX_CORE_ACTIVITY_CHARS)
+    unique_scope: str = Field("", max_length=METADATA_MAX_UNIQUE_SCOPE_CHARS)
+    geographic_scope: str = Field("", max_length=METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS)
+    excludes: list[str] = Field(default_factory=list, max_length=METADATA_MAX_EXCLUDES)
     has_override: bool = False
 
 
@@ -219,10 +275,56 @@ class IntentMetadataUpdateItem(BaseModel):
     intent_id: str
     label: str
     route: str
-    description: str
-    keywords: list[str]
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
     priority: int = 500
     enabled: bool = True
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def clamp_intent_description(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_DESCRIPTION_CHARS)
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def clamp_intent_keywords(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return _clamp_string_list(
+            v, max_items=METADATA_MAX_KEYWORDS, max_item_chars=METADATA_MAX_KEYWORD_CHARS
+        )
+
+    @field_validator("excludes", mode="before")
+    @classmethod
+    def clamp_intent_excludes(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return [str(e).strip() for e in v if str(e).strip()][:METADATA_MAX_EXCLUDES]
+
+    @field_validator("main_identifier", mode="before")
+    @classmethod
+    def clamp_intent_main_identifier(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_MAIN_IDENTIFIER_CHARS)
+
+    @field_validator("core_activity", mode="before")
+    @classmethod
+    def clamp_intent_core_activity(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_CORE_ACTIVITY_CHARS)
+
+    @field_validator("unique_scope", mode="before")
+    @classmethod
+    def clamp_intent_unique_scope(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_UNIQUE_SCOPE_CHARS)
+
+    @field_validator("geographic_scope", mode="before")
+    @classmethod
+    def clamp_intent_geographic_scope(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS)
 
 
 class MetadataCatalogStabilityLockItem(BaseModel):
