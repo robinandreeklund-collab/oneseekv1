@@ -24,28 +24,28 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 # ── Intent → Route → Agent policy mapping ──────────────────────────────
 _ROUTE_AGENT_POLICIES: dict[str, list[str]] = {
     "kunskap": [
-        "knowledge", "browser", "weather", "trafik", "statistics",
-        "bolag", "riksdagen", "marketplace",
+        "kunskap", "webb", "väder", "trafik", "statistik",
+        "bolag", "riksdagen", "marknad",
     ],
-    "skapande": ["media", "kartor", "code"],
-    "jämförelse": ["synthesis", "statistics", "knowledge"],
+    "skapande": ["media", "kartor", "kod"],
+    "jämförelse": ["syntes", "statistik", "kunskap"],
     "konversation": [],
 }
 
 # ── Agent → Tool mapping (hardcoded tool IDs per agent namespace) ──────
 _AGENT_TOOL_MAP: dict[str, list[dict[str, str]]] = {
-    "knowledge": [
+    "kunskap": [
         {"tool_id": "search_surfsense_docs", "label": "SurfSense Docs"},
-        {"tool_id": "save_memory", "label": "Save Memory"},
-        {"tool_id": "recall_memory", "label": "Recall Memory"},
-        {"tool_id": "tavily_search", "label": "Tavily Search"},
+        {"tool_id": "save_memory", "label": "Spara Minne"},
+        {"tool_id": "recall_memory", "label": "Hämta Minne"},
+        {"tool_id": "tavily_search", "label": "Tavily Sök"},
     ],
-    "browser": [
-        {"tool_id": "scrape_webpage", "label": "Scrape Webpage"},
-        {"tool_id": "link_preview", "label": "Link Preview"},
-        {"tool_id": "public_web_search", "label": "Web Search"},
+    "webb": [
+        {"tool_id": "scrape_webpage", "label": "Scrape Webbsida"},
+        {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
+        {"tool_id": "public_web_search", "label": "Webbsökning"},
     ],
-    "weather": [
+    "väder": [
         {"tool_id": "smhi_weather", "label": "SMHI Prognos"},
         {"tool_id": "smhi_vaderprognoser_metfcst", "label": "SMHI MetFcst"},
         {"tool_id": "smhi_vaderprognoser_snow1g", "label": "SMHI Snö"},
@@ -68,7 +68,7 @@ _AGENT_TOOL_MAP: dict[str, list[dict[str, str]]] = {
     "kartor": [
         {"tool_id": "geoapify_static_map", "label": "Statisk Karta"},
     ],
-    "marketplace": [
+    "marknad": [
         {"tool_id": "marketplace_unified_search", "label": "Unified Search"},
         {"tool_id": "marketplace_blocket_search", "label": "Blocket Sök"},
         {"tool_id": "marketplace_blocket_cars", "label": "Blocket Bilar"},
@@ -77,7 +77,7 @@ _AGENT_TOOL_MAP: dict[str, list[dict[str, str]]] = {
         {"tool_id": "marketplace_tradera_search", "label": "Tradera Sök"},
         {"tool_id": "marketplace_compare_prices", "label": "Prisjämförelse"},
     ],
-    "statistics": [
+    "statistik": [
         {"tool_id": "scb_befolkning", "label": "SCB Befolkning"},
         {"tool_id": "scb_arbetsmarknad", "label": "SCB Arbetsmarknad"},
         {"tool_id": "scb_boende_byggande", "label": "SCB Boende"},
@@ -89,7 +89,7 @@ _AGENT_TOOL_MAP: dict[str, list[dict[str, str]]] = {
         {"tool_id": "generate_podcast", "label": "Podcast"},
         {"tool_id": "display_image", "label": "Visa Bild"},
     ],
-    "code": [
+    "kod": [
         {"tool_id": "sandbox_execute", "label": "Sandbox Execute"},
         {"tool_id": "sandbox_write_file", "label": "Sandbox Write"},
         {"tool_id": "sandbox_read_file", "label": "Sandbox Read"},
@@ -109,13 +109,13 @@ _AGENT_TOOL_MAP: dict[str, list[dict[str, str]]] = {
         {"tool_id": "riksdagen_votering", "label": "Voteringar"},
         {"tool_id": "riksdagen_ledamot", "label": "Ledamöter"},
     ],
-    "action": [
-        {"tool_id": "search_knowledge_base", "label": "Knowledge Base"},
-        {"tool_id": "link_preview", "label": "Link Preview"},
-        {"tool_id": "scrape_webpage", "label": "Scrape Webpage"},
+    "åtgärd": [
+        {"tool_id": "search_knowledge_base", "label": "Kunskapsbas"},
+        {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
+        {"tool_id": "scrape_webpage", "label": "Scrape Webbsida"},
     ],
-    "synthesis": [
-        {"tool_id": "external_model_compare", "label": "Model Compare"},
+    "syntes": [
+        {"tool_id": "external_model_compare", "label": "Modelljämförelse"},
     ],
 }
 

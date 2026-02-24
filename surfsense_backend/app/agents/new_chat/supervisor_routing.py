@@ -82,23 +82,23 @@ def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None
     route = _normalize_route_hint_value(route_hint)
     defaults = {
         # New Swedish route values
-        "kunskap": "knowledge",
-        "skapande": "action",
-        "jämförelse": "synthesis",
-        "konversation": "knowledge",
+        "kunskap": "kunskap",
+        "skapande": "åtgärd",
+        "jämförelse": "syntes",
+        "konversation": "kunskap",
         # Backward compat
-        "action": "action",
-        "knowledge": "knowledge",
-        "statistics": "statistics",
-        "compare": "synthesis",
+        "action": "åtgärd",
+        "knowledge": "kunskap",
+        "statistics": "statistik",
+        "compare": "syntes",
         "trafik": "trafik",
-        "mixed": "knowledge",
+        "mixed": "kunskap",
     }
-    preferred = defaults.get(route, "knowledge")
+    preferred = defaults.get(route, "kunskap")
     if allowed:
         if preferred in allowed:
             return preferred
-        for name in ("statistics", "synthesis", "knowledge", "action", "trafik"):
+        for name in ("statistik", "syntes", "kunskap", "åtgärd", "trafik"):
             if name in allowed:
                 return name
     return preferred
@@ -169,7 +169,7 @@ def _select_focused_tool_profiles(
 def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -> list[str]:
     normalized_task = _normalize_text(task)
     normalized_agent_name = str(agent_name or "").strip().lower()
-    if normalized_agent_name in {"knowledge", "statistics", "action", "kunskap", "skapande"} and any(
+    if normalized_agent_name in {"kunskap", "statistik", "åtgärd", "knowledge", "statistics", "action"} and any(
         marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS
     ):
         # Allow retrieve_tools to discover dynamic connector tools (for example MCP)
@@ -194,19 +194,19 @@ def _guess_agent_from_alias(alias: str) -> str | None:
     if direct:
         return direct
     token_rules: list[tuple[tuple[str, ...], str]] = [
-        (("smhi", "weather", "vader", "väder", "temperatur", "regn", "sno", "snö", "vind"), "weather"),
+        (("smhi", "weather", "vader", "väder", "temperatur", "regn", "sno", "snö", "vind"), "väder"),
         (("trafik", "traffic", "road", "vag", "väg", "rail", "train"), "trafik"),
         (("map", "kart", "geo"), "kartor"),
-        (("stat", "scb", "data"), "statistics"),
+        (("stat", "scb", "data"), "statistik"),
         (("riks", "parliament", "politik"), "riksdagen"),
         (("bolag", "company", "business", "org"), "bolag"),
-        (("blocket", "tradera", "annons", "begagnat", "köp", "sälj", "marknadsplats"), "marketplace"),
-        (("browser", "web", "scrape", "search"), "browser"),
+        (("blocket", "tradera", "annons", "begagnat", "köp", "sälj", "marknadsplats"), "marknad"),
+        (("browser", "web", "scrape", "search"), "webb"),
         (("media", "podcast", "image", "video"), "media"),
-        (("code", "python", "calc"), "code"),
-        (("synth", "compare", "samman"), "synthesis"),
-        (("knowledge", "docs", "internal", "external", "local"), "knowledge"),
-        (("action", "travel"), "action"),
+        (("code", "python", "calc", "kod"), "kod"),
+        (("synth", "compare", "samman", "syntes"), "syntes"),
+        (("knowledge", "docs", "internal", "external", "local", "kunskap"), "kunskap"),
+        (("action", "travel", "åtgärd"), "åtgärd"),
     ]
     for tokens, resolved in token_rules:
         if any(token in normalized for token in tokens):

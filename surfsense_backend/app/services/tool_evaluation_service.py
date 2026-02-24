@@ -105,33 +105,33 @@ _SWEDISH_SIGNAL_WORDS = {
     "utvärdering",
 }
 _EVAL_AGENT_CHOICES = (
-    "statistics",
+    "statistik",
     "riksdagen",
-    "weather",
+    "väder",
     "trafik",
     "bolag",
-    "marketplace",
+    "marknad",
     "kartor",
     "media",
-    "browser",
-    "knowledge",
-    "action",
-    "synthesis",
+    "webb",
+    "kunskap",
+    "åtgärd",
+    "syntes",
 )
 
 _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
-    "statistics": "SCB/statistics and official data in Sweden.",
-    "riksdagen": "Swedish parliament and political documents.",
-    "weather": "SMHI weather forecasts and weather context for Swedish cities/regions.",
-    "trafik": "Traffic, roads, incidents, rail and transport context.",
-    "bolag": "Swedish company/organization registry context.",
-    "marketplace": "Blocket/Tradera marketplace search and price comparison tasks.",
-    "kartor": "Geospatial/maps/geocoding context.",
-    "media": "Podcast and media generation context.",
-    "browser": "Web browsing, URL scraping, and page lookup tasks.",
-    "knowledge": "Knowledge lookup in docs/internal/external sources.",
-    "action": "General action/data tasks not covered by a specialist agent.",
-    "synthesis": "Cross-source compare/synthesis tasks.",
+    "statistik": "SCB/statistik och officiell data i Sverige.",
+    "riksdagen": "Riksdagens öppna data och politiska dokument.",
+    "väder": "SMHI-väderprognoser och väderkontext för svenska orter.",
+    "trafik": "Trafik, vägar, incidenter, järnväg och transport.",
+    "bolag": "Bolagsverket och företagsregister.",
+    "marknad": "Blocket/Tradera marknadsplatssökning och prisjämförelse.",
+    "kartor": "Geospatial/kartor/geokodning.",
+    "media": "Podcast och media-generering.",
+    "webb": "Webbsökning, URL-scraping och siduppslag.",
+    "kunskap": "Kunskapssökning i docs/interna/externa källor.",
+    "åtgärd": "Generella åtgärder som inte täcks av specialistagenter.",
+    "syntes": "Jämförelse och syntes från flera källor och modeller.",
 }
 _DIFFICULTY_ORDER = ("lätt", "medel", "svår")
 _GRAPH_COMPLEXITY_VALUES = {
@@ -752,14 +752,17 @@ def _normalize_agent_name(value: Any) -> str | None:
         return None
     normalized_token = _normalize_token_for_match(agent)
     aliases = {
-        "statistik": "statistics",
-        "stats": "statistics",
-        "scb": "statistics",
+        # Swedish → canonical
+        "statistik": "statistik",
+        "stats": "statistik",
+        "scb": "statistik",
+        "statistics": "statistik",
         "riksdag": "riksdagen",
         "traffic": "trafik",
         "trafikverket": "trafik",
-        "weather": "weather",
-        "smhi": "weather",
+        "weather": "väder",
+        "smhi": "väder",
+        "vader": "väder",
         "maps": "kartor",
         "map": "kartor",
         "geo": "kartor",
@@ -767,28 +770,31 @@ def _normalize_agent_name(value: Any) -> str | None:
         "bolagsverket": "bolag",
         "companies": "bolag",
         "company": "bolag",
-        "web": "browser",
-        "docs": "knowledge",
-        "internal": "knowledge",
-        "external": "knowledge",
-        "compare": "synthesis",
-        "marketplace": "marketplace",
-        "marknadsplats": "marketplace",
-        "marknadsplatser": "marketplace",
-        "blocket": "marketplace",
-        "tradera": "marketplace",
-        "marketplace_agent": "marketplace",
-        "marketplace_worker": "marketplace",
-        "marketplace_search": "marketplace",
-        "marketplace_compare": "marketplace",
-        "marketplace_reference": "marketplace",
-        "marketplace_vehicles": "marketplace",
-        "marketplace_vehicles_agent": "marketplace",
-        "marketplace_vehicles_worker": "marketplace",
+        "web": "webb",
+        "browser": "webb",
+        "docs": "kunskap",
+        "internal": "kunskap",
+        "external": "kunskap",
+        "knowledge": "kunskap",
+        "compare": "syntes",
+        "synthesis": "syntes",
+        "marketplace": "marknad",
+        "marknadsplats": "marknad",
+        "marknadsplatser": "marknad",
+        "blocket": "marknad",
+        "tradera": "marknad",
+        "marketplace_agent": "marknad",
+        "marketplace_worker": "marknad",
+        "marketplace_search": "marknad",
+        "marketplace_compare": "marknad",
+        "marketplace_reference": "marknad",
+        "marketplace_vehicles": "marknad",
+        "code": "kod",
+        "action": "åtgärd",
     }
     normalized = aliases.get(agent, aliases.get(normalized_token, normalized_token))
     if normalized.startswith("marketplace_"):
-        normalized = "marketplace"
+        normalized = "marknad"
     return normalized if normalized in _EVAL_AGENT_CHOICES else None
 
 
@@ -808,21 +814,21 @@ def _agent_for_route_hint(route_value: str | None, sub_route_value: str | None) 
     route_norm = _normalize_route_value(route_value)
     sub_norm = _normalize_sub_route_value(sub_route_value)
     if route_norm == Route.KUNSKAP.value:
-        return "statistics"
+        return "statistik"
     if route_norm == Route.JAMFORELSE.value:
-        return "synthesis"
+        return "syntes"
     if route_norm == Route.KUNSKAP.value:
-        return "knowledge"
+        return "kunskap"
     if route_norm == Route.SKAPANDE.value:
         if sub_norm == ActionRoute.TRAVEL.value:
             return "trafik"
         if sub_norm == ActionRoute.WEB.value:
-            return "browser"
+            return "webb"
         if sub_norm == ActionRoute.MEDIA.value:
             return "media"
         if sub_norm == ActionRoute.DATA.value:
-            return "action"
-        return "action"
+            return "åtgärd"
+        return "åtgärd"
     return None
 
 
@@ -837,14 +843,14 @@ def _agent_for_tool(
     if tool in _SKOLVERKET_TOOL_IDS:
         skolverket_category = _SKOLVERKET_TOOL_CATEGORY_BY_ID.get(tool, cat)
         if skolverket_category == "statistics":
-            return "statistics"
-        return "knowledge"
+            return "statistik"
+        return "kunskap"
     if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
-        return "statistics"
+        return "statistik"
     if tool.startswith("riksdag_") or cat.startswith("riksdag"):
         return "riksdagen"
     if _is_weather_domain_tool(tool, cat):
-        return "weather"
+        return "väder"
     if tool.startswith("trafikverket_") or tool == "trafiklab_route":
         return "trafik"
     if tool.startswith("bolagsverket_"):
@@ -852,13 +858,13 @@ def _agent_for_tool(
     if tool.startswith("geoapify_"):
         return "kartor"
     if tool.startswith("marketplace_") or cat.startswith("marketplace"):
-        return "marketplace"
+        return "marknad"
     if tool in {"generate_podcast", "display_image"}:
         return "media"
     if tool in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
-        return "browser"
+        return "webb"
     if tool in {"search_surfsense_docs", "search_knowledge_base"}:
-        return "knowledge"
+        return "kunskap"
     return _agent_for_route_hint(route_value, sub_route_value)
 
 
