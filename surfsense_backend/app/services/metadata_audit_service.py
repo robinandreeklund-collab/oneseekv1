@@ -10,7 +10,11 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.new_chat.bigtool_store import (
+    METADATA_MAX_DESCRIPTION_CHARS,
+    METADATA_MAX_EXAMPLE_QUERIES,
+    METADATA_MAX_KEYWORDS,
     ToolIndexEntry,
+    enforce_metadata_limits,
     get_tool_embedding_context_split_fields,
     get_tool_embedding_context_fields,
     get_vector_recall_top_k,
@@ -45,17 +49,20 @@ _TOOL_AUDIT_STOPWORDS = {
     "sverige",
 }
 
-_ACTION_AGENTS = {
-    "action",
-    "weather",
-    "kartor",
-    "media",
-    "trafik",
-    "marketplace",
+_KUNSKAP_AGENTS = {
+    "kunskap", "knowledge", "webb", "browser", "väder", "weather",
+    "trafik", "statistik", "statistics", "bolag", "riksdagen",
+    "marknad", "marketplace",
 }
-_KNOWLEDGE_AGENTS = {"knowledge", "browser", "bolag", "riksdagen"}
-_STATISTICS_AGENTS = {"statistics"}
-_COMPARE_AGENTS = {"synthesis"}
+_SKAPANDE_AGENTS = {
+    "media", "kartor", "kod", "code", "åtgärd", "action",
+}
+_JAMFORELSE_AGENTS = {"syntes", "synthesis", "statistik", "statistics", "kunskap", "knowledge"}
+# Backward compat aliases
+_ACTION_AGENTS = _SKAPANDE_AGENTS | _KUNSKAP_AGENTS
+_KNOWLEDGE_AGENTS = _KUNSKAP_AGENTS
+_STATISTICS_AGENTS = {"statistik", "statistics"}
+_COMPARE_AGENTS = {"syntes", "synthesis"}
 _MAX_INTENT_FAILURES_FOR_LLM = 20
 _MAX_AGENT_FAILURES_FOR_LLM = 20
 _PROBE_QUERY_LLM_TIMEOUT_SECONDS = 18.0
@@ -153,6 +160,10 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
         [("tools", "knowledge")],
         [("tools", "action"), ("tools", "statistics"), ("tools", "general")],
     ),
+    "kunskap": (
+        [("tools", "knowledge")],
+        [("tools", "action"), ("tools", "statistics"), ("tools", "general")],
+    ),
     "action": (
         [("tools", "action")],
         [
@@ -162,7 +173,20 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
             ("tools", "general"),
         ],
     ),
+    "åtgärd": (
+        [("tools", "action")],
+        [
+            ("tools", "knowledge"),
+            ("tools", "statistics"),
+            ("tools", "kartor"),
+            ("tools", "general"),
+        ],
+    ),
     "weather": (
+        [("tools", "weather")],
+        [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
+    ),
+    "väder": (
         [("tools", "weather")],
         [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
     ),
@@ -183,6 +207,10 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
         [("tools", "statistics")],
         [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
     ),
+    "statistik": (
+        [("tools", "statistics")],
+        [("tools", "action"), ("tools", "knowledge"), ("tools", "general")],
+    ),
     "browser": (
         [("tools", "knowledge", "web")],
         [
@@ -192,7 +220,25 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
             ("tools", "general"),
         ],
     ),
+    "webb": (
+        [("tools", "knowledge", "web")],
+        [
+            ("tools", "knowledge"),
+            ("tools", "action"),
+            ("tools", "statistics"),
+            ("tools", "general"),
+        ],
+    ),
     "code": (
+        [("tools", "code")],
+        [
+            ("tools", "general"),
+            ("tools", "knowledge"),
+            ("tools", "action"),
+            ("tools", "statistics"),
+        ],
+    ),
+    "kod": (
         [("tools", "code")],
         [
             ("tools", "general"),
@@ -222,7 +268,15 @@ _AGENT_NAMESPACE_MAP: dict[str, tuple[list[tuple[str, ...]], list[tuple[str, ...
         [("tools", "marketplace")],
         [("tools", "knowledge"), ("tools", "general")],
     ),
+    "marknad": (
+        [("tools", "marketplace")],
+        [("tools", "knowledge"), ("tools", "general")],
+    ),
     "synthesis": (
+        [("tools", "knowledge")],
+        [("tools", "statistics"), ("tools", "action"), ("tools", "general")],
+    ),
+    "syntes": (
         [("tools", "knowledge")],
         [("tools", "statistics"), ("tools", "action"), ("tools", "general")],
     ),
@@ -352,29 +406,42 @@ def _has_time_or_year_reference(query: str) -> bool:
 
 def _query_domain_terms(entry: ToolIndexEntry, *, limit: int = 80) -> set[str]:
     terms: set[str] = set()
+    effective_limit = max(10, int(limit))
 
     def _extend(value: str) -> None:
         for token in _tokenize(value):
             if token in _GENERIC_QUERY_TERMS:
                 continue
             terms.add(token)
-            if len(terms) >= max(10, int(limit)):
+            if len(terms) >= effective_limit:
                 return
 
-    for keyword in list(entry.keywords or [])[:30]:
+    for keyword in list(entry.keywords or [])[:METADATA_MAX_KEYWORDS]:
         _extend(str(keyword))
-        if len(terms) >= max(10, int(limit)):
+        if len(terms) >= effective_limit:
             break
-    if len(terms) < max(10, int(limit)):
+    if len(terms) < effective_limit:
         _extend(entry.category or "")
-    if len(terms) < max(10, int(limit)):
+    if len(terms) < effective_limit:
         _extend(entry.description or "")
-    if len(terms) < max(10, int(limit)):
+    if len(terms) < effective_limit:
         _extend(entry.name or "")
+    if len(terms) < effective_limit:
+        _extend(getattr(entry, "main_identifier", "") or "")
+    if len(terms) < effective_limit:
+        _extend(getattr(entry, "core_activity", "") or "")
+    if len(terms) < effective_limit:
+        _extend(getattr(entry, "unique_scope", "") or "")
+    if len(terms) < effective_limit:
+        _extend(getattr(entry, "geographic_scope", "") or "")
     for sample in list(entry.example_queries or [])[:8]:
-        if len(terms) >= max(10, int(limit)):
+        if len(terms) >= effective_limit:
             break
         _extend(str(sample))
+    for exclude_term in list(getattr(entry, "excludes", ()) or ()):
+        if len(terms) >= effective_limit:
+            break
+        _extend(str(exclude_term))
     return terms
 
 
@@ -865,14 +932,25 @@ async def _generate_probe_queries_for_tool(
         "Q1 2025",
         "under sommaren",
     ]
+    tool_context: dict[str, Any] = {
+        "name": entry.name,
+        "category": entry.category,
+        "description": entry.description,
+        "keywords": entry.keywords,
+        "example_queries": entry.example_queries[:8],
+    }
+    if getattr(entry, "main_identifier", ""):
+        tool_context["main_identifier"] = entry.main_identifier
+    if getattr(entry, "core_activity", ""):
+        tool_context["core_activity"] = entry.core_activity
+    if getattr(entry, "unique_scope", ""):
+        tool_context["unique_scope"] = entry.unique_scope
+    if getattr(entry, "geographic_scope", ""):
+        tool_context["geographic_scope"] = entry.geographic_scope
+    if getattr(entry, "excludes", ()):
+        tool_context["excludes"] = list(entry.excludes)
     payload = {
-        "tool_context": {
-            "name": entry.name,
-            "category": entry.category,
-            "description": entry.description,
-            "keywords": entry.keywords,
-            "example_queries": entry.example_queries[:8],
-        },
+        "tool_context": tool_context,
         "target_quality_profile": {
             "language": "naturlig svenska",
             "style": "konkret och verklighetsnära användarfråga",
@@ -1022,13 +1100,14 @@ def _agent_route_bonus(agent_id: str, intent_id: str | None, namespace_boost: fl
     normalized_intent = str(intent_id or "").strip().lower()
     if not normalized_intent:
         return 0.0
-    if normalized_intent == "action" and normalized_agent in _ACTION_AGENTS:
+    if normalized_intent in {"kunskap", "knowledge"} and normalized_agent in _KUNSKAP_AGENTS:
         return namespace_boost
-    if normalized_intent == "knowledge" and normalized_agent in _KNOWLEDGE_AGENTS:
+    if normalized_intent in {"skapande", "action"} and normalized_agent in _SKAPANDE_AGENTS:
         return namespace_boost
+    if normalized_intent in {"jämförelse", "compare"} and normalized_agent in _JAMFORELSE_AGENTS:
+        return namespace_boost
+    # Backward compat
     if normalized_intent == "statistics" and normalized_agent in _STATISTICS_AGENTS:
-        return namespace_boost
-    if normalized_intent == "compare" and normalized_agent in _COMPARE_AGENTS:
         return namespace_boost
     return 0.0
 
@@ -2097,7 +2176,7 @@ def _fallback_intent_metadata_suggestion(
             continue
         keywords.append(token)
         seen.add(token.casefold())
-        if len(keywords) >= 25:
+        if len(keywords) >= METADATA_MAX_KEYWORDS:
             break
     description = _normalize_text(current.get("description"))
     if wrong_intents:
@@ -2113,6 +2192,7 @@ def _fallback_intent_metadata_suggestion(
         "priority": int(current.get("priority") or 500),
         "enabled": bool(current.get("enabled", True)),
     }
+    proposed = enforce_metadata_limits(proposed)
     rationale = (
         "Metadataforslag baserat pa granskade intent-kollisioner: "
         "forstarkt nyckelord och tydligare avgransning mot forvaxlade intents."
@@ -2141,7 +2221,7 @@ def _fallback_agent_metadata_suggestion(
             continue
         keywords.append(token)
         seen.add(token.casefold())
-        if len(keywords) >= 25:
+        if len(keywords) >= METADATA_MAX_KEYWORDS:
             break
     description = _normalize_text(current.get("description"))
     if wrong_agents:
@@ -2156,6 +2236,7 @@ def _fallback_agent_metadata_suggestion(
         "prompt_key": _normalize_text(current.get("prompt_key")) or None,
         "namespace": _safe_string_list(current.get("namespace")),
     }
+    proposed = enforce_metadata_limits(proposed)
     rationale = (
         "Metadataforslag baserat pa granskade agent-kollisioner: "
         "forstarkt nyckelord och tydligare avgransning mot forvaxlade agenter."
@@ -2191,6 +2272,7 @@ async def _build_llm_intent_metadata_suggestion(
         '  "enabled": true,\n'
         '  "rationale": "kort motivering pa svenska"\n'
         "}\n"
+        f"Begränsningar: beskrivning max {METADATA_MAX_DESCRIPTION_CHARS} tecken, keywords max {METADATA_MAX_KEYWORDS} stycken.\n"
         "Ingen markdown."
     )
     payload = {
@@ -2258,6 +2340,7 @@ async def _build_llm_agent_metadata_suggestion(
         '  "keywords": ["svenska termer"],\n'
         '  "rationale": "kort motivering pa svenska"\n'
         "}\n"
+        f"Begränsningar: beskrivning max {METADATA_MAX_DESCRIPTION_CHARS} tecken, keywords max {METADATA_MAX_KEYWORDS} stycken.\n"
         "Ingen markdown."
     )
     payload = {

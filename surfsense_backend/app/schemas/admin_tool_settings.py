@@ -1,27 +1,127 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.agents.new_chat.bigtool_store import (
+    METADATA_MAX_CORE_ACTIVITY_CHARS,
+    METADATA_MAX_DESCRIPTION_CHARS,
+    METADATA_MAX_EXAMPLE_QUERIES,
+    METADATA_MAX_EXAMPLE_QUERY_CHARS,
+    METADATA_MAX_EXCLUDES,
+    METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS,
+    METADATA_MAX_KEYWORD_CHARS,
+    METADATA_MAX_KEYWORDS,
+    METADATA_MAX_MAIN_IDENTIFIER_CHARS,
+    METADATA_MAX_UNIQUE_SCOPE_CHARS,
+)
+
+
+def _clamp_string(value: str, max_chars: int) -> str:
+    """Truncate a string to *max_chars*, preferring a sentence boundary."""
+    value = (value or "").strip()
+    if len(value) <= max_chars:
+        return value
+    cut = value[:max_chars]
+    last_dot = cut.rfind(".")
+    if last_dot > max_chars * 0.6:
+        return cut[: last_dot + 1]
+    return cut.rstrip()
+
+
+def _clamp_string_list(
+    values: list[str], *, max_items: int, max_item_chars: int
+) -> list[str]:
+    out: list[str] = []
+    for v in values:
+        item = str(v).strip()[:max_item_chars]
+        if item:
+            out.append(item)
+        if len(out) >= max_items:
+            break
+    return out
 
 
 class ToolMetadataItem(BaseModel):
     tool_id: str
     name: str
-    description: str
-    keywords: list[str]
-    example_queries: list[str]
+    description: str = Field(max_length=METADATA_MAX_DESCRIPTION_CHARS)
+    keywords: list[str] = Field(max_length=METADATA_MAX_KEYWORDS)
+    example_queries: list[str] = Field(max_length=METADATA_MAX_EXAMPLE_QUERIES)
     category: str
     base_path: str | None = None
+    main_identifier: str = Field("", max_length=METADATA_MAX_MAIN_IDENTIFIER_CHARS)
+    core_activity: str = Field("", max_length=METADATA_MAX_CORE_ACTIVITY_CHARS)
+    unique_scope: str = Field("", max_length=METADATA_MAX_UNIQUE_SCOPE_CHARS)
+    geographic_scope: str = Field("", max_length=METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS)
+    excludes: list[str] = Field(default_factory=list, max_length=METADATA_MAX_EXCLUDES)
     has_override: bool = False
 
 
 class ToolMetadataUpdateItem(BaseModel):
     tool_id: str
     name: str
-    description: str
-    keywords: list[str]
-    example_queries: list[str]
-    category: str
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    example_queries: list[str] = Field(default_factory=list)
+    category: str = ""
     base_path: str | None = None
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def clamp_description(cls, v: str) -> str:
+        return _clamp_string(v, METADATA_MAX_DESCRIPTION_CHARS)
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def clamp_keywords(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return _clamp_string_list(
+            v, max_items=METADATA_MAX_KEYWORDS, max_item_chars=METADATA_MAX_KEYWORD_CHARS
+        )
+
+    @field_validator("example_queries", mode="before")
+    @classmethod
+    def clamp_example_queries(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return _clamp_string_list(
+            v,
+            max_items=METADATA_MAX_EXAMPLE_QUERIES,
+            max_item_chars=METADATA_MAX_EXAMPLE_QUERY_CHARS,
+        )
+
+    @field_validator("excludes", mode="before")
+    @classmethod
+    def clamp_excludes(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return [str(e).strip() for e in v if str(e).strip()][:METADATA_MAX_EXCLUDES]
+
+    @field_validator("main_identifier", mode="before")
+    @classmethod
+    def clamp_main_identifier(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_MAIN_IDENTIFIER_CHARS)
+
+    @field_validator("core_activity", mode="before")
+    @classmethod
+    def clamp_core_activity(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_CORE_ACTIVITY_CHARS)
+
+    @field_validator("unique_scope", mode="before")
+    @classmethod
+    def clamp_unique_scope(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_UNIQUE_SCOPE_CHARS)
+
+    @field_validator("geographic_scope", mode="before")
+    @classmethod
+    def clamp_geographic_scope(cls, v: str) -> str:
+        return _clamp_string(v or "", METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS)
 
 
 class ToolCategoryResponse(BaseModel):
@@ -76,6 +176,11 @@ class ToolSettingsUpdateRequest(BaseModel):
     tools: list[ToolMetadataUpdateItem]
 
 
+class FlowToolEntry(BaseModel):
+    tool_id: str
+    label: str
+
+
 class AgentMetadataItem(BaseModel):
     agent_id: str
     label: str
@@ -83,6 +188,8 @@ class AgentMetadataItem(BaseModel):
     keywords: list[str]
     prompt_key: str | None = None
     namespace: list[str] = Field(default_factory=list)
+    routes: list[str] = Field(default_factory=list)
+    flow_tools: list[FlowToolEntry] = Field(default_factory=list)
     has_override: bool = False
 
 
@@ -93,6 +200,8 @@ class AgentMetadataUpdateItem(BaseModel):
     keywords: list[str]
     prompt_key: str | None = None
     namespace: list[str] = Field(default_factory=list)
+    routes: list[str] = Field(default_factory=list)
+    flow_tools: list[FlowToolEntry] = Field(default_factory=list)
 
 
 class IntentMetadataItem(BaseModel):
@@ -210,6 +319,20 @@ class MetadataCatalogStabilityLockActionResponse(BaseModel):
     stability_locks: MetadataCatalogStabilityLockSummary = Field(
         default_factory=MetadataCatalogStabilityLockSummary
     )
+
+
+class MetadataCatalogResetRequest(BaseModel):
+    search_space_id: int | None = None
+    reason: str | None = None
+
+
+class MetadataCatalogResetResponse(BaseModel):
+    search_space_id: int
+    cleared_tool_overrides: int = 0
+    cleared_intent_overrides: int = 0
+    cleared_agent_overrides: int = 0
+    cleared_lock_pairs: int = 0
+    catalog: MetadataCatalogResponse
 
 
 class ToolRetrievalTuningResponse(BaseModel):

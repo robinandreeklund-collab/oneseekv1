@@ -56,48 +56,47 @@ def _fake_resolve_route_from_intents(*, query: str, definitions=None):
     text = str(query or "").strip().lower()
     if text.startswith("/compare"):
         return _Decision(
-            route=dispatcher.Route.COMPARE,
+            route=dispatcher.Route.JAMFORELSE,
             confidence=0.95,
             source="intent_retrieval",
-            reason="intent_retrieval:compare",
-            candidates=[{"intent_id": "compare", "route": "compare", "score": 9.5}],
+            reason="intent_retrieval:jämförelse",
+            candidates=[{"intent_id": "jämförelse", "route": "jämförelse", "score": 9.5}],
         )
     if "trafik" in text or "väder" in text or "vader" in text:
         return _Decision(
-            route=dispatcher.Route.ACTION,
+            route=dispatcher.Route.KUNSKAP,
             confidence=0.93,
             source="intent_retrieval",
-            reason="intent_retrieval:action",
+            reason="intent_retrieval:kunskap",
             candidates=[
-                {"intent_id": "action", "route": "action", "score": 11.2},
-                {"intent_id": "knowledge", "route": "knowledge", "score": 4.1},
+                {"intent_id": "kunskap", "route": "kunskap", "score": 11.2},
             ],
         )
     return _Decision(
-        route=dispatcher.Route.KNOWLEDGE,
+        route=dispatcher.Route.KUNSKAP,
         confidence=0.81,
         source="intent_retrieval",
-        reason="intent_retrieval:knowledge",
-        candidates=[{"intent_id": "knowledge", "route": "knowledge", "score": 8.0}],
+        reason="intent_retrieval:kunskap",
+        candidates=[{"intent_id": "kunskap", "route": "kunskap", "score": 8.0}],
     )
 
 
-def test_rule_based_smalltalk_only_for_pure_greeting() -> None:
+def test_rule_based_konversation_only_for_pure_greeting() -> None:
     route = dispatcher._infer_rule_based_route("Hej!")
-    assert route == dispatcher.Route.SMALLTALK
+    assert route == dispatcher.Route.KONVERSATION
 
 
-def test_greeting_with_weather_query_is_not_forced_smalltalk() -> None:
+def test_greeting_with_weather_query_is_not_forced_konversation() -> None:
     route = dispatcher._infer_rule_based_route("Hej, vad blir vädret i Stockholm i morgon?")
     assert route is None
 
 
 def test_compare_command_rule_still_has_priority() -> None:
     route = dispatcher._infer_rule_based_route("/compare väder i Malmö")
-    assert route == dispatcher.Route.COMPARE
+    assert route == dispatcher.Route.JAMFORELSE
 
 
-def test_compare_followup_allows_new_action_query_route() -> None:
+def test_compare_followup_allows_new_kunskap_query_route() -> None:
     original_resolver = dispatcher.resolve_route_from_intents
     dispatcher.resolve_route_from_intents = _fake_resolve_route_from_intents
     try:
@@ -109,14 +108,23 @@ def test_compare_followup_allows_new_action_query_route() -> None:
                     {"role": "user", "content": "/compare openai och anthropic"},
                 ],
                 intent_definitions=[
-                    {"intent_id": "action", "route": "action", "enabled": True},
-                    {"intent_id": "knowledge", "route": "knowledge", "enabled": True},
-                    {"intent_id": "compare", "route": "compare", "enabled": True},
+                    {"intent_id": "kunskap", "route": "kunskap", "enabled": True},
+                    {"intent_id": "skapande", "route": "skapande", "enabled": True},
+                    {"intent_id": "jämförelse", "route": "jämförelse", "enabled": True},
                 ],
             )
         )
     finally:
         dispatcher.resolve_route_from_intents = original_resolver
 
-    assert route == dispatcher.Route.ACTION
+    assert route == dispatcher.Route.KUNSKAP
     assert meta.get("reason") != "followup_after_compare_routes_to_knowledge"
+
+
+def test_backward_compat_old_route_values() -> None:
+    """Old English route values should still resolve via _missing_."""
+    assert dispatcher.Route("knowledge") == dispatcher.Route.KUNSKAP
+    assert dispatcher.Route("action") == dispatcher.Route.SKAPANDE
+    assert dispatcher.Route("smalltalk") == dispatcher.Route.KONVERSATION
+    assert dispatcher.Route("compare") == dispatcher.Route.JAMFORELSE
+    assert dispatcher.Route("statistics") == dispatcher.Route.KUNSKAP

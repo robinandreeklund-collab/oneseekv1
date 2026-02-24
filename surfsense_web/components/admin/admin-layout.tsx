@@ -3,18 +3,25 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { 
-	Settings, 
-	MessageSquare, 
-	Database, 
+import {
+	Settings,
+	MessageSquare,
+	Database,
 	Wrench,
 	ToggleLeft,
-	ChevronRight 
+	ChevronRight,
+	GitBranch,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const ADMIN_NAV_ITEMS = [
+	{
+		title: "Flow Overview",
+		href: "/admin/flow",
+		icon: GitBranch,
+		description: "Visuell vy av intent \u2192 agent \u2192 tool",
+	},
 	{
 		title: "Agent Prompts",
 		href: "/admin/prompts",
@@ -25,7 +32,7 @@ const ADMIN_NAV_ITEMS = [
 		title: "Tool Settings",
 		href: "/admin/tools",
 		icon: Wrench,
-		description: "Hantera verktygsmetadata och inställningar",
+		description: "Hantera verktygsmetadata och inst\u00e4llningar",
 	},
 	{
 		title: "Tool Lifecycle",
@@ -47,11 +54,12 @@ interface AdminLayoutProps {
 
 export function AdminLayout({ children }: AdminLayoutProps) {
 	const pathname = usePathname();
+	const isFlowPage = pathname === "/admin/flow" || pathname?.startsWith("/admin/flow/");
 
 	return (
 		<div className="flex min-h-screen">
 			{/* Sidebar */}
-			<div className="w-64 border-r bg-muted/40">
+			<div className="w-64 border-r bg-muted/40 shrink-0">
 				<div className="flex h-full flex-col">
 					{/* Header */}
 					<div className="flex h-16 items-center border-b px-6">
@@ -98,8 +106,8 @@ export function AdminLayout({ children }: AdminLayoutProps) {
 			</div>
 
 			{/* Main content */}
-			<div className="flex-1">
-				<div className="container mx-auto p-6 max-w-7xl">
+			<div className="flex-1 min-w-0">
+				<div className={isFlowPage ? "h-full" : "container mx-auto p-6 max-w-7xl"}>
 					{children}
 				</div>
 			</div>

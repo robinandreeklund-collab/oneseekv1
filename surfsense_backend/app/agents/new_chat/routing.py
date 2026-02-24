@@ -2,26 +2,45 @@ from enum import Enum
 
 
 class Route(str, Enum):
-    KNOWLEDGE = "knowledge"
-    ACTION = "action"
-    SMALLTALK = "smalltalk"
-    COMPARE = "compare"
-    STATISTICS = "statistics"
+    KUNSKAP = "kunskap"
+    SKAPANDE = "skapande"
+    KONVERSATION = "konversation"
+    JAMFORELSE = "jämförelse"
+
+    # ── Backward-compat aliases (kept so old DB rows / logs still parse) ──
+    @classmethod
+    def _missing_(cls, value: object):
+        _COMPAT = {
+            "knowledge": cls.KUNSKAP,
+            "action": cls.SKAPANDE,
+            "smalltalk": cls.KONVERSATION,
+            "compare": cls.JAMFORELSE,
+            "statistics": cls.KUNSKAP,  # merged into kunskap
+        }
+        if isinstance(value, str):
+            return _COMPAT.get(value.strip().lower())
+        return None
 
 
+# ── Tool allow-lists per route ────────────────────────────────────────
+# Kunskap: all information-retrieval tools (weather, traffic, marketplace,
+# knowledge base, web, statistics …).
+# Skapande: tools that *create* artifacts (podcast, maps, code sandbox).
 ROUTE_TOOL_SETS: dict[Route, list[str]] = {
-    Route.KNOWLEDGE: [
+    Route.KUNSKAP: [
+        # Internal knowledge
         "search_surfsense_docs",
         "save_memory",
         "recall_memory",
-    ],
-    Route.ACTION: [
         "search_knowledge_base",
+        # Web / browser
         "link_preview",
         "scrape_webpage",
-        "display_image",
-        "geoapify_static_map",
-        "generate_podcast",
+        "public_web_search",
+        "tavily_search",
+        "libris_search",
+        "jobad_links_search",
+        # Weather (SMHI)
         "smhi_weather",
         "smhi_vaderprognoser_metfcst",
         "smhi_vaderprognoser_snow1g",
@@ -32,9 +51,9 @@ ROUTE_TOOL_SETS: dict[Route, list[str]] = {
         "smhi_oceanografi_ocobs",
         "smhi_brandrisk_fwif",
         "smhi_brandrisk_fwia",
+        # Traffic
         "trafiklab_route",
-        "libris_search",
-        "jobad_links_search",
+        # Marketplace
         "marketplace_unified_search",
         "marketplace_blocket_search",
         "marketplace_blocket_cars",
@@ -45,15 +64,19 @@ ROUTE_TOOL_SETS: dict[Route, list[str]] = {
         "marketplace_categories",
         "marketplace_regions",
     ],
-    Route.SMALLTALK: [],
-    Route.STATISTICS: [],
+    Route.SKAPANDE: [
+        "display_image",
+        "geoapify_static_map",
+        "generate_podcast",
+    ],
+    Route.KONVERSATION: [],
+    Route.JAMFORELSE: [],
 }
 
 
 ROUTE_CITATIONS_ENABLED: dict[Route, bool] = {
-    Route.KNOWLEDGE: True,
-    Route.ACTION: False,
-    Route.SMALLTALK: False,
-    Route.COMPARE: True,
-    Route.STATISTICS: True,
+    Route.KUNSKAP: True,
+    Route.SKAPANDE: False,
+    Route.KONVERSATION: False,
+    Route.JAMFORELSE: True,
 }

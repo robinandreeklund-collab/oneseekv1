@@ -131,7 +131,8 @@ export default function DocumentsTable() {
 	});
 
 	// Transform SurfSense docs to match the Document type
-	const surfsenseDocsAsDocuments: Document[] = useMemo(() => {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const surfsenseDocsAsDocuments: any[] = useMemo(() => {
 		if (!surfsenseDocsResponse?.items) return [];
 		return surfsenseDocsResponse.items.map((doc) => ({
 			id: doc.id,

@@ -47,7 +47,7 @@ const WeatherSummarySchema = z
 const WeatherCurrentSchema = z
 	.object({
 		valid_time: z.string().nullish(),
-		parameters: z.record(z.any()).nullish(),
+		parameters: z.record(z.string(), z.any()).nullish(),
 		summary: WeatherSummarySchema.nullish(),
 	})
 	.partial();
@@ -65,7 +65,7 @@ const SmhiWeatherArgsSchema = z
 const SmhiWeatherTimeseriesSchema = z
 	.object({
 		valid_time: z.string().nullish(),
-		parameters: z.record(z.any()).nullish(),
+		parameters: z.record(z.string(), z.any()).nullish(),
 	})
 	.partial();
 
@@ -707,9 +707,9 @@ function renderSmhiWeatherUI({
 export const SmhiWeatherToolUI = makeAssistantToolUI<SmhiWeatherArgs, SmhiWeatherResult>({
 	toolName: "smhi_weather",
 	render: renderSmhiWeatherUI,
-});
+} as any);
 
 export const SmhiMetfcstToolUI = makeAssistantToolUI<SmhiWeatherArgs, SmhiWeatherResult>({
 	toolName: "smhi_vaderprognoser_metfcst",
 	render: renderSmhiWeatherUI,
-});
+} as any);

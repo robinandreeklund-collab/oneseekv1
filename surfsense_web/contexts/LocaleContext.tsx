@@ -19,9 +19,9 @@ const LocaleContext = createContext<LocaleContextType | undefined>(undefined);
 
 const LOCALE_STORAGE_KEY = "surfsense-locale";
 const LOCALE_MESSAGES: Record<Locale, typeof enMessages> = {
-	sv: svMessages,
+	sv: svMessages as typeof enMessages,
 	en: enMessages,
-	zh: zhMessages,
+	zh: zhMessages as typeof enMessages,
 };
 
 export function LocaleProvider({ children }: { children: React.ReactNode }) {

@@ -87,7 +87,7 @@ function ParsedMediaCard({ result }: { result: unknown }) {
 
 	return (
 		<MediaCard
-			{...card}
+			{...(card as any)}
 			maxWidth="100%"
 			responseActions={[{ id: "open", label: "Öppna", variant: "default" }]}
 			onResponseAction={(id) => {

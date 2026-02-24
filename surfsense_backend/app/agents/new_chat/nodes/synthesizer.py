@@ -45,7 +45,7 @@ def _should_passthrough_synthesizer(
     if final_agent_name == "supervisor":
         return True
     route_hint = str(state.get("route_hint") or "").strip().lower()
-    if route_hint == "action" and _FILESYSTEM_QUERY_RE.search(str(latest_user_query or "")):
+    if route_hint in {"skapande", "action"} and _FILESYSTEM_QUERY_RE.search(str(latest_user_query or "")):
         return True
     lowered = str(source_response or "").strip().lower()
     if any(marker in lowered for marker in _NO_DATA_MARKERS):
@@ -166,7 +166,7 @@ def build_synthesizer_node(
         
         # Use compare-specific prompt if in compare mode
         route_hint = str(state.get("route_hint") or "").strip().lower()
-        if route_hint == "compare" and compare_synthesizer_prompt_template:
+        if route_hint in {"jämförelse", "compare"} and compare_synthesizer_prompt_template:
             prompt_template = compare_synthesizer_prompt_template
         else:
             prompt_template = synthesizer_prompt_template

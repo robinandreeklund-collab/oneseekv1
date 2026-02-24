@@ -8,9 +8,10 @@ interface MarkdownViewerProps {
 }
 
 export function MarkdownViewer({ content, className }: MarkdownViewerProps) {
-	const components: StreamdownProps["components"] = {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const components: StreamdownProps["components"] & Record<string, any> = {
 		// Define custom components for markdown elements
-		callout: ({ children, ...props }) => (
+		callout: ({ children, ...props }: { children: React.ReactNode; [key: string]: unknown }) => (
 			<div
 				className="my-4 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950"
 				{...props}

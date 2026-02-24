@@ -6,11 +6,14 @@ import {
 	type MetadataCatalogSeparationRequest,
 	type MetadataCatalogStabilityLockActionRequest,
 	type MetadataCatalogStabilityLockActionResponse,
+	type MetadataCatalogResetRequest,
 	type MetadataCatalogUpdateRequest,
 	metadataCatalogAuditRunRequest,
 	metadataCatalogAuditRunResponse,
 	metadataCatalogAuditSuggestionRequest,
 	metadataCatalogAuditSuggestionResponse,
+	metadataCatalogResetRequest,
+	metadataCatalogResetResponse,
 	metadataCatalogResponse,
 	metadataCatalogSafeRenameSuggestionRequest,
 	metadataCatalogSafeRenameSuggestionResponse,
@@ -208,6 +211,21 @@ class AdminToolSettingsApiService {
 		return baseApiService.post(
 			"/api/v1/admin/tool-settings/metadata-audit/stability-locks/unlock",
 			metadataCatalogStabilityLockActionResponse,
+			{
+				body: parsed.data,
+			}
+		);
+	}
+
+	async resetMetadataCatalog(request: MetadataCatalogResetRequest) {
+		const parsed = metadataCatalogResetRequest.safeParse(request);
+		if (!parsed.success) {
+			const errorMessage = parsed.error.issues.map((issue) => issue.message).join(", ");
+			throw new ValidationError(`Invalid request: ${errorMessage}`);
+		}
+		return baseApiService.post(
+			"/api/v1/admin/tool-settings/metadata-catalog/reset",
+			metadataCatalogResetResponse,
 			{
 				body: parsed.data,
 			}
