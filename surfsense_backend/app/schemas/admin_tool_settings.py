@@ -184,17 +184,17 @@ class FlowToolEntry(BaseModel):
 class AgentMetadataItem(BaseModel):
     agent_id: str
     label: str
-    description: str = Field("", max_length=METADATA_MAX_DESCRIPTION_CHARS)
-    keywords: list[str] = Field(default_factory=list, max_length=METADATA_MAX_KEYWORDS)
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
     prompt_key: str | None = None
     namespace: list[str] = Field(default_factory=list)
     routes: list[str] = Field(default_factory=list)
     flow_tools: list[FlowToolEntry] = Field(default_factory=list)
-    main_identifier: str = Field("", max_length=METADATA_MAX_MAIN_IDENTIFIER_CHARS)
-    core_activity: str = Field("", max_length=METADATA_MAX_CORE_ACTIVITY_CHARS)
-    unique_scope: str = Field("", max_length=METADATA_MAX_UNIQUE_SCOPE_CHARS)
-    geographic_scope: str = Field("", max_length=METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS)
-    excludes: list[str] = Field(default_factory=list, max_length=METADATA_MAX_EXCLUDES)
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
     has_override: bool = False
 
 
@@ -259,15 +259,15 @@ class IntentMetadataItem(BaseModel):
     intent_id: str
     label: str
     route: str
-    description: str = Field("", max_length=METADATA_MAX_DESCRIPTION_CHARS)
-    keywords: list[str] = Field(default_factory=list, max_length=METADATA_MAX_KEYWORDS)
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
     priority: int = 500
     enabled: bool = True
-    main_identifier: str = Field("", max_length=METADATA_MAX_MAIN_IDENTIFIER_CHARS)
-    core_activity: str = Field("", max_length=METADATA_MAX_CORE_ACTIVITY_CHARS)
-    unique_scope: str = Field("", max_length=METADATA_MAX_UNIQUE_SCOPE_CHARS)
-    geographic_scope: str = Field("", max_length=METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS)
-    excludes: list[str] = Field(default_factory=list, max_length=METADATA_MAX_EXCLUDES)
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
     has_override: bool = False
 
 
