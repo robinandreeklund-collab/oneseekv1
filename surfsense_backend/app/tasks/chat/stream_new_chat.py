@@ -1402,7 +1402,7 @@ async def stream_new_chat(
         
         # Sync compare_mode with route decision
         # Router can identify compare requests even without /compare prefix
-        if route == Route.COMPARE:
+        if route == Route.JAMFORELSE:
             compare_mode = True
             # Always extract compare query when route is COMPARE, even if initial detection failed
             if not compare_query:
@@ -1441,7 +1441,7 @@ async def stream_new_chat(
             supervisor_prompt,
             citation_instructions=citation_instructions_block,
         )
-        if route == Route.COMPARE:
+        if route == Route.JAMFORELSE:
             compare_supervisor_instructions = resolve_prompt(
                 prompt_overrides,
                 "compare.supervisor.instructions",
@@ -1566,7 +1566,7 @@ async def stream_new_chat(
             DEFAULT_EXTERNAL_SYSTEM_PROMPT,
         )
 
-        if route == Route.SMALLTALK:
+        if route == Route.KONVERSATION:
             smalltalk_prompt = resolve_prompt(
                 prompt_overrides,
                 "agent.smalltalk.system",
@@ -1721,7 +1721,7 @@ async def stream_new_chat(
                 yield route_end
 
         checkpoint_ns = ""
-        if route != Route.SMALLTALK:
+        if route != Route.KONVERSATION:
             # Create connector service
             connector_service = ConnectorService(
                 session, search_space_id=search_space_id, user_id=user_id
@@ -1988,7 +1988,7 @@ async def stream_new_chat(
         # NullValue").
         if worker_system_prompt:
             input_state["worker_system_prompt"] = worker_system_prompt
-        if route == Route.SMALLTALK:
+        if route == Route.KONVERSATION:
             input_state["search_space_id"] = search_space_id
         else:
             input_state["route_hint"] = route.value

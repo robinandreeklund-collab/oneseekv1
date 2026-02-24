@@ -46,19 +46,21 @@ def _normalize_route(value: str) -> Route | None:
     if not value:
         return None
     lowered = value.strip().lower()
-    for route in (
-        Route.KNOWLEDGE,
-        Route.ACTION,
-        Route.SMALLTALK,
-        Route.STATISTICS,
-        Route.COMPARE,
-    ):
+    for route in Route:
         if route.value in lowered:
             return route
-    if "statistik" in lowered:
-        return Route.STATISTICS
-    if "compare" in lowered:
-        return Route.COMPARE
+    # Backward compat / aliases
+    _ALIASES: dict[str, Route] = {
+        "knowledge": Route.KUNSKAP,
+        "action": Route.SKAPANDE,
+        "smalltalk": Route.KONVERSATION,
+        "statistics": Route.KUNSKAP,
+        "statistik": Route.KUNSKAP,
+        "compare": Route.JAMFORELSE,
+    }
+    for alias, route in _ALIASES.items():
+        if alias in lowered:
+            return route
     return None
 
 
@@ -67,17 +69,14 @@ def _infer_rule_based_route(text: str) -> Route | None:
     if not value:
         return None
     if _COMPARE_COMMAND_RE.match(value):
-        return Route.COMPARE
+        return Route.JAMFORELSE
     if _MARKETPLACE_ROUTE_RE.search(value):
-        return Route.ACTION
+        return Route.KUNSKAP  # Marketplace = information retrieval
     greeting_match = _GREETING_REGEX.match(value)
     if greeting_match:
-        # Only hard-lock to smalltalk when the message is effectively a pure greeting.
-        # Queries like "hej vädret i stockholm?" should continue to intent retrieval
-        # so tool routes (e.g. action/weather) are still reachable.
         trailing_text = value[greeting_match.end() :].strip(" \t\r\n,.;:!?-")
         if not trailing_text:
-            return Route.SMALLTALK
+            return Route.KONVERSATION
     return None
 
 
@@ -95,7 +94,7 @@ def _looks_context_dependent_followup(text: str) -> bool:
 def _first_non_compare_route(candidates: list[dict[str, Any]] | None) -> Route | None:
     for item in candidates or []:
         route = _normalize_route(str(item.get("route") or ""))
-        if route and route not in {Route.COMPARE, Route.SMALLTALK}:
+        if route and route not in {Route.JAMFORELSE, Route.KONVERSATION}:
             return route
     return None
 
@@ -134,7 +133,7 @@ async def dispatch_route_with_trace(
 ) -> tuple[Route, dict[str, Any]]:
     text = (user_query or "").strip()
     if not text:
-        return Route.SMALLTALK, {
+        return Route.KONVERSATION, {
             "source": "empty_message",
             "confidence": 1.0,
             "reason": "empty_input_defaults_to_smalltalk",
@@ -151,7 +150,7 @@ async def dispatch_route_with_trace(
         }
 
     if has_attachments or has_mentions:
-        return Route.KNOWLEDGE, {
+        return Route.KUNSKAP, {
             "source": "attachment_or_mention",
             "confidence": 0.98,
             "reason": "attachments_or_mentions_force_knowledge",
@@ -178,12 +177,12 @@ async def dispatch_route_with_trace(
     if (
         is_followup
         and previous_route
-        and previous_route not in {Route.SMALLTALK}
+        and previous_route not in {Route.KONVERSATION}
     ):
         # Compare followups often start with short polite phrases ("kan du ...")
         # while still introducing a new actionable task (weather/traffic/etc.).
         # Do not hard-lock them to knowledge before intent retrieval runs.
-        if previous_route == Route.COMPARE:
+        if previous_route == Route.JAMFORELSE:
             previous_route = None
         # Global continuity rule: preserve prior route for context-dependent follow-ups.
         if previous_route:
@@ -204,7 +203,7 @@ async def dispatch_route_with_trace(
             query=previous_user_text,
             definitions=normalized_intents,
         )
-        if previous_decision and previous_decision.route not in {Route.SMALLTALK}:
+        if previous_decision and previous_decision.route not in {Route.KONVERSATION}:
             previous_route = previous_decision.route
 
     explicit_compare = bool(_COMPARE_COMMAND_RE.match(text))
@@ -214,17 +213,17 @@ async def dispatch_route_with_trace(
         *,
         candidates: list[dict[str, Any]] | None = None,
     ) -> Route:
-        if route != Route.COMPARE or explicit_compare:
+        if route != Route.JAMFORELSE or explicit_compare:
             return route
-        if previous_route and previous_route not in {Route.SMALLTALK}:
+        if previous_route and previous_route not in {Route.KONVERSATION}:
             # Allow compare followups to preserve compare context
-            if previous_route == Route.COMPARE:
-                return Route.KNOWLEDGE
+            if previous_route == Route.JAMFORELSE:
+                return Route.KUNSKAP
             return previous_route
         candidate_route = _first_non_compare_route(candidates)
         if candidate_route:
             return candidate_route
-        return Route.KNOWLEDGE
+        return Route.KUNSKAP
 
     retrieval_decision = resolve_route_from_intents(
         query=text,
@@ -301,12 +300,12 @@ async def dispatch_route_with_trace(
             if (
                 is_followup
                 and previous_route
-                and previous_route not in {Route.SMALLTALK}
-                and guarded_llm_route in {Route.KNOWLEDGE, Route.ACTION}
+                and previous_route not in {Route.KONVERSATION}
+                and guarded_llm_route in {Route.KUNSKAP, Route.SKAPANDE}
             ):
                 # Do not force compare followups into knowledge; retrieval/LLM route
                 # should decide when the user asks a fresh actionable task.
-                if previous_route == Route.COMPARE:
+                if previous_route == Route.JAMFORELSE:
                     return guarded_llm_route, {
                         "source": "followup_override_compare_passthrough",
                         "confidence": 0.82,
@@ -349,7 +348,7 @@ async def dispatch_route_with_trace(
                 "reason": retrieval_decision.reason,
                 "candidates": retrieval_decision.candidates,
             }
-        fallback_route = previous_route or Route.KNOWLEDGE
+        fallback_route = previous_route or Route.KUNSKAP
         return fallback_route, {
             "source": "fallback",
             "confidence": 0.4 if previous_route else 0.35,
@@ -375,7 +374,7 @@ async def dispatch_route_with_trace(
                 "reason": retrieval_decision.reason,
                 "candidates": retrieval_decision.candidates,
             }
-        fallback_route = previous_route or Route.KNOWLEDGE
+        fallback_route = previous_route or Route.KUNSKAP
         return fallback_route, {
             "source": "exception_fallback",
             "confidence": 0.33,

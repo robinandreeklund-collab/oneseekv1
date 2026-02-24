@@ -81,6 +81,12 @@ def _route_allowed_agents(route_hint: str | None) -> set[str]:
 def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None) -> str:
     route = _normalize_route_hint_value(route_hint)
     defaults = {
+        # New Swedish route values
+        "kunskap": "knowledge",
+        "skapande": "action",
+        "jämförelse": "synthesis",
+        "konversation": "knowledge",
+        # Backward compat
         "action": "action",
         "knowledge": "knowledge",
         "statistics": "statistics",
@@ -163,7 +169,7 @@ def _select_focused_tool_profiles(
 def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -> list[str]:
     normalized_task = _normalize_text(task)
     normalized_agent_name = str(agent_name or "").strip().lower()
-    if normalized_agent_name in {"knowledge", "statistics", "action"} and any(
+    if normalized_agent_name in {"knowledge", "statistics", "action", "kunskap", "skapande"} and any(
         marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS
     ):
         # Allow retrieve_tools to discover dynamic connector tools (for example MCP)

@@ -754,19 +754,19 @@ def _infer_agent_for_tool(
         return "browser"
     if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
         return "knowledge"
-    if normalized_route == "statistics":
+    if normalized_route in {"statistics", "kunskap"}:
         return "statistics"
-    if normalized_route == "compare":
+    if normalized_route in {"jämförelse", "compare"}:
         return "synthesis"
-    if normalized_route == "knowledge":
+    if normalized_route in {"knowledge", "kunskap"}:
         return "knowledge"
-    if normalized_route == "action" and normalized_sub_route == "travel":
+    if normalized_route in {"skapande", "action"} and normalized_sub_route == "travel":
         return "trafik"
-    if normalized_route == "action" and normalized_sub_route == "web":
+    if normalized_route in {"skapande", "action"} and normalized_sub_route == "web":
         return "browser"
-    if normalized_route == "action" and normalized_sub_route == "media":
+    if normalized_route in {"skapande", "action"} and normalized_sub_route == "media":
         return "media"
-    if normalized_route == "action":
+    if normalized_route in {"skapande", "action"}:
         return "action"
     return "action"
 

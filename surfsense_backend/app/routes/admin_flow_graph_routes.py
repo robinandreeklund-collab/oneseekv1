@@ -23,11 +23,13 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 # ── Intent → Route → Agent policy mapping ──────────────────────────────
 _ROUTE_AGENT_POLICIES: dict[str, list[str]] = {
-    "knowledge": ["knowledge", "browser"],
-    "action": ["action", "weather", "kartor", "trafik", "marketplace", "media", "code", "bolag"],
-    "statistics": ["statistics"],
-    "compare": ["synthesis", "statistics", "knowledge"],
-    "smalltalk": [],
+    "kunskap": [
+        "knowledge", "browser", "weather", "trafik", "statistics",
+        "bolag", "riksdagen", "marketplace",
+    ],
+    "skapande": ["media", "kartor", "code"],
+    "jämförelse": ["synthesis", "statistics", "knowledge"],
+    "konversation": [],
 }
 
 # ── Agent → Tool mapping (hardcoded tool IDs per agent namespace) ──────

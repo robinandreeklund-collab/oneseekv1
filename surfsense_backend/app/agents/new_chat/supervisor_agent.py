@@ -528,7 +528,7 @@ def _coerce_redundant_retrieve_call(
     only_call = tool_calls[0]
     if str(only_call.get("name") or "").strip() != "retrieve_agents":
         return tool_calls, False
-    if str(_normalize_route_hint_value(state.get("route_hint")) or "") == "compare":
+    if str(_normalize_route_hint_value(state.get("route_hint")) or "") in {"jämförelse", "compare"}:
         return tool_calls, False
     selected_agents = _selected_agent_names_from_state(state)
     if len(selected_agents) != 1:
@@ -1061,7 +1061,7 @@ def _should_finalize_from_contract(
     response = _strip_critic_json(str(response_text or "").strip())
     if not response:
         return False
-    if str(route_hint or "").strip().lower() == "compare":
+    if str(route_hint or "").strip().lower() in {"jämförelse", "compare"}:
         return False
 
     status = _normalize_result_status(contract.get("status"))
@@ -2736,11 +2736,16 @@ async def create_supervisor_agent(
         return any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
 
     route_to_intent_id = {
-        "knowledge": "knowledge",
-        "action": "action",
-        "statistics": "statistics",
-        "compare": "compare",
-        "smalltalk": "smalltalk",
+        "kunskap": "kunskap",
+        "skapande": "skapande",
+        "jämförelse": "jämförelse",
+        "konversation": "konversation",
+        # Backward compat
+        "knowledge": "kunskap",
+        "action": "skapande",
+        "statistics": "kunskap",
+        "compare": "jämförelse",
+        "smalltalk": "konversation",
         "mixed": "mixed",
     }
     route_to_speculative_tool_ids: dict[str, list[str]] = {
@@ -3000,7 +3005,7 @@ async def create_supervisor_agent(
         intent_id = route_to_intent_id.get(normalized, "knowledge")
         return {
             "intent_id": intent_id,
-            "route": normalized or "knowledge",
+            "route": normalized or "kunskap",
             "reason": "Fallback baserad pa route_hint.",
             "confidence": 0.5,
         }
@@ -3010,7 +3015,7 @@ async def create_supervisor_agent(
         latest_user_query: str = "",
     ) -> str:
         normalized = _normalize_route_hint_value(route_value)
-        if normalized == "action":
+        if normalized in {"skapande", "action", "kunskap", "knowledge"}:
             if sandbox_enabled and _has_filesystem_intent(latest_user_query):
                 return "code"
             # Weather removed: let LLM/retrieval choose agent
@@ -3039,31 +3044,32 @@ async def create_supervisor_agent(
         normalized_route = _normalize_route_hint_value(
             resolved.get("route") or route_hint
         )
-        if normalized_route in {"compare", "statistics", "mixed"}:
+        if normalized_route in {"jämförelse", "compare", "mixed"}:
             return resolved
 
         override_route: str | None = None
         override_reason = ""
-        # Weather removed: should be handled by LLM classification, not regex override
+        # Traffic, filesystem, marketplace, map overrides route to kunskap
+        # (agent-level routing picks the right specialist agent)
         if _has_strict_trafik_intent(query):
-            override_route = "action"
+            override_route = "kunskap"
             override_reason = (
-                "Heuristisk override: trafikfraga ska routas till action/trafik."
+                "Heuristisk override: trafikfraga ska routas till kunskap/trafik."
             )
         elif sandbox_enabled and _has_filesystem_intent(query):
-            override_route = "action"
+            override_route = "skapande"
             override_reason = (
-                "Heuristisk override: filsystem/sandbox-fraga ska routas till action/code."
+                "Heuristisk override: filsystem/sandbox-fraga ska routas till skapande/code."
             )
         elif _has_marketplace_intent(query):
-            override_route = "action"
+            override_route = "kunskap"
             override_reason = (
-                "Heuristisk override: marknadsplatsfraga ska routas till action/marketplace."
+                "Heuristisk override: marknadsplatsfraga ska routas till kunskap/marketplace."
             )
         elif _has_map_intent(query):
-            override_route = "action"
+            override_route = "skapande"
             override_reason = (
-                "Heuristisk override: kart/rutt-fraga ska routas till action."
+                "Heuristisk override: kart/rutt-fraga ska routas till skapande."
             )
         if not override_route:
             return resolved
@@ -3191,7 +3197,7 @@ async def create_supervisor_agent(
             return None
 
         # Soft preference for weather-capable agents on weather tasks
-        if route_hint == "action" and weather_task and not strict_trafik_task:
+        if route_hint in {"kunskap", "skapande", "action", "knowledge"} and weather_task and not strict_trafik_task:
             if requested_raw in agent_by_name and requested_raw != "weather":
                 # Check if requested agent has SMHI tools via its WorkerConfig
                 requested_worker = worker_configs.get(requested_raw)
@@ -3207,14 +3213,14 @@ async def create_supervisor_agent(
                 # Only lock if requested agent lacks weather tools
                 if not has_weather_tools:
                     return "weather", f"weather_soft_lock:{requested_raw}->weather"
-        if route_hint == "action" and strict_trafik_task:
+        if route_hint in {"kunskap", "skapande", "action", "knowledge"} and strict_trafik_task:
             allowed_for_strict = {"trafik", "kartor", "action"}
             if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
                 return "trafik", f"strict_trafik_lock:{requested_raw}->trafik"
         # For explicit marketplace tasks, keep execution on marketplace to avoid
         # drifting into browser/web-search aliases mid-plan.
         if (
-            route_hint == "action"
+            route_hint in {"kunskap", "skapande", "action", "knowledge"}
             and marketplace_task
             and not weather_task
             and not strict_trafik_task
@@ -3293,6 +3299,10 @@ async def create_supervisor_agent(
             retrieved = [agent for agent in retrieved if agent.name in selected_agent_set]
         if route_hint:
             preferred = {
+                "kunskap": ["knowledge", "browser"],
+                "skapande": ["action", "media"],
+                "jämförelse": ["synthesis", "knowledge", "statistics"],
+                # Backward compat
                 "action": ["action", "media"],
                 "knowledge": ["knowledge", "browser"],
                 "statistics": ["statistics"],
@@ -3300,7 +3310,7 @@ async def create_supervisor_agent(
             }.get(str(route_hint), [])
             if marketplace_task and "marketplace" not in preferred:
                 preferred.insert(0, "marketplace")
-            if str(route_hint) == "action":
+            if str(route_hint) in {"skapande", "action"}:
                 # Weather preference removed: rely on retrieval
                 if sandbox_enabled and filesystem_task:
                     preferred = ["code", "action"]
@@ -3426,7 +3436,7 @@ async def create_supervisor_agent(
         route_allowed = _route_allowed_agents(route_hint)
         default_for_route = _route_default_agent(route_hint, route_allowed)
         # Weather limit removed: should be controlled by graph_complexity like other routes
-        if route_hint == "statistics":
+        if route_hint in {"statistics"}:  # Statistics agents chosen by agent_resolver, not route
             limit = 1
 
         # Extract sub_intents from state for multi-domain cache key
@@ -3441,7 +3451,7 @@ async def create_supervisor_agent(
                 _set_cached_combo(cache_key, cached_agents)
         if (
             cached_agents
-            and route_hint == "action"
+            and route_hint in {"kunskap", "skapande", "action", "knowledge"}
             and has_strict_trafik_intent
         ):
             # Avoid stale non-traffic combos on hard traffic queries.
@@ -3471,6 +3481,10 @@ async def create_supervisor_agent(
             )
             if route_hint:
                 preferred = {
+                    "kunskap": ["knowledge", "browser"],
+                    "skapande": ["action", "media"],
+                    "jämförelse": ["synthesis", "knowledge", "statistics"],
+                    # Backward compat
                     "action": ["action", "media"],
                     "knowledge": ["knowledge", "browser"],
                     "statistics": ["statistics"],
@@ -3479,7 +3493,7 @@ async def create_supervisor_agent(
                 }.get(str(route_hint), [])
                 if has_marketplace_intent and "marketplace" not in preferred:
                     preferred.insert(0, "marketplace")
-                if str(route_hint) == "action":
+                if str(route_hint) in {"skapande", "action", "kunskap", "knowledge"}:
                     # Weather preference removed: rely on retrieval and LLM classification
                     if sandbox_enabled and has_filesystem_intent:
                         preferred = ["code", "action"]
@@ -3515,13 +3529,13 @@ async def create_supervisor_agent(
             if (
                 has_trafik_intent
                 and not has_weather_intent
-                and route_hint in {"action", "trafik"}
+                and route_hint in {"kunskap", "skapande", "action", "knowledge", "trafik"}
             ):
                 trafik_agent = agent_by_name.get("trafik")
                 if trafik_agent and trafik_agent not in selected:
                     selected.insert(0, trafik_agent)
                     selected = selected[:limit]
-            if route_hint == "action" and sandbox_enabled and has_filesystem_intent:
+            if route_hint in {"kunskap", "skapande", "action", "knowledge"} and sandbox_enabled and has_filesystem_intent:
                 code_agent = agent_by_name.get("code")
                 if code_agent:
                     if code_agent in selected:
@@ -3556,7 +3570,7 @@ async def create_supervisor_agent(
 
         selected = selected[:limit]
         if (
-            route_hint == "action"
+            route_hint in {"kunskap", "skapande", "action", "knowledge"}
             and has_marketplace_intent
             and not has_weather_intent
             and not has_strict_trafik_intent
@@ -3567,7 +3581,7 @@ async def create_supervisor_agent(
             ]
             selected = marketplace_selected[:limit] if marketplace_selected else selected
         # Weather order removed: selection should be based on retrieval and LLM classification
-        if route_hint == "action" and has_strict_trafik_intent:
+        if route_hint in {"kunskap", "skapande", "action", "knowledge"} and has_strict_trafik_intent:
             strict_order = ["trafik"]
             if has_map_intent:
                 strict_order.append("kartor")
@@ -6013,7 +6027,7 @@ async def create_supervisor_agent(
         if (
             "final_agent_response" not in updates
             and call_entries
-            and route_hint != "compare"
+            and route_hint not in {"jämförelse", "compare"}
             and not pending_followup_steps
         ):
             last_entry = call_entries[-1]
@@ -6038,7 +6052,7 @@ async def create_supervisor_agent(
 
         if (
             "final_agent_response" not in updates
-            and route_hint != "compare"
+            and route_hint not in {"jämförelse", "compare"}
             and not pending_followup_steps
         ):
             ai_fallback = _latest_actionable_ai_response(
@@ -6190,7 +6204,7 @@ async def create_supervisor_agent(
             (resolved_intent.get("route") if isinstance(resolved_intent, dict) else None)
             or state.get("route_hint")
         )
-        if resolved_route == "smalltalk":
+        if resolved_route in {"konversation", "smalltalk"}:
             return "smalltalk"
         phase = str(state.get("orchestration_phase") or "").strip().lower()
         has_final = bool(

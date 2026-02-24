@@ -388,7 +388,9 @@ _MISSING_FIELD_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 _RESULT_STATUS_VALUES = {"success", "partial", "blocked", "error"}
 _ROUTE_STRICT_AGENT_POLICIES: dict[str, set[str]] = {
-    "statistics": {"statistics"},
+    # Jämförelse locks to synthesis + relevant kunskap agents
+    "jämförelse": {"synthesis", "statistics", "knowledge"},
+    # Backward compat for old string values
     "compare": {"synthesis", "statistics", "knowledge"},
 }
 _COMPARE_FOLLOWUP_RE = re.compile(

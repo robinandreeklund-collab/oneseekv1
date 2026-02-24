@@ -641,11 +641,18 @@ def _apply_prompt_architecture_guard(
 
 def _normalize_route_value(value: Any) -> str | None:
     route = str(value or "").strip().lower()
-    if route in {Route.KNOWLEDGE.value, Route.ACTION.value, Route.SMALLTALK.value, Route.STATISTICS.value, Route.COMPARE.value}:
+    if route in {Route.KUNSKAP.value, Route.SKAPANDE.value, Route.KONVERSATION.value, Route.JAMFORELSE.value}:
         return route
-    if route in {"statistik", "statistics"}:
-        return Route.STATISTICS.value
-    return None
+    # Backward compat: map old English names to new Swedish values
+    _COMPAT: dict[str, str] = {
+        "knowledge": Route.KUNSKAP.value,
+        "action": Route.SKAPANDE.value,
+        "smalltalk": Route.KONVERSATION.value,
+        "compare": Route.JAMFORELSE.value,
+        "statistics": Route.KUNSKAP.value,
+        "statistik": Route.KUNSKAP.value,
+    }
+    return _COMPAT.get(route)
 
 
 def _normalize_sub_route_value(value: Any) -> str | None:
@@ -800,13 +807,13 @@ def _is_weather_domain_tool(tool_id: str | None, category: str | None = None) ->
 def _agent_for_route_hint(route_value: str | None, sub_route_value: str | None) -> str | None:
     route_norm = _normalize_route_value(route_value)
     sub_norm = _normalize_sub_route_value(sub_route_value)
-    if route_norm == Route.STATISTICS.value:
+    if route_norm == Route.KUNSKAP.value:
         return "statistics"
-    if route_norm == Route.COMPARE.value:
+    if route_norm == Route.JAMFORELSE.value:
         return "synthesis"
-    if route_norm == Route.KNOWLEDGE.value:
+    if route_norm == Route.KUNSKAP.value:
         return "knowledge"
-    if route_norm == Route.ACTION.value:
+    if route_norm == Route.SKAPANDE.value:
         if sub_norm == ActionRoute.TRAVEL.value:
             return "trafik"
         if sub_norm == ActionRoute.WEB.value:
@@ -903,7 +910,7 @@ def _coerce_weather_agent_choice(
     is_weather_tool = _is_weather_domain_tool(tool_id, category)
     if not is_weather_tool:
         return normalized_selected_agent, False
-    if route_norm == Route.ACTION.value and sub_route_norm in {
+    if route_norm == Route.SKAPANDE.value and sub_route_norm in {
         ActionRoute.TRAVEL.value,
         None,
     }:
@@ -923,27 +930,27 @@ def _route_sub_route_for_tool(
     if tool in _SKOLVERKET_TOOL_IDS:
         skolverket_category = _SKOLVERKET_TOOL_CATEGORY_BY_ID.get(tool, cat)
         if skolverket_category == "statistics":
-            return Route.STATISTICS.value, None
-        return Route.KNOWLEDGE.value, KnowledgeRoute.EXTERNAL.value
+            return Route.KUNSKAP.value, None
+        return Route.KUNSKAP.value, KnowledgeRoute.EXTERNAL.value
     if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
-        return Route.STATISTICS.value, None
+        return Route.KUNSKAP.value, None
     if tool == "trafiklab_route" or _is_weather_domain_tool(tool, cat):
-        return Route.ACTION.value, ActionRoute.TRAVEL.value
+        return Route.SKAPANDE.value, ActionRoute.TRAVEL.value
     if tool.startswith("trafikverket_"):
-        return Route.ACTION.value, ActionRoute.TRAVEL.value
+        return Route.SKAPANDE.value, ActionRoute.TRAVEL.value
     if tool in {"scrape_webpage", "link_preview", "search_web", "search_tavily"}:
-        return Route.ACTION.value, ActionRoute.WEB.value
+        return Route.SKAPANDE.value, ActionRoute.WEB.value
     if tool in {"generate_podcast", "display_image"}:
-        return Route.ACTION.value, ActionRoute.MEDIA.value
+        return Route.SKAPANDE.value, ActionRoute.MEDIA.value
     if tool in {"libris_search", "jobad_links_search"}:
-        return Route.ACTION.value, ActionRoute.DATA.value
+        return Route.SKAPANDE.value, ActionRoute.DATA.value
     if tool.startswith("marketplace_") or cat.startswith("marketplace"):
-        return Route.ACTION.value, ActionRoute.DATA.value
+        return Route.SKAPANDE.value, ActionRoute.DATA.value
     if tool.startswith("bolagsverket_") or tool.startswith("riksdag_"):
-        return Route.ACTION.value, ActionRoute.DATA.value
+        return Route.SKAPANDE.value, ActionRoute.DATA.value
     if tool in {"search_surfsense_docs", "search_knowledge_base"}:
-        return Route.KNOWLEDGE.value, KnowledgeRoute.INTERNAL.value
-    return Route.ACTION.value, ActionRoute.DATA.value
+        return Route.KUNSKAP.value, KnowledgeRoute.INTERNAL.value
+    return Route.SKAPANDE.value, ActionRoute.DATA.value
 
 
 def _repair_expected_routing(
@@ -965,15 +972,15 @@ def _repair_expected_routing(
     if route is None and inferred_route is not None:
         route = inferred_route
 
-    if route == Route.ACTION.value:
-        if inferred_route == Route.ACTION.value and inferred_sub_route:
+    if route == Route.SKAPANDE.value:
+        if inferred_route == Route.SKAPANDE.value and inferred_sub_route:
             # If expected tool implies an action sub-route, trust that mapping
             # over mislabeled sub-routes in eval payloads (e.g. web vs travel).
             sub_route = inferred_sub_route
-    elif route == Route.KNOWLEDGE.value:
-        if inferred_route == Route.KNOWLEDGE.value and inferred_sub_route:
+    elif route == Route.KUNSKAP.value:
+        if inferred_route == Route.KUNSKAP.value and inferred_sub_route:
             sub_route = inferred_sub_route
-    elif route == Route.STATISTICS.value:
+    elif route == Route.KUNSKAP.value:
         sub_route = None
 
     if inferred_route and route and route != inferred_route:
@@ -989,13 +996,13 @@ def _candidate_agents_for_route(
 ) -> list[str]:
     route_norm = _normalize_route_value(route_value)
     sub_norm = _normalize_sub_route_value(sub_route_value)
-    if route_norm == Route.STATISTICS.value:
+    if route_norm == Route.KUNSKAP.value:
         return ["statistics", "riksdagen", "knowledge"]
-    if route_norm == Route.COMPARE.value:
+    if route_norm == Route.JAMFORELSE.value:
         return ["synthesis", "statistics", "knowledge"]
-    if route_norm == Route.KNOWLEDGE.value:
+    if route_norm == Route.KUNSKAP.value:
         return ["knowledge", "riksdagen", "statistics", "browser"]
-    if route_norm == Route.ACTION.value:
+    if route_norm == Route.SKAPANDE.value:
         if sub_norm == ActionRoute.TRAVEL.value:
             return ["weather", "trafik", "action", "kartor"]
         if sub_norm == ActionRoute.WEB.value:
@@ -1154,11 +1161,11 @@ async def _dispatch_route_from_start(
 ) -> tuple[str | None, str | None, str | None, dict[str, Any]]:
     def _fallback_intent_id(route_value: str | None) -> str | None:
         mapping = {
-            Route.KNOWLEDGE.value: "knowledge",
-            Route.ACTION.value: "action",
-            Route.STATISTICS.value: "statistics",
-            Route.COMPARE.value: "compare",
-            Route.SMALLTALK.value: "smalltalk",
+            Route.KUNSKAP.value: "knowledge",
+            Route.SKAPANDE.value: "action",
+            Route.KUNSKAP.value: "statistics",
+            Route.JAMFORELSE.value: "compare",
+            Route.KONVERSATION.value: "smalltalk",
         }
         return mapping.get(_normalize_route_value(route_value))
 
@@ -1223,7 +1230,7 @@ async def _dispatch_route_from_start(
         else _normalize_route_value(selected_route)
     )
     selected_sub_route: str | None = None
-    if route_value == Route.ACTION.value:
+    if route_value == Route.SKAPANDE.value:
         action_route = await dispatch_action_route(
             question,
             llm,
@@ -1234,7 +1241,7 @@ async def _dispatch_route_from_start(
             if hasattr(action_route, "value")
             else _normalize_sub_route_value(action_route)
         )
-    elif route_value == Route.KNOWLEDGE.value:
+    elif route_value == Route.KUNSKAP.value:
         knowledge_route = await dispatch_knowledge_route(
             question,
             llm,
@@ -1291,11 +1298,11 @@ def _infer_expected_intent_id(
         if resolved:
             return resolved
     fallback = {
-        Route.KNOWLEDGE.value: "knowledge",
-        Route.ACTION.value: "action",
-        Route.STATISTICS.value: "statistics",
-        Route.COMPARE.value: "compare",
-        Route.SMALLTALK.value: "smalltalk",
+        Route.KUNSKAP.value: "knowledge",
+        Route.SKAPANDE.value: "action",
+        Route.KUNSKAP.value: "statistics",
+        Route.JAMFORELSE.value: "compare",
+        Route.KONVERSATION.value: "smalltalk",
     }
     return fallback.get(normalized_route)
 
@@ -1341,7 +1348,7 @@ def _route_requirement_matches(
 
     if expected in {"travel", "weather"}:
         if not (
-            selected_route == Route.ACTION.value
+            selected_route == Route.SKAPANDE.value
             and selected_sub_route == ActionRoute.TRAVEL.value
         ):
             return False
@@ -1359,7 +1366,7 @@ def _route_requirement_matches(
         ActionRoute.DATA.value,
     }:
         return bool(
-            selected_route == Route.ACTION.value and selected_sub_route == expected
+            selected_route == Route.SKAPANDE.value and selected_sub_route == expected
         )
 
     if expected in {
@@ -1368,7 +1375,7 @@ def _route_requirement_matches(
         KnowledgeRoute.EXTERNAL.value,
     }:
         return bool(
-            selected_route == Route.KNOWLEDGE.value
+            selected_route == Route.KUNSKAP.value
             and selected_sub_route == expected
         )
 
@@ -1381,7 +1388,7 @@ def _route_requirement_matches(
         if trailing == "weather":
             trailing = ActionRoute.TRAVEL.value
         return bool(
-            selected_route == Route.ACTION.value and selected_sub_route == trailing
+            selected_route == Route.SKAPANDE.value and selected_sub_route == trailing
         )
 
     if expected.startswith("knowledge/") or expected.startswith("knowledge:"):
@@ -1391,7 +1398,7 @@ def _route_requirement_matches(
             else expected.split(":", 1)[1]
         ).strip().casefold()
         return bool(
-            selected_route == Route.KNOWLEDGE.value and selected_sub_route == trailing
+            selected_route == Route.KUNSKAP.value and selected_sub_route == trailing
         )
 
     return False
@@ -3093,7 +3100,7 @@ async def suggest_intent_definition_improvements(
             continue
         definitions_by_id[intent_id] = {
             "intent_id": intent_id,
-            "route": _normalize_route_value(definition.get("route")) or Route.KNOWLEDGE.value,
+            "route": _normalize_route_value(definition.get("route")) or Route.KUNSKAP.value,
             "label": str(definition.get("label") or intent_id).strip(),
             "description": str(definition.get("description") or "").strip(),
             "keywords": _safe_string_list(definition.get("keywords")),
@@ -3138,7 +3145,7 @@ async def suggest_intent_definition_improvements(
             break
         current_definition = definitions_by_id.get(intent_id) or {
             "intent_id": intent_id,
-            "route": str(bucket.get("expected_route") or Route.KNOWLEDGE.value),
+            "route": str(bucket.get("expected_route") or Route.KUNSKAP.value),
             "label": intent_id.replace("_", " ").title(),
             "description": "",
             "keywords": [],
@@ -3256,7 +3263,7 @@ async def suggest_intent_definition_improvements(
                         )
                         candidate_route = (
                             _normalize_route_value(candidate_definition.get("route"))
-                            or str(current_definition.get("route") or Route.KNOWLEDGE.value)
+                            or str(current_definition.get("route") or Route.KUNSKAP.value)
                         )
                         proposed_definition = {
                             "intent_id": candidate_intent_id,
