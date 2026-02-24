@@ -150,3 +150,4 @@ class SupervisorState(TypedDict, total=False):
     agent_hops: Annotated[int | None, _replace]
     no_progress_runs: Annotated[int | None, _replace]
     guard_parallel_preview: Annotated[list[str], _replace]
+    domain_fan_out_trace: Annotated[dict[str, Any] | None, _replace]

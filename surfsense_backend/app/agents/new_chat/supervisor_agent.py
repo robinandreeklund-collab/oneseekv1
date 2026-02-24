@@ -107,6 +107,11 @@ from app.agents.new_chat.token_budget import TokenBudget
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
+from app.agents.new_chat.domain_fan_out import (
+    execute_domain_fan_out,
+    format_fan_out_context,
+    is_fan_out_enabled,
+)
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
     EXTERNAL_MODEL_SPECS,
@@ -2585,12 +2590,14 @@ async def create_supervisor_agent(
         if definition.tool_id not in weather_tool_id_set
     ]
     live_tool_index = []
+    _tool_registry_for_fan_out: dict[str, Any] = {}
     if isinstance(db_session, AsyncSession):
         try:
             global_tool_registry = await build_global_tool_registry(
                 dependencies=dependencies,
                 include_mcp_tools=True,
             )
+            _tool_registry_for_fan_out = global_tool_registry
             metadata_overrides = await get_global_tool_metadata_overrides(db_session)
             live_tool_index = build_tool_index(
                 global_tool_registry,
@@ -4305,6 +4312,28 @@ async def create_supervisor_agent(
                 if prompt
                 else tool_prompt_block
             )
+        # --- Domain fan-out: pre-fetch data in parallel ---
+        fan_out_context = ""
+        if is_fan_out_enabled(name) and not filesystem_sandbox_task:
+            try:
+                fan_out_results = await execute_domain_fan_out(
+                    agent_name=name,
+                    query=task,
+                    tool_registry=_tool_registry_for_fan_out,
+                )
+                fan_out_context = format_fan_out_context(fan_out_results)
+            except Exception as fan_out_exc:
+                logger.warning(
+                    "domain-fan-out failed for agent=%s: %s",
+                    name,
+                    fan_out_exc,
+                )
+        if fan_out_context:
+            prompt = (
+                f"{prompt.rstrip()}\n\n{fan_out_context}".strip()
+                if prompt
+                else fan_out_context
+            )
         messages = []
         if prompt:
             messages.append(SystemMessage(content=prompt))
@@ -5071,6 +5100,28 @@ async def create_supervisor_agent(
                         f"{prompt.rstrip()}\n\n{tool_prompt_block}".strip()
                         if prompt
                         else tool_prompt_block
+                    )
+                # --- Domain fan-out: pre-fetch data in parallel ---
+                fan_out_context = ""
+                if is_fan_out_enabled(agent_name) and not filesystem_sandbox_task:
+                    try:
+                        fan_out_results = await execute_domain_fan_out(
+                            agent_name=agent_name,
+                            query=task,
+                            tool_registry=_tool_registry_for_fan_out,
+                        )
+                        fan_out_context = format_fan_out_context(fan_out_results)
+                    except Exception as fan_out_exc:
+                        logger.warning(
+                            "domain-fan-out failed for agent=%s: %s",
+                            agent_name,
+                            fan_out_exc,
+                        )
+                if fan_out_context:
+                    prompt = (
+                        f"{prompt.rstrip()}\n\n{fan_out_context}".strip()
+                        if prompt
+                        else fan_out_context
                     )
                 messages = []
                 if prompt:
