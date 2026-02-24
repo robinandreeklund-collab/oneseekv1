@@ -24,12 +24,14 @@ import type {
 	FlowIntentNode,
 	FlowAgentNode,
 	FlowToolNode,
+	PipelineNode,
 } from "@/contracts/types/admin-flow-graph.types";
 
 type SelectedNodeData =
 	| { type: "intent"; data: FlowIntentNode }
 	| { type: "agent"; data: FlowAgentNode }
-	| { type: "tool"; data: FlowToolNode };
+	| { type: "tool"; data: FlowToolNode }
+	| { type: "pipeline"; data: PipelineNode };
 
 interface FlowDetailPanelProps {
 	selectedNode: SelectedNodeData;
@@ -300,6 +302,50 @@ function ToolDetail({ tool }: { tool: FlowToolNode }) {
 	);
 }
 
+function PipelineDetail({ node }: { node: PipelineNode }) {
+	return (
+		<div className="space-y-4">
+			<div className="flex items-center gap-3">
+				<div className="flex items-center justify-center h-10 w-10 rounded-lg bg-primary/10">
+					<Hash className="h-5 w-5 text-primary" />
+				</div>
+				<div>
+					<h3 className="text-base font-semibold">{node.label}</h3>
+					<p className="text-xs text-muted-foreground">Pipeline-nod</p>
+				</div>
+			</div>
+
+			<Separator />
+
+			<div className="space-y-3">
+				<div className="flex items-center justify-between">
+					<span className="text-xs text-muted-foreground">Nod-ID</span>
+					<span className="text-xs font-mono">{node.id.replace("node:", "")}</span>
+				</div>
+				<div className="flex items-center justify-between">
+					<span className="text-xs text-muted-foreground">Steg</span>
+					<Badge variant="secondary" className="text-xs">{node.stage}</Badge>
+				</div>
+			</div>
+
+			<Separator />
+
+			<div className="space-y-2">
+				<Label className="text-xs flex items-center gap-1.5">
+					<FileText className="h-3 w-3" /> Beskrivning
+				</Label>
+				<p className="text-xs text-muted-foreground">{node.description || "Ingen beskrivning"}</p>
+			</div>
+
+			<Separator />
+
+			<Link href="/admin/prompts" className="flex items-center gap-2 text-xs text-primary hover:underline">
+				<ExternalLink className="h-3 w-3" /> Redigera nod-prompt
+			</Link>
+		</div>
+	);
+}
+
 export function FlowDetailPanel({
 	selectedNode,
 	connectionCounts,
@@ -328,6 +374,7 @@ export function FlowDetailPanel({
 					/>
 				)}
 				{selectedNode.type === "tool" && <ToolDetail tool={selectedNode.data} />}
+				{selectedNode.type === "pipeline" && <PipelineDetail node={selectedNode.data} />}
 			</div>
 		</div>
 	);

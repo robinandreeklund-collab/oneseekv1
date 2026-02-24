@@ -639,40 +639,44 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
             normalized_category,
         )
         if skolverket_category == "statistics":
-            return "statistics", None
-        return "knowledge", "external"
+            return "kunskap", "statistik"
+        return "kunskap", "external"
     if normalized_tool.startswith("scb_") or normalized_category in {"statistics", "scb_statistics"}:
-        return "statistics", None
+        return "kunskap", "statistik"
     if normalized_tool in {"trafiklab_route"} or _is_weather_domain_tool(
         normalized_tool,
         normalized_category,
     ):
-        return "action", "travel"
+        return "kunskap", "väder"
     if normalized_tool.startswith("trafikverket_"):
-        return "action", "travel"
+        return "kunskap", "trafik"
     if normalized_tool in {"scrape_webpage", "link_preview", "search_web", "search_tavily"}:
-        return "action", "web"
+        return "kunskap", "webb"
     if normalized_tool in {"generate_podcast", "display_image"}:
-        return "action", "media"
+        return "skapande", "media"
     if normalized_tool in {"libris_search", "jobad_links_search"}:
-        return "action", "data"
-    # Marketplace tools (including reference tools like categories/regions) map to ACTION
-    # because they're part of the marketplace agent which handles all marketplace operations
+        return "kunskap", "data"
+    # Marketplace tools map to kunskap (information retrieval)
     if normalized_tool.startswith(("bolagsverket_", "riksdag_", "marketplace_")):
-        return "action", "data"
+        return "kunskap", "data"
     if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
-        return "knowledge", "internal"
-    return "action", "data"
+        return "kunskap", "internal"
+    return "kunskap", "data"
 
 
 def _infer_intent_for_route(route: str | None) -> str | None:
     normalized_route = str(route or "").strip().lower()
     mapping = {
-        "knowledge": "knowledge",
-        "action": "action",
-        "statistics": "statistics",
-        "compare": "compare",
-        "smalltalk": "smalltalk",
+        "kunskap": "kunskap",
+        "skapande": "skapande",
+        "jämförelse": "jämförelse",
+        "konversation": "konversation",
+        # Backward compat
+        "knowledge": "kunskap",
+        "action": "skapande",
+        "statistics": "kunskap",
+        "compare": "jämförelse",
+        "smalltalk": "konversation",
     }
     return mapping.get(normalized_route)
 
@@ -735,11 +739,11 @@ def _infer_agent_for_tool(
     normalized_route = str(route or "").strip().lower()
     normalized_sub_route = str(sub_route or "").strip().lower()
     if normalized_tool.startswith("scb_") or normalized_category in {"statistics", "scb_statistics"}:
-        return "statistics"
+        return "statistik"
     if normalized_tool.startswith("riksdag_") or normalized_category.startswith("riksdag"):
         return "riksdagen"
     if _is_weather_domain_tool(normalized_tool, normalized_category):
-        return "weather"
+        return "väder"
     if normalized_tool.startswith("trafikverket_") or normalized_tool in {"trafiklab_route"}:
         return "trafik"
     if normalized_tool.startswith("bolagsverket_"):
@@ -747,28 +751,28 @@ def _infer_agent_for_tool(
     if normalized_tool.startswith("geoapify_"):
         return "kartor"
     if normalized_tool.startswith("marketplace_"):
-        return "marketplace"
+        return "marknad"
     if normalized_tool in {"generate_podcast", "display_image"}:
         return "media"
     if normalized_tool in {"search_web", "search_tavily", "scrape_webpage", "link_preview"}:
-        return "browser"
+        return "webb"
     if normalized_tool in {"search_surfsense_docs", "search_knowledge_base"}:
-        return "knowledge"
-    if normalized_route in {"statistics", "kunskap"}:
-        return "statistics"
+        return "kunskap"
+    if normalized_route in {"kunskap", "knowledge"} and normalized_sub_route == "statistik":
+        return "statistik"
     if normalized_route in {"jämförelse", "compare"}:
-        return "synthesis"
-    if normalized_route in {"knowledge", "kunskap"}:
-        return "knowledge"
-    if normalized_route in {"skapande", "action"} and normalized_sub_route == "travel":
+        return "syntes"
+    if normalized_route in {"kunskap", "knowledge"}:
+        return "kunskap"
+    if normalized_route in {"skapande", "action"} and normalized_sub_route in {"trafik", "travel", "väder"}:
         return "trafik"
-    if normalized_route in {"skapande", "action"} and normalized_sub_route == "web":
-        return "browser"
+    if normalized_route in {"skapande", "action"} and normalized_sub_route in {"webb", "web"}:
+        return "webb"
     if normalized_route in {"skapande", "action"} and normalized_sub_route == "media":
         return "media"
     if normalized_route in {"skapande", "action"}:
-        return "action"
-    return "action"
+        return "åtgärd"
+    return "åtgärd"
 
 
 def _dedupe_non_empty(values: list[str]) -> list[str]:
@@ -1008,16 +1012,16 @@ def _normalize_single_eval_test_for_consistency(
 
     mixed_weather = bool(
         _is_mixed_weather_question(question)
-        and str(normalized_expected.get("route") or "").strip().lower() == "action"
+        and str(normalized_expected.get("route") or "").strip().lower() in {"kunskap", "skapande", "action"}
         and str(normalized_expected.get("sub_route") or "").strip().lower() in {"travel", ""}
     )
     if mixed_weather:
-        expanded_agents = _dedupe_non_empty(["weather", "trafik", *acceptable_agents])
+        expanded_agents = _dedupe_non_empty(["väder", "trafik", *acceptable_agents])
         if expanded_agents != acceptable_agents:
             acceptable_agents = expanded_agents
             normalized = True
             warnings.append(
-                "Mixed väder/trafik-fråga upptäckt; acceptable_agents utökades till weather+trafik."
+                "Mixed väder/trafik-fråga upptäckt; acceptable_agents utökades till väder+trafik."
             )
         weather_retrieval_candidates: list[str] = []
         for tool_id in retrieved_ids:
@@ -1199,7 +1203,7 @@ def _sweden_focus_hint_for_entry(entry: Any) -> str:
     tool_id = str(getattr(entry, "tool_id", "") or "").strip().lower()
     category = str(getattr(entry, "category", "") or "").strip().lower()
     route, sub_route = _infer_route_for_tool(tool_id, category)
-    if tool_id.startswith("scb_") or route == "statistics":
+    if tool_id.startswith("scb_") or route in {"kunskap", "statistics"} and sub_route in {"statistik", None}:
         return (
             "Frågan ska handla om Sverige och använda svenska kommuner/län "
             "samt officiell statistik-kontext."
@@ -1237,7 +1241,7 @@ def _build_swedish_question_for_entry(entry: Any, index: int) -> str:
     region = _pick_reference(_SWEDISH_REGIONS, index)
     road = _pick_reference(_SWEDISH_ROADS, index)
     topic = _pick_reference(_SWEDISH_POLITICS_TOPICS, index)
-    if tool_id.startswith("scb_") or route == "statistics":
+    if tool_id.startswith("scb_") or route in {"kunskap", "statistics"} and sub_route in {"statistik", None}:
         return (
             f"Hur har {topic} utvecklats i {city} kommun och {region} "
             "de senaste fem åren?"
@@ -1248,7 +1252,7 @@ def _build_swedish_question_for_entry(entry: Any, index: int) -> str:
             "under det senaste året?"
         )
     if tool_id in _SKOLVERKET_TOOL_IDS:
-        if route == "statistics":
+        if sub_route in {"statistik", "statistics"}:
             return (
                 f"Vilken statistik finns om gymnasieutbildningar i {city} "
                 f"och {region} enligt Skolverket?"
@@ -1368,17 +1372,17 @@ def _normalize_generated_tests(
             expected_category or str(getattr(entry, "category", "")).strip(),
         )
         # For marketplace tools, always use inferred values (don't trust LLM)
-        # to ensure consistency: all marketplace tools → action/data/marketplace
+        # to ensure consistency: all marketplace tools → kunskap/data/marknad
         if expected_tool.startswith("marketplace_"):
-            expected_route = inferred_route  # Always "action"
+            expected_route = inferred_route  # Always "kunskap"
             expected_sub_route = inferred_sub_route  # Always "data"
-            expected_intent = _infer_intent_for_route(inferred_route)  # Always "action"
+            expected_intent = _infer_intent_for_route(inferred_route)  # Always "kunskap"
             expected_agent = _infer_agent_for_tool(
                 expected_tool,
                 expected_category or str(getattr(entry, "category", "")).strip(),
                 inferred_route,
                 inferred_sub_route,
-            )  # Always "marketplace"
+            )  # Always "marknad"
         else:
             expected_route = str(
                 expected.get("route") or source.get("expected_route") or inferred_route
@@ -1871,11 +1875,11 @@ async def _generate_eval_tests(
         '      "expected": {\n'
         '        "tool": "tool_id",\n'
         '        "category": "category",\n'
-        '        "intent": "knowledge|action|statistics|smalltalk|compare",\n'
-        '        "route": "action|knowledge|statistics|smalltalk|compare",\n'
-        '        "sub_route": "web|media|travel|data|docs|internal|external|null",\n'
-        '        "agent": "weather|trafik|statistics|riksdagen|bolag|kartor|marketplace|media|browser|knowledge|action|synthesis",\n'
-        '        "plan_requirements": ["route:action", "agent:agent_id", "tool:tool_id"]\n'
+        '        "intent": "kunskap|skapande|jämförelse|konversation",\n'
+        '        "route": "kunskap|skapande|jämförelse|konversation",\n'
+        '        "sub_route": "webb|media|trafik|väder|statistik|data|internal|external|null",\n'
+        '        "agent": "väder|trafik|statistik|riksdagen|bolag|kartor|marknad|media|webb|kunskap|åtgärd|kod|syntes",\n'
+        '        "plan_requirements": ["route:kunskap", "agent:agent_id", "tool:tool_id"]\n'
         "      },\n"
         '      "allowed_tools": ["tool_id"]\n'
         "    }\n"
@@ -4712,7 +4716,7 @@ async def run_metadata_catalog_audit(
             intent=None,
         )
         expected_intent_by_tool[str(getattr(entry, "tool_id", "") or "")] = (
-            str(intent_id or "").strip().lower() or "action"
+            str(intent_id or "").strip().lower() or "kunskap"
         )
         expected_agent_by_tool[str(getattr(entry, "tool_id", "") or "")] = (
             _infer_agent_for_tool(
@@ -5226,7 +5230,7 @@ async def run_metadata_catalog_separation(
         if not normalized_tool_id:
             continue
         expected_intent_by_tool[normalized_tool_id] = (
-            str(intent_id or "").strip().lower() or "action"
+            str(intent_id or "").strip().lower() or "kunskap"
         )
         expected_agent_by_tool[normalized_tool_id] = _infer_agent_for_tool(
             normalized_tool_id,

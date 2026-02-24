@@ -45,18 +45,18 @@ _TOOL_AUDIT_STOPWORDS = {
     "sverige",
 }
 
-_ACTION_AGENTS = {
-    "åtgärd",
-    "action",
-    "väder",
-    "weather",
-    "kartor",
-    "media",
-    "trafik",
-    "marknad",
-    "marketplace",
+_KUNSKAP_AGENTS = {
+    "kunskap", "knowledge", "webb", "browser", "väder", "weather",
+    "trafik", "statistik", "statistics", "bolag", "riksdagen",
+    "marknad", "marketplace",
 }
-_KNOWLEDGE_AGENTS = {"kunskap", "knowledge", "webb", "browser", "bolag", "riksdagen"}
+_SKAPANDE_AGENTS = {
+    "media", "kartor", "kod", "code", "åtgärd", "action",
+}
+_JAMFORELSE_AGENTS = {"syntes", "synthesis", "statistik", "statistics", "kunskap", "knowledge"}
+# Backward compat aliases
+_ACTION_AGENTS = _SKAPANDE_AGENTS | _KUNSKAP_AGENTS
+_KNOWLEDGE_AGENTS = _KUNSKAP_AGENTS
 _STATISTICS_AGENTS = {"statistik", "statistics"}
 _COMPARE_AGENTS = {"syntes", "synthesis"}
 _MAX_INTENT_FAILURES_FOR_LLM = 20
@@ -1072,13 +1072,14 @@ def _agent_route_bonus(agent_id: str, intent_id: str | None, namespace_boost: fl
     normalized_intent = str(intent_id or "").strip().lower()
     if not normalized_intent:
         return 0.0
-    if normalized_intent == "action" and normalized_agent in _ACTION_AGENTS:
+    if normalized_intent in {"kunskap", "knowledge"} and normalized_agent in _KUNSKAP_AGENTS:
         return namespace_boost
-    if normalized_intent == "knowledge" and normalized_agent in _KNOWLEDGE_AGENTS:
+    if normalized_intent in {"skapande", "action"} and normalized_agent in _SKAPANDE_AGENTS:
         return namespace_boost
+    if normalized_intent in {"jämförelse", "compare"} and normalized_agent in _JAMFORELSE_AGENTS:
+        return namespace_boost
+    # Backward compat
     if normalized_intent == "statistics" and normalized_agent in _STATISTICS_AGENTS:
-        return namespace_boost
-    if normalized_intent == "compare" and normalized_agent in _COMPARE_AGENTS:
         return namespace_boost
     return 0.0
 
