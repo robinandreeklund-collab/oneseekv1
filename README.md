@@ -13,17 +13,20 @@ Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalo
 4. [LangGraph-flode (Fas 1-4 + subagent A-F)](#langgraph-flode-fas-1-4--subagent-a-f)
 5. [Strict subagent isolation + DeerFlow-style context (A-F)](#strict-subagent-isolation--deerflow-style-context-a-f)
 6. [Intent + Bigtool + Namespace + Rerank](#intent--bigtool--namespace--rerank)
-7. [Realtidsdata och API-integrationer](#realtidsdata-och-api-integrationer)
-8. [Compare-lage](#compare-lage)
-9. [LangSmith + full transparens (trace)](#langsmith--full-transparens-trace)
-10. [Memory och feedback-loopar](#memory-och-feedback-loopar)
-11. [Eval-systemet](#eval-systemet)
-12. [SSE/Data Stream-events](#ssedata-stream-events)
-13. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
-14. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
-15. [Sandbox step-by-step guide](#sandbox-step-by-step-guide)
-16. [Copy-paste only quickstart (Docker + K8s)](#copy-paste-only-quickstart-docker--k8s)
-17. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
+7. [Centrala metadataganser och normaliserad scoring](#centrala-metadataganser-och-normaliserad-scoring)
+8. [Identitetsmetadata (template-falt)](#identitetsmetadata-template-falt)
+9. [DB-driven flodesgraf + admin-UI](#db-driven-flodesgraf--admin-ui)
+10. [Realtidsdata och API-integrationer](#realtidsdata-och-api-integrationer)
+11. [Compare-lage](#compare-lage)
+12. [LangSmith + full transparens (trace)](#langsmith--full-transparens-trace)
+13. [Memory och feedback-loopar](#memory-och-feedback-loopar)
+14. [Eval-systemet](#eval-systemet)
+15. [SSE/Data Stream-events](#ssedata-stream-events)
+16. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
+17. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
+18. [Sandbox step-by-step guide](#sandbox-step-by-step-guide)
+19. [Copy-paste only quickstart (Docker + K8s)](#copy-paste-only-quickstart-docker--k8s)
+20. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
 
 ---
 
@@ -68,6 +71,15 @@ Tekniskt anvands:
   - route/agent/tool/API-input-eval
   - metadata/prompt/tuning-forslag
   - stage-jamforelse over tid
+- **Centrala metadataganser + normaliserad scoring**
+  - harda faltgranser for alla metadata-falt (description, keywords, examples, excludes, identitet)
+  - `enforce_metadata_limits()` som 3-lagers defense in depth (frontend, API, core)
+  - normaliserad lexical scoring som eliminerar faltlangs-bias
+- **Identitetsmetadata**
+  - template-falt (main_identifier, core_activity, unique_scope, geographic_scope, excludes) for battre retrieval-separation
+- **DB-driven flodesgraf + visuell admin**
+  - databas-backade route/tool-mappningar i stallet for hardkodning
+  - inline prompt-redigering, intent-redigering, drag-and-drop tool-grupper i admin-UI
 
 ---
 
@@ -154,7 +166,7 @@ Istallet for att retrieval filtrerar till top-5 tools, exponeras nu alla tools i
 - `tool_evaluation_service.py`: `build_namespace_confusion_matrix()`, `generate_contrastive_probes()`
 - `retrieval_feedback.py`: `competitor_wins`, `record_competitor()`, `top_competitors`
 
-### 3) Ranking stability + dual embeddings
+### 3a) Ranking stability + dual embeddings
 
 - Tool retrieval har nu separata embeddings:
   - **semantic vector** (description/examples)
@@ -166,7 +178,7 @@ Istallet for att retrieval filtrerar till top-5 tools, exponeras nu alla tools i
   - top1/topK-frekvens
   - expected rank och expected margin per tool
 
-### 3) Live rollout med faser och admin-toggle
+### 3b) Live rollout med faser och admin-toggle
 
 Implementerad fasstyrd utrullning i produktion med central styrning via Retrieval Tuning:
 
@@ -296,6 +308,147 @@ flowchart TD
    - admin-UI visar en tabell **"Blockerade av lock"** med samma konfliktpar for snabb felsokning
    - varje rad har knappen **"Applicera saker rename"** som provar minimal namnandring mot lock-validering innan den appliceras i draft
    - vid behov finns en manuell override-toggle som kan ignorera locken vid save (rekommendation: kor BSSS igen direkt efterat)
+
+### 5) Centrala metadataganser + normaliserad scoring
+
+Alla metadata-falt har nu harda granser definierade som centrala konstanter i `bigtool_store.py`. Samma granser anvands i backend-validering, LLM-prompter, separation-engine och frontend.
+
+#### Centrala konstanter
+
+| Konstant | Varde | Beskrivning |
+|---|---|---|
+| `METADATA_MAX_DESCRIPTION_CHARS` | 300 | Max tecken for tool-description |
+| `METADATA_MAX_KEYWORDS` | 20 | Max antal keywords |
+| `METADATA_MAX_EXAMPLE_QUERIES` | 10 | Max antal example queries |
+| `METADATA_MAX_EXCLUDES` | 15 | Max antal exclude-termer |
+| `METADATA_MAX_KEYWORD_CHARS` | 40 | Max tecken per keyword |
+| `METADATA_MAX_EXAMPLE_QUERY_CHARS` | 120 | Max tecken per example query |
+| `METADATA_MAX_MAIN_IDENTIFIER_CHARS` | 80 | Max tecken for main_identifier |
+| `METADATA_MAX_CORE_ACTIVITY_CHARS` | 120 | Max tecken for core_activity |
+| `METADATA_MAX_UNIQUE_SCOPE_CHARS` | 120 | Max tecken for unique_scope |
+| `METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS` | 80 | Max tecken for geographic_scope |
+| `METADATA_MAX_EMBEDDING_TEXT_CHARS` | 800 | Max text for embedding-generering |
+
+#### `enforce_metadata_limits()`
+
+Central enforcement-funktion som clampar alla falt:
+
+- Description trunkeras vid meningsgrans (`.`) om >60% av limiten bevaras
+- Keywords dedupas och trunkeras per-item
+- Example queries dedupas och trunkeras per-item
+- Excludes trunkeras till max-antal
+- Identitetsfalt (se nedan) trunkeras till sina respektive granser
+
+Funktionen anropas pa tre nivaer (defense in depth):
+
+1. **Frontend** - Zod-schema i `admin-tool-settings.types.ts` validerar fore POST
+2. **Backend API** - Pydantic `field_validator` pa `ToolMetadataUpdateItem` auto-trunkerar
+3. **Core** - `enforce_metadata_limits()` anropas i `_merge_candidates()`, audit-suggestions och eval-forslag
+
+#### Normaliserad lexical scoring
+
+Lexical scoring i `_score_entry_components()` normaliseras nu per faltlangd:
+
+```python
+keyword_hits = keyword_hits_raw / max(1, len(entry.keywords))
+description_hits = description_hits_raw / max(1, len(description_tokens))
+example_hits = example_hits_raw / max(1, len(entry.example_queries))
+```
+
+Detta forhindrar att tools med fler keywords/langre descriptions far orattvist hoga scorer. Ett tool med 5/20 keyword-traffar scorer inte hogre an ett tool med 2/5 traffar.
+
+#### LLM-prompter med explicita granser
+
+Alla LLM-prompter for metadata-forslag (eval, audit, BSSS) inkluderar nu de numeriska granserna explicit sa att modellen inte genererar overstor metadata:
+
+```text
+- description: max 300 tecken
+- keywords: max 20 stycken, max 40 tecken/keyword
+- example_queries: max 10 stycken, max 120 tecken/fraga
+- excludes: max 15 stycken
+```
+
+**Filer:**
+- `bigtool_store.py`: konstanter + `enforce_metadata_limits()` + normaliserad scoring
+- `admin_tool_settings.py` (schemas): Pydantic field_validators
+- `admin-tool-settings.types.ts`: Zod-scheman (frontend)
+- `metadata_separation_service.py`: `enforce_metadata_limits()` i `_merge_candidates()`
+- `tool_evaluation_service.py`: explicita granser i LLM-prompter
+- `metadata_audit_service.py`: `enforce_metadata_limits()` efter forslag
+
+### 6) Identitetsmetadata (template-falt)
+
+Varje tool har nu separata identitetsfalt utover description/keywords/examples:
+
+| Falt | Syfte | Exempel |
+|---|---|---|
+| `main_identifier` | Huvudidentifierare - vad toolet heter/ar | "Trafikverkets korapport" |
+| `core_activity` | Karnaktivitet - vad toolet gor | "Hamtar realtidsdata om koer och trangsel pa svenska vagar" |
+| `unique_scope` | Unik avgransning - vad som skiljer detta tool fran liknande | "Enbart koer och trangsel, inte olyckor eller vagarbeten" |
+| `geographic_scope` | Geografisk avgransning | "Sverige, rikstackande" |
+| `excludes` | Exkluderar - vad toolet INTE hanterar | ["olycka", "krock", "vagarbete"] |
+
+Identitetsfalt propageras genom hela pipeline:
+
+- **Eval**: inkluderas i metadata-forslag och scoring
+- **Audit**: visas i metadata-tabeller och forslagsgenerering
+- **BSSS**: anvands for separation-kandidater
+- **Vector/embedding**: bidrar till embedding-text for battre retrieval
+- **Admin UI**: redigerbara i metadata-katalogen och flow-vyn
+
+Falten lagras i JSONB (ingen databasmigration behovs).
+
+### 7) DB-driven flodesgraf + admin-UI
+
+Admin-ytan har nu en fullstandig visuell flodesgraf som speglar LangGraph-pipelinen med redigeringskapacitet direkt i UI.
+
+#### DB-backed mappningar
+
+Hardkodade agent-policyer ar ersatta med databas-backade metadata:
+
+- `routes: list[str]` - vilka intents/routes en agent betjanar
+- `flow_tools: list[{tool_id, label}]` - vilka tools som tillhor en agent
+
+#### Nya API-endpoints
+
+| Metod | Endpoint | Beskrivning |
+|---|---|---|
+| `PATCH` | `/flow-graph/agent-routes` | Uppdatera vilka routes en agent betjanar |
+| `PATCH` | `/flow-graph/agent-tools` | Uppdatera vilka tools som tillhor en agent |
+| `PUT` | `/flow-graph/intent` | Skapa/uppdatera intent-definition |
+| `DELETE` | `/flow-graph/intent` | Ta bort intent-definition |
+
+#### Pipeline-visualisering (full-width)
+
+- Alla 21 execution-noder visas med stage-gruppering och fargkodning
+- Full-width layout (utanfor max-w-7xl container)
+- Noder grupperade efter fas: Routing, Planning, Execution, Synthesis
+
+#### Inline-redigering i sidopaneler
+
+- **Pipeline-sidopanel**: inline prompt-redigering med versionshistorik (save/reset)
+- **Routing-sidopanel**: inline intent-redigering (label, description, keywords, priority, enabled)
+- **Agent-detalj**: redigerbara route-checkboxar
+- Intent-definitioner anvander template-placeholders (HUVUDIDENTIFIERARE, KARNAKTIVITET, etc.)
+- Ta bort intent med bekraftelsedialog
+
+#### Kollapsbara tool-grupper med drag-and-drop
+
+- Tool-grupper ar kollapsade per default i routing-vyn; klicka for att expandera
+- Drag-and-drop tools mellan agentgrupper med automatisk namespace-andring
+- Klicka pa tool for att oppna redigeringssidopanel (namn, description med template, keywords, example queries, kategori, agent-tillhorighet)
+- ToolGroupNode visar expand/collapse-chevron med antal-badge
+- Agent-till-tool-kanter renderas enbart nar malgruppen ar expanderad
+
+**Filer (backend):**
+- `admin_flow_graph_routes.py`: nya PATCH/PUT/DELETE-endpoints
+- `admin_flow_graph_service.py` (om relevant): DB-logik for mappningar
+
+**Filer (frontend):**
+- `flow-detail-panel.tsx`: inline-redigering, kollapsbara grupper
+- `flow-graph-page.tsx`: full-width layout, data-refresh callbacks
+- `tool-group-node.tsx`: collapse/expand, DnD
+- `admin-flow-graph-api.service.ts`: API-anrop for route/tool-redigering
 
 ---
 
@@ -513,6 +666,99 @@ I live-rollouten kan samma signaler anvandas for fasstyrd gating:
 
 ---
 
+## Centrala metadataganser och normaliserad scoring
+
+Alla metadata-falt har centrala harda granser som tillämpas konsekvent genom hela systemet.
+
+### Konstanter (definierade i `bigtool_store.py`)
+
+| Konstant | Varde |
+|---|---|
+| `METADATA_MAX_DESCRIPTION_CHARS` | 300 |
+| `METADATA_MAX_KEYWORDS` | 20 |
+| `METADATA_MAX_EXAMPLE_QUERIES` | 10 |
+| `METADATA_MAX_EXCLUDES` | 15 |
+| `METADATA_MAX_KEYWORD_CHARS` | 40 |
+| `METADATA_MAX_EXAMPLE_QUERY_CHARS` | 120 |
+| `METADATA_MAX_EMBEDDING_TEXT_CHARS` | 800 |
+
+Identitetsfalt har egna granser: `METADATA_MAX_MAIN_IDENTIFIER_CHARS` (80), `METADATA_MAX_CORE_ACTIVITY_CHARS` (120), `METADATA_MAX_UNIQUE_SCOPE_CHARS` (120), `METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS` (80).
+
+### Enforcement (defense in depth)
+
+```text
+Frontend (Zod)  ->  Backend API (Pydantic field_validator)  ->  Core (enforce_metadata_limits())
+```
+
+- **Frontend**: Zod-scheman i `admin-tool-settings.types.ts` validerar fore submit
+- **Backend**: `ToolMetadataUpdateItem` Pydantic-modell auto-trunkerar via `field_validator`
+- **Core**: `enforce_metadata_limits()` anropas i separation merge, audit-suggestions och eval-forslag
+
+### Normaliserad lexical scoring
+
+Lexical hit-counts divideras med faltlangd sa att tools med fler keywords inte far orattvis boost:
+
+```python
+keyword_hits = raw_hits / max(1, len(entry.keywords))
+```
+
+### LLM-prompter
+
+Alla prompter for metadata-forslag inkluderar nu explicita numeriska granser sa att LLM:en inte genererar overstor metadata.
+
+---
+
+## Identitetsmetadata (template-falt)
+
+Varje tool har separata identitetsfalt som kompletterar description/keywords/examples:
+
+| Falt | Syfte |
+|---|---|
+| `main_identifier` | Huvudidentifierare - vad toolet ar |
+| `core_activity` | Karnaktivitet - vad toolet gor |
+| `unique_scope` | Unik avgransning - vad som skiljer det fran liknande tools |
+| `geographic_scope` | Geografisk avgransning |
+| `excludes` | Vad toolet INTE hanterar |
+
+Identitetsfalt propageras genom:
+
+- **Retrieval/embedding**: bidrar till embedding-text
+- **Eval/audit**: inkluderas i forslag och scoring
+- **BSSS**: anvands for separation-kandidater
+- **Admin UI**: redigerbara i metadata-katalogen och flow-vyn
+
+Falten lagras i JSONB (ingen databasmigration behovs).
+
+---
+
+## DB-driven flodesgraf + admin-UI
+
+### DB-backed mappningar
+
+Hardkodade agent-policyer ar ersatta med databas-backade metadata:
+
+- `routes: list[str]` - vilka intents/routes en agent betjanar
+- `flow_tools: list[{tool_id, label}]` - vilka tools som tillhor en agent
+
+### API-endpoints
+
+| Metod | Endpoint | Beskrivning |
+|---|---|---|
+| `PATCH` | `/flow-graph/agent-routes` | Uppdatera routes for agent |
+| `PATCH` | `/flow-graph/agent-tools` | Uppdatera tools for agent |
+| `PUT` | `/flow-graph/intent` | Skapa/uppdatera intent |
+| `DELETE` | `/flow-graph/intent` | Ta bort intent |
+
+### Visuell pipeline
+
+- 21 execution-noder med stage-gruppering och fargkodning
+- Full-width layout
+- Inline prompt-redigering med versionshistorik
+- Inline intent-redigering (label, description, keywords, priority, enabled)
+- Kollapsbara tool-grupper med drag-and-drop mellan agenter
+
+---
+
 ## Realtidsdata och API-integrationer
 
 OneSeek har verktyg for live data och officiella kallor, bl.a.:
@@ -685,19 +931,48 @@ Frontend far live-events via Vercel AI data stream. Exempel:
 
 ## Kodstruktur (viktigaste filer)
 
-- `surfsense_backend/app/agents/new_chat/supervisor_agent.py`
-- `surfsense_backend/app/agents/new_chat/nodes/intent.py`
-- `surfsense_backend/app/agents/new_chat/nodes/execution_router.py`
-- `surfsense_backend/app/agents/new_chat/nodes/smart_critic.py`
-- `surfsense_backend/app/agents/new_chat/nodes/speculative.py`
-- `surfsense_backend/app/agents/new_chat/nodes/progressive_synthesizer.py`
-- `surfsense_backend/app/agents/new_chat/episodic_memory.py`
-- `surfsense_backend/app/agents/new_chat/retrieval_feedback.py`
-- `surfsense_backend/app/agents/new_chat/bigtool_store.py`
-- `surfsense_backend/app/tasks/chat/stream_new_chat.py`
-- `surfsense_backend/app/services/tool_evaluation_service.py`
-- `surfsense_backend/app/routes/admin_tool_settings_routes.py`
-- `surfsense_backend/app/services/trace_service.py`
+### LangGraph-agent och noder
+
+- `surfsense_backend/app/agents/new_chat/supervisor_agent.py` - huvudgraf
+- `surfsense_backend/app/agents/new_chat/nodes/intent.py` - intent resolver
+- `surfsense_backend/app/agents/new_chat/nodes/execution_router.py` - execution strategy
+- `surfsense_backend/app/agents/new_chat/nodes/smart_critic.py` - critic
+- `surfsense_backend/app/agents/new_chat/nodes/speculative.py` - speculative branch
+- `surfsense_backend/app/agents/new_chat/nodes/progressive_synthesizer.py` - syntes
+- `surfsense_backend/app/agents/new_chat/nodes/tool_resolver.py` - tool-val med namespace-stod
+
+### Retrieval, metadata och scoring
+
+- `surfsense_backend/app/agents/new_chat/bigtool_store.py` - verktygsindex, metadata-konstanter, `enforce_metadata_limits()`, normaliserad scoring, kontrastiva descriptions, namespace-mappningar
+- `surfsense_backend/app/agents/new_chat/episodic_memory.py` - episodic memory
+- `surfsense_backend/app/agents/new_chat/retrieval_feedback.py` - feedback + competitor tracking
+
+### Services
+
+- `surfsense_backend/app/services/tool_evaluation_service.py` - eval, metadata-forslag, confusion matrix
+- `surfsense_backend/app/services/metadata_separation_service.py` - BSSS bottom-up separation
+- `surfsense_backend/app/services/metadata_audit_service.py` - autonom audit-loop
+- `surfsense_backend/app/services/trace_service.py` - intern trace-pipeline
+
+### API-routes
+
+- `surfsense_backend/app/routes/admin_tool_settings_routes.py` - metadata CRUD + eval
+- `surfsense_backend/app/routes/admin_flow_graph_routes.py` - flodesgraf routes/tools/intents
+
+### Scheman
+
+- `surfsense_backend/app/schemas/admin_tool_settings.py` - Pydantic-scheman med field_validators
+
+### Stream
+
+- `surfsense_backend/app/tasks/chat/stream_new_chat.py` - SSE-stream
+
+### Frontend (viktigaste)
+
+- `surfsense_web/contracts/types/admin-tool-settings.types.ts` - metadata-typer + Zod-scheman
+- `surfsense_web/app/[locale]/dashboard/admin/flow-graph/` - flodesgraf-sidor
+- `surfsense_web/components/admin/flow-detail-panel.tsx` - inline-redigering
+- `surfsense_web/components/admin/tool-group-node.tsx` - kollapsbara tool-grupper
 
 ---
 
@@ -920,6 +1195,11 @@ OneSeek ar nu en hybrid, transparent och eval-driven agentplattform med:
 - **namespace confusion matrix** och **kontrastiva probes** i eval-systemet
 - **competitor tracking** i retrieval feedback for att spara kollisionskallor
 - fasstyrd live-rollout (shadow -> tool gate -> agent auto -> adaptive -> intent finetune)
+- **centrala metadataganser** (`enforce_metadata_limits`) med 3-lagers validering (frontend Zod, backend Pydantic, core enforcement)
+- **normaliserad lexical scoring** som forhindrar orattvis faltlangsboost
+- **identitetsmetadata** (main_identifier, core_activity, unique_scope, geographic_scope, excludes) for precisare retrieval och separation
+- **DB-driven flodesgraf** med redigerbara route-mappningar och tool-tillhorighet via admin-API
+- **visuell pipeline-editor** med inline prompt-redigering, intent-redigering och drag-and-drop tool-grupper
 - realtidsdata och compare-subgraf
 - LangSmith + intern trace for full observability
 - produktionsnara evalloop for kontinuerlig forbattring
