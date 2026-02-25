@@ -1,227 +1,190 @@
 "use client";
-import {
-	IconBrandDiscord,
-	IconBrandGithub,
-	IconBrandReddit,
-	IconMenu2,
-	IconX,
-} from "@tabler/icons-react";
+
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SignInButton } from "@/components/auth/sign-in-button";
-import { Logo } from "@/components/Logo";
+import { OneseekIcon, OneseekWordmark } from "@/components/Logo";
 import { ThemeTogglerComponent } from "@/components/theme/theme-toggle";
-import { useGithubStars } from "@/hooks/use-github-stars";
 import { cn } from "@/lib/utils";
 
 export const Navbar = () => {
 	const [isScrolled, setIsScrolled] = useState(false);
+	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const t = useTranslations("navigation");
 
 	const navItems = [
-		// { name: t("pricing"), link: "/pricing" }, // Hidden per requirements
 		{ name: t("contact"), link: "/contact" },
 		{ name: t("changelog"), link: "/changelog" },
-		// { name: t("docs"), link: "/docs" }, // Hidden per requirements
 	];
 
 	useEffect(() => {
 		if (typeof window === "undefined") return;
-
-		const handleScroll = () => {
-			setIsScrolled(window.scrollY > 20);
-		};
-
+		const handleScroll = () => setIsScrolled(window.scrollY > 20);
 		handleScroll();
-		window.addEventListener("scroll", handleScroll);
+		window.addEventListener("scroll", handleScroll, { passive: true });
 		return () => window.removeEventListener("scroll", handleScroll);
 	}, []);
 
-	return (
-		<div className="fixed top-1 left-0 right-0 z-60 w-full">
-			<DesktopNav navItems={navItems} isScrolled={isScrolled} />
-			<MobileNav navItems={navItems} isScrolled={isScrolled} />
-		</div>
-	);
-};
+	// Lock body scroll when sidebar is open
+	useEffect(() => {
+		if (sidebarOpen) {
+			document.body.style.overflow = "hidden";
+		} else {
+			document.body.style.overflow = "";
+		}
+		return () => {
+			document.body.style.overflow = "";
+		};
+	}, [sidebarOpen]);
 
-const DesktopNav = ({ navItems, isScrolled }: any) => {
-	const [hovered, setHovered] = useState<number | null>(null);
-	const { compactFormat: githubStars, loading: loadingGithubStars } = useGithubStars();
+	const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+
 	return (
-		<motion.div
-			onMouseLeave={() => {
-				setHovered(null);
-			}}
-			className={cn(
-				"mx-auto hidden w-full max-w-7xl flex-row items-center justify-between self-start rounded-full px-4 py-2 lg:flex transition-all duration-300",
-				isScrolled
-					? "bg-white/80 backdrop-blur-md border border-white/20 shadow-lg dark:bg-neutral-950/80 dark:border-neutral-800/50"
-					: "bg-transparent border border-transparent"
-			)}
-		>
-			<Link
-				href="/"
-				className="flex flex-1 flex-row items-center gap-0.5 hover:opacity-80 transition-opacity"
+		<>
+			{/* Top bar */}
+			<header
+				className={cn(
+					"fixed top-0 left-0 right-0 z-50 transition-all duration-300",
+					isScrolled
+						? "bg-white/80 dark:bg-neutral-950/80 backdrop-blur-xl border-b border-neutral-200/50 dark:border-neutral-800/50 shadow-sm"
+						: "bg-transparent border-b border-transparent"
+				)}
 			>
-				<Logo className="h-8 w-8 rounded-md" />
-				<span className="dark:text-white/90 text-gray-800 text-lg font-bold">Oneseek</span>
-			</Link>
-			<div className="hidden flex-1 flex-row items-center justify-center space-x-2 text-sm font-medium text-zinc-600 transition duration-200 hover:text-zinc-800 lg:flex lg:space-x-2">
-				{navItems.map((navItem: any, idx: number) => (
-					<Link
-						onMouseEnter={() => setHovered(idx)}
-						onMouseLeave={() => setHovered(null)}
-						className="relative px-4 py-2 text-neutral-600 dark:text-neutral-300"
-						key={`link=${idx}`}
-						href={navItem.link}
-					>
-						{hovered === idx && (
-							<motion.div
-								layoutId="hovered"
-								className="absolute inset-0 h-full w-full rounded-full bg-gray-100 dark:bg-neutral-800"
-							/>
-						)}
-						<span className="relative z-20">{navItem.name}</span>
-					</Link>
-				))}
-			</div>
-			<div className="flex flex-1 items-center justify-end gap-2">
-				{/* Social links hidden per requirements */}
-				{/* <Link
-					href="https://discord.gg/ejRNvftDp9"
-					target="_blank"
-					rel="noopener noreferrer"
-					className="hidden rounded-full p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors md:flex items-center justify-center"
-				>
-					<IconBrandDiscord className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-				</Link>
-				<Link
-					href="https://www.reddit.com/r/SurfSense/"
-					target="_blank"
-					rel="noopener noreferrer"
-					className="hidden rounded-full p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors md:flex items-center justify-center"
-				>
-					<IconBrandReddit className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-				</Link>
-				<Link
-					href="https://github.com/MODSetter/SurfSense"
-					target="_blank"
-					rel="noopener noreferrer"
-					className="hidden rounded-full px-3 py-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors md:flex items-center gap-1.5"
-				>
-					<IconBrandGithub className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-					{loadingGithubStars ? (
-						<div className="w-6 h-5 dark:bg-neutral-800 animate-pulse"></div>
-					) : (
-						<span className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
-							{githubStars}
-						</span>
-					)}
-				</Link> */}
-				<ThemeTogglerComponent />
-				<SignInButton variant="desktop" />
-			</div>
-		</motion.div>
-	);
-};
-
-const MobileNav = ({ navItems, isScrolled }: any) => {
-	const [open, setOpen] = useState(false);
-	const { compactFormat: githubStars, loading: loadingGithubStars } = useGithubStars();
-
-	return (
-		<motion.div
-			animate={{ borderRadius: open ? "4px" : "2rem" }}
-			key={String(open)}
-			className={cn(
-				"relative mx-auto flex w-full max-w-[calc(100vw-2rem)] flex-col items-center justify-between px-4 py-2 lg:hidden transition-all duration-300",
-				isScrolled
-					? "bg-white/80 backdrop-blur-md border border-white/20 shadow-lg dark:bg-neutral-950/80 dark:border-neutral-800/50"
-					: "bg-transparent border border-transparent"
-			)}
-		>
-			<div className="flex w-full flex-row items-center justify-between">
-				<Link
-					href="/"
-					className="flex flex-row items-center gap-2 hover:opacity-80 transition-opacity"
-				>
-					<Logo className="h-8 w-8 rounded-md" />
-					<span className="dark:text-white/90 text-gray-800 text-lg font-bold">Oneseek</span>
-				</Link>
-				<button
-					type="button"
-					onClick={() => setOpen(!open)}
-					className="relative z-50 flex items-center justify-center p-2 -mr-2 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors touch-manipulation"
-					aria-label={open ? "Close menu" : "Open menu"}
-				>
-					{open ? (
-						<IconX className="h-6 w-6 text-black dark:text-white" />
-					) : (
-						<IconMenu2 className="h-6 w-6 text-black dark:text-white" />
-					)}
-				</button>
-			</div>
-
-			<AnimatePresence>
-				{open && (
-					<motion.div
-						initial={{ opacity: 0, y: -10 }}
-						animate={{ opacity: 1, y: 0 }}
-						exit={{ opacity: 0, y: -10 }}
-						transition={{ duration: 0.2, ease: "easeOut" }}
-						className="absolute inset-x-0 top-full mt-1 z-20 flex w-full flex-col items-start justify-start gap-4 rounded-xl bg-white/90 backdrop-blur-xl border border-white/20 shadow-2xl px-4 py-6 dark:bg-neutral-950/90 dark:border-neutral-800/50"
-					>
-						{navItems.map((navItem: any, idx: number) => (
-							<Link
-								key={`link=${idx}`}
-								href={navItem.link}
-								className="relative text-neutral-600 dark:text-neutral-300"
+				<div className="mx-auto max-w-7xl flex items-center justify-between h-14 px-4 md:px-6">
+					{/* Left: hamburger + logo */}
+					<div className="flex items-center gap-3">
+						{/* Hamburger — mobile only */}
+						<button
+							type="button"
+							onClick={() => setSidebarOpen(true)}
+							className="flex items-center justify-center w-8 h-8 -ml-1 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors lg:hidden"
+							aria-label="Open menu"
+						>
+							<svg
+								className="w-5 h-5 text-neutral-700 dark:text-neutral-300"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+								strokeWidth={1.5}
 							>
-								<motion.span className="block">{navItem.name} </motion.span>
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
+								/>
+							</svg>
+						</button>
+
+						{/* Logo — wordmark on desktop, icon-only on small mobile */}
+						<Link href="/" className="flex items-center hover:opacity-80 transition-opacity">
+							<span className="hidden sm:flex">
+								<OneseekWordmark iconSize={26} />
+							</span>
+							<span className="flex sm:hidden">
+								<OneseekIcon size={28} />
+							</span>
+						</Link>
+					</div>
+
+					{/* Center: nav links — desktop only */}
+					<nav className="hidden lg:flex items-center gap-1">
+						{navItems.map((item) => (
+							<Link
+								key={item.link}
+								href={item.link}
+								className="relative px-3 py-1.5 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors"
+							>
+								{item.name}
 							</Link>
 						))}
-						<div className="flex w-full items-center gap-2 pt-2">
-							{/* Social links hidden per requirements */}
-							{/* <Link
-								href="https://discord.gg/ejRNvftDp9"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="flex items-center justify-center rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors touch-manipulation"
-							>
-								<IconBrandDiscord className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-							</Link>
-							<Link
-								href="https://www.reddit.com/r/SurfSense/"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="flex items-center justify-center rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors touch-manipulation"
-							>
-								<IconBrandReddit className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-							</Link>
-							<Link
-								href="https://github.com/MODSetter/SurfSense"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="flex items-center gap-1.5 rounded-lg px-3 py-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors touch-manipulation"
-							>
-								<IconBrandGithub className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-								{loadingGithubStars ? (
-									<div className="w-6 h-5 dark:bg-neutral-800 animate-pulse"></div>
-								) : (
-									<span className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
-										{githubStars}
-									</span>
-								)}
-							</Link> */}
-							<ThemeTogglerComponent />
-						</div>
-						<SignInButton variant="mobile" />
-					</motion.div>
+					</nav>
+
+					{/* Right: theme toggle + sign in */}
+					<div className="flex items-center gap-2">
+						<ThemeTogglerComponent />
+						<SignInButton variant="desktop" />
+					</div>
+				</div>
+			</header>
+
+			{/* Mobile sidebar */}
+			<AnimatePresence>
+				{sidebarOpen && (
+					<>
+						{/* Backdrop */}
+						<motion.div
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							transition={{ duration: 0.2 }}
+							className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm lg:hidden"
+							onClick={closeSidebar}
+							aria-hidden
+						/>
+
+						{/* Sidebar panel — slides from left */}
+						<motion.aside
+							initial={{ x: "-100%" }}
+							animate={{ x: 0 }}
+							exit={{ x: "-100%" }}
+							transition={{ type: "spring", damping: 30, stiffness: 300 }}
+							className="fixed top-0 left-0 bottom-0 z-50 w-72 bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 shadow-2xl flex flex-col lg:hidden"
+						>
+							{/* Sidebar header */}
+							<div className="flex items-center justify-between h-14 px-4 border-b border-neutral-100 dark:border-neutral-800/50">
+								<Link
+									href="/"
+									onClick={closeSidebar}
+									className="hover:opacity-80 transition-opacity"
+								>
+									<OneseekWordmark iconSize={24} />
+								</Link>
+								<button
+									type="button"
+									onClick={closeSidebar}
+									className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+									aria-label="Close menu"
+								>
+									<svg
+										className="w-5 h-5 text-neutral-500"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+										strokeWidth={1.5}
+									>
+										<path
+											strokeLinecap="round"
+											strokeLinejoin="round"
+											d="M6 18L18 6M6 6l12 12"
+										/>
+									</svg>
+								</button>
+							</div>
+
+							{/* Nav items */}
+							<nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+								{navItems.map((item) => (
+									<Link
+										key={item.link}
+										href={item.link}
+										onClick={closeSidebar}
+										className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-neutral-700 dark:text-neutral-300 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors"
+									>
+										{item.name}
+									</Link>
+								))}
+							</nav>
+
+							{/* Sidebar footer */}
+							<div className="p-4 border-t border-neutral-100 dark:border-neutral-800/50 space-y-3">
+								<SignInButton variant="mobile" />
+							</div>
+						</motion.aside>
+					</>
 				)}
 			</AnimatePresence>
-		</motion.div>
+		</>
 	);
 };

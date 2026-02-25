@@ -8,7 +8,7 @@ import {
 } from "@tabler/icons-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { Logo } from "@/components/Logo";
+import { Logo, OneseekWordmark } from "@/components/Logo";
 
 export function FooterNew() {
 	const tNav = useTranslations("navigation");
@@ -107,9 +107,8 @@ export function FooterNew() {
 		<div className="border-t border-neutral-100 dark:border-white/[0.1] px-8 py-20 bg-white dark:bg-neutral-950 w-full relative overflow-hidden">
 			<div className="max-w-7xl mx-auto text-sm text-neutral-500 flex sm:flex-row flex-col justify-between items-start  md:px-8">
 				<div>
-					<div className="mr-0 md:mr-4  md:flex mb-4">
-						<Logo className="h-6 w-6 rounded-md mr-2" />
-						<span className="dark:text-white/90 text-gray-800 text-lg font-bold">Oneseek</span>
+					<div className="mr-0 md:mr-4 md:flex mb-4">
+						<OneseekWordmark iconSize={24} />
 					</div>
 
 					<div className="mt-2 ml-2">{tFooter("rights_reserved", { year: new Date().getFullYear() })}</div>
