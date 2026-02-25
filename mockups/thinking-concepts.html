@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OneSeek Thinking Concepts — Mockups</title>
+<style>
+  :root {
+    --bg: #09090b;
+    --bg-muted: #18181b;
+    --bg-muted-50: rgba(39,39,42,0.5);
+    --fg: #fafafa;
+    --fg-muted: #a1a1aa;
+    --fg-dim: #52525b;
+    --primary: #6d28d9;
+    --primary-light: #8b5cf6;
+    --border: #27272a;
+    --thread-max: 44rem;
+    --accent: #2563eb;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
+
+  /* Nav */
+  .nav { position:sticky; top:0; z-index:50; background:rgba(9,9,11,0.9); backdrop-filter:blur(8px); border-bottom:1px solid var(--border); padding:1rem 2rem; display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:center; }
+  .nav button { padding:0.5rem 1rem; border-radius:0.5rem; border:1px solid var(--border); background:var(--bg-muted); color:var(--fg-muted); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+  .nav button.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+  .nav button:hover:not(.active) { border-color:var(--fg-dim); color:var(--fg); }
+
+  /* Concept container */
+  .concepts { max-width:52rem; margin:0 auto; padding:2rem 1rem; }
+  .concept { display:none; }
+  .concept.active { display:block; }
+  .concept-label { text-align:center; margin-bottom:1.5rem; }
+  .concept-label h2 { font-size:1.25rem; font-weight:600; margin-bottom:0.25rem; }
+  .concept-label p { color:var(--fg-muted); font-size:0.85rem; }
+
+  /* Shared message shell */
+  .msg-shell { max-width:var(--thread-max); margin:0 auto 1.5rem; padding:0.75rem 0; }
+  .user-msg { background:var(--bg-muted); border-radius:1rem; padding:0.75rem 1rem; max-width:28rem; margin-left:auto; margin-bottom:1.5rem; font-size:0.9rem; }
+  .response-text { padding:0 0.5rem; line-height:1.7; font-size:0.9rem; }
+  .response-text ul { list-style:disc; padding-left:1.25rem; margin:0.4rem 0; }
+  .response-text li { margin:0.15rem 0; }
+  .response-text strong { font-weight:600; }
+
+  /* Footer */
+  .msg-footer { display:flex; gap:0.5rem; padding:0.25rem 0.5rem; margin-top:0.5rem; }
+  .msg-footer button { background:none; border:none; color:var(--fg-dim); cursor:pointer; font-size:0.75rem; display:flex; align-items:center; gap:0.25rem; }
+  .msg-footer button:hover { color:var(--fg-muted); }
+  .msg-footer svg { width:14px; height:14px; }
+
+  /* ============================
+     CONCEPT 1: Thought Stream
+     ============================ */
+  .c1-stream { padding:0 0.5rem; margin-bottom:1rem; }
+  .c1-item { display:flex; gap:0; position:relative; }
+  .c1-line-col { width:1.5rem; display:flex; flex-direction:column; align-items:center; position:relative; flex-shrink:0; }
+  .c1-vline { position:absolute; left:50%; top:0; bottom:0; width:1px; background: linear-gradient(to bottom, transparent 0%, var(--fg-dim) 8px, var(--fg-dim) calc(100% - 8px), transparent 100%); transform:translateX(-50%); opacity:0.4; }
+  .c1-item:last-child .c1-vline { display:none; }
+  .c1-dot { width:6px; height:6px; border-radius:50%; background:var(--fg-dim); position:relative; z-index:1; margin-top:8px; flex-shrink:0; opacity:0.6; }
+  .c1-dot.active { background:var(--primary-light); opacity:1; box-shadow:0 0 6px var(--primary-light); }
+  .c1-dot.done { background:var(--fg-dim); opacity:0.4; }
+  .c1-content { flex:1; padding-bottom:0.75rem; padding-left:0.75rem; min-width:0; }
+  .c1-title { font-size:0.75rem; font-weight:600; color:var(--fg-muted); margin-bottom:0.15rem; }
+  .c1-text { font-size:0.7rem; color:var(--fg-dim); line-height:1.5; font-family:'SF Mono',Monaco,monospace; }
+  .c1-tool { display:inline-flex; align-items:center; gap:0.35rem; background:var(--bg-muted); border:1px solid var(--border); border-radius:0.375rem; padding:0.2rem 0.5rem; font-size:0.7rem; color:var(--fg-muted); margin:0.15rem 0; }
+  .c1-tool .time { color:var(--fg-dim); margin-left:0.5rem; }
+  .c1-collapse { display:flex; align-items:center; gap:0.35rem; font-size:0.7rem; color:var(--fg-dim); cursor:pointer; padding:0.25rem 0.5rem; border:none; background:none; margin-top:0.25rem; }
+  .c1-collapse:hover { color:var(--fg-muted); }
+
+  /* ============================
+     CONCEPT 2: Fade Layer
+     ============================ */
+  .c2-layers { padding:0 0.5rem; margin-bottom:0.75rem; }
+  .c2-row { font-size:0.75rem; line-height:1.8; font-family:'SF Mono',Monaco,monospace; padding:0 0.25rem; transition:opacity 0.3s; }
+  .c2-row .label { color:var(--primary-light); font-weight:500; margin-right:0.5rem; font-family:inherit; }
+  .c2-row .text { color:var(--fg-muted); }
+  .c2-row.op10 { opacity:0.12; }
+  .c2-row.op20 { opacity:0.2; }
+  .c2-row.op30 { opacity:0.3; }
+  .c2-row.op50 { opacity:0.5; }
+  .c2-row.op70 { opacity:0.7; }
+  .c2-row.op90 { opacity:0.9; }
+  .c2-layers:hover .c2-row { opacity:0.85 !important; }
+  .c2-tool-inline { display:inline-flex; align-items:center; gap:0.25rem; }
+  .c2-divider { height:1px; background:linear-gradient(to right, transparent, var(--border), transparent); margin:0.5rem 0; }
+
+  /* ============================
+     CONCEPT 3: Margin Notes
+     ============================ */
+  .c3-layout { display:grid; grid-template-columns:9rem 1fr; gap:1rem; padding:0 0.5rem; margin-bottom:0.5rem; }
+  @media (max-width:640px) { .c3-layout { grid-template-columns:1fr; } .c3-margin { display:none; } }
+  .c3-margin { position:relative; }
+  .c3-margin-items { position:relative; }
+  .c3-m-item { font-size:0.65rem; color:var(--fg-dim); padding:0.2rem 0; display:flex; align-items:center; gap:0.35rem; line-height:1.4; }
+  .c3-m-item .dot-line { display:flex; align-items:center; gap:0; flex-shrink:0; }
+  .c3-m-item .dots { color:var(--fg-dim); opacity:0.3; letter-spacing:-1px; font-size:0.55rem; }
+  .c3-m-item .m-label { white-space:nowrap; }
+  .c3-m-item.active .m-label { color:var(--primary-light); }
+  .c3-m-item .m-time { color:var(--fg-dim); opacity:0.5; font-size:0.6rem; }
+  .c3-collapse-row { font-size:0.65rem; color:var(--fg-dim); margin-top:0.5rem; cursor:pointer; }
+  .c3-main { min-width:0; }
+  .c3-connector { position:absolute; right:-0.5rem; top:0; bottom:0; width:1px; background:linear-gradient(to bottom, var(--border) 0%, transparent 100%); opacity:0.3; }
+
+  /* ============================
+     CONCEPT 4: Breathing Underline
+     ============================ */
+  .c4-pipeline { padding:0 0.5rem; margin-top:0.75rem; }
+  .c4-separator { height:1px; background:linear-gradient(to right, transparent, var(--border), var(--border), transparent); margin-bottom:0.5rem; }
+  .c4-flow { display:flex; flex-wrap:wrap; align-items:center; gap:0.25rem; font-size:0.7rem; color:var(--fg-dim); }
+  .c4-node { display:inline-flex; align-items:center; gap:0.25rem; padding:0.15rem 0.4rem; border-radius:0.25rem; transition:all 0.3s; }
+  .c4-node.done { opacity:0.5; }
+  .c4-node.active { color:var(--primary-light); background:rgba(109,40,217,0.08); }
+  .c4-node .check { font-size:0.6rem; }
+  .c4-arrow { color:var(--fg-dim); opacity:0.3; font-size:0.6rem; }
+  .c4-expand { display:flex; align-items:center; gap:0.25rem; font-size:0.65rem; color:var(--fg-dim); cursor:pointer; background:none; border:none; margin-top:0.35rem; padding:0.2rem 0; }
+  .c4-expand:hover { color:var(--fg-muted); }
+  .c4-detail { margin-top:0.5rem; padding:0.5rem; background:var(--bg-muted-50); border-radius:0.375rem; font-size:0.7rem; color:var(--fg-dim); font-family:'SF Mono',Monaco,monospace; line-height:1.6; display:none; }
+  .c4-detail.open { display:block; }
+  .c4-detail-title { color:var(--fg-muted); font-weight:500; font-family:sans-serif; margin-bottom:0.15rem; }
+
+  /* ============================
+     CONCEPT 5: Ghost Crystallize
+     ============================ */
+  .c5-ghost-area { padding:0 0.5rem; margin-bottom:0.5rem; }
+  .c5-ghost-line { font-size:0.8rem; line-height:1.7; color:var(--fg-dim); font-style:italic; opacity:0.35; transition:opacity 0.5s; }
+  .c5-ghost-line .g-label { color:var(--primary-light); opacity:0.6; font-style:normal; font-size:0.7rem; font-weight:500; }
+  .c5-tool-ghost { display:inline-flex; align-items:center; gap:0.3rem; background:rgba(39,39,42,0.3); border:1px solid rgba(39,39,42,0.5); border-radius:0.375rem; padding:0.15rem 0.4rem; font-style:normal; font-size:0.7rem; color:var(--fg-dim); margin:0.15rem 0; }
+  .c5-crystal { position:relative; }
+  .c5-crystal::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:linear-gradient(to bottom, var(--primary-light), transparent); border-radius:2px; opacity:0; transition:opacity 0.5s; }
+  .c5-crystal.revealed::before { opacity:0.5; }
+  .c5-collapse-bar { display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0.5rem; margin-top:0.5rem; font-size:0.7rem; color:var(--fg-dim); cursor:pointer; }
+  .c5-collapse-bar:hover { color:var(--fg-muted); }
+  .c5-collapse-bar .circle { width:6px; height:6px; border-radius:50%; border:1px solid var(--fg-dim); opacity:0.5; }
+  .c5-expanded { margin-top:0.5rem; padding:0.5rem; font-size:0.7rem; color:var(--fg-dim); line-height:1.6; font-family:'SF Mono',Monaco,monospace; display:none; }
+  .c5-expanded.open { display:block; }
+  .c5-expanded .exp-title { color:var(--fg-muted); font-weight:500; font-family:sans-serif; margin-top:0.35rem; }
+  .c5-expanded .exp-title:first-child { margin-top:0; }
+
+  /* Streaming animation helper */
+  @keyframes pulse { 0%,100% { opacity:0.4; } 50% { opacity:1; } }
+  @keyframes shimmer { 0% { background-position:-200% 0; } 100% { background-position:200% 0; } }
+  .shimmer-text { background:linear-gradient(90deg,var(--fg-muted) 25%,var(--fg) 50%,var(--fg-muted) 75%); background-size:200% auto; -webkit-background-clip:text; -webkit-text-fill-color:transparent; animation:shimmer 2s linear infinite; font-size:0.75rem; }
+  .pulse-dot { animation:pulse 1.5s ease-in-out infinite; }
+
+  /* Animated streaming state */
+  .streaming-tag { font-size:0.65rem; color:var(--primary-light); opacity:0.7; display:inline-flex; align-items:center; gap:0.35rem; }
+  .streaming-tag::before { content:''; width:5px; height:5px; border-radius:50%; background:var(--primary-light); animation:pulse 1.2s ease-in-out infinite; }
+
+  /* Toggle for streaming/done state */
+  .state-toggle { text-align:center; margin-bottom:1.5rem; display:flex; justify-content:center; gap:0.5rem; }
+  .state-toggle button { padding:0.35rem 0.75rem; border-radius:0.375rem; border:1px solid var(--border); background:var(--bg-muted); color:var(--fg-muted); cursor:pointer; font-size:0.75rem; }
+  .state-toggle button.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <button class="active" onclick="showConcept(1)">1 — Thought Stream</button>
+  <button onclick="showConcept(2)">2 — Fade Layer</button>
+  <button onclick="showConcept(3)">3 — Margin Notes</button>
+  <button onclick="showConcept(4)">4 — Breathing Underline</button>
+  <button onclick="showConcept(5)">5 — Ghost Crystallize</button>
+</nav>
+
+<div class="concepts">
+
+<!-- ============================================
+     CONCEPT 1: THOUGHT STREAM
+     ============================================ -->
+<div class="concept active" id="c1">
+  <div class="concept-label">
+    <h2>Koncept 1 — Thought Stream</h2>
+    <p>Kronologisk tankeflod med tunn vänsterlinje. Steg och reasoning interfolieras.</p>
+  </div>
+
+  <div class="msg-shell">
+    <div class="user-msg">Hämta idag väder i Stockholm enligt SMHI</div>
+
+    <div class="c1-stream">
+      <div class="c1-item">
+        <div class="c1-line-col"><div class="c1-vline"></div><div class="c1-dot done"></div></div>
+        <div class="c1-content">
+          <div class="c1-title">Resolving intent</div>
+          <div class="c1-text">Användaren frågar om dagens väder i Stockholm via SMHI. Klassificering: simple.</div>
+        </div>
+      </div>
+      <div class="c1-item">
+        <div class="c1-line-col"><div class="c1-vline"></div><div class="c1-dot done"></div></div>
+        <div class="c1-content">
+          <div class="c1-title">Selecting agents</div>
+          <div class="c1-text">Väder-agenten matchar. Inga andra agenter behövs.</div>
+        </div>
+      </div>
+      <div class="c1-item">
+        <div class="c1-line-col"><div class="c1-vline"></div><div class="c1-dot done"></div></div>
+        <div class="c1-content">
+          <div class="c1-title">Building plan</div>
+          <div class="c1-text">1. Anropa väder-agenten med SMHI-data &nbsp;2. Presentera resultat</div>
+        </div>
+      </div>
+      <div class="c1-item">
+        <div class="c1-line-col"><div class="c1-vline"></div><div class="c1-dot done"></div></div>
+        <div class="c1-content">
+          <div class="c1-tool">&#9728; smhi_weather("Stockholm") <span class="time">1.2s</span></div>
+        </div>
+      </div>
+      <div class="c1-item">
+        <div class="c1-line-col"><div class="c1-dot done"></div></div>
+        <div class="c1-content">
+          <div class="c1-title">Synthesizing response</div>
+          <div class="c1-text">Sammanställer väderdata till kort svar...</div>
+        </div>
+      </div>
+      <button class="c1-collapse">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        5 steg &middot; 3.4s
+      </button>
+    </div>
+
+    <div class="response-text">
+      <strong>Vädret i Stockholm just nu (25 feb 2026) enligt SMHI:</strong>
+      <ul>
+        <li>Temperatur: 0,6 &deg;C</li>
+        <li>Vind: sydväst 5,7 m/s (gust 12,3 m/s)</li>
+        <li>Nederbörd: 0,2 mm — lätt snöfall</li>
+        <li>Molnbedäckning: hög (8 oktaver)</li>
+        <li>Luftfuktighet: 89 %</li>
+      </ul>
+      Kort sagt: Kyligt, mulet och med lätt snö i luften.
+    </div>
+    <div class="msg-footer">
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button>
+      <button>&#x21BB; Retry</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================
+     CONCEPT 2: FADE LAYER
+     ============================================ -->
+<div class="concept" id="c2">
+  <div class="concept-label">
+    <h2>Koncept 2 — Fade Layer</h2>
+    <p>Transparenta lager som tonar fram. Äldsta tankar nästan osynliga, svaret fullt synligt.</p>
+  </div>
+
+  <div class="msg-shell">
+    <div class="user-msg">Hämta idag väder i Stockholm enligt SMHI</div>
+
+    <div class="c2-layers">
+      <div class="c2-row op10"><span class="label">Resolving intent</span><span class="text">Frågar om väder Stockholm via SMHI. simple.</span></div>
+      <div class="c2-row op20"><span class="label">Selecting agents</span><span class="text">väder-agenten matchar</span></div>
+      <div class="c2-row op30"><span class="label">Building plan</span><span class="text">1) anropa väder 2) presentera</span></div>
+      <div class="c2-row op50"><span class="text c2-tool-inline">&#9728; smhi_weather("Stockholm") &middot; 1.2s</span></div>
+      <div class="c2-row op70"><span class="label">Synthesizing</span><span class="text">sammanställer data...</span></div>
+    </div>
+    <div class="c2-divider"></div>
+
+    <div class="response-text">
+      <strong>Vädret i Stockholm just nu (25 feb 2026) enligt SMHI:</strong>
+      <ul>
+        <li>Temperatur: 0,6 &deg;C</li>
+        <li>Vind: sydväst 5,7 m/s (gust 12,3 m/s)</li>
+        <li>Nederbörd: 0,2 mm — lätt snöfall</li>
+        <li>Molnbedäckning: hög (8 oktaver)</li>
+        <li>Luftfuktighet: 89 %</li>
+      </ul>
+      Kort sagt: Kyligt, mulet och med lätt snö i luften.
+    </div>
+    <div class="msg-footer">
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button>
+      <button>&#x21BB; Retry</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================
+     CONCEPT 3: MARGIN NOTES
+     ============================================ -->
+<div class="concept" id="c3">
+  <div class="concept-label">
+    <h2>Koncept 3 — Margin Notes</h2>
+    <p>Akademisk marginal-layout. Tankar annoterar svaret från sidan.</p>
+  </div>
+
+  <div class="msg-shell">
+    <div class="user-msg">Hämta idag väder i Stockholm enligt SMHI</div>
+
+    <div class="c3-layout">
+      <div class="c3-margin">
+        <div class="c3-margin-items">
+          <div class="c3-m-item"><span class="m-label">Resolving intent</span> <span class="dots">&middot;&middot;</span></div>
+          <div class="c3-m-item"><span class="m-label">Selecting agents</span> <span class="dots">&middot;&middot;</span></div>
+          <div class="c3-m-item"><span class="m-label">Building plan</span> <span class="dots">&middot;&middot;&middot;&middot;</span></div>
+          <div class="c3-m-item"><span class="m-label">&#9728; smhi_weather</span> <span class="m-time">1.2s</span></div>
+          <div class="c3-m-item"><span class="m-label">Synthesizing</span> <span class="dots">&middot;&middot;&middot;&middot;&middot;</span></div>
+          <div class="c3-collapse-row">&#x2039; 5 steg &#x203A;</div>
+        </div>
+        <div class="c3-connector"></div>
+      </div>
+      <div class="c3-main">
+        <div class="response-text">
+          <strong>Vädret i Stockholm just nu (25 feb 2026) enligt SMHI:</strong>
+          <ul>
+            <li>Temperatur: 0,6 &deg;C</li>
+            <li>Vind: sydväst 5,7 m/s (gust 12,3 m/s)</li>
+            <li>Nederbörd: 0,2 mm — lätt snöfall</li>
+            <li>Molnbedäckning: hög (8 oktaver)</li>
+            <li>Luftfuktighet: 89 %</li>
+          </ul>
+          Kort sagt: Kyligt, mulet och med lätt snö i luften.
+        </div>
+      </div>
+    </div>
+    <div class="msg-footer">
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button>
+      <button>&#x21BB; Retry</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================
+     CONCEPT 4: BREATHING UNDERLINE
+     ============================================ -->
+<div class="concept" id="c4">
+  <div class="concept-label">
+    <h2>Koncept 4 — Breathing Underline</h2>
+    <p>Minimalistisk pipeline under svaret. Pulserande rad under streaming.</p>
+  </div>
+
+  <div class="msg-shell">
+    <div class="user-msg">Hämta idag väder i Stockholm enligt SMHI</div>
+
+    <div class="response-text">
+      <strong>Vädret i Stockholm just nu (25 feb 2026) enligt SMHI:</strong>
+      <ul>
+        <li>Temperatur: 0,6 &deg;C</li>
+        <li>Vind: sydväst 5,7 m/s (gust 12,3 m/s)</li>
+        <li>Nederbörd: 0,2 mm — lätt snöfall</li>
+        <li>Molnbedäckning: hög (8 oktaver)</li>
+        <li>Luftfuktighet: 89 %</li>
+      </ul>
+      Kort sagt: Kyligt, mulet och med lätt snö i luften.
+    </div>
+
+    <div class="c4-pipeline">
+      <div class="c4-separator"></div>
+      <div class="c4-flow">
+        <span class="c4-node done">Resolving intent <span class="check">&#10003;</span></span>
+        <span class="c4-arrow">&#x2192;</span>
+        <span class="c4-node done">Selecting agents <span class="check">&#10003;</span></span>
+        <span class="c4-arrow">&#x2192;</span>
+        <span class="c4-node done">Building plan <span class="check">&#10003;</span></span>
+        <span class="c4-arrow">&#x2192;</span>
+        <span class="c4-node done">&#9728; smhi_weather <span style="opacity:0.5">1.2s</span></span>
+        <span class="c4-arrow">&#x2192;</span>
+        <span class="c4-node done">Synthesizing <span class="check">&#10003;</span></span>
+      </div>
+      <button class="c4-expand" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? '▴ Dölj tankar' : '▾ Visa tankar'">&#x25BE; Visa tankar</button>
+      <div class="c4-detail" id="c4-detail">
+        <div class="c4-detail-title">Resolving intent</div>
+        Användaren frågar om dagens väder i Stockholm via SMHI. Klassificering: simple.
+        <div class="c4-detail-title">Selecting agents</div>
+        Väder-agenten matchar. Inga andra agenter behövs.
+        <div class="c4-detail-title">Building plan</div>
+        1. Anropa väder-agenten med SMHI-data  2. Presentera resultat
+        <div class="c4-detail-title">Synthesizing</div>
+        Sammanställer väderdata till ett kort, strukturerat svar...
+      </div>
+    </div>
+    <div class="msg-footer">
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button>
+      <button>&#x21BB; Retry</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================
+     CONCEPT 5: GHOST CRYSTALLIZE
+     ============================================ -->
+<div class="concept" id="c5">
+  <div class="concept-label">
+    <h2>Koncept 5 — Ghost Crystallize</h2>
+    <p>Spöktext som kristalliseras till svar. All text i samma yta.</p>
+  </div>
+
+  <div class="state-toggle">
+    <button class="active" onclick="showC5State('done', this)">Slutresultat</button>
+    <button onclick="showC5State('streaming', this)">Under streaming</button>
+  </div>
+
+  <div class="msg-shell">
+    <div class="user-msg">Hämta idag väder i Stockholm enligt SMHI</div>
+
+    <!-- Streaming state (ghost text visible) -->
+    <div class="c5-ghost-area" id="c5-streaming" style="display:none">
+      <div class="c5-ghost-line"><span class="g-label">Resolving intent </span>Användaren frågar om väder i Stockholm via SMHI...</div>
+      <div class="c5-ghost-line"><span class="g-label">Selecting agents </span>Väder-agenten matchar bäst för SMHI-data</div>
+      <div class="c5-ghost-line"><span class="g-label">Building plan </span>1) Anropa väder-agenten 2) Formatera svar</div>
+      <div class="c5-ghost-line"><span class="c5-tool-ghost">&#9728; smhi_weather("Stockholm") &middot; 1.2s</span></div>
+      <div class="c5-ghost-line" style="opacity:0.5;"><span class="g-label">Synthesizing </span><span class="streaming-tag">sammanställer data...</span></div>
+      <div style="height:0.75rem"></div>
+      <div class="response-text" style="opacity:0.4;">
+        <strong>Vädret i Stockholm just nu (25 feb 2026):</strong>
+        <ul>
+          <li>Temperatur: 0,6 &deg;C</li>
+          <li style="opacity:0.3">Vind: sydväst 5,7 m/s...</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Done state (crystallized) -->
+    <div id="c5-done">
+      <div class="c5-crystal revealed">
+        <div class="response-text">
+          <strong>Vädret i Stockholm just nu (25 feb 2026) enligt SMHI:</strong>
+          <ul>
+            <li>Temperatur: 0,6 &deg;C</li>
+            <li>Vind: sydväst 5,7 m/s (gust 12,3 m/s)</li>
+            <li>Nederbörd: 0,2 mm — lätt snöfall</li>
+            <li>Molnbedäckning: hög (8 oktaver)</li>
+            <li>Luftfuktighet: 89 %</li>
+          </ul>
+          Kort sagt: Kyligt, mulet och med lätt snö i luften.
+        </div>
+      </div>
+      <div class="c5-collapse-bar" onclick="document.getElementById('c5-exp').classList.toggle('open'); this.querySelector('span').textContent = document.getElementById('c5-exp').classList.contains('open') ? '▴ Dölj tankar' : '&#9675; 5 tankar'">
+        <div class="circle"></div>
+        <span>&#9675; 5 tankar</span>
+      </div>
+      <div class="c5-expanded" id="c5-exp">
+        <div class="exp-title">Resolving intent</div>
+        Användaren frågar om dagens väder i Stockholm via SMHI. Klassificering: simple.
+        <div class="exp-title">Selecting agents</div>
+        Väder-agenten matchar. Inga andra agenter behövs.
+        <div class="exp-title">Building plan</div>
+        1. Anropa väder-agenten med SMHI-data  2. Presentera resultat
+        <div class="exp-title">&#9728; smhi_weather("Stockholm") &middot; 1.2s</div>
+        <div class="exp-title">Synthesizing</div>
+        Sammanställer väderdata till ett kort svar...
+      </div>
+    </div>
+    <div class="msg-footer">
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button>
+      <button>&#x21BB; Retry</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /concepts -->
+
+<script>
+function showConcept(n) {
+  document.querySelectorAll('.concept').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav button').forEach(el => el.classList.remove('active'));
+  document.getElementById('c'+n).classList.add('active');
+  document.querySelectorAll('.nav button')[n-1].classList.add('active');
+}
+function showC5State(state, btn) {
+  document.getElementById('c5-streaming').style.display = state === 'streaming' ? 'block' : 'none';
+  document.getElementById('c5-done').style.display = state === 'done' ? 'block' : 'none';
+  btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>
