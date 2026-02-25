@@ -802,6 +802,11 @@ _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "response_layer",
 )
 
+# Regex to strip <think>…</think> blocks and bare tags from pipeline text
+# so that reasoning content doesn't leak into visible step items.
+_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
+_THINK_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
+
 # Mapping from pipeline chain-name tokens to user-facing titles for the
 # unified think-box.  Nodes not listed here fall back to a title derived
 # from the chain name.
@@ -894,7 +899,10 @@ def _normalize_line_for_dedupe(line: str) -> str:
 def _clean_assistant_output_text(text: str) -> str:
     if not text:
         return ""
-    cleaned = _CRITIC_JSON_SNIPPET_RE.sub("", text)
+    # Strip <think>…</think> blocks and bare tags first
+    cleaned = _THINK_BLOCK_RE.sub("", text)
+    cleaned = _THINK_TAG_RE.sub("", cleaned)
+    cleaned = _CRITIC_JSON_SNIPPET_RE.sub("", cleaned)
     cleaned, removed_inline = _strip_inline_critic_payloads(cleaned)
     cleaned, removed_payloads = _strip_inline_pipeline_payloads(cleaned)
     cleaned = _HTML_COMMENT_RE.sub("", cleaned)
@@ -2342,14 +2350,10 @@ async def stream_new_chat(
         # When a pipeline node's LLM call streams tokens, we run them
         # through a dedicated filter to extract <think> reasoning per node.
         internal_node_think_filters: dict[str, _ThinkStreamFilter] = {}
-        # Map pipeline chain run_id -> thinking step id so we can emit
-        # node-reasoning events attached to the correct step.
-        pipeline_chain_step_ids: dict[str, str] = {}
-        # Map pipeline chain run_id -> chain name for node-reasoning events.
-        pipeline_chain_step_names: dict[str, str] = {}
-        # Track pipeline chain run_ids that already emitted an in_progress step
-        # so we don't duplicate on model start.
-        pipeline_chain_started: set[str] = set()
+        # Track which pipeline node last emitted reasoning so we can inject
+        # transition headers (e.g. "--- Resolving intent ---") into the
+        # global rolling reasoning stream.
+        last_reasoning_pipeline_node: str = ""
 
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
@@ -2521,9 +2525,13 @@ async def stream_new_chat(
             *,
             source_chain: str | None = None,
         ) -> list[str]:
+            # Strip <think>…</think> blocks and bare tags to prevent
+            # reasoning content from leaking into visible step items.
+            stripped = _THINK_BLOCK_RE.sub("", text) if text else text
+            stripped = _THINK_TAG_RE.sub("", stripped) if stripped else stripped
             payloads = [
                 payload
-                for payload in _extract_json_objects_from_text(text, max_objects=6)
+                for payload in _extract_json_objects_from_text(stripped, max_objects=6)
                 if _pipeline_payload_kind(payload)
             ]
             return emit_pipeline_steps_from_payloads(
@@ -2753,32 +2761,6 @@ async def stream_new_chat(
                     if run_id:
                         chain_name_by_run_id[run_id] = str(chain_name)
 
-                    # --- Node-by-node think-box: emit in_progress step ---
-                    if (
-                        run_id
-                        and _is_internal_pipeline_chain_name(str(chain_name))
-                        and run_id not in pipeline_chain_started
-                    ):
-                        pipeline_chain_started.add(run_id)
-                        node_step_id = next_thinking_step_id()
-                        node_title = format_step_title(
-                            _pipeline_node_title(str(chain_name))
-                        )
-                        pipeline_chain_step_ids[run_id] = node_step_id
-                        pipeline_chain_step_names[run_id] = str(chain_name)
-                        # Complete previous active step
-                        prev_step_event = complete_current_step()
-                        if prev_step_event:
-                            yield prev_step_event
-                        last_active_step_id = node_step_id
-                        last_active_step_title = node_title
-                        last_active_step_items = []
-                        yield streaming_service.format_thinking_step(
-                            step_id=node_step_id,
-                            title=node_title,
-                            status="in_progress",
-                        )
-
                     chain_input = event.get("data", {}).get("input")
                     chain_meta = {
                         "tags": event.get("tags") or [],
@@ -2901,26 +2883,24 @@ async def stream_new_chat(
                     internal_chain_name = model_parent_chain_by_run_id.pop(run_id, "")
                     internal_buffer = internal_model_buffers.pop(run_id, "")
                     # Flush per-node think filter and emit remaining reasoning
+                    # into the global rolling think-box (reasoning-delta).
                     node_filter = internal_node_think_filters.pop(run_id, None)
                     if node_filter:
                         flush_reasoning, _flush_text = node_filter.flush()
                         if flush_reasoning:
-                            parent_ids = [
-                                str(v)
-                                for v in (event.get("parent_ids") or [])
-                                if str(v)
-                            ]
-                            node_step_id = ""
-                            for pid in reversed(parent_ids):
-                                if pid in pipeline_chain_step_ids:
-                                    node_step_id = pipeline_chain_step_ids[pid]
-                                    break
-                            if node_step_id:
-                                yield streaming_service.format_node_reasoning(
-                                    step_id=node_step_id,
-                                    node_name=internal_chain_name,
-                                    delta=flush_reasoning,
-                                )
+                            # Inject node header if this is a new pipeline node
+                            if internal_chain_name and internal_chain_name != last_reasoning_pipeline_node:
+                                last_reasoning_pipeline_node = internal_chain_name
+                                node_title = _pipeline_node_title(internal_chain_name)
+                                header = f"\n--- {node_title} ---\n"
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = streaming_service.generate_reasoning_id()
+                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                yield streaming_service.format_reasoning_delta(active_reasoning_id, header)
+                            if active_reasoning_id is None:
+                                active_reasoning_id = streaming_service.generate_reasoning_id()
+                                yield streaming_service.format_reasoning_start(active_reasoning_id)
+                            yield streaming_service.format_reasoning_delta(active_reasoning_id, flush_reasoning)
                     if internal_chain_name:
                         internal_text = internal_buffer or candidate_text
                         for step_event in emit_pipeline_steps_from_text(
@@ -2947,24 +2927,23 @@ async def stream_new_chat(
                         )
                     if native_reasoning and isinstance(native_reasoning, str):
                         if run_id and run_id in model_parent_chain_by_run_id:
-                            # Pipeline node: emit as node-reasoning
+                            # Pipeline node: emit as reasoning-delta in the
+                            # global rolling think-box.
                             parent_chain = model_parent_chain_by_run_id.get(run_id, "")
-                            parent_ids = [
-                                str(v)
-                                for v in (event.get("parent_ids") or [])
-                                if str(v)
-                            ]
-                            node_step_id = ""
-                            for pid in reversed(parent_ids):
-                                if pid in pipeline_chain_step_ids:
-                                    node_step_id = pipeline_chain_step_ids[pid]
-                                    break
-                            if node_step_id:
-                                yield streaming_service.format_node_reasoning(
-                                    step_id=node_step_id,
-                                    node_name=parent_chain,
-                                    delta=native_reasoning,
-                                )
+                            if parent_chain != last_reasoning_pipeline_node:
+                                last_reasoning_pipeline_node = parent_chain
+                                node_title = _pipeline_node_title(parent_chain)
+                                header = f"\n--- {node_title} ---\n"
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = streaming_service.generate_reasoning_id()
+                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                yield streaming_service.format_reasoning_delta(active_reasoning_id, header)
+                            if active_reasoning_id is None:
+                                active_reasoning_id = streaming_service.generate_reasoning_id()
+                                yield streaming_service.format_reasoning_start(active_reasoning_id)
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, native_reasoning
+                            )
                         else:
                             # Executor node: emit as global reasoning-delta
                             if active_reasoning_id is None:
@@ -2990,7 +2969,8 @@ async def stream_new_chat(
                                 )
                                 if trace_update:
                                     yield trace_update
-                            # --- Node-by-node think-box: stream per-node reasoning ---
+                            # --- Node-by-node think-box: stream per-node reasoning
+                            # into the global rolling think-box (reasoning-delta). ---
                             node_filter = internal_node_think_filters.get(run_id)
                             if node_filter:
                                 node_reasoning, _node_text = node_filter.feed(content)
@@ -2998,24 +2978,23 @@ async def stream_new_chat(
                                     parent_chain = model_parent_chain_by_run_id.get(
                                         run_id, ""
                                     )
-                                    # Find the step_id for this pipeline node
-                                    # Walk parent_ids to find the chain that owns the step
-                                    node_step_id = ""
-                                    parent_ids = [
-                                        str(v)
-                                        for v in (event.get("parent_ids") or [])
-                                        if str(v)
-                                    ]
-                                    for pid in reversed(parent_ids):
-                                        if pid in pipeline_chain_step_ids:
-                                            node_step_id = pipeline_chain_step_ids[pid]
-                                            break
-                                    if node_step_id:
-                                        yield streaming_service.format_node_reasoning(
-                                            step_id=node_step_id,
-                                            node_name=parent_chain,
-                                            delta=node_reasoning,
+                                    # Inject node header when the pipeline node changes
+                                    if parent_chain != last_reasoning_pipeline_node:
+                                        last_reasoning_pipeline_node = parent_chain
+                                        node_title = _pipeline_node_title(parent_chain)
+                                        header = f"\n--- {node_title} ---\n"
+                                        if active_reasoning_id is None:
+                                            active_reasoning_id = streaming_service.generate_reasoning_id()
+                                            yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                        yield streaming_service.format_reasoning_delta(
+                                            active_reasoning_id, header
                                         )
+                                    if active_reasoning_id is None:
+                                        active_reasoning_id = streaming_service.generate_reasoning_id()
+                                        yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                    yield streaming_service.format_reasoning_delta(
+                                        active_reasoning_id, node_reasoning
+                                    )
                             continue
                         # Split <think>…</think> tags into reasoning vs. main text
                         reasoning_chunk, content = _think_filter.feed(content)

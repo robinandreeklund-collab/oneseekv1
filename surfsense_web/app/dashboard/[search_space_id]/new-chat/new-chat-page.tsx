@@ -304,8 +304,6 @@ export default function NewChatPage() {
 		Map<string, ContextStatsEntry[]>
 	>(new Map());
 	const [messageReasoningMap, setMessageReasoningMap] = useState<Map<string, string>>(new Map());
-	// Per-node reasoning keyed by thinking step_id (from data-node-reasoning events)
-	const [nodeReasoningMap, setNodeReasoningMap] = useState<Map<string, string>>(new Map());
 	const [messageTraceSessions, setMessageTraceSessions] = useState<Map<string, string>>(
 		new Map()
 	);
@@ -493,7 +491,6 @@ export default function NewChatPage() {
 		setThreadId(null);
 		setCurrentThread(null);
 		setMessageThinkingSteps(new Map());
-		setNodeReasoningMap(new Map());
 		setMessageContextStats(new Map());
 		setMessageTraceSessions(new Map());
 		setTraceSpansBySession(new Map());
@@ -1369,26 +1366,9 @@ export default function NewChatPage() {
 											break;
 										}
 
-										case "data-node-reasoning": {
-											const nrData = parsed.data as {
-												step_id?: string;
-												node?: string;
-												delta?: string;
-											};
-											if (nrData?.step_id && nrData?.delta) {
-												setNodeReasoningMap((prev) => {
-													const newMap = new Map(prev);
-													const existing = newMap.get(nrData.step_id!) ?? "";
-													newMap.set(nrData.step_id!, existing + nrData.delta!);
-													return newMap;
-												});
-											}
-											break;
-										}
-
 										case "error":
 											throw new Error(parsed.errorText || "Server error");
-									}
+	}
 								} catch (e) {
 									if (e instanceof SyntaxError) continue;
 									throw e;
@@ -2030,26 +2010,9 @@ export default function NewChatPage() {
 											break;
 										}
 
-										case "data-node-reasoning": {
-											const nrData2 = parsed.data as {
-												step_id?: string;
-												node?: string;
-												delta?: string;
-											};
-											if (nrData2?.step_id && nrData2?.delta) {
-												setNodeReasoningMap((prev) => {
-													const newMap = new Map(prev);
-													const existing = newMap.get(nrData2.step_id!) ?? "";
-													newMap.set(nrData2.step_id!, existing + nrData2.delta!);
-													return newMap;
-												});
-											}
-											break;
-										}
-
 										case "error":
 											throw new Error(parsed.errorText || "Server error");
-									}
+	}
 								} catch (e) {
 									if (e instanceof SyntaxError) continue;
 									throw e;
@@ -2327,7 +2290,6 @@ export default function NewChatPage() {
 							messageThinkingSteps={messageThinkingSteps}
 							messageContextStats={messageContextStats}
 							messageReasoningMap={messageReasoningMap}
-							nodeReasoningMap={nodeReasoningMap}
 							isPublicChat={isPublicChat}
 							header={
 								<div className="flex items-center justify-between gap-2">
