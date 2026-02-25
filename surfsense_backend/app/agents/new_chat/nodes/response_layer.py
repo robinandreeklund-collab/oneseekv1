@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _ANALYS_ROUTE_HINTS = {"jämförelse", "compare", "skapande"}
+_MULTI_SOURCE_EXECUTION_MODES = {"multi_source"}
 _SYNTES_KEYWORDS = re.compile(
     r"\b(jämför|analysera|sammanfatta|berätta\s+om|samla|kombinera|"
     r"compare|analyse|analyze|summarize|synthesize)\b",
@@ -57,17 +58,18 @@ def _select_response_mode(
     response: str,
     sub_intents: list[str],
     execution_strategy: str,
+    execution_mode: str = "",
 ) -> str:
     """Choose presentation mode using lightweight heuristics.
 
     Priority order:
     1. visualisering  – query or response contains table/list signals
     2. analys         – compare/jämförelse route, or analytical keywords
-    3. syntes         – multi-domain (mixed route / multiple sub_intents)
+    3. syntes         – multi-domain (multi_source / multiple sub_intents)
     4. kunskap        – default factual answer
     """
     route = route_hint.lower()
-    combined_text = f"{query} {response}"
+    exec_mode = execution_mode.lower()
 
     if _VISUALISERING_KEYWORDS.search(query):
         return "visualisering"
@@ -75,8 +77,13 @@ def _select_response_mode(
     if route in _ANALYS_ROUTE_HINTS or _ANALYS_KEYWORDS.search(query):
         return "analys"
 
-    # Multiple domains resolved → synthesis presentation
-    if route == "mixed" or len(sub_intents) > 1 or execution_strategy == "parallel":
+    # Multi-source execution mode or multiple domains → synthesis
+    if (
+        exec_mode in _MULTI_SOURCE_EXECUTION_MODES
+        or route == "mixed"
+        or len(sub_intents) > 1
+        or execution_strategy == "parallel"
+    ):
         return "syntes"
 
     return "kunskap"
@@ -159,6 +166,7 @@ def build_response_layer_node(
             if str(s).strip()
         ]
         execution_strategy = str(state.get("execution_strategy") or "").strip().lower()
+        execution_mode = str(state.get("execution_mode") or "").strip().lower()
 
         mode = _select_response_mode(
             route_hint=route_hint,
@@ -166,6 +174,7 @@ def build_response_layer_node(
             response=final_response,
             sub_intents=sub_intents,
             execution_strategy=execution_strategy,
+            execution_mode=execution_mode,
         )
 
         formatted = _apply_formatting(

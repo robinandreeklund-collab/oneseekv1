@@ -113,6 +113,14 @@ class SupervisorState(TypedDict, total=False):
     active_turn_id: Annotated[str | None, _replace]
     resolved_intent: Annotated[dict[str, Any] | None, _replace]
     sub_intents: Annotated[list[str] | None, _replace]
+    # ── Execution Mode (Nivå 1) ──────────────────────────────────────
+    # The primary routing decision: tool_required | tool_optional |
+    # tool_forbidden | multi_source.  Replaces the old graph_complexity
+    # as the main control-flow signal.
+    execution_mode: Annotated[str | None, _replace]
+    # domain_hints from intent_resolver: ["väder"], ["statistik", "väder"], etc.
+    domain_hints: Annotated[list[str] | None, _replace]
+    # Kept for backward compatibility — derived from execution_mode.
     graph_complexity: Annotated[str | None, _replace]
     speculative_candidates: Annotated[list[dict[str, Any]], _replace]
     speculative_results: Annotated[dict[str, Any], _replace]

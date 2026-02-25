@@ -37,6 +37,7 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    DEFAULT_SUPERVISOR_TOOL_OPTIONAL_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
 )
 from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
@@ -98,6 +99,7 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "supervisor.planner.multi_domain.system",
     "supervisor.tool_resolver.system",
     "supervisor.domain_planner.system",
+    "supervisor.tool_optional.system",
     "supervisor.critic_gate.system",
     "supervisor.synthesizer.system",
     "supervisor.critic.system",
@@ -207,6 +209,12 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Supervisor domain planner prompt",
         description="Prompt for domain_planner node — skapar mikro-plan per domänagent med verktygsval och parallellitet.",
         default_prompt=DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
+    ),
+    "supervisor.tool_optional.system": PromptDefinition(
+        key="supervisor.tool_optional.system",
+        label="Supervisor tool-optional gate prompt",
+        description="Prompt for tool_optional_gate node — attempts direct LLM answer without tools for high-confidence queries.",
+        default_prompt=DEFAULT_SUPERVISOR_TOOL_OPTIONAL_PROMPT,
     ),
     "supervisor.critic_gate.system": PromptDefinition(
         key="supervisor.critic_gate.system",

@@ -259,6 +259,7 @@ class IntentMetadataItem(BaseModel):
     intent_id: str
     label: str
     route: str
+    execution_mode: str = "tool_required"
     description: str = ""
     keywords: list[str] = Field(default_factory=list)
     priority: int = 500
@@ -275,6 +276,7 @@ class IntentMetadataUpdateItem(BaseModel):
     intent_id: str
     label: str
     route: str
+    execution_mode: str = "tool_required"
     description: str = ""
     keywords: list[str] = Field(default_factory=list)
     priority: int = 500

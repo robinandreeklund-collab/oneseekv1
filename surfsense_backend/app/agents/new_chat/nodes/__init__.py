@@ -20,6 +20,7 @@ from app.agents.new_chat.nodes.speculative import (
     build_speculative_node,
 )
 from app.agents.new_chat.nodes.synthesizer import build_synthesizer_node
+from app.agents.new_chat.nodes.tool_optional_gate import build_tool_optional_gate_node
 from app.agents.new_chat.nodes.tool_resolver import build_tool_resolver_node
 
 __all__ = [
@@ -39,5 +40,6 @@ __all__ = [
     "build_speculative_node",
     "build_synthesis_hitl_gate_node",
     "build_synthesizer_node",
+    "build_tool_optional_gate_node",
     "build_tool_resolver_node",
 ]

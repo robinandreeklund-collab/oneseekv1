@@ -9,6 +9,7 @@ from typing import Any, Callable
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from app.agents.new_chat.routing import ExecutionMode
 
 _INTENT_EMBED_CACHE: dict[str, list[float]] = {}
 _INTENT_TOKEN_RE = re.compile(r"[a-z0-9åäö]{2,}", re.IGNORECASE)
@@ -115,6 +116,9 @@ def _rank_intent_candidates(
     return ranked
 
 
+_VALID_EXECUTION_MODES = {m.value for m in ExecutionMode}
+
+
 def build_intent_resolver_node(
     *,
     llm: Any,
@@ -127,7 +131,7 @@ def build_intent_resolver_node(
     append_datetime_context_fn: Callable[[str], str],
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
     coerce_confidence_fn: Callable[[Any, float], float],
-    classify_graph_complexity_fn: Callable[[dict[str, Any], str], str],
+    classify_execution_mode_fn: Callable[[dict[str, Any], str], str],
     build_speculative_candidates_fn: Callable[[dict[str, Any], str], list[dict[str, Any]]],
     build_trivial_response_fn: Callable[[str], str | None],
     route_default_agent_fn: Callable[..., str],
@@ -231,7 +235,7 @@ def build_intent_resolver_node(
             if pending_stage == "synthesis":
                 updates["final_response"] = None
                 updates["final_agent_response"] = None
-            updates["critic_decision"] = "replan"
+            updates["critic_decision"] = "needs_more"
             updates["orchestration_phase"] = "plan"
             return updates
 
@@ -282,9 +286,11 @@ def build_intent_resolver_node(
         resolved = intent_from_route_fn(route_hint)
         should_resolve_with_llm = bool(latest_user_query)
         if route_hint and route_hint in route_to_intent_id:
-            # Route has already been resolved upstream; skip an extra control-plane
-            # LLM pass and trust route_hint unless we have no candidates at all.
             should_resolve_with_llm = False
+
+        # ── LLM intent resolution (now also produces execution_mode + domain_hints) ──
+        llm_execution_mode: str | None = None
+        llm_domain_hints: list[str] = []
         if latest_user_query and should_resolve_with_llm:
             prompt = append_datetime_context_fn(intent_resolver_prompt_template)
             resolver_input = json.dumps(
@@ -301,13 +307,24 @@ def build_intent_resolver_node(
                         SystemMessage(content=prompt),
                         HumanMessage(content=resolver_input),
                     ],
-                    max_tokens=140,
+                    max_tokens=200,
                 )
                 parsed = extract_first_json_object_fn(
                     str(getattr(message, "content", "") or "")
                 )
                 selected_intent = str(parsed.get("intent_id") or "").strip()
                 selected_route = normalize_route_hint_fn(parsed.get("route"))
+                # Extract new fields: execution_mode and domain_hints
+                raw_exec_mode = str(parsed.get("execution_mode") or "").strip().lower()
+                if raw_exec_mode in _VALID_EXECUTION_MODES:
+                    llm_execution_mode = raw_exec_mode
+                raw_domain_hints = parsed.get("domain_hints")
+                if isinstance(raw_domain_hints, list):
+                    llm_domain_hints = [
+                        str(h).strip().lower()
+                        for h in raw_domain_hints
+                        if str(h).strip()
+                    ]
                 if selected_intent and selected_intent in candidate_ids:
                     resolved = {
                         "intent_id": selected_intent,
@@ -327,6 +344,17 @@ def build_intent_resolver_node(
                             parsed.get("confidence"), 0.5
                         ),
                     }
+                    # Attach execution_mode and domain_hints to resolved intent
+                    if llm_execution_mode:
+                        resolved["execution_mode"] = llm_execution_mode
+                    if llm_domain_hints:
+                        resolved["domain_hints"] = llm_domain_hints
+                    # Attach sub_intents for multi_source
+                    raw_sub_intents = parsed.get("sub_intents")
+                    if isinstance(raw_sub_intents, list):
+                        resolved["sub_intents"] = [
+                            str(s).strip() for s in raw_sub_intents if str(s).strip()
+                        ]
             except Exception:
                 pass
 
@@ -342,11 +370,24 @@ def build_intent_resolver_node(
             except Exception:
                 pass
 
-        graph_complexity = str(
-            classify_graph_complexity_fn(resolved, latest_user_query)
+        # ── Classify execution mode (Nivå 1 decision) ──
+        execution_mode = str(
+            classify_execution_mode_fn(resolved, latest_user_query)
         ).strip().lower()
-        if graph_complexity not in {"trivial", "simple", "complex"}:
-            graph_complexity = "complex"
+        if execution_mode not in _VALID_EXECUTION_MODES:
+            execution_mode = ExecutionMode.TOOL_REQUIRED.value
+
+        # Derive backward-compat graph_complexity from execution_mode
+        from app.agents.new_chat.hybrid_state import execution_mode_to_graph_complexity
+        graph_complexity = execution_mode_to_graph_complexity(execution_mode)
+
+        # Extract domain_hints (prefer LLM output, fallback to resolved intent)
+        domain_hints: list[str] = llm_domain_hints
+        if not domain_hints:
+            resolved_hints = (resolved or {}).get("domain_hints")
+            if isinstance(resolved_hints, list):
+                domain_hints = [str(h).strip().lower() for h in resolved_hints if str(h).strip()]
+
         speculative_candidates = build_speculative_candidates_fn(
             resolved,
             latest_user_query,
@@ -357,8 +398,12 @@ def build_intent_resolver_node(
             item for item in speculative_candidates[:3] if isinstance(item, dict)
         ]
 
+        # Pre-select agents for tool_optional and tool_required (simple cases)
         selected_agents_for_simple: list[dict[str, Any]] = []
-        if graph_complexity == "simple":
+        if execution_mode in {
+            ExecutionMode.TOOL_REQUIRED.value,
+            ExecutionMode.TOOL_OPTIONAL.value,
+        } and graph_complexity == "simple":
             try:
                 default_agent_name = route_default_agent_fn(
                     resolved.get("route"),
@@ -376,7 +421,7 @@ def build_intent_resolver_node(
 
         trivial_response = (
             build_trivial_response_fn(latest_user_query)
-            if graph_complexity == "trivial"
+            if execution_mode == ExecutionMode.TOOL_FORBIDDEN.value
             else None
         )
 
@@ -393,6 +438,8 @@ def build_intent_resolver_node(
             "resolved_intent": resolved,
             "route_hint": normalize_route_hint_fn(resolved.get("route")),
             "sub_intents": sub_intents,
+            "execution_mode": execution_mode,
+            "domain_hints": domain_hints,
             "graph_complexity": graph_complexity,
             "speculative_candidates": speculative_candidates,
             "speculative_results": {},
@@ -412,6 +459,8 @@ def build_intent_resolver_node(
                     "margin": intent_margin,
                     "shortlist_size": len(llm_candidates),
                     "selected": str((resolved or {}).get("intent_id") or ""),
+                    "execution_mode": execution_mode,
+                    "domain_hints": domain_hints,
                 },
             },
         }
@@ -436,6 +485,8 @@ def build_intent_resolver_node(
             updates["no_progress_runs"] = 0
             updates["guard_parallel_preview"] = []
             updates["subagent_handoffs"] = []
+            updates["execution_mode"] = execution_mode
+            updates["domain_hints"] = domain_hints
             updates["graph_complexity"] = graph_complexity
             updates["speculative_candidates"] = speculative_candidates
             updates["speculative_results"] = {}
@@ -464,13 +515,14 @@ def build_intent_resolver_node(
             updates["orchestration_phase"] = "finalize"
         if live_enabled:
             logger.info(
-                "live-routing intent-selection phase=%s mode=%s top1=%s top2=%s margin=%s selected=%s",
+                "live-routing intent-selection phase=%s mode=%s top1=%s top2=%s margin=%s selected=%s exec_mode=%s",
                 live_cfg.get("phase"),
                 "llm_shortlist" if use_intent_shortlist else "llm_full",
                 (top1_row or {}).get("intent_id"),
                 (top2_row or {}).get("intent_id"),
                 intent_margin,
                 str((resolved or {}).get("intent_id") or ""),
+                execution_mode,
             )
         return updates
 

@@ -105,7 +105,7 @@ def test_intent_resolver_applies_weather_override_for_simple_turn() -> None:
         append_datetime_context_fn=lambda prompt: prompt,
         extract_first_json_object_fn=_extract_first_json_object,
         coerce_confidence_fn=_coerce_confidence,
-        classify_graph_complexity_fn=lambda _intent, _query: "simple",
+        classify_execution_mode_fn=lambda _intent, _query: "tool_required",
         build_speculative_candidates_fn=lambda _intent, _query: [],
         build_trivial_response_fn=lambda _query: None,
         route_default_agent_fn=lambda route, _query="": (
@@ -154,7 +154,7 @@ def test_intent_resolver_propagates_route_hint_without_llm_roundtrip() -> None:
         append_datetime_context_fn=lambda prompt: prompt,
         extract_first_json_object_fn=_extract_first_json_object,
         coerce_confidence_fn=_coerce_confidence,
-        classify_graph_complexity_fn=lambda _intent, _query: "complex",
+        classify_execution_mode_fn=lambda _intent, _query: "tool_required",
         build_speculative_candidates_fn=lambda _intent, _query: [],
         build_trivial_response_fn=lambda _query: None,
         route_default_agent_fn=lambda route, _query="": str(route or "knowledge"),
@@ -222,7 +222,7 @@ def test_intent_resolver_reclassifies_when_turn_id_missing_but_new_human_message
         append_datetime_context_fn=lambda prompt: prompt,
         extract_first_json_object_fn=_extract_first_json_object,
         coerce_confidence_fn=_coerce_confidence,
-        classify_graph_complexity_fn=lambda _intent, _query: "simple",
+        classify_execution_mode_fn=lambda _intent, _query: "tool_required",
         build_speculative_candidates_fn=lambda _intent, _query: [],
         build_trivial_response_fn=lambda _query: None,
         route_default_agent_fn=lambda route, _query="": (
