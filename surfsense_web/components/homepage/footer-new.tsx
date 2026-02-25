@@ -1,14 +1,8 @@
 "use client";
 
-import {
-	IconBrandDiscord,
-	IconBrandGithub,
-	IconBrandLinkedin,
-	IconBrandTwitter,
-} from "@tabler/icons-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { Logo, OneseekWordmark } from "@/components/Logo";
+import { OneseekWordmark } from "@/components/Logo";
 
 export function FooterNew() {
 	const tNav = useTranslations("navigation");
