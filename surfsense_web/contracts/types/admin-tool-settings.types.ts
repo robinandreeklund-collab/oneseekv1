@@ -229,6 +229,11 @@ export const agentMetadataItem = z.object({
 	namespace: z.array(z.string()).optional().default([]),
 	routes: z.array(z.string()).optional().default([]),
 	flow_tools: z.array(flowToolEntry).optional().default([]),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 	has_override: z.boolean().optional().default(false),
 });
 
@@ -241,6 +246,11 @@ export const agentMetadataUpdateItem = z.object({
 	namespace: z.array(z.string()).optional().default([]),
 	routes: z.array(z.string()).optional().default([]),
 	flow_tools: z.array(flowToolEntry).optional().default([]),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 });
 
 export const intentMetadataItem = z.object({
@@ -251,6 +261,11 @@ export const intentMetadataItem = z.object({
 	keywords: z.array(z.string()),
 	priority: z.number().int().optional().default(500),
 	enabled: z.boolean().optional().default(true),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 	has_override: z.boolean().optional().default(false),
 });
 
@@ -262,6 +277,11 @@ export const intentMetadataUpdateItem = z.object({
 	keywords: z.array(z.string()),
 	priority: z.number().int().optional().default(500),
 	enabled: z.boolean().optional().default(true),
+	main_identifier: z.string().max(METADATA_MAX_MAIN_IDENTIFIER_CHARS).optional().default(""),
+	core_activity: z.string().max(METADATA_MAX_CORE_ACTIVITY_CHARS).optional().default(""),
+	unique_scope: z.string().max(METADATA_MAX_UNIQUE_SCOPE_CHARS).optional().default(""),
+	geographic_scope: z.string().max(METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS).optional().default(""),
+	excludes: z.array(z.string()).max(METADATA_MAX_EXCLUDES).optional().default([]),
 });
 
 export const metadataCatalogResponse = z.object({

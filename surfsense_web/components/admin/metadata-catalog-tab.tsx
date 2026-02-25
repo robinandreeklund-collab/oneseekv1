@@ -90,6 +90,11 @@ function toAgentUpdateItem(
 		namespace: [...(item.namespace ?? [])],
 		routes: [...(item.routes ?? [])],
 		flow_tools: [...(item.flow_tools ?? [])].map((t) => ({ ...t })),
+		main_identifier: item.main_identifier ?? "",
+		core_activity: item.core_activity ?? "",
+		unique_scope: item.unique_scope ?? "",
+		geographic_scope: item.geographic_scope ?? "",
+		excludes: [...(item.excludes ?? [])],
 	};
 }
 
@@ -104,6 +109,11 @@ function toIntentUpdateItem(
 		keywords: [...item.keywords],
 		priority: item.priority ?? 500,
 		enabled: item.enabled ?? true,
+		main_identifier: item.main_identifier ?? "",
+		core_activity: item.core_activity ?? "",
+		unique_scope: item.unique_scope ?? "",
+		geographic_scope: item.geographic_scope ?? "",
+		excludes: [...(item.excludes ?? [])],
 	};
 }
 

@@ -223,8 +223,13 @@ def _intent_text(payload: dict[str, Any]) -> str:
             _normalize_text(payload.get("intent_id")),
             _normalize_text(payload.get("label")),
             _normalize_text(payload.get("route")),
+            _normalize_text(payload.get("main_identifier")),
+            _normalize_text(payload.get("core_activity")),
             _normalize_text(payload.get("description")),
             " ".join(_safe_string_list(payload.get("keywords"))),
+            _normalize_text(payload.get("unique_scope")),
+            _normalize_text(payload.get("geographic_scope")),
+            " ".join(_safe_string_list(payload.get("excludes"))),
         ]
     ).strip()
 
@@ -234,9 +239,14 @@ def _agent_text(payload: dict[str, Any]) -> str:
         [
             _normalize_text(payload.get("agent_id")),
             _normalize_text(payload.get("label")),
+            _normalize_text(payload.get("main_identifier")),
+            _normalize_text(payload.get("core_activity")),
             _normalize_text(payload.get("description")),
             " ".join(_safe_string_list(payload.get("keywords"))),
             " ".join(_safe_string_list(payload.get("namespace"))),
+            _normalize_text(payload.get("unique_scope")),
+            _normalize_text(payload.get("geographic_scope")),
+            " ".join(_safe_string_list(payload.get("excludes"))),
         ]
     ).strip()
 
@@ -367,6 +377,11 @@ def _intent_metadata_payload_with_id(
         "keywords": _safe_string_list(payload.get("keywords")),
         "priority": int(payload.get("priority") or 500),
         "enabled": bool(payload.get("enabled", True)),
+        "main_identifier": _normalize_text(payload.get("main_identifier")),
+        "core_activity": _normalize_text(payload.get("core_activity")),
+        "unique_scope": _normalize_text(payload.get("unique_scope")),
+        "geographic_scope": _normalize_text(payload.get("geographic_scope")),
+        "excludes": _safe_string_list(payload.get("excludes")),
     }
 
 
@@ -380,6 +395,11 @@ def _agent_metadata_payload_with_id(
         "keywords": _safe_string_list(payload.get("keywords")),
         "prompt_key": _normalize_text(payload.get("prompt_key")) or None,
         "namespace": _safe_string_list(payload.get("namespace")),
+        "main_identifier": _normalize_text(payload.get("main_identifier")),
+        "core_activity": _normalize_text(payload.get("core_activity")),
+        "unique_scope": _normalize_text(payload.get("unique_scope")),
+        "geographic_scope": _normalize_text(payload.get("geographic_scope")),
+        "excludes": _safe_string_list(payload.get("excludes")),
     }
 
 
@@ -2043,6 +2063,11 @@ async def run_bottom_up_metadata_separation(
                 "keywords": _safe_string_list(payload.get("keywords")),
                 "priority": int(payload.get("priority") or 500),
                 "enabled": bool(payload.get("enabled", True)),
+                "main_identifier": _normalize_text(payload.get("main_identifier")),
+                "core_activity": _normalize_text(payload.get("core_activity")),
+                "unique_scope": _normalize_text(payload.get("unique_scope")),
+                "geographic_scope": _normalize_text(payload.get("geographic_scope")),
+                "excludes": _safe_string_list(payload.get("excludes")),
             }
         )
     normalized_agent_patch_output: list[dict[str, Any]] = []
@@ -2055,6 +2080,11 @@ async def run_bottom_up_metadata_separation(
                 "keywords": _safe_string_list(payload.get("keywords")),
                 "prompt_key": _normalize_text(payload.get("prompt_key")) or None,
                 "namespace": _safe_string_list(payload.get("namespace")),
+                "main_identifier": _normalize_text(payload.get("main_identifier")),
+                "core_activity": _normalize_text(payload.get("core_activity")),
+                "unique_scope": _normalize_text(payload.get("unique_scope")),
+                "geographic_scope": _normalize_text(payload.get("geographic_scope")),
+                "excludes": _safe_string_list(payload.get("excludes")),
             }
         )
     return {

@@ -1457,6 +1457,11 @@ async def run_layered_metadata_audit(
             "description": str(definition.get("description") or "").strip(),
             "keywords": list(definition.get("keywords") or []),
             "route": str(definition.get("route") or "").strip().lower(),
+            "main_identifier": str(definition.get("main_identifier") or "").strip(),
+            "core_activity": str(definition.get("core_activity") or "").strip(),
+            "unique_scope": str(definition.get("unique_scope") or "").strip(),
+            "geographic_scope": str(definition.get("geographic_scope") or "").strip(),
+            "excludes": list(definition.get("excludes") or []),
         }
         for definition in intent_definitions
         if str(definition.get("intent_id") or "").strip()
@@ -1469,6 +1474,11 @@ async def run_layered_metadata_audit(
             "keywords": list(payload.get("keywords") or []),
             "prompt_key": payload.get("prompt_key"),
             "namespace": list(payload.get("namespace") or []),
+            "main_identifier": str(payload.get("main_identifier") or "").strip(),
+            "core_activity": str(payload.get("core_activity") or "").strip(),
+            "unique_scope": str(payload.get("unique_scope") or "").strip(),
+            "geographic_scope": str(payload.get("geographic_scope") or "").strip(),
+            "excludes": list(payload.get("excludes") or []),
         }
         for payload in agent_metadata
         if str(payload.get("agent_id") or "").strip()
@@ -2191,6 +2201,11 @@ def _fallback_intent_metadata_suggestion(
         "keywords": keywords,
         "priority": int(current.get("priority") or 500),
         "enabled": bool(current.get("enabled", True)),
+        "main_identifier": _normalize_text(current.get("main_identifier")),
+        "core_activity": _normalize_text(current.get("core_activity")),
+        "unique_scope": _normalize_text(current.get("unique_scope")),
+        "geographic_scope": _normalize_text(current.get("geographic_scope")),
+        "excludes": _safe_string_list(current.get("excludes")),
     }
     proposed = enforce_metadata_limits(proposed)
     rationale = (
@@ -2235,6 +2250,11 @@ def _fallback_agent_metadata_suggestion(
         "keywords": keywords,
         "prompt_key": _normalize_text(current.get("prompt_key")) or None,
         "namespace": _safe_string_list(current.get("namespace")),
+        "main_identifier": _normalize_text(current.get("main_identifier")),
+        "core_activity": _normalize_text(current.get("core_activity")),
+        "unique_scope": _normalize_text(current.get("unique_scope")),
+        "geographic_scope": _normalize_text(current.get("geographic_scope")),
+        "excludes": _safe_string_list(current.get("excludes")),
     }
     proposed = enforce_metadata_limits(proposed)
     rationale = (
@@ -2260,7 +2280,8 @@ async def _build_llm_intent_metadata_suggestion(
         model = llm
     prompt = (
         "Du optimerar intent-metadata for retrieval-only.\n"
-        "Forbattra enbart metadatafalten (label, route, description, keywords, priority, enabled).\n"
+        "Forbattra enbart metadatafalten (label, route, description, keywords, priority, enabled, "
+        "main_identifier, core_activity, unique_scope, geographic_scope, excludes).\n"
         "Inga prompt-forslag och ingen analys av pipeline-steg.\n"
         "Returnera strikt JSON:\n"
         "{\n"
@@ -2270,9 +2291,14 @@ async def _build_llm_intent_metadata_suggestion(
         '  "keywords": ["svenska termer"],\n'
         '  "priority": 100,\n'
         '  "enabled": true,\n'
+        '  "main_identifier": "primarnamn max 80 tecken",\n'
+        '  "core_activity": "karnaktivitet max 120 tecken",\n'
+        '  "unique_scope": "vad som skiljer mot liknande intents max 120 tecken",\n'
+        '  "geographic_scope": "geografisk rackvidd max 80 tecken",\n'
+        '  "excludes": ["termer som intenten INTE hanterar"],\n'
         '  "rationale": "kort motivering pa svenska"\n'
         "}\n"
-        f"Begränsningar: beskrivning max {METADATA_MAX_DESCRIPTION_CHARS} tecken, keywords max {METADATA_MAX_KEYWORDS} stycken.\n"
+        f"Begränsningar: beskrivning max {METADATA_MAX_DESCRIPTION_CHARS} tecken, keywords max {METADATA_MAX_KEYWORDS} stycken, excludes max 15.\n"
         "Ingen markdown."
     )
     payload = {
@@ -2306,6 +2332,11 @@ async def _build_llm_intent_metadata_suggestion(
             "keywords": _safe_string_list(parsed.get("keywords")) or _safe_string_list(current.get("keywords")),
             "priority": int(parsed.get("priority") or current.get("priority") or 500),
             "enabled": bool(parsed.get("enabled", current.get("enabled", True))),
+            "main_identifier": _normalize_text(parsed.get("main_identifier")) or _normalize_text(current.get("main_identifier")),
+            "core_activity": _normalize_text(parsed.get("core_activity")) or _normalize_text(current.get("core_activity")),
+            "unique_scope": _normalize_text(parsed.get("unique_scope")) or _normalize_text(current.get("unique_scope")),
+            "geographic_scope": _normalize_text(parsed.get("geographic_scope")) or _normalize_text(current.get("geographic_scope")),
+            "excludes": _safe_string_list(parsed.get("excludes")) or _safe_string_list(current.get("excludes")),
         }
         rationale = _normalize_text(parsed.get("rationale")) or (
             "LLM-forslag for intent-metadata baserat pa granskade retrieval-fall."
@@ -2331,16 +2362,22 @@ async def _build_llm_agent_metadata_suggestion(
         model = llm
     prompt = (
         "Du optimerar agent-metadata for retrieval-only.\n"
-        "Forbattra enbart metadatafalten (label, description, keywords).\n"
+        "Forbattra enbart metadatafalten (label, description, keywords, "
+        "main_identifier, core_activity, unique_scope, geographic_scope, excludes).\n"
         "Inga prompt-forslag och ingen analys av pipeline-steg.\n"
         "Returnera strikt JSON:\n"
         "{\n"
         '  "label": "string",\n'
         '  "description": "string pa svenska",\n'
         '  "keywords": ["svenska termer"],\n'
+        '  "main_identifier": "primarnamn max 80 tecken",\n'
+        '  "core_activity": "karnaktivitet max 120 tecken",\n'
+        '  "unique_scope": "vad som skiljer mot liknande agenter max 120 tecken",\n'
+        '  "geographic_scope": "geografisk rackvidd max 80 tecken",\n'
+        '  "excludes": ["termer som agenten INTE hanterar"],\n'
         '  "rationale": "kort motivering pa svenska"\n'
         "}\n"
-        f"Begränsningar: beskrivning max {METADATA_MAX_DESCRIPTION_CHARS} tecken, keywords max {METADATA_MAX_KEYWORDS} stycken.\n"
+        f"Begränsningar: beskrivning max {METADATA_MAX_DESCRIPTION_CHARS} tecken, keywords max {METADATA_MAX_KEYWORDS} stycken, excludes max 15.\n"
         "Ingen markdown."
     )
     payload = {
@@ -2372,6 +2409,11 @@ async def _build_llm_agent_metadata_suggestion(
             "keywords": _safe_string_list(parsed.get("keywords")) or _safe_string_list(current.get("keywords")),
             "prompt_key": _normalize_text(current.get("prompt_key")) or None,
             "namespace": _safe_string_list(current.get("namespace")),
+            "main_identifier": _normalize_text(parsed.get("main_identifier")) or _normalize_text(current.get("main_identifier")),
+            "core_activity": _normalize_text(parsed.get("core_activity")) or _normalize_text(current.get("core_activity")),
+            "unique_scope": _normalize_text(parsed.get("unique_scope")) or _normalize_text(current.get("unique_scope")),
+            "geographic_scope": _normalize_text(parsed.get("geographic_scope")) or _normalize_text(current.get("geographic_scope")),
+            "excludes": _safe_string_list(parsed.get("excludes")) or _safe_string_list(current.get("excludes")),
         }
         rationale = _normalize_text(parsed.get("rationale")) or (
             "LLM-forslag for agent-metadata baserat pa granskade retrieval-fall."
@@ -2451,6 +2493,11 @@ async def generate_intent_metadata_suggestions_from_annotations(
                 "keywords": list(current.get("keywords") or []),
                 "priority": int(current.get("priority") or 500),
                 "enabled": bool(current.get("enabled", True)),
+                "main_identifier": current.get("main_identifier", ""),
+                "core_activity": current.get("core_activity", ""),
+                "unique_scope": current.get("unique_scope", ""),
+                "geographic_scope": current.get("geographic_scope", ""),
+                "excludes": list(current.get("excludes") or []),
             },
             "proposed_metadata": {
                 "intent_id": intent_id,
@@ -2460,6 +2507,11 @@ async def generate_intent_metadata_suggestions_from_annotations(
                 "keywords": list(proposed.get("keywords") or []),
                 "priority": int(proposed.get("priority") or 500),
                 "enabled": bool(proposed.get("enabled", True)),
+                "main_identifier": proposed.get("main_identifier", ""),
+                "core_activity": proposed.get("core_activity", ""),
+                "unique_scope": proposed.get("unique_scope", ""),
+                "geographic_scope": proposed.get("geographic_scope", ""),
+                "excludes": list(proposed.get("excludes") or []),
             },
         }
 
@@ -2568,6 +2620,11 @@ async def generate_agent_metadata_suggestions_from_annotations(
                 "keywords": list(current.get("keywords") or []),
                 "prompt_key": current.get("prompt_key"),
                 "namespace": list(current.get("namespace") or []),
+                "main_identifier": current.get("main_identifier", ""),
+                "core_activity": current.get("core_activity", ""),
+                "unique_scope": current.get("unique_scope", ""),
+                "geographic_scope": current.get("geographic_scope", ""),
+                "excludes": list(current.get("excludes") or []),
             },
             "proposed_metadata": {
                 "agent_id": agent_id,
@@ -2576,6 +2633,11 @@ async def generate_agent_metadata_suggestions_from_annotations(
                 "keywords": list(proposed.get("keywords") or []),
                 "prompt_key": proposed.get("prompt_key"),
                 "namespace": list(proposed.get("namespace") or []),
+                "main_identifier": proposed.get("main_identifier", ""),
+                "core_activity": proposed.get("core_activity", ""),
+                "unique_scope": proposed.get("unique_scope", ""),
+                "geographic_scope": proposed.get("geographic_scope", ""),
+                "excludes": list(proposed.get("excludes") or []),
             },
         }
 
