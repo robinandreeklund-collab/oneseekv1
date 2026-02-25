@@ -77,9 +77,11 @@ def _score_intent(
         + (description_hits * 0.6)
         + priority_bonus
     )
+    graph_route = str(definition.get("graph_route") or route).strip().lower()
     return {
         "intent_id": intent_id,
         "route": route,
+        "graph_route": graph_route,
         "label": label,
         "description": description,
         "keywords": keywords,
@@ -214,11 +216,14 @@ def resolve_route_from_intents(
     top = scored[0] if scored else None
     if not top:
         return None
-    route_value = str(top.get("route") or "").strip().lower()
+    # Use graph_route (the actual LangGraph route) for enum resolution.
+    # Custom intents may have a free-text route but their graph_route always
+    # maps to a valid Route enum value (defaults to kunskap).
+    graph_route_value = str(top.get("graph_route") or top.get("route") or "").strip().lower()
     try:
-        selected_route = Route(route_value)
+        selected_route = Route(graph_route_value)
     except Exception:
-        return None
+        selected_route = Route.KUNSKAP
     confidence = _compute_confidence(scored)
     top_intent = str(top.get("intent_id") or selected_route.value)
     reason = f"intent_retrieval:{top_intent}"
@@ -228,6 +233,7 @@ def resolve_route_from_intents(
             {
                 "intent_id": str(item.get("intent_id") or ""),
                 "route": str(item.get("route") or ""),
+                "graph_route": str(item.get("graph_route") or item.get("route") or ""),
                 "score": round(float(item.get("score") or 0.0), 4),
                 "lexical_score": round(float(item.get("lexical_score") or 0.0), 4),
                 "rerank_score": (

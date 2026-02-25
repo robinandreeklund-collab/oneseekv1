@@ -21,9 +21,24 @@ _COMPAT_ROUTE_MAP: dict[str, str] = {
     "statistics": Route.KUNSKAP.value,  # merged into kunskap
 }
 
+# ── Backward-compat: old intent_id → new intent_id ───────────────────
+# When intents were first created, intent_id == route. Now intent_id is
+# a descriptive slug decoupled from the LangGraph route. Existing DB
+# overrides and agent.routes references using the old names are mapped
+# transparently.
+_COMPAT_INTENT_ID_MAP: dict[str, str] = {
+    "kunskap": "info_sokning",
+    "skapande": "generering",
+    "jämförelse": "jamfor_analys",
+    "konversation": "smalltalk",
+}
+
+# Reverse: new → old (for looking up which old override replaces which default)
+_COMPAT_INTENT_ID_REVERSE: dict[str, str] = {v: k for k, v in _COMPAT_INTENT_ID_MAP.items()}
+
 _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "kunskap": {
-        "intent_id": "kunskap",
+    "info_sokning": {
+        "intent_id": "info_sokning",
         "route": Route.KUNSKAP.value,
         "label": "Kunskap",
         "description": (
@@ -76,8 +91,8 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
         "priority": 200,
         "enabled": True,
     },
-    "skapande": {
-        "intent_id": "skapande",
+    "generering": {
+        "intent_id": "generering",
         "route": Route.SKAPANDE.value,
         "label": "Skapande",
         "description": (
@@ -103,8 +118,8 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
         "priority": 300,
         "enabled": True,
     },
-    "jämförelse": {
-        "intent_id": "jämförelse",
+    "jamfor_analys": {
+        "intent_id": "jamfor_analys",
         "route": Route.JAMFORELSE.value,
         "label": "Jämförelse",
         "description": "Jämförelse-läge när användaren explicit efterfrågar compare.",
@@ -112,8 +127,8 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
         "priority": 50,
         "enabled": True,
     },
-    "konversation": {
-        "intent_id": "konversation",
+    "smalltalk": {
+        "intent_id": "smalltalk",
         "route": Route.KONVERSATION.value,
         "label": "Konversation",
         "description": "Hälsningar och enkel konversation utan verktyg.",
@@ -185,6 +200,8 @@ def normalize_intent_definition_payload(
     resolved_intent_id = _normalize_text(intent_id or payload.get("intent_id")).lower()
     if not resolved_intent_id:
         resolved_intent_id = "custom"
+    # Map old intent_ids to new slugs transparently
+    resolved_intent_id = _COMPAT_INTENT_ID_MAP.get(resolved_intent_id, resolved_intent_id)
     route_value = _normalize_text(payload.get("route")).lower()
     # Accept old English route names transparently
     route_value = _COMPAT_ROUTE_MAP.get(route_value, route_value)
@@ -232,6 +249,14 @@ def normalize_intent_definition_payload(
     }
 
 
+def resolve_compat_intent_id(raw_id: str) -> str:
+    """Map an old intent_id (e.g. 'kunskap') to the current slug ('info_sokning').
+
+    Returns the input unchanged if it is not an old name.
+    """
+    return _COMPAT_INTENT_ID_MAP.get(raw_id, raw_id)
+
+
 def get_default_intent_definitions() -> dict[str, dict[str, Any]]:
     return {
         intent_id: normalize_intent_definition_payload(payload, intent_id=intent_id)
@@ -246,8 +271,10 @@ async def get_global_intent_definition_overrides(
     overrides: dict[str, dict[str, Any]] = {}
     for row in result.scalars().all():
         payload = row.definition_payload if isinstance(row.definition_payload, dict) else {}
+        # normalize_intent_definition_payload maps old intent_ids → new slugs
         normalized = normalize_intent_definition_payload(payload, intent_id=row.intent_id)
-        overrides[row.intent_id] = normalized
+        resolved_id = normalized["intent_id"]
+        overrides[resolved_id] = normalized
     return overrides
 
 

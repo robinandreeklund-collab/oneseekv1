@@ -2750,16 +2750,15 @@ async def create_supervisor_agent(
         return any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
 
     route_to_intent_id = {
-        "kunskap": "kunskap",
-        "skapande": "skapande",
-        "jämförelse": "jämförelse",
-        "konversation": "konversation",
-        # Backward compat
-        "knowledge": "kunskap",
-        "action": "skapande",
-        "statistics": "kunskap",
-        "compare": "jämförelse",
-        "smalltalk": "konversation",
+        "kunskap": "info_sokning",
+        "skapande": "generering",
+        "jämförelse": "jamfor_analys",
+        "konversation": "smalltalk",
+        # Backward compat (old English route names)
+        "knowledge": "info_sokning",
+        "action": "generering",
+        "statistics": "info_sokning",
+        "compare": "jamfor_analys",
         "mixed": "mixed",
     }
     route_to_speculative_tool_ids: dict[str, list[str]] = {

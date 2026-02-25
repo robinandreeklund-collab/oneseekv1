@@ -53,6 +53,17 @@ import { toast } from "sonner";
 
 type ViewMode = "pipeline" | "routing";
 
+/** Convert a human label to a URL-safe slug for use as intent_id / agent_id. */
+function toSlug(label: string): string {
+	return label
+		.toLowerCase()
+		.replace(/å/g, "a")
+		.replace(/ä/g, "a")
+		.replace(/ö/g, "o")
+		.replace(/[^a-z0-9]+/g, "_")
+		.replace(/^_|_$/g, "");
+}
+
 const nodeTypes: NodeTypes = {
 	intentNode: IntentGraphNode,
 	agentNode: AgentGraphNode,
@@ -822,22 +833,33 @@ export function FlowGraphPage() {
 											</DialogHeader>
 											<div className="space-y-3 py-2">
 												<div className="space-y-1">
-													<Label className="text-xs">Intent ID</Label>
-													<Input
-														value={newIntent.intent_id}
-														onChange={(e) => setNewIntent((p) => ({ ...p, intent_id: e.target.value }))}
-														className="text-xs h-8"
-														placeholder="t.ex. skolverket_fraga"
-													/>
-												</div>
-												<div className="space-y-1">
 													<Label className="text-xs">Label</Label>
 													<Input
 														value={newIntent.label}
-														onChange={(e) => setNewIntent((p) => ({ ...p, label: e.target.value }))}
+														onChange={(e) => {
+															const label = e.target.value;
+															setNewIntent((p) => ({
+																...p,
+																label,
+																// Auto-generate slug from label unless user has manually edited the ID
+																intent_id: p.intent_id === toSlug(p.label) || p.intent_id === "" ? toSlug(label) : p.intent_id,
+															}));
+														}}
 														className="text-xs h-8"
-														placeholder="Skolverket-fråga"
+														placeholder="t.ex. Skolverket-fråga"
 													/>
+												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Intent ID (slug)</Label>
+													<Input
+														value={newIntent.intent_id}
+														onChange={(e) => setNewIntent((p) => ({ ...p, intent_id: e.target.value }))}
+														className="text-xs h-8 font-mono"
+														placeholder="auto-genereras från label"
+													/>
+													<p className="text-[10px] text-muted-foreground">
+														Stabilt ID som inte ändras om du byter label senare. Auto-genereras från label.
+													</p>
 												</div>
 												<div className="space-y-1">
 													<Label className="text-xs">Beskrivning</Label>
@@ -928,21 +950,28 @@ export function FlowGraphPage() {
 											</DialogHeader>
 											<div className="space-y-3 py-2">
 												<div className="space-y-1">
-													<Label className="text-xs">Agent ID</Label>
-													<Input
-														value={newAgent.agent_id}
-														onChange={(e) => setNewAgent((p) => ({ ...p, agent_id: e.target.value }))}
-														className="text-xs h-8"
-														placeholder="t.ex. skolverket"
-													/>
-												</div>
-												<div className="space-y-1">
 													<Label className="text-xs">Label</Label>
 													<Input
 														value={newAgent.label}
-														onChange={(e) => setNewAgent((p) => ({ ...p, label: e.target.value }))}
+														onChange={(e) => {
+															const label = e.target.value;
+															setNewAgent((p) => ({
+																...p,
+																label,
+																agent_id: p.agent_id === toSlug(p.label) || p.agent_id === "" ? toSlug(label) : p.agent_id,
+															}));
+														}}
 														className="text-xs h-8"
-														placeholder="Skolverket"
+														placeholder="t.ex. Skolverket"
+													/>
+												</div>
+												<div className="space-y-1">
+													<Label className="text-xs">Agent ID (slug)</Label>
+													<Input
+														value={newAgent.agent_id}
+														onChange={(e) => setNewAgent((p) => ({ ...p, agent_id: e.target.value }))}
+														className="text-xs h-8 font-mono"
+														placeholder="auto-genereras från label"
 													/>
 												</div>
 												<div className="space-y-1">

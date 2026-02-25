@@ -10,6 +10,7 @@ from app.services.agent_prompt_service import (
     get_global_prompt_overrides,
     upsert_global_prompt_overrides,
 )
+from app.services.intent_definition_service import resolve_compat_intent_id
 
 _AGENT_METADATA_OVERRIDE_PREFIX = "agent.metadata."
 
@@ -35,7 +36,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "action"],
         "prompt_key": "action",
-        "routes": ["kunskap"],
+        "routes": ["info_sokning"],
         "flow_tools": [
             {"tool_id": "search_knowledge_base", "label": "Kunskapsbas"},
             {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
@@ -60,7 +61,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "weather"],
         "prompt_key": "action",
-        "routes": ["kunskap"],
+        "routes": ["info_sokning"],
         "flow_tools": [
             {"tool_id": "smhi_weather", "label": "SMHI Prognos"},
             {"tool_id": "smhi_vaderprognoser_metfcst", "label": "SMHI MetFcst"},
@@ -98,7 +99,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "kartor"],
         "prompt_key": "kartor",
-        "routes": ["skapande"],
+        "routes": ["generering"],
         "flow_tools": [
             {"tool_id": "geoapify_static_map", "label": "Statisk Karta"},
         ],
@@ -125,7 +126,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "statistics"],
         "prompt_key": "statistics",
-        "routes": ["kunskap", "jämförelse"],
+        "routes": ["info_sokning", "jamfor_analys"],
         "flow_tools": [
             {"tool_id": "scb_befolkning", "label": "SCB Befolkning"},
             {"tool_id": "scb_arbetsmarknad", "label": "SCB Arbetsmarknad"},
@@ -142,7 +143,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "keywords": ["podcast", "podd", "media", "bild", "ljud"],
         "namespace": ["agents", "media"],
         "prompt_key": "media",
-        "routes": ["skapande"],
+        "routes": ["generering"],
         "flow_tools": [
             {"tool_id": "generate_podcast", "label": "Podcast"},
             {"tool_id": "display_image", "label": "Visa Bild"},
@@ -168,7 +169,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "knowledge"],
         "prompt_key": "knowledge",
-        "routes": ["kunskap", "jämförelse"],
+        "routes": ["info_sokning", "jamfor_analys"],
         "flow_tools": [
             {"tool_id": "search_surfsense_docs", "label": "SurfSense Docs"},
             {"tool_id": "save_memory", "label": "Spara Minne"},
@@ -183,7 +184,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "keywords": ["webb", "browser", "sok", "nyheter", "url"],
         "namespace": ["agents", "browser"],
         "prompt_key": "browser",
-        "routes": ["kunskap"],
+        "routes": ["info_sokning"],
         "flow_tools": [
             {"tool_id": "scrape_webpage", "label": "Scrape Webbsida"},
             {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
@@ -216,7 +217,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "code"],
         "prompt_key": "code",
-        "routes": ["skapande"],
+        "routes": ["generering"],
         "flow_tools": [
             {"tool_id": "sandbox_execute", "label": "Sandbox Execute"},
             {"tool_id": "sandbox_write_file", "label": "Sandbox Write"},
@@ -245,7 +246,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "bolag"],
         "prompt_key": "bolag",
-        "routes": ["kunskap"],
+        "routes": ["info_sokning"],
         "flow_tools": [
             {"tool_id": "bolagsverket_info_basic", "label": "Företagsinfo"},
             {"tool_id": "bolagsverket_info_status", "label": "Företagsstatus"},
@@ -270,7 +271,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "trafik"],
         "prompt_key": "trafik",
-        "routes": ["kunskap"],
+        "routes": ["info_sokning"],
         "flow_tools": [
             {"tool_id": "trafikverket_situation", "label": "Trafikläge"},
             {"tool_id": "trafikverket_road_condition", "label": "Väglag"},
@@ -308,7 +309,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "riksdagen"],
         "prompt_key": "riksdagen",
-        "routes": ["kunskap"],
+        "routes": ["info_sokning"],
         "flow_tools": [
             {"tool_id": "riksdagen_dokument_sok", "label": "Dokument Sök"},
             {"tool_id": "riksdagen_votering", "label": "Voteringar"},
@@ -345,7 +346,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "marketplace"],
         "prompt_key": "agent.marketplace.system",
-        "routes": ["kunskap"],
+        "routes": ["info_sokning"],
         "flow_tools": [
             {"tool_id": "marketplace_unified_search", "label": "Unified Search"},
             {"tool_id": "marketplace_blocket_search", "label": "Blocket Sök"},
@@ -363,7 +364,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "keywords": ["synthesis", "syntes", "jamfor", "compare", "sammanfatta"],
         "namespace": ["agents", "synthesis"],
         "prompt_key": "synthesis",
-        "routes": ["jämförelse"],
+        "routes": ["jamfor_analys"],
         "flow_tools": [
             {"tool_id": "external_model_compare", "label": "Modelljämförelse"},
         ],
@@ -416,7 +417,7 @@ def _normalize_routes(values: Any) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
     for raw in values:
-        text = _normalize_text(raw).lower()
+        text = resolve_compat_intent_id(_normalize_text(raw).lower())
         if text and text not in seen:
             seen.add(text)
             normalized.append(text)
