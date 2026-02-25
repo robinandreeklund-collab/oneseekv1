@@ -1,19 +1,36 @@
 from dataclasses import dataclass
 
-from app.agents.new_chat.bolag_prompts import DEFAULT_BOLAG_SYSTEM_PROMPT
 from app.agents.new_chat.bigtool_prompts import (
     DEFAULT_WORKER_ACTION_PROMPT,
     DEFAULT_WORKER_KNOWLEDGE_PROMPT,
 )
+from app.agents.new_chat.bolag_prompts import DEFAULT_BOLAG_SYSTEM_PROMPT
 from app.agents.new_chat.compare_prompts import (
     COMPARE_SUPERVISOR_INSTRUCTIONS,
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
 )
 from app.agents.new_chat.dispatcher import DEFAULT_ROUTE_SYSTEM_PROMPT
-from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
+from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
 from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PROMPT
 from app.agents.new_chat.subagent_utils import SMALLTALK_INSTRUCTIONS
+from app.agents.new_chat.supervisor_pipeline_prompts import (
+    DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
+    DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
+    DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
+    DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+)
 from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
 from app.agents.new_chat.supervisor_runtime_prompts import (
     DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
@@ -26,27 +43,13 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
     DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
     DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
 )
-from app.agents.new_chat.supervisor_pipeline_prompts import (
-    DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
-    DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
-    DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
-    DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
-    DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
-    DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
-    DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
-    DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
-    DEFAULT_SUPERVISOR_PLANNER_PROMPT,
-    DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
-    DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
-    DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
-    DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
-    DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
-    DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
+from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CITATION_INSTRUCTIONS,
+    SURFSENSE_CORE_GLOBAL_PROMPT,
+    SURFSENSE_SYSTEM_INSTRUCTIONS,
 )
-from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
-from app.agents.new_chat.system_prompt import SURFSENSE_SYSTEM_INSTRUCTIONS
-from app.agents.new_chat.trafik_prompts import DEFAULT_TRAFFIC_SYSTEM_PROMPT
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
+from app.agents.new_chat.trafik_prompts import DEFAULT_TRAFFIC_SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)
@@ -86,6 +89,8 @@ def infer_prompt_node_group(key: str) -> tuple[str, str]:
 
 
 ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
+    # Global core prompt - injected into every node
+    "system.core.global",
     # Platform ingress
     "system.default.instructions",
     "citation.instructions",
@@ -140,6 +145,15 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
 
 
 _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
+    "system.core.global": PromptDefinition(
+        key="system.core.global",
+        label="Global core prompt",
+        description=(
+            "Injiceras i ALLA noder i agentflödet. "
+            "Innehåller grundläggande direktiv som språk och datum/tid."
+        ),
+        default_prompt=SURFSENSE_CORE_GLOBAL_PROMPT,
+    ),
     "system.default.instructions": PromptDefinition(
         key="system.default.instructions",
         label="Core system prompt",

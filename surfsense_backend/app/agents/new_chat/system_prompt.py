@@ -13,6 +13,32 @@ The prompt is composed of three parts:
 import re
 from datetime import UTC, datetime
 
+# ---------------------------------------------------------------------------
+# Core global prompt - injected into EVERY node in the agent graph.
+# Editable from /admin/prompts under "system.core.global".
+# ---------------------------------------------------------------------------
+SURFSENSE_CORE_GLOBAL_PROMPT = """
+<core_directives>
+Tänk ALLTID på svenska i dina interna resonemang (<think>-block och chain-of-thought).
+Svara användaren på samma språk som användaren använder.
+
+Dagens datum (UTC): {resolved_today}
+Aktuell tid (UTC): {resolved_time}
+</core_directives>
+"""
+
+
+def inject_core_prompt(core_prompt: str, target_prompt: str) -> str:
+    """Prepend the resolved core global prompt to *target_prompt*.
+
+    If *core_prompt* is empty the target is returned unchanged.
+    """
+    core = (core_prompt or "").strip()
+    if not core:
+        return target_prompt
+    return core + "\n\n" + target_prompt
+
+
 # Default system instructions - can be overridden via NewLLMConfig.system_instructions
 SURFSENSE_SYSTEM_INSTRUCTIONS = """
 <system_instruction>

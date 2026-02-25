@@ -58,8 +58,10 @@ from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.routing import Route
 from app.agents.new_chat.system_prompt import (
     SURFSENSE_CITATION_INSTRUCTIONS,
+    SURFSENSE_CORE_GLOBAL_PROMPT,
     SURFSENSE_SYSTEM_INSTRUCTIONS,
     append_datetime_context,
+    inject_core_prompt,
 )
 from app.agents.new_chat.complete_graph import build_complete_graph
 from app.agents.new_chat.supervisor_prompts import (
@@ -1436,11 +1438,22 @@ async def stream_new_chat(
             trace_recorder.set_tokenizer_model(tokenizer_model)
 
         prompt_overrides = await get_global_prompt_overrides(session)
+
+        # Resolve the global core prompt (Swedish thinking, date/time) and
+        # resolve its date/time placeholders so it is ready to prepend.
+        _raw_core_prompt = resolve_prompt(
+            prompt_overrides,
+            "system.core.global",
+            SURFSENSE_CORE_GLOBAL_PROMPT,
+        )
+        core_global_prompt = append_datetime_context(_raw_core_prompt.strip())
+
         default_system_prompt = resolve_prompt(
             prompt_overrides,
             "system.default.instructions",
             SURFSENSE_SYSTEM_INSTRUCTIONS,
         )
+        default_system_prompt = inject_core_prompt(core_global_prompt, default_system_prompt)
         if agent_config is not None:
             has_custom_system_prompt = bool(
                 str(agent_config.system_instructions or "").strip()
@@ -1455,8 +1468,11 @@ async def stream_new_chat(
                     system_instructions=default_system_prompt,
                     use_default_system_instructions=False,
                 )
-        router_prompt = resolve_prompt(
-            prompt_overrides, "router.top_level", DEFAULT_ROUTE_SYSTEM_PROMPT
+        router_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides, "router.top_level", DEFAULT_ROUTE_SYSTEM_PROMPT
+            ),
         )
         try:
             routing_history = await _load_conversation_history_for_routing(
@@ -1517,10 +1533,13 @@ async def stream_new_chat(
                 else None
             )
         citations_enabled = bool(citation_instructions_block)
-        supervisor_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.supervisor.system",
-            DEFAULT_SUPERVISOR_PROMPT,
+        supervisor_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.supervisor.system",
+                DEFAULT_SUPERVISOR_PROMPT,
+            ),
         )
         supervisor_system_prompt = build_supervisor_prompt(
             supervisor_prompt,
@@ -1536,13 +1555,16 @@ async def stream_new_chat(
                 supervisor_system_prompt + "\n\n" + compare_supervisor_instructions
             )
 
-        knowledge_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.knowledge.system",
+        knowledge_prompt = inject_core_prompt(
+            core_global_prompt,
             resolve_prompt(
                 prompt_overrides,
-                "agent.worker.knowledge",
-                DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+                "agent.knowledge.system",
+                resolve_prompt(
+                    prompt_overrides,
+                    "agent.worker.knowledge",
+                    DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+                ),
             ),
         )
         knowledge_worker_prompt = build_worker_prompt(
@@ -1550,13 +1572,16 @@ async def stream_new_chat(
             citations_enabled=citations_enabled,
             citation_instructions=citation_instructions_block,
         )
-        action_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.action.system",
+        action_prompt = inject_core_prompt(
+            core_global_prompt,
             resolve_prompt(
                 prompt_overrides,
-                "agent.worker.action",
-                DEFAULT_WORKER_ACTION_PROMPT,
+                "agent.action.system",
+                resolve_prompt(
+                    prompt_overrides,
+                    "agent.worker.action",
+                    DEFAULT_WORKER_ACTION_PROMPT,
+                ),
             ),
         )
         action_worker_prompt = build_worker_prompt(
@@ -1564,98 +1589,137 @@ async def stream_new_chat(
             citations_enabled=citations_enabled,
             citation_instructions=citation_instructions_block,
         )
-        media_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.media.system",
-            action_prompt,
+        media_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.media.system",
+                action_prompt,
+            ),
         )
-        browser_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.browser.system",
-            knowledge_prompt,
+        browser_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.browser.system",
+                knowledge_prompt,
+            ),
         )
-        code_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.code.system",
-            knowledge_prompt,
+        code_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.code.system",
+                knowledge_prompt,
+            ),
         )
-        kartor_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.kartor.system",
-            action_prompt,
+        kartor_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.kartor.system",
+                action_prompt,
+            ),
         )
-        statistics_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.statistics.system",
-            DEFAULT_STATISTICS_SYSTEM_PROMPT,
+        statistics_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.statistics.system",
+                DEFAULT_STATISTICS_SYSTEM_PROMPT,
+            ),
         )
         statistics_worker_prompt = build_statistics_system_prompt(
             statistics_prompt,
             citation_instructions=citation_instructions_block,
         )
-        synthesis_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.synthesis.system",
-            statistics_prompt,
+        synthesis_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.synthesis.system",
+                statistics_prompt,
+            ),
         )
-        bolag_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.bolag.system",
-            DEFAULT_BOLAG_SYSTEM_PROMPT,
+        bolag_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.bolag.system",
+                DEFAULT_BOLAG_SYSTEM_PROMPT,
+            ),
         )
         bolag_worker_prompt = build_bolag_prompt(
             bolag_prompt,
             citation_instructions=citation_instructions_block,
         )
-        trafik_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.trafik.system",
-            DEFAULT_TRAFFIC_SYSTEM_PROMPT,
+        trafik_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.trafik.system",
+                DEFAULT_TRAFFIC_SYSTEM_PROMPT,
+            ),
         )
         trafik_worker_prompt = build_trafik_prompt(
             trafik_prompt,
             citation_instructions=citation_instructions_block,
         )
-        riksdagen_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.riksdagen.system",
-            DEFAULT_RIKSDAGEN_SYSTEM_PROMPT,
+        riksdagen_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.riksdagen.system",
+                DEFAULT_RIKSDAGEN_SYSTEM_PROMPT,
+            ),
         )
         riksdagen_worker_prompt = build_worker_prompt(
             riksdagen_prompt,
             citations_enabled=citations_enabled,
             citation_instructions=citation_instructions_block,
         )
-        marketplace_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.marketplace.system",
-            DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+        marketplace_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.marketplace.system",
+                DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+            ),
         )
         marketplace_worker_prompt = build_marketplace_prompt(
             marketplace_prompt,
             citation_instructions=citation_instructions_block,
         )
-        compare_analysis_prompt = resolve_prompt(
-            prompt_overrides,
-            "compare.analysis.system",
-            DEFAULT_COMPARE_ANALYSIS_PROMPT,
+        compare_analysis_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "compare.analysis.system",
+                DEFAULT_COMPARE_ANALYSIS_PROMPT,
+            ),
         )
         compare_synthesis_prompt = build_compare_synthesis_prompt(
             compare_analysis_prompt,
             citations_enabled=citations_enabled,
             citation_instructions=citation_instructions_block,
         )
-        compare_external_prompt = resolve_prompt(
-            prompt_overrides,
-            "compare.external.system",
-            DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+        compare_external_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "compare.external.system",
+                DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+            ),
         )
 
         if route == Route.KONVERSATION:
-            smalltalk_prompt = resolve_prompt(
-                prompt_overrides,
-                "agent.smalltalk.system",
-                SMALLTALK_INSTRUCTIONS,
+            smalltalk_prompt = inject_core_prompt(
+                core_global_prompt,
+                resolve_prompt(
+                    prompt_overrides,
+                    "agent.smalltalk.system",
+                    SMALLTALK_INSTRUCTIONS,
+                ),
             )
         else:
             worker_system_prompt = supervisor_system_prompt
