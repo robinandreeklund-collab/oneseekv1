@@ -1377,6 +1377,22 @@ class _ThinkStreamFilter:
 
         return "".join(reasoning_parts), "".join(text_parts)
 
+    def reset_think_mode(self) -> tuple[str, str]:
+        """Flush buffer and re-enter think mode for a new model call.
+
+        When multiple models stream through the same filter instance, each
+        model should start in think mode (if *assume_think* is True) so that
+        a previous model's ``</think>`` doesn't cause the next model's
+        content to be classified as main text.
+
+        Returns the same ``(reasoning, text)`` tuple as :meth:`flush` for
+        any residual buffered content.
+        """
+        result = self.flush()
+        if self._assume_think:
+            self._in_think = True
+        return result
+
     def flush(self) -> tuple[str, str]:
         """Drain any remaining buffer at end-of-stream."""
         remaining, self._buf = self._buf, ""
@@ -2779,6 +2795,36 @@ async def stream_new_chat(
                     if _is_internal_pipeline_chain_name(parent_chain_name):
                         model_parent_chain_by_run_id[run_id] = parent_chain_name
                         internal_model_buffers.setdefault(run_id, "")
+                    elif _think_filter._assume_think:
+                        # Non-internal model (e.g. subagent worker): reset the
+                        # shared think filter to think mode so this model's
+                        # content doesn't inherit text-mode from a previous
+                        # model's </think>.  Each model should start fresh.
+                        flush_r, flush_t = _think_filter.reset_think_mode()
+                        if flush_r:
+                            if active_reasoning_id is None:
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, flush_r
+                            )
+                        if flush_t:
+                            # Residual text from previous model — emit it
+                            if current_text_id is None:
+                                current_text_id = (
+                                    streaming_service.generate_text_id()
+                                )
+                                yield streaming_service.format_text_start(
+                                    current_text_id
+                                )
+                            yield streaming_service.format_text_delta(
+                                current_text_id, flush_t
+                            )
+                            accumulated_text += flush_t
 
             if trace_recorder:
                 if event_type == "on_chain_start":
