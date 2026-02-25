@@ -3472,6 +3472,7 @@ async def create_supervisor_agent(
         if route_hint in {"statistik", "statistics"}:  # Statistics agents chosen by agent_resolver, not route
             limit = 1
 
+        # Weather cache invalidation removed — cache is shared across all routes
         # Extract sub_intents from state for multi-domain cache key
         sub_intents = state.get("sub_intents") if state else None
         cache_key, cache_pattern = _build_cache_key(
