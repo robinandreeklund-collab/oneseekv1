@@ -319,27 +319,42 @@ const STAGE_COLORS: Record<string, string> = {
 
 function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 	const nodePositions: Record<string, { x: number; y: number }> = {
-		"node:resolve_intent": { x: 0, y: 200 },
-		"node:memory_context": { x: 220, y: 200 },
-		"node:smalltalk": { x: 440, y: 0 },
-		"node:speculative": { x: 440, y: 100 },
-		"node:agent_resolver": { x: 440, y: 220 },
-		"node:planner": { x: 660, y: 220 },
-		"node:planner_hitl_gate": { x: 880, y: 220 },
-		"node:tool_resolver": { x: 440, y: 360 },
-		"node:speculative_merge": { x: 660, y: 360 },
-		"node:execution_router": { x: 880, y: 360 },
-		"node:execution_hitl_gate": { x: 1100, y: 280 },
-		"node:executor": { x: 1320, y: 280 },
-		"node:tools": { x: 1540, y: 200 },
-		"node:post_tools": { x: 1540, y: 340 },
-		"node:artifact_indexer": { x: 1760, y: 340 },
-		"node:context_compactor": { x: 1760, y: 460 },
-		"node:orchestration_guard": { x: 1540, y: 460 },
-		"node:critic": { x: 1320, y: 460 },
-		"node:synthesis_hitl": { x: 1100, y: 560 },
-		"node:progressive_synthesizer": { x: 1320, y: 620 },
-		"node:synthesizer": { x: 1540, y: 620 },
+		// ── Entry ──
+		"node:resolve_intent": { x: 0, y: 260 },
+		"node:memory_context": { x: 240, y: 260 },
+		// ── Fast path & speculative ──
+		"node:smalltalk": { x: 480, y: 20 },
+		"node:speculative": { x: 480, y: 140 },
+		// ── Planning ──
+		"node:agent_resolver": { x: 480, y: 260 },
+		"node:planner": { x: 720, y: 260 },
+		"node:planner_hitl_gate": { x: 960, y: 260 },
+		// ── Tool resolution ──
+		"node:tool_resolver": { x: 480, y: 400 },
+		"node:speculative_merge": { x: 720, y: 400 },
+		"node:execution_router": { x: 960, y: 400 },
+		"node:domain_planner": { x: 1200, y: 400 },
+		// ── Execution ──
+		"node:execution_hitl_gate": { x: 1440, y: 330 },
+		"node:executor": { x: 1680, y: 330 },
+		"node:tools": { x: 1920, y: 220 },
+		"node:post_tools": { x: 1920, y: 380 },
+		// ── Post-processing ──
+		"node:artifact_indexer": { x: 2160, y: 380 },
+		"node:context_compactor": { x: 2160, y: 520 },
+		"node:orchestration_guard": { x: 1920, y: 520 },
+		// ── Evaluation ──
+		"node:critic": { x: 1680, y: 520 },
+		// ── Synthesis ──
+		"node:synthesis_hitl": { x: 1440, y: 640 },
+		"node:progressive_synthesizer": { x: 1680, y: 700 },
+		"node:synthesizer": { x: 1920, y: 700 },
+		// ── Response layer ──
+		"node:response_layer": { x: 2160, y: 700 },
+		"node:response_layer_kunskap": { x: 2400, y: 590 },
+		"node:response_layer_analys": { x: 2400, y: 670 },
+		"node:response_layer_syntes": { x: 2400, y: 750 },
+		"node:response_layer_visualisering": { x: 2400, y: 830 },
 	};
 
 	return pipelineNodes.map((node) => ({
