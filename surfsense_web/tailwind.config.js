@@ -73,11 +73,36 @@ module.exports = {
 					"50%": { width: "50%" },
 					"100%": { left: "100%", width: "33%" },
 				},
+				"marquee": {
+					"0%": { transform: "translateX(0%)" },
+					"100%": { transform: "translateX(-50%)" },
+				},
+				"hero-gradient": {
+					"0%, 100%": { backgroundPosition: "0% 50%" },
+					"50%": { backgroundPosition: "100% 50%" },
+				},
+				"fade-up": {
+					"0%": { opacity: 0, transform: "translateY(20px)" },
+					"100%": { opacity: 1, transform: "translateY(0)" },
+				},
+				"pulse-glow": {
+					"0%, 100%": { opacity: 0.4 },
+					"50%": { opacity: 0.8 },
+				},
+				"count-up": {
+					"0%": { opacity: 0, transform: "translateY(10px)" },
+					"100%": { opacity: 1, transform: "translateY(0)" },
+				},
 			},
 			animation: {
 				"accordion-down": "accordion-down 0.2s ease-out",
 				"accordion-up": "accordion-up 0.2s ease-out",
 				"progress-indeterminate": "progress-indeterminate 1.5s ease-in-out infinite",
+				"marquee": "marquee 30s linear infinite",
+				"hero-gradient": "hero-gradient 15s ease infinite",
+				"fade-up": "fade-up 0.6s ease-out forwards",
+				"pulse-glow": "pulse-glow 4s ease-in-out infinite",
+				"count-up": "count-up 0.5s ease-out forwards",
 			},
 		},
 	},
