@@ -11,10 +11,9 @@ final answer should be presented:
                        table or structured list.
 
 The node writes ``response_mode`` to state so the frontend and any
-downstream logging/analytics can inspect the chosen mode.  It may also
-apply lightweight formatting rules to ``final_response`` (e.g. adding
-section headers for ``analys`` mode) but it never changes factual
-content.
+downstream logging/analytics can inspect the chosen mode.  When a
+per-mode prompt template is available, it uses an LLM call to reformat
+the final response according to the mode-specific rules.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ import logging
 import re
 from typing import Any, Callable
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 logger = logging.getLogger(__name__)
@@ -49,6 +48,8 @@ _ANALYS_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+_VALID_MODES = {"kunskap", "analys", "syntes", "visualisering"}
+
 
 def _select_response_mode(
     *,
@@ -67,7 +68,6 @@ def _select_response_mode(
     4. kunskap        – default factual answer
     """
     route = route_hint.lower()
-    combined_text = f"{query} {response}"
 
     if _VISUALISERING_KEYWORDS.search(query):
         return "visualisering"
@@ -83,62 +83,52 @@ def _select_response_mode(
 
 
 # ---------------------------------------------------------------------------
-# Optional lightweight formatting per mode
-# ---------------------------------------------------------------------------
-
-def _format_analys(response: str) -> str:
-    """Ensure analytical responses have a minimal structure."""
-    stripped = response.strip()
-    if not stripped:
-        return response
-    # If the response already has markdown headers, leave it alone.
-    if re.search(r"^#{1,3}\s", stripped, re.MULTILINE):
-        return response
-    return response
-
-
-def _format_syntes(response: str, sub_intents: list[str]) -> str:
-    """Multi-domain synthesis: keep as-is; the planner/synthesizer already
-    structures it into sections."""
-    return response
-
-
-def _format_visualisering(response: str) -> str:
-    """Ensure visualisering responses preserve any existing table/list
-    formatting."""
-    return response
-
-
-def _apply_formatting(
-    *,
-    mode: str,
-    response: str,
-    sub_intents: list[str],
-) -> str:
-    if mode == "analys":
-        return _format_analys(response)
-    if mode == "syntes":
-        return _format_syntes(response, sub_intents)
-    if mode == "visualisering":
-        return _format_visualisering(response)
-    # kunskap — no structural changes needed
-    return response
-
-
-# ---------------------------------------------------------------------------
 # Node builder
 # ---------------------------------------------------------------------------
 
 def build_response_layer_node(
     *,
+    llm: Any = None,
+    mode_prompts: dict[str, str] | None = None,
     latest_user_query_fn: Callable[[list[Any] | None], str],
 ):
     """Return a response_layer node.
 
     The node classifies the final answer into one of the four presentation
-    modes and records the decision as ``response_mode`` on state.  It also
-    applies any mode-specific formatting to ``final_response``.
+    modes and records the decision as ``response_mode`` on state.
+
+    When *mode_prompts* contains a non-empty prompt for the selected mode
+    **and** an *llm* is provided, the node uses an LLM call to reformat
+    the response according to the mode-specific prompt.  Otherwise the
+    response passes through unchanged.
     """
+    _mode_prompts = mode_prompts or {}
+
+    async def _llm_format(prompt_template: str, response: str, query: str) -> str:
+        """Use LLM to reformat *response* according to *prompt_template*."""
+        if llm is None:
+            return response
+        try:
+            message = await llm.ainvoke(
+                [
+                    SystemMessage(content=prompt_template),
+                    HumanMessage(
+                        content=(
+                            f"Användarfråga: {query}\n\n"
+                            f"Svar att formatera:\n{response}"
+                        )
+                    ),
+                ],
+                max_tokens=4096,
+            )
+            result = str(getattr(message, "content", "") or "").strip()
+            return result if result else response
+        except Exception:
+            logger.debug(
+                "response_layer: LLM formatting failed, returning original",
+                exc_info=True,
+            )
+            return response
 
     async def response_layer_node(
         state: dict[str, Any],
@@ -168,17 +158,19 @@ def build_response_layer_node(
             execution_strategy=execution_strategy,
         )
 
-        formatted = _apply_formatting(
-            mode=mode,
-            response=final_response,
-            sub_intents=sub_intents,
-        )
+        # ── LLM-driven formatting if a per-mode prompt is available ──
+        mode_prompt = _mode_prompts.get(mode, "").strip()
+        if mode_prompt and llm is not None:
+            formatted = await _llm_format(mode_prompt, final_response, latest_user_query)
+        else:
+            formatted = final_response
 
         logger.info(
-            "response_layer: mode=%s route=%s sub_intents=%d",
+            "response_layer: mode=%s route=%s sub_intents=%d llm_format=%s",
             mode,
             route_hint,
             len(sub_intents),
+            bool(mode_prompt and llm is not None),
         )
 
         updates: dict[str, Any] = {"response_mode": mode}

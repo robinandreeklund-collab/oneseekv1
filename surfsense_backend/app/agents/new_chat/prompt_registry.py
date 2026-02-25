@@ -29,6 +29,7 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
 from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
@@ -37,6 +38,10 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+    DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
 )
 from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
 from app.agents.new_chat.system_prompt import SURFSENSE_SYSTEM_INSTRUCTIONS
@@ -105,6 +110,11 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "supervisor.scoped_tool_prompt.template",
     "supervisor.tool_default_prompt.template",
     "supervisor.subagent.context.template",
+    "supervisor.domain_planner.system",
+    "supervisor.response_layer.kunskap",
+    "supervisor.response_layer.analys",
+    "supervisor.response_layer.syntes",
+    "supervisor.response_layer.visualisering",
     "supervisor.hitl.planner.message",
     "supervisor.hitl.execution.message",
     "supervisor.hitl.synthesis.message",
@@ -203,6 +213,36 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Supervisor critic gate prompt",
         description="Prompt for critic node decisioning in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    ),
+    "supervisor.domain_planner.system": PromptDefinition(
+        key="supervisor.domain_planner.system",
+        label="Domain Planner prompt",
+        description="LLM-driven mikro-plan per domänagent: vilka sub-verktyg och parallellitet (Nivå 2).",
+        default_prompt=DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
+    ),
+    "supervisor.response_layer.kunskap": PromptDefinition(
+        key="supervisor.response_layer.kunskap",
+        label="Response Layer · Kunskap",
+        description="Formateringsregler för kunskap-läge — direkt, faktabaserat svar.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    ),
+    "supervisor.response_layer.analys": PromptDefinition(
+        key="supervisor.response_layer.analys",
+        label="Response Layer · Analys",
+        description="Formateringsregler för analys-läge — strukturerat svar med sektioner.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    ),
+    "supervisor.response_layer.syntes": PromptDefinition(
+        key="supervisor.response_layer.syntes",
+        label="Response Layer · Syntes",
+        description="Formateringsregler för syntes-läge — fler-källors syntes.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    ),
+    "supervisor.response_layer.visualisering": PromptDefinition(
+        key="supervisor.response_layer.visualisering",
+        label="Response Layer · Visualisering",
+        description="Formateringsregler för visualisering-läge — data som tabell/lista.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
     ),
     "supervisor.synthesizer.system": PromptDefinition(
         key="supervisor.synthesizer.system",

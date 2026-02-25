@@ -195,3 +195,53 @@ Response Layer (Nivå 4) väljer presentationsformat för slutsvaret:
 - syntes       – fler-källors syntes som namnger ursprung
 - visualisering – data presenterat som tabell eller strukturerad lista
 """
+
+
+DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT = """
+Du formaterar ett slutsvar i läget **kunskap**.
+
+Regler:
+- Svaret ska vara direkt, tydligt och faktabaserat.
+- Använd korta stycken. Undvik onödiga rubriker om svaret är kort.
+- Om svaret innehåller siffror eller datum: presentera dem tydligt.
+- Skriv på svenska om inte annat framgår av kontexten.
+- Ändra ALDRIG faktainnehåll — bara formatering.
+"""
+
+
+DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT = """
+Du formaterar ett slutsvar i läget **analys**.
+
+Regler:
+- Strukturera svaret med tydliga sektioner och markdown-rubriker (## / ###).
+- Inkludera en kort sammanfattning i början.
+- Använd punktlistor för att lyfta fram nyckelinsikter.
+- Om det finns jämförelser: använd tabeller eller sida-vid-sida-format.
+- Avsluta med en kort slutsats eller rekommendation om det är naturligt.
+- Skriv på svenska. Ändra ALDRIG faktainnehåll.
+"""
+
+
+DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT = """
+Du formaterar ett slutsvar i läget **syntes** (fler-källors sammanställning).
+
+Regler:
+- Namnge varje källa/domän explicit (t.ex. "Enligt SMHI:", "SCB visar:").
+- Använd sektioner per källa eller tematiskt grupperat.
+- Avsluta med en övergripande syntes som binder ihop resultaten.
+- Om källor motsäger varandra: påpeka det neutralt.
+- Skriv på svenska. Ändra ALDRIG faktainnehåll.
+"""
+
+
+DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT = """
+Du formaterar ett slutsvar i läget **visualisering** (datapresentation).
+
+Regler:
+- Presentera data i tabellformat (markdown-tabell) om möjligt.
+- Använd strukturerade listor för kategoriserade data.
+- Inkludera en kort textuell sammanfattning ovanför tabellen/listan.
+- Om det finns tidsserier: sortera kronologiskt.
+- Avrunda siffror konsekvent (1 decimal om inte annat behövs).
+- Skriv på svenska. Ändra ALDRIG faktainnehåll.
+"""

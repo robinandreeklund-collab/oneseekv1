@@ -102,6 +102,10 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+    DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
 )
 from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
@@ -1833,6 +1837,26 @@ async def create_supervisor_agent(
         prompt_overrides,
         "supervisor.domain_planner.system",
         DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
+    )
+    response_layer_kunskap_prompt = resolve_prompt(
+        prompt_overrides,
+        "supervisor.response_layer.kunskap",
+        DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    )
+    response_layer_analys_prompt = resolve_prompt(
+        prompt_overrides,
+        "supervisor.response_layer.analys",
+        DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    )
+    response_layer_syntes_prompt = resolve_prompt(
+        prompt_overrides,
+        "supervisor.response_layer.syntes",
+        DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    )
+    response_layer_visualisering_prompt = resolve_prompt(
+        prompt_overrides,
+        "supervisor.response_layer.visualisering",
+        DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
     )
     synthesizer_prompt_template = resolve_prompt(
         prompt_overrides,
@@ -5539,6 +5563,13 @@ async def create_supervisor_agent(
     )
 
     response_layer_node = build_response_layer_node(
+        llm=llm,
+        mode_prompts={
+            "kunskap": response_layer_kunskap_prompt,
+            "analys": response_layer_analys_prompt,
+            "syntes": response_layer_syntes_prompt,
+            "visualisering": response_layer_visualisering_prompt,
+        },
         latest_user_query_fn=_latest_user_query,
     )
 

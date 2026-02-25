@@ -199,8 +199,37 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "id": "node:response_layer",
         "label": "Response Layer",
         "stage": "synthesis",
-        "description": "Nivå 4: väljer presentationsformat för svaret — kunskap, analys, syntes eller visualisering. → END",
+        "description": "Nivå 4: väljer presentationsformat för svaret — kunskap, analys, syntes eller visualisering.",
         "prompt_key": None,
+    },
+    # ── Response Layer per-mode nodes (editable prompts) ──
+    {
+        "id": "node:response_layer_kunskap",
+        "label": "RL: Kunskap",
+        "stage": "synthesis",
+        "description": "Formateringsregler för kunskap-läge — direkt, faktabaserat svar.",
+        "prompt_key": "supervisor.response_layer.kunskap",
+    },
+    {
+        "id": "node:response_layer_analys",
+        "label": "RL: Analys",
+        "stage": "synthesis",
+        "description": "Formateringsregler för analys-läge — strukturerat svar med sektioner och motivering.",
+        "prompt_key": "supervisor.response_layer.analys",
+    },
+    {
+        "id": "node:response_layer_syntes",
+        "label": "RL: Syntes",
+        "stage": "synthesis",
+        "description": "Formateringsregler för syntes-läge — fler-källors syntes som namnger ursprung.",
+        "prompt_key": "supervisor.response_layer.syntes",
+    },
+    {
+        "id": "node:response_layer_visualisering",
+        "label": "RL: Visualisering",
+        "stage": "synthesis",
+        "description": "Formateringsregler för visualisering-läge — data som tabell eller strukturerad lista. → END",
+        "prompt_key": "supervisor.response_layer.visualisering",
     },
 ]
 
@@ -243,6 +272,11 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:synthesis_hitl", "target": "node:synthesizer", "type": "conditional", "label": "enkel"},
     {"source": "node:progressive_synthesizer", "target": "node:synthesizer", "type": "normal"},
     {"source": "node:synthesizer", "target": "node:response_layer", "type": "normal"},
+    # ── Response Layer → per-mode nodes (conditional) ──
+    {"source": "node:response_layer", "target": "node:response_layer_kunskap", "type": "conditional", "label": "kunskap"},
+    {"source": "node:response_layer", "target": "node:response_layer_analys", "type": "conditional", "label": "analys"},
+    {"source": "node:response_layer", "target": "node:response_layer_syntes", "type": "conditional", "label": "syntes"},
+    {"source": "node:response_layer", "target": "node:response_layer_visualisering", "type": "conditional", "label": "visualisering"},
 ]
 
 # Stage metadata for frontend grouping and coloring
