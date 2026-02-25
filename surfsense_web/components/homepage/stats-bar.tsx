@@ -70,7 +70,7 @@ export function StatsBar() {
 			label: t("stats_swedish_apis"),
 		},
 		{
-			value: 14,
+			value: 23,
 			suffix: "",
 			label: t("stats_pipeline_nodes"),
 		},
