@@ -3346,10 +3346,16 @@ def _intent_metadata_item_from_payload(
         intent_id=str(normalized.get("intent_id") or ""),
         label=str(normalized.get("label") or ""),
         route=str(normalized.get("route") or ""),
+        execution_mode=str(normalized.get("execution_mode") or "tool_required"),
         description=str(normalized.get("description") or ""),
         keywords=list(normalized.get("keywords") or []),
         priority=int(normalized.get("priority") or 500),
         enabled=bool(normalized.get("enabled", True)),
+        main_identifier=str(normalized.get("main_identifier") or ""),
+        core_activity=str(normalized.get("core_activity") or ""),
+        unique_scope=str(normalized.get("unique_scope") or ""),
+        geographic_scope=str(normalized.get("geographic_scope") or ""),
+        excludes=list(normalized.get("excludes") or []),
         has_override=has_override,
     )
 

@@ -1,6 +1,45 @@
 from enum import Enum
 
 
+class ExecutionMode(str, Enum):
+    """First-class routing decision (Nivå 1).
+
+    Determines *how* the system should process the user's query:
+    - TOOL_REQUIRED:  External structured data is needed (API calls).
+    - TOOL_OPTIONAL:  LLM may know the answer; tools available as fallback.
+    - TOOL_FORBIDDEN: No tools — pure LLM response (smalltalk, greetings).
+    - MULTI_SOURCE:   Multiple domain agents or comparison across sources.
+    """
+
+    TOOL_REQUIRED = "tool_required"
+    TOOL_OPTIONAL = "tool_optional"
+    TOOL_FORBIDDEN = "tool_forbidden"
+    MULTI_SOURCE = "multi_source"
+
+    @classmethod
+    def _missing_(cls, value: object):
+        _COMPAT = {
+            # Old graph_complexity / route values → execution mode
+            "kunskap": cls.TOOL_REQUIRED,
+            "knowledge": cls.TOOL_REQUIRED,
+            "skapande": cls.TOOL_REQUIRED,
+            "action": cls.TOOL_REQUIRED,
+            "konversation": cls.TOOL_FORBIDDEN,
+            "smalltalk": cls.TOOL_FORBIDDEN,
+            "jämförelse": cls.MULTI_SOURCE,
+            "compare": cls.MULTI_SOURCE,
+            "statistics": cls.TOOL_REQUIRED,
+            "mixed": cls.MULTI_SOURCE,
+            # Old complexity values
+            "trivial": cls.TOOL_FORBIDDEN,
+            "simple": cls.TOOL_REQUIRED,
+            "complex": cls.TOOL_REQUIRED,
+        }
+        if isinstance(value, str):
+            return _COMPAT.get(value.strip().lower())
+        return None
+
+
 class Route(str, Enum):
     KUNSKAP = "kunskap"
     SKAPANDE = "skapande"
@@ -20,6 +59,15 @@ class Route(str, Enum):
         if isinstance(value, str):
             return _COMPAT.get(value.strip().lower())
         return None
+
+
+# ── Route → default ExecutionMode mapping ─────────────────────────────
+ROUTE_TO_EXECUTION_MODE: dict[Route, ExecutionMode] = {
+    Route.KUNSKAP: ExecutionMode.TOOL_REQUIRED,
+    Route.SKAPANDE: ExecutionMode.TOOL_REQUIRED,
+    Route.KONVERSATION: ExecutionMode.TOOL_FORBIDDEN,
+    Route.JAMFORELSE: ExecutionMode.MULTI_SOURCE,
+}
 
 
 # ── Tool allow-lists per route ────────────────────────────────────────

@@ -26,7 +26,7 @@ export const IntentGraphNode = memo(function IntentGraphNode({
 				<div className="flex flex-col">
 					<span className="text-xs font-semibold leading-tight">{intent.label}</span>
 					<span className="text-[10px] text-muted-foreground leading-tight">
-						route: {intent.route}
+						{intent.execution_mode || intent.route}
 					</span>
 				</div>
 			</div>

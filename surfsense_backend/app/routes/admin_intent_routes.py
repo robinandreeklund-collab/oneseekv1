@@ -59,6 +59,7 @@ async def _build_intent_response(session: AsyncSession) -> dict[str, list[dict]]
             {
                 "intent_id": intent_id,
                 "route": definition.get("route"),
+                "execution_mode": definition.get("execution_mode", "tool_required"),
                 "label": definition.get("label"),
                 "description": definition.get("description") or "",
                 "keywords": list(definition.get("keywords") or []),
@@ -118,6 +119,8 @@ async def update_intent_definitions(
         merged = dict(base_payload)
         if item.route is not None:
             merged["route"] = item.route
+        if item.execution_mode is not None:
+            merged["execution_mode"] = item.execution_mode
         if item.label is not None:
             merged["label"] = item.label
         if item.description is not None:

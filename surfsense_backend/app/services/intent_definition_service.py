@@ -6,11 +6,12 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.agents.new_chat.routing import Route
+from app.agents.new_chat.routing import ExecutionMode, Route, ROUTE_TO_EXECUTION_MODE
 from app.db import GlobalIntentDefinition, GlobalIntentDefinitionHistory
 
 
 _ROUTE_VALUES = {route.value for route in Route}
+_EXECUTION_MODE_VALUES = {mode.value for mode in ExecutionMode}
 
 # ── Backward-compat: accept old route values during normalization ─────
 _COMPAT_ROUTE_MAP: dict[str, str] = {
@@ -22,10 +23,6 @@ _COMPAT_ROUTE_MAP: dict[str, str] = {
 }
 
 # ── Backward-compat: old intent_id → new intent_id ───────────────────
-# When intents were first created, intent_id == route. Now intent_id is
-# a descriptive slug decoupled from the LangGraph route. Existing DB
-# overrides and agent.routes references using the old names are mapped
-# transparently.
 _COMPAT_INTENT_ID_MAP: dict[str, str] = {
     "kunskap": "info_sokning",
     "skapande": "generering",
@@ -33,13 +30,24 @@ _COMPAT_INTENT_ID_MAP: dict[str, str] = {
     "konversation": "smalltalk",
 }
 
-# Reverse: new → old (for looking up which old override replaces which default)
+# Reverse: new → old
 _COMPAT_INTENT_ID_REVERSE: dict[str, str] = {v: k for k, v in _COMPAT_INTENT_ID_MAP.items()}
+
+
+def _route_to_default_execution_mode(route_value: str) -> str:
+    """Derive a default execution_mode from a route value."""
+    try:
+        route_enum = Route(route_value)
+    except (ValueError, KeyError):
+        return ExecutionMode.TOOL_REQUIRED.value
+    return ROUTE_TO_EXECUTION_MODE.get(route_enum, ExecutionMode.TOOL_REQUIRED).value
+
 
 _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
     "info_sokning": {
         "intent_id": "info_sokning",
         "route": Route.KUNSKAP.value,
+        "execution_mode": ExecutionMode.TOOL_REQUIRED.value,
         "label": "Kunskap",
         "description": (
             "Användaren vill ha information eller kunskap om något – "
@@ -94,6 +102,7 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
     "generering": {
         "intent_id": "generering",
         "route": Route.SKAPANDE.value,
+        "execution_mode": ExecutionMode.TOOL_REQUIRED.value,
         "label": "Skapande",
         "description": (
             "Användaren vill att systemet skapar eller genererar något – "
@@ -121,6 +130,7 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
     "jamfor_analys": {
         "intent_id": "jamfor_analys",
         "route": Route.JAMFORELSE.value,
+        "execution_mode": ExecutionMode.MULTI_SOURCE.value,
         "label": "Jämförelse",
         "description": "Jämförelse-läge när användaren explicit efterfrågar compare.",
         "keywords": ["/compare", "compare", "jämför", "jamfor", "jämförelse"],
@@ -130,6 +140,7 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
     "smalltalk": {
         "intent_id": "smalltalk",
         "route": Route.KONVERSATION.value,
+        "execution_mode": ExecutionMode.TOOL_FORBIDDEN.value,
         "label": "Konversation",
         "description": "Hälsningar och enkel konversation utan verktyg.",
         "keywords": ["hej", "tjena", "hallå", "hur mår du", "konversation", "smalltalk"],
@@ -205,10 +216,16 @@ def normalize_intent_definition_payload(
     route_value = _normalize_text(payload.get("route")).lower()
     # Accept old English route names transparently
     route_value = _COMPAT_ROUTE_MAP.get(route_value, route_value)
-    # Allow custom route strings (unknown routes are stored as-is and treated
-    # as kunskap in the LangGraph execution until a dedicated graph route exists)
     if not route_value:
         route_value = Route.KUNSKAP.value
+    # ── Execution mode (new field) ────────────────────────────────────
+    raw_exec_mode = _normalize_text(payload.get("execution_mode")).lower()
+    if raw_exec_mode in _EXECUTION_MODE_VALUES:
+        execution_mode = raw_exec_mode
+    else:
+        # Derive from route for backward-compat
+        execution_mode = _route_to_default_execution_mode(route_value)
+
     label = _normalize_optional_text(payload.get("label")) or resolved_intent_id.replace(
         "_", " "
     ).title()
@@ -222,8 +239,6 @@ def normalize_intent_definition_payload(
     geographic_scope = _normalize_identity_field(payload.get("geographic_scope", ""), 80)
     excludes = _normalize_excludes(payload.get("excludes", []))
     # graph_route: the actual LangGraph route used at runtime.
-    # For known system routes it matches route_value; for custom routes it
-    # falls back to kunskap until a dedicated graph route is implemented.
     is_system_route = route_value in _ROUTE_VALUES
     graph_route_raw = _normalize_text(payload.get("graph_route")).lower()
     graph_route_raw = _COMPAT_ROUTE_MAP.get(graph_route_raw, graph_route_raw)
@@ -234,6 +249,7 @@ def normalize_intent_definition_payload(
     return {
         "intent_id": resolved_intent_id,
         "route": route_value,
+        "execution_mode": execution_mode,
         "graph_route": graph_route,
         "is_custom_route": not is_system_route,
         "label": label,
@@ -250,10 +266,7 @@ def normalize_intent_definition_payload(
 
 
 def resolve_compat_intent_id(raw_id: str) -> str:
-    """Map an old intent_id (e.g. 'kunskap') to the current slug ('info_sokning').
-
-    Returns the input unchanged if it is not an old name.
-    """
+    """Map an old intent_id (e.g. 'kunskap') to the current slug ('info_sokning')."""
     return _COMPAT_INTENT_ID_MAP.get(raw_id, raw_id)
 
 
@@ -271,7 +284,6 @@ async def get_global_intent_definition_overrides(
     overrides: dict[str, dict[str, Any]] = {}
     for row in result.scalars().all():
         payload = row.definition_payload if isinstance(row.definition_payload, dict) else {}
-        # normalize_intent_definition_payload maps old intent_ids → new slugs
         normalized = normalize_intent_definition_payload(payload, intent_id=row.intent_id)
         resolved_id = normalized["intent_id"]
         overrides[resolved_id] = normalized

@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 class IntentDefinitionItem(BaseModel):
     intent_id: str = Field(..., description="Stable intent identifier")
     route: str = Field(..., description="Top-level route selected for this intent")
+    execution_mode: str = Field(
+        "tool_required",
+        description="Execution mode: tool_required | tool_optional | tool_forbidden | multi_source",
+    )
     label: str = Field(..., description="Human-readable label")
     description: str = Field("", description="Intent description")
     keywords: list[str] = Field(default_factory=list, description="Routing keywords")
@@ -21,6 +25,7 @@ class IntentDefinitionsResponse(BaseModel):
 class IntentDefinitionUpdateItem(BaseModel):
     intent_id: str
     route: str | None = None
+    execution_mode: str | None = None
     label: str | None = None
     description: str | None = None
     keywords: list[str] | None = None

@@ -54,13 +54,16 @@ from app.agents.new_chat.nodes import (
     build_speculative_node,
     build_synthesis_hitl_gate_node,
     build_synthesizer_node,
+    build_tool_optional_gate_node,
     build_tool_resolver_node,
 )
 from app.agents.new_chat.nodes.execution_router import get_execution_timeout_seconds
 from app.agents.new_chat.hybrid_state import (
     build_speculative_candidates,
     build_trivial_response,
+    classify_execution_mode,
     classify_graph_complexity,
+    execution_mode_to_graph_complexity,
 )
 from app.agents.new_chat.episodic_memory import (
     get_or_create_episodic_store,
@@ -101,6 +104,7 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    DEFAULT_SUPERVISOR_TOOL_OPTIONAL_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
 )
 from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
@@ -1834,6 +1838,11 @@ async def create_supervisor_agent(
         "supervisor.domain_planner.system",
         DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     )
+    tool_optional_prompt_template = resolve_prompt(
+        prompt_overrides,
+        "supervisor.tool_optional.system",
+        DEFAULT_SUPERVISOR_TOOL_OPTIONAL_PROMPT,
+    )
     synthesizer_prompt_template = resolve_prompt(
         prompt_overrides,
         "supervisor.synthesizer.system",
@@ -3117,6 +3126,17 @@ async def create_supervisor_agent(
             user_query=latest_user_query,
         )
 
+    def _classify_execution_mode(
+        resolved_intent_payload: dict[str, Any],
+        latest_user_query: str,
+    ) -> str:
+        if not hybrid_mode:
+            return "tool_required"
+        return classify_execution_mode(
+            resolved_intent=resolved_intent_payload,
+            user_query=latest_user_query,
+        )
+
     def _build_speculative_candidates_for_intent(
         resolved_intent_payload: dict[str, Any],
         latest_user_query: str,
@@ -3452,6 +3472,7 @@ async def create_supervisor_agent(
         if route_hint in {"statistik", "statistics"}:  # Statistics agents chosen by agent_resolver, not route
             limit = 1
 
+        # Weather cache invalidation removed — cache is shared across all routes
         # Extract sub_intents from state for multi-domain cache key
         sub_intents = state.get("sub_intents") if state else None
         cache_key, cache_pattern = _build_cache_key(
@@ -5414,7 +5435,7 @@ async def create_supervisor_agent(
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
         coerce_confidence_fn=_coerce_confidence,
-        classify_graph_complexity_fn=_classify_graph_complexity,
+        classify_execution_mode_fn=_classify_execution_mode,
         build_speculative_candidates_fn=_build_speculative_candidates_for_intent,
         build_trivial_response_fn=_build_trivial_response_for_intent,
         route_default_agent_fn=_route_default_agent_for_intent,
@@ -5453,6 +5474,15 @@ async def create_supervisor_agent(
         plan_preview_text_fn=_plan_preview_text,
         render_hitl_message_fn=_render_hitl_message,
         hitl_planner_message_template=hitl_planner_message_template,
+    )
+
+    tool_optional_gate_node = build_tool_optional_gate_node(
+        llm=llm,
+        tool_optional_prompt_template=tool_optional_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+        coerce_confidence_fn=_coerce_confidence,
     )
 
     tool_resolver_node = build_tool_resolver_node(
@@ -6263,15 +6293,16 @@ async def create_supervisor_agent(
                 return "execution_hitl_gate"
             if stage == "synthesis":
                 return "synthesis_hitl"
-            # Unknown/stale HITL stage — pause safely rather than proceeding
-            # without user approval.
             return END
+        # ── Use execution_mode as primary routing signal ──
+        exec_mode = str(state.get("execution_mode") or "").strip().lower()
         resolved_intent = state.get("resolved_intent") or {}
         resolved_route = _normalize_route_hint_value(
             (resolved_intent.get("route") if isinstance(resolved_intent, dict) else None)
             or state.get("route_hint")
         )
-        if resolved_route in {"konversation", "smalltalk"}:
+        # tool_forbidden → smalltalk fast path
+        if exec_mode == "tool_forbidden" or resolved_route in {"konversation", "smalltalk"}:
             return "smalltalk"
         phase = str(state.get("orchestration_phase") or "").strip().lower()
         has_final = bool(
@@ -6284,6 +6315,10 @@ async def create_supervisor_agent(
         if phase in {"plan"}:
             return "planner"
         if hybrid_mode and not compare_mode:
+            # tool_optional → try direct LLM answer first
+            if exec_mode == "tool_optional":
+                return "tool_optional_gate"
+            # Backward-compat: also check graph_complexity for simple path
             complexity = str(state.get("graph_complexity") or "").strip().lower()
             if complexity == "simple":
                 return "tool_resolver"
@@ -6291,7 +6326,7 @@ async def create_supervisor_agent(
                 if has_final:
                     return "synthesis_hitl"
                 return "agent_resolver"
-            if complexity == "complex" and speculative_enabled:
+            if (exec_mode in {"tool_required", "multi_source"}) and speculative_enabled:
                 return "speculative"
             return "agent_resolver"
         return "agent_resolver"
@@ -6327,15 +6362,13 @@ async def create_supervisor_agent(
         replan_count = int(state.get("replan_count") or 0)
         if final_response and decision in {"ok", "pass", "finalize"}:
             return "synthesis_hitl"
-        if decision == "replan" and replan_count < _MAX_REPLAN_ATTEMPTS:
-            return "planner"
-        if decision == "needs_more" and replan_count < _MAX_REPLAN_ATTEMPTS:
+        # needs_more: allow max 1 extra iteration, then force synthesis
+        if decision == "needs_more" and replan_count < 1:
             return "tool_resolver"
+        # replan removed — if plan was wrong, deliver partial result instead of looping
         if final_response:
             return "synthesis_hitl"
-        # Replan budget exhausted and guard-message may have produced an empty
-        # final_response — always exit towards synthesis rather than looping
-        # back to planner, which would create an unbounded replan cycle.
+        # No final response and budget exhausted — still go to synthesis
         return "synthesis_hitl"
 
     def synthesis_hitl_should_continue(state: SupervisorState, *, store=None):
@@ -6396,6 +6429,8 @@ async def create_supervisor_agent(
             graph_builder.add_node("speculative", RunnableCallable(None, speculative_node))
         graph_builder.add_node("memory_context", RunnableCallable(None, memory_context_node))
         graph_builder.add_node("smalltalk", RunnableCallable(None, smalltalk_node))
+        if hybrid_mode and not compare_mode:
+            graph_builder.add_node("tool_optional_gate", RunnableCallable(None, tool_optional_gate_node))
         graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
         graph_builder.add_node("planner", RunnableCallable(None, planner_node))
         graph_builder.add_node(
@@ -6459,6 +6494,8 @@ async def create_supervisor_agent(
             "synthesis_hitl",
             END,
         ]
+        if hybrid_mode and not compare_mode:
+            resolve_intent_paths.append("tool_optional_gate")
         if hybrid_mode and not compare_mode and speculative_enabled:
             resolve_intent_paths.append("speculative")
         graph_builder.add_edge("resolve_intent", "memory_context")
@@ -6468,6 +6505,18 @@ async def create_supervisor_agent(
             path_map=resolve_intent_paths,
         )
         graph_builder.add_edge("smalltalk", END)
+        # tool_optional_gate: direct answer → synthesis, fallback → agent_resolver
+        if hybrid_mode and not compare_mode:
+            def tool_optional_gate_should_continue(state: SupervisorState, *, store=None):
+                phase = str(state.get("orchestration_phase") or "").strip().lower()
+                if phase == "finalize":
+                    return "synthesis_hitl"
+                return "agent_resolver"
+            graph_builder.add_conditional_edges(
+                "tool_optional_gate",
+                tool_optional_gate_should_continue,
+                path_map=["synthesis_hitl", "agent_resolver"],
+            )
         if hybrid_mode and not compare_mode and speculative_enabled:
             graph_builder.add_edge("speculative", "agent_resolver")
         graph_builder.add_edge("agent_resolver", "planner")
@@ -6505,7 +6554,7 @@ async def create_supervisor_agent(
         graph_builder.add_conditional_edges(
             "critic",
             critic_should_continue,
-            path_map=["synthesis_hitl", "tool_resolver", "planner"],
+            path_map=["synthesis_hitl", "tool_resolver"],
         )
         graph_builder.add_conditional_edges(
             "synthesis_hitl",

@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
+from app.agents.new_chat.routing import ExecutionMode
+
+# ── Backward-compat constants ────────────────────────────────────────
 GRAPH_COMPLEXITY_TRIVIAL = "trivial"
 GRAPH_COMPLEXITY_SIMPLE = "simple"
 GRAPH_COMPLEXITY_COMPLEX = "complex"
@@ -14,6 +17,14 @@ _TRIVIAL_QUERY_RE = re.compile(
 )
 _BULK_QUERY_RE = re.compile(
     r"\b(alla|samtliga|hela\s+listan|alla\s+kommuner|alla\s+lan|bulk)\b",
+    re.IGNORECASE,
+)
+
+# ── General-knowledge patterns where LLM can likely answer directly ──
+_GENERAL_KNOWLEDGE_RE = re.compile(
+    r"\b(vad\s+(?:ar|betyder|innebar)|vem\s+(?:ar|var)|"
+    r"forklara|beskriv|definiera|vad\s+heter|"
+    r"hur\s+fungerar|what\s+is|who\s+is|explain|define)\b",
     re.IGNORECASE,
 )
 
@@ -51,34 +62,106 @@ def looks_trivial_query(query: str) -> bool:
     return bool(_TRIVIAL_QUERY_RE.match(text))
 
 
+def _looks_general_knowledge(query: str) -> bool:
+    """Check if the query is likely answerable by LLM alone (no tools)."""
+    text = str(query or "").strip()
+    if not text:
+        return False
+    return bool(_GENERAL_KNOWLEDGE_RE.search(text))
+
+
+# ── Tool-signal keywords: queries that almost certainly need API data ──
+_TOOL_SIGNAL_RE = re.compile(
+    r"\b(vader|vadret|smhi|temperatur|regn|prognos|"
+    r"trafik|trafiken|trafikverket|"
+    r"statistik|scb|befolkning|kolada|"
+    r"bolag|bolagsverket|"
+    r"riksdagen|proposition|"
+    r"blocket|tradera|annons|marknadsplats|"
+    r"priser|kpi|inflation|"
+    r"sokvag|resplan|pendeltag)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_execution_mode(
+    *,
+    resolved_intent: dict[str, Any] | None,
+    user_query: str,
+) -> str:
+    """Classify the query into an ExecutionMode (Nivå 1 decision).
+
+    This is the FIRST routing decision in the new architecture.
+    Returns one of: tool_required, tool_optional, tool_forbidden, multi_source.
+    """
+    intent = resolved_intent if isinstance(resolved_intent, dict) else {}
+    # If the intent_resolver already set execution_mode, trust it.
+    llm_mode = str(intent.get("execution_mode") or "").strip().lower()
+    if llm_mode in {m.value for m in ExecutionMode}:
+        return llm_mode
+
+    route = str(intent.get("route") or "").strip().lower()
+    confidence = _safe_confidence(intent.get("confidence"), 0.5)
+    query_text = str(user_query or "").strip()
+
+    # 1. Trivial queries → tool_forbidden
+    if looks_trivial_query(query_text):
+        return ExecutionMode.TOOL_FORBIDDEN.value
+
+    if route in {"konversation", "smalltalk"} and confidence >= 0.75:
+        return ExecutionMode.TOOL_FORBIDDEN.value
+
+    # 2. Compare / mixed → multi_source
+    if route in {"jämförelse", "compare", "mixed"}:
+        return ExecutionMode.MULTI_SOURCE.value
+
+    sub_intents = intent.get("sub_intents")
+    if isinstance(sub_intents, list) and len(sub_intents) > 1:
+        return ExecutionMode.MULTI_SOURCE.value
+
+    # 3. Explicit tool-signal keywords → tool_required
+    if _TOOL_SIGNAL_RE.search(query_text):
+        return ExecutionMode.TOOL_REQUIRED.value
+
+    # 4. Bulk queries → tool_required
+    if _BULK_QUERY_RE.search(query_text):
+        return ExecutionMode.TOOL_REQUIRED.value
+
+    # 5. High-confidence general knowledge → tool_optional
+    if confidence >= 0.72 and _looks_general_knowledge(query_text):
+        query_tokens = _tokenize_query(query_text)
+        if len(query_tokens) <= 18 and not _TOOL_SIGNAL_RE.search(query_text):
+            return ExecutionMode.TOOL_OPTIONAL.value
+
+    # 6. Default: tool_required (better to have tools available)
+    return ExecutionMode.TOOL_REQUIRED.value
+
+
+def execution_mode_to_graph_complexity(execution_mode: str) -> str:
+    """Map ExecutionMode to the old graph_complexity for backward compat."""
+    mode = str(execution_mode or "").strip().lower()
+    if mode == ExecutionMode.TOOL_FORBIDDEN.value:
+        return GRAPH_COMPLEXITY_TRIVIAL
+    if mode == ExecutionMode.TOOL_OPTIONAL.value:
+        return GRAPH_COMPLEXITY_SIMPLE
+    if mode == ExecutionMode.MULTI_SOURCE.value:
+        return GRAPH_COMPLEXITY_COMPLEX
+    # tool_required — most queries are single-agent; planner handles multi-step
+    return GRAPH_COMPLEXITY_SIMPLE
+
+
+# ── Backward-compat wrapper ──────────────────────────────────────────
 def classify_graph_complexity(
     *,
     resolved_intent: dict[str, Any] | None,
     user_query: str,
 ) -> str:
-    intent = resolved_intent if isinstance(resolved_intent, dict) else {}
-    route = str(intent.get("route") or "").strip().lower()
-    confidence = _safe_confidence(intent.get("confidence"), 0.5)
-    query_text = str(user_query or "").strip()
-    query_tokens = _tokenize_query(query_text)
-
-    if looks_trivial_query(query_text):
-        return GRAPH_COMPLEXITY_TRIVIAL
-
-    if route in {"konversation", "smalltalk"} and confidence >= 0.75:
-        return GRAPH_COMPLEXITY_TRIVIAL
-
-    if route in {"jämförelse", "compare"}:
-        return GRAPH_COMPLEXITY_COMPLEX
-
-    if _BULK_QUERY_RE.search(query_text):
-        return GRAPH_COMPLEXITY_COMPLEX
-
-    if confidence >= 0.72 and route in {"kunskap", "knowledge", "åtgärd", "action", "väder", "weather", "trafik"}:
-        if len(query_tokens) <= 18:
-            return GRAPH_COMPLEXITY_SIMPLE
-
-    return GRAPH_COMPLEXITY_COMPLEX
+    """Legacy wrapper: returns graph_complexity derived from execution_mode."""
+    mode = classify_execution_mode(
+        resolved_intent=resolved_intent,
+        user_query=user_query,
+    )
+    return execution_mode_to_graph_complexity(mode)
 
 
 def build_trivial_response(user_query: str) -> str | None:

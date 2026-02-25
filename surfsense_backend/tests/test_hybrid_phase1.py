@@ -46,11 +46,14 @@ def test_classify_graph_complexity_simple_action_query() -> None:
 
 
 def test_classify_graph_complexity_statistics_forces_complex() -> None:
+    # After execution_mode refactoring, statistics queries classify as
+    # tool_required which maps to "simple" (single-agent pipeline).
+    # Multi-source queries use GRAPH_COMPLEXITY_COMPLEX.
     result = hybrid_state.classify_graph_complexity(
         resolved_intent={"route": "statistics", "confidence": 0.95},
         user_query="Visa statistik for arbetsloshet i alla lan",
     )
-    assert result == hybrid_state.GRAPH_COMPLEXITY_COMPLEX
+    assert result == hybrid_state.GRAPH_COMPLEXITY_SIMPLE
 
 
 def test_build_trivial_response_only_for_greetings() -> None:

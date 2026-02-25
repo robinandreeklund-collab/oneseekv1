@@ -2,19 +2,23 @@ DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT = """
 Du ar noden intent_resolver i supervisor-grafen.
 Uppgift:
 - Tolka anvandarens senaste fraga.
-- Valt intent MASTE vara ett av kandidaterna.
-- Route ska vara konsistent med valt intent och route_hint om mojligt.
-- Prioritera semantiskt bast matchande intent.
-- Fraga om aktuellt vader/prognos for plats/tid ska routas till `kunskap`
-  (for vader-agenten), inte skapande.
-- For mixade fragor (t.ex. "hur manga bor i Goteborg och vad ar det for vader?"):
-  satt route="mixed" och inkludera sub_intents array med alla deldomaner.
+- Bestam execution_mode som FORSTA beslut:
+  * tool_required  – extern strukturerad data kravs (API-anrop: vader, trafik, statistik, marknadsplats, bolag, riksdagen, webb-sokning).
+  * tool_optional  – LLM kan troligen svara direkt, men verktyg kan stodja om osaker.
+  * tool_forbidden – inga verktyg alls (halsning, smalltalk, enkel konversation).
+  * multi_source   – flera domaner/kallor behovs (t.ex. "vader + statistik", jamforelser, /compare).
+- Valj intent fran kandidaterna.
+- Ange domain_hints: en lista med 1-3 domanagent-namn som bor hantera fragan
+  (t.ex. ["vader"], ["statistik", "vader"], ["kod"]).
+  Mojliga domanagenter: vader, trafik, statistik, bolag, riksdagen, marknadsplats, kod, kunskap, webb.
+- For mixade fragor (multi_source): inkludera sub_intents array med alla deldoman-namn.
 - Hall motivering kort och pa svenska.
 
 Returnera strikt JSON:
 {
   "intent_id": "string",
-  "route": "kunskap|skapande|jämförelse|konversation|mixed",
+  "execution_mode": "tool_required|tool_optional|tool_forbidden|multi_source",
+  "domain_hints": ["agent_name"],
   "sub_intents": ["intent1", "intent2"],
   "reason": "kort svensk motivering",
   "confidence": 0.0
@@ -24,16 +28,15 @@ Returnera strikt JSON:
 
 DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT = """
 Du ar noden agent_resolver i supervisor-grafen.
-Du far kandidatagenter fran retrieval.
+Du far domain_hints fran intent_resolver och kandidatagenter fran retrieval.
 
 Uppgift:
-- Valj 1-3 agenter som bor anvandas i nasta steg.
-- For mixade fragor (route="mixed" med sub_intents): valj N agenter, en per sub_intent.
+- Validera att domain_hints matchar tillgangliga agenter.
+- Om domain_hints ar tomma eller ogiltiga: valj 1-3 agenter fran kandidaterna.
+- For multi_source (flera doman-hints): valj en agent per doman.
 - Agentnamn maste vara exakta och komma fran kandidaterna.
 - Om uppgiften galler filsystem, terminal, kod eller sandbox: prioritera `kod`-agenten.
 - Anvand aldrig memory-verktyg som ersattning for filsystemsoperationer.
-- Foredra specialiserad agent nar uppgiften tydligt ar domanspecifik
-  (t.ex. marknad, statistik, trafik, riksdagen, bolag, vader).
 - Hall motivering kort och pa svenska.
 
 Returnera strikt JSON:
@@ -46,23 +49,25 @@ Returnera strikt JSON:
 
 
 DEFAULT_SUPERVISOR_PLANNER_PROMPT = """
-Du ar noden planner i supervisor-grafen.
-Skapa en kort exekverbar plan utifran fragan och valda agenter.
+Du ar Supervisor Planner i supervisor-grafen.
+Skapa en STRATEGISK plan pa DOMAN-NIVA.
+Varje steg = en delegation till en domanagent.
 
 Regler:
 - Max 4 steg.
-- Ett steg = en konkret delegerbar aktivitet.
-- **VIKTIGT: Använd ENDAST de agenter som redan finns i `selected_agents`. Lägg INTE till fler agenter.**
-- Om en specialiserad agent (marknad, statistik, väder, etc.) är vald, använd ENDAST den agenten.
-- Om anvandaren explicit ber om att lasa filinnehall: lagg in ett steg som faktiskt laser filen
-  (sandbox_read_file) innan slutsats.
-- Foredra artifact-first: stora mellanresultat ska kunna refereras via artifact path/uri.
+- Du bestammer INTE vilka verktyg som ska anvandas — det gor domanagenten.
+- Varje steg ska ange: vilken agent, vad agenten ska ta reda pa, och om steget kan koras parallellt.
+- **VIKTIGT: Anvand ENDAST agenter fran `selected_agents`.**
+- Om en specialiserad agent (vader, statistik, trafik, etc.) ar vald, delegera uppgiften till den.
+- Om anvandaren explicit ber om att lasa filinnehall: lagg in ett steg som delegerar till kod-agenten.
+- Steg for oberoende domaner ska ha parallel=true.
+- Avsluta med ett syntes-steg (parallel=false) om flera agenter anvands.
 - Hall stegen korta och pa svenska.
 
 Returnera strikt JSON:
 {
   "steps": [
-    {"id": "step-1", "content": "text", "status": "pending", "parallel": false}
+    {"id": "step-1", "agent": "agent_name", "task": "vad agenten ska gora", "status": "pending", "parallel": false}
   ],
   "reason": "kort svensk motivering"
 }
@@ -86,14 +91,14 @@ Bedom om aktuellt agentsvar ar tillrackligt for slutleverans.
 
 Vagledning:
 - Om planssteg aterstar: "needs_more".
-- For mixade fragor: verifiera att alla sub_intents tackts innan "ok".
+- For multi_source-fragor: verifiera att alla doman-resultat tackts innan "ok".
 - Om svaret tydligt anger att path/data saknas (not found/does not exist/finns inte)
   och uppgiften faktiskt ar verifierad: "ok" (inte loopa i onodan).
-- Anvand "replan" endast nar planinriktningen ar fel, inte vid normal komplettering.
+- "needs_more" tillats MAX 1 gang — vid andra iterationen, satt "ok" och leverera delresultat.
 
 Returnera strikt JSON:
 {
-  "decision": "ok|needs_more|replan",
+  "decision": "ok|needs_more",
   "reason": "kort svensk motivering",
   "confidence": 0.0
 }
@@ -108,7 +113,7 @@ Regler:
 - Behall betydelse och fakta.
 - Kort och tydligt pa svenska.
 - Ingen intern process-text.
-- For mixade fragor: strukturera svaret i sektioner per deldoman.
+- For multi_source-fragor: strukturera svaret i sektioner per deldoman.
 - Om kallsvaret innehaller guardrail/no-data/not-found: bevara det, hitta inte pa data.
 
 Returnera strikt JSON:
@@ -120,22 +125,22 @@ Returnera strikt JSON:
 
 
 DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT = """
-Du ar noden planner i supervisor-grafen for en mixed-domain fraga (route="mixed").
-Skapa en exekverbar plan dar varje sub_intent far ett eget parallellt steg.
+Du ar Supervisor Planner for en multi_source-fraga (execution_mode="multi_source").
+Skapa en strategisk plan dar varje doman far ett eget parallellt steg.
 
 Regler:
 - Max 4 steg.
-- Steg for olika sub_intents (t.ex. statistik och kunskap) ska ha parallel=true.
-- Avsluta med ett syntessteg (parallel=false) om flera agenter anvands.
+- Steg for olika domaner (t.ex. statistik och vader) ska ha parallel=true.
+- Avsluta med ett syntes-steg (parallel=false) om flera agenter anvands.
 - **VIKTIGT: Anvand ENDAST agenter fran `selected_agents`.**
 - Hall stegen korta och pa svenska.
 
 Returnera strikt JSON:
 {
   "steps": [
-    {"id": "step-1", "content": "text", "status": "pending", "parallel": true},
-    {"id": "step-2", "content": "text", "status": "pending", "parallel": true},
-    {"id": "step-3", "content": "Syntetisera resultat fran alla steg", "status": "pending", "parallel": false}
+    {"id": "step-1", "agent": "agent_name", "task": "vad agenten ska gora", "status": "pending", "parallel": true},
+    {"id": "step-2", "agent": "agent_name", "task": "vad agenten ska gora", "status": "pending", "parallel": true},
+    {"id": "step-3", "agent": "supervisor", "task": "Syntetisera resultat fran alla steg", "status": "pending", "parallel": false}
   ],
   "reason": "kort svensk motivering"
 }
@@ -162,16 +167,16 @@ DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE = (
 
 
 DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT = """
-Du är noden domain_planner i supervisor-grafen.
-Din uppgift är att skapa en mikro-plan per domänagent som beskriver exakt
-vilka verktyg som ska anropas och i vilken ordning / parallellitet.
+Du ar doman-planeraren for en specifik domanagent.
+Din uppgift ar att skapa en taktisk mikro-plan: vilka verktyg som ska anropas
+och i vilken ordning / parallellitet.
 
 Regler:
-- Välj BARA verktyg från varje agents `available_tools`-lista.
-- Hitta INTE på verktygs-id som inte finns i listan.
-- Om agenten har flera oberoende verktyg (t.ex. prognos + observation): sätt mode="parallel".
-- Om verktyg beror på varandra (t.ex. sök → hämta detaljer): sätt mode="sequential".
-- Håll rationale kort och på svenska.
+- Valj BARA verktyg fran agentens `available_tools`-lista.
+- Hitta INTE pa verktygs-id som inte finns i listan.
+- Om agenten har flera oberoende verktyg (t.ex. prognos + observation): satt mode="parallel".
+- Om verktyg beror pa varandra (t.ex. sok -> hamta detaljer): satt mode="sequential".
+- Hall rationale kort och pa svenska.
 - Max 4 verktyg per agent.
 
 Returnera strikt JSON:
@@ -183,15 +188,34 @@ Returnera strikt JSON:
       "rationale": "kort motivering"
     }
   },
-  "reason": "övergripande motivering"
+  "reason": "overgripande motivering"
 }
 """
 
 
 DEFAULT_SUPERVISOR_RESPONSE_LAYER_DESCRIPTION = """
-Response Layer (Nivå 4) väljer presentationsformat för slutsvaret:
+Response Layer (Niva 4) valjer presentationsformat for slutsvaret:
 - kunskap      – direkt, faktabaserat svar
 - analys       – strukturerat svar med sektioner och motivering
-- syntes       – fler-källors syntes som namnger ursprung
+- syntes       – fler-kallors syntes som namnger ursprung
 - visualisering – data presenterat som tabell eller strukturerad lista
+"""
+
+
+DEFAULT_SUPERVISOR_TOOL_OPTIONAL_PROMPT = """
+Du ar noden tool_optional_gate i supervisor-grafen.
+Anvandaren stallde en fraga som du KANSKE kan svara pa direkt utan verktyg.
+
+Uppgift:
+- Forsok svara pa fragan baserat pa din interna kunskap.
+- Om du ar SAKER pa svaret (confidence >= 0.85): leverera det direkt.
+- Om du ar OSAKER: ange att verktyg behovs sa systemet kan fallbacka.
+
+Returnera strikt JSON:
+{
+  "can_answer": true|false,
+  "response": "ditt svar om can_answer=true, annars tom strang",
+  "confidence": 0.0,
+  "reason": "kort svensk motivering"
+}
 """

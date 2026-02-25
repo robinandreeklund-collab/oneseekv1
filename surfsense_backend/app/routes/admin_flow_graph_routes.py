@@ -35,9 +35,13 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
     # ── Entry ──
     {
         "id": "node:resolve_intent",
-        "label": "Resolve Intent",
+        "label": "Resolve Intent + Execution Mode",
         "stage": "entry",
-        "description": "Klassificerar frågan → route (kunskap/skapande/jämförelse/konversation) + confidence.",
+        "description": (
+            "Klassificerar frågan → execution_mode (tool_required/tool_optional/"
+            "tool_forbidden/multi_source) + domain_hints + confidence. "
+            "Detta är det FÖRSTA beslutet (Nivå 1)."
+        ),
         "prompt_key": "supervisor.intent_resolver.system",
     },
     {
@@ -50,32 +54,48 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
     # ── Fast paths ──
     {
         "id": "node:smalltalk",
-        "label": "Smalltalk",
+        "label": "Smalltalk (tool_forbidden)",
         "stage": "fast_path",
-        "description": "Snabb hälsningssvar (konversation-route). → END",
+        "description": "Snabb hälsningssvar — execution_mode=tool_forbidden. → END",
         "prompt_key": "agent.smalltalk.system",
+    },
+    {
+        "id": "node:tool_optional_gate",
+        "label": "Tool-Optional Gate",
+        "stage": "fast_path",
+        "description": (
+            "LLM försöker svara direkt utan verktyg. Om confidence >= 0.85 → END, "
+            "annars fallback till tool_required-flödet."
+        ),
+        "prompt_key": "supervisor.tool_optional.system",
     },
     # ── Speculative ──
     {
         "id": "node:speculative",
         "label": "Speculative",
         "stage": "speculative",
-        "description": "Förberäknar troliga verktyg parallellt (hybrid-läge, komplex fråga).",
+        "description": "Förberäknar troliga verktyg parallellt (hybrid-läge).",
         "prompt_key": None,
     },
-    # ── Planning ──
+    # ── Planning (Supervisor — strategisk nivå) ──
     {
         "id": "node:agent_resolver",
-        "label": "Agent Resolver",
+        "label": "Agent Resolver (Validation)",
         "stage": "planning",
-        "description": "Hämtar och väljer agenter via vektor-retrieval + LLM-rankning.",
+        "description": (
+            "Validerar domain_hints mot tillgängliga agenter. "
+            "Kör LLM bara om domain_hints är tomma eller ogiltiga."
+        ),
         "prompt_key": "supervisor.agent_resolver.system",
     },
     {
         "id": "node:planner",
-        "label": "Planner",
+        "label": "Supervisor Planner (Strategisk)",
         "stage": "planning",
-        "description": "Skapar exekverbar plan (max 4 steg) baserat på valda agenter.",
+        "description": (
+            "Skapar strategisk plan på DOMÄNNIVÅ: vilken agent ska göra vad, "
+            "parallellt eller sekventiellt. Max 4 steg."
+        ),
         "prompt_key": "supervisor.planner.system",
     },
     {
@@ -85,7 +105,7 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "description": "Human-in-the-loop: pausar för användarens godkännande av planen.",
         "prompt_key": "supervisor.hitl.planner.message",
     },
-    # ── Tool resolution ──
+    # ── Tool resolution + Domain planning (taktisk nivå) ──
     {
         "id": "node:tool_resolver",
         "label": "Tool Resolver",
@@ -109,9 +129,12 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
     },
     {
         "id": "node:domain_planner",
-        "label": "Domain Planner",
+        "label": "Domain Planner (Taktisk)",
         "stage": "tool_resolution",
-        "description": "LLM-driven mikro-plan per domänagent: vilka sub-verktyg och om de körs parallellt eller sekventiellt (Nivå 2 agentplan).",
+        "description": (
+            "Domänagentens taktiska mikro-plan: vilka sub-verktyg "
+            "och om de körs parallellt eller sekventiellt (Nivå 2)."
+        ),
         "prompt_key": "supervisor.domain_planner.system",
     },
     # ── Execution ──
@@ -170,7 +193,7 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "id": "node:critic",
         "label": "Critic",
         "stage": "evaluation",
-        "description": "Bedömer om svaret är tillräckligt (ok/needs_more/replan).",
+        "description": "Bedömer om svaret är tillräckligt (ok/needs_more). Max 1 extra iteration.",
         "prompt_key": "supervisor.critic.system",
     },
     # ── Synthesis ──
@@ -207,19 +230,23 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
 _PIPELINE_EDGES: list[dict[str, Any]] = [
     # ── Main flow ──
     {"source": "node:resolve_intent", "target": "node:memory_context", "type": "normal"},
-    # ── Conditional from memory_context (route_after_intent) ──
-    {"source": "node:memory_context", "target": "node:smalltalk", "type": "conditional", "label": "konversation"},
-    {"source": "node:memory_context", "target": "node:speculative", "type": "conditional", "label": "komplex"},
-    {"source": "node:memory_context", "target": "node:agent_resolver", "type": "conditional", "label": "default"},
-    {"source": "node:memory_context", "target": "node:tool_resolver", "type": "conditional", "label": "enkel"},
+    # ── Conditional from memory_context (route_after_execution_mode) ──
+    {"source": "node:memory_context", "target": "node:smalltalk", "type": "conditional", "label": "tool_forbidden"},
+    {"source": "node:memory_context", "target": "node:tool_optional_gate", "type": "conditional", "label": "tool_optional"},
+    {"source": "node:memory_context", "target": "node:speculative", "type": "conditional", "label": "tool_required (speculative)"},
+    {"source": "node:memory_context", "target": "node:agent_resolver", "type": "conditional", "label": "tool_required / multi_source"},
+    {"source": "node:memory_context", "target": "node:tool_resolver", "type": "conditional", "label": "tool_required (simple)"},
     {"source": "node:memory_context", "target": "node:synthesis_hitl", "type": "conditional", "label": "finalize"},
+    # ── Tool-optional fast path ──
+    {"source": "node:tool_optional_gate", "target": "node:synthesis_hitl", "type": "conditional", "label": "confident → direct answer"},
+    {"source": "node:tool_optional_gate", "target": "node:agent_resolver", "type": "conditional", "label": "fallback → tool_required"},
     # ── Speculative → planning ──
     {"source": "node:speculative", "target": "node:agent_resolver", "type": "normal"},
-    # ── Planning flow ──
+    # ── Planning flow (Supervisor strategisk plan) ──
     {"source": "node:agent_resolver", "target": "node:planner", "type": "normal"},
     {"source": "node:planner", "target": "node:planner_hitl_gate", "type": "normal"},
     {"source": "node:planner_hitl_gate", "target": "node:tool_resolver", "type": "conditional", "label": "godkänd"},
-    # ── Tool resolution → domain planner → execution ──
+    # ── Tool resolution → domain planner (taktisk plan) → execution ──
     {"source": "node:tool_resolver", "target": "node:speculative_merge", "type": "normal"},
     {"source": "node:speculative_merge", "target": "node:execution_router", "type": "normal"},
     {"source": "node:execution_router", "target": "node:domain_planner", "type": "normal"},
@@ -234,10 +261,9 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:artifact_indexer", "target": "node:context_compactor", "type": "normal"},
     {"source": "node:context_compactor", "target": "node:orchestration_guard", "type": "normal"},
     {"source": "node:orchestration_guard", "target": "node:critic", "type": "normal"},
-    # ── Critic decisions ──
+    # ── Critic decisions (no replan — limited to ok + needs_more with max 1 extra) ──
     {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},
-    {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more"},
-    {"source": "node:critic", "target": "node:planner", "type": "conditional", "label": "replan"},
+    {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more (max 1x)"},
     # ── Synthesis → response layer ──
     {"source": "node:synthesis_hitl", "target": "node:progressive_synthesizer", "type": "conditional", "label": "komplex"},
     {"source": "node:synthesis_hitl", "target": "node:synthesizer", "type": "conditional", "label": "enkel"},
@@ -305,6 +331,7 @@ async def get_flow_graph(
             "label": intent.get("label", intent_id),
             "description": intent.get("description", ""),
             "route": intent.get("route", ""),
+            "execution_mode": intent.get("execution_mode", "tool_required"),
             "graph_route": intent.get("graph_route", intent.get("route", "")),
             "is_custom_route": bool(intent.get("is_custom_route", False)),
             "keywords": intent.get("keywords", []),
@@ -406,6 +433,7 @@ class UpdateIntentRequest(BaseModel):
     intent_id: str
     label: str | None = None
     route: str | None = None
+    execution_mode: str | None = None
     graph_route: str | None = None
     description: str | None = None
     keywords: list[str] | None = None
@@ -551,6 +579,8 @@ async def upsert_intent(
         payload["label"] = request.label
     if request.route is not None:
         payload["route"] = request.route
+    if request.execution_mode is not None:
+        payload["execution_mode"] = request.execution_mode
     if request.graph_route is not None:
         payload["graph_route"] = request.graph_route
     if request.description is not None:

@@ -491,7 +491,11 @@ async def test_retry_on_429():
                 request=mock_request,
                 response=mock_response,
             )
-        return {"values": []}
+        success_response = MagicMock()
+        success_response.status_code = 200
+        success_response.json.return_value = {"values": []}
+        success_response.raise_for_status = MagicMock()
+        return success_response
     
     with patch("httpx.AsyncClient") as mock_client_class:
         mock_client = MagicMock()
