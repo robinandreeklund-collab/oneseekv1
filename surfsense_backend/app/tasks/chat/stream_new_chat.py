@@ -795,10 +795,18 @@ _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "planner",
     "tool_resolver",
     "execution_router",
+    "executor",
+    "worker",
     "domain_planner",
     "critic",
-    "progressive_synthesizer",
+)
+
+# Pipeline nodes whose model output IS the final user-facing response.
+# These are intentionally NOT in _INTERNAL_PIPELINE_CHAIN_TOKENS so their
+# text streams as text-delta (visible response) rather than being buffered.
+_OUTPUT_PIPELINE_CHAIN_TOKENS = (
     "synthesizer",
+    "progressive_synthesizer",
     "response_layer",
 )
 
@@ -836,6 +844,8 @@ _PIPELINE_NODE_TITLES: dict[str, str] = {
     "planner": "Building plan",
     "tool_resolver": "Resolving tools",
     "execution_router": "Routing execution",
+    "executor": "Executing",
+    "worker": "Running agent",
     "domain_planner": "Planning domain execution",
     "critic": "Reviewing findings",
     "progressive_synthesizer": "Preparing draft",
@@ -1190,10 +1200,30 @@ def _split_trailing_pipeline_prefix(text: str) -> tuple[str, str]:
 
 
 def _is_internal_pipeline_chain_name(chain_name: str) -> bool:
+    """Return True if *chain_name* belongs to an internal (non-output) pipeline node.
+
+    Models under these nodes have their content buffered and routed to
+    reasoning-delta, NOT to text-delta.
+    """
     normalized = str(chain_name or "").strip().lower()
     if not normalized:
         return False
     return any(token in normalized for token in _INTERNAL_PIPELINE_CHAIN_TOKENS)
+
+
+def _is_any_pipeline_chain_name(chain_name: str) -> bool:
+    """Return True if *chain_name* belongs to ANY pipeline node (internal or output).
+
+    Used for step labeling and chain-end text extraction where we want to
+    recognise all known pipeline nodes, not just the buffered ones.
+    """
+    normalized = str(chain_name or "").strip().lower()
+    if not normalized:
+        return False
+    return any(
+        token in normalized
+        for token in (*_INTERNAL_PIPELINE_CHAIN_TOKENS, *_OUTPUT_PIPELINE_CHAIN_TOKENS)
+    )
 
 
 def _coerce_runtime_flag(value: Any, *, default: bool = False) -> bool:
@@ -2535,7 +2565,7 @@ async def stream_new_chat(
                             items.append(f"Draft confidence: {float(confidence):.2f}")
                         if draft_text:
                             items.append(draft_text[:180])
-                if source_chain and _is_internal_pipeline_chain_name(source_chain):
+                if source_chain and _is_any_pipeline_chain_name(source_chain):
                     items.insert(0, f"Nod: {source_chain}")
                 events.append(
                     streaming_service.format_thinking_step(
@@ -2876,7 +2906,7 @@ async def stream_new_chat(
                     if candidate_text:
                         source_chain = (
                             chain_name
-                            if _is_internal_pipeline_chain_name(chain_name)
+                            if _is_any_pipeline_chain_name(chain_name)
                             else None
                         )
                         for step_event in emit_pipeline_steps_from_text(
@@ -4567,7 +4597,7 @@ async def stream_new_chat(
                 if candidate_text:
                     source_chain = (
                         chain_name
-                        if _is_internal_pipeline_chain_name(chain_name)
+                        if _is_any_pipeline_chain_name(chain_name)
                         else None
                     )
                     for step_event in emit_pipeline_steps_from_text(
