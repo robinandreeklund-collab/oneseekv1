@@ -1266,6 +1266,23 @@ TOOL_CONTRASTIVE_EXCLUSIONS: dict[str, dict[str, list[str]]] = {
             "SMHI", "väderprognos",
         ],
     },
+    # --- Kolada boende vs SCB befolkning disambiguation ---
+    "tools.statistics.kolada.boende": {
+        "kolada_boende": [
+            "befolkning", "folkmängd", "invånare", "hur många bor",
+            "antal invånare", "demografi", "födelser", "dödsfall",
+        ],
+    },
+    "tools.statistics.scb.befolkning": {
+        "scb_befolkning": [
+            "bostadsbestånd", "nybyggnation", "bygglov", "hyra",
+            "bostadskö", "bostad", "bostadsrätt", "hyresrätt",
+        ],
+        "scb_befolkning_folkmangd": [
+            "bostadsbestånd", "nybyggnation", "bygglov", "hyra",
+            "bostadskö", "bostad",
+        ],
+    },
 }
 
 

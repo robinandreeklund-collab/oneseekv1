@@ -63,22 +63,29 @@ SCB_TOOL_DEFINITIONS: list[ScbToolDefinition] = [
         name="SCB Befolkning",
         base_path="BE/",
         description=(
-            "Befolkningsstatistik fran SCB. Omfattar folkmangd, flyttningar, "
-            "fodelser, dodsfall, alder, kon och region."
+            "Befolkningsstatistik fran SCB. Omfattar folkmangd, invånare, "
+            "flyttningar, fodelser, dodsfall, alder, kon och region. "
+            "Anvand for fragor om hur manga som bor i en kommun eller region."
         ),
         keywords=[
             "befolkning",
             "folkmangd",
+            "invanare",
+            "bor",
             "flytt",
             "migration",
             "fodd",
             "dod",
             "alder",
             "kon",
+            "demografi",
+            "antal manniskor",
         ],
         example_queries=[
             "Befolkning i Stockholms lan 2024",
             "Folkmangd Sverige 2015-2024",
+            "Hur manga bor i Hjo?",
+            "Antal invanare i Goteborg 2023",
             "Flyttnetto per lan 2020-2024",
             "Fodda och dodda i Skane 2015-2024",
             "Aldersfordelning i Goteborg 2023",
@@ -560,11 +567,16 @@ SCB_TOOL_DEFINITIONS: list[ScbToolDefinition] = [
         tool_id="scb_befolkning_folkmangd",
         name="SCB Befolkning - Folkmangd",
         base_path="BE/BE0101/BE0101A/",
-        description="Folkmangd och befolkning per region, alder och kon.",
-        keywords=["folkmangd", "befolkning", "alder", "kon", "region"],
+        description=(
+            "Folkmangd, antal invanare och befolkning per region, alder och kon. "
+            "Anvand for fragor om hur manga som bor i en kommun."
+        ),
+        keywords=["folkmangd", "befolkning", "invanare", "bor", "alder", "kon", "region", "antal manniskor"],
         example_queries=[
             "Folkmangd Sverige 2010-2024",
             "Befolkning per lan 2024",
+            "Hur manga bor i Hjo?",
+            "Antal invanare i Goteborg 2023",
             "Aldersfordelning Goteborg 2023",
         ],
         table_codes=["BE0101A"],

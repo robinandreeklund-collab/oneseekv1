@@ -386,7 +386,8 @@ KOLADA_TOOL_DEFINITIONS: list[KoladaToolDefinition] = [
         operating_area=None,
         description=(
             "Nyckeltal för boende och bostäder från Kolada. Omfattar bostadsbestånd, "
-            "nybyggnation, bostadskö och hyror."
+            "nybyggnation, bostadskö och hyror. Inte befolkningsstatistik eller folkmängd "
+            "(använd SCB befolkning för det)."
         ),
         keywords=[
             "boende",

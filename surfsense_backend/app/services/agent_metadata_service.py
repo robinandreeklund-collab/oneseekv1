@@ -489,6 +489,11 @@ def normalize_agent_metadata_payload(
         if "flow_tools" in payload
         else fallback_flow_tools
     )
+    # If the override produced an empty list but defaults have tools,
+    # fall back to defaults so DB overrides that omit flow_tools don't
+    # silently disconnect all tools from the agent.
+    if not flow_tools and fallback_flow_tools:
+        flow_tools = fallback_flow_tools
     main_identifier = _normalize_identity_field(payload.get("main_identifier", default_payload.get("main_identifier", "")), 80)
     core_activity = _normalize_identity_field(payload.get("core_activity", default_payload.get("core_activity", "")), 120)
     unique_scope = _normalize_identity_field(payload.get("unique_scope", default_payload.get("unique_scope", "")), 120)
