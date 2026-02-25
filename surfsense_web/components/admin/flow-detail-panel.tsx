@@ -1598,6 +1598,13 @@ function ToolDetail({
 					)}
 				</div>
 			)}
+
+			{/* Tool Runtime Prompt */}
+			<Separator />
+			<InlinePromptEditor
+				promptKey={`tool.${tool.tool_id}.system`}
+				onSaved={onDataChanged}
+			/>
 		</div>
 	);
 }

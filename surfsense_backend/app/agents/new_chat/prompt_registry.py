@@ -76,6 +76,8 @@ def infer_prompt_node_group(key: str) -> tuple[str, str]:
         return ("supervisor", "Supervisor")
     if normalized_key.startswith("agent.") and normalized_key != "agent.supervisor.system":
         return ("subagent", "Subagent/Worker")
+    if normalized_key.startswith("tool."):
+        return ("tool", "Verktyg")
     if normalized_key.startswith("system.") or normalized_key.startswith("citation."):
         return ("system", "System")
     return ("other", "Övrigt")
@@ -456,24 +458,40 @@ _DEFAULT_CUSTOM_AGENT_PROMPT = DEFAULT_WORKER_KNOWLEDGE_PROMPT
 def make_dynamic_prompt_definition(prompt_key: str) -> PromptDefinition | None:
     """Create a PromptDefinition on-the-fly for a key not in the static registry.
 
-    Accepts keys matching ``agent.<name>.system`` and returns a definition
-    with the default worker knowledge prompt so that custom agents created
-    via the admin UI are immediately editable.
+    Accepts keys matching ``agent.<name>.system`` or ``tool.<name>.system``
+    and returns a definition so that custom agents/tools created via the
+    admin UI are immediately editable.
     """
     if prompt_key in PROMPT_DEFINITION_MAP:
         return None  # already registered statically
-    if not prompt_key.startswith("agent.") or not prompt_key.endswith(".system"):
-        return None
-    agent_slug = prompt_key.removeprefix("agent.").removesuffix(".system")
-    if not agent_slug:
-        return None
-    return PromptDefinition(
-        key=prompt_key,
-        label=f"{agent_slug.replace('_', ' ').title()}-agent prompt",
-        description=f"System-prompt for custom agent '{agent_slug}'.",
-        default_prompt=_DEFAULT_CUSTOM_AGENT_PROMPT,
-        active_in_admin=True,
-    )
+
+    # agent.<slug>.system
+    if prompt_key.startswith("agent.") and prompt_key.endswith(".system"):
+        agent_slug = prompt_key.removeprefix("agent.").removesuffix(".system")
+        if not agent_slug:
+            return None
+        return PromptDefinition(
+            key=prompt_key,
+            label=f"{agent_slug.replace('_', ' ').title()}-agent prompt",
+            description=f"System-prompt for custom agent '{agent_slug}'.",
+            default_prompt=_DEFAULT_CUSTOM_AGENT_PROMPT,
+            active_in_admin=True,
+        )
+
+    # tool.<tool_id>.system
+    if prompt_key.startswith("tool.") and prompt_key.endswith(".system"):
+        tool_id = prompt_key.removeprefix("tool.").removesuffix(".system")
+        if not tool_id:
+            return None
+        return PromptDefinition(
+            key=prompt_key,
+            label=f"{tool_id} runtime prompt",
+            description=f"Runtime-prompt injected when tool '{tool_id}' is selected by the supervisor.",
+            default_prompt=DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
+            active_in_admin=True,
+        )
+
+    return None
 
 
 def resolve_prompt(
