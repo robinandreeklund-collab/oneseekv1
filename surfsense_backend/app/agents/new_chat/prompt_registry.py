@@ -29,6 +29,7 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
 from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
@@ -94,6 +95,7 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "supervisor.planner.system",
     "supervisor.planner.multi_domain.system",
     "supervisor.tool_resolver.system",
+    "supervisor.domain_planner.system",
     "supervisor.critic_gate.system",
     "supervisor.synthesizer.system",
     "supervisor.critic.system",
@@ -197,6 +199,12 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Supervisor tool resolver prompt",
         description="Prompt for tool_resolver node in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+    ),
+    "supervisor.domain_planner.system": PromptDefinition(
+        key="supervisor.domain_planner.system",
+        label="Supervisor domain planner prompt",
+        description="Prompt for domain_planner node — skapar mikro-plan per domänagent med verktygsval och parallellitet.",
+        default_prompt=DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     ),
     "supervisor.critic_gate.system": PromptDefinition(
         key="supervisor.critic_gate.system",
