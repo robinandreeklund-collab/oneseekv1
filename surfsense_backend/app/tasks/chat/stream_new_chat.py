@@ -802,6 +802,26 @@ _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "response_layer",
 )
 
+# Generic intermediate chain names inserted by LangGraph/LangChain between
+# the actual graph node and the model call.  When walking parent_ids to find
+# the graph node that owns a model, these must be skipped so the real node
+# name (e.g. "planner") is found instead of a meaningless wrapper.
+_GENERIC_CHAIN_NAMES: frozenset[str] = frozenset({
+    "runnablesequence",
+    "runnablelambda",
+    "runnableparallel",
+    "runnablebranch",
+    "runnablewithfallbacks",
+    "runnablepassthrough",
+    "chatmodel",
+    "chatlitellm",
+    "basechatmodel",
+    "llm",
+    "chatprompttemplate",
+    "prompttemplate",
+    "chain",
+})
+
 # Regex to strip <think>…</think> blocks and bare tags from pipeline text
 # so that reasoning content doesn't leak into visible step items.
 _THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
@@ -2748,9 +2768,14 @@ async def stream_new_chat(
                     ]
                     for parent_id in reversed(parent_ids):
                         candidate_chain_name = chain_name_by_run_id.get(parent_id)
-                        if candidate_chain_name:
-                            parent_chain_name = str(candidate_chain_name)
-                            break
+                        if not candidate_chain_name:
+                            continue
+                        # Skip generic intermediate chains (RunnableSequence,
+                        # ChatLiteLLM, etc.) to find the real graph node name.
+                        if str(candidate_chain_name).strip().lower() in _GENERIC_CHAIN_NAMES:
+                            continue
+                        parent_chain_name = str(candidate_chain_name)
+                        break
                     if _is_internal_pipeline_chain_name(parent_chain_name):
                         model_parent_chain_by_run_id[run_id] = parent_chain_name
                         internal_model_buffers.setdefault(run_id, "")
@@ -2836,9 +2861,14 @@ async def stream_new_chat(
                     ]
                     for parent_id in reversed(parent_ids):
                         candidate_chain_name = chain_name_by_run_id.get(parent_id)
-                        if candidate_chain_name:
-                            parent_chain_name = str(candidate_chain_name)
-                            break
+                        if not candidate_chain_name:
+                            continue
+                        # Skip generic intermediate chains (RunnableSequence,
+                        # ChatLiteLLM, etc.) to find the real graph node name.
+                        if str(candidate_chain_name).strip().lower() in _GENERIC_CHAIN_NAMES:
+                            continue
+                        parent_chain_name = str(candidate_chain_name)
+                        break
                     if run_id and _is_internal_pipeline_chain_name(parent_chain_name):
                         model_parent_chain_by_run_id[run_id] = parent_chain_name
                         internal_model_buffers.setdefault(run_id, "")
