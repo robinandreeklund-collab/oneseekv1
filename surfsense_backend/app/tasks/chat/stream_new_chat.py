@@ -1108,31 +1108,38 @@ class _ThinkStreamFilter:
 
     **Template-prefilled <think> support:**
 
-    When a model's chat template pre-fills ``<think>`` in the assistant turn
-    (e.g. Qwen3 with ``<|im_start|>assistant\\n<think>\\n``), the opening tag
-    is never streamed.  The filter detects this when ``</think>`` appears
-    before any ``<think>`` and retroactively classifies earlier text as
-    reasoning via :meth:`drain_retroactive_reasoning`.
+    When *assume_think* is ``True`` (the default) the filter starts in think
+    mode, which means all initial content is emitted as reasoning.  This
+    handles models whose chat template pre-fills ``<think>`` in the assistant
+    turn (e.g. Qwen3) so that reasoning content is streamed in real-time
+    instead of being retroactively reclassified when ``</think>`` appears.
+
+    If the model does NOT use ``<think>`` tags at all, the entire response
+    will be classified as reasoning (the ``flush()`` method keeps it as
+    reasoning).  In practice this is rare since the global core prompt
+    instructs all models to use ``<think>`` blocks.
+
+    When *assume_think* is ``False`` the filter uses the legacy behaviour:
+    content is treated as text until ``<think>`` is explicitly seen, and
+    template-prefilled detection is performed retroactively.
 
     Usage::
 
-        f = _ThinkStreamFilter()
+        f = _ThinkStreamFilter(assume_think=True)
         for chunk in model_stream:
             reasoning, text = f.feed(chunk)
-            if f.late_close_detected:
-                retro = f.drain_retroactive_reasoning()
-                # emit retro as reasoning-delta + text-clear event
-            # stream reasoning → reasoning-delta, text → text-delta
+            # stream reasoning -> reasoning-delta, text -> text-delta
         reasoning, text = f.flush()   # resolve any trailing buffer at end-of-stream
     """
 
     _OPEN = "<think>"
     _CLOSE = "</think>"
 
-    def __init__(self) -> None:
-        self._in_think = False
+    def __init__(self, *, assume_think: bool = True) -> None:
+        self._assume_think = assume_think
+        self._in_think = assume_think
         self._buf = ""
-        self._ever_opened = False
+        self._ever_opened = assume_think
         # Text returned as main text before late-close was detected.
         # The streaming handler must re-emit this as reasoning-delta.
         self._pre_close_text_parts: list[str] = []
@@ -1181,17 +1188,31 @@ class _ThinkStreamFilter:
 
         while self._buf:
             if self._in_think:
-                # Inside a think block — look for the closing tag.
-                idx = self._buf.find(self._CLOSE)
-                if idx == -1:
-                    partial = self._longest_prefix_match(self._buf, self._CLOSE)
+                # Inside a think block - look for the closing tag.
+                # Also strip any redundant <think> tag that might appear
+                # when assume_think is active and the model also outputs
+                # an explicit <think> tag.
+                close_idx = self._buf.find(self._CLOSE)
+                open_idx = self._buf.find(self._OPEN)
+
+                # Strip redundant <think> if it appears before </think>
+                if open_idx != -1 and (close_idx == -1 or open_idx < close_idx):
+                    reasoning_parts.append(self._buf[:open_idx])
+                    self._buf = self._buf[open_idx + len(self._OPEN) :]
+                    continue
+
+                if close_idx == -1:
+                    partial = max(
+                        self._longest_prefix_match(self._buf, self._CLOSE),
+                        self._longest_prefix_match(self._buf, self._OPEN),
+                    )
                     safe = self._buf[:-partial] if partial else self._buf
                     reasoning_parts.append(safe)
                     self._buf = self._buf[-partial:] if partial else ""
                     break
                 else:
-                    reasoning_parts.append(self._buf[:idx])
-                    self._buf = self._buf[idx + len(self._CLOSE) :]
+                    reasoning_parts.append(self._buf[:close_idx])
+                    self._buf = self._buf[close_idx + len(self._CLOSE) :]
                     self._in_think = False
             else:
                 # Outside a think block.

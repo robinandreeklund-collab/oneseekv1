@@ -74,7 +74,13 @@ const ThinkingStepsPart: FC = () => {
 
 
 /**
- * Collapsible reasoning block - displays <think> tag / reasoning-delta content streamed from the model
+ * Collapsible reasoning block - displays <think> tag / reasoning-delta
+ * content streamed from the model in real-time.
+ *
+ * Uses a fixed max-height with overflow-y scroll so the block does not
+ * grow infinitely.  During streaming the container auto-scrolls to
+ * bottom so the user always sees the latest reasoning (rolling view,
+ * similar to LM Studio).
  */
 const ReasoningBlock: FC = () => {
 	const reasoningMap = useContext(ReasoningContext);
@@ -84,6 +90,7 @@ const ReasoningBlock: FC = () => {
 	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
 	const isStreaming = isThreadRunning && isLastMessage;
 	const [isOpen, setIsOpen] = useState(true);
+	const scrollRef = useRef<HTMLDivElement>(null);
 
 	// Auto-collapse when streaming finishes
 	useEffect(() => {
@@ -91,6 +98,18 @@ const ReasoningBlock: FC = () => {
 			setIsOpen(false);
 		}
 	}, [isStreaming, reasoning]);
+
+	// Auto-scroll to bottom while streaming (rolling view)
+	useEffect(() => {
+		if (isStreaming && isOpen && scrollRef.current) {
+			requestAnimationFrame(() => {
+				scrollRef.current?.scrollTo({
+					top: scrollRef.current.scrollHeight,
+					behavior: "smooth",
+				});
+			});
+		}
+	}, [reasoning, isStreaming, isOpen]);
 
 	if (!reasoning) return null;
 
@@ -118,7 +137,10 @@ const ReasoningBlock: FC = () => {
 					)}
 				>
 					<div className="overflow-hidden">
-						<div className="mt-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground font-mono whitespace-pre-wrap leading-relaxed">
+						<div
+							ref={scrollRef}
+							className="mt-2 max-h-72 overflow-y-auto rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground font-mono whitespace-pre-wrap leading-relaxed scroll-smooth"
+						>
 							{reasoning}
 						</div>
 					</div>
