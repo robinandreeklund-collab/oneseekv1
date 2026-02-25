@@ -292,6 +292,11 @@ async def get_flow_graph(
             "keywords": intent.get("keywords", []),
             "priority": intent.get("priority", 500),
             "enabled": intent.get("enabled", True),
+            "main_identifier": intent.get("main_identifier", ""),
+            "core_activity": intent.get("core_activity", ""),
+            "unique_scope": intent.get("unique_scope", ""),
+            "geographic_scope": intent.get("geographic_scope", ""),
+            "excludes": intent.get("excludes", []),
         })
     intent_ids = {intent.get("intent_id", "") for intent in intents}
 
@@ -310,6 +315,11 @@ async def get_flow_graph(
             "prompt_key": agent.get("prompt_key", ""),
             "namespace": agent.get("namespace", []),
             "routes": agent.get("routes", []),
+            "main_identifier": agent.get("main_identifier", ""),
+            "core_activity": agent.get("core_activity", ""),
+            "unique_scope": agent.get("unique_scope", ""),
+            "geographic_scope": agent.get("geographic_scope", ""),
+            "excludes": agent.get("excludes", []),
         })
         for route_id in agent.get("routes", []):
             if route_id in intent_ids:
@@ -382,6 +392,11 @@ class UpdateIntentRequest(BaseModel):
     keywords: list[str] | None = None
     priority: int | None = None
     enabled: bool | None = None
+    main_identifier: str | None = None
+    core_activity: str | None = None
+    unique_scope: str | None = None
+    geographic_scope: str | None = None
+    excludes: list[str] | None = None
 
 
 class UpsertAgentRequest(BaseModel):
@@ -393,6 +408,11 @@ class UpsertAgentRequest(BaseModel):
     namespace: list[str] | None = None
     routes: list[str] | None = None
     flow_tools: list[FlowToolEntry] | None = None
+    main_identifier: str | None = None
+    core_activity: str | None = None
+    unique_scope: str | None = None
+    geographic_scope: str | None = None
+    excludes: list[str] | None = None
 
 
 class DeleteAgentRequest(BaseModel):
@@ -426,6 +446,16 @@ async def upsert_agent(
         payload["routes"] = request.routes
     if request.flow_tools is not None:
         payload["flow_tools"] = [t.model_dump() for t in request.flow_tools]
+    if request.main_identifier is not None:
+        payload["main_identifier"] = request.main_identifier
+    if request.core_activity is not None:
+        payload["core_activity"] = request.core_activity
+    if request.unique_scope is not None:
+        payload["unique_scope"] = request.unique_scope
+    if request.geographic_scope is not None:
+        payload["geographic_scope"] = request.geographic_scope
+    if request.excludes is not None:
+        payload["excludes"] = request.excludes
     await upsert_global_agent_metadata_overrides(
         session,
         [(request.agent_id, payload)],
@@ -510,6 +540,16 @@ async def upsert_intent(
         payload["priority"] = request.priority
     if request.enabled is not None:
         payload["enabled"] = request.enabled
+    if request.main_identifier is not None:
+        payload["main_identifier"] = request.main_identifier
+    if request.core_activity is not None:
+        payload["core_activity"] = request.core_activity
+    if request.unique_scope is not None:
+        payload["unique_scope"] = request.unique_scope
+    if request.geographic_scope is not None:
+        payload["geographic_scope"] = request.geographic_scope
+    if request.excludes is not None:
+        payload["excludes"] = request.excludes
     await upsert_global_intent_definition_overrides(
         session,
         [(request.intent_id, payload)],

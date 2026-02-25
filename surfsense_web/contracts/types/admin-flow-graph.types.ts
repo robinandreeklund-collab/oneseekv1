@@ -35,6 +35,11 @@ export const flowIntentNode = z.object({
 	keywords: z.array(z.string()),
 	priority: z.number(),
 	enabled: z.boolean(),
+	main_identifier: z.string().optional().default(""),
+	core_activity: z.string().optional().default(""),
+	unique_scope: z.string().optional().default(""),
+	geographic_scope: z.string().optional().default(""),
+	excludes: z.array(z.string()).optional().default([]),
 });
 
 export const flowAgentNode = z.object({
@@ -47,6 +52,11 @@ export const flowAgentNode = z.object({
 	prompt_key: z.string(),
 	namespace: z.array(z.string()),
 	routes: z.array(z.string()).default([]),
+	main_identifier: z.string().optional().default(""),
+	core_activity: z.string().optional().default(""),
+	unique_scope: z.string().optional().default(""),
+	geographic_scope: z.string().optional().default(""),
+	excludes: z.array(z.string()).optional().default([]),
 });
 
 export const flowToolNode = z.object({
