@@ -41,6 +41,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
             {"tool_id": "scrape_webpage", "label": "Scrape Webbsida"},
         ],
+        "main_identifier": "Atgardsagent",
+        "core_activity": "Kor realtidsverktyg for vader, resor och generella actions",
+        "unique_scope": "Generell action-agent for verktygskorningar som inte tillhor en specialiserad agent",
+        "geographic_scope": "Sverige, rikstackande",
+        "excludes": ["statistik", "bolag", "riksdagen"],
     },
     {
         "agent_id": "väder",
@@ -78,6 +83,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "trafikverket_vader_vind", "label": "Trafikverket Väder Vind"},
             {"tool_id": "trafikverket_vader_temperatur", "label": "Trafikverket Väder Temperatur"},
         ],
+        "main_identifier": "Vaderagent",
+        "core_activity": "Hamtar vaderprognoser och vagvaderdata fran SMHI och Trafikverket",
+        "unique_scope": "Enbart vader, temperatur, nederbord, vind och vaglag – inte trafiklaget i sig",
+        "geographic_scope": "Sverige, rikstackande",
+        "excludes": ["olycka", "ko", "vagarbete", "statistik"],
     },
     {
         "agent_id": "kartor",
@@ -102,6 +112,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "flow_tools": [
             {"tool_id": "geoapify_static_map", "label": "Statisk Karta"},
         ],
+        "main_identifier": "Kartagent",
+        "core_activity": "Skapar statiska kartbilder med markorer och rutter via Geoapify",
+        "unique_scope": "Enbart kartgenerering och geocoding, inte navigering eller reseplanering",
+        "geographic_scope": "Globalt med fokus pa Sverige",
+        "excludes": ["trafik", "vader", "statistik"],
     },
     {
         "agent_id": "statistik",
@@ -134,6 +149,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "scb_utbildning", "label": "SCB Utbildning"},
             {"tool_id": "kolada_municipality", "label": "Kolada Kommun"},
         ],
+        "main_identifier": "Statistikagent",
+        "core_activity": "Hamtar officiell svensk statistik fran SCB och Kolada kommundata",
+        "unique_scope": "Enbart officiell statistik och kommunala nyckeltal, inte realtidsdata",
+        "geographic_scope": "Sverige, rikstackande och kommunalt",
+        "excludes": ["vader", "trafik", "bolag", "realtid"],
     },
     {
         "agent_id": "media",
@@ -147,6 +167,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "generate_podcast", "label": "Podcast"},
             {"tool_id": "display_image", "label": "Visa Bild"},
         ],
+        "main_identifier": "Mediaagent",
+        "core_activity": "Genererar podcast, bilder och annat medieinnehall",
+        "unique_scope": "Enbart mediagenerering som podcast och bildvisning",
+        "geographic_scope": "",
+        "excludes": ["statistik", "trafik", "vader", "kod"],
     },
     {
         "agent_id": "kunskap",
@@ -175,6 +200,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "recall_memory", "label": "Hämta Minne"},
             {"tool_id": "tavily_search", "label": "Tavily Sök"},
         ],
+        "main_identifier": "Kunskapsagent",
+        "core_activity": "Soker i interna dokument, minnen och extern webbkunskap via SurfSense och Tavily",
+        "unique_scope": "Generell kunskapssokning i egna dokument och extern webb, inte specialiserade datakallor",
+        "geographic_scope": "Globalt",
+        "excludes": ["vader", "trafik", "statistik", "bolag"],
     },
     {
         "agent_id": "webb",
@@ -189,6 +219,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
             {"tool_id": "public_web_search", "label": "Webbsökning"},
         ],
+        "main_identifier": "Webbagent",
+        "core_activity": "Soker pa webben och scrapar webbsidor for information",
+        "unique_scope": "Enbart oppen webbsokning och scraping, inte interna dokument eller API-kallor",
+        "geographic_scope": "Globalt",
+        "excludes": ["statistik", "vader", "bolag"],
     },
     {
         "agent_id": "kod",
@@ -225,6 +260,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "sandbox_replace", "label": "Sandbox Replace"},
             {"tool_id": "sandbox_release", "label": "Sandbox Release"},
         ],
+        "main_identifier": "Kodagent",
+        "core_activity": "Kor Python-kod, skript och filoperationer i en sandlademiljo",
+        "unique_scope": "Enbart kodexekvering och filhantering i sandbox, inte databaser eller API:er",
+        "geographic_scope": "",
+        "excludes": ["vader", "trafik", "statistik", "bolag"],
     },
     {
         "agent_id": "bolag",
@@ -253,6 +293,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "bolagsverket_sok_orgnr", "label": "Sök Orgnr"},
             {"tool_id": "bolagsverket_ekonomi_bokslut", "label": "Bokslut"},
         ],
+        "main_identifier": "Bolagsagent",
+        "core_activity": "Hamtar foretagsinformation fran Bolagsverket som orgnr, styrelse och ekonomi",
+        "unique_scope": "Enbart svenska foretagsuppgifter via Bolagsverket, inte statistik eller trafik",
+        "geographic_scope": "Sverige",
+        "excludes": ["vader", "trafik", "statistik", "riksdagen"],
     },
     {
         "agent_id": "trafik",
@@ -279,6 +324,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "trafikverket_railway", "label": "Järnväg"},
             {"tool_id": "trafiklab_route", "label": "Resplanerare"},
         ],
+        "main_identifier": "Trafikagent",
+        "core_activity": "Hamtar realtids trafikdata fran Trafikverket som olyckor, koer, kameror och tagstorningar",
+        "unique_scope": "Enbart trafikhändelser och realtidsläge, inte väderprognoser eller statistik",
+        "geographic_scope": "Sverige, rikstackande",
+        "excludes": ["vader", "temperatur", "statistik", "bolag"],
     },
     {
         "agent_id": "riksdagen",
@@ -314,6 +364,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "riksdagen_votering", "label": "Voteringar"},
             {"tool_id": "riksdagen_ledamot", "label": "Ledamöter"},
         ],
+        "main_identifier": "Riksdagsagent",
+        "core_activity": "Soker i riksdagens oppna data for propositioner, motioner, voteringar och ledamoter",
+        "unique_scope": "Enbart riksdagens formella dokument och beslutsprocesser, inte allmanna nyheter",
+        "geographic_scope": "Sverige",
+        "excludes": ["vader", "trafik", "statistik", "bolag"],
     },
     {
         "agent_id": "marknad",
@@ -355,6 +410,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "marketplace_tradera_search", "label": "Tradera Sök"},
             {"tool_id": "marketplace_compare_prices", "label": "Prisjämförelse"},
         ],
+        "main_identifier": "Marknadsagent",
+        "core_activity": "Soker och jamfor annonser pa Blocket och Tradera for begagnade varor",
+        "unique_scope": "Enbart marknadsplatser for begagnade varor, inte nyproducerade eller butiker",
+        "geographic_scope": "Sverige",
+        "excludes": ["vader", "trafik", "statistik", "bolag"],
     },
     {
         "agent_id": "syntes",
@@ -367,6 +427,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "flow_tools": [
             {"tool_id": "external_model_compare", "label": "Modelljämförelse"},
         ],
+        "main_identifier": "Syntesagent",
+        "core_activity": "Jamfor svar fran flera AI-modeller och sammanstaller synteser",
+        "unique_scope": "Enbart korsmodell-jamforelse och syntes, inte enskild kunskapssokning",
+        "geographic_scope": "",
+        "excludes": ["vader", "trafik", "bolag"],
     },
 )
 
@@ -395,6 +460,23 @@ def _normalize_keywords(values: Any) -> list[str]:
         if key in seen:
             continue
         seen.add(key)
+        deduped.append(text)
+    return deduped
+
+
+def _normalize_text_list(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        text = _normalize_text(raw)
+        if not text:
+            continue
+        lowered = text.casefold()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
         deduped.append(text)
     return deduped
 
@@ -460,6 +542,11 @@ def normalize_agent_metadata_payload(
     fallback_namespace = _normalize_namespace(default_payload.get("namespace"))
     fallback_routes = _normalize_routes(default_payload.get("routes"))
     fallback_flow_tools = _normalize_flow_tools(default_payload.get("flow_tools"))
+    fallback_main_identifier = _normalize_text(default_payload.get("main_identifier"))
+    fallback_core_activity = _normalize_text(default_payload.get("core_activity"))
+    fallback_unique_scope = _normalize_text(default_payload.get("unique_scope"))
+    fallback_geographic_scope = _normalize_text(default_payload.get("geographic_scope"))
+    fallback_excludes = _normalize_text_list(default_payload.get("excludes"))
     label = _normalize_optional_text(payload.get("label")) or fallback_label
     description = _normalize_optional_text(payload.get("description")) or fallback_description
     keywords = _normalize_keywords(payload.get("keywords")) or fallback_keywords
@@ -471,6 +558,11 @@ def normalize_agent_metadata_payload(
         if "flow_tools" in payload
         else fallback_flow_tools
     )
+    main_identifier = _normalize_text(payload.get("main_identifier")) or fallback_main_identifier
+    core_activity = _normalize_text(payload.get("core_activity")) or fallback_core_activity
+    unique_scope = _normalize_text(payload.get("unique_scope")) or fallback_unique_scope
+    geographic_scope = _normalize_text(payload.get("geographic_scope")) or fallback_geographic_scope
+    excludes = _normalize_text_list(payload.get("excludes")) or fallback_excludes
     return {
         "agent_id": resolved_agent_id,
         "label": label,
@@ -480,6 +572,11 @@ def normalize_agent_metadata_payload(
         "namespace": namespace,
         "routes": routes,
         "flow_tools": flow_tools,
+        "main_identifier": main_identifier,
+        "core_activity": core_activity,
+        "unique_scope": unique_scope,
+        "geographic_scope": geographic_scope,
+        "excludes": excludes,
     }
 
 
@@ -577,6 +674,11 @@ async def upsert_global_agent_metadata_overrides(
     *,
     updated_by_id=None,
 ) -> None:
+    # Load existing overrides so partial updates can merge with stored data
+    # instead of silently wiping unmentioned fields.
+    existing_overrides = await get_global_agent_metadata_overrides(session)
+    defaults = get_default_agent_metadata()
+
     prompt_updates: list[tuple[str, str | None]] = []
     for raw_agent_id, payload in updates:
         agent_id = _normalize_text(raw_agent_id).lower()
@@ -586,10 +688,21 @@ async def upsert_global_agent_metadata_overrides(
         if payload is None:
             prompt_updates.append((key, None))
             continue
+        # Build a merged base: start from hardcoded default, layer on the
+        # previously stored override, then apply the incoming partial payload.
+        base: dict[str, Any] = {}
+        default_payload = defaults.get(agent_id) or {}
+        if default_payload:
+            base.update(default_payload)
+        existing = existing_overrides.get(agent_id)
+        if existing:
+            base.update(existing)
+        # Apply incoming fields on top (only keys actually present in payload)
+        base.update({k: v for k, v in dict(payload).items() if v is not None})
         normalized_payload = normalize_agent_metadata_payload(
-            payload,
+            base,
             agent_id=agent_id,
-            default_payload=get_default_agent_metadata().get(agent_id),
+            default_payload=default_payload or None,
         )
         prompt_updates.append((key, _serialize_override_payload(normalized_payload)))
     if not prompt_updates:

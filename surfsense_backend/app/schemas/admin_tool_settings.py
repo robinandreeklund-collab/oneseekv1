@@ -184,12 +184,17 @@ class FlowToolEntry(BaseModel):
 class AgentMetadataItem(BaseModel):
     agent_id: str
     label: str
-    description: str
-    keywords: list[str]
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
     prompt_key: str | None = None
     namespace: list[str] = Field(default_factory=list)
     routes: list[str] = Field(default_factory=list)
     flow_tools: list[FlowToolEntry] = Field(default_factory=list)
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
     has_override: bool = False
 
 
@@ -202,16 +207,26 @@ class AgentMetadataUpdateItem(BaseModel):
     namespace: list[str] = Field(default_factory=list)
     routes: list[str] = Field(default_factory=list)
     flow_tools: list[FlowToolEntry] = Field(default_factory=list)
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
 
 
 class IntentMetadataItem(BaseModel):
     intent_id: str
     label: str
     route: str
-    description: str
-    keywords: list[str]
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
     priority: int = 500
     enabled: bool = True
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
     has_override: bool = False
 
 
@@ -223,6 +238,11 @@ class IntentMetadataUpdateItem(BaseModel):
     keywords: list[str]
     priority: int = 500
     enabled: bool = True
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: list[str] = Field(default_factory=list)
 
 
 class MetadataCatalogStabilityLockItem(BaseModel):

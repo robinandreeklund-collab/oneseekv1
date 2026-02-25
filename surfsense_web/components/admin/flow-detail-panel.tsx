@@ -46,8 +46,6 @@ import { adminFlowGraphApiService } from "@/lib/apis/admin-flow-graph-api.servic
 import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 
-const ALL_ROUTES = ["kunskap", "skapande", "jämförelse", "konversation"];
-
 type SelectedNodeData =
 	| { type: "intent"; data: FlowIntentNode }
 	| { type: "agent"; data: FlowAgentNode }
@@ -62,6 +60,7 @@ interface FlowDetailPanelProps {
 	};
 	catalogData: MetadataCatalogResponse | null;
 	agents: FlowAgentNode[];
+	intents: FlowIntentNode[];
 	onClose: () => void;
 	onDataChanged?: () => void;
 }
@@ -267,6 +266,11 @@ function IntentDetail({
 	const [keywords, setKeywords] = useState(intent.keywords.join(", "));
 	const [priority, setPriority] = useState(String(intent.priority));
 	const [enabled, setEnabled] = useState(intent.enabled);
+	const [mainIdentifier, setMainIdentifier] = useState(intent.main_identifier ?? "");
+	const [coreActivity, setCoreActivity] = useState(intent.core_activity ?? "");
+	const [uniqueScope, setUniqueScope] = useState(intent.unique_scope ?? "");
+	const [geographicScope, setGeographicScope] = useState(intent.geographic_scope ?? "");
+	const [excludes, setExcludes] = useState((intent.excludes ?? []).join(", "));
 	const [saving, setSaving] = useState(false);
 	const [deleting, setDeleting] = useState(false);
 	const [confirmDelete, setConfirmDelete] = useState(false);
@@ -281,6 +285,11 @@ function IntentDetail({
 				keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
 				priority: parseInt(priority, 10) || 500,
 				enabled,
+				main_identifier: mainIdentifier.trim(),
+				core_activity: coreActivity.trim(),
+				unique_scope: uniqueScope.trim(),
+				geographic_scope: geographicScope.trim(),
+				excludes: excludes.split(",").map((e) => e.trim()).filter(Boolean),
 			});
 			toast.success("Intent sparad");
 			setEditing(false);
@@ -290,7 +299,7 @@ function IntentDetail({
 		} finally {
 			setSaving(false);
 		}
-	}, [intent.intent_id, label, description, keywords, priority, enabled, onDataChanged]);
+	}, [intent.intent_id, label, description, keywords, priority, enabled, mainIdentifier, coreActivity, uniqueScope, geographicScope, excludes, onDataChanged]);
 
 	const handleDelete = useCallback(async () => {
 		setDeleting(true);
@@ -353,6 +362,11 @@ function IntentDetail({
 							setKeywords(intent.keywords.join(", "));
 							setPriority(String(intent.priority));
 							setEnabled(intent.enabled);
+							setMainIdentifier(intent.main_identifier ?? "");
+							setCoreActivity(intent.core_activity ?? "");
+							setUniqueScope(intent.unique_scope ?? "");
+							setGeographicScope(intent.geographic_scope ?? "");
+							setExcludes((intent.excludes ?? []).join(", "));
 						}
 						setEditing(!editing);
 					}}
@@ -367,6 +381,35 @@ function IntentDetail({
 						<Label className="text-[11px] text-muted-foreground">Label</Label>
 						<Input value={label} onChange={(e) => setLabel(e.target.value)} className="text-xs h-8" />
 					</div>
+
+					{/* Main Identifier */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Target className="h-3 w-3" /> Huvudidentifierare
+						</Label>
+						<Input
+							value={mainIdentifier}
+							onChange={(e) => setMainIdentifier(e.target.value)}
+							className="text-xs h-8"
+							placeholder="Vad intenten fundamentalt är, t.ex. 'Kunskapsintent'"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad intenten fundamentalt är/representerar</p>
+					</div>
+
+					{/* Core Activity */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Activity className="h-3 w-3" /> Kärnaktivitet
+						</Label>
+						<Input
+							value={coreActivity}
+							onChange={(e) => setCoreActivity(e.target.value)}
+							className="text-xs h-8"
+							placeholder="Identifierar frågor som kräver informationssökning"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad intenten gör / dess huvudsakliga funktion</p>
+					</div>
+
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Beskrivning</Label>
 						<Textarea
@@ -384,6 +427,49 @@ function IntentDetail({
 							className="text-xs min-h-[60px]"
 						/>
 					</div>
+
+					{/* Unique Scope */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<ShieldOff className="h-3 w-3" /> Unik avgränsning
+						</Label>
+						<Input
+							value={uniqueScope}
+							onChange={(e) => setUniqueScope(e.target.value)}
+							className="text-xs h-8"
+							placeholder="Vad som unikt avgränsar denna intent från andra"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad som skiljer denna intent från liknande</p>
+					</div>
+
+					{/* Geographic Scope */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<MapPin className="h-3 w-3" /> Kommun / Sverige
+						</Label>
+						<Input
+							value={geographicScope}
+							onChange={(e) => setGeographicScope(e.target.value)}
+							className="text-xs h-8"
+							placeholder="t.ex. 'Sverige', 'Norrköping kommun', 'Norden'"
+						/>
+						<p className="text-[10px] text-muted-foreground">Geografiskt omfång / tillämpningsområde</p>
+					</div>
+
+					{/* Excludes */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Ban className="h-3 w-3" /> Exkluderar (komma-separerade)
+						</Label>
+						<Textarea
+							value={excludes}
+							onChange={(e) => setExcludes(e.target.value)}
+							className="text-xs min-h-[60px]"
+							placeholder="skapa, generera, hej, tjena"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad intenten INTE hanterar</p>
+					</div>
+
 					<div className="grid grid-cols-2 gap-2">
 						<div className="space-y-1">
 							<Label className="text-[11px] text-muted-foreground">Prioritet</Label>
@@ -409,6 +495,26 @@ function IntentDetail({
 				</div>
 			) : (
 				<div className="space-y-2">
+					{/* Main Identifier */}
+					{intent.main_identifier && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<Target className="h-3 w-3" /> Huvudidentifierare
+							</Label>
+							<p className="text-xs">{intent.main_identifier}</p>
+						</div>
+					)}
+
+					{/* Core Activity */}
+					{intent.core_activity && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<Activity className="h-3 w-3" /> Kärnaktivitet
+							</Label>
+							<p className="text-xs">{intent.core_activity}</p>
+						</div>
+					)}
+
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
 							<FileText className="h-3 w-3" /> Beskrivning
@@ -425,6 +531,43 @@ function IntentDetail({
 							))}
 						</div>
 					</div>
+
+					{/* Unique Scope */}
+					{intent.unique_scope && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<ShieldOff className="h-3 w-3" /> Unik avgränsning
+							</Label>
+							<p className="text-xs">{intent.unique_scope}</p>
+						</div>
+					)}
+
+					{/* Geographic Scope */}
+					{intent.geographic_scope && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<MapPin className="h-3 w-3" /> Kommun / Sverige
+							</Label>
+							<p className="text-xs">{intent.geographic_scope}</p>
+						</div>
+					)}
+
+					{/* Excludes */}
+					{intent.excludes && intent.excludes.length > 0 && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<Ban className="h-3 w-3" /> Exkluderar
+							</Label>
+							<div className="flex flex-wrap gap-1">
+								{intent.excludes.map((ex) => (
+									<Badge key={ex} variant="outline" className="text-[10px] px-1.5 py-0 border-destructive/30 text-destructive">
+										{ex}
+									</Badge>
+								))}
+							</div>
+						</div>
+					)}
+
 					<div className="flex items-center justify-between">
 						<span className="text-xs text-muted-foreground">Prioritet</span>
 						<span className="text-xs font-mono">{intent.priority}</span>
@@ -486,10 +629,12 @@ function IntentDetail({
 function AgentDetail({
 	agent,
 	toolCount,
+	intents,
 	onDataChanged,
 }: {
 	agent: FlowAgentNode;
 	toolCount: number;
+	intents: FlowIntentNode[];
 	onDataChanged?: () => void;
 }) {
 	const [editing, setEditing] = useState(false);
@@ -499,6 +644,11 @@ function AgentDetail({
 	const [promptKey, setPromptKey] = useState(agent.prompt_key);
 	const [namespace, setNamespace] = useState(agent.namespace.join("/"));
 	const [selectedRoutes, setSelectedRoutes] = useState<string[]>(agent.routes ?? []);
+	const [mainIdentifier, setMainIdentifier] = useState(agent.main_identifier ?? "");
+	const [coreActivity, setCoreActivity] = useState(agent.core_activity ?? "");
+	const [uniqueScope, setUniqueScope] = useState(agent.unique_scope ?? "");
+	const [geographicScope, setGeographicScope] = useState(agent.geographic_scope ?? "");
+	const [excludes, setExcludes] = useState((agent.excludes ?? []).join(", "));
 	const [saving, setSaving] = useState(false);
 	const [deleting, setDeleting] = useState(false);
 	const [confirmDelete, setConfirmDelete] = useState(false);
@@ -520,6 +670,11 @@ function AgentDetail({
 				prompt_key: promptKey || undefined,
 				namespace: namespace.split("/").map((s) => s.trim()).filter(Boolean),
 				routes: selectedRoutes,
+				main_identifier: mainIdentifier.trim(),
+				core_activity: coreActivity.trim(),
+				unique_scope: uniqueScope.trim(),
+				geographic_scope: geographicScope.trim(),
+				excludes: excludes.split(",").map((e) => e.trim()).filter(Boolean),
 			});
 			toast.success("Agent sparad");
 			setEditing(false);
@@ -529,7 +684,7 @@ function AgentDetail({
 		} finally {
 			setSaving(false);
 		}
-	}, [agent.agent_id, label, description, keywords, promptKey, namespace, selectedRoutes, onDataChanged]);
+	}, [agent.agent_id, label, description, keywords, promptKey, namespace, selectedRoutes, mainIdentifier, coreActivity, uniqueScope, geographicScope, excludes, onDataChanged]);
 
 	const handleDelete = useCallback(async () => {
 		setDeleting(true);
@@ -598,6 +753,11 @@ function AgentDetail({
 							setPromptKey(agent.prompt_key);
 							setNamespace(agent.namespace.join("/"));
 							setSelectedRoutes(agent.routes ?? []);
+							setMainIdentifier(agent.main_identifier ?? "");
+							setCoreActivity(agent.core_activity ?? "");
+							setUniqueScope(agent.unique_scope ?? "");
+							setGeographicScope(agent.geographic_scope ?? "");
+							setExcludes((agent.excludes ?? []).join(", "));
 						}
 						setEditing(!editing);
 					}}
@@ -612,6 +772,35 @@ function AgentDetail({
 						<Label className="text-[11px] text-muted-foreground">Label</Label>
 						<Input value={label} onChange={(e) => setLabel(e.target.value)} className="text-xs h-8" />
 					</div>
+
+					{/* Main Identifier */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Target className="h-3 w-3" /> Huvudidentifierare
+						</Label>
+						<Input
+							value={mainIdentifier}
+							onChange={(e) => setMainIdentifier(e.target.value)}
+							className="text-xs h-8"
+							placeholder="Vad agenten fundamentalt är, t.ex. 'Väderagent'"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad agenten fundamentalt är/representerar</p>
+					</div>
+
+					{/* Core Activity */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Activity className="h-3 w-3" /> Kärnaktivitet
+						</Label>
+						<Input
+							value={coreActivity}
+							onChange={(e) => setCoreActivity(e.target.value)}
+							className="text-xs h-8"
+							placeholder="Hämtar väderprognoser och vägväderdata"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad agenten gör / dess huvudsakliga funktion</p>
+					</div>
+
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Beskrivning</Label>
 						<Textarea
@@ -629,6 +818,49 @@ function AgentDetail({
 							className="text-xs min-h-[60px]"
 						/>
 					</div>
+
+					{/* Unique Scope */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<ShieldOff className="h-3 w-3" /> Unik avgränsning
+						</Label>
+						<Input
+							value={uniqueScope}
+							onChange={(e) => setUniqueScope(e.target.value)}
+							className="text-xs h-8"
+							placeholder="Vad som unikt avgränsar denna agent från andra"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad som skiljer denna agent från liknande</p>
+					</div>
+
+					{/* Geographic Scope */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<MapPin className="h-3 w-3" /> Kommun / Sverige
+						</Label>
+						<Input
+							value={geographicScope}
+							onChange={(e) => setGeographicScope(e.target.value)}
+							className="text-xs h-8"
+							placeholder="t.ex. 'Sverige', 'Norrköping kommun', 'Norden'"
+						/>
+						<p className="text-[10px] text-muted-foreground">Geografiskt omfång / tillämpningsområde</p>
+					</div>
+
+					{/* Excludes */}
+					<div className="space-y-1">
+						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+							<Ban className="h-3 w-3" /> Exkluderar (komma-separerade)
+						</Label>
+						<Textarea
+							value={excludes}
+							onChange={(e) => setExcludes(e.target.value)}
+							className="text-xs min-h-[60px]"
+							placeholder="statistik, bolag, riksdagen"
+						/>
+						<p className="text-[10px] text-muted-foreground">Vad agenten INTE hanterar</p>
+					</div>
+
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Prompt-nyckel</Label>
 						<Input value={promptKey} onChange={(e) => setPromptKey(e.target.value)} className="text-xs h-8" placeholder="t.ex. weather, code, knowledge" />
@@ -641,17 +873,17 @@ function AgentDetail({
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Tillhör intents</Label>
 						<div className="space-y-1.5">
-							{ALL_ROUTES.map((route) => (
-								<div key={route} className="flex items-center gap-2">
+							{intents.map((intent) => (
+								<div key={intent.intent_id} className="flex items-center gap-2">
 									<Checkbox
-										id={`agent-route-${route}`}
-										checked={selectedRoutes.includes(route)}
+										id={`agent-route-${intent.intent_id}`}
+										checked={selectedRoutes.includes(intent.intent_id)}
 										onCheckedChange={(checked) =>
-											handleToggleRoute(route, checked === true)
+											handleToggleRoute(intent.intent_id, checked === true)
 										}
 									/>
-									<label htmlFor={`agent-route-${route}`} className="text-xs cursor-pointer">
-										{route}
+									<label htmlFor={`agent-route-${intent.intent_id}`} className="text-xs cursor-pointer">
+										{intent.label} <span className="text-muted-foreground font-mono">({intent.intent_id})</span>
 									</label>
 								</div>
 							))}
@@ -664,6 +896,26 @@ function AgentDetail({
 				</div>
 			) : (
 				<>
+					{/* Main Identifier */}
+					{agent.main_identifier && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<Target className="h-3 w-3" /> Huvudidentifierare
+							</Label>
+							<p className="text-xs">{agent.main_identifier}</p>
+						</div>
+					)}
+
+					{/* Core Activity */}
+					{agent.core_activity && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<Activity className="h-3 w-3" /> Kärnaktivitet
+							</Label>
+							<p className="text-xs">{agent.core_activity}</p>
+						</div>
+					)}
+
 					{/* Routes (read-only) */}
 					<div className="space-y-2">
 						<Label className="text-xs flex items-center gap-1.5">
@@ -703,6 +955,42 @@ function AgentDetail({
 							))}
 						</div>
 					</div>
+
+					{/* Unique Scope */}
+					{agent.unique_scope && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<ShieldOff className="h-3 w-3" /> Unik avgränsning
+							</Label>
+							<p className="text-xs">{agent.unique_scope}</p>
+						</div>
+					)}
+
+					{/* Geographic Scope */}
+					{agent.geographic_scope && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<MapPin className="h-3 w-3" /> Kommun / Sverige
+							</Label>
+							<p className="text-xs">{agent.geographic_scope}</p>
+						</div>
+					)}
+
+					{/* Excludes */}
+					{agent.excludes && agent.excludes.length > 0 && (
+						<div className="space-y-1">
+							<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+								<Ban className="h-3 w-3" /> Exkluderar
+							</Label>
+							<div className="flex flex-wrap gap-1">
+								{agent.excludes.map((ex) => (
+									<Badge key={ex} variant="outline" className="text-[10px] px-1.5 py-0 border-destructive/30 text-destructive">
+										{ex}
+									</Badge>
+								))}
+							</div>
+						</div>
+					)}
 				</>
 			)}
 
@@ -1380,6 +1668,7 @@ export function FlowDetailPanel({
 	connectionCounts,
 	catalogData,
 	agents,
+	intents,
 	onClose,
 	onDataChanged,
 }: FlowDetailPanelProps) {
@@ -1404,6 +1693,7 @@ export function FlowDetailPanel({
 					<AgentDetail
 						agent={selectedNode.data}
 						toolCount={connectionCounts.toolsPerAgent[selectedNode.data.id] ?? 0}
+						intents={intents}
 						onDataChanged={onDataChanged}
 					/>
 				)}

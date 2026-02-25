@@ -104,8 +104,15 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "id": "node:execution_router",
         "label": "Execution Router",
         "stage": "tool_resolution",
-        "description": "Bestämmer exekverings-strategi (inline/subagent/parallel).",
+        "description": "Bestämmer exekverings-strategi (inline/subagent/parallel) per gren.",
         "prompt_key": None,
+    },
+    {
+        "id": "node:domain_planner",
+        "label": "Domain Planner",
+        "stage": "tool_resolution",
+        "description": "LLM-driven mikro-plan per domänagent: vilka sub-verktyg och om de körs parallellt eller sekventiellt (Nivå 2 agentplan).",
+        "prompt_key": "supervisor.domain_planner.system",
     },
     # ── Execution ──
     {
@@ -185,8 +192,44 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "id": "node:synthesizer",
         "label": "Synthesizer",
         "stage": "synthesis",
-        "description": "Slutgiltig förfining och formatering av svaret. → END",
+        "description": "Slutgiltig förfining och formatering av svaret.",
         "prompt_key": "supervisor.synthesizer.system",
+    },
+    {
+        "id": "node:response_layer",
+        "label": "Response Layer",
+        "stage": "synthesis",
+        "description": "Nivå 4: väljer presentationsformat för svaret — kunskap, analys, syntes eller visualisering.",
+        "prompt_key": None,
+    },
+    # ── Response Layer per-mode nodes (editable prompts) ──
+    {
+        "id": "node:response_layer_kunskap",
+        "label": "RL: Kunskap",
+        "stage": "synthesis",
+        "description": "Formateringsregler för kunskap-läge — direkt, faktabaserat svar.",
+        "prompt_key": "supervisor.response_layer.kunskap",
+    },
+    {
+        "id": "node:response_layer_analys",
+        "label": "RL: Analys",
+        "stage": "synthesis",
+        "description": "Formateringsregler för analys-läge — strukturerat svar med sektioner och motivering.",
+        "prompt_key": "supervisor.response_layer.analys",
+    },
+    {
+        "id": "node:response_layer_syntes",
+        "label": "RL: Syntes",
+        "stage": "synthesis",
+        "description": "Formateringsregler för syntes-läge — fler-källors syntes som namnger ursprung.",
+        "prompt_key": "supervisor.response_layer.syntes",
+    },
+    {
+        "id": "node:response_layer_visualisering",
+        "label": "RL: Visualisering",
+        "stage": "synthesis",
+        "description": "Formateringsregler för visualisering-läge — data som tabell eller strukturerad lista. → END",
+        "prompt_key": "supervisor.response_layer.visualisering",
     },
 ]
 
@@ -205,10 +248,11 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:agent_resolver", "target": "node:planner", "type": "normal"},
     {"source": "node:planner", "target": "node:planner_hitl_gate", "type": "normal"},
     {"source": "node:planner_hitl_gate", "target": "node:tool_resolver", "type": "conditional", "label": "godkänd"},
-    # ── Tool resolution → execution ──
+    # ── Tool resolution → domain planner → execution ──
     {"source": "node:tool_resolver", "target": "node:speculative_merge", "type": "normal"},
     {"source": "node:speculative_merge", "target": "node:execution_router", "type": "normal"},
-    {"source": "node:execution_router", "target": "node:execution_hitl_gate", "type": "normal"},
+    {"source": "node:execution_router", "target": "node:domain_planner", "type": "normal"},
+    {"source": "node:domain_planner", "target": "node:execution_hitl_gate", "type": "normal"},
     {"source": "node:execution_hitl_gate", "target": "node:executor", "type": "conditional", "label": "godkänd"},
     # ── Executor loop ──
     {"source": "node:executor", "target": "node:tools", "type": "conditional", "label": "tool_calls"},
@@ -223,10 +267,16 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},
     {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more"},
     {"source": "node:critic", "target": "node:planner", "type": "conditional", "label": "replan"},
-    # ── Synthesis ──
+    # ── Synthesis → response layer ──
     {"source": "node:synthesis_hitl", "target": "node:progressive_synthesizer", "type": "conditional", "label": "komplex"},
     {"source": "node:synthesis_hitl", "target": "node:synthesizer", "type": "conditional", "label": "enkel"},
     {"source": "node:progressive_synthesizer", "target": "node:synthesizer", "type": "normal"},
+    {"source": "node:synthesizer", "target": "node:response_layer", "type": "normal"},
+    # ── Response Layer → per-mode nodes (conditional) ──
+    {"source": "node:response_layer", "target": "node:response_layer_kunskap", "type": "conditional", "label": "kunskap"},
+    {"source": "node:response_layer", "target": "node:response_layer_analys", "type": "conditional", "label": "analys"},
+    {"source": "node:response_layer", "target": "node:response_layer_syntes", "type": "conditional", "label": "syntes"},
+    {"source": "node:response_layer", "target": "node:response_layer_visualisering", "type": "conditional", "label": "visualisering"},
 ]
 
 # Stage metadata for frontend grouping and coloring
@@ -235,11 +285,11 @@ _PIPELINE_STAGES: list[dict[str, str]] = [
     {"id": "fast_path", "label": "Snabbsvar", "color": "amber"},
     {"id": "speculative", "label": "Spekulativ", "color": "slate"},
     {"id": "planning", "label": "Planering", "color": "blue"},
-    {"id": "tool_resolution", "label": "Verktygsval", "color": "cyan"},
+    {"id": "tool_resolution", "label": "Verktygsval / Domänplan", "color": "cyan"},
     {"id": "execution", "label": "Exekvering", "color": "emerald"},
     {"id": "post_processing", "label": "Efterbehandling", "color": "slate"},
     {"id": "evaluation", "label": "Utvärdering", "color": "orange"},
-    {"id": "synthesis", "label": "Syntes", "color": "rose"},
+    {"id": "synthesis", "label": "Syntes / Response Layer", "color": "rose"},
 ]
 
 
@@ -292,6 +342,11 @@ async def get_flow_graph(
             "keywords": intent.get("keywords", []),
             "priority": intent.get("priority", 500),
             "enabled": intent.get("enabled", True),
+            "main_identifier": intent.get("main_identifier", ""),
+            "core_activity": intent.get("core_activity", ""),
+            "unique_scope": intent.get("unique_scope", ""),
+            "geographic_scope": intent.get("geographic_scope", ""),
+            "excludes": intent.get("excludes", []),
         })
     intent_ids = {intent.get("intent_id", "") for intent in intents}
 
@@ -310,6 +365,11 @@ async def get_flow_graph(
             "prompt_key": agent.get("prompt_key", ""),
             "namespace": agent.get("namespace", []),
             "routes": agent.get("routes", []),
+            "main_identifier": agent.get("main_identifier", ""),
+            "core_activity": agent.get("core_activity", ""),
+            "unique_scope": agent.get("unique_scope", ""),
+            "geographic_scope": agent.get("geographic_scope", ""),
+            "excludes": agent.get("excludes", []),
         })
         for route_id in agent.get("routes", []):
             if route_id in intent_ids:
@@ -382,6 +442,11 @@ class UpdateIntentRequest(BaseModel):
     keywords: list[str] | None = None
     priority: int | None = None
     enabled: bool | None = None
+    main_identifier: str | None = None
+    core_activity: str | None = None
+    unique_scope: str | None = None
+    geographic_scope: str | None = None
+    excludes: list[str] | None = None
 
 
 class UpsertAgentRequest(BaseModel):
@@ -393,6 +458,11 @@ class UpsertAgentRequest(BaseModel):
     namespace: list[str] | None = None
     routes: list[str] | None = None
     flow_tools: list[FlowToolEntry] | None = None
+    main_identifier: str | None = None
+    core_activity: str | None = None
+    unique_scope: str | None = None
+    geographic_scope: str | None = None
+    excludes: list[str] | None = None
 
 
 class DeleteAgentRequest(BaseModel):
@@ -426,6 +496,16 @@ async def upsert_agent(
         payload["routes"] = request.routes
     if request.flow_tools is not None:
         payload["flow_tools"] = [t.model_dump() for t in request.flow_tools]
+    if request.main_identifier is not None:
+        payload["main_identifier"] = request.main_identifier
+    if request.core_activity is not None:
+        payload["core_activity"] = request.core_activity
+    if request.unique_scope is not None:
+        payload["unique_scope"] = request.unique_scope
+    if request.geographic_scope is not None:
+        payload["geographic_scope"] = request.geographic_scope
+    if request.excludes is not None:
+        payload["excludes"] = request.excludes
     await upsert_global_agent_metadata_overrides(
         session,
         [(request.agent_id, payload)],
@@ -510,6 +590,16 @@ async def upsert_intent(
         payload["priority"] = request.priority
     if request.enabled is not None:
         payload["enabled"] = request.enabled
+    if request.main_identifier is not None:
+        payload["main_identifier"] = request.main_identifier
+    if request.core_activity is not None:
+        payload["core_activity"] = request.core_activity
+    if request.unique_scope is not None:
+        payload["unique_scope"] = request.unique_scope
+    if request.geographic_scope is not None:
+        payload["geographic_scope"] = request.geographic_scope
+    if request.excludes is not None:
+        payload["excludes"] = request.excludes
     await upsert_global_intent_definition_overrides(
         session,
         [(request.intent_id, payload)],

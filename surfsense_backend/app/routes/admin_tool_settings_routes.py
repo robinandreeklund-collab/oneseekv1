@@ -3346,6 +3346,11 @@ def _intent_metadata_item_from_payload(
         keywords=list(normalized.get("keywords") or []),
         priority=int(normalized.get("priority") or 500),
         enabled=bool(normalized.get("enabled", True)),
+        main_identifier=str(normalized.get("main_identifier") or ""),
+        core_activity=str(normalized.get("core_activity") or ""),
+        unique_scope=str(normalized.get("unique_scope") or ""),
+        geographic_scope=str(normalized.get("geographic_scope") or ""),
+        excludes=list(normalized.get("excludes") or []),
         has_override=has_override,
     )
 
@@ -3381,6 +3386,11 @@ def _agent_metadata_item_from_payload(
         namespace=[str(value) for value in (normalized.get("namespace") or []) if value],
         routes=[str(r) for r in (normalized.get("routes") or []) if r],
         flow_tools=flow_tools,
+        main_identifier=str(normalized.get("main_identifier") or ""),
+        core_activity=str(normalized.get("core_activity") or ""),
+        unique_scope=str(normalized.get("unique_scope") or ""),
+        geographic_scope=str(normalized.get("geographic_scope") or ""),
+        excludes=list(normalized.get("excludes") or []),
         has_override=has_override,
     )
 

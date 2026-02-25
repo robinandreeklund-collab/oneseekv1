@@ -75,6 +75,11 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
         ],
         "priority": 200,
         "enabled": True,
+        "main_identifier": "Kunskapsintent",
+        "core_activity": "Identifierar fragor som kraver informationssokning fran interna eller externa kallor",
+        "unique_scope": "All informationshamtning oavsett domankalla, inte skapande eller konversation",
+        "geographic_scope": "Sverige, rikstackande",
+        "excludes": ["skapa", "generera", "rita", "hej", "tjena"],
     },
     "skapande": {
         "intent_id": "skapande",
@@ -102,6 +107,11 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
         ],
         "priority": 300,
         "enabled": True,
+        "main_identifier": "Skapandeintent",
+        "core_activity": "Identifierar fragor dar anvandaren vill generera nytt innehall som kod, media eller kartbilder",
+        "unique_scope": "Enbart generering och skapande, inte informationssokning eller konversation",
+        "geographic_scope": "",
+        "excludes": ["sök", "search", "vad är", "hej", "tjena"],
     },
     "jämförelse": {
         "intent_id": "jämförelse",
@@ -111,6 +121,11 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
         "keywords": ["/compare", "compare", "jämför", "jamfor", "jämförelse"],
         "priority": 50,
         "enabled": True,
+        "main_identifier": "Jamforelseintent",
+        "core_activity": "Identifierar fragor som explicit ber om jamforelse mellan kallor eller modeller",
+        "unique_scope": "Enbart explicita jamforelser mellan datakallor eller AI-modeller",
+        "geographic_scope": "",
+        "excludes": ["skapa", "hej", "sök"],
     },
     "konversation": {
         "intent_id": "konversation",
@@ -120,6 +135,11 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
         "keywords": ["hej", "tjena", "hallå", "hur mår du", "konversation", "smalltalk"],
         "priority": 400,
         "enabled": True,
+        "main_identifier": "Konversationsintent",
+        "core_activity": "Identifierar halsningar och enkel konversation som inte kraver verktygsanrop",
+        "unique_scope": "Enbart smalltalk och halsningar utan informationsbehov",
+        "geographic_scope": "",
+        "excludes": ["sök", "skapa", "jämför", "statistik", "trafik"],
     },
 }
 
@@ -160,6 +180,23 @@ def _normalize_keywords(values: Any) -> list[str]:
     return deduped
 
 
+def _normalize_text_list(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        text = _normalize_text(raw)
+        if not text:
+            continue
+        lowered = text.casefold()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(text)
+    return deduped
+
+
 def normalize_intent_definition_payload(
     payload: Mapping[str, Any],
     *,
@@ -180,6 +217,11 @@ def normalize_intent_definition_payload(
     keywords = _normalize_keywords(payload.get("keywords"))
     priority = _normalize_int(payload.get("priority"), default=500)
     enabled = bool(payload.get("enabled", True))
+    main_identifier = _normalize_text(payload.get("main_identifier"))
+    core_activity = _normalize_text(payload.get("core_activity"))
+    unique_scope = _normalize_text(payload.get("unique_scope"))
+    geographic_scope = _normalize_text(payload.get("geographic_scope"))
+    excludes = _normalize_text_list(payload.get("excludes"))
     return {
         "intent_id": resolved_intent_id,
         "route": route_value,
@@ -188,6 +230,11 @@ def normalize_intent_definition_payload(
         "keywords": keywords,
         "priority": priority,
         "enabled": enabled,
+        "main_identifier": main_identifier,
+        "core_activity": core_activity,
+        "unique_scope": unique_scope,
+        "geographic_scope": geographic_scope,
+        "excludes": excludes,
     }
 
 

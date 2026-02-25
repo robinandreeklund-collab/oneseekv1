@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.prompt_registry import (
     ACTIVE_PROMPT_DEFINITION_MAP,
+    PromptDefinition,
     get_prompt_definitions,
+    make_dynamic_prompt_definition,
 )
 from sqlalchemy.future import select
 
@@ -16,6 +18,7 @@ from app.schemas.agent_prompts import (
     AgentPromptHistoryResponse,
     AgentPromptsUpdateRequest,
 )
+from app.services.agent_metadata_service import get_effective_agent_metadata
 from app.services.agent_prompt_service import (
     get_global_prompt_overrides,
     upsert_global_prompt_overrides,
@@ -25,6 +28,35 @@ from app.users import current_active_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+async def _all_prompt_definitions(
+    session: AsyncSession,
+) -> tuple[list[PromptDefinition], dict[str, PromptDefinition]]:
+    """Return static + dynamic prompt definitions and a combined lookup map."""
+    static_defs = get_prompt_definitions(active_only=True)
+    combined_map = dict(ACTIVE_PROMPT_DEFINITION_MAP)
+
+    # Generate dynamic definitions for custom agents whose prompt key
+    # is not covered by the static registry.
+    try:
+        agents = await get_effective_agent_metadata(session)
+    except Exception:
+        agents = []
+    dynamic_defs: list[PromptDefinition] = []
+    for agent in agents:
+        pk = str(agent.get("prompt_key") or "").strip()
+        if not pk:
+            continue
+        full_key = f"agent.{pk}.system"
+        if full_key in combined_map:
+            continue
+        defn = make_dynamic_prompt_definition(full_key)
+        if defn:
+            dynamic_defs.append(defn)
+            combined_map[full_key] = defn
+
+    return static_defs + dynamic_defs, combined_map
 
 
 async def _require_admin(
@@ -56,8 +88,9 @@ async def get_agent_prompts(
 ):
     await _require_admin(session, user)
     overrides = await get_global_prompt_overrides(session)
+    all_defs, _ = await _all_prompt_definitions(session)
     items = []
-    for definition in get_prompt_definitions(active_only=True):
+    for definition in all_defs:
         items.append(
             {
                 "key": definition.key,
@@ -82,9 +115,10 @@ async def update_agent_prompts(
     user: User = Depends(current_active_user),
 ):
     await _require_admin(session, user)
+    _, combined_map = await _all_prompt_definitions(session)
     updates = []
     for item in payload.items:
-        if item.key not in ACTIVE_PROMPT_DEFINITION_MAP:
+        if item.key not in combined_map:
             raise HTTPException(
                 status_code=400, detail=f"Unknown prompt key: {item.key}"
             )
@@ -105,8 +139,9 @@ async def update_agent_prompts(
         ) from exc
 
     overrides = await get_global_prompt_overrides(session)
+    all_defs, _ = await _all_prompt_definitions(session)
     items = []
-    for definition in get_prompt_definitions(active_only=True):
+    for definition in all_defs:
         items.append(
             {
                 "key": definition.key,
@@ -131,7 +166,8 @@ async def get_agent_prompt_history(
     user: User = Depends(current_active_user),
 ):
     await _require_admin(session, user)
-    if prompt_key not in ACTIVE_PROMPT_DEFINITION_MAP:
+    _, combined_map = await _all_prompt_definitions(session)
+    if prompt_key not in combined_map:
         raise HTTPException(status_code=400, detail="Unknown prompt key")
 
     result = await session.execute(

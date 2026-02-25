@@ -159,3 +159,89 @@ DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE = (
     "Jag har ett utkast till svar:\n{response_preview}\n\nVill du att jag levererar detta nu? "
     "Svara ja eller nej."
 )
+
+
+DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT = """
+Du är noden domain_planner i supervisor-grafen.
+Din uppgift är att skapa en mikro-plan per domänagent som beskriver exakt
+vilka verktyg som ska anropas och i vilken ordning / parallellitet.
+
+Regler:
+- Välj BARA verktyg från varje agents `available_tools`-lista.
+- Hitta INTE på verktygs-id som inte finns i listan.
+- Om agenten har flera oberoende verktyg (t.ex. prognos + observation): sätt mode="parallel".
+- Om verktyg beror på varandra (t.ex. sök → hämta detaljer): sätt mode="sequential".
+- Håll rationale kort och på svenska.
+- Max 4 verktyg per agent.
+
+Returnera strikt JSON:
+{
+  "domain_plans": {
+    "<agent_name>": {
+      "mode": "parallel|sequential",
+      "tools": ["tool_id_1", "tool_id_2"],
+      "rationale": "kort motivering"
+    }
+  },
+  "reason": "övergripande motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_RESPONSE_LAYER_DESCRIPTION = """
+Response Layer (Nivå 4) väljer presentationsformat för slutsvaret:
+- kunskap      – direkt, faktabaserat svar
+- analys       – strukturerat svar med sektioner och motivering
+- syntes       – fler-källors syntes som namnger ursprung
+- visualisering – data presenterat som tabell eller strukturerad lista
+"""
+
+
+DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT = """
+Du formaterar ett slutsvar i läget **kunskap**.
+
+Regler:
+- Svaret ska vara direkt, tydligt och faktabaserat.
+- Använd korta stycken. Undvik onödiga rubriker om svaret är kort.
+- Om svaret innehåller siffror eller datum: presentera dem tydligt.
+- Skriv på svenska om inte annat framgår av kontexten.
+- Ändra ALDRIG faktainnehåll — bara formatering.
+"""
+
+
+DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT = """
+Du formaterar ett slutsvar i läget **analys**.
+
+Regler:
+- Strukturera svaret med tydliga sektioner och markdown-rubriker (## / ###).
+- Inkludera en kort sammanfattning i början.
+- Använd punktlistor för att lyfta fram nyckelinsikter.
+- Om det finns jämförelser: använd tabeller eller sida-vid-sida-format.
+- Avsluta med en kort slutsats eller rekommendation om det är naturligt.
+- Skriv på svenska. Ändra ALDRIG faktainnehåll.
+"""
+
+
+DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT = """
+Du formaterar ett slutsvar i läget **syntes** (fler-källors sammanställning).
+
+Regler:
+- Namnge varje källa/domän explicit (t.ex. "Enligt SMHI:", "SCB visar:").
+- Använd sektioner per källa eller tematiskt grupperat.
+- Avsluta med en övergripande syntes som binder ihop resultaten.
+- Om källor motsäger varandra: påpeka det neutralt.
+- Skriv på svenska. Ändra ALDRIG faktainnehåll.
+"""
+
+
+DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT = """
+Du formaterar ett slutsvar i läget **visualisering** (datapresentation).
+
+Regler:
+- Presentera data i tabellformat (markdown-tabell) om möjligt.
+- Använd strukturerade listor för kategoriserade data.
+- Inkludera en kort textuell sammanfattning ovanför tabellen/listan.
+- Om det finns tidsserier: sortera kronologiskt.
+- Avrunda siffror konsekvent (1 decimal om inte annat behövs).
+- Skriv på svenska. Ändra ALDRIG faktainnehåll.
+"""

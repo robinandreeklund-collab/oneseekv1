@@ -29,6 +29,7 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
 from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
@@ -37,6 +38,10 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+    DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
 )
 from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
 from app.agents.new_chat.system_prompt import SURFSENSE_SYSTEM_INSTRUCTIONS
@@ -94,6 +99,7 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "supervisor.planner.system",
     "supervisor.planner.multi_domain.system",
     "supervisor.tool_resolver.system",
+    "supervisor.domain_planner.system",
     "supervisor.critic_gate.system",
     "supervisor.synthesizer.system",
     "supervisor.critic.system",
@@ -105,6 +111,10 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "supervisor.scoped_tool_prompt.template",
     "supervisor.tool_default_prompt.template",
     "supervisor.subagent.context.template",
+    "supervisor.response_layer.kunskap",
+    "supervisor.response_layer.analys",
+    "supervisor.response_layer.syntes",
+    "supervisor.response_layer.visualisering",
     "supervisor.hitl.planner.message",
     "supervisor.hitl.execution.message",
     "supervisor.hitl.synthesis.message",
@@ -198,11 +208,41 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         description="Prompt for tool_resolver node in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
     ),
+    "supervisor.domain_planner.system": PromptDefinition(
+        key="supervisor.domain_planner.system",
+        label="Supervisor domain planner prompt",
+        description="Prompt for domain_planner node — skapar mikro-plan per domänagent med verktygsval och parallellitet.",
+        default_prompt=DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
+    ),
     "supervisor.critic_gate.system": PromptDefinition(
         key="supervisor.critic_gate.system",
         label="Supervisor critic gate prompt",
         description="Prompt for critic node decisioning in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    ),
+    "supervisor.response_layer.kunskap": PromptDefinition(
+        key="supervisor.response_layer.kunskap",
+        label="Response Layer · Kunskap",
+        description="Formateringsregler för kunskap-läge — direkt, faktabaserat svar.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    ),
+    "supervisor.response_layer.analys": PromptDefinition(
+        key="supervisor.response_layer.analys",
+        label="Response Layer · Analys",
+        description="Formateringsregler för analys-läge — strukturerat svar med sektioner.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    ),
+    "supervisor.response_layer.syntes": PromptDefinition(
+        key="supervisor.response_layer.syntes",
+        label="Response Layer · Syntes",
+        description="Formateringsregler för syntes-läge — fler-källors syntes.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    ),
+    "supervisor.response_layer.visualisering": PromptDefinition(
+        key="supervisor.response_layer.visualisering",
+        label="Response Layer · Visualisering",
+        description="Formateringsregler för visualisering-läge — data som tabell/lista.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
     ),
     "supervisor.synthesizer.system": PromptDefinition(
         key="supervisor.synthesizer.system",
@@ -440,6 +480,32 @@ def get_prompt_definitions(*, active_only: bool = False) -> list[PromptDefinitio
 def get_oneseek_langsmith_prompt_template() -> list[PromptDefinition]:
     """Canonical prompt template used by the current OneSeek LangGraph flow."""
     return list(PROMPT_DEFINITIONS)
+
+
+_DEFAULT_CUSTOM_AGENT_PROMPT = DEFAULT_WORKER_KNOWLEDGE_PROMPT
+
+
+def make_dynamic_prompt_definition(prompt_key: str) -> PromptDefinition | None:
+    """Create a PromptDefinition on-the-fly for a key not in the static registry.
+
+    Accepts keys matching ``agent.<name>.system`` and returns a definition
+    with the default worker knowledge prompt so that custom agents created
+    via the admin UI are immediately editable.
+    """
+    if prompt_key in PROMPT_DEFINITION_MAP:
+        return None  # already registered statically
+    if not prompt_key.startswith("agent.") or not prompt_key.endswith(".system"):
+        return None
+    agent_slug = prompt_key.removeprefix("agent.").removesuffix(".system")
+    if not agent_slug:
+        return None
+    return PromptDefinition(
+        key=prompt_key,
+        label=f"{agent_slug.replace('_', ' ').title()}-agent prompt",
+        description=f"System-prompt for custom agent '{agent_slug}'.",
+        default_prompt=_DEFAULT_CUSTOM_AGENT_PROMPT,
+        active_in_admin=True,
+    )
 
 
 def resolve_prompt(

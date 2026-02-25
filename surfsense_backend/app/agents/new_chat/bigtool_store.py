@@ -29,6 +29,7 @@ from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
+from app.agents.new_chat.tool_identity_defaults import _DEFAULT_TOOL_IDENTITY
 from app.services.reranker_service import RerankerService
 from app.services.cache_control import is_cache_disabled
 from app.agents.new_chat.retrieval_feedback import get_global_retrieval_feedback_store
@@ -2124,12 +2125,20 @@ def build_tool_index(
         if _is_weather_tool(tool_id) and not tool_id.startswith("smhi_"):
             # Keep weather tools grouped together across providers.
             category = "weather"
-        # New metadata identity fields (populated from overrides)
-        main_identifier = ""
-        core_activity = ""
-        unique_scope = ""
-        geographic_scope = ""
+        # New metadata identity fields — seeded from built-in defaults,
+        # then overridden by DB overrides when present.
+        _identity = _DEFAULT_TOOL_IDENTITY.get(tool_id, {})
+        main_identifier = str(_identity.get("main_identifier") or "")
+        core_activity = str(_identity.get("core_activity") or "")
+        unique_scope = str(_identity.get("unique_scope") or "")
+        geographic_scope = str(_identity.get("geographic_scope") or "")
         excludes: tuple[str, ...] = ()
+        _id_kw = _identity.get("keywords")
+        if isinstance(_id_kw, list) and _id_kw and not keywords:
+            keywords = list(_id_kw)
+        _id_desc = str(_identity.get("description") or "")
+        if _id_desc and not description:
+            description = _id_desc
         if metadata_overrides and tool_id in metadata_overrides:
             override = metadata_overrides[tool_id]
             override_name = str(override.get("name") or "").strip()

@@ -90,6 +90,11 @@ function toAgentUpdateItem(
 		namespace: [...(item.namespace ?? [])],
 		routes: [...(item.routes ?? [])],
 		flow_tools: [...(item.flow_tools ?? [])].map((t) => ({ ...t })),
+		main_identifier: item.main_identifier ?? "",
+		core_activity: item.core_activity ?? "",
+		unique_scope: item.unique_scope ?? "",
+		geographic_scope: item.geographic_scope ?? "",
+		excludes: [...(item.excludes ?? [])],
 	};
 }
 
@@ -104,6 +109,11 @@ function toIntentUpdateItem(
 		keywords: [...item.keywords],
 		priority: item.priority ?? 500,
 		enabled: item.enabled ?? true,
+		main_identifier: item.main_identifier ?? "",
+		core_activity: item.core_activity ?? "",
+		unique_scope: item.unique_scope ?? "",
+		geographic_scope: item.geographic_scope ?? "",
+		excludes: [...(item.excludes ?? [])],
 	};
 }
 
@@ -389,11 +399,15 @@ function extractSaveLockConflicts(error: unknown): {
 	return { message, conflicts };
 }
 
-const AUDIT_SCOPE_OPTIONS: Array<{
+type AuditScopeOption = {
 	id: string;
 	label: string;
 	prefix?: string;
-}> = [
+	toolIds?: string[];  // explicit tool list for agent-based scopes
+	isAgent?: boolean;   // marks dynamically-generated agent entries
+};
+
+const STATIC_AUDIT_SCOPE_OPTIONS: AuditScopeOption[] = [
 	{ id: "smhi", label: "SMHI", prefix: "smhi_" },
 	{ id: "trafikverket_weather", label: "Trafikverket-vader", prefix: "trafikverket_vader_" },
 	{ id: "trafikverket", label: "Trafikverket (alla)", prefix: "trafikverket_" },
@@ -886,6 +900,32 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		}
 		return options.sort((left, right) => left.localeCompare(right, "sv"));
 	}, [data?.tool_categories]);
+
+	// Extend static scope options with agent-based entries from catalog
+	const auditScopeOptions = useMemo((): AuditScopeOption[] => {
+		const staticIds = new Set(STATIC_AUDIT_SCOPE_OPTIONS.map((o) => o.id));
+		const agentOptions: AuditScopeOption[] = [];
+		for (const agent of data?.agents ?? []) {
+			if (staticIds.has(agent.agent_id)) continue;
+			const toolIds = (agent.flow_tools ?? []).map((t) => t.tool_id).filter(Boolean);
+			if (toolIds.length === 0) continue;
+			agentOptions.push({
+				id: agent.agent_id,
+				label: agent.label || agent.agent_id,
+				toolIds,
+				isAgent: true,
+			});
+		}
+		// Insert agent entries before the "all" option
+		const withoutAll = STATIC_AUDIT_SCOPE_OPTIONS.filter((o) => o.id !== "all");
+		const allOption = STATIC_AUDIT_SCOPE_OPTIONS.find((o) => o.id === "all");
+		return [
+			...withoutAll,
+			...agentOptions.sort((a, b) => a.label.localeCompare(b.label, "sv")),
+			...(allOption ? [allOption] : []),
+		];
+	}, [data?.agents]);
+
 	const customAuditToolIds = useMemo(
 		() => parseToolIdsInput(customAuditToolIdsInput),
 		[customAuditToolIdsInput]
@@ -896,17 +936,24 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 	);
 	const scopeDerivedAuditToolIds = useMemo(() => {
 		if (hasAllScopeSelected) return [];
-		const scopePrefixes = AUDIT_SCOPE_OPTIONS.filter((option) =>
+		const selectedOptions = auditScopeOptions.filter((option) =>
 			selectedAuditScopes.includes(option.id)
-		)
+		);
+		const scopePrefixes = selectedOptions
 			.map((option) => option.prefix)
 			.filter((value): value is string => typeof value === "string" && value.length > 0);
-		if (!scopePrefixes.length) return [];
+		const scopeExactIds = new Set(
+			selectedOptions.flatMap((option) => option.toolIds ?? [])
+		);
+		if (!scopePrefixes.length && scopeExactIds.size === 0) return [];
 		return allToolOptions.filter((toolId) => {
 			const normalizedToolId = toolId.toLocaleLowerCase();
-			return scopePrefixes.some((prefix) => normalizedToolId.startsWith(prefix));
+			return (
+				scopePrefixes.some((prefix) => normalizedToolId.startsWith(prefix)) ||
+				scopeExactIds.has(toolId)
+			);
 		});
-	}, [hasAllScopeSelected, selectedAuditScopes, allToolOptions]);
+	}, [hasAllScopeSelected, selectedAuditScopes, allToolOptions, auditScopeOptions]);
 	const requestedAuditToolIds = useMemo(() => {
 		if (hasAllScopeSelected && customAuditToolIds.length === 0) return [];
 		const ordered: string[] = [];
@@ -2549,7 +2596,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 						<div className="space-y-1 lg:col-span-2">
 							<Label>Scope (flera val)</Label>
 							<div className="rounded border p-2 space-y-1 max-h-32 overflow-auto text-xs">
-								{AUDIT_SCOPE_OPTIONS.map((scopeOption) => {
+								{auditScopeOptions.map((scopeOption) => {
 									const checked = selectedAuditScopes.includes(scopeOption.id);
 									const disabled = selectedAuditScopes.includes("all") && scopeOption.id !== "all";
 									return (
@@ -2565,7 +2612,14 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 													toggleAuditScopeSelection(scopeOption.id, event.target.checked)
 												}
 											/>
-											{scopeOption.label}
+											<span>
+												{scopeOption.label}
+												{scopeOption.isAgent && (
+													<span className="ml-1 text-muted-foreground text-[10px]">
+														({scopeOption.toolIds?.length ?? 0} tools)
+													</span>
+												)}
+											</span>
 										</label>
 									);
 								})}

@@ -1,0 +1,995 @@
+{
+  "SCB": {
+    "description": "API SCB",
+    "top_level_categories": [
+      {
+        "Tool-namn": "scb_arbetsmarknad",
+        "HUVUDIDENTIFIERARE": "SCB arbetsmarknadsstatistik",
+        "KÄRNAKTIVITET": "sysselsättning arbetslöshet löner",
+        "STARKASTE KEYWORDS": "sysselsättning arbetslöshet arbetskraft löner AKU bransch yrke tidsserie inkomst",
+        "UNIKT AVGRÄNSNING": "– inte kommunala åtgärder Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_befolkning",
+        "HUVUDIDENTIFIERARE": "SCB befolkningsstatistik",
+        "KÄRNAKTIVITET": "folkmängd flyttningar födelser dödsfall",
+        "STARKASTE KEYWORDS": "folkmängd befolkning flyttningar födelser dödsfall ålder kön region kommun demografi",
+        "UNIKT AVGRÄNSNING": "– inte arbetsmarknad eller ekonomi",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "scb_boende_byggande",
+        "HUVUDIDENTIFIERARE": "SCB bostadsstatistik",
+        "KÄRNAKTIVITET": "bostadsbestånd nybyggnation bygglov",
+        "STARKASTE KEYWORDS": "bostadsbestånd nybyggnation bygglov hyresrätt bostadsrätt småhus byggstart färdigställt",
+        "UNIKT AVGRÄNSNING": "– inte kommunala hyror eller köer Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_demokrati",
+        "HUVUDIDENTIFIERARE": "SCB demokratistatistik",
+        "KÄRNAKTIVITET": "valdeltagande medborgarengagemang",
+        "STARKASTE KEYWORDS": "valdeltagande medborgarengagemang förtroende e-tjänster medborgardialog",
+        "UNIKT AVGRÄNSNING": "– inte kommunal nöjdhet Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_energi",
+        "HUVUDIDENTIFIERARE": "SCB energistatistik",
+        "KÄRNAKTIVITET": "energianvändning elproduktion",
+        "STARKASTE KEYWORDS": "energianvändning elproduktion förbrukning per invånare hushåll bransch",
+        "UNIKT AVGRÄNSNING": "– inte kommunal energi Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_finansmarknad",
+        "HUVUDIDENTIFIERARE": "SCB finansmarknadsstatistik",
+        "KÄRNAKTIVITET": "räntor lån bostadslån",
+        "STARKASTE KEYWORDS": "räntor lån bostadslån sparande investeringar",
+        "UNIKT AVGRÄNSNING": "– inte kommunal budget Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_handel",
+        "HUVUDIDENTIFIERARE": "SCB handelsstatistik",
+        "KÄRNAKTIVITET": "export import handelsbalans",
+        "STARKASTE KEYWORDS": "export import handelsbalans varuhandel tjänstehandel land",
+        "UNIKT AVGRÄNSNING": "– inte kommunal handel",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_hushall",
+        "HUVUDIDENTIFIERARE": "SCB hushållsstatistik",
+        "KÄRNAKTIVITET": "hushållsstorlek boendeform",
+        "STARKASTE KEYWORDS": "hushållsstorlek boendeform inkomst konsumtion",
+        "UNIKT AVGRÄNSNING": "– inte kommunal bostadskö Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_halsa_sjukvard",
+        "HUVUDIDENTIFIERARE": "SCB hälso sjukvårdsstatistik",
+        "KÄRNAKTIVITET": "sjukvård dödsorsaker hälsa",
+        "STARKASTE KEYWORDS": "sjukvård dödsorsaker sjukfrånvaro hälsa patientnöjdhet",
+        "UNIKT AVGRÄNSNING": "– inte kommunal vårdkostnad Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_jordbruk",
+        "HUVUDIDENTIFIERARE": "SCB jordbruksstatistik",
+        "KÄRNAKTIVITET": "jordbruk areal skörd",
+        "STARKASTE KEYWORDS": "jordbruk areal skörd djurhållning livsmedelsproduktion",
+        "UNIKT AVGRÄNSNING": "– inte kommunal miljö Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_kultur",
+        "HUVUDIDENTIFIERARE": "SCB kulturstatistik",
+        "KÄRNAKTIVITET": "idrott fritid turism",
+        "STARKASTE KEYWORDS": "idrott fritid turism bibliotek museum evenemang deltagande",
+        "UNIKT AVGRÄNSNING": "– inte kommunal kulturhus Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_levnadsforhallanden",
+        "HUVUDIDENTIFIERARE": "SCB levnadsförhållanden statistik",
+        "KÄRNAKTIVITET": "inkomst fattigdom boende",
+        "STARKASTE KEYWORDS": "inkomst fattigdom boende hälsa utbildning",
+        "UNIKT AVGRÄNSNING": "– inte kommunal IFO Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_miljo",
+        "HUVUDIDENTIFIERARE": "SCB miljöstatistik",
+        "KÄRNAKTIVITET": "utsläpp klimat hållbarhet",
+        "STARKASTE KEYWORDS": "utsläpp klimat hållbarhet energi avfall vatten luftkvalitet",
+        "UNIKT AVGRÄNSNING": "– inte kommunal återvinning Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_nationalrakenskaper",
+        "HUVUDIDENTIFIERARE": "SCB nationalräkenskaper",
+        "KÄRNAKTIVITET": "BNP konsumtion investeringar",
+        "STARKASTE KEYWORDS": "BNP konsumtion investeringar export import tillväxt",
+        "UNIKT AVGRÄNSNING": "– inte kommunal ekonomi Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_naringsverksamhet",
+        "HUVUDIDENTIFIERARE": "SCB näringsverksamhet statistik",
+        "KÄRNAKTIVITET": "företag omsättning anställda",
+        "STARKASTE KEYWORDS": "företag omsättning anställda bransch nyföretagande",
+        "UNIKT AVGRÄNSNING": "– inte kommunal sysselsättning Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_offentlig_ekonomi",
+        "HUVUDIDENTIFIERARE": "SCB offentlig ekonomi statistik",
+        "KÄRNAKTIVITET": "kommun stat skatter",
+        "STARKASTE KEYWORDS": "kommun stat skatter bidrag utgifter",
+        "UNIKT AVGRÄNSNING": "– inte kommunal budget Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_priser_konsumtion",
+        "HUVUDIDENTIFIERARE": "SCB priser konsumtion statistik",
+        "KÄRNAKTIVITET": "KPI inflation konsumtionsprisindex",
+        "STARKASTE KEYWORDS": "KPI inflation konsumtionsprisindex livsmedelspriser",
+        "UNIKT AVGRÄNSNING": "– inte kommunal skattesats Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_socialtjanst",
+        "HUVUDIDENTIFIERARE": "SCB socialtjänst statistik",
+        "KÄRNAKTIVITET": "ekonomiskt bistånd familjehem",
+        "STARKASTE KEYWORDS": "ekonomiskt bistånd familjehem missbruk LVU försörjningsstöd",
+        "UNIKT AVGRÄNSNING": "– inte kommunal IFO Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_transporter",
+        "HUVUDIDENTIFIERARE": "SCB transportstatistik",
+        "KÄRNAKTIVITET": "väg järnväg flyg",
+        "STARKASTE KEYWORDS": "väg järnväg flyg sjöfart persontrafik godstransport",
+        "UNIKT AVGRÄNSNING": "– inte realtids trafik Trafikverket",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_utbildning",
+        "HUVUDIDENTIFIERARE": "SCB utbildningsstatistik",
+        "KÄRNAKTIVITET": "skolresultat elever examen",
+        "STARKASTE KEYWORDS": "skolresultat elever studenter examen gymnasium högskola",
+        "UNIKT AVGRÄNSNING": "– inte kommunal pedagogtäthet Kolada",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_amnesovergripande",
+        "HUVUDIDENTIFIERARE": "SCB ämnesövergripande statistik",
+        "KÄRNAKTIVITET": "tvärvetenskaplig nyckeltal",
+        "STARKASTE KEYWORDS": "tvärvetenskaplig nyckeltal jämförelser kommun region",
+        "UNIKT AVGRÄNSNING": "catch-all när ingen specifik kategori passar",
+        "KOMMUN/SVERIGE": "Sverige"
+      }
+    ],
+    "focused_sub_tools": [
+      {
+        "Tool-namn": "scb_befolkning_folkmangd",
+        "HUVUDIDENTIFIERARE": "SCB befolkningsfolkmängd",
+        "KÄRNAKTIVITET": "antal invånare folkmängd",
+        "STARKASTE KEYWORDS": "antal invånare folkmängd per region kommun ålder kön",
+        "UNIKT AVGRÄNSNING": "– inte flyttningar födelser dödsfall",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "scb_befolkning_forandringar",
+        "HUVUDIDENTIFIERARE": "SCB befolkningsförändringar",
+        "KÄRNAKTIVITET": "flyttningar migration",
+        "STARKASTE KEYWORDS": "flyttningar inrikes utrikes migration nettoflytt tidsserie",
+        "UNIKT AVGRÄNSNING": "– inte statisk folkmängd",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_befolkning_fodda",
+        "HUVUDIDENTIFIERARE": "SCB födelsetal",
+        "KÄRNAKTIVITET": "födda barn nativitet",
+        "STARKASTE KEYWORDS": "födda barn nativitet fertilitet TFR födelser per region kön",
+        "UNIKT AVGRÄNSNING": "– inte dödsfall eller flyttningar",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_arbetsmarknad_arbetsloshet",
+        "HUVUDIDENTIFIERARE": "SCB arbetslöshetsstatistik",
+        "KÄRNAKTIVITET": "arbetslöshet arbetslöshetsgrad",
+        "STARKASTE KEYWORDS": "arbetslöshet arbetslöshetsgrad AKU tidsserie bransch ålder kön",
+        "UNIKT AVGRÄNSNING": "– inte sysselsättning eller löner",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_arbetsmarknad_sysselsattning",
+        "HUVUDIDENTIFIERARE": "SCB sysselsättningsstatistik",
+        "KÄRNAKTIVITET": "sysselsättning sysselsättningsgrad",
+        "STARKASTE KEYWORDS": "sysselsättning sysselsättningsgrad arbetskraft deltagande bransch",
+        "UNIKT AVGRÄNSNING": "– inte arbetslöshet eller löner",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_arbetsmarknad_lon",
+        "HUVUDIDENTIFIERARE": "SCB lönestatistik",
+        "KÄRNAKTIVITET": "löner medellön medianlön",
+        "STARKASTE KEYWORDS": "löner medellön medianlön löneutveckling inkomstskillnad kön bransch yrke",
+        "UNIKT AVGRÄNSNING": "– inte sysselsättning eller arbetslöshet",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_boende_bygglov",
+        "HUVUDIDENTIFIERARE": "SCB bygglov statistik",
+        "KÄRNAKTIVITET": "bygglov beviljade ansökningar",
+        "STARKASTE KEYWORDS": "bygglov beviljade ansökningar byggstart nybyggnation",
+        "UNIKT AVGRÄNSNING": "– inte befintligt bostadsbestånd",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_boende_nybyggnation",
+        "HUVUDIDENTIFIERARE": "SCB nybyggnation statistik",
+        "KÄRNAKTIVITET": "nybyggda bostäder byggstart",
+        "STARKASTE KEYWORDS": "nybyggda bostäder byggstart färdigställt bostadsproduktion",
+        "UNIKT AVGRÄNSNING": "– inte befintligt bostadsbestånd",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "scb_boende_bestand",
+        "HUVUDIDENTIFIERARE": "SCB bostadsbestånd statistik",
+        "KÄRNAKTIVITET": "antal bostäder småhus flerbostadshus",
+        "STARKASTE KEYWORDS": "antal bostäder småhus flerbostadshus hyresrätt bostadsrätt byggår",
+        "UNIKT AVGRÄNSNING": "– inte nybyggnation eller bygglov",
+        "KOMMUN/SVERIGE": "Sverige"
+      }
+    ]
+  },
+  "SMHI": {
+    "description": "API SMHI",
+    "tools": [
+      {
+        "Tool-namn": "smhi_vaderprognoser",
+        "HUVUDIDENTIFIERARE": "SMHI väderprognoser",
+        "KÄRNAKTIVITET": "prognos temperatur nederbörd vind",
+        "STARKASTE KEYWORDS": "prognos temperatur nederbörd vind moln regn snö timprognos dygnsprognos AROME MEPS",
+        "UNIKT AVGRÄNSNING": "– inte aktuella observationer eller vägväder",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_vaderanalyser",
+        "HUVUDIDENTIFIERARE": "SMHI väderanalyser",
+        "KÄRNAKTIVITET": "analys MESAN grid",
+        "STARKASTE KEYWORDS": "analys MESAN grid molntäckning strålning vindriktning temperatur analyserad data",
+        "UNIKT AVGRÄNSNING": "– inte råobservationer eller prognoser",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_vaderobservationer",
+        "HUVUDIDENTIFIERARE": "SMHI väderobservationer",
+        "KÄRNAKTIVITET": "realtidsmätningar temperatur nederbörd",
+        "STARKASTE KEYWORDS": "realtidsmätningar temperatur nederbörd vind lufttryck luftfuktighet sikt stationer",
+        "UNIKT AVGRÄNSNING": "– inte prognoser eller analyser",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_hydrologi",
+        "HUVUDIDENTIFIERARE": "SMHI hydrologi",
+        "KÄRNAKTIVITET": "vattenflöden vattennivåer",
+        "STARKASTE KEYWORDS": "vattenflöde vattennivå avrinningsområde hydrologi mätstationer realtid prognoser",
+        "UNIKT AVGRÄNSNING": "– inte havsvågor eller brandrisk",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_oceanografi",
+        "HUVUDIDENTIFIERARE": "SMHI oceanografi",
+        "KÄRNAKTIVITET": "havsvågor våghöjd strömmar",
+        "STARKASTE KEYWORDS": "havsvågor våghöjd strömmar havsnivåer bojar kustdata observationer prognoser",
+        "UNIKT AVGRÄNSNING": "– inte sjöar eller hydrologi",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_brandrisk",
+        "HUVUDIDENTIFIERARE": "SMHI brandrisk",
+        "KÄRNAKTIVITET": "brandriskindex FWI FFMC ISI",
+        "STARKASTE KEYWORDS": "brandrisk FWI FFMC ISI vindpåverkan skogsbrandindex prognos",
+        "UNIKT AVGRÄNSNING": "– inte allmän väderprognos eller observationer",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_weather (legacy alias)",
+        "HUVUDIDENTIFIERARE": "SMHI väderprognoser legacy",
+        "KÄRNAKTIVITET": "prognos temperatur nederbörd vind",
+        "STARKASTE KEYWORDS": "prognos temperatur nederbörd vind moln regn snö timprognos dygnsprognos AROME",
+        "UNIKT AVGRÄNSNING": "– legacy alias för METFCST prognoser",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_vaderprognoser_metfcst",
+        "HUVUDIDENTIFIERARE": "SMHI väderprognoser METFCST",
+        "KÄRNAKTIVITET": "prognos temperatur nederbörd vind",
+        "STARKASTE KEYWORDS": "prognos temperatur nederbörd vind moln regn snö timprognos dygnsprognos AROME MEPS",
+        "UNIKT AVGRÄNSNING": "– inte snöspecifik prognos eller analyser",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_vaderprognoser_snow1g",
+        "HUVUDIDENTIFIERARE": "SMHI snöprognoser SNOW1G",
+        "KÄRNAKTIVITET": "snödjup snöfall snötäcke",
+        "STARKASTE KEYWORDS": "snödjup snöfall snötäcke vinterprognos snörelaterad prognos",
+        "UNIKT AVGRÄNSNING": "– inte allmän väderprognos",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_vaderanalyser_mesan2g",
+        "HUVUDIDENTIFIERARE": "SMHI väderanalyser MESAN2G",
+        "KÄRNAKTIVITET": "analys molntäckning strålning",
+        "STARKASTE KEYWORDS": "analys MESAN grid molntäckning strålning vindriktning temperatur analyserad data",
+        "UNIKT AVGRÄNSNING": "– inte råobservationer eller prognoser",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_vaderobservationer_metobs",
+        "HUVUDIDENTIFIERARE": "SMHI väderobservationer METOBS",
+        "KÄRNAKTIVITET": "realtidsmätningar temperatur nederbörd",
+        "STARKASTE KEYWORDS": "realtidsmätningar temperatur nederbörd vind lufttryck luftfuktighet sikt stationer",
+        "UNIKT AVGRÄNSNING": "– inte prognoser eller analyser",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_hydrologi_hydroobs",
+        "HUVUDIDENTIFIERARE": "SMHI hydrologi observationer HYDROOBS",
+        "KÄRNAKTIVITET": "vattenflöde vattennivå realtid",
+        "STARKASTE KEYWORDS": "vattenflöde vattennivå avrinningsområde realtidsmätningar stationer",
+        "UNIKT AVGRÄNSNING": "– inte prognoser",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_hydrologi_pthbv",
+        "HUVUDIDENTIFIERARE": "SMHI hydrologi prognoser PTHBV",
+        "KÄRNAKTIVITET": "prognos vattenflöde vattennivå",
+        "STARKASTE KEYWORDS": "prognos vattenflöde vattennivå översvämning avrinningsområde",
+        "UNIKT AVGRÄNSNING": "– inte observationer",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_oceanografi_ocobs",
+        "HUVUDIDENTIFIERARE": "SMHI oceanografi observationer OCOBS",
+        "KÄRNAKTIVITET": "havsvågor våghöjd strömmar realtid",
+        "STARKASTE KEYWORDS": "havsvågor våghöjd strömmar havsnivåer bojar kustdata realtid",
+        "UNIKT AVGRÄNSNING": "– inte prognoser",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_brandrisk_fwif",
+        "HUVUDIDENTIFIERARE": "SMHI brandrisk prognos FWIF",
+        "KÄRNAKTIVITET": "brandriskindex FWI FFMC ISI prognos",
+        "STARKASTE KEYWORDS": "brandrisk FWI FFMC ISI vindpåverkan skogsbrandprognos",
+        "UNIKT AVGRÄNSNING": "– inte allmän väderprognos",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "smhi_brandrisk_fwia",
+        "HUVUDIDENTIFIERARE": "SMHI brandrisk analys FWIA",
+        "KÄRNAKTIVITET": "brandriskanalys FWI FFMC ISI",
+        "STARKASTE KEYWORDS": "brandriskanalys FWI FFMC ISI vindpåverkan skogsbrandindex",
+        "UNIKT AVGRÄNSNING": "– inte prognos eller observationer",
+        "KOMMUN/SVERIGE": "Sverige"
+      }
+    ]
+  },
+  "Trafikverket": {
+    "description": "API Trafikverket",
+    "top_level": [
+      {
+        "Tool-namn": "trafikverket_trafikinfo",
+        "HUVUDIDENTIFIERARE": "Trafikverket trafikinfo",
+        "KÄRNAKTIVITET": "störningar olyckor köer vägavstängningar",
+        "STARKASTE KEYWORDS": "störningar olyckor köer vägavstängningar trafikinfo realtid E4 E20 vägtrafik",
+        "UNIKT AVGRÄNSNING": "– inte tågförseningar eller kamerabilder",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_tag",
+        "HUVUDIDENTIFIERARE": "Trafikverket tåg",
+        "KÄRNAKTIVITET": "tågtrafik förseningar tidtabell stationer",
+        "STARKASTE KEYWORDS": "tågtrafik förseningar tidtabell stationer inställda tåg SJ pendeltåg järnväg",
+        "UNIKT AVGRÄNSNING": "– inte vägtrafik eller kameror",
+        "KOMMUN/SVERIGE": "Sverige tåg"
+      },
+      {
+        "Tool-namn": "trafikverket_vag",
+        "HUVUDIDENTIFIERARE": "Trafikverket väg",
+        "KÄRNAKTIVITET": "vägstatus underhåll hastighet avstängningar",
+        "STARKASTE KEYWORDS": "vägstatus underhåll hastighet avstängningar vägtrafik E4 E20 realtid VViS",
+        "UNIKT AVGRÄNSNING": "– inte tåg eller kameror",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_vader",
+        "HUVUDIDENTIFIERARE": "Trafikverket väder",
+        "KÄRNAKTIVITET": "vägväder halka vind temperatur",
+        "STARKASTE KEYWORDS": "vägväder halka vind temperatur snö is väglag VViS realtid väg",
+        "UNIKT AVGRÄNSNING": "– inte allmän SMHI-väder eller prognos",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_kameror",
+        "HUVUDIDENTIFIERARE": "Trafikverket kameror",
+        "KÄRNAKTIVITET": "trafikbilder snapshot lista status",
+        "STARKASTE KEYWORDS": "trafikbilder kameror snapshot lista status realtid E4 E20 vägtrafik",
+        "UNIKT AVGRÄNSNING": "– inte vägstatus eller tåg",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_prognos",
+        "HUVUDIDENTIFIERARE": "Trafikverket prognos",
+        "KÄRNAKTIVITET": "trafikprognos väg tåg",
+        "STARKASTE KEYWORDS": "trafikprognos vägprognos tågprognos förseningar framtid trafikinfo",
+        "UNIKT AVGRÄNSNING": "– inte realtidsdata eller observationer",
+        "KOMMUN/SVERIGE": "Sverige"
+      }
+    ],
+    "focused_sub_tools": [
+      {
+        "Tool-namn": "trafikverket_trafikinfo_storningar",
+        "HUVUDIDENTIFIERARE": "Trafikverket trafikinfo störningar",
+        "KÄRNAKTIVITET": "störningar olyckor köer",
+        "STARKASTE KEYWORDS": "störningar olyckor köer trafikinfo realtid E4 E20 vägtrafik",
+        "UNIKT AVGRÄNSNING": "– inte tåg eller kameror",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_trafikinfo_olyckor",
+        "HUVUDIDENTIFIERARE": "Trafikverket trafikinfo olyckor",
+        "KÄRNAKTIVITET": "olyckor incidenter",
+        "STARKASTE KEYWORDS": "olyckor incidenter trafikinfo realtid E4 E20 vägtrafik",
+        "UNIKT AVGRÄNSNING": "– inte köer eller avstängningar",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_trafikinfo_koer",
+        "HUVUDIDENTIFIERARE": "Trafikverket trafikinfo köer",
+        "KÄRNAKTIVITET": "köer köbildning",
+        "STARKASTE KEYWORDS": "köer köbildning trafikinfo realtid E4 E20 vägtrafik",
+        "UNIKT AVGRÄNSNING": "– inte olyckor eller avstängningar",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_trafikinfo_vagarbeten",
+        "HUVUDIDENTIFIERARE": "Trafikverket trafikinfo vägavstängningar",
+        "KÄRNAKTIVITET": "vägavstängningar arbeten",
+        "STARKASTE KEYWORDS": "vägavstängningar vägavstängningar arbeten trafikinfo realtid E4 E20",
+        "UNIKT AVGRÄNSNING": "– inte olyckor eller köer",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_tag_forseningar",
+        "HUVUDIDENTIFIERARE": "Trafikverket tåg förseningar",
+        "KÄRNAKTIVITET": "tågförseningar",
+        "STARKASTE KEYWORDS": "tågförseningar förseningar tågtrafik SJ pendeltåg järnväg",
+        "UNIKT AVGRÄNSNING": "– inte inställda tåg eller tidtabell",
+        "KOMMUN/SVERIGE": "Sverige tåg"
+      },
+      {
+        "Tool-namn": "trafikverket_tag_tidtabell",
+        "HUVUDIDENTIFIERARE": "Trafikverket tåg tidtabell",
+        "KÄRNAKTIVITET": "tidtabell avgångar",
+        "STARKASTE KEYWORDS": "tidtabell avgångar ankomster tågtrafik SJ pendeltåg järnväg",
+        "UNIKT AVGRÄNSNING": "– inte förseningar eller inställda tåg",
+        "KOMMUN/SVERIGE": "Sverige tåg"
+      },
+      {
+        "Tool-namn": "trafikverket_tag_stationer",
+        "HUVUDIDENTIFIERARE": "Trafikverket tåg stationer",
+        "KÄRNAKTIVITET": "stationer tågstationer",
+        "STARKASTE KEYWORDS": "stationer tågstationer tågtrafik SJ pendeltåg järnväg",
+        "UNIKT AVGRÄNSNING": "– inte tidtabell eller förseningar",
+        "KOMMUN/SVERIGE": "Sverige tåg"
+      },
+      {
+        "Tool-namn": "trafikverket_tag_installda",
+        "HUVUDIDENTIFIERARE": "Trafikverket tåg inställda",
+        "KÄRNAKTIVITET": "inställda tåg",
+        "STARKASTE KEYWORDS": "inställda tåg inställda avgångar tågtrafik SJ pendeltåg järnväg",
+        "UNIKT AVGRÄNSNING": "– inte förseningar eller tidtabell",
+        "KOMMUN/SVERIGE": "Sverige tåg"
+      },
+      {
+        "Tool-namn": "trafikverket_vag_status",
+        "HUVUDIDENTIFIERARE": "Trafikverket väg status",
+        "KÄRNAKTIVITET": "vägstatus realtid",
+        "STARKASTE KEYWORDS": "vägstatus realtid vägtrafik E4 E20 VViS",
+        "UNIKT AVGRÄNSNING": "– inte hastighet eller underhåll",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_vag_underhall",
+        "HUVUDIDENTIFIERARE": "Trafikverket väg underhåll",
+        "KÄRNAKTIVITET": "vägunderhåll",
+        "STARKASTE KEYWORDS": "vägunderhåll vägtrafik E4 E20 realtid",
+        "UNIKT AVGRÄNSNING": "– inte vägstatus eller hastighet",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_vag_hastighet",
+        "HUVUDIDENTIFIERARE": "Trafikverket väg hastighet",
+        "KÄRNAKTIVITET": "hastighetsbegränsningar",
+        "STARKASTE KEYWORDS": "hastighetsbegränsningar vägtrafik E4 E20 realtid",
+        "UNIKT AVGRÄNSNING": "– inte vägstatus eller underhåll",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_vag_avstangningar",
+        "HUVUDIDENTIFIERARE": "Trafikverket väg avstängningar",
+        "KÄRNAKTIVITET": "vägavstängningar",
+        "STARKASTE KEYWORDS": "vägavstängningar vägtrafik E4 E20 realtid",
+        "UNIKT AVGRÄNSNING": "– inte olyckor eller köer",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_vader_stationer",
+        "HUVUDIDENTIFIERARE": "Trafikverket vägväder stationer",
+        "KÄRNAKTIVITET": "vägväder stationer",
+        "STARKASTE KEYWORDS": "vägväder stationer VViS temperatur vind snö is realtid",
+        "UNIKT AVGRÄNSNING": "– inte allmän SMHI-väder",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_vader_halka",
+        "HUVUDIDENTIFIERARE": "Trafikverket vägväder halka",
+        "KÄRNAKTIVITET": "halkrisk",
+        "STARKASTE KEYWORDS": "halkrisk väglag snö is VViS realtid väg",
+        "UNIKT AVGRÄNSNING": "– inte allmän temperatur eller vind",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_vader_vind",
+        "HUVUDIDENTIFIERARE": "Trafikverket vägväder vind",
+        "KÄRNAKTIVITET": "vindhastighet vindriktning",
+        "STARKASTE KEYWORDS": "vindhastighet vindriktning VViS realtid väg",
+        "UNIKT AVGRÄNSNING": "– inte temperatur eller halkrisk",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_vader_temperatur",
+        "HUVUDIDENTIFIERARE": "Trafikverket vägväder temperatur",
+        "KÄRNAKTIVITET": "temperatur vägväder",
+        "STARKASTE KEYWORDS": "temperatur vägväder VViS realtid väg",
+        "UNIKT AVGRÄNSNING": "– inte vind eller halkrisk",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_kameror_lista",
+        "HUVUDIDENTIFIERARE": "Trafikverket kameror lista",
+        "KÄRNAKTIVITET": "kameror lista stationer",
+        "STARKASTE KEYWORDS": "kameror lista stationer trafikbilder realtid E4 E20",
+        "UNIKT AVGRÄNSNING": "– inte snapshot eller status",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_kameror_snapshot",
+        "HUVUDIDENTIFIERARE": "Trafikverket kameror snapshot",
+        "KÄRNAKTIVITET": "kamerabilder ögonblicksbilder",
+        "STARKASTE KEYWORDS": "kamerabilder snapshot trafikbilder realtid E4 E20",
+        "UNIKT AVGRÄNSNING": "– inte lista eller status",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_kameror_status",
+        "HUVUDIDENTIFIERARE": "Trafikverket kameror status",
+        "KÄRNAKTIVITET": "kamerastatus",
+        "STARKASTE KEYWORDS": "kamerastatus trafikbilder realtid E4 E20",
+        "UNIKT AVGRÄNSNING": "– inte snapshot eller lista",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_prognos_trafik",
+        "HUVUDIDENTIFIERARE": "Trafikverket trafikprognos",
+        "KÄRNAKTIVITET": "trafikprognos",
+        "STARKASTE KEYWORDS": "trafikprognos vägprognos förseningar framtid trafikinfo",
+        "UNIKT AVGRÄNSNING": "– inte realtidsdata",
+        "KOMMUN/SVERIGE": "Sverige"
+      },
+      {
+        "Tool-namn": "trafikverket_prognos_vag",
+        "HUVUDIDENTIFIERARE": "Trafikverket vägprognos",
+        "KÄRNAKTIVITET": "vägprognos",
+        "STARKASTE KEYWORDS": "vägprognos trafikprognos framtid vägtrafik E4 E20",
+        "UNIKT AVGRÄNSNING": "– inte realtids vägstatus",
+        "KOMMUN/SVERIGE": "Sverige väg"
+      },
+      {
+        "Tool-namn": "trafikverket_prognos_tag",
+        "HUVUDIDENTIFIERARE": "Trafikverket tågprognos",
+        "KÄRNAKTIVITET": "tågprognos",
+        "STARKASTE KEYWORDS": "tågprognos förseningar framtid tågtrafik SJ pendeltåg",
+        "UNIKT AVGRÄNSNING": "– inte realtids tågstatus",
+        "KOMMUN/SVERIGE": "Sverige tåg"
+      }
+    ]
+  },
+  "Riksdagen": {
+    "description": "Riksdagen API",
+    "top_level_tools": [
+      {
+        "Tool-namn": "riksdag_dokument",
+        "HUVUDIDENTIFIERARE": "Riksdagen dokument",
+        "KÄRNAKTIVITET": "propositioner motioner betänkanden",
+        "STARKASTE KEYWORDS": "propositioner motioner betänkanden interpellationer frågor protokoll SOU DS EU",
+        "UNIKT AVGRÄNSNING": "– inte ledamöter eller voteringar",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_ledamoter",
+        "HUVUDIDENTIFIERARE": "Riksdagen ledamöter",
+        "KÄRNAKTIVITET": "riksdagsledamöter partier valkretsar",
+        "STARKASTE KEYWORDS": "riksdagsledamöter ledamöter parti valkrets riksdagsval mandatperiod namn",
+        "UNIKT AVGRÄNSNING": "– inte dokument eller voteringar",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_voteringar",
+        "HUVUDIDENTIFIERARE": "Riksdagen voteringar",
+        "KÄRNAKTIVITET": "voteringar omröstningar resultat",
+        "STARKASTE KEYWORDS": "voteringar omröstningar resultat ja nej avstämning riksdagsbeslut voteringar",
+        "UNIKT AVGRÄNSNING": "– inte dokument eller anföranden",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_anforanden",
+        "HUVUDIDENTIFIERARE": "Riksdagen anföranden",
+        "KÄRNAKTIVITET": "tal debatt frågestund",
+        "STARKASTE KEYWORDS": "anföranden tal debatt frågestund kammaren protokoll riksdagsdebatt",
+        "UNIKT AVGRÄNSNING": "– inte voteringar eller dokument",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokumentstatus",
+        "HUVUDIDENTIFIERARE": "Riksdagen dokumentstatus",
+        "KÄRNAKTIVITET": "dokumentstatus historik behandling",
+        "STARKASTE KEYWORDS": "dokumentstatus historik behandling riksdagsprocess riksdagsärende status",
+        "UNIKT AVGRÄNSNING": "– inte själva dokumentinnehållet",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      }
+    ],
+    "document_sub_tools": [
+      {
+        "Tool-namn": "riksdag_dokument_proposition",
+        "HUVUDIDENTIFIERARE": "Riksdagen propositioner",
+        "KÄRNAKTIVITET": "regeringsförslag propositioner",
+        "STARKASTE KEYWORDS": "propositioner prop regeringsförslag propositioner riksdagsbeslut regering",
+        "UNIKT AVGRÄNSNING": "– inte motioner eller betänkanden",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_motion",
+        "HUVUDIDENTIFIERARE": "Riksdagen motioner",
+        "KÄRNAKTIVITET": "ledamöters förslag motioner",
+        "STARKASTE KEYWORDS": "motioner mot ledamöters förslag motioner riksdagsinitiativ",
+        "UNIKT AVGRÄNSNING": "– inte propositioner eller betänkanden",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_betankande",
+        "HUVUDIDENTIFIERARE": "Riksdagen betänkanden",
+        "KÄRNAKTIVITET": "utskottsbetänkanden kommittéer",
+        "STARKASTE KEYWORDS": "betänkanden bet utskottsbetänkanden kommittéer riksdagsutskott",
+        "UNIKT AVGRÄNSNING": "– inte propositioner eller motioner",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_interpellation",
+        "HUVUDIDENTIFIERARE": "Riksdagen interpellationer",
+        "KÄRNAKTIVITET": "interpellationer frågestund",
+        "STARKASTE KEYWORDS": "interpellationer ip frågor till ministrar riksdagsdebatt",
+        "UNIKT AVGRÄNSNING": "– inte skriftliga frågor eller protokoll",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_fraga",
+        "HUVUDIDENTIFIERARE": "Riksdagen frågor",
+        "KÄRNAKTIVITET": "skriftliga frågor fr",
+        "STARKASTE KEYWORDS": "frågor fr skriftliga frågor riksdagsledamöter ministrar svar",
+        "UNIKT AVGRÄNSNING": "– inte interpellationer eller protokoll",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_protokoll",
+        "HUVUDIDENTIFIERARE": "Riksdagen protokoll",
+        "KÄRNAKTIVITET": "kammarprotokoll debattprotokoll",
+        "STARKASTE KEYWORDS": "protokoll kammarprotokoll debattprotokoll riksdagsmöten",
+        "UNIKT AVGRÄNSNING": "– inte dokument eller voteringar",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_sou",
+        "HUVUDIDENTIFIERARE": "Riksdagen SOU utredningar",
+        "KÄRNAKTIVITET": "statliga offentliga utredningar SOU",
+        "STARKASTE KEYWORDS": "SOU statliga utredningar offentliga utredningar riksdagsunderlag",
+        "UNIKT AVGRÄNSNING": "– inte propositioner eller motioner",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_ds",
+        "HUVUDIDENTIFIERARE": "Riksdagen departementspromemorior",
+        "KÄRNAKTIVITET": "departementspromemorior DS",
+        "STARKASTE KEYWORDS": "DS departementspromemorior regeringsunderlag ministerier",
+        "UNIKT AVGRÄNSNING": "– inte SOU eller propositioner",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_dir",
+        "HUVUDIDENTIFIERARE": "Riksdagen direktiv",
+        "KÄRNAKTIVITET": "kommittédirektiv dir",
+        "STARKASTE KEYWORDS": "direktiv kommittédirektiv utredningsdirektiv riksdagsuppdrag",
+        "UNIKT AVGRÄNSNING": "– inte SOU eller betänkanden",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_rskr",
+        "HUVUDIDENTIFIERARE": "Riksdagen riksdagsskrivelser",
+        "KÄRNAKTIVITET": "riksdagsskrivelser rskr",
+        "STARKASTE KEYWORDS": "rskr riksdagsskrivelser riksdagsbeslut skrivelser regering",
+        "UNIKT AVGRÄNSNING": "– inte propositioner eller motioner",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_eu",
+        "HUVUDIDENTIFIERARE": "Riksdagen EU-dokument",
+        "KÄRNAKTIVITET": "EU-förslag KOM EU-nämnden",
+        "STARKASTE KEYWORDS": "EU-dokument KOM EU-förslag riksdagsbehandling EU-nämnden",
+        "UNIKT AVGRÄNSNING": "– inte nationella propositioner",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_dokument_rir",
+        "HUVUDIDENTIFIERARE": "Riksdagen RIR revisioner",
+        "KÄRNAKTIVITET": "Riksrevisionens rapporter RIR",
+        "STARKASTE KEYWORDS": "RIR Riksrevisionen rapporter granskning revision riksdagsunderlag",
+        "UNIKT AVGRÄNSNING": "– inte SOU eller propositioner",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      }
+    ],
+    "anforande_sub_tools": [
+      {
+        "Tool-namn": "riksdag_anforanden_debatt",
+        "HUVUDIDENTIFIERARE": "Riksdagen debattanföranden",
+        "KÄRNAKTIVITET": "debatt tal allmän debatt",
+        "STARKASTE KEYWORDS": "debatt tal allmän debatt budget utrikespolitik kammaren",
+        "UNIKT AVGRÄNSNING": "– inte frågestund eller protokoll",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_anforanden_fragestund",
+        "HUVUDIDENTIFIERARE": "Riksdagen frågestund anföranden",
+        "KÄRNAKTIVITET": "frågestund tal frågor ministrar",
+        "STARKASTE KEYWORDS": "frågestund tal frågor ministrar riksdagsdebatt kammaren",
+        "UNIKT AVGRÄNSNING": "– inte allmän debatt eller protokoll",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      }
+    ],
+    "ledamot_sub_tools": [
+      {
+        "Tool-namn": "riksdag_ledamoter_parti",
+        "HUVUDIDENTIFIERARE": "Riksdagen ledamöter parti",
+        "KÄRNAKTIVITET": "ledamöter per parti",
+        "STARKASTE KEYWORDS": "ledamöter parti riksdagsledamöter mandatparti riksdagsval",
+        "UNIKT AVGRÄNSNING": "– inte valkrets eller dokument",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      },
+      {
+        "Tool-namn": "riksdag_ledamoter_valkrets",
+        "HUVUDIDENTIFIERARE": "Riksdagen ledamöter valkrets",
+        "KÄRNAKTIVITET": "ledamöter per valkrets",
+        "STARKASTE KEYWORDS": "ledamöter valkrets riksdagsval valkretsmandat riksdagsledamöter",
+        "UNIKT AVGRÄNSNING": "– inte parti eller dokument",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      }
+    ],
+    "votering_sub_tools": [
+      {
+        "Tool-namn": "riksdag_voteringar_resultat",
+        "HUVUDIDENTIFIERARE": "Riksdagen voteringar resultat",
+        "KÄRNAKTIVITET": "omröstningar resultat ja nej",
+        "STARKASTE KEYWORDS": "voteringar omröstningar resultat ja nej avstämning riksdagsbeslut",
+        "UNIKT AVGRÄNSNING": "– inte dokument eller anföranden",
+        "KOMMUN/SVERIGE": "Sverige riksdagen"
+      }
+    ]
+  },
+  "Kolada": {
+    "description": "Kolada kommunal statistik",
+    "top_level_categories": [
+      {
+        "Tool-namn": "kolada_aldreomsorg",
+        "HUVUDIDENTIFIERARE": "Kolada äldreomsorg",
+        "KÄRNAKTIVITET": "hemtjänst särskilt boende vård",
+        "STARKASTE KEYWORDS": "hemtjänst särskilt boende timme brukare trygghetslarm valfrihet nöjdhet äldre vård",
+        "UNIKT AVGRÄNSNING": "– inte sjukvård eller LSS",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_arbetsmarknad",
+        "HUVUDIDENTIFIERARE": "Kolada arbetsmarknad",
+        "KÄRNAKTIVITET": "sysselsättning arbetslöshet åtgärder",
+        "STARKASTE KEYWORDS": "sysselsättning arbetslöshet åtgärder jobbcoachning etableringstid kommun",
+        "UNIKT AVGRÄNSNING": "– inte nationell SCB AKU eller löner",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_barn_unga",
+        "HUVUDIDENTIFIERARE": "Kolada barn ungdomsvård",
+        "KÄRNAKTIVITET": "placeringar öppenvård insatser",
+        "STARKASTE KEYWORDS": "placeringar öppenvård insatser barn unga familjestöd LVU socialtjänst",
+        "UNIKT AVGRÄNSNING": "– inte äldreomsorg eller skola",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_boende",
+        "HUVUDIDENTIFIERARE": "Kolada boende bostäder",
+        "KÄRNAKTIVITET": "bostadsbestånd nybyggnation bostadskö",
+        "STARKASTE KEYWORDS": "bostadsbestånd nybyggnation bostadskö hyror vakanser hyresnivå kommun",
+        "UNIKT AVGRÄNSNING": "– inte nationell SCB byggstatistik",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_demokrati",
+        "HUVUDIDENTIFIERARE": "Kolada demokrati medborgarservice",
+        "KÄRNAKTIVITET": "valdeltagande engagemang förtroende",
+        "STARKASTE KEYWORDS": "valdeltagande medborgarengagemang förtroende e-tjänster medborgardialog",
+        "UNIKT AVGRÄNSNING": "– inte riksdagsvoteringar",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_ekonomi",
+        "HUVUDIDENTIFIERARE": "Kolada kommunal ekonomi",
+        "KÄRNAKTIVITET": "skattesats kostnader intäkter",
+        "STARKASTE KEYWORDS": "skattesats kostnader intäkter resultat balans budget skuldsättning investeringar",
+        "UNIKT AVGRÄNSNING": "– inte nationell BNP SCB",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_forskola",
+        "HUVUDIDENTIFIERARE": "Kolada förskola",
+        "KÄRNAKTIVITET": "barn pedagogtäthet kostnader",
+        "STARKASTE KEYWORDS": "barn pedagogtäthet kostnader kvalitetsindikator barn pedagog nöjdhet",
+        "UNIKT AVGRÄNSNING": "– inte grundskola eller gymnasium",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_grundskola",
+        "HUVUDIDENTIFIERARE": "Kolada grundskola",
+        "KÄRNAKTIVITET": "elevantal lärartäthet behörighet",
+        "STARKASTE KEYWORDS": "elevantal lärartäthet behörighet betyg meritvärde kostnader lärare elev nöjdhet",
+        "UNIKT AVGRÄNSNING": "– inte förskola eller gymnasium",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_gymnasieskola",
+        "HUVUDIDENTIFIERARE": "Kolada gymnasieskola",
+        "KÄRNAKTIVITET": "elevantal genomströmning examen",
+        "STARKASTE KEYWORDS": "elevantal genomströmning examen behörighet meritpoäng kostnader avhopp",
+        "UNIKT AVGRÄNSNING": "– inte grundskola eller vuxenutbildning",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_halsa",
+        "HUVUDIDENTIFIERARE": "Kolada hälso sjukvård",
+        "KÄRNAKTIVITET": "vårdkostnader läkarbesök primärvård",
+        "STARKASTE KEYWORDS": "vårdkostnader läkarbesök primärvård sjukhus väntetid patientnöjdhet DRG",
+        "UNIKT AVGRÄNSNING": "– inte kommunal äldreomsorg eller LSS",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_ifo",
+        "HUVUDIDENTIFIERARE": "Kolada IFO individ familjeomsorg",
+        "KÄRNAKTIVITET": "ekonomiskt bistånd familjehem missbruk",
+        "STARKASTE KEYWORDS": "ekonomiskt bistånd familjehem missbruk öppenvård placeringar försörjningsstöd",
+        "UNIKT AVGRÄNSNING": "– inte LSS eller äldreomsorg",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_kultur",
+        "HUVUDIDENTIFIERARE": "Kolada kultur fritid",
+        "KÄRNAKTIVITET": "bibliotek kulturhus fritidsverksamhet",
+        "STARKASTE KEYWORDS": "bibliotek kulturhus fritidsverksamhet kulturkostnader besöksantal boklån nöjdhet",
+        "UNIKT AVGRÄNSNING": "– inte nationell kulturstatistik SCB",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_lss",
+        "HUVUDIDENTIFIERARE": "Kolada LSS",
+        "KÄRNAKTIVITET": "personlig assistans boende service",
+        "STARKASTE KEYWORDS": "personlig assistans boende särskild service LSS-insatser kostnad funktionsnedsättning",
+        "UNIKT AVGRÄNSNING": "– inte äldreomsorg eller sjukvård",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_miljo",
+        "HUVUDIDENTIFIERARE": "Kolada miljö klimat",
+        "KÄRNAKTIVITET": "avfall återvinning koldioxid",
+        "STARKASTE KEYWORDS": "avfall återvinning koldioxid energianvändning klimatpåverkan sophämtning utsortering",
+        "UNIKT AVGRÄNSNING": "– inte nationell SCB miljöstatistik",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_sammanfattning",
+        "HUVUDIDENTIFIERARE": "Kolada allmänna nyckeltal",
+        "KÄRNAKTIVITET": "översikt kommunindex invånare",
+        "STARKASTE KEYWORDS": "översikt kommunindex invånare ekonomi demografi miljö hälsa kultur förtroende",
+        "UNIKT AVGRÄNSNING": "catch-all när ingen specifik kategori passar",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      }
+    ],
+    "focused_sub_tools": [
+      {
+        "Tool-namn": "kolada_aldreomsorg_hemtjanst",
+        "HUVUDIDENTIFIERARE": "Kolada äldreomsorg hemtjänst",
+        "KÄRNAKTIVITET": "hemtjänst timmar brukare",
+        "STARKASTE KEYWORDS": "hemtjänst timme per brukare trygghetslarm äldre vård omsorg",
+        "UNIKT AVGRÄNSNING": "– inte särskilt boende eller LSS",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_aldreomsorg_sarskiltboende",
+        "HUVUDIDENTIFIERARE": "Kolada äldreomsorg särskilt boende",
+        "KÄRNAKTIVITET": "särskilt boende vård",
+        "STARKASTE KEYWORDS": "särskilt boende vård omsorg äldre nöjdhet trygghetslarm",
+        "UNIKT AVGRÄNSNING": "– inte hemtjänst eller sjukvård",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_arbetsmarknad_arbetsloshet",
+        "HUVUDIDENTIFIERARE": "Kolada arbetsmarknad arbetslöshet",
+        "KÄRNAKTIVITET": "arbetslöshet kommun",
+        "STARKASTE KEYWORDS": "arbetslöshet kommun sysselsättning åtgärder jobbcoachning etableringstid",
+        "UNIKT AVGRÄNSNING": "– inte nationell SCB AKU",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_arbetsmarknad_etablering",
+        "HUVUDIDENTIFIERARE": "Kolada arbetsmarknad etableringstid",
+        "KÄRNAKTIVITET": "etableringstid nyanlända",
+        "STARKASTE KEYWORDS": "etableringstid nyanlända jobbcoachning åtgärder kommun",
+        "UNIKT AVGRÄNSNING": "– inte nationell SCB sysselsättning",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_forskola_pedagogtathet",
+        "HUVUDIDENTIFIERARE": "Kolada förskola pedagogtäthet",
+        "KÄRNAKTIVITET": "barn pedagogtäthet",
+        "STARKASTE KEYWORDS": "barn pedagogtäthet barn per pedagog kostnader nöjdhet",
+        "UNIKT AVGRÄNSNING": "– inte grundskola eller gymnasium",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_forskola_kostnader",
+        "HUVUDIDENTIFIERARE": "Kolada förskola kostnader",
+        "KÄRNAKTIVITET": "kostnader per barn",
+        "STARKASTE KEYWORDS": "kostnader per barn pedagogtäthet nöjdhet förskoleverksamhet",
+        "UNIKT AVGRÄNSNING": "– inte antal barn eller kvalitet",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_grundskola_meritvarde",
+        "HUVUDIDENTIFIERARE": "Kolada grundskola meritvärde",
+        "KÄRNAKTIVITET": "meritvärde betyg årskurs 9",
+        "STARKASTE KEYWORDS": "meritvärde betyg årskurs 9 lärartäthet behörighet kostnader",
+        "UNIKT AVGRÄNSNING": "– inte förskola eller gymnasium",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      },
+      {
+        "Tool-namn": "kolada_grundskola_larartathet",
+        "HUVUDIDENTIFIERARE": "Kolada grundskola lärartäthet",
+        "KÄRNAKTIVITET": "lärartäthet behörighet",
+        "STARKASTE KEYWORDS": "lärartäthet behöriga lärare lärare per elev betyg kostnader",
+        "UNIKT AVGRÄNSNING": "– inte meritvärde eller nöjdhet",
+        "KOMMUN/SVERIGE": "kommun Sverige"
+      }
+    ]
+  }
+}
+
+
