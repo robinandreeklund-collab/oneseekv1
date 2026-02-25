@@ -288,6 +288,22 @@ class VercelStreamingService:
             self.context.active_reasoning_id = None
         return self._format_sse({"type": "reasoning-end", "id": reasoning_id})
 
+    def format_text_clear(self) -> str:
+        """
+        Format a text-clear event to tell the frontend to discard accumulated
+        text content for the current message.
+
+        Used when the think-stream filter detects that text previously sent as
+        ``text-delta`` was actually reasoning (template-prefilled ``<think>``).
+
+        Returns:
+            str: SSE formatted text-clear event
+
+        Example output:
+            data: {"type":"text-clear"}
+        """
+        return self._format_sse({"type": "text-clear"})
+
     # =========================================================================
     # Source Parts
     # =========================================================================

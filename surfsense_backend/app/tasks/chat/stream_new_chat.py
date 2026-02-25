@@ -1104,11 +1104,22 @@ class _ThinkStreamFilter:
     buffers the trailing bytes that could be the start of the next tag and only
     emits them once the ambiguity is resolved.
 
+    **Template-prefilled <think> support:**
+
+    When a model's chat template pre-fills ``<think>`` in the assistant turn
+    (e.g. Qwen3 with ``<|im_start|>assistant\\n<think>\\n``), the opening tag
+    is never streamed.  The filter detects this when ``</think>`` appears
+    before any ``<think>`` and retroactively classifies earlier text as
+    reasoning via :meth:`drain_retroactive_reasoning`.
+
     Usage::
 
         f = _ThinkStreamFilter()
         for chunk in model_stream:
             reasoning, text = f.feed(chunk)
+            if f.late_close_detected:
+                retro = f.drain_retroactive_reasoning()
+                # emit retro as reasoning-delta + text-clear event
             # stream reasoning → reasoning-delta, text → text-delta
         reasoning, text = f.flush()   # resolve any trailing buffer at end-of-stream
     """
@@ -1119,10 +1130,38 @@ class _ThinkStreamFilter:
     def __init__(self) -> None:
         self._in_think = False
         self._buf = ""
+        self._ever_opened = False
+        # Text returned as main text before late-close was detected.
+        # The streaming handler must re-emit this as reasoning-delta.
+        self._pre_close_text_parts: list[str] = []
+        self._late_close_detected = False
 
     @property
     def in_think(self) -> bool:
         return self._in_think
+
+    @property
+    def late_close_detected(self) -> bool:
+        """True if ``</think>`` was found before any ``<think>``.
+
+        This indicates the model's chat template pre-filled the opening
+        ``<think>`` tag, so text emitted before the detection was actually
+        reasoning content.
+        """
+        return self._late_close_detected
+
+    def drain_retroactive_reasoning(self) -> str:
+        """Return and clear text that was wrongly emitted as main text.
+
+        Call this once after :attr:`late_close_detected` becomes ``True``
+        to get the accumulated text from previous :meth:`feed` calls that
+        should have been reasoning.
+        """
+        if not self._pre_close_text_parts:
+            return ""
+        text = "".join(self._pre_close_text_parts)
+        self._pre_close_text_parts.clear()
+        return text
 
     @staticmethod
     def _longest_prefix_match(s: str, pattern: str) -> int:
@@ -1139,21 +1178,65 @@ class _ThinkStreamFilter:
         text_parts: list[str] = []
 
         while self._buf:
-            tag = self._CLOSE if self._in_think else self._OPEN
-            idx = self._buf.find(tag)
-
-            if idx == -1:
-                # Tag not complete yet — keep any partial tag suffix buffered.
-                partial = self._longest_prefix_match(self._buf, tag)
-                safe = self._buf[:-partial] if partial else self._buf
-                (reasoning_parts if self._in_think else text_parts).append(safe)
-                self._buf = self._buf[-partial:] if partial else ""
-                break
+            if self._in_think:
+                # Inside a think block — look for the closing tag.
+                idx = self._buf.find(self._CLOSE)
+                if idx == -1:
+                    partial = self._longest_prefix_match(self._buf, self._CLOSE)
+                    safe = self._buf[:-partial] if partial else self._buf
+                    reasoning_parts.append(safe)
+                    self._buf = self._buf[-partial:] if partial else ""
+                    break
+                else:
+                    reasoning_parts.append(self._buf[:idx])
+                    self._buf = self._buf[idx + len(self._CLOSE) :]
+                    self._in_think = False
             else:
-                before = self._buf[:idx]
-                (reasoning_parts if self._in_think else text_parts).append(before)
-                self._buf = self._buf[idx + len(tag):]
-                self._in_think = not self._in_think
+                # Outside a think block.
+                if not self._ever_opened and not self._late_close_detected:
+                    # Haven't seen any tag yet — look for both <think> and </think>
+                    # to handle template-prefilled <think>.
+                    open_idx = self._buf.find(self._OPEN)
+                    close_idx = self._buf.find(self._CLOSE)
+
+                    if open_idx != -1 and (close_idx == -1 or open_idx <= close_idx):
+                        # Normal case: <think> found first.
+                        self._ever_opened = True
+                        text_parts.append(self._buf[:open_idx])
+                        self._buf = self._buf[open_idx + len(self._OPEN) :]
+                        self._in_think = True
+                    elif close_idx != -1:
+                        # </think> found before any <think> — template prefill.
+                        self._late_close_detected = True
+                        reasoning_parts.append(self._buf[:close_idx])
+                        self._buf = self._buf[close_idx + len(self._CLOSE) :]
+                        # _in_think stays False (we just exited the implicit block)
+                    else:
+                        # Neither tag found — check partial match for both tags.
+                        partial = max(
+                            self._longest_prefix_match(self._buf, self._OPEN),
+                            self._longest_prefix_match(self._buf, self._CLOSE),
+                        )
+                        safe = self._buf[:-partial] if partial else self._buf
+                        # Track text that might need retroactive reclassification.
+                        self._pre_close_text_parts.append(safe)
+                        text_parts.append(safe)
+                        self._buf = self._buf[-partial:] if partial else ""
+                        break
+                else:
+                    # Resolved state — only look for <think>.
+                    idx = self._buf.find(self._OPEN)
+                    if idx == -1:
+                        partial = self._longest_prefix_match(self._buf, self._OPEN)
+                        safe = self._buf[:-partial] if partial else self._buf
+                        text_parts.append(safe)
+                        self._buf = self._buf[-partial:] if partial else ""
+                        break
+                    else:
+                        text_parts.append(self._buf[:idx])
+                        self._buf = self._buf[idx + len(self._OPEN) :]
+                        self._in_think = True
+                        self._ever_opened = True
 
         return "".join(reasoning_parts), "".join(text_parts)
 
@@ -1164,6 +1247,8 @@ class _ThinkStreamFilter:
             return "", ""
         if self._in_think:
             return remaining, ""
+        # If we never resolved (no tags seen at all), check if there's
+        # buffered speculative text that should just be flushed as text.
         return "", remaining
 
 
@@ -2064,6 +2149,7 @@ async def stream_new_chat(
         # Think-tag streaming state
         _think_filter = _ThinkStreamFilter()
         active_reasoning_id: str | None = None
+        _late_close_handled = False  # Guard for template-prefilled <think> handling
 
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
@@ -2613,7 +2699,34 @@ async def stream_new_chat(
                             continue
                         # Split <think>…</think> tags into reasoning vs. main text
                         reasoning_chunk, content = _think_filter.feed(content)
-                        if reasoning_chunk:
+
+                        # Handle template-prefilled <think> detection:
+                        # When </think> appears before any <think>, text that was
+                        # previously streamed as text-delta was actually reasoning.
+                        if _think_filter.late_close_detected and not _late_close_handled:
+                            _late_close_handled = True
+                            retro_text = _think_filter.drain_retroactive_reasoning()
+                            if retro_text or reasoning_chunk:
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = streaming_service.generate_reasoning_id()
+                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                if retro_text:
+                                    yield streaming_service.format_reasoning_delta(active_reasoning_id, retro_text)
+                                if reasoning_chunk:
+                                    yield streaming_service.format_reasoning_delta(active_reasoning_id, reasoning_chunk)
+                                yield streaming_service.format_reasoning_end(active_reasoning_id)
+                                active_reasoning_id = None
+                                reasoning_chunk = ""  # already handled
+                            if retro_text:
+                                # Tell the frontend to discard text it already rendered
+                                yield streaming_service.format_text_clear()
+                                # Reset the text block so subsequent text starts fresh
+                                if current_text_id is not None:
+                                    yield streaming_service.format_text_end(current_text_id)
+                                    current_text_id = None
+                                accumulated_text = ""
+
+                        elif reasoning_chunk:
                             if active_reasoning_id is None:
                                 active_reasoning_id = streaming_service.generate_reasoning_id()
                                 yield streaming_service.format_reasoning_start(active_reasoning_id)

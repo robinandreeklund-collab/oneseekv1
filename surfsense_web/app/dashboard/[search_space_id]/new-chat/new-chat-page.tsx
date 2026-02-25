@@ -1208,6 +1208,24 @@ export default function NewChatPage() {
 											);
 											break;
 
+										case "text-clear": {
+											// Template-prefilled <think> detected: text streamed so
+											// far was actually reasoning.  Discard text parts so the
+											// retroactive reasoning-delta takes over.
+											for (let i = contentParts.length - 1; i >= 0; i--) {
+												if (contentParts[i].type === "text") {
+													contentParts.splice(i, 1);
+												}
+											}
+											currentTextPartIndex = -1;
+											setMessages((prev) =>
+												prev.map((m) =>
+													m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+												)
+											);
+											break;
+										}
+
 										case "tool-input-start":
 											// Add tool call inline - this breaks the current text segment
 											addToolCall(parsed.toolCallId, parsed.toolName, {});
@@ -1847,6 +1865,21 @@ export default function NewChatPage() {
 												)
 											);
 											break;
+
+										case "text-clear": {
+											for (let i = contentParts.length - 1; i >= 0; i--) {
+												if (contentParts[i].type === "text") {
+													contentParts.splice(i, 1);
+												}
+											}
+											currentTextPartIndex = -1;
+											setMessages((prev) =>
+												prev.map((m) =>
+													m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+												)
+											);
+											break;
+										}
 
 										case "tool-input-start":
 											addToolCall(parsed.toolCallId, parsed.toolName, {});
