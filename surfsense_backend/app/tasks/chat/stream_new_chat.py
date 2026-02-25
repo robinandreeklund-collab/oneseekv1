@@ -9,10 +9,10 @@ Supports loading LLM configurations from:
 - NewLLMConfig database table (positive IDs for user-created configs with prompt settings)
 """
 
+import ast
 import json
 import re
 import uuid
-import ast
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 from typing import Any
@@ -23,18 +23,6 @@ from langchain_core.runnables import RunnableLambda
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.agents.new_chat.checkpointer import (
-    build_checkpoint_namespace,
-    get_checkpointer,
-    resolve_checkpoint_namespace_for_thread,
-)
-from app.agents.new_chat.llm_config import (
-    AgentConfig,
-    create_chat_litellm_from_agent_config,
-    create_chat_litellm_from_config,
-    load_agent_config,
-    load_llm_config_from_yaml,
-)
 from app.agents.new_chat.bigtool_prompts import (
     DEFAULT_WORKER_ACTION_PROMPT,
     DEFAULT_WORKER_KNOWLEDGE_PROMPT,
@@ -45,17 +33,46 @@ from app.agents.new_chat.bolag_prompts import (
     DEFAULT_BOLAG_SYSTEM_PROMPT,
     build_bolag_prompt,
 )
+from app.agents.new_chat.checkpointer import (
+    build_checkpoint_namespace,
+    get_checkpointer,
+    resolve_checkpoint_namespace_for_thread,
+)
 from app.agents.new_chat.compare_prompts import (
     COMPARE_SUPERVISOR_INSTRUCTIONS,
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
     build_compare_synthesis_prompt,
 )
+from app.agents.new_chat.complete_graph import build_complete_graph
 from app.agents.new_chat.dispatcher import (
     DEFAULT_ROUTE_SYSTEM_PROMPT,
     dispatch_route_with_trace,
 )
+from app.agents.new_chat.llm_config import (
+    AgentConfig,
+    create_chat_litellm_from_agent_config,
+    create_chat_litellm_from_config,
+    load_agent_config,
+    load_llm_config_from_yaml,
+)
+from app.agents.new_chat.marketplace_prompts import (
+    DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+    build_marketplace_prompt,
+)
 from app.agents.new_chat.prompt_registry import resolve_prompt
+from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
 from app.agents.new_chat.routing import Route
+from app.agents.new_chat.statistics_prompts import (
+    DEFAULT_STATISTICS_SYSTEM_PROMPT,
+    build_statistics_system_prompt,
+)
+from app.agents.new_chat.subagent_utils import (
+    SMALLTALK_INSTRUCTIONS,
+)
+from app.agents.new_chat.supervisor_prompts import (
+    DEFAULT_SUPERVISOR_PROMPT,
+    build_supervisor_prompt,
+)
 from app.agents.new_chat.system_prompt import (
     SURFSENSE_CITATION_INSTRUCTIONS,
     SURFSENSE_CORE_GLOBAL_PROMPT,
@@ -63,31 +80,16 @@ from app.agents.new_chat.system_prompt import (
     append_datetime_context,
     inject_core_prompt,
 )
-from app.agents.new_chat.complete_graph import build_complete_graph
-from app.agents.new_chat.supervisor_prompts import (
-    DEFAULT_SUPERVISOR_PROMPT,
-    build_supervisor_prompt,
+from app.agents.new_chat.tools.display_image import extract_domain, generate_image_id
+from app.agents.new_chat.tools.external_models import (
+    DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+    EXTERNAL_MODEL_SPECS,
 )
-from app.agents.new_chat.statistics_prompts import (
-    DEFAULT_STATISTICS_SYSTEM_PROMPT,
-    build_statistics_system_prompt,
-)
-from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
-from app.agents.new_chat.marketplace_prompts import (
-    DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
-    build_marketplace_prompt,
-)
-from app.agents.new_chat.subagent_utils import (
-    SMALLTALK_INSTRUCTIONS,
-)
+from app.agents.new_chat.tools.user_memory import create_save_memory_tool
 from app.agents.new_chat.trafik_prompts import (
     DEFAULT_TRAFFIC_SYSTEM_PROMPT,
     build_trafik_prompt,
 )
-from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
-from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
-from app.agents.new_chat.tools.display_image import extract_domain, generate_image_id
-from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.db import (
     ChatTraceSession,
     Document,
@@ -97,32 +99,32 @@ from app.db import (
     async_session_maker,
 )
 from app.schemas.new_chat import ChatAttachment
+from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.services.chat_session_state_service import (
     clear_ai_responding,
     set_ai_responding,
 )
-from app.agents.new_chat.tools.user_memory import create_save_memory_tool
 from app.services.connector_service import ConnectorService
-from app.services.new_streaming_service import VercelStreamingService
-from app.services.trace_service import TraceRecorder
 from app.services.intent_definition_service import (
     get_default_intent_definitions,
     get_effective_intent_definitions,
 )
-from app.tasks.chat.stream_compare_chat import (
-    extract_compare_query,
-    is_compare_request,
-)
+from app.services.new_streaming_service import VercelStreamingService
+from app.services.trace_service import TraceRecorder
 from app.tasks.chat.context_formatters import (
     format_attachments_as_context,
     format_mentioned_documents_as_context,
     format_mentioned_surfsense_docs_as_context,
 )
+from app.tasks.chat.stream_compare_chat import (
+    extract_compare_query,
+    is_compare_request,
+)
+from app.utils.content_utils import bootstrap_history_from_db, extract_text_content
 from app.utils.context_metrics import (
     estimate_tokens_from_text,
     serialize_context_payload,
 )
-from app.utils.content_utils import bootstrap_history_from_db, extract_text_content
 
 AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (
@@ -166,12 +168,18 @@ AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
         "User prefers {value}",
     ),
     (
-        re.compile(r"\bjag heter ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)", re.IGNORECASE),
+        re.compile(
+            r"\bjag heter ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)",
+            re.IGNORECASE,
+        ),
         "fact",
         "User's name is {value}",
     ),
     (
-        re.compile(r"\bkalla mig ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)", re.IGNORECASE),
+        re.compile(
+            r"\bkalla mig ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)",
+            re.IGNORECASE,
+        ),
         "fact",
         "User prefers to be called {value}",
     ),
@@ -186,12 +194,16 @@ AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
         "User lives in {value}",
     ),
     (
-        re.compile(r"\bjag (?:jobbar|arbetar) som ([A-Za-zÅÄÖåäö\s\-]{2,80})\b", re.IGNORECASE),
+        re.compile(
+            r"\bjag (?:jobbar|arbetar) som ([A-Za-zÅÄÖåäö\s\-]{2,80})\b", re.IGNORECASE
+        ),
         "fact",
         "User works as {value}",
     ),
     (
-        re.compile(r"\bjag (?:gillar|föredrar|tycker om) ([^.!?\n]{2,80})", re.IGNORECASE),
+        re.compile(
+            r"\bjag (?:gillar|föredrar|tycker om) ([^.!?\n]{2,80})", re.IGNORECASE
+        ),
         "preference",
         "User prefers {value}",
     ),
@@ -253,7 +265,10 @@ async def _load_conversation_history_for_routing(
     history: list[dict[str, str]] = []
     for row in rows:
         role = str(getattr(row.role, "value", row.role) or "").strip().lower()
-        if role not in {NewChatMessageRole.USER.value, NewChatMessageRole.ASSISTANT.value}:
+        if role not in {
+            NewChatMessageRole.USER.value,
+            NewChatMessageRole.ASSISTANT.value,
+        }:
             continue
         text = _normalize_router_text(extract_text_content(row.content))
         if not text:
@@ -350,17 +365,17 @@ def _build_followup_context_block(
         return ""
     if previous.lower() == current.lower():
         return ""
-    
+
     # Check if previous query was a compare request
     previous_was_compare = previous.strip().lower().startswith("/compare")
-    
+
     context = (
         "<followup_context>\n"
         "Detta är en uppföljningsfråga. Tolka den med samma ämne, metod och verktygsnivå "
         "som föregående användarfråga om inget annat uttryckligen anges.\n"
         f"Föregående användarfråga: {previous}\n"
     )
-    
+
     # Add special context for compare followups
     if previous_was_compare:
         context += (
@@ -369,7 +384,7 @@ def _build_followup_context_block(
             "Du kan söka efter dem med search_knowledge_base för att ge sammanhangsberoende svar "
             "baserade på jämförelsen.\n"
         )
-    
+
     if _FOLLOWUP_COMPARE_RE.search(current.lower()):
         previous_answers = _extract_previous_assistant_answers_from_history(
             routing_history, limit=2
@@ -383,8 +398,6 @@ def _build_followup_context_block(
             )
     context += "</followup_context>"
     return context
-
-
 
 
 def extract_todos_from_deepagents(command_output) -> dict:
@@ -508,9 +521,7 @@ def _collect_trafikverket_photos(payload: Any) -> list[dict[str, str]]:
                         or "Trafikverket kamera"
                     )
                     description = str(
-                        node.get("Description")
-                        or node.get("LocationDescriptor")
-                        or ""
+                        node.get("Description") or node.get("LocationDescriptor") or ""
                     ).strip()
                     photos.append(
                         {
@@ -567,7 +578,9 @@ def _extract_assistant_text_from_message(message: Any) -> str:
     class_name = message.__class__.__name__.lower()
     if any(token in class_name for token in ("human", "system", "tool")):
         return ""
-    tool_calls = getattr(message, "tool_calls", None) or getattr(message, "toolCalls", None)
+    tool_calls = getattr(message, "tool_calls", None) or getattr(
+        message, "toolCalls", None
+    )
     if tool_calls:
         return ""
     return _content_to_text(getattr(message, "content", "")).strip()
@@ -604,92 +617,138 @@ def _extract_assistant_text_from_event_output(output: Any) -> str:
                 return text
         return ""
     if hasattr(output, "generations"):
-        return _extract_assistant_text_from_event_output(getattr(output, "generations"))
+        return _extract_assistant_text_from_event_output(output.generations)
     if hasattr(output, "message"):
-        return _extract_assistant_text_from_event_output(getattr(output, "message"))
+        return _extract_assistant_text_from_event_output(output.message)
     if hasattr(output, "content"):
         return _extract_assistant_text_from_message(output)
     return ""
 
 
-def _extract_and_stream_tool_calls(output: Any, streaming_service: Any, streamed_ids: set[str]) -> list[str]:
+def _extract_and_stream_tool_calls(
+    output: Any, streaming_service: Any, streamed_ids: set[str]
+) -> list[str]:
     """
     Extract AIMessage with tool_calls and corresponding ToolMessages from chain output.
     Returns list of SSE events to stream to frontend.
-    
+
     This is critical for compare mode where compare_fan_out creates:
     - AIMessage with tool_calls array (one per external model)
     - ToolMessage responses (one per model with results)
-    
+
     Without this, frontend doesn't receive tool call events and can't render model cards.
-    
+
     Args:
         output: Chain output dictionary containing messages
         streaming_service: Service for formatting SSE events
         streamed_ids: Set of tool_call_ids already streamed (prevents duplicates)
     """
     events = []
-    
+
     if not isinstance(output, dict):
         return events
-    
+
     messages = output.get("messages")
     if not isinstance(messages, list) or len(messages) == 0:
         return events
-    
+
     # Find AIMessage with tool_calls and collect corresponding ToolMessages
     ai_message_with_tools = None
     tool_messages_by_id = {}
-    
+
     for msg in messages:
         # Check for AIMessage with tool_calls
-        if isinstance(msg, AIMessage) or (isinstance(msg, dict) and msg.get("type") == "ai"):
-            tool_calls = getattr(msg, "tool_calls", None) if hasattr(msg, "tool_calls") else msg.get("tool_calls")
+        if isinstance(msg, AIMessage) or (
+            isinstance(msg, dict) and msg.get("type") == "ai"
+        ):
+            tool_calls = (
+                getattr(msg, "tool_calls", None)
+                if hasattr(msg, "tool_calls")
+                else msg.get("tool_calls")
+            )
             if tool_calls and isinstance(tool_calls, list) and len(tool_calls) > 0:
                 ai_message_with_tools = (msg, tool_calls)
-        
+
         # Collect ToolMessages
-        if isinstance(msg, ToolMessage) or (isinstance(msg, dict) and msg.get("type") == "tool"):
-            tool_call_id = getattr(msg, "tool_call_id", None) if hasattr(msg, "tool_call_id") else msg.get("tool_call_id")
+        if isinstance(msg, ToolMessage) or (
+            isinstance(msg, dict) and msg.get("type") == "tool"
+        ):
+            tool_call_id = (
+                getattr(msg, "tool_call_id", None)
+                if hasattr(msg, "tool_call_id")
+                else msg.get("tool_call_id")
+            )
             if tool_call_id:
                 tool_messages_by_id[tool_call_id] = msg
-    
+
     # If we found tool calls and messages, stream them (but only if not already streamed)
     if ai_message_with_tools:
         _msg, tool_calls = ai_message_with_tools
-        
+
         for tool_call in tool_calls:
-            tool_call_id = tool_call.get("id") if isinstance(tool_call, dict) else getattr(tool_call, "id", None)
-            tool_name = tool_call.get("name") if isinstance(tool_call, dict) else getattr(tool_call, "name", None)
-            tool_args = tool_call.get("args") if isinstance(tool_call, dict) else getattr(tool_call, "args", {})
-            
+            tool_call_id = (
+                tool_call.get("id")
+                if isinstance(tool_call, dict)
+                else getattr(tool_call, "id", None)
+            )
+            tool_name = (
+                tool_call.get("name")
+                if isinstance(tool_call, dict)
+                else getattr(tool_call, "name", None)
+            )
+            tool_args = (
+                tool_call.get("args")
+                if isinstance(tool_call, dict)
+                else getattr(tool_call, "args", {})
+            )
+
             if not tool_call_id or not tool_name:
                 continue
-            
+
             # Skip if already streamed
             if tool_call_id in streamed_ids:
                 continue
-            
+
             # Mark as streamed
             streamed_ids.add(tool_call_id)
-            
+
             # Stream tool input
-            events.append(streaming_service.format_tool_input_start(tool_call_id, tool_name))
-            events.append(streaming_service.format_tool_input_available(tool_call_id, tool_name, tool_args))
-            
+            events.append(
+                streaming_service.format_tool_input_start(tool_call_id, tool_name)
+            )
+            events.append(
+                streaming_service.format_tool_input_available(
+                    tool_call_id, tool_name, tool_args
+                )
+            )
+
             # Stream tool output if available
             tool_msg = tool_messages_by_id.get(tool_call_id)
             if tool_msg:
-                content = getattr(tool_msg, "content", None) if hasattr(tool_msg, "content") else tool_msg.get("content")
+                content = (
+                    getattr(tool_msg, "content", None)
+                    if hasattr(tool_msg, "content")
+                    else tool_msg.get("content")
+                )
                 if content:
                     # Try to parse as JSON
                     try:
-                        output_data = json.loads(content) if isinstance(content, str) else content
-                        events.append(streaming_service.format_tool_output_available(tool_call_id, output_data))
+                        output_data = (
+                            json.loads(content) if isinstance(content, str) else content
+                        )
+                        events.append(
+                            streaming_service.format_tool_output_available(
+                                tool_call_id, output_data
+                            )
+                        )
                     except (json.JSONDecodeError, TypeError):
                         # If not JSON, send as-is
-                        events.append(streaming_service.format_tool_output_available(tool_call_id, content))
-    
+                        events.append(
+                            streaming_service.format_tool_output_available(
+                                tool_call_id, content
+                            )
+                        )
+
     return events
 
 
@@ -736,10 +795,40 @@ _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "planner",
     "tool_resolver",
     "execution_router",
+    "domain_planner",
     "critic",
     "progressive_synthesizer",
     "synthesizer",
+    "response_layer",
 )
+
+# Mapping from pipeline chain-name tokens to user-facing titles for the
+# unified think-box.  Nodes not listed here fall back to a title derived
+# from the chain name.
+_PIPELINE_NODE_TITLES: dict[str, str] = {
+    "resolve_intent": "Resolving intent",
+    "agent_resolver": "Selecting agents",
+    "planner": "Building plan",
+    "tool_resolver": "Resolving tools",
+    "execution_router": "Routing execution",
+    "domain_planner": "Planning domain execution",
+    "critic": "Reviewing findings",
+    "progressive_synthesizer": "Preparing draft",
+    "synthesizer": "Synthesizing response",
+    "response_layer": "Formatting response",
+    "speculative": "Speculative pre-execution",
+    "speculative_merge": "Merging speculative results",
+}
+
+
+def _pipeline_node_title(chain_name: str) -> str:
+    """Return a user-facing title for the pipeline node identified by *chain_name*."""
+    normalized = str(chain_name or "").strip().lower()
+    for token, title in _PIPELINE_NODE_TITLES.items():
+        if token in normalized:
+            return title
+    # Fallback: capitalize the chain name
+    return chain_name.replace("_", " ").capitalize() if chain_name else "Processing"
 
 
 def _strip_inline_critic_payloads(text: str) -> tuple[str, bool]:
@@ -832,7 +921,9 @@ def _clean_assistant_output_text(text: str) -> str:
     return cleaned.strip()
 
 
-def _extract_json_objects_from_text(text: str, *, max_objects: int = 6) -> list[dict[str, Any]]:
+def _extract_json_objects_from_text(
+    text: str, *, max_objects: int = 6
+) -> list[dict[str, Any]]:
     value = str(text or "").strip()
     if not value:
         return []
@@ -884,21 +975,16 @@ def _extract_json_objects_from_text(text: str, *, max_objects: int = 6) -> list[
 def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
     if not isinstance(payload, dict):
         return None
-    if "intent_id" in payload and (
-        "reason" in payload or "confidence" in payload
-    ):
+    if "intent_id" in payload and ("reason" in payload or "confidence" in payload):
         return "intent"
     if isinstance(payload.get("selected_agents"), list):
         return "agent_resolver"
-    if (
-        isinstance(payload.get("steps"), list)
-        and (
-            "reason" in payload
-            or any(
-                isinstance(step, dict)
-                and ("content" in step or "status" in step or "id" in step)
-                for step in payload.get("steps")[:4]
-            )
+    if isinstance(payload.get("steps"), list) and (
+        "reason" in payload
+        or any(
+            isinstance(step, dict)
+            and ("content" in step or "status" in step or "id" in step)
+            for step in payload.get("steps")[:4]
         )
     ):
         return "planner"
@@ -978,19 +1064,19 @@ def _extract_synthesis_drafts_from_event_output(output: Any) -> list[dict[str, A
         return []
     if hasattr(output, "generations"):
         nested = _extract_synthesis_drafts_from_event_output(
-            getattr(output, "generations"),
+            output.generations,
         )
         if nested:
             return nested
     if hasattr(output, "message"):
         nested = _extract_synthesis_drafts_from_event_output(
-            getattr(output, "message"),
+            output.message,
         )
         if nested:
             return nested
     if hasattr(output, "synthesis_drafts"):
         return _extract_synthesis_drafts_from_event_output(
-            getattr(output, "synthesis_drafts"),
+            output.synthesis_drafts,
         )
     return []
 
@@ -1474,7 +1560,9 @@ async def stream_new_chat(
             "system.default.instructions",
             SURFSENSE_SYSTEM_INSTRUCTIONS,
         )
-        default_system_prompt = inject_core_prompt(core_global_prompt, default_system_prompt)
+        default_system_prompt = inject_core_prompt(
+            core_global_prompt, default_system_prompt
+        )
         if agent_config is not None:
             has_custom_system_prompt = bool(
                 str(agent_config.system_instructions or "").strip()
@@ -1521,7 +1609,7 @@ async def stream_new_chat(
             conversation_history=routing_history,
             intent_definitions=intent_definitions,
         )
-        
+
         # Sync compare_mode with route decision
         # Router can identify compare requests even without /compare prefix
         if route == Route.JAMFORELSE:
@@ -1532,7 +1620,7 @@ async def stream_new_chat(
             if compare_query:
                 user_query = compare_query
             followup_context_block = ""
-        
+
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
@@ -1758,7 +1846,9 @@ async def stream_new_chat(
             runtime_flags.get("sandbox_enabled"),
             default=False,
         )
-        sandbox_mode = str(runtime_flags.get("sandbox_mode") or "docker").strip().lower()
+        sandbox_mode = (
+            str(runtime_flags.get("sandbox_mode") or "docker").strip().lower()
+        )
         if sandbox_mode == "remote":
             sandbox_mode = "provisioner"
         sandbox_provisioner_url = str(
@@ -1766,25 +1856,26 @@ async def stream_new_chat(
             or runtime_flags.get("sandbox_service_url")
             or ""
         ).strip()
-        sandbox_state_store = str(
-            runtime_flags.get("sandbox_state_store") or "file"
-        ).strip().lower()
+        sandbox_state_store = (
+            str(runtime_flags.get("sandbox_state_store") or "file").strip().lower()
+        )
         try:
             sandbox_idle_timeout_seconds = int(
                 runtime_flags.get("sandbox_idle_timeout_seconds") or 15 * 60
             )
         except (TypeError, ValueError):
             sandbox_idle_timeout_seconds = 15 * 60
+        think_enabled = _coerce_runtime_flag(
+            runtime_flags.get("think_enabled"),
+            default=True,
+        )
         subagent_enabled = _coerce_runtime_flag(
             runtime_flags.get("subagent_enabled"),
             default=True,
         )
-        subagent_isolation_enabled = (
-            subagent_enabled
-            and _coerce_runtime_flag(
-                runtime_flags.get("subagent_isolation_enabled"),
-                default=False,
-            )
+        subagent_isolation_enabled = subagent_enabled and _coerce_runtime_flag(
+            runtime_flags.get("subagent_isolation_enabled"),
+            default=False,
         )
         try:
             subagent_max_concurrency = int(
@@ -1804,18 +1895,24 @@ async def stream_new_chat(
             )
         except (TypeError, ValueError):
             subagent_result_max_chars = 1000
-        subagent_sandbox_scope = str(
-            runtime_flags.get("subagent_sandbox_scope")
-            or runtime_flags.get("sandbox_scope")
-            or "thread"
-        ).strip().lower()
+        subagent_sandbox_scope = (
+            str(
+                runtime_flags.get("subagent_sandbox_scope")
+                or runtime_flags.get("sandbox_scope")
+                or "thread"
+            )
+            .strip()
+            .lower()
+        )
         artifact_offload_enabled = _coerce_runtime_flag(
             runtime_flags.get("artifact_offload_enabled"),
             default=False,
         )
-        artifact_offload_storage_mode = str(
-            runtime_flags.get("artifact_offload_storage_mode") or "auto"
-        ).strip().lower()
+        artifact_offload_storage_mode = (
+            str(runtime_flags.get("artifact_offload_storage_mode") or "auto")
+            .strip()
+            .lower()
+        )
         if artifact_offload_storage_mode not in {"auto", "sandbox", "local"}:
             artifact_offload_storage_mode = "auto"
         context_compaction_enabled = _coerce_runtime_flag(
@@ -2009,7 +2106,9 @@ async def stream_new_chat(
                         if latest_query:
                             break
                 if not latest_query and incoming:
-                    latest_query = str(getattr(incoming[-1], "content", "") or "").strip()
+                    latest_query = str(
+                        getattr(incoming[-1], "content", "") or ""
+                    ).strip()
                 if not latest_query:
                     latest_query = str(raw_user_query or "").strip()
                 response = await llm.ainvoke(
@@ -2229,12 +2328,28 @@ async def stream_new_chat(
         internal_model_buffers: dict[str, str] = {}
         emitted_pipeline_payload_signatures: set[str] = set()
         emitted_synthesis_draft_signatures: set[str] = set()
-        streamed_tool_call_ids: set[str] = set()  # Track tool calls already streamed to prevent duplicates
+        streamed_tool_call_ids: set[str] = (
+            set()
+        )  # Track tool calls already streamed to prevent duplicates
         stream_pipeline_prefix_buffer: str = ""
         # Think-tag streaming state
-        _think_filter = _ThinkStreamFilter()
+        _think_filter = _ThinkStreamFilter(assume_think=think_enabled)
         active_reasoning_id: str | None = None
         _late_close_handled = False  # Guard for template-prefilled <think> handling
+
+        # --- Node-by-node think-box state ---
+        # Per-node ThinkStreamFilter instances keyed by model run_id.
+        # When a pipeline node's LLM call streams tokens, we run them
+        # through a dedicated filter to extract <think> reasoning per node.
+        internal_node_think_filters: dict[str, _ThinkStreamFilter] = {}
+        # Map pipeline chain run_id -> thinking step id so we can emit
+        # node-reasoning events attached to the correct step.
+        pipeline_chain_step_ids: dict[str, str] = {}
+        # Map pipeline chain run_id -> chain name for node-reasoning events.
+        pipeline_chain_step_names: dict[str, str] = {}
+        # Track pipeline chain run_ids that already emitted an in_progress step
+        # so we don't duplicate on model start.
+        pipeline_chain_started: set[str] = set()
 
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
@@ -2289,7 +2404,9 @@ async def stream_new_chat(
                 if kind == "intent":
                     title = format_step_title("Resolving intent")
                     intent_id = str(payload.get("intent_id") or "").strip()
-                    graph_complexity = str(payload.get("graph_complexity") or "").strip()
+                    graph_complexity = str(
+                        payload.get("graph_complexity") or ""
+                    ).strip()
                     reason = str(payload.get("reason") or "").strip()
                     confidence = payload.get("confidence")
                     if intent_id:
@@ -2305,7 +2422,9 @@ async def stream_new_chat(
                     selected_agents = payload.get("selected_agents")
                     if isinstance(selected_agents, list):
                         clean_agents = [
-                            str(agent).strip() for agent in selected_agents if str(agent).strip()
+                            str(agent).strip()
+                            for agent in selected_agents
+                            if str(agent).strip()
                         ]
                         if clean_agents:
                             items.append(f"Agenter: {', '.join(clean_agents[:4])}")
@@ -2326,7 +2445,9 @@ async def stream_new_chat(
                     if reason:
                         items.append(f"Planmotiv: {reason[:180]}")
                 elif kind == "critic":
-                    title = format_step_title("Reviewing findings, gaps, and next steps")
+                    title = format_step_title(
+                        "Reviewing findings, gaps, and next steps"
+                    )
                     decision = str(payload.get("decision") or "").strip()
                     if not decision:
                         decision = str(payload.get("status") or "").strip()
@@ -2338,7 +2459,9 @@ async def stream_new_chat(
                 elif kind == "execution_router":
                     title = format_step_title("Routing execution strategy")
                     strategy = str(payload.get("execution_strategy") or "").strip()
-                    reason = str(payload.get("execution_reason") or payload.get("reason") or "").strip()
+                    reason = str(
+                        payload.get("execution_reason") or payload.get("reason") or ""
+                    ).strip()
                     if strategy:
                         items.append(f"Strategi: {strategy}")
                     if reason:
@@ -2354,9 +2477,7 @@ async def stream_new_chat(
                         ]
                         candidate_ids = [item for item in candidate_ids if item]
                         if candidate_ids:
-                            items.append(
-                                f"Kandidater: {', '.join(candidate_ids[:4])}"
-                            )
+                            items.append(f"Kandidater: {', '.join(candidate_ids[:4])}")
                     reused = payload.get("speculative_reused_tools")
                     if isinstance(reused, list) and reused:
                         items.append(f"Återanvända: {len(reused)}")
@@ -2405,7 +2526,9 @@ async def stream_new_chat(
                 for payload in _extract_json_objects_from_text(text, max_objects=6)
                 if _pipeline_payload_kind(payload)
             ]
-            return emit_pipeline_steps_from_payloads(payloads, source_chain=source_chain)
+            return emit_pipeline_steps_from_payloads(
+                payloads, source_chain=source_chain
+            )
 
         def emit_synthesis_draft_events(output: Any) -> list[str]:
             events: list[str] = []
@@ -2629,6 +2752,33 @@ async def stream_new_chat(
                     chain_name = event.get("name") or "chain"
                     if run_id:
                         chain_name_by_run_id[run_id] = str(chain_name)
+
+                    # --- Node-by-node think-box: emit in_progress step ---
+                    if (
+                        run_id
+                        and _is_internal_pipeline_chain_name(str(chain_name))
+                        and run_id not in pipeline_chain_started
+                    ):
+                        pipeline_chain_started.add(run_id)
+                        node_step_id = next_thinking_step_id()
+                        node_title = format_step_title(
+                            _pipeline_node_title(str(chain_name))
+                        )
+                        pipeline_chain_step_ids[run_id] = node_step_id
+                        pipeline_chain_step_names[run_id] = str(chain_name)
+                        # Complete previous active step
+                        prev_step_event = complete_current_step()
+                        if prev_step_event:
+                            yield prev_step_event
+                        last_active_step_id = node_step_id
+                        last_active_step_title = node_title
+                        last_active_step_items = []
+                        yield streaming_service.format_thinking_step(
+                            step_id=node_step_id,
+                            title=node_title,
+                            status="in_progress",
+                        )
+
                     chain_input = event.get("data", {}).get("input")
                     chain_meta = {
                         "tags": event.get("tags") or [],
@@ -2655,13 +2805,15 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
-                    
+
                     # Extract and stream tool calls from chain output (critical for compare mode)
                     # Pass tracking set to prevent duplicate tool call streaming
-                    tool_call_events = _extract_and_stream_tool_calls(chain_output, streaming_service, streamed_tool_call_ids)
+                    tool_call_events = _extract_and_stream_tool_calls(
+                        chain_output, streaming_service, streamed_tool_call_ids
+                    )
                     for tool_event in tool_call_events:
                         yield tool_event
-                    
+
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
                     )
@@ -2695,7 +2847,11 @@ async def stream_new_chat(
                 elif event_type in ("on_chat_model_start", "on_llm_start"):
                     model_data = event.get("data", {})
                     parent_chain_name = ""
-                    parent_ids = [str(value) for value in (event.get("parent_ids") or []) if str(value)]
+                    parent_ids = [
+                        str(value)
+                        for value in (event.get("parent_ids") or [])
+                        if str(value)
+                    ]
                     for parent_id in reversed(parent_ids):
                         candidate_chain_name = chain_name_by_run_id.get(parent_id)
                         if candidate_chain_name:
@@ -2704,6 +2860,10 @@ async def stream_new_chat(
                     if run_id and _is_internal_pipeline_chain_name(parent_chain_name):
                         model_parent_chain_by_run_id[run_id] = parent_chain_name
                         internal_model_buffers.setdefault(run_id, "")
+                        # Create a per-node ThinkStreamFilter for live reasoning
+                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                            assume_think=_think_filter._assume_think,
+                        )
                     model_input = (
                         model_data.get("input")
                         or model_data.get("messages")
@@ -2740,6 +2900,27 @@ async def stream_new_chat(
                     )
                     internal_chain_name = model_parent_chain_by_run_id.pop(run_id, "")
                     internal_buffer = internal_model_buffers.pop(run_id, "")
+                    # Flush per-node think filter and emit remaining reasoning
+                    node_filter = internal_node_think_filters.pop(run_id, None)
+                    if node_filter:
+                        flush_reasoning, _flush_text = node_filter.flush()
+                        if flush_reasoning:
+                            parent_ids = [
+                                str(v)
+                                for v in (event.get("parent_ids") or [])
+                                if str(v)
+                            ]
+                            node_step_id = ""
+                            for pid in reversed(parent_ids):
+                                if pid in pipeline_chain_step_ids:
+                                    node_step_id = pipeline_chain_step_ids[pid]
+                                    break
+                            if node_step_id:
+                                yield streaming_service.format_node_reasoning(
+                                    step_id=node_step_id,
+                                    node_name=internal_chain_name,
+                                    delta=flush_reasoning,
+                                )
                     if internal_chain_name:
                         internal_text = internal_buffer or candidate_text
                         for step_event in emit_pipeline_steps_from_text(
@@ -2761,13 +2942,41 @@ async def stream_new_chat(
                     # Handle native reasoning_content (DeepSeek-R1 / models with separate field)
                     native_reasoning: str | None = None
                     if hasattr(chunk, "additional_kwargs"):
-                        native_reasoning = chunk.additional_kwargs.get("reasoning_content")
+                        native_reasoning = chunk.additional_kwargs.get(
+                            "reasoning_content"
+                        )
                     if native_reasoning and isinstance(native_reasoning, str):
-                        if not (run_id and run_id in model_parent_chain_by_run_id):
+                        if run_id and run_id in model_parent_chain_by_run_id:
+                            # Pipeline node: emit as node-reasoning
+                            parent_chain = model_parent_chain_by_run_id.get(run_id, "")
+                            parent_ids = [
+                                str(v)
+                                for v in (event.get("parent_ids") or [])
+                                if str(v)
+                            ]
+                            node_step_id = ""
+                            for pid in reversed(parent_ids):
+                                if pid in pipeline_chain_step_ids:
+                                    node_step_id = pipeline_chain_step_ids[pid]
+                                    break
+                            if node_step_id:
+                                yield streaming_service.format_node_reasoning(
+                                    step_id=node_step_id,
+                                    node_name=parent_chain,
+                                    delta=native_reasoning,
+                                )
+                        else:
+                            # Executor node: emit as global reasoning-delta
                             if active_reasoning_id is None:
-                                active_reasoning_id = streaming_service.generate_reasoning_id()
-                                yield streaming_service.format_reasoning_start(active_reasoning_id)
-                            yield streaming_service.format_reasoning_delta(active_reasoning_id, native_reasoning)
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, native_reasoning
+                            )
 
                     content = chunk.content
                     if content and isinstance(content, str):
@@ -2781,6 +2990,32 @@ async def stream_new_chat(
                                 )
                                 if trace_update:
                                     yield trace_update
+                            # --- Node-by-node think-box: stream per-node reasoning ---
+                            node_filter = internal_node_think_filters.get(run_id)
+                            if node_filter:
+                                node_reasoning, _node_text = node_filter.feed(content)
+                                if node_reasoning:
+                                    parent_chain = model_parent_chain_by_run_id.get(
+                                        run_id, ""
+                                    )
+                                    # Find the step_id for this pipeline node
+                                    # Walk parent_ids to find the chain that owns the step
+                                    node_step_id = ""
+                                    parent_ids = [
+                                        str(v)
+                                        for v in (event.get("parent_ids") or [])
+                                        if str(v)
+                                    ]
+                                    for pid in reversed(parent_ids):
+                                        if pid in pipeline_chain_step_ids:
+                                            node_step_id = pipeline_chain_step_ids[pid]
+                                            break
+                                    if node_step_id:
+                                        yield streaming_service.format_node_reasoning(
+                                            step_id=node_step_id,
+                                            node_name=parent_chain,
+                                            delta=node_reasoning,
+                                        )
                             continue
                         # Split <think>…</think> tags into reasoning vs. main text
                         reasoning_chunk, content = _think_filter.feed(content)
@@ -2788,18 +3023,31 @@ async def stream_new_chat(
                         # Handle template-prefilled <think> detection:
                         # When </think> appears before any <think>, text that was
                         # previously streamed as text-delta was actually reasoning.
-                        if _think_filter.late_close_detected and not _late_close_handled:
+                        if (
+                            _think_filter.late_close_detected
+                            and not _late_close_handled
+                        ):
                             _late_close_handled = True
                             retro_text = _think_filter.drain_retroactive_reasoning()
                             if retro_text or reasoning_chunk:
                                 if active_reasoning_id is None:
-                                    active_reasoning_id = streaming_service.generate_reasoning_id()
-                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                    active_reasoning_id = (
+                                        streaming_service.generate_reasoning_id()
+                                    )
+                                    yield streaming_service.format_reasoning_start(
+                                        active_reasoning_id
+                                    )
                                 if retro_text:
-                                    yield streaming_service.format_reasoning_delta(active_reasoning_id, retro_text)
+                                    yield streaming_service.format_reasoning_delta(
+                                        active_reasoning_id, retro_text
+                                    )
                                 if reasoning_chunk:
-                                    yield streaming_service.format_reasoning_delta(active_reasoning_id, reasoning_chunk)
-                                yield streaming_service.format_reasoning_end(active_reasoning_id)
+                                    yield streaming_service.format_reasoning_delta(
+                                        active_reasoning_id, reasoning_chunk
+                                    )
+                                yield streaming_service.format_reasoning_end(
+                                    active_reasoning_id
+                                )
                                 active_reasoning_id = None
                                 reasoning_chunk = ""  # already handled
                             if retro_text:
@@ -2807,18 +3055,28 @@ async def stream_new_chat(
                                 yield streaming_service.format_text_clear()
                                 # Reset the text block so subsequent text starts fresh
                                 if current_text_id is not None:
-                                    yield streaming_service.format_text_end(current_text_id)
+                                    yield streaming_service.format_text_end(
+                                        current_text_id
+                                    )
                                     current_text_id = None
                                 accumulated_text = ""
 
                         elif reasoning_chunk:
                             if active_reasoning_id is None:
-                                active_reasoning_id = streaming_service.generate_reasoning_id()
-                                yield streaming_service.format_reasoning_start(active_reasoning_id)
-                            yield streaming_service.format_reasoning_delta(active_reasoning_id, reasoning_chunk)
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, reasoning_chunk
+                            )
                         # Close reasoning block the moment main text starts arriving
                         if content and active_reasoning_id is not None:
-                            yield streaming_service.format_reasoning_end(active_reasoning_id)
+                            yield streaming_service.format_reasoning_end(
+                                active_reasoning_id
+                            )
                             active_reasoning_id = None
                         if not content:
                             continue
@@ -2826,16 +3084,16 @@ async def stream_new_chat(
                         if stream_pipeline_prefix_buffer:
                             content = stream_pipeline_prefix_buffer + content
                             stream_pipeline_prefix_buffer = ""
-                        content, inline_pipeline_payloads = _strip_inline_pipeline_payloads(
-                            content
+                        content, inline_pipeline_payloads = (
+                            _strip_inline_pipeline_payloads(content)
                         )
                         if inline_pipeline_payloads:
                             for step_event in emit_pipeline_steps_from_payloads(
                                 inline_pipeline_payloads
                             ):
                                 yield step_event
-                        content, stream_pipeline_prefix_buffer = _split_trailing_pipeline_prefix(
-                            content
+                        content, stream_pipeline_prefix_buffer = (
+                            _split_trailing_pipeline_prefix(content)
                         )
                         content = filter_repeated_output(content)
                         if not content:
@@ -2939,9 +3197,7 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = format_step_title(
-                        "Fetching link preview"
-                    )
+                    last_active_step_title = format_step_title("Fetching link preview")
                     last_active_step_items = [
                         f"URL: {url[:80]}{'...' if len(url) > 80 else ''}"
                     ]
@@ -2998,9 +3254,7 @@ async def stream_new_chat(
                             location = f"{lat}, {lon}"
                     else:
                         location = str(tool_input)
-                    last_active_step_title = format_step_title(
-                        "Fetching SMHI data"
-                    )
+                    last_active_step_title = format_step_title("Fetching SMHI data")
                     last_active_step_items = [
                         f"Location: {location[:80]}{'...' if len(location) > 80 else ''}"
                     ]
@@ -3015,9 +3269,15 @@ async def stream_new_chat(
                     destination = ""
                     time_value = ""
                     if isinstance(tool_input, dict):
-                        origin = tool_input.get("origin") or tool_input.get("origin_id") or ""
+                        origin = (
+                            tool_input.get("origin")
+                            or tool_input.get("origin_id")
+                            or ""
+                        )
                         destination = (
-                            tool_input.get("destination") or tool_input.get("destination_id") or ""
+                            tool_input.get("destination")
+                            or tool_input.get("destination_id")
+                            or ""
                         )
                         time_value = tool_input.get("time") or ""
                     else:
@@ -3135,12 +3395,18 @@ async def stream_new_chat(
                         items=last_active_step_items,
                     )
                 elif tool_name == "retrieve_agents":
-                    query = tool_input.get("query") if isinstance(tool_input, dict) else tool_input
-                    limit = tool_input.get("limit") if isinstance(tool_input, dict) else None
+                    query = (
+                        tool_input.get("query")
+                        if isinstance(tool_input, dict)
+                        else tool_input
+                    )
+                    limit = (
+                        tool_input.get("limit")
+                        if isinstance(tool_input, dict)
+                        else None
+                    )
                     last_active_step_title = format_step_title("Selecting agents")
-                    last_active_step_items = [
-                        f"Query: {_summarize_text(query)}"
-                    ]
+                    last_active_step_items = [f"Query: {_summarize_text(query)}"]
                     if limit:
                         last_active_step_items.append(f"Limit: {limit}")
                     yield streaming_service.format_thinking_step(
@@ -3153,7 +3419,11 @@ async def stream_new_chat(
                     agent_name = ""
                     task = ""
                     if isinstance(tool_input, dict):
-                        agent_name = tool_input.get("agent_name") or tool_input.get("agent") or ""
+                        agent_name = (
+                            tool_input.get("agent_name")
+                            or tool_input.get("agent")
+                            or ""
+                        )
                         task = tool_input.get("task") or ""
                     else:
                         task = str(tool_input)
@@ -3165,9 +3435,7 @@ async def stream_new_chat(
                     if agent_name:
                         last_active_step_items.append(f"Agent: {agent_name}")
                     if task:
-                        last_active_step_items.append(
-                            f"Task: {_summarize_text(task)}"
-                        )
+                        last_active_step_items.append(f"Task: {_summarize_text(task)}")
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -3175,7 +3443,11 @@ async def stream_new_chat(
                         items=last_active_step_items,
                     )
                 elif tool_name == "retrieve_tools":
-                    query = tool_input.get("query") if isinstance(tool_input, dict) else tool_input
+                    query = (
+                        tool_input.get("query")
+                        if isinstance(tool_input, dict)
+                        else tool_input
+                    )
                     last_active_step_title = format_step_title("Selecting tools")
                     last_active_step_items = [f"Query: {_summarize_text(query)}"]
                     yield streaming_service.format_thinking_step(
@@ -3300,8 +3572,7 @@ async def stream_new_chat(
                 if trace_recorder:
                     status = "completed"
                     if isinstance(tool_output, dict) and (
-                        tool_output.get("status") == "error"
-                        or "error" in tool_output
+                        tool_output.get("status") == "error" or "error" in tool_output
                     ):
                         status = "error"
                     trace_event = await trace_recorder.end_span(
@@ -3365,8 +3636,12 @@ async def stream_new_chat(
                                     or location.get("display_name")
                                     or "location"
                                 )
-                                category = str(tool_output.get("category") or "").strip()
-                                category_label = category.replace("_", " ") if category else "data"
+                                category = str(
+                                    tool_output.get("category") or ""
+                                ).strip()
+                                category_label = (
+                                    category.replace("_", " ") if category else "data"
+                                )
                                 tool_title = f"SMHI {category_label}: {location_name}"
                                 tool_metadata = {
                                     "provider": "SMHI",
@@ -3377,9 +3652,13 @@ async def stream_new_chat(
                                 }
                             elif tool_name == "trafiklab_route":
                                 origin = (tool_output.get("origin") or {}).get("name")
-                                destination = (tool_output.get("destination") or {}).get("name")
+                                destination = (
+                                    tool_output.get("destination") or {}
+                                ).get("name")
                                 if origin and destination:
-                                    tool_title = f"Trafiklab route: {origin} → {destination}"
+                                    tool_title = (
+                                        f"Trafiklab route: {origin} → {destination}"
+                                    )
                                 tool_metadata = {
                                     "provider": "Trafiklab",
                                     "origin": tool_output.get("origin", {}),
@@ -3436,9 +3715,7 @@ async def stream_new_chat(
                     todo_items = format_todo_items(
                         todos if isinstance(todos, list) else []
                     )
-                    completed_items = (
-                        todo_items if todo_items else ["Plan updated"]
-                    )
+                    completed_items = todo_items if todo_items else ["Plan updated"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Plan"),
@@ -3626,7 +3903,10 @@ async def stream_new_chat(
                         if temperature is not None:
                             completed_items.append(f"Temperature: {temperature} C")
                     else:
-                        completed_items = [*last_active_step_items, "SMHI data retrieved"]
+                        completed_items = [
+                            *last_active_step_items,
+                            "SMHI data retrieved",
+                        ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Fetching SMHI data"),
@@ -3654,11 +3934,12 @@ async def stream_new_chat(
                             completed_items.append(
                                 f"Route: {route_summary[:60]}{'...' if len(route_summary) > 60 else ''}"
                             )
-                        completed_items.append(
-                            f"Matches: {len(matches)}"
-                        )
+                        completed_items.append(f"Matches: {len(matches)}")
                     else:
-                        completed_items = [*last_active_step_items, "Route results ready"]
+                        completed_items = [
+                            *last_active_step_items,
+                            "Route results ready",
+                        ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Planning route (Trafiklab)"),
@@ -3671,7 +3952,10 @@ async def stream_new_chat(
                         if mode == "record":
                             record = tool_output.get("record", {}) or {}
                             title = record.get("title") or "Record"
-                            completed_items = [*last_active_step_items, f"Record: {title}"]
+                            completed_items = [
+                                *last_active_step_items,
+                                f"Record: {title}",
+                            ]
                         else:
                             results = tool_output.get("results", []) or []
                             completed_items = [
@@ -3679,7 +3963,10 @@ async def stream_new_chat(
                                 f"Results: {len(results)}",
                             ]
                     else:
-                        completed_items = [*last_active_step_items, "Libris results ready"]
+                        completed_items = [
+                            *last_active_step_items,
+                            "Libris results ready",
+                        ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Searching Libris catalog"),
@@ -3858,9 +4145,7 @@ async def stream_new_chat(
                 else:
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title(
-                            f"Using {tool_name.replace('_', ' ')}"
-                        ),
+                        title=format_step_title(f"Using {tool_name.replace('_', ' ')}"),
                         status="completed",
                         items=last_active_step_items,
                     )
@@ -3987,9 +4272,14 @@ async def stream_new_chat(
                 elif tool_name.startswith("smhi_"):
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                        tool_output
+                        if isinstance(tool_output, dict)
+                        else {"result": tool_output},
                     )
-                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                    if (
+                        isinstance(tool_output, dict)
+                        and tool_output.get("status") == "ok"
+                    ):
                         location = tool_output.get("location", {}) or {}
                         location_name = (
                             location.get("name")
@@ -4013,9 +4303,14 @@ async def stream_new_chat(
                 elif tool_name == "trafiklab_route":
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                        tool_output
+                        if isinstance(tool_output, dict)
+                        else {"result": tool_output},
                     )
-                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                    if (
+                        isinstance(tool_output, dict)
+                        and tool_output.get("status") == "ok"
+                    ):
                         matches = tool_output.get("matching_entries", []) or []
                         yield streaming_service.format_terminal_info(
                             f"Trafiklab departures loaded ({len(matches)} matches)",
@@ -4034,9 +4329,14 @@ async def stream_new_chat(
                 elif tool_name == "libris_search":
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                        tool_output
+                        if isinstance(tool_output, dict)
+                        else {"result": tool_output},
                     )
-                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                    if (
+                        isinstance(tool_output, dict)
+                        and tool_output.get("status") == "ok"
+                    ):
                         results = tool_output.get("results", []) or []
                         yield streaming_service.format_terminal_info(
                             f"Libris results loaded ({len(results)} items)",
@@ -4055,9 +4355,14 @@ async def stream_new_chat(
                 elif tool_name == "jobad_links_search":
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                        tool_output
+                        if isinstance(tool_output, dict)
+                        else {"result": tool_output},
                     )
-                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                    if (
+                        isinstance(tool_output, dict)
+                        and tool_output.get("status") == "ok"
+                    ):
                         results = tool_output.get("results", []) or []
                         yield streaming_service.format_terminal_info(
                             f"Job ads loaded ({len(results)} items)",
@@ -4126,7 +4431,10 @@ async def stream_new_chat(
                         )
                 else:
                     # Default handling for other tools
-                    payload = {"status": "completed", "result_length": len(str(tool_output))}
+                    payload = {
+                        "status": "completed",
+                        "result_length": len(str(tool_output)),
+                    }
                     if tool_name in external_model_tool_names:
                         payload = (
                             tool_output
@@ -4197,12 +4505,16 @@ async def stream_new_chat(
                 chain_output = event.get("data", {}).get("output")
                 for synthesis_event in emit_synthesis_draft_events(chain_output):
                     yield synthesis_event
-                chain_name = chain_name_by_run_id.get(run_id) or str(event.get("name") or "")
-                candidate_text = _extract_assistant_text_from_event_output(
-                    chain_output
+                chain_name = chain_name_by_run_id.get(run_id) or str(
+                    event.get("name") or ""
                 )
+                candidate_text = _extract_assistant_text_from_event_output(chain_output)
                 if candidate_text:
-                    source_chain = chain_name if _is_internal_pipeline_chain_name(chain_name) else None
+                    source_chain = (
+                        chain_name
+                        if _is_internal_pipeline_chain_name(chain_name)
+                        else None
+                    )
                     for step_event in emit_pipeline_steps_from_text(
                         candidate_text,
                         source_chain=source_chain,
@@ -4223,7 +4535,9 @@ async def stream_new_chat(
             if active_reasoning_id is None:
                 active_reasoning_id = streaming_service.generate_reasoning_id()
                 yield streaming_service.format_reasoning_start(active_reasoning_id)
-            yield streaming_service.format_reasoning_delta(active_reasoning_id, flush_reasoning)
+            yield streaming_service.format_reasoning_delta(
+                active_reasoning_id, flush_reasoning
+            )
         if flush_text:
             if current_text_id is None:
                 current_text_id = streaming_service.generate_text_id()

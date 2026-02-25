@@ -468,6 +468,36 @@ class VercelStreamingService:
             },
         )
 
+    def format_node_reasoning(
+        self,
+        step_id: str,
+        node_name: str,
+        delta: str,
+    ) -> str:
+        """
+        Format a per-node reasoning delta for the unified pipeline think-box.
+
+        This carries live ``<think>`` reasoning from internal pipeline nodes
+        (intent resolver, planner, critic, etc.) so the frontend can display
+        rolling reasoning text attached to the corresponding thinking step.
+
+        Args:
+            step_id: The thinking-step id this reasoning belongs to.
+            node_name: Pipeline node name (e.g. ``"resolve_intent"``).
+            delta: Incremental reasoning text.
+
+        Returns:
+            str: SSE formatted ``data-node-reasoning`` event.
+        """
+        return self.format_data(
+            "node-reasoning",
+            {
+                "step_id": step_id,
+                "node": node_name,
+                "delta": delta,
+            },
+        )
+
     def format_terminal_info(self, text: str, message_type: str = "info") -> str:
         """
         Format terminal info as custom data (SurfSense specific).

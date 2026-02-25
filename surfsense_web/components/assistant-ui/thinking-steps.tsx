@@ -13,6 +13,42 @@ export const ThinkingStepsContext = createContext<Map<string, ThinkingStep[]>>(n
 // Context to pass live reasoning text (from <think> tags / reasoning-delta events) to AssistantMessage
 export const ReasoningContext = createContext<Map<string, string>>(new Map());
 
+// Context to pass per-node reasoning text keyed by step_id (from data-node-reasoning events)
+export const NodeReasoningContext = createContext<Map<string, string>>(new Map());
+
+/**
+ * Inline rolling reasoning display for a single pipeline step.
+ * Shows live <think> reasoning from the backend's per-node filter.
+ */
+const StepNodeReasoning: FC<{ stepId: string; isStreaming: boolean }> = ({ stepId, isStreaming }) => {
+	const nodeReasoningMap = useContext(NodeReasoningContext);
+	const reasoning = nodeReasoningMap.get(stepId) ?? "";
+	const scrollRef = useRef<HTMLDivElement>(null);
+
+	// Auto-scroll to bottom while streaming
+	useEffect(() => {
+		if (isStreaming && scrollRef.current) {
+			requestAnimationFrame(() => {
+				scrollRef.current?.scrollTo({
+					top: scrollRef.current.scrollHeight,
+					behavior: "smooth",
+				});
+			});
+		}
+	}, [reasoning, isStreaming]);
+
+	if (!reasoning) return null;
+
+	return (
+		<div
+			ref={scrollRef}
+			className="mt-1.5 max-h-32 overflow-y-auto rounded bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground/80 font-mono whitespace-pre-wrap leading-relaxed scroll-smooth"
+		>
+			{reasoning}
+		</div>
+	);
+};
+
 /**
  * Chain of thought display component - single collapsible dropdown design
  */
@@ -149,6 +185,12 @@ export const ThinkingStepsDisplay: FC<{ steps: ThinkingStep[]; isThreadRunning?:
 													))}
 												</div>
 											)}
+
+											{/* Per-node reasoning from pipeline LLM calls */}
+											<StepNodeReasoning
+												stepId={step.id}
+												isStreaming={effectiveStatus === "in_progress" && isProcessing}
+											/>
 										</div>
 									</div>
 								);
@@ -168,6 +210,7 @@ export const ThinkingStepsDisplay: FC<{ steps: ThinkingStep[]; isThreadRunning?:
  */
 export const ThinkingStepsScrollHandler: FC = () => {
 	const thinkingStepsMap = useContext(ThinkingStepsContext);
+	const nodeReasoningMap = useContext(NodeReasoningContext);
 	const viewport = useThreadViewport();
 	const isRunning = useAssistantState(({ thread }) => thread.isRunning);
 	// Track the serialized state to detect any changes
@@ -181,11 +224,12 @@ export const ThinkingStepsScrollHandler: FC = () => {
 		}
 
 		// Serialize the thinking steps state to detect any changes
-		// This catches new steps, status changes, and item additions
+		// This catches new steps, status changes, item additions, and node reasoning updates
 		let stateString = "";
 		thinkingStepsMap.forEach((steps, msgId) => {
 			steps.forEach((step) => {
-				stateString += `${msgId}:${step.id}:${step.status}:${step.items?.length || 0};`;
+				const reasoningLen = nodeReasoningMap.get(step.id)?.length ?? 0;
+				stateString += `${msgId}:${step.id}:${step.status}:${step.items?.length || 0}:${reasoningLen};`;
 			});
 		});
 
@@ -206,7 +250,7 @@ export const ThinkingStepsScrollHandler: FC = () => {
 			requestAnimationFrame(scrollAttempt);
 			setTimeout(scrollAttempt, 100);
 		}
-	}, [thinkingStepsMap, viewport, isRunning]);
+	}, [thinkingStepsMap, nodeReasoningMap, viewport, isRunning]);
 
 	return null; // This component doesn't render anything
 };

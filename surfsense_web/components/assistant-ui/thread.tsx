@@ -53,6 +53,7 @@ import {
 	type ContextStatsEntry,
 } from "@/components/assistant-ui/context-stats";
 import {
+	NodeReasoningContext,
 	ReasoningContext,
 	ThinkingStepsContext,
 	ThinkingStepsDisplay,
@@ -84,6 +85,7 @@ interface ThreadProps {
 	messageThinkingSteps?: Map<string, ThinkingStep[]>;
 	messageContextStats?: Map<string, ContextStatsEntry[]>;
 	messageReasoningMap?: Map<string, string>;
+	nodeReasoningMap?: Map<string, string>;
 	header?: React.ReactNode;
 	isPublicChat?: boolean;
 }
@@ -92,6 +94,7 @@ export const Thread: FC<ThreadProps> = ({
 	messageThinkingSteps = new Map(),
 	messageContextStats = new Map(),
 	messageReasoningMap = new Map(),
+	nodeReasoningMap = new Map(),
 	header,
 	isPublicChat = false,
 }) => {
@@ -99,7 +102,9 @@ export const Thread: FC<ThreadProps> = ({
 		<ContextStatsContext.Provider value={messageContextStats}>
 			<ThinkingStepsContext.Provider value={messageThinkingSteps}>
 				<ReasoningContext.Provider value={messageReasoningMap}>
-					<ThreadContent header={header} isPublicChat={isPublicChat} />
+					<NodeReasoningContext.Provider value={nodeReasoningMap}>
+						<ThreadContent header={header} isPublicChat={isPublicChat} />
+					</NodeReasoningContext.Provider>
 				</ReasoningContext.Provider>
 			</ThinkingStepsContext.Provider>
 		</ContextStatsContext.Provider>
