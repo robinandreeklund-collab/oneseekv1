@@ -11,28 +11,93 @@ import { AUTH_TYPE, BACKEND_URL } from "@/lib/env-config";
 import { trackLoginAttempt } from "@/lib/posthog/events";
 import { cn } from "@/lib/utils";
 
+/* ────────────────────────────────────────────────────────────
+   Sidebar toggle icon (hamburger ↔ X with animation)
+   ──────────────────────────────────────────────────────────── */
+const ToggleIcon = ({ open, className }: { open: boolean; className?: string }) => (
+	<svg
+		className={cn("w-5 h-5", className)}
+		fill="none"
+		viewBox="0 0 24 24"
+		stroke="currentColor"
+		strokeWidth={1.5}
+	>
+		{open ? (
+			<path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+		) : (
+			<>
+				<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5" />
+				<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5" />
+				<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 17.25h16.5" />
+			</>
+		)}
+	</svg>
+);
+
+/* ────────────────────────────────────────────────────────────
+   Sidebar + Top-right login bar
+   Layout: left sidebar (collapsible drawer) + floating top-right auth
+   ──────────────────────────────────────────────────────────── */
 export const Navbar = () => {
-	const [isScrolled, setIsScrolled] = useState(false);
-	const [menuOpen, setMenuOpen] = useState(false);
+	const [sidebarOpen, setSidebarOpen] = useState(true);
+	const [isMobile, setIsMobile] = useState(false);
 	const [isAuthenticated, setIsAuthenticated] = useState(false);
 	const t = useTranslations("navigation");
 	const tAuth = useTranslations("auth");
 	const isGoogleAuth = AUTH_TYPE === "GOOGLE";
 
 	const navItems = [
-		{ name: t("docs"), link: "/docs" },
-		{ name: t("contact"), link: "/contact" },
-		{ name: t("changelog"), link: "/changelog" },
+		{
+			name: t("home"),
+			link: "/",
+			icon: (
+				<svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+					<path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955a1.126 1.126 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
+				</svg>
+			),
+		},
+		{
+			name: t("docs"),
+			link: "/docs",
+			icon: (
+				<svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+					<path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+				</svg>
+			),
+		},
+		{
+			name: t("contact"),
+			link: "/contact",
+			icon: (
+				<svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+					<path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+				</svg>
+			),
+		},
+		{
+			name: t("changelog"),
+			link: "/changelog",
+			icon: (
+				<svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+					<path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+				</svg>
+			),
+		},
 	];
 
+	// Detect mobile
 	useEffect(() => {
-		if (typeof window === "undefined") return;
-		const handleScroll = () => setIsScrolled(window.scrollY > 20);
-		handleScroll();
-		window.addEventListener("scroll", handleScroll, { passive: true });
-		return () => window.removeEventListener("scroll", handleScroll);
+		const check = () => {
+			const mobile = window.innerWidth < 768;
+			setIsMobile(mobile);
+			if (mobile) setSidebarOpen(false);
+		};
+		check();
+		window.addEventListener("resize", check);
+		return () => window.removeEventListener("resize", check);
 	}, []);
 
+	// Auth state
 	useEffect(() => {
 		const update = () => setIsAuthenticated(!!getBearerToken());
 		update();
@@ -41,9 +106,9 @@ export const Navbar = () => {
 		return () => window.removeEventListener("storage", handler);
 	}, []);
 
-	// Lock body scroll when menu is open
+	// Lock body scroll when mobile overlay is open
 	useEffect(() => {
-		if (menuOpen) {
+		if (isMobile && sidebarOpen) {
 			document.body.style.overflow = "hidden";
 		} else {
 			document.body.style.overflow = "";
@@ -51,9 +116,10 @@ export const Navbar = () => {
 		return () => {
 			document.body.style.overflow = "";
 		};
-	}, [menuOpen]);
+	}, [isMobile, sidebarOpen]);
 
-	const closeMenu = useCallback(() => setMenuOpen(false), []);
+	const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+	const toggleSidebar = useCallback(() => setSidebarOpen((p) => !p), []);
 
 	const handleGoogleLogin = () => {
 		trackLoginAttempt("google");
@@ -62,202 +128,155 @@ export const Navbar = () => {
 
 	return (
 		<>
-			<header
-				className={cn(
-					"fixed top-0 left-0 right-0 z-50 transition-all duration-300",
-					isScrolled
-						? "bg-white/80 dark:bg-neutral-950/80 backdrop-blur-xl border-b border-neutral-200/50 dark:border-neutral-800/50"
-						: "bg-transparent border-b border-transparent"
-				)}
-			>
-				<div className="mx-auto max-w-7xl flex items-center justify-between h-[60px] px-4 md:px-6">
-					{/* ── Left cluster: logo + nav links ── */}
-					<div className="flex items-center gap-1">
-						{/* Logo */}
-						<Link href="/" className="flex items-center hover:opacity-80 transition-opacity mr-6">
-							<span className="hidden sm:flex">
-								<OneseekWordmark iconSize={26} />
-							</span>
-							<span className="flex sm:hidden">
-								<OneseekIcon size={28} />
-							</span>
-						</Link>
+			{/* ── Left sidebar ── */}
+			{/* Desktop: permanent, collapsible between wide (240px) and narrow (64px) */}
+			{/* Mobile: overlay drawer from left */}
 
-						{/* Desktop nav links — immediately after logo */}
-						<nav className="hidden md:flex items-center">
-							{navItems.map((item) => (
-								<Link
-									key={item.link}
-									href={item.link}
-									className="px-3 py-1.5 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
-								>
-									{item.name}
-								</Link>
-							))}
-						</nav>
-					</div>
-
-					{/* ── Right cluster: theme toggle + login + CTA ── */}
-					<div className="flex items-center gap-3">
-						<ThemeTogglerComponent />
-
-						{isAuthenticated ? (
-							<Link
-								href="/dashboard"
-								className="hidden md:inline-flex items-center px-5 py-2 text-sm font-medium rounded-full bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity"
-							>
-								Dashboard
-							</Link>
-						) : (
-							<>
-								{/* "Log in" text link — OpenAI style */}
-								{isGoogleAuth ? (
-									<button
-										type="button"
-										onClick={handleGoogleLogin}
-										className="hidden md:inline-flex text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
-									>
-										{tAuth("sign_in")}
-									</button>
-								) : (
-									<Link
-										href="/login"
-										className="hidden md:inline-flex text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
-									>
-										{tAuth("sign_in")}
-									</Link>
-								)}
-
-								{/* Prominent CTA pill — "Try Oneseek →" */}
-								<Link
-									href={isAuthenticated ? "/dashboard" : "/login"}
-									className="hidden md:inline-flex items-center gap-1.5 px-5 py-2 text-sm font-medium rounded-full bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity"
-								>
-									{t("try_oneseek")}
-									<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-										<path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-									</svg>
-								</Link>
-							</>
-						)}
-
-						{/* Hamburger — mobile only */}
-						<button
-							type="button"
-							onClick={() => setMenuOpen(true)}
-							className="flex items-center justify-center w-9 h-9 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors md:hidden"
-							aria-label="Open menu"
-						>
-							<svg
-								className="w-5 h-5 text-neutral-700 dark:text-neutral-300"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-								strokeWidth={1.5}
-							>
-								<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-							</svg>
-						</button>
-					</div>
-				</div>
-			</header>
-
-			{/* ── Mobile menu overlay ── */}
+			{/* Mobile backdrop */}
 			<AnimatePresence>
-				{menuOpen && (
-					<>
-						{/* Backdrop */}
-						<motion.div
-							initial={{ opacity: 0 }}
-							animate={{ opacity: 1 }}
-							exit={{ opacity: 0 }}
-							transition={{ duration: 0.2 }}
-							className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm md:hidden"
-							onClick={closeMenu}
-							aria-hidden
-						/>
-
-						{/* Slide-in panel from left */}
-						<motion.aside
-							initial={{ x: "-100%" }}
-							animate={{ x: 0 }}
-							exit={{ x: "-100%" }}
-							transition={{ type: "spring", damping: 30, stiffness: 300 }}
-							className="fixed top-0 left-0 bottom-0 z-50 w-72 bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 shadow-2xl flex flex-col md:hidden"
-						>
-							{/* Panel header */}
-							<div className="flex items-center justify-between h-[60px] px-4 border-b border-neutral-100 dark:border-neutral-800/50">
-								<Link href="/" onClick={closeMenu} className="hover:opacity-80 transition-opacity">
-									<OneseekWordmark iconSize={24} />
-								</Link>
-								<button
-									type="button"
-									onClick={closeMenu}
-									className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-									aria-label="Close menu"
-								>
-									<svg className="w-5 h-5 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-										<path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-									</svg>
-								</button>
-							</div>
-
-							{/* Nav items */}
-							<nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-								{navItems.map((item) => (
-									<Link
-										key={item.link}
-										href={item.link}
-										onClick={closeMenu}
-										className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-neutral-700 dark:text-neutral-300 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors"
-									>
-										{item.name}
-									</Link>
-								))}
-							</nav>
-
-							{/* Panel footer with auth buttons */}
-							<div className="p-4 border-t border-neutral-100 dark:border-neutral-800/50 space-y-3">
-								{isAuthenticated ? (
-									<Link
-										href="/dashboard"
-										onClick={closeMenu}
-										className="flex items-center justify-center w-full px-4 py-2.5 text-sm font-medium rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-									>
-										Dashboard
-									</Link>
-								) : (
-									<>
-										{isGoogleAuth ? (
-											<button
-												type="button"
-												onClick={() => {
-													closeMenu();
-													handleGoogleLogin();
-												}}
-												className="flex items-center justify-center w-full px-4 py-2.5 text-sm font-medium rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-											>
-												{tAuth("sign_in")}
-											</button>
-										) : (
-											<Link
-												href="/login"
-												onClick={closeMenu}
-												className="flex items-center justify-center w-full px-4 py-2.5 text-sm font-medium rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-											>
-												{t("try_oneseek")}
-												<svg className="w-3.5 h-3.5 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-													<path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-												</svg>
-											</Link>
-										)}
-									</>
-								)}
-							</div>
-						</motion.aside>
-					</>
+				{isMobile && sidebarOpen && (
+					<motion.div
+						initial={{ opacity: 0 }}
+						animate={{ opacity: 1 }}
+						exit={{ opacity: 0 }}
+						transition={{ duration: 0.2 }}
+						className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm md:hidden"
+						onClick={closeSidebar}
+						aria-hidden
+					/>
 				)}
 			</AnimatePresence>
+
+			{/* Sidebar */}
+			<motion.aside
+				initial={false}
+				animate={{
+					width: sidebarOpen ? 240 : (isMobile ? 0 : 64),
+					x: isMobile && !sidebarOpen ? -240 : 0,
+				}}
+				transition={{ type: "spring", damping: 28, stiffness: 320 }}
+				className={cn(
+					"fixed top-0 left-0 bottom-0 z-50 flex flex-col",
+					"bg-neutral-50 dark:bg-neutral-900/80",
+					"border-r border-neutral-200/70 dark:border-neutral-800/70",
+					isMobile ? "shadow-2xl" : "",
+				)}
+				style={{ overflow: "hidden" }}
+			>
+				{/* Sidebar header: logo + toggle */}
+				<div className="flex items-center h-14 px-3 shrink-0">
+					{sidebarOpen ? (
+						<div className="flex items-center justify-between w-full">
+							<Link href="/" className="flex items-center hover:opacity-80 transition-opacity pl-1">
+								<OneseekWordmark iconSize={24} />
+							</Link>
+							<button
+								type="button"
+								onClick={toggleSidebar}
+								className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-neutral-200/70 dark:hover:bg-neutral-700/50 transition-colors"
+								aria-label="Collapse sidebar"
+							>
+								{/* Sidebar collapse icon */}
+								<svg className="w-[18px] h-[18px] text-neutral-500 dark:text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+									<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+								</svg>
+							</button>
+						</div>
+					) : (
+						<button
+							type="button"
+							onClick={toggleSidebar}
+							className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-neutral-200/70 dark:hover:bg-neutral-700/50 transition-colors mx-auto"
+							aria-label="Expand sidebar"
+						>
+							<OneseekIcon size={22} />
+						</button>
+					)}
+				</div>
+
+				{/* Navigation links */}
+				<nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto overflow-x-hidden">
+					{navItems.map((item) => (
+						<Link
+							key={item.link}
+							href={item.link}
+							onClick={isMobile ? closeSidebar : undefined}
+							className={cn(
+								"flex items-center gap-3 rounded-lg transition-colors",
+								"text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white",
+								"hover:bg-neutral-200/60 dark:hover:bg-neutral-700/40",
+								sidebarOpen ? "px-3 py-2.5" : "justify-center px-0 py-2.5",
+							)}
+							title={!sidebarOpen ? item.name : undefined}
+						>
+							<span className="shrink-0">{item.icon}</span>
+							{sidebarOpen && (
+								<span className="text-sm font-medium truncate">{item.name}</span>
+							)}
+						</Link>
+					))}
+				</nav>
+
+				{/* Sidebar footer: theme toggle */}
+				<div className={cn(
+					"shrink-0 border-t border-neutral-200/70 dark:border-neutral-800/70 px-2 py-3",
+					sidebarOpen ? "flex items-center justify-between" : "flex justify-center",
+				)}>
+					<ThemeTogglerComponent />
+				</div>
+			</motion.aside>
+
+			{/* ── Top-right floating bar ── */}
+			<div
+				className={cn(
+					"fixed top-0 right-0 z-40 flex items-center gap-3 h-14 px-4 md:px-6 transition-all duration-300",
+				)}
+			>
+				{/* Mobile hamburger toggle */}
+				<button
+					type="button"
+					onClick={toggleSidebar}
+					className="flex items-center justify-center w-9 h-9 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors md:hidden"
+					aria-label="Toggle menu"
+				>
+					<ToggleIcon open={sidebarOpen} className="text-neutral-700 dark:text-neutral-300" />
+				</button>
+
+				{/* Auth buttons */}
+				{isAuthenticated ? (
+					<Link
+						href="/dashboard"
+						className="inline-flex items-center px-4 py-1.5 text-sm font-medium rounded-full bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity"
+					>
+						Dashboard
+					</Link>
+				) : (
+					<>
+						{isGoogleAuth ? (
+							<button
+								type="button"
+								onClick={handleGoogleLogin}
+								className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
+							>
+								{tAuth("sign_in")}
+							</button>
+						) : (
+							<Link
+								href="/login"
+								className="inline-flex items-center px-4 py-1.5 text-sm font-medium rounded-full bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity"
+							>
+								{tAuth("sign_in")}
+							</Link>
+						)}
+					</>
+				)}
+			</div>
 		</>
 	);
 };
+
+/* ────────────────────────────────────────────────────────────
+   Export sidebar width constants for layout offset
+   ──────────────────────────────────────────────────────────── */
+export const SIDEBAR_WIDTH_OPEN = 240;
+export const SIDEBAR_WIDTH_COLLAPSED = 64;

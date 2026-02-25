@@ -320,7 +320,7 @@ export function HeroSection() {
 	};
 
 	return (
-		<section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden px-4 pt-24 pb-16 md:pt-32 md:pb-24">
+		<section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden px-4 pt-16 pb-16 md:pt-20 md:pb-24">
 			{/* Background */}
 			<div className="absolute inset-0 -z-10">
 				<div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(120,80,255,0.08),transparent)] dark:bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(120,80,255,0.25),transparent)]" />
