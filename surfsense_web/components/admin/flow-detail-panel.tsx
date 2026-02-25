@@ -46,8 +46,6 @@ import { adminFlowGraphApiService } from "@/lib/apis/admin-flow-graph-api.servic
 import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 
-const ALL_ROUTES = ["kunskap", "skapande", "jämförelse", "konversation"];
-
 type SelectedNodeData =
 	| { type: "intent"; data: FlowIntentNode }
 	| { type: "agent"; data: FlowAgentNode }
@@ -62,6 +60,7 @@ interface FlowDetailPanelProps {
 	};
 	catalogData: MetadataCatalogResponse | null;
 	agents: FlowAgentNode[];
+	intents: FlowIntentNode[];
 	onClose: () => void;
 	onDataChanged?: () => void;
 }
@@ -654,10 +653,12 @@ function IntentDetail({
 function AgentDetail({
 	agent,
 	toolCount,
+	intents,
 	onDataChanged,
 }: {
 	agent: FlowAgentNode;
 	toolCount: number;
+	intents: FlowIntentNode[];
 	onDataChanged?: () => void;
 }) {
 	const [editing, setEditing] = useState(false);
@@ -884,17 +885,17 @@ function AgentDetail({
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Tillhör intents</Label>
 						<div className="space-y-1.5">
-							{ALL_ROUTES.map((route) => (
-								<div key={route} className="flex items-center gap-2">
+							{intents.map((intent) => (
+								<div key={intent.intent_id} className="flex items-center gap-2">
 									<Checkbox
-										id={`agent-route-${route}`}
-										checked={selectedRoutes.includes(route)}
+										id={`agent-route-${intent.intent_id}`}
+										checked={selectedRoutes.includes(intent.intent_id)}
 										onCheckedChange={(checked) =>
-											handleToggleRoute(route, checked === true)
+											handleToggleRoute(intent.intent_id, checked === true)
 										}
 									/>
-									<label htmlFor={`agent-route-${route}`} className="text-xs cursor-pointer">
-										{route}
+									<label htmlFor={`agent-route-${intent.intent_id}`} className="text-xs cursor-pointer">
+										{intent.label} <span className="text-muted-foreground font-mono">({intent.intent_id})</span>
 									</label>
 								</div>
 							))}
@@ -1669,6 +1670,7 @@ export function FlowDetailPanel({
 	connectionCounts,
 	catalogData,
 	agents,
+	intents,
 	onClose,
 	onDataChanged,
 }: FlowDetailPanelProps) {
@@ -1693,6 +1695,7 @@ export function FlowDetailPanel({
 					<AgentDetail
 						agent={selectedNode.data}
 						toolCount={connectionCounts.toolsPerAgent[selectedNode.data.id] ?? 0}
+						intents={intents}
 						onDataChanged={onDataChanged}
 					/>
 				)}

@@ -471,12 +471,13 @@ export function FlowGraphPage() {
 		}
 		setCreatingAgent(true);
 		try {
+			const resolvedPromptKey = newAgent.prompt_key.trim() || agentId;
 			await adminFlowGraphApiService.upsertAgent({
 				agent_id: agentId,
 				label: newAgent.label.trim() || agentId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
 				description: newAgent.description.trim(),
 				keywords: newAgent.keywords.split(",").map((k) => k.trim()).filter(Boolean),
-				prompt_key: newAgent.prompt_key.trim() || undefined,
+				prompt_key: resolvedPromptKey,
 				namespace: newAgent.namespace.split("/").map((s) => s.trim()).filter(Boolean),
 				routes: newAgent.routes.split(",").map((r) => r.trim()).filter(Boolean),
 				flow_tools: [],
@@ -1055,6 +1056,7 @@ export function FlowGraphPage() {
 					connectionCounts={connectionCounts}
 					catalogData={catalogData}
 					agents={graphData?.agents ?? []}
+					intents={graphData?.intents ?? []}
 					onClose={() => {
 						setSelectedNode(null);
 						if (!graphData) return;

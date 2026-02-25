@@ -450,6 +450,32 @@ def get_oneseek_langsmith_prompt_template() -> list[PromptDefinition]:
     return list(PROMPT_DEFINITIONS)
 
 
+_DEFAULT_CUSTOM_AGENT_PROMPT = DEFAULT_WORKER_KNOWLEDGE_PROMPT
+
+
+def make_dynamic_prompt_definition(prompt_key: str) -> PromptDefinition | None:
+    """Create a PromptDefinition on-the-fly for a key not in the static registry.
+
+    Accepts keys matching ``agent.<name>.system`` and returns a definition
+    with the default worker knowledge prompt so that custom agents created
+    via the admin UI are immediately editable.
+    """
+    if prompt_key in PROMPT_DEFINITION_MAP:
+        return None  # already registered statically
+    if not prompt_key.startswith("agent.") or not prompt_key.endswith(".system"):
+        return None
+    agent_slug = prompt_key.removeprefix("agent.").removesuffix(".system")
+    if not agent_slug:
+        return None
+    return PromptDefinition(
+        key=prompt_key,
+        label=f"{agent_slug.replace('_', ' ').title()}-agent prompt",
+        description=f"System-prompt for custom agent '{agent_slug}'.",
+        default_prompt=_DEFAULT_CUSTOM_AGENT_PROMPT,
+        active_in_admin=True,
+    )
+
+
 def resolve_prompt(
     overrides: dict[str, str],
     key: str,

@@ -605,6 +605,11 @@ async def upsert_global_agent_metadata_overrides(
     *,
     updated_by_id=None,
 ) -> None:
+    # Load existing overrides so partial updates can merge with stored data
+    # instead of silently wiping unmentioned fields.
+    existing_overrides = await get_global_agent_metadata_overrides(session)
+    defaults = get_default_agent_metadata()
+
     prompt_updates: list[tuple[str, str | None]] = []
     for raw_agent_id, payload in updates:
         agent_id = _normalize_text(raw_agent_id).lower()
@@ -614,10 +619,21 @@ async def upsert_global_agent_metadata_overrides(
         if payload is None:
             prompt_updates.append((key, None))
             continue
+        # Build a merged base: start from hardcoded default, layer on the
+        # previously stored override, then apply the incoming partial payload.
+        base: dict[str, Any] = {}
+        default_payload = defaults.get(agent_id) or {}
+        if default_payload:
+            base.update(default_payload)
+        existing = existing_overrides.get(agent_id)
+        if existing:
+            base.update(existing)
+        # Apply incoming fields on top (only keys actually present in payload)
+        base.update({k: v for k, v in dict(payload).items() if v is not None})
         normalized_payload = normalize_agent_metadata_payload(
-            payload,
+            base,
             agent_id=agent_id,
-            default_payload=get_default_agent_metadata().get(agent_id),
+            default_payload=default_payload or None,
         )
         prompt_updates.append((key, _serialize_override_payload(normalized_payload)))
     if not prompt_updates:
