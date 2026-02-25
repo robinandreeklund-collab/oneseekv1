@@ -674,16 +674,20 @@ def _infer_route_for_tool(tool_id: str, category: str | None = None) -> tuple[st
 def _infer_intent_for_route(route: str | None) -> str | None:
     normalized_route = str(route or "").strip().lower()
     mapping = {
-        "kunskap": "kunskap",
-        "skapande": "skapande",
-        "jämförelse": "jämförelse",
-        "konversation": "konversation",
-        # Backward compat
-        "knowledge": "kunskap",
-        "action": "skapande",
-        "statistics": "kunskap",
-        "compare": "jämförelse",
-        "smalltalk": "konversation",
+        "kunskap": "info_sokning",
+        "skapande": "generering",
+        "jämförelse": "jamfor_analys",
+        "konversation": "smalltalk",
+        # Backward compat (English names)
+        "knowledge": "info_sokning",
+        "action": "generering",
+        "statistics": "info_sokning",
+        "compare": "jamfor_analys",
+        "smalltalk": "smalltalk",
+        # Already-new intent_ids (idempotent)
+        "info_sokning": "info_sokning",
+        "generering": "generering",
+        "jamfor_analys": "jamfor_analys",
     }
     return mapping.get(normalized_route)
 
@@ -4855,7 +4859,7 @@ async def run_metadata_catalog_audit(
             intent=None,
         )
         expected_intent_by_tool[str(getattr(entry, "tool_id", "") or "")] = (
-            str(intent_id or "").strip().lower() or "kunskap"
+            str(intent_id or "").strip().lower() or "info_sokning"
         )
         expected_agent_by_tool[str(getattr(entry, "tool_id", "") or "")] = (
             _infer_agent_for_tool(
@@ -5369,7 +5373,7 @@ async def run_metadata_catalog_separation(
         if not normalized_tool_id:
             continue
         expected_intent_by_tool[normalized_tool_id] = (
-            str(intent_id or "").strip().lower() or "kunskap"
+            str(intent_id or "").strip().lower() or "info_sokning"
         )
         expected_agent_by_tool[normalized_tool_id] = _infer_agent_for_tool(
             normalized_tool_id,

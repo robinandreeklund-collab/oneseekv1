@@ -1100,11 +1100,13 @@ def _agent_route_bonus(agent_id: str, intent_id: str | None, namespace_boost: fl
     normalized_intent = str(intent_id or "").strip().lower()
     if not normalized_intent:
         return 0.0
-    if normalized_intent in {"kunskap", "knowledge"} and normalized_agent in _KUNSKAP_AGENTS:
+    if normalized_intent in {"info_sokning", "kunskap", "knowledge"} and normalized_agent in _KUNSKAP_AGENTS:
         return namespace_boost
-    if normalized_intent in {"skapande", "action"} and normalized_agent in _SKAPANDE_AGENTS:
+    if normalized_intent in {"generering", "skapande", "action"} and normalized_agent in _SKAPANDE_AGENTS:
         return namespace_boost
-    if normalized_intent in {"jämförelse", "compare"} and normalized_agent in _JAMFORELSE_AGENTS:
+    if normalized_intent in {"jamfor_analys", "jämförelse", "compare"} and normalized_agent in _JAMFORELSE_AGENTS:
+        return namespace_boost
+    if normalized_intent in {"smalltalk", "konversation"} and normalized_agent in _KUNSKAP_AGENTS:
         return namespace_boost
     # Backward compat
     if normalized_intent == "statistics" and normalized_agent in _STATISTICS_AGENTS:
