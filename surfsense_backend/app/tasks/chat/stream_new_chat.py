@@ -808,6 +808,8 @@ _OUTPUT_PIPELINE_CHAIN_TOKENS = (
     "synthesizer",
     "progressive_synthesizer",
     "response_layer",
+    "smalltalk",
+    "compare_synthesizer",
 )
 
 # Generic intermediate chain names inserted by LangGraph/LangChain between
@@ -828,6 +830,17 @@ _GENERIC_CHAIN_NAMES: frozenset[str] = frozenset({
     "chatprompttemplate",
     "prompttemplate",
     "chain",
+    # Infrastructure/gate nodes that don't own model calls and should be
+    # skipped when walking the parent chain to find the real pipeline node.
+    "memory_context",
+    "planner_hitl_gate",
+    "execution_hitl_gate",
+    "synthesis_hitl",
+    "post_tools",
+    "artifact_indexer",
+    "context_compactor",
+    "orchestration_guard",
+    "tools",
 })
 
 # Regex to strip <think>…</think> blocks and bare tags from pipeline text
@@ -865,6 +878,8 @@ _PIPELINE_NODE_TITLES: dict[str, str] = {
     "response_layer": "Formaterar svar",
     "speculative": "Spekulativ förkörning",
     "speculative_merge": "Sammanfogar spekulativa resultat",
+    "smalltalk": "Svarar direkt",
+    "compare_synthesizer": "Sammanställer jämförelse",
 }
 
 
@@ -2822,32 +2837,57 @@ async def stream_new_chat(
                 )
             elif event_type in ("on_chat_model_start", "on_llm_start") and run_id:
                 if run_id not in model_parent_chain_by_run_id:
-                    parent_chain_name = ""
                     parent_ids = [
                         str(value)
                         for value in (event.get("parent_ids") or [])
                         if str(value)
                     ]
+                    # Walk ALL parents: track both the immediate non-generic
+                    # parent (for display/headers) and the pipeline ancestor
+                    # (for classification as internal vs output).
+                    immediate_parent = ""
+                    pipeline_parent = ""
                     for parent_id in reversed(parent_ids):
                         candidate_chain_name = chain_name_by_run_id.get(parent_id)
                         if not candidate_chain_name:
                             continue
-                        # Skip generic intermediate chains (RunnableSequence,
-                        # ChatLiteLLM, etc.) to find the real graph node name.
-                        if str(candidate_chain_name).strip().lower() in _GENERIC_CHAIN_NAMES:
+                        normalized = str(candidate_chain_name).strip().lower()
+                        if normalized in _GENERIC_CHAIN_NAMES:
                             continue
-                        parent_chain_name = str(candidate_chain_name)
-                        break
+                        cname = str(candidate_chain_name)
+                        # Remember the closest non-generic chain
+                        if not immediate_parent:
+                            immediate_parent = cname
+                        # If this ancestor is a known pipeline node, use it
+                        if _is_internal_pipeline_chain_name(cname) or _is_any_pipeline_chain_name(cname):
+                            pipeline_parent = cname
+                            break
+
+                    # Use pipeline parent for classification, fall back to immediate
+                    parent_chain_name = pipeline_parent or immediate_parent
+
+                    # Build a display key that tracks transitions at the
+                    # agent level (not just pipeline node), so headers also
+                    # appear when switching between domain agents inside the
+                    # same executor loop.
+                    display_key = immediate_parent or parent_chain_name
+
                     if _is_internal_pipeline_chain_name(parent_chain_name):
                         model_parent_chain_by_run_id[run_id] = parent_chain_name
                         internal_model_buffers.setdefault(run_id, "")
                         # Emit a node-transition header immediately so the
-                        # frontend shows which pipeline phase is now active,
-                        # regardless of when reasoning tokens arrive later.
-                        if parent_chain_name != last_reasoning_pipeline_node:
-                            last_reasoning_pipeline_node = parent_chain_name
-                            node_title = _pipeline_node_title(parent_chain_name)
-                            header = f"\n--- {node_title} ---\n"
+                        # frontend shows which pipeline phase is now active.
+                        if display_key != last_reasoning_pipeline_node:
+                            last_reasoning_pipeline_node = display_key
+                            # If the immediate parent differs from the pipeline
+                            # node, it's a domain agent — show its name.
+                            if immediate_parent and immediate_parent != parent_chain_name:
+                                node_title = _pipeline_node_title(parent_chain_name)
+                                agent_label = immediate_parent.replace("_", " ").title()
+                                header = f"\n--- {agent_label} ({node_title}) ---\n"
+                            else:
+                                node_title = _pipeline_node_title(parent_chain_name)
+                                header = f"\n--- {node_title} ---\n"
                             if active_reasoning_id is None:
                                 active_reasoning_id = (
                                     streaming_service.generate_reasoning_id()
@@ -2862,8 +2902,8 @@ async def stream_new_chat(
                         # Output pipeline node (synthesizer / response_layer):
                         # not registered as internal, but emit a header so the
                         # user sees which phase is producing the final response.
-                        if parent_chain_name != last_reasoning_pipeline_node:
-                            last_reasoning_pipeline_node = parent_chain_name
+                        if display_key != last_reasoning_pipeline_node:
+                            last_reasoning_pipeline_node = display_key
                             node_title = _pipeline_node_title(parent_chain_name)
                             header = f"\n--- {node_title} ---\n"
                             if active_reasoning_id is None:
@@ -3011,16 +3051,22 @@ async def stream_new_chat(
                         for value in (event.get("parent_ids") or [])
                         if str(value)
                     ]
+                    # Walk ALL parents to find the nearest pipeline node.
                     for parent_id in reversed(parent_ids):
                         candidate_chain_name = chain_name_by_run_id.get(parent_id)
                         if not candidate_chain_name:
                             continue
-                        # Skip generic intermediate chains (RunnableSequence,
-                        # ChatLiteLLM, etc.) to find the real graph node name.
-                        if str(candidate_chain_name).strip().lower() in _GENERIC_CHAIN_NAMES:
+                        normalized = str(candidate_chain_name).strip().lower()
+                        if normalized in _GENERIC_CHAIN_NAMES:
                             continue
-                        parent_chain_name = str(candidate_chain_name)
-                        break
+                        if not parent_chain_name:
+                            parent_chain_name = str(candidate_chain_name)
+                        if _is_internal_pipeline_chain_name(str(candidate_chain_name)):
+                            parent_chain_name = str(candidate_chain_name)
+                            break
+                        if _is_any_pipeline_chain_name(str(candidate_chain_name)):
+                            parent_chain_name = str(candidate_chain_name)
+                            break
                     if run_id and _is_internal_pipeline_chain_name(parent_chain_name):
                         model_parent_chain_by_run_id[run_id] = parent_chain_name
                         internal_model_buffers.setdefault(run_id, "")
