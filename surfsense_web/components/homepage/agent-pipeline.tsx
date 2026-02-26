@@ -1,175 +1,320 @@
 "use client";
 
-import {
-	ReactFlow,
-	Background,
-	type Node,
-	type Edge,
-	MarkerType,
-	Position,
-	Handle,
-	type NodeProps,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
 import { motion, useInView } from "motion/react";
 import { useTranslations } from "next-intl";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 /* ────────────────────────────────────────────────────────────
-   Phase color definitions
+   Phase definitions — the 8 stages of the pipeline
    ──────────────────────────────────────────────────────────── */
-type Phase = "intent" | "memory" | "planning" | "resolution" | "execution" | "validation" | "synthesis" | "response";
-
-const PHASE_HUE: Record<Phase, { bg: string; border: string; text: string; handle: string; stroke: string }> = {
-	intent: { bg: "bg-violet-500/10", border: "border-violet-500/40", text: "text-violet-400", handle: "#8b5cf6", stroke: "hsl(263 70% 55%)" },
-	memory: { bg: "bg-blue-500/10", border: "border-blue-500/40", text: "text-blue-400", handle: "#3b82f6", stroke: "hsl(217 91% 60%)" },
-	planning: { bg: "bg-teal-500/10", border: "border-teal-500/40", text: "text-teal-400", handle: "#14b8a6", stroke: "hsl(173 80% 40%)" },
-	resolution: { bg: "bg-amber-500/10", border: "border-amber-500/40", text: "text-amber-400", handle: "#f59e0b", stroke: "hsl(38 92% 50%)" },
-	execution: { bg: "bg-orange-500/10", border: "border-orange-500/40", text: "text-orange-400", handle: "#f97316", stroke: "hsl(25 95% 53%)" },
-	validation: { bg: "bg-rose-500/10", border: "border-rose-500/40", text: "text-rose-400", handle: "#f43f5e", stroke: "hsl(350 89% 60%)" },
-	synthesis: { bg: "bg-fuchsia-500/10", border: "border-fuchsia-500/40", text: "text-fuchsia-400", handle: "#d946ef", stroke: "hsl(292 84% 61%)" },
-	response: { bg: "bg-pink-500/10", border: "border-pink-500/40", text: "text-pink-400", handle: "#ec4899", stroke: "hsl(330 81% 60%)" },
-};
-
-const PHASE_LABELS: Record<Phase, string> = {
-	intent: "Intent",
-	memory: "Minne",
-	planning: "Planering",
-	resolution: "Upplösning",
-	execution: "Exekvering",
-	validation: "Validering",
-	synthesis: "Syntes",
-	response: "Svar",
-};
-
-/* ────────────────────────────────────────────────────────────
-   Pipeline node component
-   ──────────────────────────────────────────────────────────── */
-interface PipelineNodeData {
-	label: string;
-	description: string;
-	phase: Phase;
-	nodeType: "process" | "decision" | "hitl" | "terminal" | "branch";
-	active?: boolean;
-}
-
-const PipelineNode = memo(function PipelineNode({ data }: NodeProps) {
-	const d = data as unknown as PipelineNodeData;
-	const colors = PHASE_HUE[d.phase];
-
-	return (
-		<>
-			<Handle type="target" position={Position.Left} className="!w-2 !h-2" style={{ background: colors.handle }} />
-			<div
-				className={cn(
-					"relative rounded-lg border px-3 py-2 shadow-sm min-w-[130px] max-w-[170px] transition-all duration-500",
-					d.active ? colors.bg : "bg-neutral-900/40",
-					d.active ? colors.border : "border-neutral-800/40",
-					d.nodeType === "hitl" && "rounded-full border-dashed",
-					d.nodeType === "decision" && "border-dashed",
-					d.nodeType === "terminal" && "rounded-full",
-					d.active && "shadow-lg",
-				)}
-				style={d.active ? { boxShadow: `0 0 20px ${colors.handle}20` } : undefined}
-			>
-				<div className={cn("absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-neutral-950 transition-colors duration-500")} style={{ background: d.active ? colors.handle : "#333" }} />
-				<div className={cn("text-xs font-semibold leading-tight transition-colors duration-500", d.active ? colors.text : "text-neutral-600")}>
-					{d.label}
-				</div>
-				{d.nodeType === "hitl" && (
-					<span className={cn("text-[8px] font-bold uppercase tracking-wider", d.active ? "text-amber-400/80" : "text-neutral-700")}>HITL</span>
-				)}
-				{d.description && (
-					<div className={cn("mt-0.5 text-[9px] leading-tight line-clamp-2 transition-colors duration-500", d.active ? "text-neutral-400" : "text-neutral-700")}>
-						{d.description}
-					</div>
-				)}
-			</div>
-			<Handle type="source" position={Position.Right} className="!w-2 !h-2" style={{ background: colors.handle }} />
-		</>
-	);
-});
-
-const nodeTypes = { pipeline: PipelineNode };
-
-/* ────────────────────────────────────────────────────────────
-   Node definitions with positions
-   ──────────────────────────────────────────────────────────── */
-interface NodeDef {
+interface Phase {
 	id: string;
 	labelKey: string;
-	descKey: string;
-	phase: Phase;
-	type: "process" | "decision" | "hitl" | "terminal" | "branch";
-	x: number;
-	y: number;
+	color: string;
+	glowColor: string;
+	nodes: { labelKey: string; descKey: string; isDecision?: boolean; isHitl?: boolean }[];
 }
 
-const NODE_DEFS: NodeDef[] = [
-	// Row 1 — Intent & Memory
-	{ id: "resolve_intent", labelKey: "gn_resolve_intent", descKey: "gn_resolve_intent_d", phase: "intent", type: "process", x: 0, y: 200 },
-	{ id: "memory_context", labelKey: "gn_memory_context", descKey: "gn_memory_context_d", phase: "memory", type: "process", x: 240, y: 200 },
-	// Branching from memory
-	{ id: "smalltalk", labelKey: "gn_smalltalk", descKey: "gn_smalltalk_d", phase: "memory", type: "terminal", x: 480, y: 20 },
-	{ id: "speculative", labelKey: "gn_speculative", descKey: "gn_speculative_d", phase: "memory", type: "branch", x: 480, y: 110 },
-	// Planning
-	{ id: "agent_resolver", labelKey: "gn_agent_resolver", descKey: "gn_agent_resolver_d", phase: "planning", type: "process", x: 480, y: 280 },
-	{ id: "planner", labelKey: "gn_planner", descKey: "gn_planner_d", phase: "planning", type: "process", x: 700, y: 280 },
-	{ id: "planner_hitl", labelKey: "gn_planner_hitl", descKey: "gn_planner_hitl_d", phase: "planning", type: "hitl", x: 910, y: 280 },
-	// Tool Resolution
-	{ id: "tool_resolver", labelKey: "gn_tool_resolver", descKey: "gn_tool_resolver_d", phase: "resolution", type: "process", x: 1120, y: 280 },
-	{ id: "speculative_merge", labelKey: "gn_speculative_merge", descKey: "gn_speculative_merge_d", phase: "resolution", type: "branch", x: 1120, y: 150 },
-	{ id: "execution_router", labelKey: "gn_execution_router", descKey: "gn_execution_router_d", phase: "resolution", type: "decision", x: 1340, y: 280 },
-	// Execution
-	{ id: "domain_planner", labelKey: "gn_domain_planner", descKey: "gn_domain_planner_d", phase: "execution", type: "process", x: 1560, y: 200 },
-	{ id: "execution_hitl", labelKey: "gn_execution_hitl", descKey: "gn_execution_hitl_d", phase: "execution", type: "hitl", x: 1560, y: 320 },
-	{ id: "executor", labelKey: "gn_executor", descKey: "gn_executor_d", phase: "execution", type: "process", x: 1780, y: 260 },
-	{ id: "tools", labelKey: "gn_tools", descKey: "gn_tools_d", phase: "execution", type: "process", x: 2000, y: 200 },
-	{ id: "post_tools", labelKey: "gn_post_tools", descKey: "gn_post_tools_d", phase: "execution", type: "process", x: 2000, y: 320 },
-	{ id: "artifact_indexer", labelKey: "gn_artifact_indexer", descKey: "gn_artifact_indexer_d", phase: "execution", type: "process", x: 2220, y: 320 },
-	// Validation
-	{ id: "context_compactor", labelKey: "gn_context_compactor", descKey: "gn_context_compactor_d", phase: "validation", type: "process", x: 2220, y: 440 },
-	{ id: "orchestration_guard", labelKey: "gn_orch_guard", descKey: "gn_orch_guard_d", phase: "validation", type: "process", x: 2000, y: 440 },
-	{ id: "critic", labelKey: "gn_critic", descKey: "gn_critic_d", phase: "validation", type: "decision", x: 1780, y: 440 },
-	// Synthesis
-	{ id: "synthesis_hitl", labelKey: "gn_synthesis_hitl", descKey: "gn_synthesis_hitl_d", phase: "synthesis", type: "hitl", x: 1560, y: 520 },
-	{ id: "progressive_synth", labelKey: "gn_progressive_synth", descKey: "gn_progressive_synth_d", phase: "synthesis", type: "process", x: 1340, y: 520 },
-	{ id: "synthesizer", labelKey: "gn_synthesizer", descKey: "gn_synthesizer_d", phase: "synthesis", type: "process", x: 1120, y: 520 },
-	// Response
-	{ id: "response_layer", labelKey: "gn_response_layer", descKey: "gn_response_layer_d", phase: "response", type: "process", x: 910, y: 520 },
+const PHASES: Phase[] = [
+	{
+		id: "intent",
+		labelKey: "phase_intent",
+		color: "#8b5cf6",
+		glowColor: "rgba(139,92,246,0.3)",
+		nodes: [
+			{ labelKey: "gn_resolve_intent", descKey: "gn_resolve_intent_d" },
+		],
+	},
+	{
+		id: "memory",
+		labelKey: "phase_memory",
+		color: "#3b82f6",
+		glowColor: "rgba(59,130,246,0.3)",
+		nodes: [
+			{ labelKey: "gn_memory_context", descKey: "gn_memory_context_d" },
+			{ labelKey: "gn_smalltalk", descKey: "gn_smalltalk_d" },
+			{ labelKey: "gn_speculative", descKey: "gn_speculative_d" },
+		],
+	},
+	{
+		id: "planning",
+		labelKey: "phase_planning",
+		color: "#14b8a6",
+		glowColor: "rgba(20,184,166,0.3)",
+		nodes: [
+			{ labelKey: "gn_agent_resolver", descKey: "gn_agent_resolver_d" },
+			{ labelKey: "gn_planner", descKey: "gn_planner_d" },
+			{ labelKey: "gn_planner_hitl", descKey: "gn_planner_hitl_d", isHitl: true },
+		],
+	},
+	{
+		id: "resolution",
+		labelKey: "phase_resolution",
+		color: "#f59e0b",
+		glowColor: "rgba(245,158,11,0.3)",
+		nodes: [
+			{ labelKey: "gn_tool_resolver", descKey: "gn_tool_resolver_d" },
+			{ labelKey: "gn_speculative_merge", descKey: "gn_speculative_merge_d" },
+			{ labelKey: "gn_execution_router", descKey: "gn_execution_router_d", isDecision: true },
+		],
+	},
+	{
+		id: "execution",
+		labelKey: "phase_execution",
+		color: "#f97316",
+		glowColor: "rgba(249,115,22,0.3)",
+		nodes: [
+			{ labelKey: "gn_domain_planner", descKey: "gn_domain_planner_d" },
+			{ labelKey: "gn_execution_hitl", descKey: "gn_execution_hitl_d", isHitl: true },
+			{ labelKey: "gn_executor", descKey: "gn_executor_d" },
+			{ labelKey: "gn_tools", descKey: "gn_tools_d" },
+			{ labelKey: "gn_post_tools", descKey: "gn_post_tools_d" },
+			{ labelKey: "gn_artifact_indexer", descKey: "gn_artifact_indexer_d" },
+		],
+	},
+	{
+		id: "validation",
+		labelKey: "phase_validation",
+		color: "#f43f5e",
+		glowColor: "rgba(244,63,94,0.3)",
+		nodes: [
+			{ labelKey: "gn_context_compactor", descKey: "gn_context_compactor_d" },
+			{ labelKey: "gn_orch_guard", descKey: "gn_orch_guard_d" },
+			{ labelKey: "gn_critic", descKey: "gn_critic_d", isDecision: true },
+		],
+	},
+	{
+		id: "synthesis",
+		labelKey: "phase_synthesis",
+		color: "#d946ef",
+		glowColor: "rgba(217,70,239,0.3)",
+		nodes: [
+			{ labelKey: "gn_synthesis_hitl", descKey: "gn_synthesis_hitl_d", isHitl: true },
+			{ labelKey: "gn_progressive_synth", descKey: "gn_progressive_synth_d" },
+			{ labelKey: "gn_synthesizer", descKey: "gn_synthesizer_d" },
+		],
+	},
+	{
+		id: "response",
+		labelKey: "phase_response",
+		color: "#ec4899",
+		glowColor: "rgba(236,72,153,0.3)",
+		nodes: [
+			{ labelKey: "gn_response_layer", descKey: "gn_response_layer_d" },
+		],
+	},
 ];
 
-const EDGE_DEFS: { source: string; target: string; conditional?: boolean; label?: string }[] = [
-	{ source: "resolve_intent", target: "memory_context" },
-	{ source: "memory_context", target: "smalltalk", conditional: true },
-	{ source: "memory_context", target: "speculative", conditional: true },
-	{ source: "memory_context", target: "agent_resolver", conditional: true },
-	{ source: "speculative", target: "agent_resolver" },
-	{ source: "agent_resolver", target: "planner" },
-	{ source: "planner", target: "planner_hitl" },
-	{ source: "planner_hitl", target: "tool_resolver" },
-	{ source: "tool_resolver", target: "speculative_merge" },
-	{ source: "tool_resolver", target: "execution_router" },
-	{ source: "speculative_merge", target: "execution_router" },
-	{ source: "execution_router", target: "domain_planner" },
-	{ source: "domain_planner", target: "execution_hitl" },
-	{ source: "execution_hitl", target: "executor" },
-	{ source: "executor", target: "tools" },
-	{ source: "executor", target: "critic", conditional: true },
-	{ source: "tools", target: "post_tools" },
-	{ source: "post_tools", target: "artifact_indexer" },
-	{ source: "artifact_indexer", target: "context_compactor" },
-	{ source: "context_compactor", target: "orchestration_guard" },
-	{ source: "orchestration_guard", target: "critic" },
-	{ source: "critic", target: "synthesis_hitl", label: "ok" },
-	{ source: "critic", target: "tool_resolver", conditional: true, label: "needs_more" },
-	{ source: "critic", target: "planner", conditional: true, label: "replan" },
-	{ source: "synthesis_hitl", target: "progressive_synth" },
-	{ source: "synthesis_hitl", target: "synthesizer", conditional: true },
-	{ source: "progressive_synth", target: "synthesizer" },
-	{ source: "synthesizer", target: "response_layer" },
-];
+/* ────────────────────────────────────────────────────────────
+   Phase row component
+   ──────────────────────────────────────────────────────────── */
+function PhaseRow({
+	phase,
+	index,
+	activePhase,
+	expandedNode,
+	onNodeClick,
+	t,
+}: {
+	phase: Phase;
+	index: number;
+	activePhase: number;
+	expandedNode: string | null;
+	onNodeClick: (key: string) => void;
+	t: ReturnType<typeof useTranslations>;
+}) {
+	const isActive = index <= activePhase;
+	const isCurrent = index === activePhase;
+
+	return (
+		<motion.div
+			className="relative"
+			initial={{ opacity: 0, x: -30 }}
+			animate={isActive ? { opacity: 1, x: 0 } : { opacity: 0.15, x: 0 }}
+			transition={{ duration: 0.5, delay: index * 0.08 }}
+		>
+			{/* Connector line to next phase */}
+			{index < PHASES.length - 1 && (
+				<div className="absolute left-[19px] top-[40px] bottom-[-8px] w-px">
+					<motion.div
+						className="w-full h-full origin-top"
+						style={{ background: `linear-gradient(to bottom, ${phase.color}40, transparent)` }}
+						initial={{ scaleY: 0 }}
+						animate={isActive ? { scaleY: 1 } : { scaleY: 0 }}
+						transition={{ duration: 0.4, delay: index * 0.08 + 0.3 }}
+					/>
+				</div>
+			)}
+
+			<div className="flex items-start gap-4">
+				{/* Phase indicator dot */}
+				<div className="relative shrink-0 mt-1">
+					<motion.div
+						className="w-[10px] h-[10px] rounded-full border-[2.5px]"
+						style={{
+							borderColor: isActive ? phase.color : "#404040",
+							background: isCurrent ? phase.color : "transparent",
+						}}
+						animate={
+							isCurrent
+								? { boxShadow: [`0 0 0px ${phase.color}00`, `0 0 12px ${phase.glowColor}`, `0 0 0px ${phase.color}00`] }
+								: { boxShadow: "none" }
+						}
+						transition={isCurrent ? { duration: 2, repeat: Number.POSITIVE_INFINITY } : {}}
+					/>
+				</div>
+
+				{/* Phase content */}
+				<div className="flex-1 min-w-0 pb-8">
+					{/* Phase label */}
+					<div className="flex items-center gap-3 mb-3">
+						<span
+							className="text-[11px] font-bold uppercase tracking-[0.15em]"
+							style={{ color: isActive ? phase.color : "#525252" }}
+						>
+							{t(phase.labelKey)}
+						</span>
+						<motion.div
+							className="h-px flex-1"
+							style={{ background: `linear-gradient(to right, ${phase.color}30, transparent)` }}
+							initial={{ scaleX: 0, transformOrigin: "left" }}
+							animate={isActive ? { scaleX: 1 } : { scaleX: 0 }}
+							transition={{ duration: 0.6, delay: index * 0.08 + 0.2 }}
+						/>
+						{isCurrent && (
+							<motion.span
+								className="text-[9px] font-medium px-2 py-0.5 rounded-full"
+								style={{ background: `${phase.color}15`, color: phase.color }}
+								initial={{ opacity: 0, scale: 0.8 }}
+								animate={{ opacity: 1, scale: 1 }}
+								transition={{ delay: 0.3 }}
+							>
+								ACTIVE
+							</motion.span>
+						)}
+					</div>
+
+					{/* Node chips */}
+					<div className="flex flex-wrap gap-2">
+						{phase.nodes.map((node, ni) => {
+							const nodeKey = `${phase.id}-${ni}`;
+							const isExpanded = expandedNode === nodeKey;
+							return (
+								<motion.button
+									type="button"
+									key={nodeKey}
+									onClick={() => onNodeClick(nodeKey)}
+									className={cn(
+										"relative text-left rounded-lg border transition-all duration-300",
+										isActive
+											? "border-neutral-700/60 hover:border-neutral-600 bg-neutral-900/80"
+											: "border-neutral-800/40 bg-neutral-900/30",
+										isExpanded && "ring-1",
+										node.isHitl && "border-dashed",
+									)}
+									style={isExpanded ? { ringColor: phase.color, borderColor: `${phase.color}60` } : undefined}
+									initial={{ opacity: 0, y: 8 }}
+									animate={isActive ? { opacity: 1, y: 0 } : { opacity: 0.3, y: 0 }}
+									transition={{ duration: 0.3, delay: index * 0.08 + ni * 0.05 + 0.15 }}
+									whileHover={isActive ? { scale: 1.02 } : undefined}
+								>
+									<div className="px-3 py-2">
+										<div className="flex items-center gap-2">
+											{/* Status dot */}
+											<span
+												className="w-1.5 h-1.5 rounded-full shrink-0"
+												style={{ background: isActive ? phase.color : "#404040" }}
+											/>
+											<span
+												className={cn(
+													"text-xs font-medium whitespace-nowrap",
+													isActive ? "text-neutral-200" : "text-neutral-600",
+												)}
+											>
+												{t(node.labelKey)}
+											</span>
+											{node.isDecision && (
+												<span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 font-bold uppercase">
+													decision
+												</span>
+											)}
+											{node.isHitl && (
+												<span className="text-[8px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 font-bold uppercase">
+													hitl
+												</span>
+											)}
+											{/* Expand indicator */}
+											<svg
+												className={cn(
+													"w-3 h-3 transition-transform duration-200 ml-auto shrink-0",
+													isActive ? "text-neutral-500" : "text-neutral-700",
+													isExpanded && "rotate-180",
+												)}
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+												strokeWidth={2}
+											>
+												<path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+											</svg>
+										</div>
+									</div>
+
+									{/* Expanded description */}
+									<motion.div
+										initial={false}
+										animate={{ height: isExpanded ? "auto" : 0, opacity: isExpanded ? 1 : 0 }}
+										transition={{ duration: 0.2 }}
+										className="overflow-hidden"
+									>
+										<div className="px-3 pb-2.5 pt-0.5">
+											<p className="text-[11px] leading-relaxed text-neutral-400">
+												{t(node.descKey)}
+											</p>
+										</div>
+									</motion.div>
+								</motion.button>
+							);
+						})}
+					</div>
+				</div>
+			</div>
+		</motion.div>
+	);
+}
+
+/* ────────────────────────────────────────────────────────────
+   Animated progress bar — shows the "signal" flowing through
+   ──────────────────────────────────────────────────────────── */
+function ProgressSignal({ activePhase, total }: { activePhase: number; total: number }) {
+	const progress = total > 1 ? activePhase / (total - 1) : 0;
+
+	return (
+		<div className="relative h-1 rounded-full bg-neutral-800/60 overflow-hidden">
+			<motion.div
+				className="absolute inset-y-0 left-0 rounded-full"
+				style={{
+					background: "linear-gradient(90deg, #8b5cf6, #3b82f6, #14b8a6, #f59e0b, #f97316, #f43f5e, #d946ef, #ec4899)",
+				}}
+				initial={{ width: "0%" }}
+				animate={{ width: `${progress * 100}%` }}
+				transition={{ duration: 0.6, ease: "easeOut" }}
+			/>
+			{/* Glowing head */}
+			<motion.div
+				className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full"
+				style={{
+					background: PHASES[Math.min(activePhase, PHASES.length - 1)].color,
+					boxShadow: `0 0 12px ${PHASES[Math.min(activePhase, PHASES.length - 1)].glowColor}`,
+				}}
+				initial={{ left: "0%" }}
+				animate={{ left: `${progress * 100}%` }}
+				transition={{ duration: 0.6, ease: "easeOut" }}
+			/>
+		</div>
+	);
+}
 
 /* ────────────────────────────────────────────────────────────
    Main component
@@ -178,94 +323,55 @@ export function AgentPipeline() {
 	const t = useTranslations("homepage");
 	const containerRef = useRef<HTMLDivElement>(null);
 	const isInView = useInView(containerRef, { once: true, amount: 0.1 });
-	const [activeIdx, setActiveIdx] = useState(-1);
+	const [activePhase, setActivePhase] = useState(-1);
+	const [expandedNode, setExpandedNode] = useState<string | null>(null);
 	const hasAnimated = useRef(false);
 
+	// Count total nodes
+	const totalNodes = useMemo(() => PHASES.reduce((sum, p) => sum + p.nodes.length, 0), []);
+
+	// Sequential phase activation on scroll
 	useEffect(() => {
 		if (!isInView || hasAnimated.current) return;
 		hasAnimated.current = true;
+
 		let step = 0;
 		const interval = setInterval(() => {
-			if (step < NODE_DEFS.length) {
-				setActiveIdx(step);
+			if (step < PHASES.length) {
+				setActivePhase(step);
 				step++;
 			} else {
 				clearInterval(interval);
 			}
-		}, 120);
+		}, 350);
 		return () => clearInterval(interval);
 	}, [isInView]);
 
-	const nodes: Node[] = useMemo(() =>
-		NODE_DEFS.map((def, idx) => ({
-			id: def.id,
-			type: "pipeline",
-			position: { x: def.x, y: def.y },
-			data: {
-				label: t(def.labelKey),
-				description: t(def.descKey),
-				phase: def.phase,
-				nodeType: def.type,
-				active: idx <= activeIdx,
-			} satisfies PipelineNodeData,
-			draggable: false,
-			selectable: false,
-		})),
-		[t, activeIdx],
-	);
-
-	const edges: Edge[] = useMemo(() =>
-		EDGE_DEFS.map((def, idx) => {
-			const sourceNode = NODE_DEFS.find((n) => n.id === def.source);
-			const phase = sourceNode?.phase ?? "intent";
-			const color = PHASE_HUE[phase].stroke;
-			const sourceActive = NODE_DEFS.findIndex((n) => n.id === def.source) <= activeIdx;
-			const targetActive = NODE_DEFS.findIndex((n) => n.id === def.target) <= activeIdx;
-			const edgeActive = sourceActive && targetActive;
-
-			return {
-				id: `e-${idx}`,
-				source: def.source,
-				target: def.target,
-				type: "smoothstep",
-				animated: edgeActive,
-				label: def.label,
-				labelStyle: { fontSize: 9, fill: "rgba(255,255,255,0.5)", fontWeight: 600 },
-				labelBgStyle: { fill: "rgb(10,10,10)", fillOpacity: 0.9 },
-				style: {
-					stroke: color,
-					strokeWidth: def.conditional ? 1 : 1.5,
-					strokeDasharray: def.conditional ? "5 3" : undefined,
-					opacity: edgeActive ? 0.8 : 0.12,
-					transition: "opacity 0.5s ease",
-				},
-				markerEnd: {
-					type: MarkerType.ArrowClosed,
-					color,
-					width: 12,
-					height: 12,
-				},
-			};
-		}),
-		[activeIdx],
-	);
+	const handleNodeClick = (key: string) => {
+		setExpandedNode((prev) => (prev === key ? null : key));
+	};
 
 	return (
 		<section ref={containerRef} className="relative py-16 md:py-24 overflow-hidden">
+			{/* Dark background */}
 			<div className="absolute inset-0 -z-10 bg-neutral-950">
 				<div
-					className="absolute inset-0 opacity-[0.03]"
+					className="absolute inset-0 opacity-[0.02]"
 					style={{
-						backgroundImage: "linear-gradient(rgba(255,255,255,.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.1) 1px, transparent 1px)",
-						backgroundSize: "40px 40px",
+						backgroundImage:
+							"radial-gradient(circle, rgba(255,255,255,0.15) 1px, transparent 1px)",
+						backgroundSize: "24px 24px",
 					}}
 				/>
-				<div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[600px] bg-[radial-gradient(circle,rgba(139,92,246,0.08),transparent_60%)]" />
+				{/* Ambient glow */}
+				<div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-[radial-gradient(circle,rgba(139,92,246,0.06),transparent_60%)]" />
+				<div className="absolute bottom-1/4 left-1/3 w-[400px] h-[300px] bg-[radial-gradient(circle,rgba(236,72,153,0.04),transparent_60%)]" />
 			</div>
 
-			<div className="mx-auto max-w-7xl px-4 md:px-6">
+			<div className="mx-auto max-w-4xl px-6">
+				{/* Header */}
 				<motion.div
-					className="text-center mb-8 md:mb-10"
+					className="text-center mb-12"
 					initial={{ opacity: 0, y: 20 }}
 					animate={isInView ? { opacity: 1, y: 0 } : {}}
 					transition={{ duration: 0.6 }}
@@ -282,76 +388,61 @@ export function AgentPipeline() {
 					</p>
 				</motion.div>
 
-				{/* React Flow canvas */}
+				{/* Progress signal bar */}
 				<motion.div
-					className="rounded-2xl border border-neutral-800/60 overflow-hidden"
-					style={{ height: 560 }}
-					initial={{ opacity: 0, scale: 0.98 }}
-					animate={isInView ? { opacity: 1, scale: 1 } : {}}
-					transition={{ duration: 0.6, delay: 0.2 }}
-				>
-					<ReactFlow
-						nodes={nodes}
-						edges={edges}
-						nodeTypes={nodeTypes}
-						fitView
-						fitViewOptions={{ padding: 0.12, maxZoom: 0.65 }}
-						panOnDrag
-						zoomOnScroll={false}
-						zoomOnPinch
-						preventScrolling={false}
-						nodesDraggable={false}
-						nodesConnectable={false}
-						elementsSelectable={false}
-						proOptions={{ hideAttribution: true }}
-						className="!bg-neutral-950"
-					>
-						<Background gap={20} size={1} color="rgba(255,255,255,0.03)" />
-					</ReactFlow>
-				</motion.div>
-
-				{/* Phase legend */}
-				<motion.div
-					className="flex flex-wrap justify-center gap-3 mt-8"
+					className="mb-10"
 					initial={{ opacity: 0 }}
 					animate={isInView ? { opacity: 1 } : {}}
-					transition={{ delay: 1.2 }}
+					transition={{ delay: 0.3 }}
 				>
-					{(Object.entries(PHASE_LABELS) as [Phase, string][]).map(([phase, label]) => (
-						<div key={phase} className="flex items-center gap-1.5">
-							<span className="w-2 h-2 rounded-full" style={{ background: PHASE_HUE[phase].handle }} />
-							<span className="text-[10px] text-neutral-500 font-medium">{label}</span>
-						</div>
-					))}
+					<ProgressSignal activePhase={activePhase} total={PHASES.length} />
+					{/* Phase markers */}
+					<div className="flex justify-between mt-2">
+						{PHASES.map((phase, i) => (
+							<button
+								type="button"
+								key={phase.id}
+								onClick={() => setActivePhase(i)}
+								className={cn(
+									"text-[9px] font-medium transition-colors duration-300 cursor-pointer hover:opacity-80",
+									i <= activePhase ? "opacity-100" : "opacity-30",
+								)}
+								style={{ color: phase.color }}
+							>
+								{t(phase.labelKey)}
+							</button>
+						))}
+					</div>
 				</motion.div>
 
-				{/* Routing cards */}
+				{/* Phase timeline */}
+				<div className="relative pl-2">
+					{PHASES.map((phase, index) => (
+						<PhaseRow
+							key={phase.id}
+							phase={phase}
+							index={index}
+							activePhase={activePhase}
+							expandedNode={expandedNode}
+							onNodeClick={handleNodeClick}
+							t={t}
+						/>
+					))}
+				</div>
+
+				{/* Footer stat */}
 				<motion.div
-					className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4 max-w-3xl mx-auto"
-					initial={{ opacity: 0, y: 10 }}
-					animate={isInView ? { opacity: 1, y: 0 } : {}}
-					transition={{ delay: 1.5, duration: 0.5 }}
-				>
-					{[
-						{ label: "ok", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20", descKey: "routing_ok" },
-						{ label: "needs_more", color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20", descKey: "routing_needs_more" },
-						{ label: "replan", color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/20", descKey: "routing_replan" },
-					].map((route) => (
-						<div key={route.label} className={cn("rounded-xl border p-3 text-center", route.bg)}>
-							<code className={cn("text-sm font-bold", route.color)}>{route.label}</code>
-							<p className="text-[11px] text-neutral-400 mt-1">{t(route.descKey)}</p>
-						</div>
-					))}
-				</motion.div>
-
-				<motion.p
-					className="text-center mt-6 text-xs text-neutral-600"
+					className="mt-8 flex items-center justify-center gap-4"
 					initial={{ opacity: 0 }}
 					animate={isInView ? { opacity: 1 } : {}}
-					transition={{ delay: 2 }}
+					transition={{ delay: 3 }}
 				>
-					{t("pipeline_node_count", { count: NODE_DEFS.length })}
-				</motion.p>
+					<div className="h-px w-16 bg-gradient-to-r from-transparent to-neutral-700" />
+					<span className="text-xs text-neutral-500 font-medium">
+						{t("pipeline_node_count", { count: totalNodes })}
+					</span>
+					<div className="h-px w-16 bg-gradient-to-l from-transparent to-neutral-700" />
+				</motion.div>
 			</div>
 		</section>
 	);

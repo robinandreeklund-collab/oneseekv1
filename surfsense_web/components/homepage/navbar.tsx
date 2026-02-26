@@ -39,7 +39,7 @@ const ToggleIcon = ({ open, className }: { open: boolean; className?: string }) 
    Layout: left sidebar (collapsible drawer) + floating top-right auth
    ──────────────────────────────────────────────────────────── */
 export const Navbar = () => {
-	const [sidebarOpen, setSidebarOpen] = useState(true);
+	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [isMobile, setIsMobile] = useState(false);
 	const [isAuthenticated, setIsAuthenticated] = useState(false);
 	const t = useTranslations("navigation");

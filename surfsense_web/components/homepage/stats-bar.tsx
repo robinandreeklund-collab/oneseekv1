@@ -61,7 +61,7 @@ export function StatsBar() {
 	const stats = [
 		{
 			value: 7,
-			suffix: "+",
+			suffix: "",
 			label: t("stats_ai_models"),
 		},
 		{
@@ -73,11 +73,6 @@ export function StatsBar() {
 			value: 23,
 			suffix: "",
 			label: t("stats_pipeline_nodes"),
-		},
-		{
-			value: 20,
-			suffix: "+",
-			label: t("stats_llm_providers"),
 		},
 	];
 

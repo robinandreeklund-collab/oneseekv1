@@ -790,7 +790,7 @@
 		"demo_placeholder": "Ask a question...",
 		"demo_verified": "Verified against SCB",
 
-		"stats_ai_models": "AI models compared",
+		"stats_ai_models": "AI models",
 		"stats_swedish_apis": "Swedish data sources",
 		"stats_pipeline_nodes": "pipeline nodes",
 		"stats_llm_providers": "LLM providers",
@@ -814,6 +814,15 @@
 		"pipeline_title": "How Oneseek thinks",
 		"pipeline_subtitle": "Every question flows through 23 nodes — from intent to verified answer. Every step visible and configurable.",
 		"pipeline_node_count": "{count} nodes in the pipeline — every step is configurable and observable.",
+
+		"phase_intent": "Intent",
+		"phase_memory": "Memory",
+		"phase_planning": "Planning",
+		"phase_resolution": "Resolution",
+		"phase_execution": "Execution",
+		"phase_validation": "Validation",
+		"phase_synthesis": "Synthesis",
+		"phase_response": "Response",
 
 		"gn_resolve_intent": "Resolve Intent",
 		"gn_resolve_intent_d": "Classifies the question and determines complexity (trivial/simple/complex). Builds speculative candidates in hybrid mode.",
@@ -866,8 +875,8 @@
 		"routing_needs_more": "→ Tool Resolver (fetch more data)",
 		"routing_replan": "→ Planner (create new plan)",
 
-		"providers_title": "7 AI models. 30 LLM providers.",
-		"providers_subtitle": "Oneseek compares answers from all leading AI models in real-time — and supports 30+ providers via LiteLLM.",
+		"providers_title": "7 AI models",
+		"providers_subtitle": "Oneseek compares answers from all leading AI models in real-time.",
 		"providers_litellm": "Plus 30 providers via LiteLLM",
 		"providers_more": "more",
 

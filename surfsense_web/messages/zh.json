@@ -775,7 +775,7 @@
 		"demo_placeholder": "提出问题...",
 		"demo_verified": "已通过SCB验证",
 
-		"stats_ai_models": "AI模型对比",
+		"stats_ai_models": "AI模型",
 		"stats_swedish_apis": "瑞典数据源",
 		"stats_pipeline_nodes": "管道节点",
 		"stats_llm_providers": "LLM提供商",
@@ -799,6 +799,15 @@
 		"pipeline_title": "Oneseek 的思考方式",
 		"pipeline_subtitle": "每个问题流经23个节点——从意图到验证答案。每一步可见且可配置。",
 		"pipeline_node_count": "管道中有{count}个节点——每个步骤都可配置和可观测。",
+
+		"phase_intent": "意图",
+		"phase_memory": "记忆",
+		"phase_planning": "规划",
+		"phase_resolution": "解析",
+		"phase_execution": "执行",
+		"phase_validation": "验证",
+		"phase_synthesis": "综合",
+		"phase_response": "响应",
 
 		"gn_resolve_intent": "意图解析",
 		"gn_resolve_intent_d": "分类问题并确定复杂度（简单/一般/复杂）。在混合模式下构建推测性候选。",
@@ -851,8 +860,8 @@
 		"routing_needs_more": "→ 工具解析器（获取更多数据）",
 		"routing_replan": "→ 规划器（创建新计划）",
 
-		"providers_title": "7个AI模型。30个LLM提供商。",
-		"providers_subtitle": "Oneseek实时比较所有领先AI模型的答案——并通过LiteLLM支持30+提供商。",
+		"providers_title": "7个AI模型",
+		"providers_subtitle": "Oneseek实时比较所有领先AI模型的答案。",
 		"providers_litellm": "另有30个提供商通过LiteLLM",
 		"providers_more": "更多",
 

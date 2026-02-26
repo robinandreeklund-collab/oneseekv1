@@ -790,7 +790,7 @@
     "demo_placeholder": "Ställ en fråga...",
     "demo_verified": "Verifierat mot SCB",
 
-    "stats_ai_models": "AI-modeller jämförs",
+    "stats_ai_models": "AI-modeller",
     "stats_swedish_apis": "svenska datakällor",
     "stats_pipeline_nodes": "noder i pipelinen",
     "stats_llm_providers": "LLM-providers",
@@ -814,6 +814,15 @@
     "pipeline_title": "Så tänker Oneseek",
     "pipeline_subtitle": "Varje fråga flödar genom 23 noder — från intent till verifierat svar. Varje steg synligt och konfigurerbart.",
     "pipeline_node_count": "{count} noder i pipelinen — varje steg är konfigurerbart och observerbart.",
+
+    "phase_intent": "Intent",
+    "phase_memory": "Minne",
+    "phase_planning": "Planering",
+    "phase_resolution": "Upplösning",
+    "phase_execution": "Exekvering",
+    "phase_validation": "Validering",
+    "phase_synthesis": "Syntes",
+    "phase_response": "Svar",
 
     "gn_resolve_intent": "Resolve Intent",
     "gn_resolve_intent_d": "Klassificerar frågan och avgör komplexitet (trivial/enkel/komplex). Bygger spekulativa kandidater vid hybrid-läge.",
@@ -866,8 +875,8 @@
     "routing_needs_more": "→ Tool Resolver (hämta mer data)",
     "routing_replan": "→ Planner (skapa ny plan)",
 
-    "providers_title": "7 AI-modeller. 30 LLM-providers.",
-    "providers_subtitle": "Oneseek jämför svar från alla ledande AI-modeller i realtid — och stödjer 30+ providers via LiteLLM.",
+    "providers_title": "7 AI-modeller",
+    "providers_subtitle": "Oneseek jämför svar från alla ledande AI-modeller i realtid.",
     "providers_litellm": "Plus 30 providers via LiteLLM",
     "providers_more": "fler",
 

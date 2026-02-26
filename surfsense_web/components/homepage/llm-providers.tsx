@@ -19,14 +19,6 @@ const PRIMARY_MODELS = [
 	{ name: "Qwen", logo: "/model-logos/qwen.png", accent: "from-violet-500/20 to-purple-500/20", border: "border-violet-500/30", glow: "group-hover:shadow-violet-500/20" },
 ];
 
-/* ────────────────────────────────────────────────────────────
-   Secondary — LiteLLM provider ecosystem (text pills)
-   ──────────────────────────────────────────────────────────── */
-const LITELLM_PROVIDERS = [
-	"OpenRouter", "Azure", "Bedrock", "Vertex AI", "Groq", "Mistral",
-	"Together AI", "Fireworks", "Cohere", "Replicate", "Ollama",
-	"Cerebras", "DeepInfra", "Moonshot", "SambaNova", "AI21",
-];
 
 export function LLMProviders() {
 	const t = useTranslations("homepage");
@@ -105,43 +97,7 @@ export function LLMProviders() {
 					))}
 				</motion.div>
 
-				{/* Divider with "+" */}
-				<motion.div
-					className="flex items-center justify-center gap-4 mb-10"
-					initial={{ opacity: 0 }}
-					animate={isInView ? { opacity: 1 } : {}}
-					transition={{ delay: 0.8 }}
-				>
-					<div className="h-px w-24 bg-gradient-to-r from-transparent to-neutral-300 dark:to-neutral-700" />
-					<span className="text-xs font-semibold text-neutral-400 dark:text-neutral-500 uppercase tracking-widest">
-						{t("providers_litellm")}
-					</span>
-					<div className="h-px w-24 bg-gradient-to-l from-transparent to-neutral-300 dark:to-neutral-700" />
-				</motion.div>
-
-				{/* Secondary — LiteLLM provider pills */}
-				<motion.div
-					className="flex flex-wrap justify-center gap-2 max-w-3xl mx-auto"
-					initial={{ opacity: 0 }}
-					animate={isInView ? { opacity: 1 } : {}}
-					transition={{ delay: 0.9, duration: 0.5 }}
-				>
-					{LITELLM_PROVIDERS.map((name, index) => (
-						<motion.span
-							key={name}
-							initial={{ opacity: 0, scale: 0.85 }}
-							animate={isInView ? { opacity: 1, scale: 1 } : {}}
-							transition={{ delay: 0.95 + index * 0.02, duration: 0.25 }}
-							className="px-3.5 py-1.5 rounded-full text-xs font-medium bg-neutral-100 dark:bg-neutral-800/60 text-neutral-500 dark:text-neutral-400 border border-neutral-200/60 dark:border-neutral-700/40"
-						>
-							{name}
-						</motion.span>
-					))}
-					<span className="px-3.5 py-1.5 rounded-full text-xs font-medium bg-neutral-100 dark:bg-neutral-800/60 text-neutral-400 dark:text-neutral-500 border border-neutral-200/60 dark:border-neutral-700/40">
-						+{t("providers_more")}
-					</span>
-				</motion.div>
-			</div>
+				</div>
 		</section>
 	);
 }

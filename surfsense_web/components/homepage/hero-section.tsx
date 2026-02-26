@@ -320,7 +320,7 @@ export function HeroSection() {
 	};
 
 	return (
-		<section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden px-4 pt-16 pb-16 md:pt-20 md:pb-24">
+		<section className="relative overflow-hidden px-4 pt-16 pb-16 md:pt-20 md:pb-24">
 			{/* Background */}
 			<div className="absolute inset-0 -z-10">
 				<div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(120,80,255,0.08),transparent)] dark:bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(120,80,255,0.25),transparent)]" />
@@ -334,7 +334,7 @@ export function HeroSection() {
 				/>
 			</div>
 
-			{/* Headline */}
+			{/* Headline — fixed position, never moves */}
 			<motion.div
 				className="relative z-10 text-center max-w-4xl mx-auto"
 				initial={{ opacity: 0, y: 20 }}
@@ -351,7 +351,7 @@ export function HeroSection() {
 
 			{/* CTA */}
 			<motion.div
-				className="relative z-10 mt-8 flex flex-col sm:flex-row items-center gap-4"
+				className="relative z-10 mt-8 flex flex-col sm:flex-row items-center gap-4 justify-center"
 				initial={{ opacity: 0, y: 10 }}
 				animate={{ opacity: 1, y: 0 }}
 				transition={{ duration: 0.6, delay: 0.2 }}
@@ -388,7 +388,7 @@ export function HeroSection() {
 				)}
 			</motion.div>
 
-			{/* Live Demo */}
+			{/* Live Demo — grows downward, heading above stays pinned */}
 			<motion.div
 				className="relative z-10 w-full"
 				initial={{ opacity: 0, y: 30 }}
