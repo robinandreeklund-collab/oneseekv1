@@ -54,8 +54,9 @@ import {
 } from "@/components/assistant-ui/context-stats";
 import {
 	FadeLayer,
-	ReasoningContext,
 	ThinkingStepsContext,
+	TimelineContext,
+	type TimelineEntry,
 } from "@/components/assistant-ui/thinking-steps";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
@@ -84,6 +85,7 @@ interface ThreadProps {
 	messageThinkingSteps?: Map<string, ThinkingStep[]>;
 	messageContextStats?: Map<string, ContextStatsEntry[]>;
 	messageReasoningMap?: Map<string, string>;
+	messageTimeline?: Map<string, TimelineEntry[]>;
 	header?: React.ReactNode;
 	isPublicChat?: boolean;
 }
@@ -91,16 +93,17 @@ interface ThreadProps {
 export const Thread: FC<ThreadProps> = ({
 	messageThinkingSteps = new Map(),
 	messageContextStats = new Map(),
-	messageReasoningMap = new Map(),
+	messageReasoningMap: _messageReasoningMap = new Map(),
+	messageTimeline = new Map(),
 	header,
 	isPublicChat = false,
 }) => {
 	return (
 		<ContextStatsContext.Provider value={messageContextStats}>
 			<ThinkingStepsContext.Provider value={messageThinkingSteps}>
-				<ReasoningContext.Provider value={messageReasoningMap}>
+				<TimelineContext.Provider value={messageTimeline}>
 					<ThreadContent header={header} isPublicChat={isPublicChat} />
-				</ReasoningContext.Provider>
+				</TimelineContext.Provider>
 			</ThinkingStepsContext.Provider>
 		</ContextStatsContext.Provider>
 	);
@@ -673,23 +676,33 @@ const MessageError: FC = () => {
 
 /**
  * Unified FadeLayer part for the thread view — reasoning + thinking steps.
+ * Uses the timeline for correct chronological ordering.
  */
 const FadeLayerPart: FC = () => {
 	const thinkingStepsMap = useContext(ThinkingStepsContext);
-	const reasoningMap = useContext(ReasoningContext);
+	const timelineMap = useContext(TimelineContext);
 	const messageId = useAssistantState(({ message }) => message?.id);
-	const reasoning = messageId ? (reasoningMap.get(messageId) ?? "") : "";
+	const timeline = messageId ? (timelineMap.get(messageId) ?? []) : [];
 	const thinkingSteps = thinkingStepsMap.get(messageId) || [];
 	const isThreadRunning = useAssistantState(({ thread }) => thread.isRunning);
 	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
 	const isStreaming = isThreadRunning && isLastMessage;
 
-	if (!reasoning && thinkingSteps.length === 0) return null;
+	// Build a lookup map for step data by ID
+	const stepsById = useMemo(() => {
+		const map = new Map<string, (typeof thinkingSteps)[number]>();
+		for (const step of thinkingSteps) {
+			map.set(step.id, step);
+		}
+		return map;
+	}, [thinkingSteps]);
+
+	if (timeline.length === 0) return null;
 
 	return (
 		<FadeLayer
-			reasoning={reasoning}
-			thinkingSteps={thinkingSteps}
+			timeline={timeline}
+			stepsById={stepsById}
 			isStreaming={isStreaming}
 		/>
 	);

@@ -39,6 +39,7 @@ import {
 } from "@/components/assistant-ui/trace-context";
 import { TraceSheet } from "@/components/assistant-ui/trace-sheet";
 import { ChatHeader } from "@/components/new-chat/chat-header";
+import type { TimelineEntry } from "@/components/assistant-ui/thinking-steps";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
 import { DisplayImageGalleryToolUI } from "@/components/tool-ui/image-gallery";
@@ -304,6 +305,7 @@ export default function NewChatPage() {
 		Map<string, ContextStatsEntry[]>
 	>(new Map());
 	const [messageReasoningMap, setMessageReasoningMap] = useState<Map<string, string>>(new Map());
+	const [messageTimeline, setMessageTimeline] = useState<Map<string, TimelineEntry[]>>(new Map());
 	const [messageTraceSessions, setMessageTraceSessions] = useState<Map<string, string>>(
 		new Map()
 	);
@@ -547,6 +549,15 @@ export default function NewChatPage() {
 					}
 					if (restoredThinkingSteps.size > 0) {
 						setMessageThinkingSteps(restoredThinkingSteps);
+						// Build timeline from restored thinking steps (reasoning not persisted)
+						const restoredTimeline = new Map<string, TimelineEntry[]>();
+						restoredThinkingSteps.forEach((steps, msgId) => {
+							restoredTimeline.set(
+								msgId,
+								steps.map((s) => ({ kind: "step" as const, stepId: s.id })),
+							);
+						});
+						setMessageTimeline(restoredTimeline);
 					}
 					if (Object.keys(restoredDocsMap).length > 0) {
 						setMessageDocumentsMap(restoredDocsMap);
@@ -679,6 +690,7 @@ export default function NewChatPage() {
 				const userMsgId = `msg-user-${Date.now()}`;
 				const assistantMsgId = `msg-assistant-${Date.now()}`;
 				const currentThinkingSteps = new Map<string, ThinkingStepData>();
+				const currentTimeline: TimelineEntry[] = [];
 
 				const userMessage: ThreadMessageLike = {
 					id: userMsgId,
@@ -790,6 +802,12 @@ export default function NewChatPage() {
 											setMessageThinkingSteps((prev) => {
 												const newMap = new Map(prev);
 												newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
+												return newMap;
+											});
+											currentTimeline.push({ kind: "step", stepId: stepData.id });
+											setMessageTimeline((prev) => {
+												const newMap = new Map(prev);
+												newMap.set(assistantMsgId, [...currentTimeline]);
 												return newMap;
 											});
 										}
@@ -993,6 +1011,7 @@ export default function NewChatPage() {
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
 			let currentReasoningText = "";
+			const currentTimeline: TimelineEntry[] = [];
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 
@@ -1278,12 +1297,16 @@ export default function NewChatPage() {
 											const stepData = parsed.data as ThinkingStepData;
 											if (stepData?.id) {
 												currentThinkingSteps.set(stepData.id, stepData);
-												// Update thinking steps state for rendering
-												// The ThinkingStepsScrollHandler in Thread component
-												// will handle auto-scrolling when this state changes
 												setMessageThinkingSteps((prev) => {
 													const newMap = new Map(prev);
 													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
+													return newMap;
+												});
+												// Push step marker into timeline (interleaved with reasoning)
+												currentTimeline.push({ kind: "step", stepId: stepData.id });
+												setMessageTimeline((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentTimeline]);
 													return newMap;
 												});
 											}
@@ -1297,6 +1320,13 @@ export default function NewChatPage() {
 												setMessageThinkingSteps((prev) => {
 													const newMap = new Map(prev);
 													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
+													return newMap;
+												});
+												// Push context-stats step into timeline
+												currentTimeline.push({ kind: "step", stepId: step.id });
+												setMessageTimeline((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentTimeline]);
 													return newMap;
 												});
 											}
@@ -1362,6 +1392,18 @@ export default function NewChatPage() {
 													newMap.set(assistantMsgId, currentReasoningText);
 													return newMap;
 												});
+												// Extend last reasoning entry or start new chunk after a step
+												const lastTlEntry = currentTimeline[currentTimeline.length - 1];
+												if (lastTlEntry && lastTlEntry.kind === "reasoning") {
+													lastTlEntry.text += parsed.delta;
+												} else {
+													currentTimeline.push({ kind: "reasoning", text: parsed.delta });
+												}
+												setMessageTimeline((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentTimeline]);
+													return newMap;
+												});
 											}
 											break;
 										}
@@ -1425,6 +1467,16 @@ export default function NewChatPage() {
 								const newMap = new Map(prev);
 								newMap.delete(assistantMsgId);
 								newMap.set(newMsgId, reasoning);
+								return newMap;
+							}
+							return prev;
+						});
+						setMessageTimeline((prev) => {
+							const tl = prev.get(assistantMsgId);
+							if (tl) {
+								const newMap = new Map(prev);
+								newMap.delete(assistantMsgId);
+								newMap.set(newMsgId, tl);
 								return newMap;
 							}
 							return prev;
@@ -1509,6 +1561,16 @@ export default function NewChatPage() {
 									const newMap = new Map(prev);
 									newMap.delete(assistantMsgId);
 									newMap.set(newMsgId, reasoning);
+									return newMap;
+								}
+								return prev;
+							});
+							setMessageTimeline((prev) => {
+								const tl = prev.get(assistantMsgId);
+								if (tl) {
+									const newMap = new Map(prev);
+									newMap.delete(assistantMsgId);
+									newMap.set(newMsgId, tl);
 									return newMap;
 								}
 								return prev;
@@ -1702,6 +1764,7 @@ export default function NewChatPage() {
 			const assistantMsgId = `msg-assistant-${Date.now()}`;
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
 			let currentReasoningText = "";
+			const currentTimeline: TimelineEntry[] = [];
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 
@@ -1930,6 +1993,13 @@ export default function NewChatPage() {
 													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
 													return newMap;
 												});
+												// Push step marker into timeline (interleaved with reasoning)
+												currentTimeline.push({ kind: "step", stepId: stepData.id });
+												setMessageTimeline((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentTimeline]);
+													return newMap;
+												});
 											}
 											break;
 										}
@@ -1941,6 +2011,13 @@ export default function NewChatPage() {
 												setMessageThinkingSteps((prev) => {
 													const newMap = new Map(prev);
 													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
+													return newMap;
+												});
+												// Push context-stats step into timeline
+												currentTimeline.push({ kind: "step", stepId: step.id });
+												setMessageTimeline((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentTimeline]);
 													return newMap;
 												});
 											}
@@ -2004,6 +2081,18 @@ export default function NewChatPage() {
 												setMessageReasoningMap((prev) => {
 													const newMap = new Map(prev);
 													newMap.set(assistantMsgId, currentReasoningText);
+													return newMap;
+												});
+												// Extend last reasoning entry or start new chunk after a step
+												const lastTlEntry = currentTimeline[currentTimeline.length - 1];
+												if (lastTlEntry && lastTlEntry.kind === "reasoning") {
+													lastTlEntry.text += parsed.delta;
+												} else {
+													currentTimeline.push({ kind: "reasoning", text: parsed.delta });
+												}
+												setMessageTimeline((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentTimeline]);
 													return newMap;
 												});
 											}
@@ -2073,6 +2162,16 @@ export default function NewChatPage() {
 							const newMap = new Map(prev);
 							newMap.delete(assistantMsgId);
 							newMap.set(newMsgId, reasoning);
+							return newMap;
+						}
+						return prev;
+					});
+					setMessageTimeline((prev) => {
+						const tl = prev.get(assistantMsgId);
+						if (tl) {
+							const newMap = new Map(prev);
+							newMap.delete(assistantMsgId);
+							newMap.set(newMsgId, tl);
 							return newMap;
 						}
 						return prev;
@@ -2290,6 +2389,7 @@ export default function NewChatPage() {
 							messageThinkingSteps={messageThinkingSteps}
 							messageContextStats={messageContextStats}
 							messageReasoningMap={messageReasoningMap}
+							messageTimeline={messageTimeline}
 							isPublicChat={isPublicChat}
 							header={
 								<div className="flex items-center justify-between gap-2">

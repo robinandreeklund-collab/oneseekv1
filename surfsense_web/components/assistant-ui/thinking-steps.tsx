@@ -6,11 +6,23 @@ import { TextShimmerLoader } from "@/components/prompt-kit/loader";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { cn } from "@/lib/utils";
 
+// ---------------------------------------------------------------------------
+// Timeline — ordered list of reasoning chunks interleaved with tool steps
+// ---------------------------------------------------------------------------
+
+/** A single entry in the chronological fade-layer timeline. */
+export type TimelineEntry =
+	| { kind: "reasoning"; text: string }
+	| { kind: "step"; stepId: string };
+
 // Context to pass thinking steps to AssistantMessage
 export const ThinkingStepsContext = createContext<Map<string, ThinkingStep[]>>(new Map());
 
 // Context to pass live reasoning text (from <think> tags / reasoning-delta events) to AssistantMessage
 export const ReasoningContext = createContext<Map<string, string>>(new Map());
+
+// Context for the interleaved timeline (reasoning chunks + step markers, in arrival order)
+export const TimelineContext = createContext<Map<string, TimelineEntry[]>>(new Map());
 
 // ---------------------------------------------------------------------------
 // FadeLayer — unified rolling reasoning + thinking-steps component
@@ -30,9 +42,47 @@ const InlineToolStep: FC<{ step: ThinkingStep }> = ({ step }) => (
 );
 
 /**
+ * Renders a reasoning text chunk, splitting by --- Title --- headers.
+ */
+const ReasoningChunk: FC<{ text: string; keyPrefix: string }> = ({ text, keyPrefix }) => {
+	const segments = text.split(/^(---\s+.+?\s+---)\s*$/m).filter(Boolean);
+	return (
+		<>
+			{segments.map((segment, i) => {
+				const isHeader = /^---\s+.+?\s+---$/.test(segment);
+				if (isHeader) {
+					const title = segment.replace(/^---\s+/, "").replace(/\s+---$/, "");
+					return (
+						<div key={`${keyPrefix}-${i}`} className="flex items-center gap-2 pt-1.5 pb-0.5">
+							<span className="text-[0.68rem] font-semibold text-primary/80">
+								{title}
+							</span>
+							<span className="h-px flex-1 bg-primary/10" />
+						</div>
+					);
+				}
+				const trimmed = segment.trim();
+				if (!trimmed) return null;
+				return (
+					<div
+						key={`${keyPrefix}-${i}`}
+						className="text-[0.76rem] leading-relaxed text-muted-foreground whitespace-pre-wrap"
+					>
+						{trimmed}
+					</div>
+				);
+			})}
+		</>
+	);
+};
+
+/**
  * FadeLayer – unified component that merges the reasoning stream
  * (from <think> / reasoning-delta events) with structured thinking
  * steps (tool calls etc.) into a single rolling container.
+ *
+ * Uses the timeline (ordered list of reasoning chunks + step markers)
+ * to render entries in the correct chronological order.
  *
  * Design:
  * - Max-height with top gradient fade-out (content dissolves upward)
@@ -41,10 +91,10 @@ const InlineToolStep: FC<{ step: ThinkingStep }> = ({ step }) => (
  * - Clean expand toggle ("▾ N steg · Xs")
  */
 export const FadeLayer: FC<{
-	reasoning: string;
-	thinkingSteps: ThinkingStep[];
+	timeline: TimelineEntry[];
+	stepsById: Map<string, ThinkingStep>;
 	isStreaming: boolean;
-}> = ({ reasoning, thinkingSteps, isStreaming }) => {
+}> = ({ timeline, stepsById, isStreaming }) => {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [isExpanded, setIsExpanded] = useState(false);
 	const [streamStartTime] = useState(() => Date.now());
@@ -72,18 +122,12 @@ export const FadeLayer: FC<{
 				});
 			});
 		}
-	}, [reasoning, thinkingSteps, isStreaming]);
+	}, [timeline, isStreaming]);
 
-	const hasContent = reasoning || thinkingSteps.length > 0;
-	if (!hasContent) return null;
+	if (timeline.length === 0) return null;
 
 	const isDone = !isStreaming;
-	const stepCount = thinkingSteps.length;
-
-	// Parse reasoning text into segments split by node headers (--- Title ---)
-	const reasoningSegments = reasoning
-		? reasoning.split(/^(---\s+.+?\s+---)\s*$/m).filter(Boolean)
-		: [];
+	const stepCount = timeline.filter((e) => e.kind === "step").length;
 
 	return (
 		<div className="mx-auto w-full max-w-(--thread-max-width) px-2 pb-1">
@@ -111,39 +155,26 @@ export const FadeLayer: FC<{
 					/>
 				)}
 
-				{/* Content */}
+				{/* Content — interleaved reasoning + steps */}
 				<div className={cn(
 					"space-y-0.5 px-1 pb-1",
 					isDone && !isExpanded && "opacity-35 transition-opacity duration-400 hover:opacity-75",
 				)}>
-					{/* Reasoning segments with node headers */}
-					{reasoningSegments.map((segment, i) => {
-						const isHeader = /^---\s+.+?\s+---$/.test(segment);
-						if (isHeader) {
-							const title = segment.replace(/^---\s+/, "").replace(/\s+---$/, "");
+					{timeline.map((entry, i) => {
+						if (entry.kind === "reasoning") {
 							return (
-								<div key={`r-${i}`} className="flex items-center gap-2 pt-1.5 pb-0.5">
-									<span className="text-[0.68rem] font-semibold text-primary/80">
-										{title}
-									</span>
-									<span className="h-px flex-1 bg-primary/10" />
-								</div>
+								<ReasoningChunk
+									key={`tl-${i}`}
+									text={entry.text}
+									keyPrefix={`tl-${i}`}
+								/>
 							);
 						}
-						return (
-							<div
-								key={`r-${i}`}
-								className="text-[0.76rem] leading-relaxed text-muted-foreground whitespace-pre-wrap"
-							>
-								{segment.trim()}
-							</div>
-						);
+						// entry.kind === "step"
+						const step = stepsById.get(entry.stepId);
+						if (!step) return null;
+						return <InlineToolStep key={`tl-s-${entry.stepId}`} step={step} />;
 					})}
-
-					{/* Tool call steps (inline badges) */}
-					{thinkingSteps.map((step) => (
-						<InlineToolStep key={step.id} step={step} />
-					))}
 
 					{/* Streaming cursor */}
 					{isStreaming && (
@@ -153,28 +184,26 @@ export const FadeLayer: FC<{
 			</div>
 
 			{/* Toggle button */}
-			{(isDone || stepCount > 0 || reasoning) && (
-				<button
-					type="button"
-					onClick={() => setIsExpanded(!isExpanded)}
-					className="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
-				>
-					<ChevronDownIcon
-						className={cn(
-							"size-3 transition-transform duration-200",
-							isExpanded && "rotate-180",
-						)}
-					/>
-					{isStreaming ? (
-						<TextShimmerLoader text="Tänker..." size="sm" />
-					) : (
-						<span>
-							{stepCount > 0 ? `${stepCount} steg` : "Tankar"}
-							{elapsedSeconds > 0 ? ` \u00B7 ${elapsedSeconds}s` : ""}
-						</span>
+			<button
+				type="button"
+				onClick={() => setIsExpanded(!isExpanded)}
+				className="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+			>
+				<ChevronDownIcon
+					className={cn(
+						"size-3 transition-transform duration-200",
+						isExpanded && "rotate-180",
 					)}
-				</button>
-			)}
+				/>
+				{isStreaming ? (
+					<TextShimmerLoader text="Tänker..." size="sm" />
+				) : (
+					<span>
+						{stepCount > 0 ? `${stepCount} steg` : "Tankar"}
+						{elapsedSeconds > 0 ? ` \u00B7 ${elapsedSeconds}s` : ""}
+					</span>
+				)}
+			</button>
 		</div>
 	);
 };

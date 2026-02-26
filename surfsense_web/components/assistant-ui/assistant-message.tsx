@@ -22,8 +22,8 @@ import { BranchPicker } from "@/components/assistant-ui/branch-picker";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import {
 	FadeLayer,
-	ReasoningContext,
 	ThinkingStepsContext,
+	TimelineContext,
 } from "@/components/assistant-ui/thinking-steps";
 import { TracePanelContext } from "@/components/assistant-ui/trace-context";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
@@ -49,23 +49,33 @@ export const MessageError: FC = () => {
 /**
  * Unified FadeLayer part — combines reasoning stream + thinking steps
  * into a single rolling container with top gradient fade-out.
+ * Uses the timeline for correct chronological ordering.
  */
 const FadeLayerPart: FC = () => {
 	const thinkingStepsMap = useContext(ThinkingStepsContext);
-	const reasoningMap = useContext(ReasoningContext);
+	const timelineMap = useContext(TimelineContext);
 	const messageId = useAssistantState(({ message }) => message?.id);
-	const reasoning = messageId ? (reasoningMap.get(messageId) ?? "") : "";
+	const timeline = messageId ? (timelineMap.get(messageId) ?? []) : [];
 	const thinkingSteps = thinkingStepsMap.get(messageId) || [];
 	const isThreadRunning = useAssistantState(({ thread }) => thread.isRunning);
 	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
 	const isStreaming = isThreadRunning && isLastMessage;
 
-	if (!reasoning && thinkingSteps.length === 0) return null;
+	// Build a lookup map for step data by ID
+	const stepsById = useMemo(() => {
+		const map = new Map<string, (typeof thinkingSteps)[number]>();
+		for (const step of thinkingSteps) {
+			map.set(step.id, step);
+		}
+		return map;
+	}, [thinkingSteps]);
+
+	if (timeline.length === 0) return null;
 
 	return (
 		<FadeLayer
-			reasoning={reasoning}
-			thinkingSteps={thinkingSteps}
+			timeline={timeline}
+			stepsById={stepsById}
 			isStreaming={isStreaming}
 		/>
 	);
