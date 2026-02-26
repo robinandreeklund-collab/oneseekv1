@@ -2961,12 +2961,6 @@ async def stream_new_chat(
                 # Use pipeline parent for classification, fall back to immediate
                 parent_chain_name = pipeline_parent or immediate_parent
 
-                # Build a display key that tracks transitions at the
-                # agent level (not just pipeline node), so headers also
-                # appear when switching between domain agents inside the
-                # same executor loop.
-                display_key = immediate_parent or parent_chain_name
-
                 if _is_internal_pipeline_chain_name(parent_chain_name):
                     model_parent_chain_by_run_id[run_id] = parent_chain_name
                     internal_model_buffers.setdefault(run_id, "")
@@ -2980,17 +2974,13 @@ async def stream_new_chat(
                         )
                     # Emit a node-transition header immediately so the
                     # frontend shows which pipeline phase is now active.
-                    if display_key != last_reasoning_pipeline_node:
-                        last_reasoning_pipeline_node = display_key
-                        # If the immediate parent differs from the pipeline
-                        # node, it's a domain agent — show its name.
-                        if immediate_parent and immediate_parent != parent_chain_name:
-                            node_title = _pipeline_node_title(parent_chain_name)
-                            agent_label = immediate_parent.replace("_", " ").title()
-                            header = f"\n--- {agent_label} ({node_title}) ---\n"
-                        else:
-                            node_title = _pipeline_node_title(parent_chain_name)
-                            header = f"\n--- {node_title} ---\n"
+                    # Use parent_chain_name (the pipeline node) for tracking
+                    # to stay consistent with on_chat_model_stream which
+                    # also uses model_parent_chain_by_run_id (= parent_chain_name).
+                    if parent_chain_name != last_reasoning_pipeline_node:
+                        last_reasoning_pipeline_node = parent_chain_name
+                        node_title = _pipeline_node_title(parent_chain_name)
+                        header = f"\n--- {node_title} ---\n"
                         if active_reasoning_id is None:
                             active_reasoning_id = (
                                 streaming_service.generate_reasoning_id()
@@ -3020,8 +3010,8 @@ async def stream_new_chat(
                         current_text_id = None
                         yield streaming_service.format_text_clear()
                         accumulated_text = ""
-                    if display_key != last_reasoning_pipeline_node:
-                        last_reasoning_pipeline_node = display_key
+                    if parent_chain_name != last_reasoning_pipeline_node:
+                        last_reasoning_pipeline_node = parent_chain_name
                         node_title = _pipeline_node_title(parent_chain_name)
                         header = f"\n--- {node_title} ---\n"
                         if active_reasoning_id is None:
@@ -3263,29 +3253,50 @@ async def stream_new_chat(
                     )
                     internal_chain_name = model_parent_chain_by_run_id.pop(run_id, "")
                     internal_buffer = internal_model_buffers.pop(run_id, "")
-                    # Flush per-node think filter and emit remaining reasoning
-                    # into the global rolling think-box (reasoning-delta).
+                    # Flush per-node think filter (or structured parser)
+                    # and emit remaining reasoning into the global rolling
+                    # think-box (reasoning-delta).
                     node_filter = internal_node_think_filters.pop(run_id, None)
-                    # P1 Extra: also clean up structured parser for this run
-                    _structured_parsers.pop(run_id, None)
+                    structured_parser = _structured_parsers.pop(run_id, None)
+                    flush_reasoning = ""
                     if node_filter:
-                        flush_reasoning, flush_node_text = node_filter.flush()
+                        flush_r, flush_node_text = node_filter.flush()
                         # Node text also goes to reasoning (never text-delta)
-                        flush_reasoning = (flush_reasoning or "") + (flush_node_text or "")
-                        if flush_reasoning:
-                            # Inject node header if this is a new pipeline node
-                            if internal_chain_name and internal_chain_name != last_reasoning_pipeline_node:
-                                last_reasoning_pipeline_node = internal_chain_name
-                                node_title = _pipeline_node_title(internal_chain_name)
-                                header = f"\n--- {node_title} ---\n"
-                                if active_reasoning_id is None:
-                                    active_reasoning_id = streaming_service.generate_reasoning_id()
-                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
-                                yield streaming_service.format_reasoning_delta(active_reasoning_id, header)
+                        flush_reasoning = (flush_r or "") + (flush_node_text or "")
+                    elif structured_parser:
+                        # Flush structured parser: extract remaining thinking
+                        # that wasn't streamed during on_chat_model_stream.
+                        already_streamed = structured_parser._last_thinking_len
+                        try:
+                            final_obj = structured_parser.finalize()
+                            if isinstance(final_obj, dict) and "thinking" in final_obj:
+                                full_thinking = str(final_obj["thinking"])
+                                if len(full_thinking) > already_streamed:
+                                    flush_reasoning = full_thinking[already_streamed:]
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                        # If no thinking was ever extracted (model didn't
+                        # output structured JSON), fall back to the raw
+                        # buffer so reasoning isn't silently lost.
+                        if not flush_reasoning and already_streamed == 0 and internal_buffer:
+                            clean = internal_buffer.strip()
+                            clean = clean.replace("<think>", "").replace("</think>", "")
+                            clean, _ = _strip_inline_critic_payloads(clean)
+                            flush_reasoning = clean.strip()
+                    if flush_reasoning:
+                        # Inject node header if this is a new pipeline node
+                        if internal_chain_name and internal_chain_name != last_reasoning_pipeline_node:
+                            last_reasoning_pipeline_node = internal_chain_name
+                            node_title = _pipeline_node_title(internal_chain_name)
+                            header = f"\n--- {node_title} ---\n"
                             if active_reasoning_id is None:
                                 active_reasoning_id = streaming_service.generate_reasoning_id()
                                 yield streaming_service.format_reasoning_start(active_reasoning_id)
-                            yield streaming_service.format_reasoning_delta(active_reasoning_id, flush_reasoning)
+                            yield streaming_service.format_reasoning_delta(active_reasoning_id, header)
+                        if active_reasoning_id is None:
+                            active_reasoning_id = streaming_service.generate_reasoning_id()
+                            yield streaming_service.format_reasoning_start(active_reasoning_id)
+                        yield streaming_service.format_reasoning_delta(active_reasoning_id, flush_reasoning)
                     if internal_chain_name:
                         internal_text = internal_buffer or candidate_text
                         for step_event in emit_pipeline_steps_from_text(
