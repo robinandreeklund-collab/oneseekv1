@@ -74,6 +74,7 @@ from app.agents.new_chat.retrieval_feedback import (
 from app.agents.new_chat.sandbox_runtime import sandbox_write_text_file
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
+from app.agents.new_chat.structured_schemas import structured_output_enabled
 from app.agents.new_chat.system_prompt import (
     SURFSENSE_CORE_GLOBAL_PROMPT,
     append_datetime_context,
@@ -1776,6 +1777,7 @@ async def create_supervisor_agent(
         SURFSENSE_CORE_GLOBAL_PROMPT,
     )
     _core = append_datetime_context(_raw_core.strip())
+    _use_structured = structured_output_enabled()
 
     critic_prompt_template = inject_core_prompt(
         _core,
@@ -1832,6 +1834,7 @@ async def create_supervisor_agent(
             "supervisor.intent_resolver.system",
             DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     agent_resolver_prompt_template = inject_core_prompt(
         _core,
@@ -1840,6 +1843,7 @@ async def create_supervisor_agent(
             "supervisor.agent_resolver.system",
             DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     planner_prompt_template = inject_core_prompt(
         _core,
@@ -1848,6 +1852,7 @@ async def create_supervisor_agent(
             "supervisor.planner.system",
             DEFAULT_SUPERVISOR_PLANNER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     multi_domain_planner_prompt_template = inject_core_prompt(
         _core,
@@ -1856,6 +1861,7 @@ async def create_supervisor_agent(
             "supervisor.planner.multi_domain.system",
             DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     tool_resolver_prompt_template = inject_core_prompt(
         _core,
@@ -1872,6 +1878,7 @@ async def create_supervisor_agent(
             "supervisor.critic_gate.system",
             DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     domain_planner_prompt_template = inject_core_prompt(
         _core,
@@ -1920,6 +1927,7 @@ async def create_supervisor_agent(
             "supervisor.response_layer.router",
             DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     synthesizer_prompt_template = inject_core_prompt(
         _core,
@@ -1928,6 +1936,7 @@ async def create_supervisor_agent(
             "supervisor.synthesizer.system",
             DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     compare_synthesizer_prompt_template = inject_core_prompt(
         _core,
