@@ -25,6 +25,15 @@ export const ReasoningContext = createContext<Map<string, string>>(new Map());
 export const TimelineContext = createContext<Map<string, TimelineEntry[]>>(new Map());
 
 // ---------------------------------------------------------------------------
+// CSS for hiding the scrollbar (WebKit + Firefox + IE)
+// ---------------------------------------------------------------------------
+const HIDE_SCROLLBAR_CLASS = "fade-layer-scroll";
+const hideScrollbarStyle = `
+.${HIDE_SCROLLBAR_CLASS}::-webkit-scrollbar { display: none; }
+.${HIDE_SCROLLBAR_CLASS} { scrollbar-width: none; -ms-overflow-style: none; }
+`;
+
+// ---------------------------------------------------------------------------
 // FadeLayer — unified rolling reasoning + thinking-steps component
 // ---------------------------------------------------------------------------
 
@@ -75,6 +84,9 @@ const ReasoningChunk: FC<{ text: string; keyPrefix: string }> = ({ text, keyPref
 		</>
 	);
 };
+
+/** Max collapsed height in px (≈ 11rem) */
+const MAX_COLLAPSED_HEIGHT = 176;
 
 /**
  * FadeLayer – unified component that merges the reasoning stream
@@ -131,35 +143,46 @@ export const FadeLayer: FC<{
 
 	return (
 		<div className="mx-auto w-full max-w-(--thread-max-width) px-2 pb-1">
-			{/* Rolling container */}
+			{/* Inject scrollbar-hiding CSS once */}
+			<style dangerouslySetInnerHTML={{ __html: hideScrollbarStyle }} />
+
+			{/* Rolling container — inline maxHeight for guaranteed constraint */}
 			<div
 				ref={scrollRef}
-				className={cn(
-					// Base: rolling container with hidden scrollbar
-					"relative overflow-y-auto overscroll-contain",
-					// Max-height unless expanded
-					!isExpanded && "max-h-44",
-				)}
+				className={cn("fade-layer-scroll relative overflow-y-auto overscroll-contain")}
 				style={{
-					scrollbarWidth: "none",
-					msOverflowStyle: "none",
+					maxHeight: isExpanded ? "none" : `${MAX_COLLAPSED_HEIGHT}px`,
 				}}
 			>
 				{/* Top gradient fade-out mask */}
 				{!isExpanded && (
 					<div
-						className="pointer-events-none sticky top-0 left-0 right-0 z-10 h-10"
+						className="pointer-events-none sticky top-0 left-0 right-0 z-10"
 						style={{
+							height: "2.5rem",
 							background: "linear-gradient(to bottom, var(--background) 0%, transparent 100%)",
 						}}
 					/>
 				)}
 
 				{/* Content — interleaved reasoning + steps */}
-				<div className={cn(
-					"space-y-0.5 px-1 pb-1",
-					isDone && !isExpanded && "opacity-35 transition-opacity duration-400 hover:opacity-75",
-				)}>
+				<div
+					className="space-y-0.5 px-1 pb-1"
+					style={{
+						opacity: isDone && !isExpanded ? 0.35 : undefined,
+						transition: "opacity 400ms",
+					}}
+					onMouseEnter={(e) => {
+						if (isDone && !isExpanded) {
+							e.currentTarget.style.opacity = "0.75";
+						}
+					}}
+					onMouseLeave={(e) => {
+						if (isDone && !isExpanded) {
+							e.currentTarget.style.opacity = "0.35";
+						}
+					}}
+				>
 					{timeline.map((entry, i) => {
 						if (entry.kind === "reasoning") {
 							return (
