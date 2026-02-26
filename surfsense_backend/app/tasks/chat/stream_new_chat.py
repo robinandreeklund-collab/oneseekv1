@@ -4861,6 +4861,56 @@ async def stream_new_chat(
                 chain_name = chain_name_by_run_id.get(run_id) or str(
                     event.get("name") or ""
                 )
+                # ── response_layer_router structured step (fallback) ──
+                # When the router node completes, emit a structured step
+                # showing the chosen presentation mode.  This is a
+                # fallback — if the LLM's streaming events propagated
+                # correctly, the step may already have been emitted by
+                # emit_pipeline_steps_from_text.  We guard against
+                # duplicates via _pipeline_payload_kind-based signature
+                # tracking (emitted_pipeline_payload_signatures).
+                _cn_lower_ce = str(chain_name).strip().lower()
+                if (
+                    "response_layer_router" in _cn_lower_ce
+                    and isinstance(chain_output, dict)
+                ):
+                    _chosen = str(
+                        chain_output.get("response_mode") or ""
+                    ).strip().lower()
+                    if _chosen:
+                        _rl_sig = f"response_layer_router::{_chosen}"
+                        if _rl_sig not in emitted_pipeline_payload_signatures:
+                            emitted_pipeline_payload_signatures.add(_rl_sig)
+                            layer_labels = {
+                                "kunskap": "Kunskap",
+                                "analys": "Analys",
+                                "syntes": "Syntes",
+                                "visualisering": "Visualisering",
+                            }
+                            _rl_step_id = next_thinking_step_id()
+                            _rl_title = format_step_title(
+                                "Väljer presentationsläge"
+                            )
+                            _rl_items = [
+                                "Nod: response_layer_router",
+                                f"Valt läge: {layer_labels.get(_chosen, _chosen)}",
+                            ]
+                            completion_event = complete_current_step()
+                            if completion_event:
+                                yield completion_event
+                            yield streaming_service.format_thinking_step(
+                                step_id=_rl_step_id,
+                                title=_rl_title,
+                                status="in_progress",
+                                items=_rl_items,
+                            )
+                            yield streaming_service.format_thinking_step(
+                                step_id=_rl_step_id,
+                                title=_rl_title,
+                                status="completed",
+                                items=_rl_items,
+                            )
+                            completed_step_ids.add(_rl_step_id)
                 candidate_text = _extract_assistant_text_from_event_output(chain_output)
                 if candidate_text:
                     source_chain = (
@@ -4884,6 +4934,44 @@ async def stream_new_chat(
                         cleaned_candidate = _clean_assistant_output_text(candidate_text)
                         if cleaned_candidate:
                             fallback_assistant_text = cleaned_candidate
+                            # ── response_layer authoritative replacement ──
+                            # The response_layer's chain_end carries the
+                            # authoritative formatted text.  Emit it
+                            # immediately, replacing any text that was
+                            # previously streamed (from synthesizer or
+                            # from the response_layer's own LLM).
+                            # This is the safety net that guarantees the
+                            # final visible response is ALWAYS the
+                            # response_layer's output, regardless of
+                            # whether the LLM's streaming events
+                            # propagated correctly.
+                            _cn_lower = str(chain_name).strip().lower()
+                            if (
+                                "response_layer" in _cn_lower
+                                and "response_layer_router" not in _cn_lower
+                            ):
+                                # Skip replacement if the LLM's streaming
+                                # events already produced the correct text
+                                # (avoids a brief flicker from text-clear).
+                                _stripped_acc = accumulated_text.strip()
+                                _stripped_rl = cleaned_candidate.strip()
+                                if _stripped_acc != _stripped_rl:
+                                    if current_text_id is not None:
+                                        yield streaming_service.format_text_end(
+                                            current_text_id
+                                        )
+                                        current_text_id = None
+                                    yield streaming_service.format_text_clear()
+                                    current_text_id = (
+                                        streaming_service.generate_text_id()
+                                    )
+                                    yield streaming_service.format_text_start(
+                                        current_text_id
+                                    )
+                                    yield streaming_service.format_text_delta(
+                                        current_text_id, cleaned_candidate
+                                    )
+                                    accumulated_text = cleaned_candidate
                 if current_text_id is not None:
                     yield streaming_service.format_text_end(current_text_id)
                     current_text_id = None

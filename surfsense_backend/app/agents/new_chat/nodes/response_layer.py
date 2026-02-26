@@ -174,13 +174,19 @@ def build_response_layer_router_node(
         try:
             # Use astream so astream_events(v2) emits per-token events
             # that the streaming pipeline can route to reasoning-delta.
+            # Pass config explicitly to ensure callbacks propagate to
+            # the parent astream_events — without this the LLM events
+            # are invisible to the streaming pipeline.
             chunks: list[str] = []
+            stream_kwargs: dict[str, Any] = {"max_tokens": 512}
+            if config is not None:
+                stream_kwargs["config"] = config
             async for chunk in llm.astream(
                 [
                     SystemMessage(content=_prompt),
                     HumanMessage(content=human_content),
                 ],
-                max_tokens=512,
+                **stream_kwargs,
             ):
                 content = getattr(chunk, "content", "")
                 if content:
@@ -228,17 +234,29 @@ def build_response_layer_node(
     """
     _mode_prompts = mode_prompts or {}
 
-    async def _llm_format(prompt_template: str, response: str, query: str) -> str:
+    async def _llm_format(
+        prompt_template: str,
+        response: str,
+        query: str,
+        run_config: RunnableConfig | None = None,
+    ) -> str:
         """Use LLM to reformat *response* according to *prompt_template*.
 
         Uses ``astream`` so that LangGraph's ``astream_events(v2)`` emits
         per-token ``on_chat_model_stream`` events.  This lets the streaming
         pipeline route the formatted text to ``text-delta`` in real-time.
+
+        Passing *run_config* is critical — without it the LLM's callback
+        events are invisible to the parent ``astream_events`` and the
+        streaming pipeline cannot route the formatted text to the frontend.
         """
         if llm is None:
             return response
         try:
             chunks: list[str] = []
+            stream_kwargs: dict[str, Any] = {"max_tokens": 4096}
+            if run_config is not None:
+                stream_kwargs["config"] = run_config
             async for chunk in llm.astream(
                 [
                     SystemMessage(content=prompt_template),
@@ -249,7 +267,7 @@ def build_response_layer_node(
                         )
                     ),
                 ],
-                max_tokens=4096,
+                **stream_kwargs,
             ):
                 content = getattr(chunk, "content", "")
                 if content:
@@ -300,7 +318,8 @@ def build_response_layer_node(
         mode_prompt = _mode_prompts.get(mode, "").strip()
         if mode_prompt and llm is not None:
             formatted = await _llm_format(
-                mode_prompt, final_response, latest_user_query
+                mode_prompt, final_response, latest_user_query,
+                run_config=config,
             )
         else:
             formatted = final_response
@@ -313,17 +332,22 @@ def build_response_layer_node(
             bool(mode_prompt and llm is not None),
         )
 
-        updates: dict[str, Any] = {"response_mode": mode}
-        if formatted != final_response:
-            messages = list(state.get("messages") or [])
-            last_message = messages[-1] if messages else None
-            if isinstance(last_message, AIMessage):
-                if str(getattr(last_message, "content", "") or "").strip() == formatted:
-                    updates["final_response"] = formatted
-                    return updates
-            updates["messages"] = [AIMessage(content=formatted)]
-            updates["final_response"] = formatted
-
+        # Always include the final text in the output so the streaming
+        # pipeline's fallback mechanism (chain_end → fallback_assistant_text)
+        # picks up the response_layer's text rather than the synthesizer's
+        # raw output.  This is the safety net that prevents think-leakage
+        # even when the LLM's streaming events don't propagate.
+        updates: dict[str, Any] = {
+            "response_mode": mode,
+            "final_response": formatted,
+        }
+        messages = list(state.get("messages") or [])
+        last_message = messages[-1] if messages else None
+        if isinstance(last_message, AIMessage):
+            existing = str(getattr(last_message, "content", "") or "").strip()
+            if existing == formatted:
+                return updates
+        updates["messages"] = [AIMessage(content=formatted)]
         return updates
 
     return response_layer_node
