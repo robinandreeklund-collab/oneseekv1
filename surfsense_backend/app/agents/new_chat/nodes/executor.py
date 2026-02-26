@@ -581,6 +581,42 @@ def build_executor_nodes(
             ExecutorThinkingResult, "executor_thinking_result"
         )
 
+    def _strip_thinking_from_response(response: AIMessage) -> AIMessage:
+        """Remove the ``thinking`` field from structured JSON content.
+
+        When structured output is enabled the executor's ``content`` is a
+        JSON string like ``{"thinking": "..."}`` which pollutes message
+        history and can leak into visible text if the graph terminates
+        early.  All other pipeline nodes use
+        ``model_dump(exclude={"thinking"})`` — this is the executor
+        equivalent.
+        """
+        raw = getattr(response, "content", "") or ""
+        if not isinstance(raw, str) or not raw.strip():
+            return response
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return response
+        if not isinstance(parsed, dict) or "thinking" not in parsed:
+            return response
+        parsed.pop("thinking", None)
+        clean = json.dumps(parsed, ensure_ascii=False) if parsed else ""
+        try:
+            return response.model_copy(update={"content": clean})
+        except Exception:
+            return AIMessage(
+                content=clean,
+                tool_calls=getattr(response, "tool_calls", []) or [],
+                additional_kwargs=dict(
+                    getattr(response, "additional_kwargs", {}) or {}
+                ),
+                response_metadata=dict(
+                    getattr(response, "response_metadata", {}) or {}
+                ),
+                id=getattr(response, "id", None),
+            )
+
     def call_model(
         state: dict[str, Any],
         config: RunnableConfig | None = None,
@@ -727,6 +763,8 @@ def build_executor_nodes(
             allow_multiple=bool(compare_mode),
             state=state,
         )
+        if use_structured_output and think_on_tool_calls:
+            response = _strip_thinking_from_response(response)
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:
             updates.update(
@@ -787,6 +825,8 @@ def build_executor_nodes(
             allow_multiple=bool(compare_mode),
             state=state,
         )
+        if use_structured_output and think_on_tool_calls:
+            response = _strip_thinking_from_response(response)
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:
             updates.update(
