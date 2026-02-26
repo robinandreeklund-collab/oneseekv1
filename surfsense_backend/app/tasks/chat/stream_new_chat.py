@@ -3057,13 +3057,18 @@ async def stream_new_chat(
                     if trace_event:
                         yield trace_event
 
-                    # Extract and stream tool calls from chain output (critical for compare mode)
-                    # Pass tracking set to prevent duplicate tool call streaming
-                    tool_call_events = _extract_and_stream_tool_calls(
-                        chain_output, streaming_service, streamed_tool_call_ids
-                    )
-                    for tool_event in tool_call_events:
-                        yield tool_event
+                    # Extract and stream tool calls from chain output — only
+                    # needed for compare-mode chains where tool calls don't go
+                    # through the normal on_tool_start/on_tool_end pipeline.
+                    # Skipping non-compare chains prevents duplicate emission
+                    # of tool results that are already handled by on_tool_end.
+                    _chain_name_for_extract = chain_name_by_run_id.get(run_id, "")
+                    if "compare" in str(_chain_name_for_extract).lower():
+                        tool_call_events = _extract_and_stream_tool_calls(
+                            chain_output, streaming_service, streamed_tool_call_ids
+                        )
+                        for tool_event in tool_call_events:
+                            yield tool_event
 
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
