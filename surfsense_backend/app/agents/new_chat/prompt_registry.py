@@ -33,6 +33,9 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
 )
 from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
+from app.agents.new_chat.supervisor_constants import (
+    _AGENT_TOOL_PROFILE_BY_ID,
+)
 from app.agents.new_chat.supervisor_runtime_prompts import (
     DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
     DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
@@ -537,11 +540,26 @@ def make_dynamic_prompt_definition(prompt_key: str) -> PromptDefinition | None:
         tool_id = prompt_key.removeprefix("tool.").removesuffix(".system")
         if not tool_id:
             return None
+        # Render the default prompt with actual tool metadata when available
+        default_prompt = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE
+        profile = _AGENT_TOOL_PROFILE_BY_ID.get(tool_id)
+        if profile:
+            keywords = ", ".join(profile.keywords[:8]) if profile.keywords else "-"
+            description = profile.description.strip() or "-"
+            try:
+                default_prompt = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE.format(
+                    tool_id=profile.tool_id,
+                    category=profile.category,
+                    description=description,
+                    keywords=keywords,
+                )
+            except (KeyError, IndexError):
+                pass
         return PromptDefinition(
             key=prompt_key,
             label=f"{tool_id} runtime prompt",
             description=f"Runtime-prompt injected when tool '{tool_id}' is selected by the supervisor.",
-            default_prompt=DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
+            default_prompt=default_prompt,
             active_in_admin=True,
         )
 
