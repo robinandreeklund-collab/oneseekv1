@@ -25,15 +25,6 @@ export const ReasoningContext = createContext<Map<string, string>>(new Map());
 export const TimelineContext = createContext<Map<string, TimelineEntry[]>>(new Map());
 
 // ---------------------------------------------------------------------------
-// CSS for hiding the scrollbar (WebKit + Firefox + IE)
-// ---------------------------------------------------------------------------
-const HIDE_SCROLLBAR_CLASS = "fade-layer-scroll";
-const hideScrollbarStyle = `
-.${HIDE_SCROLLBAR_CLASS}::-webkit-scrollbar { display: none; }
-.${HIDE_SCROLLBAR_CLASS} { scrollbar-width: none; -ms-overflow-style: none; }
-`;
-
-// ---------------------------------------------------------------------------
 // FadeLayer — unified rolling reasoning + thinking-steps component
 // ---------------------------------------------------------------------------
 
@@ -98,7 +89,7 @@ const MAX_COLLAPSED_HEIGHT = 176;
  *
  * Design:
  * - Max-height with top gradient fade-out (content dissolves upward)
- * - No visible scrollbar; auto-scrolls to bottom during streaming
+ * - overflow:hidden clips content; JS scrollTop shows the latest
  * - Dims to low opacity when streaming finishes; hover reveals
  * - Clean expand toggle ("▾ N steg · Xs")
  */
@@ -124,42 +115,46 @@ export const FadeLayer: FC<{
 		return () => clearInterval(interval);
 	}, [isStreaming, streamStartTime]);
 
-	// Auto-scroll to bottom during streaming
+	// Scroll to bottom during streaming (works with overflow:hidden too)
 	useEffect(() => {
-		if (isStreaming && scrollRef.current) {
-			requestAnimationFrame(() => {
-				scrollRef.current?.scrollTo({
-					top: scrollRef.current.scrollHeight,
-					behavior: "smooth",
-				});
-			});
+		if (scrollRef.current) {
+			if (isStreaming || !isExpanded) {
+				scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+			}
 		}
-	}, [timeline, isStreaming]);
+	}, [timeline, isStreaming, isExpanded]);
 
 	if (timeline.length === 0) return null;
 
 	const isDone = !isStreaming;
 	const stepCount = timeline.filter((e) => e.kind === "step").length;
 
-	return (
-		<div className="mx-auto w-full max-w-(--thread-max-width) px-2 pb-1">
-			{/* Inject scrollbar-hiding CSS once */}
-			<style dangerouslySetInnerHTML={{ __html: hideScrollbarStyle }} />
+	// When collapsed: overflow hidden clips content, maxHeight constrains.
+	// When expanded: overflow auto lets user scroll freely, no maxHeight.
+	const containerStyle: React.CSSProperties = isExpanded
+		? { overflowY: "auto" }
+		: { maxHeight: MAX_COLLAPSED_HEIGHT, overflow: "hidden" };
 
-			{/* Rolling container — inline maxHeight for guaranteed constraint */}
+	return (
+		<div
+			style={{ maxWidth: "var(--thread-max-width)", margin: "0 auto", width: "100%", padding: "0 0.5rem 0.25rem" }}
+		>
+			{/* Rolling container */}
 			<div
 				ref={scrollRef}
-				className={cn("fade-layer-scroll relative overflow-y-auto overscroll-contain")}
-				style={{
-					maxHeight: isExpanded ? "none" : `${MAX_COLLAPSED_HEIGHT}px`,
-				}}
+				style={containerStyle}
 			>
-				{/* Top gradient fade-out mask */}
+				{/* Top gradient fade-out mask (only when collapsed) */}
 				{!isExpanded && (
 					<div
-						className="pointer-events-none sticky top-0 left-0 right-0 z-10"
 						style={{
+							position: "sticky",
+							top: 0,
+							left: 0,
+							right: 0,
+							zIndex: 10,
 							height: "2.5rem",
+							pointerEvents: "none",
 							background: "linear-gradient(to bottom, var(--background) 0%, transparent 100%)",
 						}}
 					/>
@@ -201,7 +196,10 @@ export const FadeLayer: FC<{
 
 					{/* Streaming cursor */}
 					{isStreaming && (
-						<span className="inline-block h-3.5 w-0.5 animate-pulse bg-primary/70 align-text-bottom ml-0.5" />
+						<span
+							className="inline-block animate-pulse align-text-bottom"
+							style={{ height: "0.875rem", width: "0.125rem", marginLeft: "0.125rem", background: "hsl(var(--primary) / 0.7)" }}
+						/>
 					)}
 				</div>
 			</div>
@@ -240,18 +238,14 @@ export const ThinkingStepsScrollHandler: FC = () => {
 	const thinkingStepsMap = useContext(ThinkingStepsContext);
 	const viewport = useThreadViewport();
 	const isRunning = useAssistantState(({ thread }) => thread.isRunning);
-	// Track the serialized state to detect any changes
 	const prevStateRef = useRef<string>("");
 
 	useEffect(() => {
-		// Only act during streaming
 		if (!isRunning) {
 			prevStateRef.current = "";
 			return;
 		}
 
-		// Serialize the thinking steps state to detect any changes
-		// This catches new steps, status changes, and item additions
 		let stateString = "";
 		thinkingStepsMap.forEach((steps, msgId) => {
 			steps.forEach((step) => {
@@ -259,11 +253,8 @@ export const ThinkingStepsScrollHandler: FC = () => {
 			});
 		});
 
-		// If state changed at all during streaming, scroll
 		if (stateString !== prevStateRef.current && stateString !== "") {
 			prevStateRef.current = stateString;
-
-			// Multiple attempts to ensure scroll happens after DOM updates
 			const scrollAttempt = () => {
 				try {
 					viewport.scrollToBottom();
@@ -271,12 +262,10 @@ export const ThinkingStepsScrollHandler: FC = () => {
 					// Ignore errors - viewport might not be ready
 				}
 			};
-
-			// Delayed attempts to handle async DOM updates
 			requestAnimationFrame(scrollAttempt);
 			setTimeout(scrollAttempt, 100);
 		}
 	}, [thinkingStepsMap, viewport, isRunning]);
 
-	return null; // This component doesn't render anything
+	return null;
 };

@@ -2825,6 +2825,66 @@ async def stream_new_chat(
                     if _is_internal_pipeline_chain_name(parent_chain_name):
                         model_parent_chain_by_run_id[run_id] = parent_chain_name
                         internal_model_buffers.setdefault(run_id, "")
+                        # Emit a node-transition header immediately so the
+                        # frontend shows which pipeline phase is now active,
+                        # regardless of when reasoning tokens arrive later.
+                        if parent_chain_name != last_reasoning_pipeline_node:
+                            last_reasoning_pipeline_node = parent_chain_name
+                            node_title = _pipeline_node_title(parent_chain_name)
+                            header = f"\n--- {node_title} ---\n"
+                            if active_reasoning_id is None:
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, header
+                            )
+                    elif _is_any_pipeline_chain_name(parent_chain_name):
+                        # Output pipeline node (synthesizer / response_layer):
+                        # not registered as internal, but emit a header so the
+                        # user sees which phase is producing the final response.
+                        if parent_chain_name != last_reasoning_pipeline_node:
+                            last_reasoning_pipeline_node = parent_chain_name
+                            node_title = _pipeline_node_title(parent_chain_name)
+                            header = f"\n--- {node_title} ---\n"
+                            if active_reasoning_id is None:
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, header
+                            )
+                        if _think_filter._assume_think:
+                            flush_r, flush_t = _think_filter.reset_think_mode()
+                            if flush_r:
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = (
+                                        streaming_service.generate_reasoning_id()
+                                    )
+                                    yield streaming_service.format_reasoning_start(
+                                        active_reasoning_id
+                                    )
+                                yield streaming_service.format_reasoning_delta(
+                                    active_reasoning_id, flush_r
+                                )
+                            if flush_t:
+                                if current_text_id is None:
+                                    current_text_id = (
+                                        streaming_service.generate_text_id()
+                                    )
+                                    yield streaming_service.format_text_start(
+                                        current_text_id
+                                    )
+                                yield streaming_service.format_text_delta(
+                                    current_text_id, flush_t
+                                )
+                                accumulated_text += flush_t
                     elif _think_filter._assume_think:
                         # Non-internal model (e.g. subagent worker): reset the
                         # shared think filter to think mode so this model's
