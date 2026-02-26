@@ -1,10 +1,11 @@
 import { useAssistantState, useThreadViewport } from "@assistant-ui/react";
 import { ChevronDownIcon } from "lucide-react";
 import type { FC } from "react";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { TextShimmerLoader } from "@/components/prompt-kit/loader";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { cn } from "@/lib/utils";
+import { ContextStatsContext } from "@/components/assistant-ui/context-stats";
 
 // ---------------------------------------------------------------------------
 // Timeline — ordered list of reasoning chunks interleaved with tool steps
@@ -32,12 +33,18 @@ export const TimelineContext = createContext<Map<string, TimelineEntry[]>>(new M
  * Renders tool-call steps as compact inline badges within the fade layer.
  */
 const InlineToolStep: FC<{ step: ThinkingStep }> = ({ step }) => (
-	<div className="my-0.5 inline-flex items-center gap-1.5 rounded border border-border/60 bg-muted/60 px-2 py-0.5 text-[0.7rem] text-muted-foreground">
-		<span className="opacity-70">&#9728;</span>
-		<span>{step.title}</span>
-		{step.items?.[0] && (
-			<span className="ml-1 text-[0.6rem] opacity-50">{step.items[0]}</span>
-		)}
+	<div className="my-0.5 flex items-start gap-1.5 rounded border border-border/60 bg-muted/60 px-2 py-0.5 text-[0.7rem] text-muted-foreground">
+		<span className="mt-px shrink-0 opacity-70">&#9728;</span>
+		<div className="min-w-0 flex-1">
+			<span>{step.title}</span>
+			{step.items && step.items.length > 0 && (
+				<div className="mt-0.5 space-y-px text-[0.6rem] opacity-50">
+					{step.items.map((item, idx) => (
+						<div key={`${step.id}-item-${idx}`} className="truncate">{item}</div>
+					))}
+				</div>
+			)}
+		</div>
 	</div>
 );
 
@@ -97,11 +104,23 @@ export const FadeLayer: FC<{
 	timeline: TimelineEntry[];
 	stepsById: Map<string, ThinkingStep>;
 	isStreaming: boolean;
-}> = ({ timeline, stepsById, isStreaming }) => {
+	messageId?: string;
+}> = ({ timeline, stepsById, isStreaming, messageId }) => {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [isExpanded, setIsExpanded] = useState(false);
 	const [streamStartTime] = useState(() => Date.now());
 	const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+	// Context stats from context
+	const contextStatsMap = useContext(ContextStatsContext);
+	const contextEntries = messageId ? contextStatsMap.get(messageId) : undefined;
+	const latestContext = contextEntries?.[contextEntries.length - 1];
+
+	// Filter context-stats from the timeline — rendered separately
+	const filteredTimeline = useMemo(
+		() => timeline.filter((e) => !(e.kind === "step" && e.stepId === "context-stats")),
+		[timeline],
+	);
 
 	// Track elapsed time during streaming
 	useEffect(() => {
@@ -122,18 +141,23 @@ export const FadeLayer: FC<{
 				scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
 			}
 		}
-	}, [timeline, isStreaming, isExpanded]);
+	}, [filteredTimeline, isStreaming, isExpanded]);
 
-	if (timeline.length === 0) return null;
+	if (filteredTimeline.length === 0) return null;
 
 	const isDone = !isStreaming;
-	const stepCount = timeline.filter((e) => e.kind === "step").length;
+	const stepCount = filteredTimeline.filter((e) => e.kind === "step").length;
 
 	// When collapsed: overflow hidden clips content, maxHeight constrains.
 	// When expanded: overflow auto lets user scroll freely, no maxHeight.
 	const containerStyle: React.CSSProperties = isExpanded
 		? { overflowY: "auto" }
 		: { maxHeight: MAX_COLLAPSED_HEIGHT, overflow: "hidden" };
+
+	// Format context tokens for the floating indicator
+	const contextTokensLabel = latestContext?.total_tokens
+		? `${latestContext.total_tokens.toLocaleString("sv-SE")} tok`
+		: null;
 
 	return (
 		<div
@@ -142,7 +166,7 @@ export const FadeLayer: FC<{
 			{/* Rolling container */}
 			<div
 				ref={scrollRef}
-				style={containerStyle}
+				style={{ ...containerStyle, position: "relative" }}
 			>
 				{/* Top gradient fade-out mask (only when collapsed) */}
 				{!isExpanded && (
@@ -178,7 +202,7 @@ export const FadeLayer: FC<{
 						}
 					}}
 				>
-					{timeline.map((entry, i) => {
+					{filteredTimeline.map((entry, i) => {
 						if (entry.kind === "reasoning") {
 							return (
 								<ReasoningChunk
@@ -204,27 +228,37 @@ export const FadeLayer: FC<{
 				</div>
 			</div>
 
-			{/* Toggle button */}
-			<button
-				type="button"
-				onClick={() => setIsExpanded(!isExpanded)}
-				className="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
-			>
-				<ChevronDownIcon
-					className={cn(
-						"size-3 transition-transform duration-200",
-						isExpanded && "rotate-180",
+			{/* Bottom bar: toggle + context stats */}
+			<div className="mt-0.5 flex items-center justify-between">
+				{/* Toggle button */}
+				<button
+					type="button"
+					onClick={() => setIsExpanded(!isExpanded)}
+					className="flex items-center gap-1.5 text-[0.65rem] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+				>
+					<ChevronDownIcon
+						className={cn(
+							"size-3 transition-transform duration-200",
+							isExpanded && "rotate-180",
+						)}
+					/>
+					{isStreaming ? (
+						<TextShimmerLoader text="Tänker..." size="sm" />
+					) : (
+						<span>
+							{stepCount > 0 ? `${stepCount} steg` : "Tankar"}
+							{elapsedSeconds > 0 ? ` \u00B7 ${elapsedSeconds}s` : ""}
+						</span>
 					)}
-				/>
-				{isStreaming ? (
-					<TextShimmerLoader text="Tänker..." size="sm" />
-				) : (
-					<span>
-						{stepCount > 0 ? `${stepCount} steg` : "Tankar"}
-						{elapsedSeconds > 0 ? ` \u00B7 ${elapsedSeconds}s` : ""}
+				</button>
+
+				{/* Context stats — floating right */}
+				{contextTokensLabel && (
+					<span className="text-[0.6rem] tabular-nums text-muted-foreground/40">
+						{contextTokensLabel}
 					</span>
 				)}
-			</button>
+			</div>
 		</div>
 	);
 };

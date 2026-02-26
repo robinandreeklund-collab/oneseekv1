@@ -77,6 +77,7 @@ const FadeLayerPart: FC = () => {
 			timeline={timeline}
 			stepsById={stepsById}
 			isStreaming={isStreaming}
+			messageId={messageId}
 		/>
 	);
 };

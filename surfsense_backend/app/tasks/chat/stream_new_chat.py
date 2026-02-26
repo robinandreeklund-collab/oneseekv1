@@ -462,6 +462,48 @@ def _summarize_text(value: object, limit: int = 140) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
+def _format_tool_input_items(
+    tool_input: object, *, max_items: int = 6, max_value_len: int = 100
+) -> list[str]:
+    """Format a tool's input parameters as compact display items.
+
+    Returns a list like:
+        ["location: Stockholm", "days: 5", "units: metric"]
+
+    Skips internal/large fields and limits value lengths.
+    """
+    if not isinstance(tool_input, dict) or not tool_input:
+        if tool_input:
+            text = str(tool_input).strip()
+            if text:
+                return [_summarize_text(text, max_value_len)]
+        return []
+
+    _SKIP_KEYS = frozenset({
+        "source_content", "content", "text", "body", "markdown",
+        "html", "raw", "data", "payload", "context",
+    })
+    items: list[str] = []
+    for key, value in tool_input.items():
+        if len(items) >= max_items:
+            remaining = len(tool_input) - len(items)
+            if remaining > 0:
+                items.append(f"(+{remaining} fler parametrar)")
+            break
+        if key.lower() in _SKIP_KEYS:
+            if isinstance(value, str) and len(value) > 200:
+                items.append(f"{key}: ({len(value):,} tecken)")
+                continue
+        if value is None or value == "":
+            continue
+        if isinstance(value, (dict, list)):
+            summary = json.dumps(value, ensure_ascii=False, default=str)
+            items.append(f"{key}: {_summarize_text(summary, max_value_len)}")
+        else:
+            items.append(f"{key}: {_summarize_text(value, max_value_len)}")
+    return items
+
+
 def _build_image_payload(
     *,
     src: str,
@@ -841,6 +883,12 @@ _GENERIC_CHAIN_NAMES: frozenset[str] = frozenset({
     "context_compactor",
     "orchestration_guard",
     "tools",
+    # LangGraph model wrapper names (the acall_model / call_model functions
+    # used by executor show up as chain names — skip them).
+    "call_model",
+    "acall_model",
+    "callmodel",
+    "acallmodel",
 })
 
 # Regex to strip <think>…</think> blocks and bare tags from pipeline text
@@ -3393,8 +3441,16 @@ async def stream_new_chat(
                         "Söker i kunskapsbasen"
                     )
                     last_active_step_items = [
-                        f"Fråga: {query[:100]}{'...' if len(query) > 100 else ''}"
+                        f"API: search_knowledge_base",
+                        f"Fråga: {query[:100]}{'...' if len(query) > 100 else ''}",
                     ]
+                    # Show additional parameters (e.g. filters, limit)
+                    if isinstance(tool_input, dict):
+                        for k, v in tool_input.items():
+                            if k != "query" and v is not None and v != "":
+                                last_active_step_items.append(
+                                    f"{k}: {_summarize_text(v, 80)}"
+                                )
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -3466,8 +3522,16 @@ async def stream_new_chat(
                         location = str(tool_input)
                     last_active_step_title = format_step_title("Hämtar SMHI-data")
                     last_active_step_items = [
-                        f"Plats: {location[:80]}{'...' if len(location) > 80 else ''}"
+                        f"API: {tool_name}",
+                        f"Plats: {location[:80]}{'...' if len(location) > 80 else ''}",
                     ]
+                    # Show additional parameters the model passed
+                    if isinstance(tool_input, dict):
+                        for k, v in tool_input.items():
+                            if k not in ("location", "lat", "lon") and v is not None and v != "":
+                                last_active_step_items.append(
+                                    f"{k}: {_summarize_text(v, 80)}"
+                                )
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -3497,12 +3561,20 @@ async def stream_new_chat(
                     )
                     route_text = f"{origin} -> {destination}".strip()
                     last_active_step_items = [
-                        f"Resväg: {route_text[:80]}{'...' if len(route_text) > 80 else ''}"
+                        f"API: trafiklab_route",
+                        f"Resväg: {route_text[:80]}{'...' if len(route_text) > 80 else ''}",
                     ]
                     if time_value:
                         last_active_step_items.append(
                             f"Tid: {time_value[:40]}{'...' if len(time_value) > 40 else ''}"
                         )
+                    # Show additional parameters
+                    if isinstance(tool_input, dict):
+                        for k, v in tool_input.items():
+                            if k not in ("origin", "origin_id", "destination", "destination_id", "time") and v is not None and v != "":
+                                last_active_step_items.append(
+                                    f"{k}: {_summarize_text(v, 80)}"
+                                )
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -3721,11 +3793,12 @@ async def stream_new_chat(
                     last_active_step_title = format_step_title(
                         f"Använder {tool_name.replace('_', ' ')}"
                     )
-                    last_active_step_items = []
+                    last_active_step_items = _format_tool_input_items(tool_input)
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
                         status="in_progress",
+                        items=last_active_step_items if last_active_step_items else None,
                     )
 
                 # Stream tool info
