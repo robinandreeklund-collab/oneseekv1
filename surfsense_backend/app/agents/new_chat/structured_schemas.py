@@ -303,3 +303,24 @@ class ResponseLayerResult(BaseModel):
         ...,
         description="Fullständigt formaterat svar till användaren (markdown).",
     )
+
+
+# ── Executor (tool-calling node) ─────────────────────────────
+
+
+class ExecutorThinkingResult(BaseModel):
+    """Minimal structured output for the executor node.
+
+    The executor primarily makes tool calls; this schema captures the
+    reasoning that appears in the ``content`` field alongside those calls.
+    When the model makes tool calls with empty content the parser handles
+    the null/empty case gracefully.
+    """
+
+    thinking: str = Field(
+        ...,
+        description=(
+            "Resonering om vilka verktyg/agenter som ska anropas, "
+            "i vilken ordning, och varför."
+        ),
+    )

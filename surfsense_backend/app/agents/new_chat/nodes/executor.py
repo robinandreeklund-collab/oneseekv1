@@ -8,6 +8,10 @@ from typing import Any, Callable
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
+from app.agents.new_chat.structured_schemas import (
+    ExecutorThinkingResult,
+    pydantic_to_response_format,
+)
 from app.agents.new_chat.token_budget import TokenBudget
 
 logger = logging.getLogger(__name__)
@@ -478,6 +482,7 @@ def build_executor_nodes(
     format_rolling_context_summary_context_fn: Callable[[dict[str, Any]], str | None],
     coerce_supervisor_tool_calls_fn: Callable[..., Any],
     think_on_tool_calls: bool = True,
+    use_structured_output: bool = False,
 ):
     def _build_context_messages(
         *,
@@ -568,6 +573,13 @@ def build_executor_nodes(
             budget = TokenBudget(model_name=str(model_name))
             messages = budget.fit_messages(messages)
         return messages
+
+    # Build extra invoke kwargs for structured output when applicable.
+    _executor_invoke_kwargs: dict[str, Any] = {}
+    if use_structured_output and think_on_tool_calls:
+        _executor_invoke_kwargs["response_format"] = pydantic_to_response_format(
+            ExecutorThinkingResult, "executor_thinking_result"
+        )
 
     def call_model(
         state: dict[str, Any],
@@ -690,7 +702,7 @@ def build_executor_nodes(
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
         messages = _normalize_messages_for_provider_compat(messages)
         try:
-            response = llm_with_tools.invoke(messages)
+            response = llm_with_tools.invoke(messages, **_executor_invoke_kwargs)
         except Exception as exc:
             if not _is_jinja_nullvalue_error(exc):
                 raise
@@ -699,7 +711,7 @@ def build_executor_nodes(
                 "Template NullValue in sync invoke; retrying with tool-result compaction"
             )
             try:
-                response = llm_with_tools.invoke(retry_messages)
+                response = llm_with_tools.invoke(retry_messages, **_executor_invoke_kwargs)
             except Exception as retry_exc:
                 if not _is_jinja_nullvalue_error(retry_exc):
                     raise
@@ -750,7 +762,7 @@ def build_executor_nodes(
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
         messages = _normalize_messages_for_provider_compat(messages)
         try:
-            response = await llm_with_tools.ainvoke(messages)
+            response = await llm_with_tools.ainvoke(messages, **_executor_invoke_kwargs)
         except Exception as exc:
             if not _is_jinja_nullvalue_error(exc):
                 raise
@@ -759,7 +771,7 @@ def build_executor_nodes(
                 "Template NullValue in async invoke; retrying with tool-result compaction"
             )
             try:
-                response = await llm_with_tools.ainvoke(retry_messages)
+                response = await llm_with_tools.ainvoke(retry_messages, **_executor_invoke_kwargs)
             except Exception as retry_exc:
                 if not _is_jinja_nullvalue_error(retry_exc):
                     raise

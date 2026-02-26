@@ -1810,6 +1810,7 @@ async def stream_new_chat(
                 "agent.supervisor.system",
                 DEFAULT_SUPERVISOR_PROMPT,
             ),
+            structured_output=structured_output_enabled(),
         )
         supervisor_system_prompt = build_supervisor_prompt(
             supervisor_prompt,

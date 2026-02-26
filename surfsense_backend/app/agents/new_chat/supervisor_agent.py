@@ -5681,6 +5681,7 @@ async def create_supervisor_agent(
         format_rolling_context_summary_context_fn=_format_rolling_context_summary_context,
         coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
         think_on_tool_calls=think_on_tool_calls,
+        use_structured_output=_use_structured,
     )
 
     async def memory_context_node(
