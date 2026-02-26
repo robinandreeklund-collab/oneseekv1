@@ -2977,48 +2977,47 @@ async def stream_new_chat(
                                 yield streaming_service.format_reasoning_delta(
                                     active_reasoning_id, flush_r
                                 )
+                            # Flushed text from a PREVIOUS model goes to
+                            # reasoning, NOT text-delta, to prevent leaks.
                             if flush_t:
-                                if current_text_id is None:
-                                    current_text_id = (
-                                        streaming_service.generate_text_id()
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = (
+                                        streaming_service.generate_reasoning_id()
                                     )
-                                    yield streaming_service.format_text_start(
-                                        current_text_id
+                                    yield streaming_service.format_reasoning_start(
+                                        active_reasoning_id
                                     )
-                                yield streaming_service.format_text_delta(
-                                    current_text_id, flush_t
+                                yield streaming_service.format_reasoning_delta(
+                                    active_reasoning_id, flush_t
                                 )
-                                accumulated_text += flush_t
-                    elif _think_filter._assume_think:
-                        # Non-internal model (e.g. subagent worker): reset the
-                        # shared think filter to think mode so this model's
-                        # content doesn't inherit text-mode from a previous
-                        # model's </think>.  Each model should start fresh.
-                        flush_r, flush_t = _think_filter.reset_think_mode()
-                        if flush_r:
-                            if active_reasoning_id is None:
-                                active_reasoning_id = (
-                                    streaming_service.generate_reasoning_id()
-                                )
-                                yield streaming_service.format_reasoning_start(
-                                    active_reasoning_id
-                                )
-                            yield streaming_service.format_reasoning_delta(
-                                active_reasoning_id, flush_r
-                            )
-                        if flush_t:
-                            # Residual text from previous model — emit it
-                            if current_text_id is None:
-                                current_text_id = (
-                                    streaming_service.generate_text_id()
-                                )
-                                yield streaming_service.format_text_start(
-                                    current_text_id
-                                )
-                            yield streaming_service.format_text_delta(
-                                current_text_id, flush_t
-                            )
-                            accumulated_text += flush_t
+                    else:
+                        # Unknown / unclassified model: treat as INTERNAL to
+                        # prevent any internal reasoning from leaking into the
+                        # visible response.  Only output pipeline nodes
+                        # (synthesizer, response_layer) should emit text-delta.
+                        model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
+                        internal_model_buffers.setdefault(run_id, "")
+                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                            assume_think=_think_filter._assume_think,
+                        )
+                        if _think_filter._assume_think:
+                            flush_r, flush_t = _think_filter.reset_think_mode()
+                            if flush_r or flush_t:
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = (
+                                        streaming_service.generate_reasoning_id()
+                                    )
+                                    yield streaming_service.format_reasoning_start(
+                                        active_reasoning_id
+                                    )
+                                if flush_r:
+                                    yield streaming_service.format_reasoning_delta(
+                                        active_reasoning_id, flush_r
+                                    )
+                                if flush_t:
+                                    yield streaming_service.format_reasoning_delta(
+                                        active_reasoning_id, flush_t
+                                    )
 
             if trace_recorder:
                 if event_type == "on_chain_start":
@@ -3115,13 +3114,20 @@ async def stream_new_chat(
                         if _is_any_pipeline_chain_name(str(candidate_chain_name)):
                             parent_chain_name = str(candidate_chain_name)
                             break
-                    if run_id and _is_internal_pipeline_chain_name(parent_chain_name):
-                        model_parent_chain_by_run_id[run_id] = parent_chain_name
-                        internal_model_buffers.setdefault(run_id, "")
-                        # Create a per-node ThinkStreamFilter for live reasoning
-                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                            assume_think=_think_filter._assume_think,
+                    if run_id and run_id not in model_parent_chain_by_run_id:
+                        # If the primary handler already classified this model,
+                        # don't overwrite.  Otherwise, treat as internal unless
+                        # it's an explicit output pipeline node.
+                        is_output = (
+                            _is_any_pipeline_chain_name(parent_chain_name)
+                            and not _is_internal_pipeline_chain_name(parent_chain_name)
                         )
+                        if not is_output:
+                            model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
+                            internal_model_buffers.setdefault(run_id, "")
+                            internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                                assume_think=_think_filter._assume_think,
+                            )
                     model_input = (
                         model_data.get("input")
                         or model_data.get("messages")
@@ -3162,7 +3168,9 @@ async def stream_new_chat(
                     # into the global rolling think-box (reasoning-delta).
                     node_filter = internal_node_think_filters.pop(run_id, None)
                     if node_filter:
-                        flush_reasoning, _flush_text = node_filter.flush()
+                        flush_reasoning, flush_node_text = node_filter.flush()
+                        # Node text also goes to reasoning (never text-delta)
+                        flush_reasoning = (flush_reasoning or "") + (flush_node_text or "")
                         if flush_reasoning:
                             # Inject node header if this is a new pipeline node
                             if internal_chain_name and internal_chain_name != last_reasoning_pipeline_node:
@@ -3187,9 +3195,8 @@ async def stream_new_chat(
                     elif candidate_text:
                         for step_event in emit_pipeline_steps_from_text(candidate_text):
                             yield step_event
-                        cleaned_candidate = _clean_assistant_output_text(candidate_text)
-                        if cleaned_candidate:
-                            fallback_assistant_text = cleaned_candidate
+                        # Do NOT store as fallback text — this came from an
+                        # unclassified model, not an output pipeline node.
 
             # Handle chat model stream events (text streaming)
             if event_type == "on_chat_model_stream":
@@ -4803,42 +4810,45 @@ async def stream_new_chat(
                         source_chain=source_chain,
                     ):
                         yield step_event
-                    cleaned_candidate = _clean_assistant_output_text(candidate_text)
-                    if cleaned_candidate:
-                        fallback_assistant_text = cleaned_candidate
+                    # Only store fallback text from OUTPUT pipeline nodes
+                    # (synthesizer, response_layer, etc.). Internal nodes
+                    # must NEVER become the visible response.
+                    is_output_chain = (
+                        _is_any_pipeline_chain_name(chain_name)
+                        and not _is_internal_pipeline_chain_name(chain_name)
+                    )
+                    if is_output_chain:
+                        cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                        if cleaned_candidate:
+                            fallback_assistant_text = cleaned_candidate
                 if current_text_id is not None:
                     yield streaming_service.format_text_end(current_text_id)
                     current_text_id = None
                 if event_type == "on_chain_end" and run_id:
                     chain_name_by_run_id.pop(run_id, None)
 
-        # Flush think-filter buffer and close any open reasoning block
+        # Flush think-filter buffer — EVERYTHING goes to reasoning to
+        # prevent any leftover internal text from leaking as response.
         flush_reasoning, flush_text = _think_filter.flush()
-        if flush_reasoning:
+        if flush_reasoning or flush_text:
             if active_reasoning_id is None:
                 active_reasoning_id = streaming_service.generate_reasoning_id()
                 yield streaming_service.format_reasoning_start(active_reasoning_id)
-            yield streaming_service.format_reasoning_delta(
-                active_reasoning_id, flush_reasoning
-            )
-        if flush_text:
-            if current_text_id is None:
-                current_text_id = streaming_service.generate_text_id()
-                yield streaming_service.format_text_start(current_text_id)
-            yield streaming_service.format_text_delta(current_text_id, flush_text)
-            accumulated_text += flush_text
+            if flush_reasoning:
+                yield streaming_service.format_reasoning_delta(
+                    active_reasoning_id, flush_reasoning
+                )
+            if flush_text:
+                yield streaming_service.format_reasoning_delta(
+                    active_reasoning_id, flush_text
+                )
         if active_reasoning_id is not None:
             yield streaming_service.format_reasoning_end(active_reasoning_id)
             active_reasoning_id = None
 
-        # Ensure text block is closed
-        if repeat_buffer and not suppress_repeat:
-            if current_text_id is None:
-                current_text_id = streaming_service.generate_text_id()
-                yield streaming_service.format_text_start(current_text_id)
-            yield streaming_service.format_text_delta(current_text_id, repeat_buffer)
-            accumulated_text += repeat_buffer
-            repeat_buffer = ""
+        # Discard any leftover repeat buffer — it contains internal
+        # pipeline text that should never reach the visible response.
+        repeat_buffer = ""
         fallback_assistant_text = _clean_assistant_output_text(fallback_assistant_text)
         if not accumulated_text.strip() and fallback_assistant_text.strip():
             if current_text_id is None:
