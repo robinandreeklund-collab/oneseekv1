@@ -804,7 +804,7 @@ _REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _STREAM_JSON_DECODER = json.JSONDecoder()
 _CRITIC_JSON_START_RE = re.compile(r"\{\s*[\"']status[\"']\s*:", re.IGNORECASE)
 _PIPELINE_JSON_START_RE = re.compile(
-    r"\{\s*[\"'](?:intent_id|graph_complexity|selected_agents|status|decision|steps|execution_strategy|speculative_candidates|speculative_reused_tools|synthesis_drafts)\b",
+    r"\{\s*[\"'](?:intent_id|graph_complexity|selected_agents|status|decision|steps|execution_strategy|speculative_candidates|speculative_reused_tools|synthesis_drafts|chosen_layer)\b",
     re.IGNORECASE,
 )
 _PIPELINE_JSON_PARTIAL_KEY_RE = re.compile(
@@ -841,6 +841,7 @@ _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "worker",
     "domain_planner",
     "critic",
+    "response_layer_router",
 )
 
 # Pipeline nodes whose model output IS the final user-facing response.
@@ -923,6 +924,7 @@ _PIPELINE_NODE_TITLES: dict[str, str] = {
     "critic": "Granskar resultat",
     "progressive_synthesizer": "Förbereder utkast",
     "synthesizer": "Sammanställer svar",
+    "response_layer_router": "Väljer presentationsläge",
     "response_layer": "Formaterar svar",
     "speculative": "Spekulativ förkörning",
     "speculative_merge": "Sammanfogar spekulativa resultat",
@@ -1121,6 +1123,8 @@ def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
         return "speculative"
     if isinstance(payload.get("synthesis_drafts"), list):
         return "progressive_synthesizer"
+    if "chosen_layer" in payload and isinstance(payload.get("chosen_layer"), str):
+        return "response_layer_router"
     return None
 
 
@@ -2633,6 +2637,27 @@ async def stream_new_chat(
                     remaining = payload.get("speculative_remaining_tools")
                     if isinstance(remaining, list) and remaining:
                         items.append(f"Kvar att köra: {len(remaining)}")
+                elif kind == "response_layer_router":
+                    title = format_step_title("Väljer presentationsläge")
+                    chosen = str(payload.get("chosen_layer") or "").strip()
+                    reason = str(payload.get("reason") or "").strip()
+                    data_chars = str(
+                        payload.get("data_characteristics") or ""
+                    ).strip()
+                    _LAYER_LABELS = {
+                        "kunskap": "Kunskap",
+                        "analys": "Analys",
+                        "syntes": "Syntes",
+                        "visualisering": "Visualisering",
+                    }
+                    if chosen:
+                        items.append(
+                            f"Valt läge: {_LAYER_LABELS.get(chosen, chosen)}"
+                        )
+                    if data_chars:
+                        items.append(f"Data: {data_chars[:180]}")
+                    if reason:
+                        items.append(f"Motivering: {reason[:180]}")
                 elif kind == "progressive_synthesizer":
                     title = format_step_title("Förbereder svarsutkast")
                     drafts = payload.get("synthesis_drafts")

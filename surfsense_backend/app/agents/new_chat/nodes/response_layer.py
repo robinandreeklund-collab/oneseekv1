@@ -14,16 +14,23 @@ The node writes ``response_mode`` to state so the frontend and any
 downstream logging/analytics can inspect the chosen mode.  When a
 per-mode prompt template is available, it uses an LLM call to reformat
 the final response according to the mode-specific rules.
+
+Mode selection can be LLM-driven (when a *router_prompt* is supplied)
+or heuristic-based (fast fallback).  The LLM router call runs inside a
+named ``RunnableLambda`` (``response_layer_router``) so the streaming
+pipeline can classify it as an *internal* chain and surface the model's
+reasoning in the FadeLayer think-box.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +56,8 @@ _ANALYS_KEYWORDS = re.compile(
 )
 
 _VALID_MODES = {"kunskap", "analys", "syntes", "visualisering"}
+
+_JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}", re.DOTALL)
 
 
 def _select_response_mode(
@@ -90,6 +99,7 @@ def build_response_layer_node(
     *,
     llm: Any = None,
     mode_prompts: dict[str, str] | None = None,
+    router_prompt: str = "",
     latest_user_query_fn: Callable[[list[Any] | None], str],
 ):
     """Return a response_layer node.
@@ -97,12 +107,57 @@ def build_response_layer_node(
     The node classifies the final answer into one of the four presentation
     modes and records the decision as ``response_mode`` on state.
 
+    When *router_prompt* is non-empty and an *llm* is provided, the mode
+    selection is done via an LLM call wrapped in a named chain
+    (``response_layer_router``) whose reasoning streams into the FadeLayer
+    think-box.  Otherwise falls back to keyword heuristics.
+
     When *mode_prompts* contains a non-empty prompt for the selected mode
-    **and** an *llm* is provided, the node uses an LLM call to reformat
-    the response according to the mode-specific prompt.  Otherwise the
-    response passes through unchanged.
+    **and** an *llm* is provided, the node uses an additional LLM call to
+    reformat the response according to the mode-specific prompt.
     """
     _mode_prompts = mode_prompts or {}
+    _router_prompt = (router_prompt or "").strip()
+
+    # ── LLM-based router wrapped in a named chain ──
+    # The name "response_layer_router" is registered as an INTERNAL pipeline
+    # chain in stream_new_chat.py, so the model's <think> reasoning streams
+    # into the FadeLayer think-box as reasoning-delta.
+
+    async def _router_fn(input_data: dict[str, Any]) -> str:
+        """LLM call for RL mode selection — runs inside a named chain."""
+        messages = [
+            SystemMessage(content=input_data["system"]),
+            HumanMessage(content=input_data["human"]),
+        ]
+        result = await llm.ainvoke(messages, max_tokens=512)
+        return str(getattr(result, "content", "") or "").strip()
+
+    _router_runnable = RunnableLambda(
+        _router_fn, name="response_layer_router"
+    )
+
+    def _parse_router_response(raw: str) -> dict[str, str] | None:
+        """Extract JSON from the router LLM response."""
+        # Strip <think>...</think> blocks
+        cleaned = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
+        match = _JSON_BLOCK_RE.search(cleaned)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group())
+            chosen = str(data.get("chosen_layer", "")).strip().lower()
+            if chosen in _VALID_MODES:
+                return {
+                    "chosen_layer": chosen,
+                    "reason": str(data.get("reason", "")),
+                    "data_characteristics": str(
+                        data.get("data_characteristics", "")
+                    ),
+                }
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass
+        return None
 
     async def _llm_format(prompt_template: str, response: str, query: str) -> str:
         """Use LLM to reformat *response* according to *prompt_template*."""
@@ -148,29 +203,73 @@ def build_response_layer_node(
             for s in (state.get("sub_intents") or [])
             if str(s).strip()
         ]
-        execution_strategy = str(state.get("execution_strategy") or "").strip().lower()
+        execution_strategy = str(
+            state.get("execution_strategy") or ""
+        ).strip().lower()
 
-        mode = _select_response_mode(
-            route_hint=route_hint,
-            query=latest_user_query,
-            response=final_response,
-            sub_intents=sub_intents,
-            execution_strategy=execution_strategy,
-        )
+        # ── Step 1: Mode selection ──
+        mode: str | None = None
+        router_decision: dict[str, str] | None = None
 
-        # ── LLM-driven formatting if a per-mode prompt is available ──
+        if _router_prompt and llm is not None:
+            # LLM-driven routing via named chain (reasoning visible in
+            # FadeLayer).  Truncate the response to keep the router call
+            # fast and within token limits.
+            truncated = final_response[:3000]
+            if len(final_response) > 3000:
+                truncated += "\n\n[...trunkerat...]"
+            human_content = (
+                f"Användarfråga: {latest_user_query}\n"
+                f"Route: {route_hint}\n"
+                f"Sub-intents: {', '.join(sub_intents) if sub_intents else 'inga'}\n"
+                f"Exekveringsstrategi: {execution_strategy or 'standard'}\n\n"
+                f"Data att analysera:\n{truncated}"
+            )
+            try:
+                raw = await _router_runnable.ainvoke(
+                    {"system": _router_prompt, "human": human_content},
+                    config=config,
+                )
+                router_decision = _parse_router_response(raw)
+                if router_decision:
+                    mode = router_decision["chosen_layer"]
+                    logger.info(
+                        "response_layer_router: chosen=%s reason=%s",
+                        mode,
+                        router_decision.get("reason", ""),
+                    )
+            except Exception:
+                logger.debug(
+                    "response_layer_router: LLM call failed, falling back to heuristic",
+                    exc_info=True,
+                )
+
+        # Fallback to heuristic if LLM routing didn't produce a result
+        if mode is None:
+            mode = _select_response_mode(
+                route_hint=route_hint,
+                query=latest_user_query,
+                response=final_response,
+                sub_intents=sub_intents,
+                execution_strategy=execution_strategy,
+            )
+
+        # ── Step 2: LLM-driven formatting if a per-mode prompt is available ──
         mode_prompt = _mode_prompts.get(mode, "").strip()
         if mode_prompt and llm is not None:
-            formatted = await _llm_format(mode_prompt, final_response, latest_user_query)
+            formatted = await _llm_format(
+                mode_prompt, final_response, latest_user_query
+            )
         else:
             formatted = final_response
 
         logger.info(
-            "response_layer: mode=%s route=%s sub_intents=%d llm_format=%s",
+            "response_layer: mode=%s route=%s sub_intents=%d llm_format=%s llm_router=%s",
             mode,
             route_hint,
             len(sub_intents),
             bool(mode_prompt and llm is not None),
+            router_decision is not None,
         )
 
         updates: dict[str, Any] = {"response_mode": mode}

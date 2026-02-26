@@ -109,6 +109,7 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
     DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
     DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
     DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
     DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
 )
@@ -1907,6 +1908,14 @@ async def create_supervisor_agent(
             prompt_overrides,
             "supervisor.response_layer.visualisering",
             DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
+        ),
+    )
+    response_layer_router_prompt = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.response_layer.router",
+            DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
         ),
     )
     synthesizer_prompt_template = inject_core_prompt(
@@ -5630,6 +5639,7 @@ async def create_supervisor_agent(
             "syntes": response_layer_syntes_prompt,
             "visualisering": response_layer_visualisering_prompt,
         },
+        router_prompt=response_layer_router_prompt,
         latest_user_query_fn=_latest_user_query,
     )
 
