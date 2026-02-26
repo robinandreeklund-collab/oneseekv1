@@ -328,9 +328,7 @@ def _looks_contextual_followup(query: str) -> bool:
         return True
     if _FOLLOWUP_COMPARE_RE.search(lowered):
         return True
-    if _FOLLOWUP_MARKER_RE.search(lowered):
-        return True
-    return False
+    return bool(_FOLLOWUP_MARKER_RE.search(lowered))
 
 
 def _extract_previous_assistant_answers_from_history(
@@ -479,7 +477,7 @@ def _format_tool_input_items(
                 return [_summarize_text(text, max_value_len)]
         return []
 
-    _SKIP_KEYS = frozenset({
+    skip_keys = frozenset({
         "source_content", "content", "text", "body", "markdown",
         "html", "raw", "data", "payload", "context",
     })
@@ -490,8 +488,7 @@ def _format_tool_input_items(
             if remaining > 0:
                 items.append(f"(+{remaining} fler parametrar)")
             break
-        if key.lower() in _SKIP_KEYS:
-            if isinstance(value, str) and len(value) > 200:
+        if key.lower() in skip_keys and isinstance(value, str) and len(value) > 200:
                 items.append(f"{key}: ({len(value):,} tecken)")
                 continue
         if value is None or value == "":
@@ -2644,7 +2641,7 @@ async def stream_new_chat(
                     data_chars = str(
                         payload.get("data_characteristics") or ""
                     ).strip()
-                    _LAYER_LABELS = {
+                    layer_labels = {
                         "kunskap": "Kunskap",
                         "analys": "Analys",
                         "syntes": "Syntes",
@@ -2652,7 +2649,7 @@ async def stream_new_chat(
                     }
                     if chosen:
                         items.append(
-                            f"Valt läge: {_LAYER_LABELS.get(chosen, chosen)}"
+                            f"Valt läge: {layer_labels.get(chosen, chosen)}"
                         )
                     if data_chars:
                         items.append(f"Data: {data_chars[:180]}")
@@ -2908,64 +2905,113 @@ async def stream_new_chat(
                 chain_name_by_run_id.setdefault(
                     run_id, str(event.get("name") or "chain")
                 )
-            elif event_type in ("on_chat_model_start", "on_llm_start") and run_id:
-                if run_id not in model_parent_chain_by_run_id:
-                    parent_ids = [
-                        str(value)
-                        for value in (event.get("parent_ids") or [])
-                        if str(value)
-                    ]
-                    # Walk ALL parents: track both the immediate non-generic
-                    # parent (for display/headers) and the pipeline ancestor
-                    # (for classification as internal vs output).
-                    immediate_parent = ""
-                    pipeline_parent = ""
-                    for parent_id in reversed(parent_ids):
-                        candidate_chain_name = chain_name_by_run_id.get(parent_id)
-                        if not candidate_chain_name:
-                            continue
-                        normalized = str(candidate_chain_name).strip().lower()
-                        if normalized in _GENERIC_CHAIN_NAMES:
-                            continue
-                        cname = str(candidate_chain_name)
-                        # Remember the closest non-generic chain
-                        if not immediate_parent:
-                            immediate_parent = cname
-                        # If this ancestor is a known pipeline node, use it
-                        if _is_internal_pipeline_chain_name(cname) or _is_any_pipeline_chain_name(cname):
-                            pipeline_parent = cname
-                            break
+            elif (
+                event_type in ("on_chat_model_start", "on_llm_start")
+                and run_id
+                and run_id not in model_parent_chain_by_run_id
+            ):
+                parent_ids = [
+                    str(value)
+                    for value in (event.get("parent_ids") or [])
+                    if str(value)
+                ]
+                # Walk ALL parents: track both the immediate non-generic
+                # parent (for display/headers) and the pipeline ancestor
+                # (for classification as internal vs output).
+                immediate_parent = ""
+                pipeline_parent = ""
+                for parent_id in reversed(parent_ids):
+                    candidate_chain_name = chain_name_by_run_id.get(parent_id)
+                    if not candidate_chain_name:
+                        continue
+                    normalized = str(candidate_chain_name).strip().lower()
+                    if normalized in _GENERIC_CHAIN_NAMES:
+                        continue
+                    cname = str(candidate_chain_name)
+                    # Remember the closest non-generic chain
+                    if not immediate_parent:
+                        immediate_parent = cname
+                    # If this ancestor is a known pipeline node, use it
+                    if _is_internal_pipeline_chain_name(cname) or _is_any_pipeline_chain_name(cname):
+                        pipeline_parent = cname
+                        break
 
-                    # Use pipeline parent for classification, fall back to immediate
-                    parent_chain_name = pipeline_parent or immediate_parent
+                # Use pipeline parent for classification, fall back to immediate
+                parent_chain_name = pipeline_parent or immediate_parent
 
-                    # Build a display key that tracks transitions at the
-                    # agent level (not just pipeline node), so headers also
-                    # appear when switching between domain agents inside the
-                    # same executor loop.
-                    display_key = immediate_parent or parent_chain_name
+                # Build a display key that tracks transitions at the
+                # agent level (not just pipeline node), so headers also
+                # appear when switching between domain agents inside the
+                # same executor loop.
+                display_key = immediate_parent or parent_chain_name
 
-                    if _is_internal_pipeline_chain_name(parent_chain_name):
-                        model_parent_chain_by_run_id[run_id] = parent_chain_name
-                        internal_model_buffers.setdefault(run_id, "")
-                        # Create per-node think filter so reasoning streams
-                        # in real-time into the FadeLayer think-box.
-                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                            assume_think=_think_filter._assume_think,
+                if _is_internal_pipeline_chain_name(parent_chain_name):
+                    model_parent_chain_by_run_id[run_id] = parent_chain_name
+                    internal_model_buffers.setdefault(run_id, "")
+                    # Create per-node think filter so reasoning streams
+                    # in real-time into the FadeLayer think-box.
+                    internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                        assume_think=_think_filter._assume_think,
+                    )
+                    # Emit a node-transition header immediately so the
+                    # frontend shows which pipeline phase is now active.
+                    if display_key != last_reasoning_pipeline_node:
+                        last_reasoning_pipeline_node = display_key
+                        # If the immediate parent differs from the pipeline
+                        # node, it's a domain agent — show its name.
+                        if immediate_parent and immediate_parent != parent_chain_name:
+                            node_title = _pipeline_node_title(parent_chain_name)
+                            agent_label = immediate_parent.replace("_", " ").title()
+                            header = f"\n--- {agent_label} ({node_title}) ---\n"
+                        else:
+                            node_title = _pipeline_node_title(parent_chain_name)
+                            header = f"\n--- {node_title} ---\n"
+                        if active_reasoning_id is None:
+                            active_reasoning_id = (
+                                streaming_service.generate_reasoning_id()
+                            )
+                            yield streaming_service.format_reasoning_start(
+                                active_reasoning_id
+                            )
+                        yield streaming_service.format_reasoning_delta(
+                            active_reasoning_id, header
                         )
-                        # Emit a node-transition header immediately so the
-                        # frontend shows which pipeline phase is now active.
-                        if display_key != last_reasoning_pipeline_node:
-                            last_reasoning_pipeline_node = display_key
-                            # If the immediate parent differs from the pipeline
-                            # node, it's a domain agent — show its name.
-                            if immediate_parent and immediate_parent != parent_chain_name:
-                                node_title = _pipeline_node_title(parent_chain_name)
-                                agent_label = immediate_parent.replace("_", " ").title()
-                                header = f"\n--- {agent_label} ({node_title}) ---\n"
-                            else:
-                                node_title = _pipeline_node_title(parent_chain_name)
-                                header = f"\n--- {node_title} ---\n"
+                elif _is_any_pipeline_chain_name(parent_chain_name):
+                    # Output pipeline node (synthesizer / response_layer):
+                    # not registered as internal, but emit a header so the
+                    # user sees which phase is producing the final response.
+                    #
+                    # When the response_layer output node starts AFTER the
+                    # synthesizer has already streamed text, clear the
+                    # existing text so the formatted version replaces it
+                    # rather than being appended.
+                    pcn_lower = str(parent_chain_name).strip().lower()
+                    if (
+                        "response_layer" in pcn_lower
+                        and "response_layer_router" not in pcn_lower
+                        and current_text_id is not None
+                    ):
+                        yield streaming_service.format_text_end(current_text_id)
+                        current_text_id = None
+                        yield streaming_service.format_text_clear()
+                        accumulated_text = ""
+                    if display_key != last_reasoning_pipeline_node:
+                        last_reasoning_pipeline_node = display_key
+                        node_title = _pipeline_node_title(parent_chain_name)
+                        header = f"\n--- {node_title} ---\n"
+                        if active_reasoning_id is None:
+                            active_reasoning_id = (
+                                streaming_service.generate_reasoning_id()
+                            )
+                            yield streaming_service.format_reasoning_start(
+                                active_reasoning_id
+                            )
+                        yield streaming_service.format_reasoning_delta(
+                            active_reasoning_id, header
+                        )
+                    if _think_filter._assume_think:
+                        flush_r, flush_t = _think_filter.reset_think_mode()
+                        if flush_r:
                             if active_reasoning_id is None:
                                 active_reasoning_id = (
                                     streaming_service.generate_reasoning_id()
@@ -2974,31 +3020,47 @@ async def stream_new_chat(
                                     active_reasoning_id
                                 )
                             yield streaming_service.format_reasoning_delta(
-                                active_reasoning_id, header
+                                active_reasoning_id, flush_r
                             )
-                    elif _is_any_pipeline_chain_name(parent_chain_name):
-                        # Output pipeline node (synthesizer / response_layer):
-                        # not registered as internal, but emit a header so the
-                        # user sees which phase is producing the final response.
-                        #
-                        # When the response_layer output node starts AFTER the
-                        # synthesizer has already streamed text, clear the
-                        # existing text so the formatted version replaces it
-                        # rather than being appended.
-                        pcn_lower = str(parent_chain_name).strip().lower()
+                        # Flushed text from a PREVIOUS model goes to
+                        # reasoning, NOT text-delta, to prevent leaks.
+                        if flush_t:
+                            if active_reasoning_id is None:
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, flush_t
+                            )
+                        # The response_layer formatting LLM produces the
+                        # final user-facing text.  reset_think_mode() puts
+                        # the filter back in think mode, which would cause
+                        # ALL its output to be classified as reasoning
+                        # instead of text-delta.  Force out of think mode
+                        # for response_layer so text streams correctly.
+                        # (The synthesizer keeps assume_think behaviour
+                        # for Qwen3-style models that pre-fill <think>.)
                         if (
                             "response_layer" in pcn_lower
                             and "response_layer_router" not in pcn_lower
-                            and current_text_id is not None
                         ):
-                            yield streaming_service.format_text_end(current_text_id)
-                            current_text_id = None
-                            yield streaming_service.format_text_clear()
-                            accumulated_text = ""
-                        if display_key != last_reasoning_pipeline_node:
-                            last_reasoning_pipeline_node = display_key
-                            node_title = _pipeline_node_title(parent_chain_name)
-                            header = f"\n--- {node_title} ---\n"
+                            _think_filter._in_think = False
+                else:
+                    # Unknown / unclassified model: treat as INTERNAL to
+                    # prevent any internal reasoning from leaking into the
+                    # visible response.  Only output pipeline nodes
+                    # (synthesizer, response_layer) should emit text-delta.
+                    model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
+                    internal_model_buffers.setdefault(run_id, "")
+                    internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                        assume_think=_think_filter._assume_think,
+                    )
+                    if _think_filter._assume_think:
+                        flush_r, flush_t = _think_filter.reset_think_mode()
+                        if flush_r or flush_t:
                             if active_reasoning_id is None:
                                 active_reasoning_id = (
                                     streaming_service.generate_reasoning_id()
@@ -3006,76 +3068,14 @@ async def stream_new_chat(
                                 yield streaming_service.format_reasoning_start(
                                     active_reasoning_id
                                 )
-                            yield streaming_service.format_reasoning_delta(
-                                active_reasoning_id, header
-                            )
-                        if _think_filter._assume_think:
-                            flush_r, flush_t = _think_filter.reset_think_mode()
                             if flush_r:
-                                if active_reasoning_id is None:
-                                    active_reasoning_id = (
-                                        streaming_service.generate_reasoning_id()
-                                    )
-                                    yield streaming_service.format_reasoning_start(
-                                        active_reasoning_id
-                                    )
                                 yield streaming_service.format_reasoning_delta(
                                     active_reasoning_id, flush_r
                                 )
-                            # Flushed text from a PREVIOUS model goes to
-                            # reasoning, NOT text-delta, to prevent leaks.
                             if flush_t:
-                                if active_reasoning_id is None:
-                                    active_reasoning_id = (
-                                        streaming_service.generate_reasoning_id()
-                                    )
-                                    yield streaming_service.format_reasoning_start(
-                                        active_reasoning_id
-                                    )
                                 yield streaming_service.format_reasoning_delta(
                                     active_reasoning_id, flush_t
                                 )
-                            # The response_layer formatting LLM produces the
-                            # final user-facing text.  reset_think_mode() puts
-                            # the filter back in think mode, which would cause
-                            # ALL its output to be classified as reasoning
-                            # instead of text-delta.  Force out of think mode
-                            # for response_layer so text streams correctly.
-                            # (The synthesizer keeps assume_think behaviour
-                            # for Qwen3-style models that pre-fill <think>.)
-                            if (
-                                "response_layer" in pcn_lower
-                                and "response_layer_router" not in pcn_lower
-                            ):
-                                _think_filter._in_think = False
-                    else:
-                        # Unknown / unclassified model: treat as INTERNAL to
-                        # prevent any internal reasoning from leaking into the
-                        # visible response.  Only output pipeline nodes
-                        # (synthesizer, response_layer) should emit text-delta.
-                        model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
-                        internal_model_buffers.setdefault(run_id, "")
-                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                            assume_think=_think_filter._assume_think,
-                        )
-                        if _think_filter._assume_think:
-                            flush_r, flush_t = _think_filter.reset_think_mode()
-                            if flush_r or flush_t:
-                                if active_reasoning_id is None:
-                                    active_reasoning_id = (
-                                        streaming_service.generate_reasoning_id()
-                                    )
-                                    yield streaming_service.format_reasoning_start(
-                                        active_reasoning_id
-                                    )
-                                if flush_r:
-                                    yield streaming_service.format_reasoning_delta(
-                                        active_reasoning_id, flush_r
-                                    )
-                                if flush_t:
-                                    yield streaming_service.format_reasoning_delta(
-                                        active_reasoning_id, flush_t
-                                    )
 
             if trace_recorder:
                 if event_type == "on_chain_start":
@@ -3511,7 +3511,7 @@ async def stream_new_chat(
                         "Söker i kunskapsbasen"
                     )
                     last_active_step_items = [
-                        f"API: search_knowledge_base",
+                        "API: search_knowledge_base",
                         f"Fråga: {query[:100]}{'...' if len(query) > 100 else ''}",
                     ]
                     # Show additional parameters (e.g. filters, limit)
@@ -3631,7 +3631,7 @@ async def stream_new_chat(
                     )
                     route_text = f"{origin} -> {destination}".strip()
                     last_active_step_items = [
-                        f"API: trafiklab_route",
+                        "API: trafiklab_route",
                         f"Resväg: {route_text[:80]}{'...' if len(route_text) > 80 else ''}",
                     ]
                     if time_value:

@@ -16,10 +16,10 @@ Two graph nodes work together:
 
 Modes:
 
-- ``kunskap``       – Factual knowledge answer, clean and direct.
-- ``analys``        – Structured analytical answer with sections/headers.
-- ``syntes``        – Multi-source synthesis that explicitly names sources.
-- ``visualisering`` – Data-heavy answer formatted as a table or list.
+- ``kunskap``       - Factual knowledge answer, clean and direct.
+- ``analys``        - Structured analytical answer with sections/headers.
+- ``syntes``        - Multi-source synthesis that explicitly names sources.
+- ``visualisering`` - Data-heavy answer formatted as a table or list.
 """
 
 from __future__ import annotations
@@ -27,7 +27,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -71,10 +72,10 @@ def _select_response_mode(
     """Choose presentation mode using lightweight heuristics.
 
     Priority order:
-    1. visualisering  – query or response contains table/list signals
-    2. analys         – compare/jämförelse route, or analytical keywords
-    3. syntes         – multi-domain (mixed route / multiple sub_intents)
-    4. kunskap        – default factual answer
+    1. visualisering  - query or response contains table/list signals
+    2. analys         - compare/jämförelse route, or analytical keywords
+    3. syntes         - multi-domain (mixed route / multiple sub_intents)
+    4. kunskap        - default factual answer
     """
     route = route_hint.lower()
 
