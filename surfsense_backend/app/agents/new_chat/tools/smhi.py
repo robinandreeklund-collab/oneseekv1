@@ -60,7 +60,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         name="SMHI Weather (legacy)",
         description=(
             "Bakåtkompatibelt verktyg för väderprognoser från SMHI (metfcst pmp3g). "
-            "Ange platsnamn via location-parametern (t.ex. location='Malmö')."
+            "Ange platsnamn via location (t.ex. location='Malmö') — verktyget geocodar automatiskt till lat/long. "
+            "Du behöver INTE ange lat/lon separat om du anger location."
         ),
         keywords=["smhi", "vader", "väder", "prognos", "temperatur", "vind", "regn"],
         example_queries=[
@@ -75,7 +76,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         name="SMHI Väderprognoser - Metfcst",
         description=(
             "Väderprognoser från SMHI:s pmp3g-modell (temperatur, vind, nederbörd, moln). "
-            "Ange platsnamn via location-parametern (t.ex. location='Stockholm')."
+            "Ange platsnamn via location (t.ex. location='Stockholm') — verktyget geocodar automatiskt till lat/long. "
+            "Du behöver INTE ange lat/lon separat om du anger location."
         ),
         keywords=["metfcst", "pmp3g", "prognos", "vader", "väder", "temperatur"],
         example_queries=[
@@ -90,7 +92,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         name="SMHI Väderprognoser - Snow1g",
         description=(
             "Snörelaterade prognoser från snow1g (snödjup, frusen nederbörd, symboler). "
-            "Ange platsnamn via location-parametern (t.ex. location='Sundsvall')."
+            "Ange platsnamn via location (t.ex. location='Sundsvall') — verktyget geocodar automatiskt till lat/long. "
+            "Du behöver INTE ange lat/lon separat om du anger location."
         ),
         keywords=["snow1g", "sno", "snö", "snodjup", "frozen precipitation"],
         example_queries=[
@@ -105,7 +108,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         name="SMHI Väderanalyser - Mesan2g",
         description=(
             "Gridbaserad väderanalys från MESAN (moln, strålning, temperatur, nederbörd). "
-            "Ange platsnamn via location-parametern."
+            "Ange platsnamn via location — verktyget geocodar automatiskt till lat/long. "
+            "Du behöver INTE ange lat/lon separat om du anger location."
         ),
         keywords=["mesan2g", "analys", "metanalys", "moln", "stralning", "vind"],
         example_queries=[
@@ -134,7 +138,9 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
             "  13 = Byvind (m/s)\n"
             "  16 = Total molntäckning (1/8)\n"
             "  39 = Daggpunktstemperatur (°C)\n"
-            "Standard: parameter_key=1 (lufttemperatur). Välj station med lat/lon eller station_key."
+            "Standard: parameter_key=1 (lufttemperatur). "
+            "Ange platsnamn via location — verktyget geocodar automatiskt till lat/long och hittar närmaste station. "
+            "Du behöver INTE ange lat/lon separat om du anger location."
         ),
         keywords=["metobs", "observation", "station", "lufttemperatur", "lufttryck"],
         example_queries=[
@@ -155,7 +161,9 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
             "  3 = Vattentemperatur (°C)\n"
             "  4 = Is\n"
             "  5 = Grundvattenstånd\n"
-            "Standard: parameter_key=3 (vattentemperatur). Välj station med lat/lon eller station_key."
+            "Standard: parameter_key=3 (vattentemperatur). "
+            "Ange platsnamn via location — verktyget geocodar automatiskt till lat/long och hittar närmaste station. "
+            "Du behöver INTE ange lat/lon separat om du anger location."
         ),
         keywords=["hydroobs", "vattenstand", "vattenstånd", "vattenforing", "hydrologi"],
         example_queries=[
@@ -169,7 +177,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_hydrologi_pthbv",
         name="SMHI Hydrologi - PTHBV",
         description=(
-            "Hydrologisk analys (PTHBV) för punktdata över perioder, t.ex. nederbörd/temperatur."
+            "Hydrologisk analys (PTHBV) för punktdata över perioder, t.ex. nederbörd/temperatur. "
+            "Ange platsnamn via location — verktyget geocodar automatiskt till lat/long."
         ),
         keywords=["pthbv", "hydrologi", "nederbord", "nederbörd", "temperatur", "analys"],
         example_queries=[
@@ -191,7 +200,9 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
             "  8  = Strömhastighet (cm/s)\n"
             "  15 = Salthalt (PSU)\n"
             "  21 = Signifikant våghöjd (cm)\n"
-            "Standard: parameter_key=6 (havsvattentemperatur). Välj station med lat/lon eller station_key."
+            "Standard: parameter_key=6 (havsvattentemperatur). "
+            "Ange platsnamn via location — verktyget geocodar automatiskt till lat/long och hittar närmaste station. "
+            "Du behöver INTE ange lat/lon separat om du anger location."
         ),
         keywords=["ocobs", "oceanografi", "hav", "vaghojd", "våghöjd", "havsniva"],
         example_queries=[
@@ -213,7 +224,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
             "  118 = Diffus irradians (W/m²)\n"
             "  120 = UV-strålning (W/m²)\n"
             "  122 = PAR – fotosyntetiskt aktiv strålning (W/m²)\n"
-            "Valfria filter: from_date/to_date (ISO datetime, t.ex. '2024-06-01T00:00:00')."
+            "Valfria filter: from_date/to_date (ISO datetime, t.ex. '2024-06-01T00:00:00'). "
+            "Ange platsnamn via location — verktyget geocodar automatiskt till lat/long."
         ),
         keywords=["strang", "solstralning", "solstrålning", "uv", "par", "irradians", "sol", "solenergi"],
         example_queries=[
@@ -228,7 +240,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_brandrisk_fwif",
         name="SMHI Brandrisk - FWIF",
         description=(
-            "Brandriskprognoser (Fire Weather Index Forecast) med daily/hourly tidsupplösning."
+            "Brandriskprognoser (Fire Weather Index Forecast) med daily/hourly tidsupplösning. "
+            "Ange platsnamn via location — verktyget geocodar automatiskt till lat/long."
         ),
         keywords=["fwif", "brandrisk", "fwi", "isi", "ffmc", "prognos"],
         example_queries=[
@@ -242,7 +255,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_brandrisk_fwia",
         name="SMHI Brandrisk - FWIA",
         description=(
-            "Brandriskanalys (Fire Weather Index Analysis) med daily/hourly tidsupplösning."
+            "Brandriskanalys (Fire Weather Index Analysis) med daily/hourly tidsupplösning. "
+            "Ange platsnamn via location — verktyget geocodar automatiskt till lat/long."
         ),
         keywords=["fwia", "brandrisk", "analys", "fwi", "isi", "ffmc"],
         example_queries=[
