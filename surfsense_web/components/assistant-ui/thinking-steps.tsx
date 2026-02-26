@@ -1,8 +1,7 @@
 import { useAssistantState, useThreadViewport } from "@assistant-ui/react";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import type { FC } from "react";
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { ChainOfThoughtItem } from "@/components/prompt-kit/chain-of-thought";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { TextShimmerLoader } from "@/components/prompt-kit/loader";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { cn } from "@/lib/utils";
@@ -13,151 +12,169 @@ export const ThinkingStepsContext = createContext<Map<string, ThinkingStep[]>>(n
 // Context to pass live reasoning text (from <think> tags / reasoning-delta events) to AssistantMessage
 export const ReasoningContext = createContext<Map<string, string>>(new Map());
 
+// ---------------------------------------------------------------------------
+// FadeLayer — unified rolling reasoning + thinking-steps component
+// ---------------------------------------------------------------------------
+
 /**
- * Chain of thought display component - single collapsible dropdown design
+ * Renders tool-call steps as compact inline badges within the fade layer.
  */
-export const ThinkingStepsDisplay: FC<{ steps: ThinkingStep[]; isThreadRunning?: boolean }> = ({
-	steps,
-	isThreadRunning = true,
-}) => {
-	const [isOpen, setIsOpen] = useState(true);
+const InlineToolStep: FC<{ step: ThinkingStep }> = ({ step }) => (
+	<div className="my-0.5 inline-flex items-center gap-1.5 rounded border border-border/60 bg-muted/60 px-2 py-0.5 text-[0.7rem] text-muted-foreground">
+		<span className="opacity-70">&#9728;</span>
+		<span>{step.title}</span>
+		{step.items?.[0] && (
+			<span className="ml-1 text-[0.6rem] opacity-50">{step.items[0]}</span>
+		)}
+	</div>
+);
 
-	// Derive effective status for each step
-	const getEffectiveStatus = useCallback(
-		(step: ThinkingStep): "pending" | "in_progress" | "completed" => {
-			if (step.status === "in_progress" && !isThreadRunning) {
-				return "completed";
-			}
-			return step.status;
-		},
-		[isThreadRunning]
-	);
+/**
+ * FadeLayer – unified component that merges the reasoning stream
+ * (from <think> / reasoning-delta events) with structured thinking
+ * steps (tool calls etc.) into a single rolling container.
+ *
+ * Design:
+ * - Max-height with top gradient fade-out (content dissolves upward)
+ * - No visible scrollbar; auto-scrolls to bottom during streaming
+ * - Dims to low opacity when streaming finishes; hover reveals
+ * - Clean expand toggle ("▾ N steg · Xs")
+ */
+export const FadeLayer: FC<{
+	reasoning: string;
+	thinkingSteps: ThinkingStep[];
+	isStreaming: boolean;
+}> = ({ reasoning, thinkingSteps, isStreaming }) => {
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const [isExpanded, setIsExpanded] = useState(false);
+	const [streamStartTime] = useState(() => Date.now());
+	const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
-	// Calculate summary info
-	const completedSteps = steps.filter((s) => getEffectiveStatus(s) === "completed").length;
-	const inProgressStep = steps.find((s) => getEffectiveStatus(s) === "in_progress");
-	const allCompleted = completedSteps === steps.length && steps.length > 0 && !isThreadRunning;
-	const isProcessing = isThreadRunning && !allCompleted;
-
-	// Auto-collapse when all tasks are completed
+	// Track elapsed time during streaming
 	useEffect(() => {
-		if (allCompleted) {
-			setIsOpen(false);
+		if (!isStreaming) {
+			setElapsedSeconds(Math.round((Date.now() - streamStartTime) / 1000));
+			return;
 		}
-	}, [allCompleted]);
+		const interval = setInterval(() => {
+			setElapsedSeconds(Math.round((Date.now() - streamStartTime) / 1000));
+		}, 1000);
+		return () => clearInterval(interval);
+	}, [isStreaming, streamStartTime]);
 
-	if (steps.length === 0) return null;
+	// Auto-scroll to bottom during streaming
+	useEffect(() => {
+		if (isStreaming && scrollRef.current) {
+			requestAnimationFrame(() => {
+				scrollRef.current?.scrollTo({
+					top: scrollRef.current.scrollHeight,
+					behavior: "smooth",
+				});
+			});
+		}
+	}, [reasoning, thinkingSteps, isStreaming]);
 
-	// Generate header text
-	const getHeaderText = () => {
-		if (allCompleted) {
-			return `Reviewed ${completedSteps} ${completedSteps === 1 ? "step" : "steps"}`;
-		}
-		if (inProgressStep) {
-			return inProgressStep.title;
-		}
-		if (isProcessing) {
-			return `Processing ${completedSteps}/${steps.length} steps`;
-		}
-		return `Reviewed ${completedSteps} ${completedSteps === 1 ? "step" : "steps"}`;
-	};
+	const hasContent = reasoning || thinkingSteps.length > 0;
+	if (!hasContent) return null;
+
+	const isDone = !isStreaming;
+	const stepCount = thinkingSteps.length;
+
+	// Parse reasoning text into segments split by node headers (--- Title ---)
+	const reasoningSegments = reasoning
+		? reasoning.split(/^(---\s+.+?\s+---)\s*$/m).filter(Boolean)
+		: [];
 
 	return (
-		<div className="mx-auto w-full max-w-(--thread-max-width) px-2 py-2">
-			<div className="rounded-lg">
-				{/* Main collapsible header */}
-				<button
-					type="button"
-					onClick={() => setIsOpen(!isOpen)}
-					className={cn(
-						"flex w-full items-center gap-1.5 text-left text-sm transition-colors",
-						"text-muted-foreground hover:text-foreground"
-					)}
-				>
-					{/* Header text with shimmer if processing (streaming) */}
-					{isProcessing ? (
-						<TextShimmerLoader text={getHeaderText()} size="sm" />
-					) : (
-						<span>{getHeaderText()}</span>
-					)}
-
-					{/* Chevron */}
-					<ChevronRightIcon
-						className={cn("size-4 transition-transform duration-200", isOpen && "rotate-90")}
+		<div className="mx-auto w-full max-w-(--thread-max-width) px-2 pb-1">
+			{/* Rolling container */}
+			<div
+				ref={scrollRef}
+				className={cn(
+					// Base: rolling container with hidden scrollbar
+					"relative overflow-y-auto overscroll-contain",
+					// Max-height unless expanded
+					!isExpanded && "max-h-44",
+				)}
+				style={{
+					scrollbarWidth: "none",
+					msOverflowStyle: "none",
+				}}
+			>
+				{/* Top gradient fade-out mask */}
+				{!isExpanded && (
+					<div
+						className="pointer-events-none sticky top-0 left-0 right-0 z-10 h-10"
+						style={{
+							background: "linear-gradient(to bottom, var(--background) 0%, transparent 100%)",
+						}}
 					/>
-				</button>
+				)}
 
-				{/* Collapsible content with CSS grid animation */}
-				<div
-					className={cn(
-						"grid transition-[grid-template-rows] duration-300 ease-out",
-						isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+				{/* Content */}
+				<div className={cn(
+					"space-y-0.5 px-1 pb-1",
+					isDone && !isExpanded && "opacity-35 transition-opacity duration-400 hover:opacity-75",
+				)}>
+					{/* Reasoning segments with node headers */}
+					{reasoningSegments.map((segment, i) => {
+						const isHeader = /^---\s+.+?\s+---$/.test(segment);
+						if (isHeader) {
+							const title = segment.replace(/^---\s+/, "").replace(/\s+---$/, "");
+							return (
+								<div key={`r-${i}`} className="flex items-center gap-2 pt-1.5 pb-0.5">
+									<span className="text-[0.68rem] font-semibold text-primary/80">
+										{title}
+									</span>
+									<span className="h-px flex-1 bg-primary/10" />
+								</div>
+							);
+						}
+						return (
+							<div
+								key={`r-${i}`}
+								className="text-[0.76rem] leading-relaxed text-muted-foreground whitespace-pre-wrap"
+							>
+								{segment.trim()}
+							</div>
+						);
+					})}
+
+					{/* Tool call steps (inline badges) */}
+					{thinkingSteps.map((step) => (
+						<InlineToolStep key={step.id} step={step} />
+					))}
+
+					{/* Streaming cursor */}
+					{isStreaming && (
+						<span className="inline-block h-3.5 w-0.5 animate-pulse bg-primary/70 align-text-bottom ml-0.5" />
 					)}
-				>
-					<div className="overflow-hidden">
-						<div className="mt-3 pl-1">
-							{steps.map((step, index) => {
-								const effectiveStatus = getEffectiveStatus(step);
-								const isLast = index === steps.length - 1;
-
-								return (
-									<div key={step.id} className="relative flex gap-3">
-										{/* Dot and line column */}
-										<div className="relative flex flex-col items-center w-2">
-											{/* Vertical connection line - extends to next dot */}
-											{!isLast && (
-												<div className="absolute left-1/2 top-[15px] -bottom-[7px] w-px -translate-x-1/2 bg-muted-foreground/30" />
-											)}
-											{/* Step dot - on top of line */}
-											<div className="relative z-10 mt-[7px] flex shrink-0 items-center justify-center">
-												{effectiveStatus === "in_progress" ? (
-													<span className="relative flex size-2">
-														<span className="absolute inline-flex size-full animate-ping rounded-full bg-primary/60" />
-														<span className="relative inline-flex size-2 rounded-full bg-primary" />
-													</span>
-												) : (
-													<span className="size-2 rounded-full bg-muted-foreground/30" />
-												)}
-											</div>
-										</div>
-
-										{/* Step content */}
-										<div className="flex-1 min-w-0 pb-4">
-											{/* Step title */}
-											<div
-												className={cn(
-													"text-sm leading-5",
-													effectiveStatus === "in_progress" && "text-foreground font-medium",
-													effectiveStatus === "completed" && "text-muted-foreground",
-													effectiveStatus === "pending" && "text-muted-foreground/60"
-												)}
-											>
-												{effectiveStatus === "in_progress" ? (
-													<TextShimmerLoader text={step.title} size="sm" />
-												) : (
-													step.title
-												)}
-											</div>
-
-											{/* Step items (sub-content) */}
-											{step.items && step.items.length > 0 && (
-												<div className="mt-1 space-y-0.5">
-													{step.items.map((item, idx) => (
-														<ChainOfThoughtItem key={`${step.id}-item-${idx}`} className="text-xs">
-															{item}
-														</ChainOfThoughtItem>
-													))}
-												</div>
-											)}
-
-											</div>
-									</div>
-								);
-							})}
-						</div>
-					</div>
 				</div>
 			</div>
+
+			{/* Toggle button */}
+			{(isDone || stepCount > 0 || reasoning) && (
+				<button
+					type="button"
+					onClick={() => setIsExpanded(!isExpanded)}
+					className="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+				>
+					<ChevronDownIcon
+						className={cn(
+							"size-3 transition-transform duration-200",
+							isExpanded && "rotate-180",
+						)}
+					/>
+					{isStreaming ? (
+						<TextShimmerLoader text="Tänker..." size="sm" />
+					) : (
+						<span>
+							{stepCount > 0 ? `${stepCount} steg` : "Tankar"}
+							{elapsedSeconds > 0 ? ` \u00B7 ${elapsedSeconds}s` : ""}
+						</span>
+					)}
+				</button>
+			)}
 		</div>
 	);
 };

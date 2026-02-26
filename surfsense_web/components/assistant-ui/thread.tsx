@@ -53,9 +53,9 @@ import {
 	type ContextStatsEntry,
 } from "@/components/assistant-ui/context-stats";
 import {
+	FadeLayer,
 	ReasoningContext,
 	ThinkingStepsContext,
-	ThinkingStepsDisplay,
 } from "@/components/assistant-ui/thinking-steps";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
@@ -672,35 +672,34 @@ const MessageError: FC = () => {
 };
 
 /**
- * Custom component to render thinking steps from Context
+ * Unified FadeLayer part for the thread view — reasoning + thinking steps.
  */
-const ThinkingStepsPart: FC = () => {
+const FadeLayerPart: FC = () => {
 	const thinkingStepsMap = useContext(ThinkingStepsContext);
-
-	// Get the current message ID to look up thinking steps
+	const reasoningMap = useContext(ReasoningContext);
 	const messageId = useAssistantState(({ message }) => message?.id);
+	const reasoning = messageId ? (reasoningMap.get(messageId) ?? "") : "";
 	const thinkingSteps = thinkingStepsMap.get(messageId) || [];
-
-	// Check if this specific message is currently streaming
-	// A message is streaming if: thread is running AND this is the last assistant message
 	const isThreadRunning = useAssistantState(({ thread }) => thread.isRunning);
 	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
-	const isMessageStreaming = isThreadRunning && isLastMessage;
+	const isStreaming = isThreadRunning && isLastMessage;
 
-	if (thinkingSteps.length === 0) return null;
+	if (!reasoning && thinkingSteps.length === 0) return null;
 
 	return (
-		<div className="mb-3">
-			<ThinkingStepsDisplay steps={thinkingSteps} isThreadRunning={isMessageStreaming} />
-		</div>
+		<FadeLayer
+			reasoning={reasoning}
+			thinkingSteps={thinkingSteps}
+			isStreaming={isStreaming}
+		/>
 	);
 };
 
 const AssistantMessageInner: FC = () => {
 	return (
 		<>
-			{/* Render thinking steps from message content - this ensures proper scroll tracking */}
-			<ThinkingStepsPart />
+			{/* Unified fade layer: reasoning stream + thinking steps */}
+			<FadeLayerPart />
 
 			<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
 				<MessagePrimitive.Parts
