@@ -1,26 +1,34 @@
 "use client";
 
 import { motion, useInView } from "motion/react";
+import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { useRef } from "react";
 
-const SWEDISH_APIS = [
-	{ name: "SCB", desc: "Statistiska Centralbyrån", color: "from-blue-500 to-blue-600" },
-	{ name: "SMHI", desc: "Klimat & Väderdata", color: "from-cyan-500 to-teal-600" },
-	{ name: "Bolagsverket", desc: "Företagsregister", color: "from-amber-500 to-orange-600" },
-	{ name: "Trafikverket", desc: "Infrastruktur & Trafik", color: "from-emerald-500 to-green-600" },
-	{ name: "Riksdagen", desc: "Lagstiftning & Politik", color: "from-red-500 to-rose-600" },
+interface SwedishAPI {
+	name: string;
+	desc: string;
+	color: string;
+	logo?: string;
+}
+
+const SWEDISH_APIS: SwedishAPI[] = [
+	{ name: "SCB", desc: "Statistiska Centralbyrån", color: "from-blue-500 to-blue-600", logo: "/api-logos/scb-logo.png" },
+	{ name: "SMHI", desc: "Klimat & Väderdata", color: "from-cyan-500 to-teal-600", logo: "/api-logos/smhi-logo.png" },
+	{ name: "Bolagsverket", desc: "Företagsregister", color: "from-amber-500 to-orange-600", logo: "/api-logos/bolagsverket-logo.png" },
+	{ name: "Trafikverket", desc: "Infrastruktur & Trafik", color: "from-emerald-500 to-green-600", logo: "/api-logos/trafiklab.png" },
+	{ name: "Riksdagen", desc: "Lagstiftning & Politik", color: "from-red-500 to-rose-600", logo: "/api-logos/riksdagen-logo.png" },
+	{ name: "Nord Pool", desc: "Energipriser & Elmarknad", color: "from-indigo-500 to-blue-600", logo: "/api-logos/Nord_Pool_Logo.png" },
 	{ name: "Kolada", desc: "Kommunal Statistik", color: "from-purple-500 to-violet-600" },
 	{ name: "Tavily", desc: "Webbsökning", color: "from-indigo-500 to-blue-600" },
 	{ name: "Skatteverket", desc: "Skatt & Folkbokföring", color: "from-yellow-500 to-amber-600" },
 	{ name: "Skolverket", desc: "Utbildningsstatistik", color: "from-teal-500 to-cyan-600" },
 	{ name: "Jordbruksverket", desc: "Jordbruk & Livsmedel", color: "from-lime-500 to-green-600" },
-	{ name: "SCB Befolkning", desc: "Befolkningsdata", color: "from-pink-500 to-rose-600" },
 	{ name: "Valmyndigheten", desc: "Valstatistik", color: "from-violet-500 to-purple-600" },
 	{ name: "Naturvårdsverket", desc: "Miljödata", color: "from-green-500 to-emerald-600" },
 ];
 
-function MarqueeRow({ items, reverse = false }: { items: typeof SWEDISH_APIS; reverse?: boolean }) {
+function MarqueeRow({ items, reverse = false }: { items: SwedishAPI[]; reverse?: boolean }) {
 	const duplicated = [...items, ...items];
 
 	return (
@@ -33,13 +41,25 @@ function MarqueeRow({ items, reverse = false }: { items: typeof SWEDISH_APIS; re
 						key={`${api.name}-${i}`}
 						className="group flex-shrink-0 flex items-center gap-3 rounded-xl border border-neutral-200/50 dark:border-white/10 bg-white/60 dark:bg-neutral-900/40 backdrop-blur-sm px-5 py-3 transition-all duration-300 hover:border-purple-300 dark:hover:border-purple-500/30 hover:shadow-lg hover:shadow-purple-500/5"
 					>
-						<div
-							className={`w-8 h-8 rounded-lg bg-gradient-to-br ${api.color} flex items-center justify-center flex-shrink-0`}
-						>
-							<span className="text-white text-[10px] font-bold leading-none">
-								{api.name.slice(0, 2).toUpperCase()}
-							</span>
-						</div>
+						{api.logo ? (
+							<div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0 bg-white dark:bg-neutral-800">
+								<Image
+									src={api.logo}
+									alt={api.name}
+									width={32}
+									height={32}
+									className="object-contain w-7 h-7"
+								/>
+							</div>
+						) : (
+							<div
+								className={`w-8 h-8 rounded-lg bg-gradient-to-br ${api.color} flex items-center justify-center flex-shrink-0`}
+							>
+								<span className="text-white text-[10px] font-bold leading-none">
+									{api.name.slice(0, 2).toUpperCase()}
+								</span>
+							</div>
+						)}
 						<div className="flex flex-col">
 							<span className="text-sm font-semibold text-neutral-800 dark:text-white whitespace-nowrap">
 								{api.name}
