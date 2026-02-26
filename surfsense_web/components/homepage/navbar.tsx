@@ -157,8 +157,8 @@ export const Navbar = () => {
 				transition={{ type: "spring", damping: 28, stiffness: 320 }}
 				className={cn(
 					"fixed top-0 left-0 bottom-0 z-50 flex flex-col",
-					"bg-neutral-50 dark:bg-neutral-900/80",
-					"border-r border-neutral-200/70 dark:border-neutral-800/70",
+					"bg-white dark:bg-neutral-950",
+					"border-r border-neutral-200/50 dark:border-neutral-800/50",
 					isMobile ? "shadow-2xl" : "",
 				)}
 				style={{ overflow: "hidden" }}
@@ -173,12 +173,11 @@ export const Navbar = () => {
 							<button
 								type="button"
 								onClick={toggleSidebar}
-								className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-neutral-200/70 dark:hover:bg-neutral-700/50 transition-colors"
+								className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors"
 								aria-label="Collapse sidebar"
 							>
-								{/* Sidebar collapse icon */}
-								<svg className="w-[18px] h-[18px] text-neutral-500 dark:text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-									<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+								<svg className="w-[18px] h-[18px] text-neutral-400 dark:text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+									<path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
 								</svg>
 							</button>
 						</div>
@@ -186,7 +185,7 @@ export const Navbar = () => {
 						<button
 							type="button"
 							onClick={toggleSidebar}
-							className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-neutral-200/70 dark:hover:bg-neutral-700/50 transition-colors mx-auto"
+							className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors mx-auto"
 							aria-label="Expand sidebar"
 						>
 							<OneseekIcon size={22} />
@@ -219,7 +218,7 @@ export const Navbar = () => {
 
 				{/* Sidebar footer: theme toggle */}
 				<div className={cn(
-					"shrink-0 border-t border-neutral-200/70 dark:border-neutral-800/70 px-2 py-3",
+					"shrink-0 border-t border-neutral-200/50 dark:border-neutral-800/50 px-2 py-3",
 					sidebarOpen ? "flex items-center justify-between" : "flex justify-center",
 				)}>
 					<ThemeTogglerComponent />

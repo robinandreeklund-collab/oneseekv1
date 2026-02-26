@@ -811,8 +811,8 @@
 		"api_section_subtitle": "Oneseek integrates with Swedish authorities and APIs in real-time for verified, up-to-date answers.",
 
 		"pipeline_badge": "Architecture",
-		"pipeline_title": "Hybrid Supervisor v2 — LangGraph Pipeline",
-		"pipeline_subtitle": "See how every question flows through 23 nodes — from intent classification to verified, formatted response.",
+		"pipeline_title": "How Oneseek thinks",
+		"pipeline_subtitle": "Every question flows through 23 nodes — from intent to verified answer. Every step visible and configurable.",
 		"pipeline_node_count": "{count} nodes in the pipeline — every step is configurable and observable.",
 
 		"gn_resolve_intent": "Resolve Intent",

@@ -34,37 +34,39 @@ function MarqueeRow({ items, reverse = false }: { items: SwedishAPI[]; reverse?:
 	return (
 		<div className="flex overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]">
 			<div
-				className={`flex gap-4 py-2 ${reverse ? "[animation-direction:reverse]" : ""} animate-marquee`}
+				className={`flex gap-5 py-2 ${reverse ? "[animation-direction:reverse]" : ""} animate-marquee`}
 			>
 				{duplicated.map((api, i) => (
 					<div
 						key={`${api.name}-${i}`}
-						className="group flex-shrink-0 flex items-center gap-3 rounded-xl border border-neutral-200/50 dark:border-white/10 bg-white/60 dark:bg-neutral-900/40 backdrop-blur-sm px-5 py-3 transition-all duration-300 hover:border-purple-300 dark:hover:border-purple-500/30 hover:shadow-lg hover:shadow-purple-500/5"
+						className="group flex-shrink-0 flex flex-col items-center gap-2.5 rounded-2xl border border-neutral-200/50 dark:border-white/10 bg-white/60 dark:bg-neutral-900/40 backdrop-blur-sm px-6 py-5 transition-all duration-300 hover:border-purple-300 dark:hover:border-purple-500/30 hover:shadow-lg hover:shadow-purple-500/5 min-w-[120px]"
 					>
+						{/* Logo — big and prominent */}
 						{api.logo ? (
-							<div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0 bg-white dark:bg-neutral-800">
+							<div className="w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0 bg-white dark:bg-neutral-800 p-1.5">
 								<Image
 									src={api.logo}
 									alt={api.name}
-									width={32}
-									height={32}
-									className="object-contain w-7 h-7"
+									width={56}
+									height={56}
+									className="object-contain w-full h-full"
 								/>
 							</div>
 						) : (
 							<div
-								className={`w-8 h-8 rounded-lg bg-gradient-to-br ${api.color} flex items-center justify-center flex-shrink-0`}
+								className={`w-14 h-14 rounded-xl bg-gradient-to-br ${api.color} flex items-center justify-center flex-shrink-0`}
 							>
-								<span className="text-white text-[10px] font-bold leading-none">
+								<span className="text-white text-base font-bold leading-none">
 									{api.name.slice(0, 2).toUpperCase()}
 								</span>
 							</div>
 						)}
-						<div className="flex flex-col">
-							<span className="text-sm font-semibold text-neutral-800 dark:text-white whitespace-nowrap">
+						{/* Name + desc below the logo */}
+						<div className="flex flex-col items-center text-center">
+							<span className="text-xs font-semibold text-neutral-800 dark:text-white whitespace-nowrap">
 								{api.name}
 							</span>
-							<span className="text-[11px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
+							<span className="text-[10px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
 								{api.desc}
 							</span>
 						</div>

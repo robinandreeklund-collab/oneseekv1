@@ -796,8 +796,8 @@
 		"api_section_subtitle": "Oneseek实时集成瑞典当局和API，提供经过验证的最新答案。",
 
 		"pipeline_badge": "架构",
-		"pipeline_title": "Hybrid Supervisor v2 — LangGraph 管道",
-		"pipeline_subtitle": "查看每个问题如何在23个节点中流转——从意图分类到验证格式化的答案。",
+		"pipeline_title": "Oneseek 的思考方式",
+		"pipeline_subtitle": "每个问题流经23个节点——从意图到验证答案。每一步可见且可配置。",
 		"pipeline_node_count": "管道中有{count}个节点——每个步骤都可配置和可观测。",
 
 		"gn_resolve_intent": "意图解析",
