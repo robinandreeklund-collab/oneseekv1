@@ -191,7 +191,7 @@ export const FadeLayer: FC<{
 						// entry.kind === "step"
 						const step = stepsById.get(entry.stepId);
 						if (!step) return null;
-						return <InlineToolStep key={`tl-s-${entry.stepId}`} step={step} />;
+						return <InlineToolStep key={`tl-${i}-s-${entry.stepId}`} step={step} />;
 					})}
 
 					{/* Streaming cursor */}

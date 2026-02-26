@@ -691,6 +691,7 @@ export default function NewChatPage() {
 				const assistantMsgId = `msg-assistant-${Date.now()}`;
 				const currentThinkingSteps = new Map<string, ThinkingStepData>();
 				const currentTimeline: TimelineEntry[] = [];
+				const timelineStepIds = new Set<string>();
 
 				const userMessage: ThreadMessageLike = {
 					id: userMsgId,
@@ -804,12 +805,15 @@ export default function NewChatPage() {
 												newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
 												return newMap;
 											});
-											currentTimeline.push({ kind: "step", stepId: stepData.id });
-											setMessageTimeline((prev) => {
-												const newMap = new Map(prev);
-												newMap.set(assistantMsgId, [...currentTimeline]);
-												return newMap;
-											});
+											if (!timelineStepIds.has(stepData.id)) {
+												timelineStepIds.add(stepData.id);
+												currentTimeline.push({ kind: "step", stepId: stepData.id });
+												setMessageTimeline((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentTimeline]);
+													return newMap;
+												});
+											}
 										}
 									}
 									if (parsed.type === "error") {
@@ -1012,6 +1016,7 @@ export default function NewChatPage() {
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
 			let currentReasoningText = "";
 			const currentTimeline: TimelineEntry[] = [];
+			const timelineStepIds = new Set<string>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 
@@ -1302,13 +1307,17 @@ export default function NewChatPage() {
 													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
 													return newMap;
 												});
-												// Push step marker into timeline (interleaved with reasoning)
-												currentTimeline.push({ kind: "step", stepId: stepData.id });
-												setMessageTimeline((prev) => {
-													const newMap = new Map(prev);
-													newMap.set(assistantMsgId, [...currentTimeline]);
-													return newMap;
-												});
+												// Push step marker into timeline only on first occurrence
+												// (subsequent events for same step are status updates)
+												if (!timelineStepIds.has(stepData.id)) {
+													timelineStepIds.add(stepData.id);
+													currentTimeline.push({ kind: "step", stepId: stepData.id });
+													setMessageTimeline((prev) => {
+														const newMap = new Map(prev);
+														newMap.set(assistantMsgId, [...currentTimeline]);
+														return newMap;
+													});
+												}
 											}
 											break;
 										}
@@ -1322,13 +1331,16 @@ export default function NewChatPage() {
 													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
 													return newMap;
 												});
-												// Push context-stats step into timeline
-												currentTimeline.push({ kind: "step", stepId: step.id });
-												setMessageTimeline((prev) => {
-													const newMap = new Map(prev);
-													newMap.set(assistantMsgId, [...currentTimeline]);
-													return newMap;
-												});
+												// Push context-stats step into timeline only on first occurrence
+												if (!timelineStepIds.has(step.id)) {
+													timelineStepIds.add(step.id);
+													currentTimeline.push({ kind: "step", stepId: step.id });
+													setMessageTimeline((prev) => {
+														const newMap = new Map(prev);
+														newMap.set(assistantMsgId, [...currentTimeline]);
+														return newMap;
+													});
+												}
 											}
 											break;
 										}
@@ -1765,6 +1777,7 @@ export default function NewChatPage() {
 			const currentThinkingSteps = new Map<string, ThinkingStepData>();
 			let currentReasoningText = "";
 			const currentTimeline: TimelineEntry[] = [];
+			const timelineStepIds = new Set<string>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 
@@ -1993,13 +2006,17 @@ export default function NewChatPage() {
 													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
 													return newMap;
 												});
-												// Push step marker into timeline (interleaved with reasoning)
-												currentTimeline.push({ kind: "step", stepId: stepData.id });
-												setMessageTimeline((prev) => {
-													const newMap = new Map(prev);
-													newMap.set(assistantMsgId, [...currentTimeline]);
-													return newMap;
-												});
+												// Push step marker into timeline only on first occurrence
+												// (subsequent events for same step are status updates)
+												if (!timelineStepIds.has(stepData.id)) {
+													timelineStepIds.add(stepData.id);
+													currentTimeline.push({ kind: "step", stepId: stepData.id });
+													setMessageTimeline((prev) => {
+														const newMap = new Map(prev);
+														newMap.set(assistantMsgId, [...currentTimeline]);
+														return newMap;
+													});
+												}
 											}
 											break;
 										}
@@ -2013,13 +2030,16 @@ export default function NewChatPage() {
 													newMap.set(assistantMsgId, Array.from(currentThinkingSteps.values()));
 													return newMap;
 												});
-												// Push context-stats step into timeline
-												currentTimeline.push({ kind: "step", stepId: step.id });
-												setMessageTimeline((prev) => {
-													const newMap = new Map(prev);
-													newMap.set(assistantMsgId, [...currentTimeline]);
-													return newMap;
-												});
+												// Push context-stats step into timeline only on first occurrence
+												if (!timelineStepIds.has(step.id)) {
+													timelineStepIds.add(step.id);
+													currentTimeline.push({ kind: "step", stepId: step.id });
+													setMessageTimeline((prev) => {
+														const newMap = new Map(prev);
+														newMap.set(assistantMsgId, [...currentTimeline]);
+														return newMap;
+													});
+												}
 											}
 											break;
 										}
