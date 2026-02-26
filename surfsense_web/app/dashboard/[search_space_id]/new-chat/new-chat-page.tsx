@@ -136,6 +136,24 @@ function extractThinkingSteps(content: unknown): ThinkingStep[] {
 }
 
 /**
+ * Extract persisted reasoning text from message content.
+ * Returns the reasoning string or empty string if not persisted.
+ */
+function extractReasoningText(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+
+	const part = content.find(
+		(p: unknown) =>
+			typeof p === "object" &&
+			p !== null &&
+			"type" in p &&
+			(p as { type: string }).type === "reasoning-text"
+	) as { type: "reasoning-text"; text: string } | undefined;
+
+	return part?.text || "";
+}
+
+/**
  * Zod schema for mentioned document info (for type-safe parsing)
  */
 const MentionedDocumentInfoSchema = z.object({
@@ -527,8 +545,9 @@ export default function NewChatPage() {
 					const loadedMessages = messagesResponse.messages.map(convertToThreadMessage);
 					setMessages(loadedMessages);
 
-					// Extract and restore thinking steps from persisted messages
+					// Extract and restore thinking steps + reasoning from persisted messages
 					const restoredThinkingSteps = new Map<string, ThinkingStep[]>();
+					const restoredReasoningMap = new Map<string, string>();
 					// Extract and restore mentioned documents from persisted messages
 					const restoredDocsMap: Record<string, MentionedDocumentInfo[]> = {};
 
@@ -538,6 +557,11 @@ export default function NewChatPage() {
 							if (steps.length > 0) {
 								restoredThinkingSteps.set(`msg-${msg.id}`, steps);
 							}
+							// P1 Extra: restore persisted reasoning text
+							const reasoning = extractReasoningText(msg.content);
+							if (reasoning) {
+								restoredReasoningMap.set(`msg-${msg.id}`, reasoning);
+							}
 						}
 						if (msg.role === "user") {
 							const docs = extractMentionedDocuments(msg.content);
@@ -546,16 +570,38 @@ export default function NewChatPage() {
 							}
 						}
 					}
-					if (restoredThinkingSteps.size > 0) {
-						setMessageThinkingSteps(restoredThinkingSteps);
-						// Build timeline from restored thinking steps (reasoning not persisted)
+					if (restoredThinkingSteps.size > 0 || restoredReasoningMap.size > 0) {
+						if (restoredThinkingSteps.size > 0) {
+							setMessageThinkingSteps(restoredThinkingSteps);
+						}
+						if (restoredReasoningMap.size > 0) {
+							setMessageReasoningMap(restoredReasoningMap);
+						}
+						// Build timeline from restored thinking steps and reasoning text
 						const restoredTimeline = new Map<string, TimelineEntry[]>();
-						restoredThinkingSteps.forEach((steps, msgId) => {
-							restoredTimeline.set(
-								msgId,
-								steps.map((s) => ({ kind: "step" as const, stepId: s.id })),
-							);
-						});
+						const allMsgIds = new Set([
+							...restoredThinkingSteps.keys(),
+							...restoredReasoningMap.keys(),
+						]);
+						for (const msgId of allMsgIds) {
+							const entries: TimelineEntry[] = [];
+							const reasoning = restoredReasoningMap.get(msgId);
+							const steps = restoredThinkingSteps.get(msgId);
+							// Add reasoning as a single block (original interleaving is lost,
+							// but the full text is preserved for display)
+							if (reasoning) {
+								entries.push({ kind: "reasoning" as const, text: reasoning });
+							}
+							// Add step entries after reasoning
+							if (steps) {
+								for (const s of steps) {
+									entries.push({ kind: "step" as const, stepId: s.id });
+								}
+							}
+							if (entries.length > 0) {
+								restoredTimeline.set(msgId, entries);
+							}
+						}
 						setMessageTimeline(restoredTimeline);
 					}
 					if (Object.keys(restoredDocsMap).length > 0) {
@@ -1097,7 +1143,7 @@ export default function NewChatPage() {
 					: [{ type: "text", text: "" }];
 			};
 
-			// Helper to build content for persistence (includes thinking-steps for restoration)
+			// Helper to build content for persistence (includes thinking-steps and reasoning for restoration)
 			const buildContentForPersistence = (): unknown[] => {
 				const parts: unknown[] = [];
 
@@ -1106,6 +1152,13 @@ export default function NewChatPage() {
 					parts.push({
 						type: "thinking-steps",
 						steps: Array.from(currentThinkingSteps.values()),
+					});
+				}
+				// P1 Extra: persist reasoning text so it survives page refresh
+				if (currentReasoningText) {
+					parts.push({
+						type: "reasoning-text",
+						text: currentReasoningText,
 					});
 				}
 				if (compareSummary) {
@@ -1844,6 +1897,13 @@ export default function NewChatPage() {
 					parts.push({
 						type: "thinking-steps",
 						steps: Array.from(currentThinkingSteps.values()),
+					});
+				}
+				// P1 Extra: persist reasoning text so it survives page refresh
+				if (currentReasoningText) {
+					parts.push({
+						type: "reasoning-text",
+						text: currentReasoningText,
 					});
 				}
 				if (compareSummary) {
