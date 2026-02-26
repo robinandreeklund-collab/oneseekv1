@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -58,7 +59,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_weather",
         name="SMHI Weather (legacy)",
         description=(
-            "Bakåtkompatibelt verktyg för väderprognoser från SMHI (metfcst pmp3g)."
+            "Bakåtkompatibelt verktyg för väderprognoser från SMHI (metfcst pmp3g). "
+            "Ange platsnamn via location-parametern (t.ex. location='Malmö')."
         ),
         keywords=["smhi", "vader", "väder", "prognos", "temperatur", "vind", "regn"],
         example_queries=[
@@ -72,7 +74,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_vaderprognoser_metfcst",
         name="SMHI Väderprognoser - Metfcst",
         description=(
-            "Väderprognoser från SMHI:s pmp3g-modell (temperatur, vind, nederbörd, moln)."
+            "Väderprognoser från SMHI:s pmp3g-modell (temperatur, vind, nederbörd, moln). "
+            "Ange platsnamn via location-parametern (t.ex. location='Stockholm')."
         ),
         keywords=["metfcst", "pmp3g", "prognos", "vader", "väder", "temperatur"],
         example_queries=[
@@ -86,7 +89,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_vaderprognoser_snow1g",
         name="SMHI Väderprognoser - Snow1g",
         description=(
-            "Snörelaterade prognoser från snow1g (snödjup, frusen nederbörd, symboler)."
+            "Snörelaterade prognoser från snow1g (snödjup, frusen nederbörd, symboler). "
+            "Ange platsnamn via location-parametern (t.ex. location='Sundsvall')."
         ),
         keywords=["snow1g", "sno", "snö", "snodjup", "frozen precipitation"],
         example_queries=[
@@ -100,7 +104,8 @@ SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
         tool_id="smhi_vaderanalyser_mesan2g",
         name="SMHI Väderanalyser - Mesan2g",
         description=(
-            "Gridbaserad väderanalys från MESAN (moln, strålning, temperatur, nederbörd)."
+            "Gridbaserad väderanalys från MESAN (moln, strålning, temperatur, nederbörd). "
+            "Ange platsnamn via location-parametern."
         ),
         keywords=["mesan2g", "analys", "metanalys", "moln", "stralning", "vind"],
         example_queries=[
@@ -267,12 +272,37 @@ def _coerce_period(value: str | None, *, allowed: set[str], default: str) -> str
     return default
 
 
+# Regex patterns to extract a location name from a natural-language query
+# such as "Vilken temperatur väntas i Malmö imorgon?"
+_LOCATION_EXTRACTION_PATTERNS = [
+    # "i Malmö", "i Stockholm", "för Göteborg", "vid Lund"
+    re.compile(
+        r"\b(?:i|för|vid|nära|runt|kring|från|till|over|över)\s+"
+        r"([A-ZÅÄÖ][a-zåäöé]+(?:\s+[A-ZÅÄÖ][a-zåäöé]+)*)",
+    ),
+    # "Malmös väder", "Göteborgs temperatur" (possessive)
+    re.compile(r"\b([A-ZÅÄÖ][a-zåäöé]+)s\s+(?:väder|temperatur|prognos|snö)"),
+]
+
+
+def _extract_location_from_query(query: str) -> str | None:
+    """Try to extract a location name from a natural-language query string."""
+    if not query:
+        return None
+    for pattern in _LOCATION_EXTRACTION_PATTERNS:
+        match = pattern.search(query)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
 async def _resolve_coordinates(
     *,
     location: str | None,
     lat: float | None,
     lon: float | None,
     country_code: str | None = None,
+    query: str | None = None,
 ) -> tuple[float | None, float | None, dict[str, Any]]:
     if lat is not None and lon is not None:
         return float(lat), float(lon), {
@@ -282,18 +312,31 @@ async def _resolve_coordinates(
             "source": "user",
         }
 
-    if not location:
+    # Fallback: if location is missing, try to extract from query
+    effective_location = location
+    if not effective_location and query:
+        # Try to extract a proper location name from the query string
+        extracted = _extract_location_from_query(query)
+        effective_location = extracted or query
+    if not effective_location:
         return None, None, {
             "status": "error",
             "error": "Provide either lat/lon or a location name.",
         }
 
-    geocoded = await _geocode_location(location, country_code=country_code)
+    geocoded = await _geocode_location(effective_location, country_code=country_code)
+    if not geocoded and effective_location != (location or ""):
+        # If we used the extracted/query and it failed, try the raw query too
+        extracted = _extract_location_from_query(effective_location)
+        if extracted and extracted != effective_location:
+            geocoded = await _geocode_location(extracted, country_code=country_code)
+            if geocoded:
+                effective_location = extracted
     if not geocoded:
         return None, None, {
             "status": "error",
             "error": "Could not resolve location.",
-            "location": {"query": location},
+            "location": {"query": effective_location},
         }
 
     resolved_lat = _parse_float(geocoded.get("lat"))
@@ -302,11 +345,11 @@ async def _resolve_coordinates(
         return None, None, {
             "status": "error",
             "error": "Geocoding returned invalid coordinates.",
-            "location": {"query": location},
+            "location": {"query": effective_location},
         }
 
     return resolved_lat, resolved_lon, {
-        "name": location,
+        "name": effective_location,
         "display_name": geocoded.get("display_name"),
         "lat": resolved_lat,
         "lon": resolved_lon,
@@ -471,12 +514,14 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         country_code: str | None,
         include_raw: bool,
         max_hours: int | None,
+        query: str | None = None,
     ) -> dict[str, Any]:
         resolved_lat, resolved_lon, resolved_location = await _resolve_coordinates(
             location=location,
             lat=lat,
             lon=lon,
             country_code=country_code,
+            query=query,
         )
         if resolved_lat is None or resolved_lon is None:
             return resolved_location
@@ -540,6 +585,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         country_code: str | None = None,
         include_raw: bool = False,
         max_hours: int | None = DEFAULT_SMHI_MAX_HOURS,
+        query: str | None = None,
     ) -> dict[str, Any]:
         return await _run_with_breaker(
             tool_id="smhi_weather",
@@ -559,6 +605,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
                 country_code=country_code,
                 include_raw=include_raw,
                 max_hours=max_hours,
+                query=query,
             ),
         )
 
@@ -573,6 +620,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         country_code: str | None = None,
         include_raw: bool = False,
         max_hours: int | None = DEFAULT_SMHI_MAX_HOURS,
+        query: str | None = None,
     ) -> dict[str, Any]:
         return await _run_with_breaker(
             tool_id="smhi_vaderprognoser_metfcst",
@@ -592,6 +640,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
                 country_code=country_code,
                 include_raw=include_raw,
                 max_hours=max_hours,
+                query=query,
             ),
         )
 
@@ -607,6 +656,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         max_points: int = 72,
         include_raw: bool = False,
         include_parameters: bool = False,
+        query: str | None = None,
     ) -> dict[str, Any]:
         async def _operation() -> dict[str, Any]:
             resolved_lat, resolved_lon, resolved_location = await _resolve_coordinates(
@@ -614,6 +664,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
                 lat=lat,
                 lon=lon,
                 country_code=country_code,
+                query=query,
             )
             if resolved_lat is None or resolved_lon is None:
                 return resolved_location
@@ -696,12 +747,14 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         max_points: int = 48,
         include_raw: bool = False,
         include_parameters: bool = False,
+        query: str | None = None,
     ) -> dict[str, Any]:
         async def _operation() -> dict[str, Any]:
             resolved_lat, resolved_lon, resolved_location = await _resolve_coordinates(
                 location=location,
                 lat=lat,
                 lon=lon,
+                query=query,
                 country_code=country_code,
             )
             if resolved_lat is None or resolved_lon is None:
@@ -786,6 +839,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         max_points: int = 72,
         include_raw: bool = False,
         include_parameters: bool = False,
+        query: str | None = None,
     ) -> dict[str, Any]:
         async def _operation() -> dict[str, Any]:
             resolved_lat, resolved_lon, resolved_location = await _resolve_coordinates(
@@ -793,6 +847,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
                 lat=lat,
                 lon=lon,
                 country_code=country_code,
+                query=query,
             )
             if resolved_lat is None or resolved_lon is None:
                 return resolved_location
@@ -888,6 +943,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         to_date: str | None = None,
         max_points: int = 72,
         include_raw: bool = False,
+        query: str | None = None,
     ) -> dict[str, Any]:
         async def _operation() -> dict[str, Any]:
             resolved_lat, resolved_lon, resolved_location = await _resolve_coordinates(
@@ -895,6 +951,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
                 lat=lat,
                 lon=lon,
                 country_code=country_code,
+                query=query,
             )
             if resolved_lat is None or resolved_lon is None:
                 return resolved_location
@@ -994,21 +1051,25 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         period_key: str | None,
         limit_values: int,
         include_catalog: bool,
+        query: str | None = None,
     ) -> dict[str, Any]:
+        # Fallback: use query as location if not provided
+        effective_location = location or query
         resolved_lat = lat
         resolved_lon = lon
         resolved_location = {
-            "name": location,
+            "name": effective_location,
             "lat": lat,
             "lon": lon,
             "source": "user" if lat is not None and lon is not None else None,
         }
-        if (resolved_lat is None or resolved_lon is None) and location:
+        if (resolved_lat is None or resolved_lon is None) and effective_location:
             g_lat, g_lon, loc = await _resolve_coordinates(
-                location=location,
+                location=effective_location,
                 lat=lat,
                 lon=lon,
                 country_code=country_code,
+                query=query,
             )
             if g_lat is not None and g_lon is not None:
                 resolved_lat, resolved_lon = g_lat, g_lon
@@ -1105,6 +1166,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         country_code: str | None = None,
         limit_values: int = 120,
         include_catalog: bool = False,
+        query: str | None = None,
     ) -> dict[str, Any]:
         return await _run_with_breaker(
             tool_id="smhi_vaderobservationer_metobs",
@@ -1133,6 +1195,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
                 period_key=period_key,
                 limit_values=limit_values,
                 include_catalog=include_catalog,
+                query=query,
             ),
         )
 
@@ -1150,6 +1213,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         country_code: str | None = None,
         limit_values: int = 120,
         include_catalog: bool = False,
+        query: str | None = None,
     ) -> dict[str, Any]:
         return await _run_with_breaker(
             tool_id="smhi_hydrologi_hydroobs",
@@ -1178,6 +1242,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
                 period_key=period_key,
                 limit_values=limit_values,
                 include_catalog=include_catalog,
+                query=query,
             ),
         )
 
@@ -1195,6 +1260,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         country_code: str | None = None,
         limit_values: int = 120,
         include_catalog: bool = False,
+        query: str | None = None,
     ) -> dict[str, Any]:
         return await _run_with_breaker(
             tool_id="smhi_oceanografi_ocobs",
@@ -1223,6 +1289,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
                 period_key=period_key,
                 limit_values=limit_values,
                 include_catalog=include_catalog,
+                query=query,
             ),
         )
 
@@ -1241,12 +1308,14 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         variables: list[str] | None = None,
         epsg: int = 4326,
         include_raw: bool = False,
+        query: str | None = None,
     ) -> dict[str, Any]:
         async def _operation() -> dict[str, Any]:
             resolved_lat, resolved_lon, resolved_location = await _resolve_coordinates(
                 location=location,
                 lat=lat,
                 lon=lon,
+                query=query,
                 country_code=country_code,
             )
             if resolved_lat is None or resolved_lon is None:
@@ -1350,6 +1419,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
         parameter: int = 116,
         from_date: str | None = None,
         to_date: str | None = None,
+        query: str | None = None,
     ) -> dict[str, Any]:
         async def _operation() -> dict[str, Any]:
             resolved_lat, resolved_lon, resolved_location = await _resolve_coordinates(
@@ -1357,6 +1427,7 @@ def build_smhi_tool_registry() -> dict[str, BaseTool]:
                 lat=lat,
                 lon=lon,
                 country_code=country_code,
+                query=query,
             )
             if resolved_lat is None or resolved_lon is None:
                 return resolved_location
