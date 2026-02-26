@@ -835,24 +835,36 @@ _GENERIC_CHAIN_NAMES: frozenset[str] = frozenset({
 _THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
 _THINK_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
 
+# Regex to strip stray XML-like tags that models sometimes emit in their
+# output (e.g. </final_planner>, </tool_call>, <tool_call>, etc.).
+# These are NOT <think> tags — those are handled by _ThinkStreamFilter.
+# This catches opening and closing tags with optional attributes.
+_STRAY_XML_TAG_RE = re.compile(
+    r"</?(?:final_planner|tool_call|tool_result|function_call|function_result"
+    r"|assistant|system|user|output|response|answer|result|plan|execution"
+    r"|synthesis|critique|reflection|observation|action|thought"
+    r"|step|task|query|context|instruction|reasoning|analysis)(?:\s[^>]*)?>",
+    re.IGNORECASE,
+)
+
 # Mapping from pipeline chain-name tokens to user-facing titles for the
 # unified think-box.  Nodes not listed here fall back to a title derived
 # from the chain name.
 _PIPELINE_NODE_TITLES: dict[str, str] = {
-    "resolve_intent": "Resolving intent",
-    "agent_resolver": "Selecting agents",
-    "planner": "Building plan",
-    "tool_resolver": "Resolving tools",
-    "execution_router": "Routing execution",
-    "executor": "Executing",
-    "worker": "Running agent",
-    "domain_planner": "Planning domain execution",
-    "critic": "Reviewing findings",
-    "progressive_synthesizer": "Preparing draft",
-    "synthesizer": "Synthesizing response",
-    "response_layer": "Formatting response",
-    "speculative": "Speculative pre-execution",
-    "speculative_merge": "Merging speculative results",
+    "resolve_intent": "Analyserar frågan",
+    "agent_resolver": "Väljer agenter",
+    "planner": "Bygger plan",
+    "tool_resolver": "Väljer verktyg",
+    "execution_router": "Planerar utförande",
+    "executor": "Utför uppgift",
+    "worker": "Kör agent",
+    "domain_planner": "Planerar domänkörning",
+    "critic": "Granskar resultat",
+    "progressive_synthesizer": "Förbereder utkast",
+    "synthesizer": "Sammanställer svar",
+    "response_layer": "Formaterar svar",
+    "speculative": "Spekulativ förkörning",
+    "speculative_merge": "Sammanfogar spekulativa resultat",
 }
 
 
@@ -863,7 +875,7 @@ def _pipeline_node_title(chain_name: str) -> str:
         if token in normalized:
             return title
     # Fallback: capitalize the chain name
-    return chain_name.replace("_", " ").capitalize() if chain_name else "Processing"
+    return chain_name.replace("_", " ").capitalize() if chain_name else "Bearbetar"
 
 
 def _strip_inline_critic_payloads(text: str) -> tuple[str, bool]:
@@ -1421,6 +1433,10 @@ class _ThinkStreamFilter:
         result = self.flush()
         if self._assume_think:
             self._in_think = True
+            self._ever_opened = True
+        # Clear late-close state so the next model starts fresh
+        self._late_close_detected = False
+        self._pre_close_text_parts.clear()
         return result
 
     def flush(self) -> tuple[str, str]:
@@ -2469,10 +2485,10 @@ async def stream_new_chat(
                     events.append(completion_event)
 
                 step_id = next_thinking_step_id()
-                title = format_step_title("Updating internal planner state")
+                title = format_step_title("Uppdaterar intern planerare")
                 items: list[str] = []
                 if kind == "intent":
-                    title = format_step_title("Resolving intent")
+                    title = format_step_title("Tolkar avsikt")
                     intent_id = str(payload.get("intent_id") or "").strip()
                     graph_complexity = str(
                         payload.get("graph_complexity") or ""
@@ -2480,15 +2496,15 @@ async def stream_new_chat(
                     reason = str(payload.get("reason") or "").strip()
                     confidence = payload.get("confidence")
                     if intent_id:
-                        items.append(f"Intent: {intent_id}")
+                        items.append(f"Avsikt: {intent_id}")
                     if graph_complexity:
-                        items.append(f"Graph complexity: {graph_complexity}")
+                        items.append(f"Komplexitet: {graph_complexity}")
                     if isinstance(confidence, (int, float)):
-                        items.append(f"Confidence: {float(confidence):.2f}")
+                        items.append(f"Konfidens: {float(confidence):.2f}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "agent_resolver":
-                    title = format_step_title("Selecting agents")
+                    title = format_step_title("Väljer agenter")
                     selected_agents = payload.get("selected_agents")
                     if isinstance(selected_agents, list):
                         clean_agents = [
@@ -2502,7 +2518,7 @@ async def stream_new_chat(
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "planner":
-                    title = format_step_title("Building plan")
+                    title = format_step_title("Bygger plan")
                     steps = payload.get("steps")
                     if isinstance(steps, list):
                         for step in steps[:4]:
@@ -2516,18 +2532,18 @@ async def stream_new_chat(
                         items.append(f"Planmotiv: {reason[:180]}")
                 elif kind == "critic":
                     title = format_step_title(
-                        "Reviewing findings, gaps, and next steps"
+                        "Granskar resultat och nästa steg"
                     )
                     decision = str(payload.get("decision") or "").strip()
                     if not decision:
                         decision = str(payload.get("status") or "").strip()
                     reason = str(payload.get("reason") or "").strip()
                     if decision:
-                        items.append(f"Decision: {decision}")
+                        items.append(f"Beslut: {decision}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "execution_router":
-                    title = format_step_title("Routing execution strategy")
+                    title = format_step_title("Planerar exekveringsstrategi")
                     strategy = str(payload.get("execution_strategy") or "").strip()
                     reason = str(
                         payload.get("execution_reason") or payload.get("reason") or ""
@@ -2537,7 +2553,7 @@ async def stream_new_chat(
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "speculative":
-                    title = format_step_title("Running speculative tools")
+                    title = format_step_title("Kör spekulativa verktyg")
                     candidates = payload.get("speculative_candidates")
                     if isinstance(candidates, list):
                         candidate_ids = [
@@ -2555,14 +2571,14 @@ async def stream_new_chat(
                     if isinstance(remaining, list) and remaining:
                         items.append(f"Kvar att köra: {len(remaining)}")
                 elif kind == "progressive_synthesizer":
-                    title = format_step_title("Preparing answer draft")
+                    title = format_step_title("Förbereder svarsutkast")
                     drafts = payload.get("synthesis_drafts")
                     if isinstance(drafts, list) and drafts:
                         first_draft = drafts[0] if isinstance(drafts[0], dict) else {}
                         confidence = first_draft.get("confidence")
                         draft_text = str(first_draft.get("draft") or "").strip()
                         if isinstance(confidence, (int, float)):
-                            items.append(f"Draft confidence: {float(confidence):.2f}")
+                            items.append(f"Utkastskonfidens: {float(confidence):.2f}")
                         if draft_text:
                             items.append(draft_text[:180])
                 if source_chain and _is_any_pipeline_chain_name(source_chain):
@@ -2621,25 +2637,25 @@ async def stream_new_chat(
             return events
 
         route_step_id = next_thinking_step_id()
-        route_items = [f"Route: {route.value}"]
+        route_items = [f"Rutt: {route.value}"]
         route_source = str(route_decision.get("source") or "").strip()
         route_confidence = route_decision.get("confidence")
         route_reason = str(route_decision.get("reason") or "").strip()
         if route_source:
             route_items.append(f"Källa: {route_source}")
         if isinstance(route_confidence, (int, float)):
-            route_items.append(f"Confidence: {float(route_confidence):.2f}")
+            route_items.append(f"Konfidens: {float(route_confidence):.2f}")
         if route_reason:
             route_items.append(f"Orsak: {route_reason}")
         yield streaming_service.format_thinking_step(
             step_id=route_step_id,
-            title=format_step_title("Routing request"),
+            title=format_step_title("Dirigerar förfrågan"),
             status="in_progress",
             items=route_items,
         )
         yield streaming_service.format_thinking_step(
             step_id=route_step_id,
-            title=format_step_title("Routing request"),
+            title=format_step_title("Dirigerar förfrågan"),
             status="completed",
             items=route_items,
         )
@@ -2651,17 +2667,17 @@ async def stream_new_chat(
 
         # Determine step title and action verb based on context
         if attachments and (mentioned_documents or mentioned_surfsense_docs):
-            last_active_step_title = format_step_title("Analyzing your content")
-            action_verb = "Reading"
+            last_active_step_title = format_step_title("Analyserar ditt innehåll")
+            action_verb = "Läser"
         elif attachments:
-            last_active_step_title = format_step_title("Reading your content")
-            action_verb = "Reading"
+            last_active_step_title = format_step_title("Läser ditt innehåll")
+            action_verb = "Läser"
         elif mentioned_documents or mentioned_surfsense_docs:
-            last_active_step_title = format_step_title("Analyzing referenced content")
-            action_verb = "Analyzing"
+            last_active_step_title = format_step_title("Analyserar refererat innehåll")
+            action_verb = "Analyserar"
         else:
-            last_active_step_title = format_step_title("Understanding your request")
-            action_verb = "Processing"
+            last_active_step_title = format_step_title("Analyserar din fråga")
+            action_verb = "Bearbetar"
 
         # Build the message with inline context about attachments/documents
         processing_parts = []
@@ -2681,7 +2697,7 @@ async def stream_new_chat(
             if len(attachment_names) == 1:
                 processing_parts.append(f"[{attachment_names[0]}]")
             else:
-                processing_parts.append(f"[{len(attachment_names)} files]")
+                processing_parts.append(f"[{len(attachment_names)} filer]")
 
         # Add mentioned document names inline
         if mentioned_documents:
@@ -2694,7 +2710,7 @@ async def stream_new_chat(
             if len(doc_names) == 1:
                 processing_parts.append(f"[{doc_names[0]}]")
             else:
-                processing_parts.append(f"[{len(doc_names)} documents]")
+                processing_parts.append(f"[{len(doc_names)} dokument]")
 
         # Add mentioned SurfSense docs inline
         if mentioned_surfsense_docs:
@@ -2707,7 +2723,7 @@ async def stream_new_chat(
             if len(doc_names) == 1:
                 processing_parts.append(f"[{doc_names[0]}]")
             else:
-                processing_parts.append(f"[{len(doc_names)} docs]")
+                processing_parts.append(f"[{len(doc_names)} dokument]")
 
         last_active_step_items = [f"{action_verb}: {' '.join(processing_parts)}"]
 
@@ -3226,6 +3242,9 @@ async def stream_new_chat(
                         if not content:
                             continue
                         content = filter_critic_json(content)
+                        # Strip stray XML tags that models sometimes emit
+                        # (e.g. </final_planner>, <tool_call>, etc.)
+                        content = _STRAY_XML_TAG_RE.sub("", content)
                         if stream_pipeline_prefix_buffer:
                             content = stream_pipeline_prefix_buffer + content
                             stream_pipeline_prefix_buffer = ""
@@ -3301,7 +3320,7 @@ async def stream_new_chat(
 
                 # Complete any previous step EXCEPT "Synthesizing response"
                 # (we want to reuse the Synthesizing step after tools complete)
-                if last_active_step_title != format_step_title("Synthesizing response"):
+                if last_active_step_title != format_step_title("Sammanställer svar"):
                     completion_event = complete_current_step()
                     if completion_event:
                         yield completion_event
@@ -3325,10 +3344,10 @@ async def stream_new_chat(
                         else str(tool_input)
                     )
                     last_active_step_title = format_step_title(
-                        "Searching knowledge base"
+                        "Söker i kunskapsbasen"
                     )
                     last_active_step_items = [
-                        f"Query: {query[:100]}{'...' if len(query) > 100 else ''}"
+                        f"Fråga: {query[:100]}{'...' if len(query) > 100 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -3342,7 +3361,7 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = format_step_title("Fetching link preview")
+                    last_active_step_title = format_step_title("Hämtar länkförhandsgranskning")
                     last_active_step_items = [
                         f"URL: {url[:80]}{'...' if len(url) > 80 else ''}"
                     ]
@@ -3363,9 +3382,9 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else ""
                     )
-                    last_active_step_title = format_step_title("Analyzing the image")
+                    last_active_step_title = format_step_title("Analyserar bilden")
                     last_active_step_items = [
-                        f"Analyzing: {title[:50] if title else src[:50]}{'...' if len(title or src) > 50 else ''}"
+                        f"Analyserar: {title[:50] if title else src[:50]}{'...' if len(title or src) > 50 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -3379,7 +3398,7 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = format_step_title("Scraping webpage")
+                    last_active_step_title = format_step_title("Hämtar webbsida")
                     last_active_step_items = [
                         f"URL: {url[:80]}{'...' if len(url) > 80 else ''}"
                     ]
@@ -3399,9 +3418,9 @@ async def stream_new_chat(
                             location = f"{lat}, {lon}"
                     else:
                         location = str(tool_input)
-                    last_active_step_title = format_step_title("Fetching SMHI data")
+                    last_active_step_title = format_step_title("Hämtar SMHI-data")
                     last_active_step_items = [
-                        f"Location: {location[:80]}{'...' if len(location) > 80 else ''}"
+                        f"Plats: {location[:80]}{'...' if len(location) > 80 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -3428,15 +3447,15 @@ async def stream_new_chat(
                     else:
                         origin = str(tool_input)
                     last_active_step_title = format_step_title(
-                        "Planning route (Trafiklab)"
+                        "Planerar resväg (Trafiklab)"
                     )
                     route_text = f"{origin} -> {destination}".strip()
                     last_active_step_items = [
-                        f"Route: {route_text[:80]}{'...' if len(route_text) > 80 else ''}"
+                        f"Resväg: {route_text[:80]}{'...' if len(route_text) > 80 else ''}"
                     ]
                     if time_value:
                         last_active_step_items.append(
-                            f"Time: {time_value[:40]}{'...' if len(time_value) > 40 else ''}"
+                            f"Tid: {time_value[:40]}{'...' if len(time_value) > 40 else ''}"
                         )
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -3453,10 +3472,10 @@ async def stream_new_chat(
                     else:
                         query = str(tool_input)
                     last_active_step_title = format_step_title(
-                        "Searching Libris catalog"
+                        "Söker i Libris-katalogen"
                     )
                     item_label = (
-                        f"Record: {record_id}" if record_id else f"Query: {query}"
+                        f"Post: {record_id}" if record_id else f"Fråga: {query}"
                     )
                     last_active_step_items = [
                         f"{item_label[:100]}{'...' if len(item_label) > 100 else ''}"
@@ -3475,10 +3494,10 @@ async def stream_new_chat(
                         location = tool_input.get("location") or ""
                     else:
                         query = str(tool_input)
-                    last_active_step_title = format_step_title("Searching job ads")
+                    last_active_step_title = format_step_title("Söker jobbannonser")
                     details = f"{query} {location}".strip()
                     last_active_step_items = [
-                        f"Search: {details[:100]}{'...' if len(details) > 100 else ''}"
+                        f"Sökning: {details[:100]}{'...' if len(details) > 100 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -3498,8 +3517,8 @@ async def stream_new_chat(
 
                     if write_todos_call_count == 1:
                         # First call - creating the plan
-                        last_active_step_title = format_step_title("Creating plan")
-                        last_active_step_items = [f"Defining {todo_count} tasks..."]
+                        last_active_step_title = format_step_title("Skapar plan")
+                        last_active_step_items = [f"Definierar {todo_count} uppgifter..."]
                     else:
                         # Subsequent calls - updating the plan
                         in_progress_count = (
@@ -3523,14 +3542,14 @@ async def stream_new_chat(
                             else 0
                         )
 
-                        last_active_step_title = format_step_title("Updating plan")
+                        last_active_step_title = format_step_title("Uppdaterar plan")
                         last_active_step_items = (
                             [
-                                f"Progress: {completed_count}/{todo_count} completed",
-                                f"In progress: {in_progress_count} tasks",
+                                f"Framsteg: {completed_count}/{todo_count} klara",
+                                f"Pågår: {in_progress_count} uppgifter",
                             ]
                             if completed_count > 0
-                            else [f"Working on {todo_count} tasks"]
+                            else [f"Arbetar med {todo_count} uppgifter"]
                         )
 
                     yield streaming_service.format_thinking_step(
@@ -3550,10 +3569,10 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else None
                     )
-                    last_active_step_title = format_step_title("Selecting agents")
-                    last_active_step_items = [f"Query: {_summarize_text(query)}"]
+                    last_active_step_title = format_step_title("Väljer agenter")
+                    last_active_step_items = [f"Fråga: {_summarize_text(query)}"]
                     if limit:
-                        last_active_step_items.append(f"Limit: {limit}")
+                        last_active_step_items.append(f"Gräns: {limit}")
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -3574,13 +3593,13 @@ async def stream_new_chat(
                         task = str(tool_input)
                     title_agent = agent_name or "worker"
                     last_active_step_title = format_step_title(
-                        f"Delegating to {title_agent}"
+                        f"Delegerar till {title_agent}"
                     )
                     last_active_step_items = []
                     if agent_name:
                         last_active_step_items.append(f"Agent: {agent_name}")
                     if task:
-                        last_active_step_items.append(f"Task: {_summarize_text(task)}")
+                        last_active_step_items.append(f"Uppgift: {_summarize_text(task)}")
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -3593,8 +3612,8 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else tool_input
                     )
-                    last_active_step_title = format_step_title("Selecting tools")
-                    last_active_step_items = [f"Query: {_summarize_text(query)}"]
+                    last_active_step_title = format_step_title("Väljer verktyg")
+                    last_active_step_items = [f"Fråga: {_summarize_text(query)}"]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -3607,11 +3626,11 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else ""
                     )
-                    last_active_step_title = format_step_title("Reflecting on progress")
+                    last_active_step_title = format_step_title("Reflekterar över framsteg")
                     last_active_step_items = [
                         _summarize_text(reflection)
                         if reflection
-                        else "Reviewing findings, gaps, and next steps"
+                        else "Granskar resultat och nästa steg"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -3631,11 +3650,11 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else ""
                     )
-                    last_active_step_title = format_step_title("Generating podcast")
+                    last_active_step_title = format_step_title("Genererar podd")
                     last_active_step_items = [
-                        f"Title: {podcast_title}",
-                        f"Content: {content_len:,} characters",
-                        "Preparing audio generation...",
+                        f"Titel: {podcast_title}",
+                        f"Innehåll: {content_len:,} tecken",
+                        "Förbereder ljudgenerering...",
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -3654,7 +3673,7 @@ async def stream_new_chat(
                 #     )
                 else:
                     last_active_step_title = format_step_title(
-                        f"Using {tool_name.replace('_', ' ')}"
+                        f"Använder {tool_name.replace('_', ' ')}"
                     )
                     last_active_step_items = []
                     yield streaming_service.format_thinking_step(
@@ -3836,18 +3855,18 @@ async def stream_new_chat(
                 completed_step_ids.add(original_step_id)
                 if tool_name == "search_knowledge_base":
                     # Get result count if available
-                    result_info = "Search completed"
+                    result_info = "Sökning klar"
                     if isinstance(tool_output, dict):
                         result_len = tool_output.get("result_length", 0)
                         if result_len > 0:
                             result_info = (
-                                f"Found relevant information ({result_len} chars)"
+                                f"Hittade relevant information ({result_len} tecken)"
                             )
                     # Include original query in completed items
                     completed_items = [*last_active_step_items, result_info]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Searching knowledge base"),
+                        title=format_step_title("Söker i kunskapsbasen"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3860,7 +3879,7 @@ async def stream_new_chat(
                     todo_items = format_todo_items(
                         todos if isinstance(todos, list) else []
                     )
-                    completed_items = todo_items if todo_items else ["Plan updated"]
+                    completed_items = todo_items if todo_items else ["Plan uppdaterad"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Plan"),
@@ -3877,13 +3896,13 @@ async def stream_new_chat(
                         if isinstance(agent, dict) and agent.get("name")
                     ]
                     completed_items = (
-                        [f"Agents: {', '.join(agent_names)}"]
+                        [f"Agenter: {', '.join(agent_names)}"]
                         if agent_names
-                        else ["Agents selected"]
+                        else ["Agenter valda"]
                     )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Selecting agents"),
+                        title=format_step_title("Väljer agenter"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3897,13 +3916,13 @@ async def stream_new_chat(
                     if agent_name:
                         completed_items.append(f"Agent: {agent_name}")
                     if response:
-                        completed_items.append(f"Result: {_summarize_text(response)}")
+                        completed_items.append(f"Resultat: {_summarize_text(response)}")
                     if not completed_items:
-                        completed_items = ["Delegation completed"]
+                        completed_items = ["Delegering klar"]
                     title = (
-                        f"Delegated to {agent_name}"
+                        f"Delegerade till {agent_name}"
                         if agent_name
-                        else "Delegation completed"
+                        else "Delegering klar"
                     )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
@@ -3918,9 +3937,9 @@ async def stream_new_chat(
                     elif isinstance(tool_output, dict):
                         tool_ids = tool_output.get("tools") or []
                     completed_items = (
-                        [f"Tools: {', '.join(tool_ids)}"]
+                        [f"Verktyg: {', '.join(tool_ids)}"]
                         if tool_ids
-                        else ["Tools selected"]
+                        else ["Verktyg valda"]
                     )
                     rerank_query = ""
                     tool_input = tool_inputs.get(run_id) if run_id else None
@@ -3941,7 +3960,7 @@ async def stream_new_chat(
                                 )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Selecting tools"),
+                        title=format_step_title("Väljer verktyg"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3952,11 +3971,11 @@ async def stream_new_chat(
                     completed_items = (
                         [_summarize_text(reflection)]
                         if reflection
-                        else ["Reflection logged"]
+                        else ["Reflektion loggad"]
                     )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Reflecting on progress"),
+                        title=format_step_title("Reflekterar över framsteg"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3969,19 +3988,19 @@ async def stream_new_chat(
                         if has_error:
                             completed_items = [
                                 *last_active_step_items,
-                                f"Error: {tool_output.get('error', 'Failed to fetch')}",
+                                f"Fel: {tool_output.get('error', 'Kunde inte hämta')}",
                             ]
                         else:
                             completed_items = [
                                 *last_active_step_items,
-                                f"Title: {title[:60]}{'...' if len(title) > 60 else ''}",
-                                f"Domain: {domain}" if domain else "Preview loaded",
+                                f"Titel: {title[:60]}{'...' if len(title) > 60 else ''}",
+                                f"Domän: {domain}" if domain else "Förhandsgranskning laddad",
                             ]
                     else:
-                        completed_items = [*last_active_step_items, "Preview loaded"]
+                        completed_items = [*last_active_step_items, "Förhandsgranskning laddad"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Fetching link preview"),
+                        title=format_step_title("Hämtar länkförhandsgranskning"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3989,17 +4008,17 @@ async def stream_new_chat(
                     # Build completion items for image analysis
                     if isinstance(tool_output, dict):
                         title = tool_output.get("title", "")
-                        alt = tool_output.get("alt", "Image")
+                        alt = tool_output.get("alt", "Bild")
                         display_name = title or alt
                         completed_items = [
                             *last_active_step_items,
-                            f"Analyzed: {display_name[:50]}{'...' if len(display_name) > 50 else ''}",
+                            f"Analyserad: {display_name[:50]}{'...' if len(display_name) > 50 else ''}",
                         ]
                     else:
-                        completed_items = [*last_active_step_items, "Image analyzed"]
+                        completed_items = [*last_active_step_items, "Bild analyserad"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Analyzing the image"),
+                        title=format_step_title("Analyserar bilden"),
                         status="completed",
                         items=completed_items,
                     )
@@ -4012,19 +4031,19 @@ async def stream_new_chat(
                         if has_error:
                             completed_items = [
                                 *last_active_step_items,
-                                f"Error: {tool_output.get('error', 'Failed to scrape')[:50]}",
+                                f"Fel: {tool_output.get('error', 'Kunde inte hämta')[:50]}",
                             ]
                         else:
                             completed_items = [
                                 *last_active_step_items,
-                                f"Title: {title[:50]}{'...' if len(title) > 50 else ''}",
-                                f"Extracted: {word_count:,} words",
+                                f"Titel: {title[:50]}{'...' if len(title) > 50 else ''}",
+                                f"Extraherat: {word_count:,} ord",
                             ]
                     else:
-                        completed_items = [*last_active_step_items, "Content extracted"]
+                        completed_items = [*last_active_step_items, "Innehåll extraherat"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Scraping webpage"),
+                        title=format_step_title("Hämtar webbsida"),
                         status="completed",
                         items=completed_items,
                     )
@@ -4043,18 +4062,18 @@ async def stream_new_chat(
                         completed_items = [*last_active_step_items]
                         if location_name:
                             completed_items.append(
-                                f"Location: {location_name[:60]}{'...' if len(location_name) > 60 else ''}"
+                                f"Plats: {location_name[:60]}{'...' if len(location_name) > 60 else ''}"
                             )
                         if temperature is not None:
-                            completed_items.append(f"Temperature: {temperature} C")
+                            completed_items.append(f"Temperatur: {temperature}\u00b0C")
                     else:
                         completed_items = [
                             *last_active_step_items,
-                            "SMHI data retrieved",
+                            "SMHI-data hämtad",
                         ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Fetching SMHI data"),
+                        title=format_step_title("Hämtar SMHI-data"),
                         status="completed",
                         items=completed_items,
                     )
@@ -4077,17 +4096,17 @@ async def stream_new_chat(
                         route_summary = f"{origin} -> {destination}".strip(" ->")
                         if route_summary:
                             completed_items.append(
-                                f"Route: {route_summary[:60]}{'...' if len(route_summary) > 60 else ''}"
+                                f"Resväg: {route_summary[:60]}{'...' if len(route_summary) > 60 else ''}"
                             )
-                        completed_items.append(f"Matches: {len(matches)}")
+                        completed_items.append(f"Träffar: {len(matches)}")
                     else:
                         completed_items = [
                             *last_active_step_items,
-                            "Route results ready",
+                            "Reseresultat klara",
                         ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Planning route (Trafiklab)"),
+                        title=format_step_title("Planerar resväg (Trafiklab)"),
                         status="completed",
                         items=completed_items,
                     )
@@ -4099,22 +4118,22 @@ async def stream_new_chat(
                             title = record.get("title") or "Record"
                             completed_items = [
                                 *last_active_step_items,
-                                f"Record: {title}",
+                                f"Post: {title}",
                             ]
                         else:
                             results = tool_output.get("results", []) or []
                             completed_items = [
                                 *last_active_step_items,
-                                f"Results: {len(results)}",
+                                f"Resultat: {len(results)}",
                             ]
                     else:
                         completed_items = [
                             *last_active_step_items,
-                            "Libris results ready",
+                            "Libris-resultat klara",
                         ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Searching Libris catalog"),
+                        title=format_step_title("Söker i Libris-katalogen"),
                         status="completed",
                         items=completed_items,
                     )
@@ -4123,13 +4142,13 @@ async def stream_new_chat(
                         results = tool_output.get("results", []) or []
                         completed_items = [
                             *last_active_step_items,
-                            f"Results: {len(results)}",
+                            f"Resultat: {len(results)}",
                         ]
                     else:
-                        completed_items = [*last_active_step_items, "Job ads ready"]
+                        completed_items = [*last_active_step_items, "Jobbannonser klara"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Searching job ads"),
+                        title=format_step_title("Söker jobbannonser"),
                         status="completed",
                         items=completed_items,
                     )
@@ -4148,32 +4167,32 @@ async def stream_new_chat(
 
                     if podcast_status == "processing":
                         completed_items = [
-                            f"Title: {podcast_title}",
-                            "Audio generation started",
-                            "Processing in background...",
+                            f"Titel: {podcast_title}",
+                            "Ljudgenerering startad",
+                            "Bearbetar i bakgrunden...",
                         ]
                     elif podcast_status == "already_generating":
                         completed_items = [
-                            f"Title: {podcast_title}",
-                            "Podcast already in progress",
-                            "Please wait for it to complete",
+                            f"Titel: {podcast_title}",
+                            "Podd redan under generering",
+                            "Vänta tills den är klar",
                         ]
                     elif podcast_status == "error":
                         error_msg = (
-                            tool_output.get("error", "Unknown error")
+                            tool_output.get("error", "Okänt fel")
                             if isinstance(tool_output, dict)
-                            else "Unknown error"
+                            else "Okänt fel"
                         )
                         completed_items = [
-                            f"Title: {podcast_title}",
-                            f"Error: {error_msg[:50]}",
+                            f"Titel: {podcast_title}",
+                            f"Fel: {error_msg[:50]}",
                         ]
                     else:
                         completed_items = last_active_step_items
 
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Generating podcast"),
+                        title=format_step_title("Genererar podd"),
                         status="completed",
                         items=completed_items,
                     )
@@ -4209,7 +4228,7 @@ async def stream_new_chat(
                 #         else:
                 #             # Updating progress - show stats
                 #             completed_items = [
-                #                 f"Progress: {completed_count}/{todo_count} completed",
+                #                 f"Framsteg: {completed_count}/{todo_count} klara",
                 #             ]
                 #             if in_progress_count > 0:
                 #                 # Find the currently in-progress task name
@@ -4227,7 +4246,7 @@ async def stream_new_chat(
                 #                         f"Current: {in_progress_task}..."
                 #                     )
                 #     else:
-                #         completed_items = ["Plan updated"]
+                #         completed_items = ["Plan uppdaterad"]
                 #     yield streaming_service.format_thinking_step(
                 #         step_id=original_step_id,
                 #         title=last_active_step_title,
@@ -4267,11 +4286,11 @@ async def stream_new_chat(
                             completed_items = [f"[{name}]" for name in file_names[:4]]
                             completed_items.append(f"(+{len(file_names) - 4} more)")
                     else:
-                        completed_items = ["No files found"]
+                        completed_items = ["Inga filer hittades"]
 
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Exploring files"),
+                        title=format_step_title("Utforskar filer"),
                         status="completed",
                         items=completed_items,
                     )
@@ -4279,7 +4298,7 @@ async def stream_new_chat(
                     title = (
                         last_active_step_title
                         if last_active_step_title
-                        else format_step_title(f"Using {tool_name.replace('_', ' ')}")
+                        else format_step_title(f"Använder {tool_name.replace('_', ' ')}")
                     )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
@@ -4290,7 +4309,7 @@ async def stream_new_chat(
                 else:
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title(f"Using {tool_name.replace('_', ' ')}"),
+                        title=format_step_title(f"Använder {tool_name.replace('_', ' ')}"),
                         status="completed",
                         items=last_active_step_items,
                     )
@@ -4318,17 +4337,17 @@ async def stream_new_chat(
                         and tool_output.get("status") == "success"
                     ):
                         yield streaming_service.format_terminal_info(
-                            f"Podcast generated successfully: {tool_output.get('title', 'Podcast')}",
+                            f"Podd genererad: {tool_output.get('title', 'Podd')}",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Unknown error")
+                            tool_output.get("error", "Okänt fel")
                             if isinstance(tool_output, dict)
-                            else "Unknown error"
+                            else "Okänt fel"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Podcast generation failed: {error_msg}",
+                            f"Poddgenerering misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "link_preview":
@@ -4343,17 +4362,17 @@ async def stream_new_chat(
                     if isinstance(tool_output, dict) and "error" not in tool_output:
                         title = tool_output.get("title", "Link")
                         yield streaming_service.format_terminal_info(
-                            f"Link preview loaded: {title[:50]}{'...' if len(title) > 50 else ''}",
+                            f"Länkförhandsgranskning laddad: {title[:50]}{'...' if len(title) > 50 else ''}",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Failed to fetch")
+                            tool_output.get("error", "Kunde inte hämta")
                             if isinstance(tool_output, dict)
-                            else "Failed to fetch"
+                            else "Kunde inte hämta"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Link preview failed: {error_msg}",
+                            f"Länkförhandsgranskning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "display_image":
@@ -4370,7 +4389,7 @@ async def stream_new_chat(
                             "alt", "Image"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Image analyzed: {title[:40]}{'...' if len(title) > 40 else ''}",
+                            f"Bild analyserad: {title[:40]}{'...' if len(title) > 40 else ''}",
                             "success",
                         )
                 elif tool_name == "scrape_webpage":
@@ -4401,17 +4420,17 @@ async def stream_new_chat(
                         title = tool_output.get("title", "Webpage")
                         word_count = tool_output.get("word_count", 0)
                         yield streaming_service.format_terminal_info(
-                            f"Scraped: {title[:40]}{'...' if len(title) > 40 else ''} ({word_count:,} words)",
+                            f"Hämtad: {title[:40]}{'...' if len(title) > 40 else ''} ({word_count:,} ord)",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Failed to scrape")
+                            tool_output.get("error", "Kunde inte hämta sida")
                             if isinstance(tool_output, dict)
-                            else "Failed to scrape"
+                            else "Kunde inte hämta sida"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Scrape failed: {error_msg}",
+                            f"Hämtning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name.startswith("smhi_"):
@@ -4432,17 +4451,17 @@ async def stream_new_chat(
                             or "location"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"SMHI data loaded for {location_name[:40]}",
+                            f"SMHI-data laddad för {location_name[:40]}",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Failed to fetch SMHI data")
+                            tool_output.get("error", "Kunde inte hämta SMHI-data")
                             if isinstance(tool_output, dict)
-                            else "Failed to fetch SMHI data"
+                            else "Kunde inte hämta SMHI-data"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"SMHI lookup failed: {error_msg}",
+                            f"SMHI-hämtning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "trafiklab_route":
@@ -4458,17 +4477,17 @@ async def stream_new_chat(
                     ):
                         matches = tool_output.get("matching_entries", []) or []
                         yield streaming_service.format_terminal_info(
-                            f"Trafiklab departures loaded ({len(matches)} matches)",
+                            f"Trafiklab-avgångar laddade ({len(matches)} träffar)",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Failed to fetch departures")
+                            tool_output.get("error", "Kunde inte hämta avgångar")
                             if isinstance(tool_output, dict)
-                            else "Failed to fetch departures"
+                            else "Kunde inte hämta avgångar"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Trafiklab route failed: {error_msg}",
+                            f"Trafiklab-rutt misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "libris_search":
@@ -4484,17 +4503,17 @@ async def stream_new_chat(
                     ):
                         results = tool_output.get("results", []) or []
                         yield streaming_service.format_terminal_info(
-                            f"Libris results loaded ({len(results)} items)",
+                            f"Libris-resultat laddade ({len(results)} poster)",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Libris search failed")
+                            tool_output.get("error", "Libris-sökning misslyckades")
                             if isinstance(tool_output, dict)
-                            else "Libris search failed"
+                            else "Libris-sökning misslyckades"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Libris search failed: {error_msg}",
+                            f"Libris-sökning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "jobad_links_search":
@@ -4510,17 +4529,17 @@ async def stream_new_chat(
                     ):
                         results = tool_output.get("results", []) or []
                         yield streaming_service.format_terminal_info(
-                            f"Job ads loaded ({len(results)} items)",
+                            f"Jobbannonser laddade ({len(results)} poster)",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Job ad search failed")
+                            tool_output.get("error", "Jobbsökning misslyckades")
                             if isinstance(tool_output, dict)
-                            else "Job ad search failed"
+                            else "Jobbsökning misslyckades"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Job ad search failed: {error_msg}",
+                            f"Jobbsökning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "search_knowledge_base":
@@ -4530,7 +4549,7 @@ async def stream_new_chat(
                         {"status": "completed", "result_length": len(str(tool_output))},
                     )
                     yield streaming_service.format_terminal_info(
-                        "Knowledge base search completed", "success"
+                        "Sökning i kunskapsbasen klar", "success"
                     )
                 elif tool_name == "write_todos":
                     todos = (
@@ -4550,7 +4569,7 @@ async def stream_new_chat(
                         else {"result": tool_output},
                     )
                     yield streaming_service.format_terminal_info(
-                        f"Plan updated ({len(todo_items) or len(todos) if isinstance(todos, list) else 0} tasks)",
+                        f"Plan uppdaterad ({len(todo_items) or len(todos) if isinstance(todos, list) else 0} uppgifter)",
                         "success",
                     )
                 elif tool_name == "write_todos":
@@ -4566,12 +4585,12 @@ async def stream_new_chat(
                         todos = tool_output.get("todos", [])
                         todo_count = len(todos) if isinstance(todos, list) else 0
                         yield streaming_service.format_terminal_info(
-                            f"Plan updated ({todo_count} tasks)",
+                            f"Plan uppdaterad ({todo_count} uppgifter)",
                             "success",
                         )
                     else:
                         yield streaming_service.format_terminal_info(
-                            "Plan updated",
+                            "Plan uppdaterad",
                             "success",
                         )
                 else:
@@ -4642,7 +4661,7 @@ async def stream_new_chat(
                                 display_call_id, image_result
                             )
                     yield streaming_service.format_terminal_info(
-                        f"Tool {tool_name} completed", "success"
+                        f"Verktyg {tool_name} klart", "success"
                     )
 
             # Handle chain/agent end to close any open text blocks
