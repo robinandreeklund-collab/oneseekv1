@@ -32,8 +32,14 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 async def _all_prompt_definitions(
     session: AsyncSession,
+    *,
+    include_tools: bool = False,
 ) -> tuple[list[PromptDefinition], dict[str, PromptDefinition]]:
-    """Return static + dynamic prompt definitions and a combined lookup map."""
+    """Return static + dynamic prompt definitions and a combined lookup map.
+
+    When *include_tools* is True the list also contains dynamic definitions
+    for every tool that is assigned to an agent (via ``flow_tools``).
+    """
     static_defs = get_prompt_definitions(active_only=True)
     combined_map = dict(ACTIVE_PROMPT_DEFINITION_MAP)
 
@@ -46,17 +52,39 @@ async def _all_prompt_definitions(
     dynamic_defs: list[PromptDefinition] = []
     for agent in agents:
         pk = str(agent.get("prompt_key") or "").strip()
-        if not pk:
-            continue
-        full_key = f"agent.{pk}.system"
-        if full_key in combined_map:
-            continue
-        defn = make_dynamic_prompt_definition(full_key)
-        if defn:
-            dynamic_defs.append(defn)
-            combined_map[full_key] = defn
+        if pk:
+            full_key = f"agent.{pk}.system"
+            if full_key not in combined_map:
+                defn = make_dynamic_prompt_definition(full_key)
+                if defn:
+                    dynamic_defs.append(defn)
+                    combined_map[full_key] = defn
+
+        # Generate tool prompt definitions for tools assigned to agents
+        if include_tools:
+            for ft in list(agent.get("flow_tools") or []):
+                tool_id = str(ft.get("tool_id") or "").strip()
+                if not tool_id:
+                    continue
+                tool_key = f"tool.{tool_id}.system"
+                if tool_key in combined_map:
+                    continue
+                defn = make_dynamic_prompt_definition(tool_key)
+                if defn:
+                    dynamic_defs.append(defn)
+                    combined_map[tool_key] = defn
 
     return static_defs + dynamic_defs, combined_map
+
+
+def _resolve_single_prompt_definition(
+    key: str,
+    combined_map: dict[str, PromptDefinition],
+) -> PromptDefinition | None:
+    """Resolve a single key — check combined map first, then create dynamically."""
+    if key in combined_map:
+        return combined_map[key]
+    return make_dynamic_prompt_definition(key)
 
 
 async def _require_admin(
@@ -88,7 +116,7 @@ async def get_agent_prompts(
 ):
     await _require_admin(session, user)
     overrides = await get_global_prompt_overrides(session)
-    all_defs, _ = await _all_prompt_definitions(session)
+    all_defs, _ = await _all_prompt_definitions(session, include_tools=True)
     items = []
     for definition in all_defs:
         items.append(
@@ -115,10 +143,10 @@ async def update_agent_prompts(
     user: User = Depends(current_active_user),
 ):
     await _require_admin(session, user)
-    _, combined_map = await _all_prompt_definitions(session)
+    _, combined_map = await _all_prompt_definitions(session, include_tools=True)
     updates = []
     for item in payload.items:
-        if item.key not in combined_map:
+        if not _resolve_single_prompt_definition(item.key, combined_map):
             raise HTTPException(
                 status_code=400, detail=f"Unknown prompt key: {item.key}"
             )
@@ -139,7 +167,7 @@ async def update_agent_prompts(
         ) from exc
 
     overrides = await get_global_prompt_overrides(session)
-    all_defs, _ = await _all_prompt_definitions(session)
+    all_defs, _ = await _all_prompt_definitions(session, include_tools=True)
     items = []
     for definition in all_defs:
         items.append(
@@ -166,8 +194,8 @@ async def get_agent_prompt_history(
     user: User = Depends(current_active_user),
 ):
     await _require_admin(session, user)
-    _, combined_map = await _all_prompt_definitions(session)
-    if prompt_key not in combined_map:
+    _, combined_map = await _all_prompt_definitions(session, include_tools=True)
+    if not _resolve_single_prompt_definition(prompt_key, combined_map):
         raise HTTPException(status_code=400, detail="Unknown prompt key")
 
     result = await session.execute(
