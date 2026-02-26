@@ -288,7 +288,9 @@ function PhaseRow({
    Animated progress bar — shows the "signal" flowing through
    ──────────────────────────────────────────────────────────── */
 function ProgressSignal({ activePhase, total }: { activePhase: number; total: number }) {
-	const progress = total > 1 ? activePhase / (total - 1) : 0;
+	const safeIdx = Math.max(0, Math.min(activePhase, total - 1));
+	const progress = total > 1 ? safeIdx / (total - 1) : 0;
+	const currentPhase = PHASES[safeIdx];
 
 	return (
 		<div className="relative h-1 rounded-full bg-neutral-800/60 overflow-hidden">
@@ -305,8 +307,8 @@ function ProgressSignal({ activePhase, total }: { activePhase: number; total: nu
 			<motion.div
 				className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full"
 				style={{
-					background: PHASES[Math.min(activePhase, PHASES.length - 1)].color,
-					boxShadow: `0 0 12px ${PHASES[Math.min(activePhase, PHASES.length - 1)].glowColor}`,
+					background: currentPhase.color,
+					boxShadow: `0 0 12px ${currentPhase.glowColor}`,
 				}}
 				initial={{ left: "0%" }}
 				animate={{ left: `${progress * 100}%` }}
