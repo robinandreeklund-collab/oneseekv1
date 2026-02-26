@@ -207,6 +207,11 @@ Regler:
 - Håll rationale kort och på svenska.
 - Max 4 verktyg per agent.
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
+
 Returnera strikt JSON:
 {
   "thinking": "Resonera steg för steg om verktygsval, beroenden och parallellitet per domänagent.",
