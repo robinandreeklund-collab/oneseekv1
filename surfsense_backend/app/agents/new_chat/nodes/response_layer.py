@@ -172,14 +172,20 @@ def build_response_layer_router_node(
         )
 
         try:
-            message = await llm.ainvoke(
+            # Use astream so astream_events(v2) emits per-token events
+            # that the streaming pipeline can route to reasoning-delta.
+            chunks: list[str] = []
+            async for chunk in llm.astream(
                 [
                     SystemMessage(content=_prompt),
                     HumanMessage(content=human_content),
                 ],
                 max_tokens=512,
-            )
-            raw = str(getattr(message, "content", "") or "").strip()
+            ):
+                content = getattr(chunk, "content", "")
+                if content:
+                    chunks.append(content)
+            raw = "".join(chunks).strip()
             decision = _parse_router_response(raw)
             if decision:
                 mode = decision["chosen_layer"]
@@ -223,11 +229,17 @@ def build_response_layer_node(
     _mode_prompts = mode_prompts or {}
 
     async def _llm_format(prompt_template: str, response: str, query: str) -> str:
-        """Use LLM to reformat *response* according to *prompt_template*."""
+        """Use LLM to reformat *response* according to *prompt_template*.
+
+        Uses ``astream`` so that LangGraph's ``astream_events(v2)`` emits
+        per-token ``on_chat_model_stream`` events.  This lets the streaming
+        pipeline route the formatted text to ``text-delta`` in real-time.
+        """
         if llm is None:
             return response
         try:
-            message = await llm.ainvoke(
+            chunks: list[str] = []
+            async for chunk in llm.astream(
                 [
                     SystemMessage(content=prompt_template),
                     HumanMessage(
@@ -238,8 +250,11 @@ def build_response_layer_node(
                     ),
                 ],
                 max_tokens=4096,
-            )
-            result = str(getattr(message, "content", "") or "").strip()
+            ):
+                content = getattr(chunk, "content", "")
+                if content:
+                    chunks.append(content)
+            result = "".join(chunks).strip()
             return result if result else response
         except Exception:
             logger.debug(
