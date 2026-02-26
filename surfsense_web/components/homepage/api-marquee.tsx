@@ -19,10 +19,12 @@ const SWEDISH_APIS: SwedishAPI[] = [
 	{ name: "Trafikverket", desc: "Infrastruktur & Trafik", color: "from-emerald-500 to-green-600", logo: "/api-logos/trafiklab.png" },
 	{ name: "Riksdagen", desc: "Lagstiftning & Politik", color: "from-red-500 to-rose-600", logo: "/api-logos/riksdagen-logo.png" },
 	{ name: "Nord Pool", desc: "Energipriser & Elmarknad", color: "from-indigo-500 to-blue-600", logo: "/api-logos/Nord_Pool_Logo.png" },
+	{ name: "Skolverket", desc: "Utbildningsstatistik", color: "from-teal-500 to-cyan-600", logo: "/api-logos/skolverket-logo.png" },
+	{ name: "Tavily", desc: "Webbsökning", color: "from-indigo-500 to-blue-600", logo: "/api-logos/tavily-logo.png" },
+	{ name: "Blocket", desc: "Marknadsplats", color: "from-red-500 to-red-600", logo: "/api-logos/blocket-logo.png" },
+	{ name: "Tradera", desc: "Auktioner & Handel", color: "from-blue-500 to-blue-600", logo: "/api-logos/tradera-logo.png" },
 	{ name: "Kolada", desc: "Kommunal Statistik", color: "from-purple-500 to-violet-600" },
-	{ name: "Tavily", desc: "Webbsökning", color: "from-indigo-500 to-blue-600" },
 	{ name: "Skatteverket", desc: "Skatt & Folkbokföring", color: "from-yellow-500 to-amber-600" },
-	{ name: "Skolverket", desc: "Utbildningsstatistik", color: "from-teal-500 to-cyan-600" },
 	{ name: "Jordbruksverket", desc: "Jordbruk & Livsmedel", color: "from-lime-500 to-green-600" },
 	{ name: "Valmyndigheten", desc: "Valstatistik", color: "from-violet-500 to-purple-600" },
 	{ name: "Naturvårdsverket", desc: "Miljödata", color: "from-green-500 to-emerald-600" },
@@ -32,41 +34,41 @@ function MarqueeRow({ items, reverse = false }: { items: SwedishAPI[]; reverse?:
 	const duplicated = [...items, ...items];
 
 	return (
-		<div className="flex overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]">
+		<div className="flex overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">
 			<div
-				className={`flex gap-5 py-2 ${reverse ? "[animation-direction:reverse]" : ""} animate-marquee`}
+				className={`flex gap-6 py-3 ${reverse ? "[animation-direction:reverse]" : ""} animate-marquee`}
 			>
 				{duplicated.map((api, i) => (
 					<div
 						key={`${api.name}-${i}`}
-						className="group flex-shrink-0 flex flex-col items-center gap-2.5 rounded-2xl border border-neutral-200/50 dark:border-white/10 bg-white/60 dark:bg-neutral-900/40 backdrop-blur-sm px-6 py-5 transition-all duration-300 hover:border-purple-300 dark:hover:border-purple-500/30 hover:shadow-lg hover:shadow-purple-500/5 min-w-[120px]"
+						className="group flex-shrink-0 flex flex-col items-center gap-3 rounded-2xl border border-neutral-200/50 dark:border-white/10 bg-white/70 dark:bg-neutral-900/50 backdrop-blur-sm px-8 py-6 transition-all duration-300 hover:border-purple-300 dark:hover:border-purple-500/30 hover:shadow-lg hover:shadow-purple-500/5 min-w-[150px]"
 					>
-						{/* Logo — big and prominent */}
+						{/* Logo — large and prominent */}
 						{api.logo ? (
-							<div className="w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0 bg-white dark:bg-neutral-800 p-1.5">
+							<div className="w-20 h-20 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0 bg-white dark:bg-neutral-800 p-2">
 								<Image
 									src={api.logo}
 									alt={api.name}
-									width={56}
-									height={56}
+									width={80}
+									height={80}
 									className="object-contain w-full h-full"
 								/>
 							</div>
 						) : (
 							<div
-								className={`w-14 h-14 rounded-xl bg-gradient-to-br ${api.color} flex items-center justify-center flex-shrink-0`}
+								className={`w-20 h-20 rounded-xl bg-gradient-to-br ${api.color} flex items-center justify-center flex-shrink-0`}
 							>
-								<span className="text-white text-base font-bold leading-none">
+								<span className="text-white text-xl font-bold leading-none">
 									{api.name.slice(0, 2).toUpperCase()}
 								</span>
 							</div>
 						)}
-						{/* Name + desc below the logo */}
+						{/* Name + desc */}
 						<div className="flex flex-col items-center text-center">
-							<span className="text-xs font-semibold text-neutral-800 dark:text-white whitespace-nowrap">
+							<span className="text-sm font-semibold text-neutral-800 dark:text-white whitespace-nowrap">
 								{api.name}
 							</span>
-							<span className="text-[10px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
+							<span className="text-[11px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
 								{api.desc}
 							</span>
 						</div>
@@ -82,8 +84,8 @@ export function APIMarquee() {
 	const ref = useRef<HTMLDivElement>(null);
 	const isInView = useInView(ref, { once: true, amount: 0.2 });
 
-	const firstRow = SWEDISH_APIS.slice(0, 7);
-	const secondRow = SWEDISH_APIS.slice(7);
+	const firstRow = SWEDISH_APIS.slice(0, 8);
+	const secondRow = SWEDISH_APIS.slice(8);
 
 	return (
 		<section
@@ -115,7 +117,7 @@ export function APIMarquee() {
 				</motion.div>
 
 				<motion.div
-					className="space-y-4"
+					className="space-y-5"
 					initial={{ opacity: 0 }}
 					animate={isInView ? { opacity: 1 } : { opacity: 0 }}
 					transition={{ duration: 0.6, delay: 0.2 }}

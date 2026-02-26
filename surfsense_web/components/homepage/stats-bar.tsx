@@ -80,7 +80,7 @@ export function StatsBar() {
 		<section ref={ref} className="relative py-16 md:py-20">
 			<div className="mx-auto max-w-5xl px-6">
 				<motion.div
-					className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12"
+					className="grid grid-cols-3 gap-8 md:gap-16 max-w-3xl mx-auto"
 					initial={{ opacity: 0, y: 20 }}
 					animate={isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
 					transition={{ duration: 0.6 }}
