@@ -2923,6 +2923,11 @@ async def stream_new_chat(
                     if _is_internal_pipeline_chain_name(parent_chain_name):
                         model_parent_chain_by_run_id[run_id] = parent_chain_name
                         internal_model_buffers.setdefault(run_id, "")
+                        # Create per-node think filter so reasoning streams
+                        # in real-time into the FadeLayer think-box.
+                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                            assume_think=_think_filter._assume_think,
+                        )
                         # Emit a node-transition header immediately so the
                         # frontend shows which pipeline phase is now active.
                         if display_key != last_reasoning_pipeline_node:

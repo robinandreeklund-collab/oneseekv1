@@ -107,9 +107,11 @@ Forfina ett redan framtaget svar utan att lagga till nya fakta.
 Regler:
 - Behall betydelse och fakta.
 - Kort och tydligt pa svenska.
-- Ingen intern process-text.
+- Ingen intern process-text. Skriv ALDRIG ut dina tankar eller resonemang.
 - For mixade fragor: strukturera svaret i sektioner per deldoman.
 - Om kallsvaret innehaller guardrail/no-data/not-found: bevara det, hitta inte pa data.
+- "response"-faltet ska BARA innehalla det slutgiltiga svaret till anvandaren,
+  inga numrerade steg, ingen planering, inget "jag ska nu...".
 
 Returnera strikt JSON:
 {
@@ -206,6 +208,8 @@ Regler:
 - Om svaret innehåller siffror eller datum: presentera dem tydligt.
 - Skriv på svenska om inte annat framgår av kontexten.
 - Ändra ALDRIG faktainnehåll — bara formatering.
+- Skriv ALDRIG ut intern resonering, planering eller steg-för-steg-tänkande.
+  Skriv BARA det slutgiltiga svaret.
 """
 
 
