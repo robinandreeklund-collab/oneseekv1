@@ -63,9 +63,10 @@ export function convertToThreadMessage(msg: MessageRecord): ThreadMessageLike {
 			.filter((part: unknown) => {
 				if (typeof part !== "object" || part === null || !("type" in part)) return true;
 				const partType = (part as { type: string }).type;
-				// Filter out thinking-steps, mentioned-documents, and attachments
+				// Filter out thinking-steps, reasoning-text, mentioned-documents, and attachments
 				return (
 					partType !== "thinking-steps" &&
+					partType !== "reasoning-text" &&
 					partType !== "mentioned-documents" &&
 					partType !== "attachments" &&
 					partType !== "compare-summary"
