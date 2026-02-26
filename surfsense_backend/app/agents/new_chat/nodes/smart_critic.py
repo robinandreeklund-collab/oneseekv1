@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Any, Awaitable, Callable
 from langchain_core.runnables import RunnableConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_status(value: Any) -> str:
@@ -93,6 +96,24 @@ def build_smart_critic_node(
             state.get("final_agent_response") or state.get("final_response") or ""
         ).strip()
         replan_count = int(state.get("replan_count") or 0)
+        total_steps = int(state.get("total_steps") or 0)
+        critic_history = list(state.get("critic_history") or [])
+
+        # --- P1 guard_finalized: respect orchestration_guard decision ---
+        if state.get("guard_finalized") and final_response:
+            logger.info(
+                "smart_critic: guard_finalized=True, accepting (total_steps=%d)",
+                total_steps,
+            )
+            return {
+                "critic_decision": "ok",
+                "final_response": final_response,
+                "orchestration_phase": "finalize",
+                "critic_history": critic_history + [
+                    {"decision": "ok", "reason": "guard_finalized", "step": total_steps}
+                ],
+            }
+
         contracts = _collect_recent_contracts(
             state=state,
             contract_from_payload_fn=contract_from_payload_fn,
@@ -122,6 +143,8 @@ def build_smart_critic_node(
                         continue
 
         if not contracts:
+            # Delegate to fallback (base critic_node) which has its own
+            # guard_finalized / total_steps / critic_history handling.
             return await fallback_critic_node(
                 state,
                 config=config,
@@ -152,9 +175,15 @@ def build_smart_critic_node(
         all_failed = all(status in {"error", "blocked"} for status in statuses)
         has_success = any(status == "success" for status in statuses)
 
+        # --- P1 adaptive: lower confidence threshold based on total_steps ---
+        adaptive_confidence = float(min_mechanical_confidence)
+        if total_steps >= 8:
+            adaptive_confidence = max(0.4, adaptive_confidence - 0.15)
+        elif total_steps >= 5:
+            adaptive_confidence = max(0.5, adaptive_confidence - 0.1)
+
         # Only replan when all agents failed AND there is no existing final
-        # response to fall back on. Discarding a valid partial response by
-        # setting final_response=None when we only want a replan is wrong.
+        # response to fall back on.
         if all_failed and not final_response and replan_count < max_replan_attempts:
             await _record_feedback(False)
             return {
@@ -164,20 +193,38 @@ def build_smart_critic_node(
                 "targeted_missing_info": [],
                 "replan_count": replan_count + 1,
                 "orchestration_phase": "plan",
+                "critic_history": critic_history + [
+                    {"decision": "replan", "reason": "all_failed", "step": total_steps}
+                ],
             }
 
         if missing_info and replan_count < max_replan_attempts:
-            await _record_feedback(False)
-            return {
-                "critic_decision": "needs_more",
-                "final_agent_response": None,
-                "final_response": None,
-                "targeted_missing_info": missing_info[:6],
-                "replan_count": replan_count + 1,
-                "orchestration_phase": "resolve_tools",
-            }
+            # P1 adaptive: skip needs_more if we've already retried recently.
+            recent_needs_more = sum(
+                1 for h in critic_history[-3:]
+                if h.get("decision") == "needs_more"
+            )
+            if recent_needs_more >= 2:
+                logger.info(
+                    "smart_critic: %d recent needs_more, forcing ok despite missing info",
+                    recent_needs_more,
+                )
+            else:
+                await _record_feedback(False)
+                return {
+                    "critic_decision": "needs_more",
+                    "final_agent_response": None,
+                    "final_response": None,
+                    "targeted_missing_info": missing_info[:6],
+                    "replan_count": replan_count + 1,
+                    "orchestration_phase": "resolve_tools",
+                    "critic_history": critic_history + [
+                        {"decision": "needs_more", "reason": "missing_info", "step": total_steps}
+                    ],
+                }
 
-        if has_success and avg_confidence >= float(min_mechanical_confidence):
+        # P1: use adaptive_confidence instead of fixed min_mechanical_confidence
+        if has_success and avg_confidence >= adaptive_confidence:
             resolved_response = final_response
             resolved_agent_name = str(state.get("final_agent_name") or "").strip()
             if not resolved_response:
@@ -193,6 +240,9 @@ def build_smart_critic_node(
                     "critic_decision": "ok",
                     "targeted_missing_info": [],
                     "orchestration_phase": "finalize",
+                    "critic_history": critic_history + [
+                        {"decision": "ok", "reason": "success_confident", "step": total_steps}
+                    ],
                 }
                 if not final_response:
                     updates["final_response"] = resolved_response
@@ -206,6 +256,9 @@ def build_smart_critic_node(
                     "targeted_missing_info": [],
                     "replan_count": replan_count + 1,
                     "orchestration_phase": "resolve_tools",
+                    "critic_history": critic_history + [
+                        {"decision": "needs_more", "reason": "no_resolved_response", "step": total_steps}
+                    ],
                 }
 
         fallback_updates = await fallback_critic_node(

@@ -234,6 +234,9 @@ _LOOP_GUARD_TOOL_NAMES = {
 }
 _LOOP_GUARD_MAX_CONSECUTIVE = 4  # Was 12 — unreachable given _MAX_AGENT_HOPS_PER_TURN=3
 _MAX_AGENT_HOPS_PER_TURN = 3
+# P1 loop-fix: hard cap on total meaningful steps across the entire flow.
+# At this threshold the flow is forced to synthesis regardless of critic decision.
+MAX_TOTAL_STEPS = 12
 _SANDBOX_CODE_TOOL_IDS = (
     "sandbox_write_file",
     "sandbox_read_file",

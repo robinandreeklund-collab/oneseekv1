@@ -477,6 +477,7 @@ def build_executor_nodes(
     format_cross_session_memory_context_fn: Callable[[dict[str, Any]], str | None],
     format_rolling_context_summary_context_fn: Callable[[dict[str, Any]], str | None],
     coerce_supervisor_tool_calls_fn: Callable[..., Any],
+    think_on_tool_calls: bool = True,
 ):
     def _build_context_messages(
         *,
@@ -502,6 +503,17 @@ def build_executor_nodes(
 
         # Base system prompt (stored once per chat, not repeated per turn).
         base_system_prompt = str(state.get("worker_system_prompt") or "").strip()
+        # P1: strip <think> instructions from executor system prompt when
+        # THINK_ON_TOOL_CALLS is disabled.  This prevents the model from
+        # wasting tokens on reasoning blocks before making tool calls.
+        if not think_on_tool_calls and base_system_prompt:
+            base_system_prompt = _THINK_TAG_RE.sub("", base_system_prompt)
+            base_system_prompt = re.sub(
+                r"KRITISKT:.*?<think>-block\.",
+                "",
+                base_system_prompt,
+                flags=re.DOTALL,
+            ).strip()
 
         plan_context = None if new_user_turn else format_plan_context_fn(state)
         recent_context = None if new_user_turn else format_recent_calls_fn(state)

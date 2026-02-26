@@ -839,14 +839,19 @@ _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "domain_planner",
     "critic",
     "response_layer_router",
+    # P1 loop-fix: synthesizer and progressive_synthesizer are now internal
+    # so their text routes to FadeLayer (think-box) as reasoning-delta.
+    # Only response_layer produces user-visible text-delta.
+    "synthesizer",
+    "progressive_synthesizer",
 )
 
 # Pipeline nodes whose model output IS the final user-facing response.
-# These are intentionally NOT in _INTERNAL_PIPELINE_CHAIN_TOKENS so their
-# text streams as text-delta (visible response) rather than being buffered.
+# Only response_layer, smalltalk, and compare_synthesizer produce text-delta.
+# P1: synthesizer/progressive_synthesizer moved to INTERNAL above so that
+# response_layer is ALWAYS the last visible text output (no more text-clear
+# race between synthesizer and response_layer).
 _OUTPUT_PIPELINE_CHAIN_TOKENS = (
-    "synthesizer",
-    "progressive_synthesizer",
     "response_layer",
     "smalltalk",
     "compare_synthesizer",
@@ -2023,6 +2028,14 @@ async def stream_new_chat(
             runtime_flags.get("think_enabled"),
             default=True,
         )
+        # P1: THINK_ON_TOOL_CALLS — when False, executor nodes skip <think>
+        # instructions in their system prompt. Env var or runtime flag.
+        import os as _os
+        think_on_tool_calls = _coerce_runtime_flag(
+            runtime_flags.get("think_on_tool_calls")
+            or _os.environ.get("THINK_ON_TOOL_CALLS"),
+            default=True,
+        )
         subagent_enabled = _coerce_runtime_flag(
             runtime_flags.get("subagent_enabled"),
             default=True,
@@ -2245,6 +2258,7 @@ async def stream_new_chat(
                 riksdagen_prompt=riksdagen_worker_prompt,
                 marketplace_prompt=marketplace_worker_prompt,
                 tool_prompt_overrides=prompt_overrides,
+                think_on_tool_calls=think_on_tool_calls,
             )
         else:
             smalltalk_system_prompt = append_datetime_context(

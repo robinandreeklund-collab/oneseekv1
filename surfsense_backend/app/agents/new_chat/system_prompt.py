@@ -33,15 +33,44 @@ Aktuell tid (UTC): {resolved_time}
 </core_directives>
 """
 
+# P1: Core prompt WITHOUT think instructions — used when THINK_ON_TOOL_CALLS=false
+# for executor nodes that make tool calls.
+SURFSENSE_CORE_GLOBAL_PROMPT_NO_THINK = """
+<core_directives>
+Tänk ALLTID på svenska i dina interna resonemang.
 
-def inject_core_prompt(core_prompt: str, target_prompt: str) -> str:
+Svara användaren på samma språk som användaren använder.
+
+Dagens datum (UTC): {resolved_today}
+Aktuell tid (UTC): {resolved_time}
+</core_directives>
+"""
+
+
+def inject_core_prompt(
+    core_prompt: str,
+    target_prompt: str,
+    *,
+    include_think_instructions: bool = True,
+) -> str:
     """Prepend the resolved core global prompt to *target_prompt*.
 
     If *core_prompt* is empty the target is returned unchanged.
+    When *include_think_instructions* is False, the ``<think>`` instruction
+    block is stripped from the core prompt (P1: THINK_ON_TOOL_CALLS toggle).
     """
     core = (core_prompt or "").strip()
     if not core:
         return target_prompt
+    if not include_think_instructions:
+        # Strip the think-specific instruction lines from the core prompt.
+        import re as _re
+        core = _re.sub(
+            r"KRITISKT:.*?<think>-block\.",
+            "",
+            core,
+            flags=_re.DOTALL,
+        ).strip()
     return core + "\n\n" + target_prompt
 
 

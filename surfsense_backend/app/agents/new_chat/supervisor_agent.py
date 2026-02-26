@@ -213,6 +213,7 @@ from app.agents.new_chat.supervisor_constants import (
     TOOL_CONTEXT_MAX_CHARS,
     TOOL_CONTEXT_MAX_ITEMS,
     TOOL_MSG_THRESHOLD,
+    MAX_TOTAL_STEPS,
 )
 from app.agents.new_chat.supervisor_types import (
     AgentDefinition,
@@ -1762,6 +1763,7 @@ async def create_supervisor_agent(
     riksdagen_prompt: str | None = None,
     marketplace_prompt: str | None = None,
     tool_prompt_overrides: dict[str, str] | None = None,
+    think_on_tool_calls: bool = True,
 ):
     prompt_overrides = dict(tool_prompt_overrides or {})
     tool_prompt_overrides = dict(prompt_overrides)
@@ -5594,6 +5596,7 @@ async def create_supervisor_agent(
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
         render_guard_message_fn=_render_guard_message,
+        max_total_steps=MAX_TOTAL_STEPS,
     )
     smart_critic_node = build_smart_critic_node(
         fallback_critic_node=critic_node,
@@ -5667,6 +5670,7 @@ async def create_supervisor_agent(
         format_cross_session_memory_context_fn=_format_cross_session_memory_context,
         format_rolling_context_summary_context_fn=_format_rolling_context_summary_context,
         coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
+        think_on_tool_calls=think_on_tool_calls,
     )
 
     async def memory_context_node(
@@ -6128,6 +6132,8 @@ async def create_supervisor_agent(
         **kwargs,
     ) -> SupervisorState:
         updates: dict[str, Any] = {}
+        # P1: increment total_steps for every pass through orchestration_guard.
+        updates["total_steps"] = int(state.get("total_steps") or 0) + 1
         route_hint = str(state.get("route_hint") or "").strip().lower()
         latest_user_query = _latest_user_query(state.get("messages") or [])
         parallel_preview = list(state.get("guard_parallel_preview") or [])[:3]
@@ -6224,6 +6230,7 @@ async def create_supervisor_agent(
                     str(last_entry.get("agent") or "").strip() or "agent"
                 )
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         if (
             "final_agent_response" not in updates
@@ -6239,6 +6246,7 @@ async def create_supervisor_agent(
                 updates["final_response"] = ai_fallback
                 updates["final_agent_name"] = "assistant"
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         if (
             "final_agent_response" not in updates
@@ -6250,6 +6258,7 @@ async def create_supervisor_agent(
                 updates["final_response"] = best[0]
                 updates["final_agent_name"] = best[1]
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
             else:
                 rendered = _render_guard_message(loop_guard_template, parallel_preview)
                 if not rendered:
@@ -6262,6 +6271,7 @@ async def create_supervisor_agent(
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         if last_call_payload:
             last_contract = _contract_from_payload(last_call_payload)
@@ -6289,6 +6299,7 @@ async def create_supervisor_agent(
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         if "final_agent_response" not in updates and agent_hops >= _MAX_AGENT_HOPS_PER_TURN:
             best = _best_actionable_entry(call_entries)
@@ -6311,6 +6322,7 @@ async def create_supervisor_agent(
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
             updates["orchestration_phase"] = "finalize"
+            updates["guard_finalized"] = True
 
         # Hard guardrail: stop runaway tool loops within a single user turn.
         if "final_agent_response" not in updates:
@@ -6332,6 +6344,7 @@ async def create_supervisor_agent(
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         # Progressive message pruning when messages get long
         if len(messages) > MESSAGE_PRUNING_THRESHOLD:
@@ -6433,6 +6446,10 @@ async def create_supervisor_agent(
             state.get("final_response") or state.get("final_agent_response") or ""
         ).strip()
         replan_count = int(state.get("replan_count") or 0)
+        total_steps = int(state.get("total_steps") or 0)
+        # P1: guard_finalized or total_steps cap → always exit to synthesis.
+        if state.get("guard_finalized") or total_steps >= MAX_TOTAL_STEPS:
+            return "synthesis_hitl"
         if final_response and decision in {"ok", "pass", "finalize"}:
             return "synthesis_hitl"
         if decision == "replan" and replan_count < _MAX_REPLAN_ATTEMPTS:

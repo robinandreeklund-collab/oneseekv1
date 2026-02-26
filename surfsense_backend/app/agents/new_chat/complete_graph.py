@@ -37,6 +37,7 @@ async def build_complete_graph(
     riksdagen_prompt: str | None = None,
     marketplace_prompt: str | None = None,
     tool_prompt_overrides: dict[str, str] | None = None,
+    think_on_tool_calls: bool = True,
 ):
     """Build and compile the complete supervisor graph."""
     return await create_supervisor_agent(
@@ -61,4 +62,5 @@ async def build_complete_graph(
         riksdagen_prompt=riksdagen_prompt,
         marketplace_prompt=marketplace_prompt,
         tool_prompt_overrides=tool_prompt_overrides,
+        think_on_tool_calls=think_on_tool_calls,
     )

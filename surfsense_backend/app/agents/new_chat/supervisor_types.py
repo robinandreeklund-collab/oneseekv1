@@ -153,3 +153,9 @@ class SupervisorState(TypedDict, total=False):
     domain_fan_out_trace: Annotated[dict[str, Any] | None, _replace]
     domain_plans: Annotated[dict[str, Any] | None, _replace]
     response_mode: Annotated[str | None, _replace]
+    # P1 loop-fix: guard_finalized prevents critic from overriding orchestration_guard.
+    guard_finalized: Annotated[bool, _replace]
+    # P1 loop-fix: total_steps counts all meaningful work nodes, hard cap at MAX_TOTAL_STEPS.
+    total_steps: Annotated[int, _replace]
+    # P1 loop-fix: critic_history tracks previous critic decisions for adaptive behavior.
+    critic_history: Annotated[list[dict[str, Any]], _replace]
