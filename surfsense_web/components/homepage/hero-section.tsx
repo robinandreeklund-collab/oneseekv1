@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion, useInView } from "motion/react";
+import Image from "next/image";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -9,10 +10,10 @@ import { trackLoginAttempt } from "@/lib/posthog/events";
 import { cn } from "@/lib/utils";
 
 const AI_MODELS = [
-	{ name: "ChatGPT", color: "from-emerald-400 to-green-500", accent: "text-emerald-400" },
-	{ name: "Claude", color: "from-orange-400 to-amber-500", accent: "text-orange-400" },
-	{ name: "Gemini", color: "from-blue-400 to-cyan-500", accent: "text-blue-400" },
-	{ name: "DeepSeek", color: "from-indigo-400 to-purple-500", accent: "text-indigo-400" },
+	{ name: "ChatGPT", logo: "/model-logos/chatgpt.png", accent: "text-emerald-400" },
+	{ name: "Claude", logo: "/model-logos/claude.png", accent: "text-orange-400" },
+	{ name: "Gemini", logo: "/model-logos/gemini.png", accent: "text-blue-400" },
+	{ name: "DeepSeek", logo: "/model-logos/deepseek.png", accent: "text-indigo-400" },
 ];
 
 const DEMO_QUESTION = "Hur många invånare har Stockholm och hur har det förändrats?";
@@ -159,7 +160,7 @@ function LiveDemo() {
 	}, [isInView, hasPlayed, streamText]);
 
 	return (
-		<div ref={ref} className="w-full max-w-5xl mx-auto mt-12 md:mt-16">
+		<div ref={ref} className="w-full max-w-5xl mx-auto mt-12 md:mt-16 min-h-[420px] md:min-h-[480px]">
 			<div className="relative rounded-2xl border border-neutral-200/50 dark:border-white/10 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl shadow-2xl shadow-purple-500/5 overflow-hidden">
 				{/* Window chrome */}
 				<div className="flex items-center gap-2 px-4 py-3 border-b border-neutral-100 dark:border-white/5">
@@ -226,11 +227,12 @@ function LiveDemo() {
 										className="rounded-xl bg-neutral-50 dark:bg-neutral-800/40 border border-neutral-200/30 dark:border-white/5 p-4"
 									>
 										<div className="flex items-center gap-2 mb-2">
-											<div
-												className={cn(
-													"w-2 h-2 rounded-full bg-gradient-to-r",
-													model.color
-												)}
+											<Image
+												src={model.logo}
+												alt={model.name}
+												width={18}
+												height={18}
+												className="rounded-sm"
 											/>
 											<span
 												className={cn(
