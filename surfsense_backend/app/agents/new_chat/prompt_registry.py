@@ -17,6 +17,7 @@ from app.agents.new_chat.subagent_utils import SMALLTALK_INSTRUCTIONS
 from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
     DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
     DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
     DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
@@ -116,6 +117,7 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "supervisor.scoped_tool_prompt.template",
     "supervisor.tool_default_prompt.template",
     "supervisor.subagent.context.template",
+    "supervisor.response_layer.router",
     "supervisor.response_layer.kunskap",
     "supervisor.response_layer.analys",
     "supervisor.response_layer.syntes",
@@ -233,6 +235,12 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Supervisor critic gate prompt",
         description="Prompt for critic node decisioning in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    ),
+    "supervisor.response_layer.router": PromptDefinition(
+        key="supervisor.response_layer.router",
+        label="Response Layer · Router",
+        description="LLM-prompt som analyserar data och väljer presentationsläge (Kunskap/Analys/Syntes/Visualisering). Reasoning visas i think-boxen.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
     ),
     "supervisor.response_layer.kunskap": PromptDefinition(
         key="supervisor.response_layer.kunskap",

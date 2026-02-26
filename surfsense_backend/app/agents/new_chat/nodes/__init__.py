@@ -14,6 +14,7 @@ from app.agents.new_chat.nodes.progressive_synthesizer import (
     build_progressive_synthesizer_node,
 )
 from app.agents.new_chat.nodes.response_layer import build_response_layer_node
+from app.agents.new_chat.nodes.response_layer import build_response_layer_router_node
 from app.agents.new_chat.nodes.smart_critic import build_smart_critic_node
 from app.agents.new_chat.nodes.speculative import (
     build_speculative_merge_node,
@@ -34,6 +35,7 @@ __all__ = [
     "build_planner_node",
     "build_progressive_synthesizer_node",
     "build_response_layer_node",
+    "build_response_layer_router_node",
     "build_smart_critic_node",
     "build_speculative_merge_node",
     "build_speculative_node",

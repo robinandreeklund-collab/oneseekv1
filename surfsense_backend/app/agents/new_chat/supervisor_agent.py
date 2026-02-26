@@ -49,6 +49,7 @@ from app.agents.new_chat.nodes import (
     build_planner_node,
     build_progressive_synthesizer_node,
     build_response_layer_node,
+    build_response_layer_router_node,
     build_smart_critic_node,
     build_speculative_merge_node,
     build_speculative_node,
@@ -5631,6 +5632,12 @@ async def create_supervisor_agent(
         extract_first_json_object_fn=_extract_first_json_object,
     )
 
+    response_layer_router_node = build_response_layer_router_node(
+        llm=llm,
+        router_prompt=response_layer_router_prompt,
+        latest_user_query_fn=_latest_user_query,
+    )
+
     response_layer_node = build_response_layer_node(
         llm=llm,
         mode_prompts={
@@ -5639,7 +5646,6 @@ async def create_supervisor_agent(
             "syntes": response_layer_syntes_prompt,
             "visualisering": response_layer_visualisering_prompt,
         },
-        router_prompt=response_layer_router_prompt,
         latest_user_query_fn=_latest_user_query,
     )
 
@@ -6549,6 +6555,7 @@ async def create_supervisor_agent(
             )
         graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
         graph_builder.add_node("domain_planner", RunnableCallable(None, domain_planner_node))
+        graph_builder.add_node("response_layer_router", RunnableCallable(None, response_layer_router_node))
         graph_builder.add_node("response_layer", RunnableCallable(None, response_layer_node))
         graph_builder.set_entry_point("resolve_intent")
         resolve_intent_paths = [
@@ -6624,7 +6631,8 @@ async def create_supervisor_agent(
         )
         if hybrid_mode and not compare_mode:
             graph_builder.add_edge("progressive_synthesizer", "synthesizer")
-        graph_builder.add_edge("synthesizer", "response_layer")
+        graph_builder.add_edge("synthesizer", "response_layer_router")
+        graph_builder.add_edge("response_layer_router", "response_layer")
         graph_builder.add_edge("response_layer", END)
 
     return graph_builder.compile(checkpointer=checkpointer, name="supervisor-agent")

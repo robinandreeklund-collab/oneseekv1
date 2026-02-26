@@ -350,11 +350,12 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		"node:progressive_synthesizer": { x: 1680, y: 700 },
 		"node:synthesizer": { x: 1920, y: 700 },
 		// ── Response layer ──
-		"node:response_layer": { x: 2160, y: 700 },
-		"node:response_layer_kunskap": { x: 2400, y: 590 },
-		"node:response_layer_analys": { x: 2400, y: 670 },
-		"node:response_layer_syntes": { x: 2400, y: 750 },
-		"node:response_layer_visualisering": { x: 2400, y: 830 },
+		"node:response_layer_router": { x: 2160, y: 700 },
+		"node:response_layer": { x: 2400, y: 700 },
+		"node:response_layer_kunskap": { x: 2640, y: 590 },
+		"node:response_layer_analys": { x: 2640, y: 670 },
+		"node:response_layer_syntes": { x: 2640, y: 750 },
+		"node:response_layer_visualisering": { x: 2640, y: 830 },
 	};
 
 	return pipelineNodes.map((node) => ({

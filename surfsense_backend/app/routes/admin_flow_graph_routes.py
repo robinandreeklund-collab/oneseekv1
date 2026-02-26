@@ -196,10 +196,17 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "prompt_key": "supervisor.synthesizer.system",
     },
     {
+        "id": "node:response_layer_router",
+        "label": "RL Router",
+        "stage": "synthesis",
+        "description": "LLM-driven analys av data → väljer presentationsläge (Kunskap/Analys/Syntes/Visualisering). Reasoning visas i think-boxen.",
+        "prompt_key": "supervisor.response_layer.router",
+    },
+    {
         "id": "node:response_layer",
         "label": "Response Layer",
         "stage": "synthesis",
-        "description": "Nivå 4: väljer presentationsformat för svaret — kunskap, analys, syntes eller visualisering.",
+        "description": "Nivå 4: formaterar svaret enligt valt presentationsläge.",
         "prompt_key": None,
     },
     # ── Response Layer per-mode nodes (editable prompts) ──
@@ -271,7 +278,8 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:synthesis_hitl", "target": "node:progressive_synthesizer", "type": "conditional", "label": "komplex"},
     {"source": "node:synthesis_hitl", "target": "node:synthesizer", "type": "conditional", "label": "enkel"},
     {"source": "node:progressive_synthesizer", "target": "node:synthesizer", "type": "normal"},
-    {"source": "node:synthesizer", "target": "node:response_layer", "type": "normal"},
+    {"source": "node:synthesizer", "target": "node:response_layer_router", "type": "normal"},
+    {"source": "node:response_layer_router", "target": "node:response_layer", "type": "normal"},
     # ── Response Layer → per-mode nodes (conditional) ──
     {"source": "node:response_layer", "target": "node:response_layer_kunskap", "type": "conditional", "label": "kunskap"},
     {"source": "node:response_layer", "target": "node:response_layer_analys", "type": "conditional", "label": "analys"},
