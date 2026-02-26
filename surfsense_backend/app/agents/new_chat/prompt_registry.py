@@ -566,6 +566,20 @@ def make_dynamic_prompt_definition(prompt_key: str) -> PromptDefinition | None:
     return None
 
 
+def get_all_tool_prompt_definitions() -> list[PromptDefinition]:
+    """Generate PromptDefinitions for every tool in the profile registry.
+
+    This ensures tool prompts are discoverable in the admin UI regardless
+    of whether the parent agent has ``flow_tools`` populated.
+    """
+    defs: list[PromptDefinition] = []
+    for tool_id in _AGENT_TOOL_PROFILE_BY_ID:
+        defn = make_dynamic_prompt_definition(f"tool.{tool_id}.system")
+        if defn:
+            defs.append(defn)
+    return defs
+
+
 def resolve_prompt(
     overrides: dict[str, str],
     key: str,

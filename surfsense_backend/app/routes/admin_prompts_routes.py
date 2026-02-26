@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.new_chat.prompt_registry import (
     ACTIVE_PROMPT_DEFINITION_MAP,
     PromptDefinition,
+    get_all_tool_prompt_definitions,
     get_prompt_definitions,
     make_dynamic_prompt_definition,
 )
@@ -73,6 +74,15 @@ async def _all_prompt_definitions(
                 if defn:
                     dynamic_defs.append(defn)
                     combined_map[tool_key] = defn
+
+    # Also generate definitions for ALL known tools from the profile registry.
+    # This ensures tool prompts are available even when an agent's flow_tools
+    # is empty (e.g. due to a DB override or missing data).
+    if include_tools:
+        for defn in get_all_tool_prompt_definitions():
+            if defn.key not in combined_map:
+                dynamic_defs.append(defn)
+                combined_map[defn.key] = defn
 
     return static_defs + dynamic_defs, combined_map
 
