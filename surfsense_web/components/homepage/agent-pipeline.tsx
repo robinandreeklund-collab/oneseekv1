@@ -153,7 +153,7 @@ function PhaseRow({
 					<motion.div
 						className="w-[10px] h-[10px] rounded-full border-[2.5px]"
 						style={{
-							borderColor: isActive ? phase.color : "#404040",
+							borderColor: isActive ? phase.color : "var(--pipeline-inactive, #d4d4d4)",
 							background: isCurrent ? phase.color : "transparent",
 						}}
 						animate={
@@ -171,7 +171,7 @@ function PhaseRow({
 					<div className="flex items-center gap-3 mb-3">
 						<span
 							className="text-[11px] font-bold uppercase tracking-[0.15em]"
-							style={{ color: isActive ? phase.color : "#525252" }}
+							style={{ color: isActive ? phase.color : "var(--pipeline-inactive-text, #a3a3a3)" }}
 						>
 							{t(phase.labelKey)}
 						</span>
@@ -208,8 +208,8 @@ function PhaseRow({
 									className={cn(
 										"relative text-left rounded-lg border transition-all duration-300",
 										isActive
-											? "border-neutral-700/60 hover:border-neutral-600 bg-neutral-900/80"
-											: "border-neutral-800/40 bg-neutral-900/30",
+											? "border-neutral-200/60 dark:border-neutral-700/60 hover:border-neutral-300 dark:hover:border-neutral-600 bg-white/80 dark:bg-neutral-900/80 shadow-sm shadow-neutral-200/50 dark:shadow-none"
+											: "border-neutral-200/40 dark:border-neutral-800/40 bg-neutral-50/50 dark:bg-neutral-900/30",
 										isExpanded && "ring-1",
 										node.isHitl && "border-dashed",
 									)}
@@ -224,12 +224,12 @@ function PhaseRow({
 											{/* Status dot */}
 											<span
 												className="w-1.5 h-1.5 rounded-full shrink-0"
-												style={{ background: isActive ? phase.color : "#404040" }}
+												style={{ background: isActive ? phase.color : "var(--pipeline-inactive, #d4d4d4)" }}
 											/>
 											<span
 												className={cn(
 													"text-xs font-medium whitespace-nowrap",
-													isActive ? "text-neutral-200" : "text-neutral-600",
+													isActive ? "text-neutral-800 dark:text-neutral-200" : "text-neutral-400 dark:text-neutral-600",
 												)}
 											>
 												{t(node.labelKey)}
@@ -248,7 +248,7 @@ function PhaseRow({
 											<svg
 												className={cn(
 													"w-3 h-3 transition-transform duration-200 ml-auto shrink-0",
-													isActive ? "text-neutral-500" : "text-neutral-700",
+													isActive ? "text-neutral-400 dark:text-neutral-500" : "text-neutral-300 dark:text-neutral-700",
 													isExpanded && "rotate-180",
 												)}
 												fill="none"
@@ -269,7 +269,7 @@ function PhaseRow({
 										className="overflow-hidden"
 									>
 										<div className="px-3 pb-2.5 pt-0.5">
-											<p className="text-[11px] leading-relaxed text-neutral-400">
+											<p className="text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
 												{t(node.descKey)}
 											</p>
 										</div>
@@ -293,7 +293,7 @@ function ProgressSignal({ activePhase, total }: { activePhase: number; total: nu
 	const currentPhase = PHASES[safeIdx];
 
 	return (
-		<div className="relative h-1 rounded-full bg-neutral-800/60 overflow-hidden">
+		<div className="relative h-1 rounded-full bg-neutral-200 dark:bg-neutral-800/60 overflow-hidden">
 			<motion.div
 				className="absolute inset-y-0 left-0 rounded-full"
 				style={{
@@ -354,20 +354,12 @@ export function AgentPipeline() {
 	};
 
 	return (
-		<section ref={containerRef} className="relative py-16 md:py-24 overflow-hidden">
-			{/* Dark background */}
-			<div className="absolute inset-0 -z-10 bg-neutral-950">
-				<div
-					className="absolute inset-0 opacity-[0.02]"
-					style={{
-						backgroundImage:
-							"radial-gradient(circle, rgba(255,255,255,0.15) 1px, transparent 1px)",
-						backgroundSize: "24px 24px",
-					}}
-				/>
+		<section ref={containerRef} className="relative py-16 md:py-24 overflow-hidden border-t border-neutral-100 dark:border-neutral-800/50 [--pipeline-inactive:#d4d4d4] dark:[--pipeline-inactive:#404040] [--pipeline-inactive-text:#a3a3a3] dark:[--pipeline-inactive-text:#525252] [--pipeline-node-inactive:#404040] dark:[--pipeline-node-inactive:#404040]">
+			{/* Background */}
+			<div className="absolute inset-0 -z-10">
 				{/* Ambient glow */}
-				<div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-[radial-gradient(circle,rgba(139,92,246,0.06),transparent_60%)]" />
-				<div className="absolute bottom-1/4 left-1/3 w-[400px] h-[300px] bg-[radial-gradient(circle,rgba(236,72,153,0.04),transparent_60%)]" />
+				<div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-[radial-gradient(circle,rgba(139,92,246,0.05),transparent_60%)] dark:bg-[radial-gradient(circle,rgba(139,92,246,0.08),transparent_60%)]" />
+				<div className="absolute bottom-1/4 left-1/3 w-[400px] h-[300px] bg-[radial-gradient(circle,rgba(236,72,153,0.04),transparent_60%)] dark:bg-[radial-gradient(circle,rgba(236,72,153,0.06),transparent_60%)]" />
 			</div>
 
 			<div className="mx-auto max-w-4xl px-6">
@@ -378,14 +370,14 @@ export function AgentPipeline() {
 					animate={isInView ? { opacity: 1, y: 0 } : {}}
 					transition={{ duration: 0.6 }}
 				>
-					<span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-xs font-semibold text-violet-400 uppercase tracking-wider mb-4">
-						<span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+					<span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-xs font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-4">
+						<span className="w-1.5 h-1.5 rounded-full bg-violet-500 dark:bg-violet-400 animate-pulse" />
 						{t("pipeline_badge")}
 					</span>
-					<h2 className="text-3xl md:text-5xl font-bold tracking-tight text-white">
+					<h2 className="text-3xl md:text-5xl font-bold tracking-tight text-neutral-900 dark:text-white">
 						{t("pipeline_title")}
 					</h2>
-					<p className="mt-4 text-base md:text-lg text-neutral-400 max-w-2xl mx-auto">
+					<p className="mt-4 text-base md:text-lg text-neutral-500 dark:text-neutral-400 max-w-2xl mx-auto">
 						{t("pipeline_subtitle")}
 					</p>
 				</motion.div>
@@ -439,11 +431,11 @@ export function AgentPipeline() {
 					animate={isInView ? { opacity: 1 } : {}}
 					transition={{ delay: 3 }}
 				>
-					<div className="h-px w-16 bg-gradient-to-r from-transparent to-neutral-700" />
+					<div className="h-px w-16 bg-gradient-to-r from-transparent to-neutral-300 dark:to-neutral-700" />
 					<span className="text-xs text-neutral-500 font-medium">
 						{t("pipeline_node_count", { count: totalNodes })}
 					</span>
-					<div className="h-px w-16 bg-gradient-to-l from-transparent to-neutral-700" />
+					<div className="h-px w-16 bg-gradient-to-l from-transparent to-neutral-300 dark:to-neutral-700" />
 				</motion.div>
 			</div>
 		</section>
