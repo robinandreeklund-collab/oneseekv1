@@ -46,23 +46,54 @@ Aktuell tid (UTC): {resolved_time}
 </core_directives>
 """
 
+# P1 Extra: Core prompt for STRUCTURED OUTPUT (JSON Schema) mode.
+# Thinking goes in the JSON "thinking" field, NOT in <think> tags.
+SURFSENSE_CORE_GLOBAL_PROMPT_STRUCTURED = """
+<core_directives>
+Tänk ALLTID på svenska i dina interna resonemang.
+
+KRITISKT: Du svarar i strikt JSON-format.
+All intern resonering (planering, steg-för-steg-tänkande, beslut) ska skrivas
+i "thinking"-fältet i JSON-svaret. Använd INTE <think>-taggar.
+Producera EXAKT det JSON-schema som anges. Inga extra fält.
+
+Svara användaren på samma språk som användaren använder.
+
+Dagens datum (UTC): {resolved_today}
+Aktuell tid (UTC): {resolved_time}
+</core_directives>
+"""
+
 
 def inject_core_prompt(
     core_prompt: str,
     target_prompt: str,
     *,
     include_think_instructions: bool = True,
+    structured_output: bool = False,
 ) -> str:
     """Prepend the resolved core global prompt to *target_prompt*.
 
     If *core_prompt* is empty the target is returned unchanged.
-    When *include_think_instructions* is False, the ``<think>`` instruction
-    block is stripped from the core prompt (P1: THINK_ON_TOOL_CALLS toggle).
+
+    Parameters
+    ----------
+    structured_output:
+        When ``True``, replaces the core prompt with
+        ``SURFSENSE_CORE_GLOBAL_PROMPT_STRUCTURED`` so that thinking goes
+        into the JSON ``thinking`` field instead of ``<think>`` tags.
+        (P1 Extra: Structured Output mode.)
+    include_think_instructions:
+        When ``False``, the ``<think>`` instruction block is stripped from
+        the core prompt (P1: THINK_ON_TOOL_CALLS toggle).
     """
-    core = (core_prompt or "").strip()
+    if structured_output:
+        core = SURFSENSE_CORE_GLOBAL_PROMPT_STRUCTURED.strip()
+    else:
+        core = (core_prompt or "").strip()
     if not core:
         return target_prompt
-    if not include_think_instructions:
+    if not structured_output and not include_think_instructions:
         # Strip the think-specific instruction lines from the core prompt.
         import re as _re
         core = _re.sub(

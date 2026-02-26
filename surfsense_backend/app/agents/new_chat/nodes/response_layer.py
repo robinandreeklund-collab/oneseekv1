@@ -33,6 +33,13 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from ..structured_schemas import (
+    ResponseLayerResult,
+    ResponseLayerRouterResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -180,6 +187,10 @@ def build_response_layer_router_node(
             # are invisible to the streaming pipeline.
             chunks: list[str] = []
             stream_kwargs: dict[str, Any] = {"max_tokens": 512}
+            if structured_output_enabled():
+                stream_kwargs["response_format"] = pydantic_to_response_format(
+                    ResponseLayerRouterResult, "response_layer_router"
+                )
             if config is not None:
                 stream_kwargs["config"] = config
             async for chunk in llm.astream(
@@ -193,7 +204,17 @@ def build_response_layer_router_node(
                 if content:
                     chunks.append(content)
             raw = "".join(chunks).strip()
-            decision = _parse_router_response(raw)
+            # P1 Extra: try Pydantic structured parse, fall back to legacy
+            decision = None
+            try:
+                _structured = ResponseLayerRouterResult.model_validate_json(raw)
+                decision = {
+                    "chosen_layer": _structured.chosen_layer,
+                    "reason": _structured.reason,
+                    "data_characteristics": _structured.data_characteristics,
+                }
+            except Exception:
+                decision = _parse_router_response(raw)
             if decision:
                 mode = decision["chosen_layer"]
                 logger.info(
@@ -247,6 +268,10 @@ def build_response_layer_node(
         per-token ``on_chat_model_stream`` events.  This lets the streaming
         pipeline route the formatted text to ``text-delta`` in real-time.
 
+        When structured output is enabled, the LLM returns JSON with
+        ``thinking`` (routed to reasoning-delta) and ``response`` (routed
+        to text-delta via the incremental parser).
+
         Passing *run_config* is critical — without it the LLM's callback
         events are invisible to the parent ``astream_events`` and the
         streaming pipeline cannot route the formatted text to the frontend.
@@ -256,6 +281,10 @@ def build_response_layer_node(
         try:
             chunks: list[str] = []
             stream_kwargs: dict[str, Any] = {"max_tokens": 4096}
+            if structured_output_enabled():
+                stream_kwargs["response_format"] = pydantic_to_response_format(
+                    ResponseLayerResult, "response_layer"
+                )
             if run_config is not None:
                 stream_kwargs["config"] = run_config
             async for chunk in llm.astream(
@@ -273,7 +302,13 @@ def build_response_layer_node(
                 content = getattr(chunk, "content", "")
                 if content:
                     chunks.append(content)
-            result = "".join(chunks).strip()
+            raw = "".join(chunks).strip()
+            # P1 Extra: extract response field from structured JSON
+            try:
+                _structured = ResponseLayerResult.model_validate_json(raw)
+                result = _structured.response.strip()
+            except Exception:
+                result = raw
             return result if result else response
         except Exception:
             logger.debug(

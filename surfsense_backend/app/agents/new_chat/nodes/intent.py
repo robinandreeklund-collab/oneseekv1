@@ -9,6 +9,12 @@ from typing import Any, Callable
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from ..structured_schemas import (
+    IntentResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 
 _INTENT_EMBED_CACHE: dict[str, list[float]] = {}
 _INTENT_TOKEN_RE = re.compile(r"[a-z0-9åäö]{2,}", re.IGNORECASE)
@@ -296,16 +302,27 @@ def build_intent_resolver_node(
                 ensure_ascii=True,
             )
             try:
+                _invoke_kwargs: dict[str, Any] = {"max_tokens": 300}
+                if structured_output_enabled():
+                    _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                        IntentResult, "intent_result"
+                    )
                 message = await llm.ainvoke(
                     [
                         SystemMessage(content=prompt),
                         HumanMessage(content=resolver_input),
                     ],
-                    max_tokens=140,
+                    **_invoke_kwargs,
                 )
-                parsed = extract_first_json_object_fn(
-                    str(getattr(message, "content", "") or "")
-                )
+                _raw_content = str(getattr(message, "content", "") or "")
+                # P1 Extra: try Pydantic structured parse, fall back to regex
+                _thinking = ""
+                try:
+                    _structured = IntentResult.model_validate_json(_raw_content)
+                    parsed = _structured.model_dump(exclude={"thinking"})
+                    _thinking = _structured.thinking
+                except Exception:
+                    parsed = extract_first_json_object_fn(_raw_content)
                 selected_intent = str(parsed.get("intent_id") or "").strip()
                 selected_route = normalize_route_hint_fn(parsed.get("route"))
                 if selected_intent and selected_intent in candidate_ids:

@@ -7,6 +7,12 @@ from typing import Any, Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from ..structured_schemas import (
+    CriticResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -164,12 +170,23 @@ def build_critic_node(
         )
         decision = "ok"
         try:
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 250}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    CriticResult, "critic_result"
+                )
             message = await llm.ainvoke(
                 [SystemMessage(content=prompt), HumanMessage(content=critic_input)],
-                max_tokens=90,
+                **_invoke_kwargs,
             )
-            parsed = extract_first_json_object_fn(str(getattr(message, "content", "") or ""))
-            parsed_decision = str(parsed.get("decision") or "").strip().lower()
+            _raw_content = str(getattr(message, "content", "") or "")
+            # P1 Extra: try Pydantic structured parse, fall back to regex
+            try:
+                _structured = CriticResult.model_validate_json(_raw_content)
+                parsed_decision = _structured.decision
+            except Exception:
+                parsed = extract_first_json_object_fn(_raw_content)
+                parsed_decision = str(parsed.get("decision") or "").strip().lower()
             if parsed_decision in {"ok", "needs_more", "replan"}:
                 decision = parsed_decision
         except Exception:

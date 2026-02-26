@@ -9,10 +9,15 @@ Uppgift:
   (for vader-agenten), inte skapande.
 - For mixade fragor (t.ex. "hur manga bor i Goteborg och vad ar det for vader?"):
   satt route="mixed" och inkludera sub_intents array med alla deldomaner.
-- Hall motivering kort och pa svenska.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
 
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "intent_id": "string",
   "route": "kunskap|skapande|jämförelse|konversation|mixed",
   "sub_intents": ["intent1", "intent2"],
@@ -34,10 +39,15 @@ Uppgift:
 - Anvand aldrig memory-verktyg som ersattning for filsystemsoperationer.
 - Foredra specialiserad agent nar uppgiften tydligt ar domanspecifik
   (t.ex. marknad, statistik, trafik, riksdagen, bolag, vader).
-- Hall motivering kort och pa svenska.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
 
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "selected_agents": ["agent_id"],
   "reason": "kort svensk motivering",
   "confidence": 0.0
@@ -57,10 +67,15 @@ Regler:
 - Om anvandaren explicit ber om att lasa filinnehall: lagg in ett steg som faktiskt laser filen
   (sandbox_read_file) innan slutsats.
 - Foredra artifact-first: stora mellanresultat ska kunna refereras via artifact path/uri.
-- Hall stegen korta och pa svenska.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
 
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "steps": [
     {"id": "step-1", "content": "text", "status": "pending", "parallel": false}
   ],
@@ -91,8 +106,14 @@ Vagledning:
   och uppgiften faktiskt ar verifierad: "ok" (inte loopa i onodan).
 - Anvand "replan" endast nar planinriktningen ar fel, inte vid normal komplettering.
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
+
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "decision": "ok|needs_more|replan",
   "reason": "kort svensk motivering",
   "confidence": 0.0
@@ -107,14 +128,19 @@ Forfina ett redan framtaget svar utan att lagga till nya fakta.
 Regler:
 - Behall betydelse och fakta.
 - Kort och tydligt pa svenska.
-- Ingen intern process-text. Skriv ALDRIG ut dina tankar eller resonemang.
 - For mixade fragor: strukturera svaret i sektioner per deldoman.
 - Om kallsvaret innehaller guardrail/no-data/not-found: bevara det, hitta inte pa data.
 - "response"-faltet ska BARA innehalla det slutgiltiga svaret till anvandaren,
   inga numrerade steg, ingen planering, inget "jag ska nu...".
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
+
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "response": "forfinat svar",
   "reason": "kort svensk motivering"
 }
@@ -130,10 +156,15 @@ Regler:
 - Steg for olika sub_intents (t.ex. statistik och kunskap) ska ha parallel=true.
 - Avsluta med ett syntessteg (parallel=false) om flera agenter anvands.
 - **VIKTIGT: Anvand ENDAST agenter fran `selected_agents`.**
-- Hall stegen korta och pa svenska.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
 
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "steps": [
     {"id": "step-1", "content": "text", "status": "pending", "parallel": true},
     {"id": "step-2", "content": "text", "status": "pending", "parallel": true},
@@ -217,8 +248,15 @@ Tillgängliga lägen:
   jämförande.
 
 Analysera datan du fått och välj exakt ett läge.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
+
 Svara ENDAST med JSON i detta exakta format:
 {{
+  "thinking": "din interna resonering på svenska",
   "chosen_layer": "kunskap | analys | syntes | visualisering",
   "reason": "kort motivering på svenska varför detta läge passar bäst",
   "data_characteristics": "beskriv kort datans typ och volym"

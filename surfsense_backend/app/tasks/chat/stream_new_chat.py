@@ -44,6 +44,7 @@ from app.agents.new_chat.compare_prompts import (
     build_compare_synthesis_prompt,
 )
 from app.agents.new_chat.complete_graph import build_complete_graph
+from app.agents.new_chat.incremental_json_parser import IncrementalSchemaParser
 from app.agents.new_chat.dispatcher import (
     DEFAULT_ROUTE_SYSTEM_PROMPT,
     dispatch_route_with_trace,
@@ -62,6 +63,7 @@ from app.agents.new_chat.marketplace_prompts import (
 from app.agents.new_chat.prompt_registry import resolve_prompt
 from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
 from app.agents.new_chat.routing import Route
+from app.agents.new_chat.structured_schemas import structured_output_enabled
 from app.agents.new_chat.statistics_prompts import (
     DEFAULT_STATISTICS_SYSTEM_PROMPT,
     build_statistics_system_prompt,
@@ -2510,6 +2512,12 @@ async def stream_new_chat(
         # When a pipeline node's LLM call streams tokens, we run them
         # through a dedicated filter to extract <think> reasoning per node.
         internal_node_think_filters: dict[str, _ThinkStreamFilter] = {}
+        # --- P1 Extra: Structured output (JSON Schema) streaming state ---
+        # When structured output is enabled, LLM responses are JSON with a
+        # ``thinking`` field instead of ``<think>`` tags.  Per-run parsers
+        # replace ThinkStreamFilter for JSON-mode extraction.
+        _structured_mode: bool = structured_output_enabled()
+        _structured_parsers: dict[str, IncrementalSchemaParser] = {}
         # Track which pipeline node last emitted reasoning so we can inject
         # transition headers (e.g. "--- Resolving intent ---") into the
         # global rolling reasoning stream.
@@ -2962,11 +2970,14 @@ async def stream_new_chat(
                 if _is_internal_pipeline_chain_name(parent_chain_name):
                     model_parent_chain_by_run_id[run_id] = parent_chain_name
                     internal_model_buffers.setdefault(run_id, "")
-                    # Create per-node think filter so reasoning streams
+                    # Create per-node filter so reasoning streams
                     # in real-time into the FadeLayer think-box.
-                    internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                        assume_think=_think_filter._assume_think,
-                    )
+                    if _structured_mode:
+                        _structured_parsers[run_id] = IncrementalSchemaParser()
+                    else:
+                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                            assume_think=_think_filter._assume_think,
+                        )
                     # Emit a node-transition header immediately so the
                     # frontend shows which pipeline phase is now active.
                     if display_key != last_reasoning_pipeline_node:
@@ -3023,7 +3034,12 @@ async def stream_new_chat(
                         yield streaming_service.format_reasoning_delta(
                             active_reasoning_id, header
                         )
-                    if _think_filter._assume_think:
+                    if _structured_mode:
+                        # P1 Extra: structured JSON mode — create an
+                        # IncrementalSchemaParser for this output model run
+                        # so on_chat_model_stream can split thinking/response.
+                        _structured_parsers[run_id] = IncrementalSchemaParser()
+                    elif _think_filter._assume_think:
                         flush_r, flush_t = _think_filter.reset_think_mode()
                         if flush_r:
                             if active_reasoning_id is None:
@@ -3069,10 +3085,13 @@ async def stream_new_chat(
                     # (synthesizer, response_layer) should emit text-delta.
                     model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
                     internal_model_buffers.setdefault(run_id, "")
-                    internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                        assume_think=_think_filter._assume_think,
-                    )
-                    if _think_filter._assume_think:
+                    if _structured_mode:
+                        _structured_parsers[run_id] = IncrementalSchemaParser()
+                    else:
+                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                            assume_think=_think_filter._assume_think,
+                        )
+                    if not _structured_mode and _think_filter._assume_think:
                         flush_r, flush_t = _think_filter.reset_think_mode()
                         if flush_r or flush_t:
                             if active_reasoning_id is None:
@@ -3202,9 +3221,12 @@ async def stream_new_chat(
                         if not is_output:
                             model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
                             internal_model_buffers.setdefault(run_id, "")
-                            internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                                assume_think=_think_filter._assume_think,
-                            )
+                            if _structured_mode:
+                                _structured_parsers.setdefault(run_id, IncrementalSchemaParser())
+                            else:
+                                internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                                    assume_think=_think_filter._assume_think,
+                                )
                     model_input = (
                         model_data.get("input")
                         or model_data.get("messages")
@@ -3244,6 +3266,8 @@ async def stream_new_chat(
                     # Flush per-node think filter and emit remaining reasoning
                     # into the global rolling think-box (reasoning-delta).
                     node_filter = internal_node_think_filters.pop(run_id, None)
+                    # P1 Extra: also clean up structured parser for this run
+                    _structured_parsers.pop(run_id, None)
                     if node_filter:
                         flush_reasoning, flush_node_text = node_filter.flush()
                         # Node text also goes to reasoning (never text-delta)
@@ -3331,39 +3355,55 @@ async def stream_new_chat(
                                     yield trace_update
                             # --- Node-by-node think-box: stream per-node reasoning
                             # into the global rolling think-box (reasoning-delta). ---
-                            node_filter = internal_node_think_filters.get(run_id)
-                            if node_filter:
-                                node_reasoning, _node_text = node_filter.feed(content)
-                                if node_reasoning:
-                                    parent_chain = model_parent_chain_by_run_id.get(
-                                        run_id, ""
-                                    )
-                                    # Inject node header when the pipeline node changes
-                                    if parent_chain != last_reasoning_pipeline_node:
-                                        last_reasoning_pipeline_node = parent_chain
-                                        node_title = _pipeline_node_title(parent_chain)
-                                        header = f"\n--- {node_title} ---\n"
-                                        if active_reasoning_id is None:
-                                            active_reasoning_id = streaming_service.generate_reasoning_id()
-                                            yield streaming_service.format_reasoning_start(active_reasoning_id)
-                                        yield streaming_service.format_reasoning_delta(
-                                            active_reasoning_id, header
-                                        )
+                            # P1 Extra: when structured output is enabled, use
+                            # IncrementalSchemaParser instead of ThinkStreamFilter.
+                            node_reasoning = ""
+                            if _structured_mode:
+                                sp = _structured_parsers.get(run_id)
+                                if sp:
+                                    node_reasoning, _ = sp.feed(content)
+                            else:
+                                node_filter = internal_node_think_filters.get(run_id)
+                                if node_filter:
+                                    node_reasoning, _node_text = node_filter.feed(content)
+                            if node_reasoning:
+                                parent_chain = model_parent_chain_by_run_id.get(
+                                    run_id, ""
+                                )
+                                # Inject node header when the pipeline node changes
+                                if parent_chain != last_reasoning_pipeline_node:
+                                    last_reasoning_pipeline_node = parent_chain
+                                    node_title = _pipeline_node_title(parent_chain)
+                                    header = f"\n--- {node_title} ---\n"
                                     if active_reasoning_id is None:
                                         active_reasoning_id = streaming_service.generate_reasoning_id()
                                         yield streaming_service.format_reasoning_start(active_reasoning_id)
                                     yield streaming_service.format_reasoning_delta(
-                                        active_reasoning_id, node_reasoning
+                                        active_reasoning_id, header
                                     )
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = streaming_service.generate_reasoning_id()
+                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                yield streaming_service.format_reasoning_delta(
+                                    active_reasoning_id, node_reasoning
+                                )
                             continue
-                        # Split <think>…</think> tags into reasoning vs. main text
-                        reasoning_chunk, content = _think_filter.feed(content)
+                        # Split thinking from main text.
+                        # P1 Extra: structured JSON mode uses IncrementalSchemaParser
+                        # to split the ``thinking`` and ``response`` fields.
+                        if _structured_mode and run_id in _structured_parsers:
+                            sp = _structured_parsers[run_id]
+                            reasoning_chunk, content, _ = sp.feed_all(content)
+                        else:
+                            reasoning_chunk, content = _think_filter.feed(content)
 
                         # Handle template-prefilled <think> detection:
                         # When </think> appears before any <think>, text that was
                         # previously streamed as text-delta was actually reasoning.
+                        # (Not applicable in structured JSON mode — no <think> tags.)
                         if (
-                            _think_filter.late_close_detected
+                            not _structured_mode
+                            and _think_filter.late_close_detected
                             and not _late_close_handled
                         ):
                             _late_close_handled = True

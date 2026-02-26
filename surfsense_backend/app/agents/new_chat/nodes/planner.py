@@ -6,6 +6,12 @@ from typing import Any, Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from ..structured_schemas import (
+    PlannerResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 
 def build_planner_node(
     *,
@@ -87,14 +93,25 @@ def build_planner_node(
         )
         new_plan: list[dict[str, Any]] = []
         try:
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 500}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    PlannerResult, "planner_result"
+                )
             message = await llm.ainvoke(
                 [
                     SystemMessage(content=prompt),
                     HumanMessage(content=planner_input),
                 ],
-                max_tokens=220,
+                **_invoke_kwargs,
             )
-            parsed = extract_first_json_object_fn(str(getattr(message, "content", "") or ""))
+            _raw_content = str(getattr(message, "content", "") or "")
+            # P1 Extra: try Pydantic structured parse, fall back to regex
+            try:
+                _structured = PlannerResult.model_validate_json(_raw_content)
+                parsed = _structured.model_dump(exclude={"thinking"})
+            except Exception:
+                parsed = extract_first_json_object_fn(_raw_content)
             steps = parsed.get("steps")
             if isinstance(steps, list):
                 for index, step in enumerate(steps[:4], start=1):
