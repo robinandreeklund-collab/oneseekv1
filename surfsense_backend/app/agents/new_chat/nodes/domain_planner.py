@@ -19,6 +19,12 @@ from typing import Any, Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from ..structured_schemas import (
+    DomainPlannerResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -124,16 +130,24 @@ def build_domain_planner_node(
 
         domain_plans: dict[str, Any] = {}
         try:
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 400}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    DomainPlannerResult, "domain_planner_result"
+                )
             message = await llm.ainvoke(
                 [
                     SystemMessage(content=prompt),
                     HumanMessage(content=planner_input),
                 ],
-                max_tokens=300,
+                **_invoke_kwargs,
             )
-            parsed = extract_first_json_object_fn(
-                str(getattr(message, "content", "") or "")
-            )
+            _raw_content = str(getattr(message, "content", "") or "")
+            try:
+                _structured = DomainPlannerResult.model_validate_json(_raw_content)
+                parsed = _structured.model_dump(exclude={"thinking"})
+            except Exception:
+                parsed = extract_first_json_object_fn(_raw_content)
             raw_plans = parsed.get("domain_plans")
             if isinstance(raw_plans, dict):
                 for agent_name, plan in raw_plans.items():

@@ -209,6 +209,7 @@ Regler:
 
 Returnera strikt JSON:
 {
+  "thinking": "Resonera steg för steg om verktygsval, beroenden och parallellitet per domänagent.",
   "domain_plans": {
     "<agent_name>": {
       "mode": "parallel|sequential",

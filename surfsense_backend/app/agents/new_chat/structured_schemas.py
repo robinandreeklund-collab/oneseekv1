@@ -161,6 +161,48 @@ class PlannerResult(BaseModel):
 
 
 # ────────────────────────────────────────────────────────────────
+# Domain Planner
+# ────────────────────────────────────────────────────────────────
+
+
+class DomainAgentPlan(BaseModel):
+    """Micro-plan for a single domain agent."""
+
+    mode: Literal["parallel", "sequential"] = Field(
+        ...,
+        description="parallel om verktygen är oberoende, sequential om beroende.",
+    )
+    tools: list[str] = Field(
+        ...,
+        description="Verktygs-ID att anropa (max 4).",
+    )
+    rationale: str = Field(
+        ...,
+        description="Kort motivering på svenska.",
+    )
+
+
+class DomainPlannerResult(BaseModel):
+    """Output schema for the domain planner node."""
+
+    thinking: str = Field(
+        ...,
+        description=(
+            "Resonering om verktygsval, beroenden och parallellitet "
+            "per domänagent."
+        ),
+    )
+    domain_plans: dict[str, DomainAgentPlan] = Field(
+        ...,
+        description="Mikro-plan per domänagent (nyckel = agentnamn).",
+    )
+    reason: str = Field(
+        ...,
+        description="Övergripande motivering på svenska.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
 # Critic
 # ────────────────────────────────────────────────────────────────
 

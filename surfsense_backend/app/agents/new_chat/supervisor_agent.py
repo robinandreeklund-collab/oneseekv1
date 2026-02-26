@@ -1887,6 +1887,7 @@ async def create_supervisor_agent(
             "supervisor.domain_planner.system",
             DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     response_layer_kunskap_prompt = inject_core_prompt(
         _core,
