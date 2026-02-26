@@ -2980,6 +2980,21 @@ async def stream_new_chat(
                         # Output pipeline node (synthesizer / response_layer):
                         # not registered as internal, but emit a header so the
                         # user sees which phase is producing the final response.
+                        #
+                        # When the response_layer output node starts AFTER the
+                        # synthesizer has already streamed text, clear the
+                        # existing text so the formatted version replaces it
+                        # rather than being appended.
+                        pcn_lower = str(parent_chain_name).strip().lower()
+                        if (
+                            "response_layer" in pcn_lower
+                            and "response_layer_router" not in pcn_lower
+                            and current_text_id is not None
+                        ):
+                            yield streaming_service.format_text_end(current_text_id)
+                            current_text_id = None
+                            yield streaming_service.format_text_clear()
+                            accumulated_text = ""
                         if display_key != last_reasoning_pipeline_node:
                             last_reasoning_pipeline_node = display_key
                             node_title = _pipeline_node_title(parent_chain_name)

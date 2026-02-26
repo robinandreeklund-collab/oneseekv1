@@ -254,7 +254,6 @@ const TOOLS_WITH_UI = new Set([
 	"display_image_gallery",
 	"geoapify_static_map",
 	"scrape_webpage",
-	"smhi_weather",
 	"smhi_vaderprognoser_metfcst",
 	"trafiklab_route",
 	"libris_search",
