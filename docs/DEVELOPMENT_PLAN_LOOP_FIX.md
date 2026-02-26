@@ -37,9 +37,10 @@ som gör att frågor tar onödigt lång tid och ibland aldrig når response_laye
 | Sprint | Prioritet | Innehåll | Löser buggar | Status |
 |--------|----------|----------|-------------|--------|
 | **P1** | Kritisk | Loop-fix, response layer, think-toggle | BUG 1-3, 5-8 | **KLAR** |
+| **P1 Extra** | Hög | Strukturerad output (JSON Schema) för alla noder + streaming | Kvalitet, parsning, determinism | Ej påbörjad |
 | **P2** | Hög | Studio, konfigurerbara guards | BUG 4, 9-12 | Ej påbörjad |
 | **P3** | Medel | Multi-query decomposer | Ny funktionalitet | Ej påbörjad |
-| **P4** | Framtida | Subagent mini-graphs, convergence, Pydantic structured output | Arkitekturell omskrivning | Planeras |
+| **P4** | Framtida | Subagent mini-graphs, convergence | Arkitekturell omskrivning | Planeras |
 
 ---
 
@@ -160,6 +161,807 @@ Inga nya regressioner.
 - [x] ALLA 20 P1-tester passerar
 - [x] Befintliga tester FORTSÄTTER passera (174 vs 156 baseline + 20 nya = korrekt)
 - [x] Inga nya regressioner
+
+---
+
+## Sprint P1 Extra — Strukturerad Output (JSON Schema)
+
+> **Status:** [ ] Ej påbörjad
+> **Startdatum:** 2026-02-26
+> **Mål:** Ersätt regex-baserad JSON-extraktion med strikt JSON Schema för alla LLM-anrop.
+> Thinking-fältet ingår i schemat och streamar progressivt. Frontend renderar
+> strukturerad data inkrementellt.
+
+### Bakgrund & Motivation
+
+Idag gör alla LLM-anropande noder (intent, planner, critic, synthesizer, agent_resolver,
+response_layer_router) samma sak:
+
+1. Anropa LLM med fri text-prompt som ber om JSON
+2. Extrahera JSON post-hoc med `extract_first_json_object_fn()` (regex-fallback)
+3. Hoppas att modellen producerade giltig JSON
+
+**Problem med nuvarande approach:**
+- Modellen kan producera ogiltig JSON → regex-fallback → stilla fel
+- `<think>`-taggar hanteras separat med stateful filter (`_ThinkStreamFilter`)
+- Ingen typvalidering av fältvärden (t.ex. `confidence` kan vara sträng istället för float)
+- Reasoning-text (från `<think>`) persisteras INTE → försvinner vid sidladdning
+
+**Lösning: JSON Schema (strict mode)**
+- `response_format={"type": "json_schema", "json_schema": {...}}` i varje API-anrop
+- LM Studio/LiteLLM använder grammar-based sampling (GBNF) → **garanterat** giltig JSON
+- `thinking`-fältet FÖRST i schemat → streamar progressivt som reasoning-delta
+- Pydantic-modeller för typvalidering av varje nods output
+- Inkrementell JSON-parsning på frontend för progressiv rendering
+
+### Arkitekturöversikt
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                     BACKEND (Python)                                 │
+│                                                                      │
+│  ┌─────────────┐    ┌───────────────────┐    ┌───────────────────┐  │
+│  │  Pydantic    │    │  response_format   │    │  Inkrementell     │  │
+│  │  Schemas     │───▶│  = json_schema     │───▶│  JSON-parsning    │  │
+│  │  (per nod)   │    │  (i ainvoke/       │    │  (astream-noder)  │  │
+│  │              │    │   astream)         │    │                   │  │
+│  └─────────────┘    └───────────────────┘    └────────┬──────────┘  │
+│                                                        │             │
+│                                           ┌────────────▼──────────┐  │
+│                                           │  SSE Events           │  │
+│                                           │  reasoning-delta ◀─ thinking│
+│                                           │  text-delta ◀─ response   │
+│                                           │  structured-data ◀─ fält  │
+│                                           └────────────┬──────────┘  │
+│                                                        │             │
+└────────────────────────────────────────────────────────┼─────────────┘
+                                                         │ SSE
+┌────────────────────────────────────────────────────────▼─────────────┐
+│                     FRONTEND (TypeScript)                             │
+│                                                                      │
+│  ┌──────────────┐    ┌───────────────────┐    ┌───────────────────┐  │
+│  │  partial-json │    │  SSE Event         │    │  Progressiv       │  │
+│  │  parser       │───▶│  Handler           │───▶│  Rendering        │  │
+│  │              │    │  (uppdaterad)      │    │  (FadeLayer+)     │  │
+│  └──────────────┘    └───────────────────┘    └───────────────────┘  │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### P1-Extra.1 — Pydantic Schemas för alla noder
+
+> **Status:** [ ] Ej påbörjad
+
+**Ny fil:** `surfsense_backend/app/agents/new_chat/structured_schemas.py`
+
+Definierar en Pydantic-modell per nod. **ALLA** har `thinking`-fältet FÖRST
+(modellen producerar thinking innan den fattar beslut).
+
+```python
+from pydantic import BaseModel, Field
+from typing import Literal
+
+# ─── Intent Resolution ───────────────────────────────────────
+class IntentResult(BaseModel):
+    thinking: str = Field(
+        ...,
+        description="Intern resonering om användarens avsikt, "
+                    "kandidatanalys och beslutsunderlag."
+    )
+    intent_id: str = Field(
+        ...,
+        description="ID för vald intent, måste matcha en av kandidaterna."
+    )
+    route: Literal["kunskap", "skapande", "jämförelse", "konversation", "mixed"] = Field(
+        ...,
+        description="Övergripande rutt-kategori."
+    )
+    sub_intents: list[str] = Field(
+        default_factory=list,
+        description="Del-intents vid mixed route."
+    )
+    reason: str = Field(
+        ...,
+        description="Kort motivering på svenska."
+    )
+    confidence: float = Field(
+        ..., ge=0.0, le=1.0,
+        description="Konfidens 0.0–1.0."
+    )
+
+# ─── Agent Resolver ──────────────────────────────────────────
+class AgentResolverResult(BaseModel):
+    thinking: str = Field(
+        ...,
+        description="Resonering om vilka agenter som bäst matchar uppgiften."
+    )
+    selected_agents: list[str] = Field(
+        ...,
+        description="Lista med agentnamn (måste matcha kandidater)."
+    )
+    reason: str = Field(..., description="Kort motivering på svenska.")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+
+# ─── Planner ─────────────────────────────────────────────────
+class PlanStep(BaseModel):
+    id: str = Field(..., description="Steg-ID, t.ex. step-1.")
+    content: str = Field(..., description="Beskrivning av steget.")
+    status: Literal["pending", "in_progress", "completed", "cancelled"] = Field(
+        default="pending"
+    )
+    parallel: bool = Field(
+        default=False,
+        description="True om steget kan köras parallellt med andra."
+    )
+
+class PlannerResult(BaseModel):
+    thinking: str = Field(
+        ...,
+        description="Resonering om hur frågan bäst bryts ned i steg."
+    )
+    steps: list[PlanStep] = Field(
+        ..., max_length=4,
+        description="Exekveringssteg (max 4)."
+    )
+    reason: str = Field(..., description="Kort motivering på svenska.")
+
+# ─── Critic ──────────────────────────────────────────────────
+class CriticResult(BaseModel):
+    thinking: str = Field(
+        ...,
+        description="Resonering om svarets kvalitet, fullständighet och brister."
+    )
+    decision: Literal["ok", "needs_more", "replan"] = Field(
+        ...,
+        description="Beslut: ok (godkänt), needs_more (behöver mer data), "
+                    "replan (ny plan krävs)."
+    )
+    reason: str = Field(..., description="Kort motivering på svenska.")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+
+# ─── Synthesizer ─────────────────────────────────────────────
+class SynthesizerResult(BaseModel):
+    thinking: str = Field(
+        ...,
+        description="Resonering om hur källmaterial bäst sammanfogas."
+    )
+    response: str = Field(
+        ...,
+        description="Det förfinade, slutgiltiga svaret (markdown)."
+    )
+    reason: str = Field(..., description="Kort motivering på svenska.")
+
+# ─── Response Layer Router ───────────────────────────────────
+class ResponseLayerRouterResult(BaseModel):
+    thinking: str = Field(
+        ...,
+        description="Resonering om vilken presentationsform som passar bäst."
+    )
+    chosen_layer: Literal["kunskap", "analys", "syntes", "visualisering"] = Field(
+        ...,
+        description="Vald presentationsform."
+    )
+    reason: str = Field(..., description="Kort motivering på svenska.")
+    data_characteristics: str = Field(
+        default="",
+        description="Beskrivning av datans karaktäristik."
+    )
+
+# ─── Response Layer (user-facing) ────────────────────────────
+class ResponseLayerResult(BaseModel):
+    thinking: str = Field(
+        ...,
+        description="Kort resonering om formateringsstrategi."
+    )
+    response: str = Field(
+        ...,
+        description="Fullständigt formaterat svar till användaren (markdown)."
+    )
+```
+
+**Hjälpfunktion för att konvertera Pydantic → JSON Schema:**
+
+```python
+def pydantic_to_response_format(model: type[BaseModel], name: str) -> dict:
+    """Konverterar Pydantic-modell till response_format dict för LiteLLM."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "strict": True,
+            "schema": model.model_json_schema()
+        }
+    }
+```
+
+**Acceptanskriterier:**
+- [ ] Alla 7 schemas definierade med `thinking` som FÖRSTA fältet
+- [ ] `model_json_schema()` producerar giltig JSON Schema
+- [ ] `pydantic_to_response_format()` returnerar korrekt dict-struktur
+- [ ] Unit-test: varje schema kan parsa ett giltigt exempelsvar
+
+---
+
+### P1-Extra.2 — Backend: Modifiera ainvoke-noder
+
+> **Status:** [ ] Ej påbörjad
+
+Alla noder som använder `ainvoke()` ändras att:
+1. Skicka `response_format` som kwarg
+2. Parsa svaret med Pydantic istället för `extract_first_json_object_fn()`
+3. Extrahera `thinking`-fältet och skicka vidare för streaming
+
+**Ändrade filer (6 st):**
+
+#### `nodes/intent.py`
+```python
+# FÖRE:
+raw = await llm.ainvoke([sys_msg, human_msg], max_tokens=140)
+parsed = extract_first_json_object_fn(raw.content)
+
+# EFTER:
+from ..structured_schemas import IntentResult, pydantic_to_response_format
+
+raw = await llm.ainvoke(
+    [sys_msg, human_msg],
+    max_tokens=300,                    # Ökat: thinking kräver mer tokens
+    response_format=pydantic_to_response_format(IntentResult, "intent_result"),
+)
+result = IntentResult.model_validate_json(raw.content)
+# result.thinking → emit som reasoning-delta
+# result.intent_id, result.route, etc. → använd direkt (typat!)
+```
+
+#### `nodes/agent_resolver.py`
+- Samma mönster med `AgentResolverResult`
+- `max_tokens` höjs från ~150 till ~300
+
+#### `nodes/planner.py`
+- Samma mönster med `PlannerResult`
+- `max_tokens` höjs från 220 till ~500
+- `result.steps` är redan typade `PlanStep`-objekt (inga dict-konverteringar)
+
+#### `nodes/critic.py`
+- Samma mönster med `CriticResult`
+- `max_tokens` höjs från 90 till ~250
+- Guard-logiken (`guard_finalized`, `total_steps`) behålls oförändrad
+- Fallback vid JSON-fel: `CriticResult(thinking="fallback", decision="ok", ...)`
+
+#### `nodes/smart_critic.py`
+- Delegerar till `critic.py` → inga direkta LLM-ändringar
+- Säkerställ att `critic_node` returnerar `CriticResult`
+
+#### `nodes/synthesizer.py`
+- Samma mönster med `SynthesizerResult`
+- `max_tokens` höjs från 220 till ~800 (response-fältet kan vara långt)
+- Kandidat-validering (degenerering-check) behålls
+
+**Viktigt — Fallback-strategi:**
+
+Varje nod behåller `try/except` med fallback till `extract_first_json_object_fn()`:
+```python
+try:
+    result = IntentResult.model_validate_json(raw.content)
+except (ValidationError, JSONDecodeError):
+    # Fallback: legacy regex-parsning (för modeller utan json_schema-stöd)
+    parsed = extract_first_json_object_fn(raw.content)
+    result = IntentResult(thinking="(ej tillgängligt)", **parsed)
+```
+
+**Acceptanskriterier:**
+- [ ] Alla 5 ainvoke-noder använder `response_format`
+- [ ] Pydantic-parsning med typvalidering
+- [ ] Fallback till legacy-parsning vid fel
+- [ ] `thinking`-fältet extraheras och returneras i state
+- [ ] `max_tokens` justerat uppåt (thinking behöver utrymme)
+- [ ] Befintliga tester passerar
+
+---
+
+### P1-Extra.3 — Backend: Modifiera astream-noder + inkrementell JSON-parsning
+
+> **Status:** [ ] Ej påbörjad
+
+`response_layer_router` använder `astream()` och streamar till FadeLayer.
+Med strukturerad output streamar den JSON-tokens istället för fri text.
+
+**Ny dependency:** `partial-json-parser` (Python)
+
+```bash
+cd surfsense_backend && uv add partial-json-parser
+```
+
+**Ny hjälpklass:** `surfsense_backend/app/agents/new_chat/incremental_json_parser.py`
+
+```python
+from partial_json_parser import loads as partial_loads
+
+class IncrementalSchemaParser:
+    """Parsar JSON inkrementellt under streaming.
+
+    Extraherar thinking-fältet progressivt medan resten
+    av schemat fylls i. Returnerar (thinking_delta, parsed_so_far).
+    """
+    def __init__(self):
+        self._buffer = ""
+        self._last_thinking_len = 0
+
+    def feed(self, chunk: str) -> tuple[str, dict | None]:
+        """Feed en ny chunk. Returnerar (thinking_delta, partial_result)."""
+        self._buffer += chunk
+        try:
+            partial = partial_loads(self._buffer)
+        except Exception:
+            return ("", None)
+
+        thinking_delta = ""
+        if isinstance(partial, dict) and "thinking" in partial:
+            full_thinking = partial["thinking"]
+            if len(full_thinking) > self._last_thinking_len:
+                thinking_delta = full_thinking[self._last_thinking_len:]
+                self._last_thinking_len = len(full_thinking)
+
+        return (thinking_delta, partial)
+
+    def finalize(self) -> dict:
+        """Returnerar den slutgiltiga parsade JSON-en."""
+        return partial_loads(self._buffer)
+```
+
+**Modifierad nod: `nodes/response_layer.py` (`response_layer_router_node`)**
+
+```python
+# FÖRE: Streamar raw text, strip <think>, extract JSON
+
+# EFTER:
+parser = IncrementalSchemaParser()
+async for chunk in llm.astream(
+    messages,
+    response_format=pydantic_to_response_format(
+        ResponseLayerRouterResult, "response_layer_router"
+    ),
+):
+    token = chunk.content
+    thinking_delta, partial = parser.feed(token)
+    if thinking_delta:
+        yield {"reasoning_delta": thinking_delta}  # → FadeLayer
+
+result_dict = parser.finalize()
+result = ResponseLayerRouterResult.model_validate(result_dict)
+```
+
+**Modifierad nod: `response_layer_node` (user-facing)**
+
+```python
+# response_layer producerar det slutgiltiga svaret.
+# Med strukturerad output: {"thinking": "...", "response": "..."}
+# thinking streamar först → reasoning-delta
+# response streamar sedan → text-delta (synligt för användaren)
+
+parser = IncrementalSchemaParser()
+response_started = False
+
+async for chunk in llm.astream(
+    messages,
+    response_format=pydantic_to_response_format(
+        ResponseLayerResult, "response_layer"
+    ),
+):
+    thinking_delta, partial = parser.feed(chunk.content)
+
+    if thinking_delta:
+        yield {"reasoning_delta": thinking_delta}
+
+    # Streama response-fältet progressivt
+    if partial and "response" in partial and not response_started:
+        response_started = True
+    if response_started and partial:
+        response_delta = # beräkna delta mot föregående
+        yield {"text_delta": response_delta}
+```
+
+**Acceptanskriterier:**
+- [ ] `partial-json-parser` installerat
+- [ ] `IncrementalSchemaParser` kan parsa partiell JSON korrekt
+- [ ] `response_layer_router` streamar thinking progressivt via JSON
+- [ ] `response_layer` streamar thinking FÖRST, sedan response som text-delta
+- [ ] `<think>`-tag-filtret (`_ThinkStreamFilter`) blir inaktivt för strukturerade noder
+- [ ] Fallback vid modell utan json_schema-stöd: `_ThinkStreamFilter` aktiveras igen
+
+---
+
+### P1-Extra.4 — Backend: SSE-protokoll & streaming-pipeline uppdatering
+
+> **Status:** [ ] Ej påbörjad
+
+**Ändrad fil:** `surfsense_backend/app/tasks/chat/stream_new_chat.py`
+
+**Förändringar:**
+
+1. **Ny SSE event-typ:** `structured-field`
+   ```json
+   {"type": "structured-field", "node": "intent", "field": "route", "value": "kunskap"}
+   {"type": "structured-field", "node": "planner", "field": "steps", "value": [...]}
+   {"type": "structured-field", "node": "critic", "field": "decision", "value": "ok"}
+   ```
+   Dessa skickas EFTER att noden kört färdigt (ainvoke-noder) och ger frontend
+   möjlighet att visa strukturerade beslut progressivt.
+
+2. **Thinkning-routing:**
+   - För ainvoke-noder: `result.thinking` → emit `reasoning-delta` event
+   - För astream-noder: inkrementell `thinking` → emit `reasoning-delta` per chunk
+   - `_ThinkStreamFilter` behålls som fallback men bypas:as om `structured_output_enabled=True`
+
+3. **Config-flagga:**
+   ```python
+   # I stream_new_chat.py
+   structured_output_enabled = os.getenv("STRUCTURED_OUTPUT_ENABLED", "true").lower() == "true"
+   ```
+   När `false`: legacy-beteende med `<think>`-taggar och regex-parsning.
+
+4. **Thinking-persistering:**
+   - Nytt SSE event: `data-thinking-persist` med serialiserat thinking-objekt
+   - Frontend sparar detta till DB → thinking bevaras vid sidladdning
+
+**Nytt SSE event-format:**
+```
+data: {"type": "structured-field", "node": "intent", "field": "route", "value": "kunskap"}
+
+data: {"type": "structured-field", "node": "planner", "field": "steps", "value": [{"id":"step-1","content":"Hämta väderdata"}]}
+
+data: {"type": "data-thinking-persist", "node": "critic", "thinking": "Jag analyserade svaret..."}
+```
+
+**Acceptanskriterier:**
+- [ ] `structured-field` SSE-event skickas per nod
+- [ ] reasoning-delta skickas för thinking-fältet (progressivt för astream, efter ainvoke)
+- [ ] `STRUCTURED_OUTPUT_ENABLED` env-flagga styr läget
+- [ ] Thinking-persistering via nytt SSE event
+- [ ] Befintlig FadeLayer-rendering fungerar oförändrat (reasoning-delta redan stött)
+
+---
+
+### P1-Extra.5 — Frontend: Inkrementell JSON-parsning & nya SSE-events
+
+> **Status:** [ ] Ej påbörjad
+
+**Ny dependency:**
+```bash
+cd surfsense_web && pnpm add partial-json
+```
+
+**Ändrade filer:**
+
+#### `surfsense_web/app/dashboard/[search_space_id]/new-chat/new-chat-page.tsx`
+
+Ny state och event-hantering:
+
+```typescript
+// Ny state
+const [messageStructuredFields, setMessageStructuredFields] =
+  useState<Map<string, Map<string, { node: string; field: string; value: unknown }[]>>>(new Map());
+
+// I SSE event-dispatch:
+case "structured-field": {
+  const { node, field, value } = parsed;
+  setMessageStructuredFields(prev => {
+    const next = new Map(prev);
+    const fields = next.get(currentMessageId) ?? new Map();
+    const entries = fields.get(node) ?? [];
+    entries.push({ node, field, value });
+    fields.set(node, entries);
+    next.set(currentMessageId, fields);
+    return next;
+  });
+  break;
+}
+
+case "data-thinking-persist": {
+  const { node, thinking } = parsed;
+  // Persistera thinking för att bevara vid sidladdning
+  setMessageReasoningMap(prev => {
+    const next = new Map(prev);
+    const existing = next.get(currentMessageId) ?? "";
+    next.set(currentMessageId, existing + `\n--- ${node} ---\n${thinking}`);
+    return next;
+  });
+  break;
+}
+```
+
+#### `surfsense_web/components/assistant-ui/thinking-steps.tsx`
+
+Ny `StructuredDecision`-komponent i FadeLayer:
+
+```typescript
+interface StructuredDecision {
+  node: string;
+  field: string;
+  value: unknown;
+}
+
+function StructuredFieldBadge({ decision }: { decision: StructuredDecision }) {
+  // Renderar t.ex. "intent → kunskap" eller "critic → ok" som kompakta badges
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border
+                      px-1.5 py-0.5 text-[0.6rem] text-muted-foreground">
+      <span className="font-medium">{decision.node}</span>
+      <span className="opacity-50">→</span>
+      <span>{String(decision.value)}</span>
+    </span>
+  );
+}
+```
+
+Integreras i `filteredTimeline` med en ny `TimelineEntry`-kind:
+
+```typescript
+type TimelineEntry =
+  | { kind: "reasoning"; text: string }
+  | { kind: "step"; stepId: string }
+  | { kind: "structured"; node: string; field: string; value: unknown };  // NY
+```
+
+#### `surfsense_web/components/assistant-ui/structured-stream-viewer.tsx` (NY FIL)
+
+Progressiv rendering av strukturerade fält från en nod:
+
+```typescript
+import { parseJSON } from "partial-json";
+
+export function StructuredStreamViewer({
+  nodeData,
+  isStreaming,
+}: {
+  nodeData: Map<string, { field: string; value: unknown }[]>;
+  isStreaming: boolean;
+}) {
+  // Renderar fält-för-fält som de anländer
+  // T.ex. planner-steg visas som en mini-lista efterhand
+  // Critic-beslut visas som en badge
+  // Intent-route visas som en chip
+}
+```
+
+**Acceptanskriterier:**
+- [ ] `partial-json` npm-paket installerat
+- [ ] `structured-field` SSE-events hanteras korrekt
+- [ ] `data-thinking-persist` sparar thinking per nod
+- [ ] FadeLayer visar strukturerade beslut som badges
+- [ ] Timeline stödjer ny `structured`-kind
+- [ ] Progressiv rendering: fält visas efterhand som de anländer
+
+---
+
+### P1-Extra.6 — Frontend: Persistera thinking & strukturerad data
+
+> **Status:** [ ] Ej påbörjad
+
+**Mål:** Thinking-text och strukturerade beslut bevaras vid sidladdning (idag
+försvinner reasoning vid refresh).
+
+**Ändrade filer:**
+
+#### `surfsense_web/app/dashboard/[search_space_id]/new-chat/new-chat-page.tsx`
+
+I `buildContentForPersistence()`:
+
+```typescript
+// NYTT: Persistera thinking + structured fields
+const persistContent = [
+  { type: "thinking-steps", steps: [...] },
+  { type: "reasoning-text", text: reasoningMap.get(msgId) ?? "" },     // NY
+  { type: "structured-fields", fields: structuredFields.get(msgId) },  // NY
+  { type: "compare-summary", summary: ... },
+  { type: "text", text: "..." },
+  { type: "tool-call", ... },
+];
+```
+
+#### `surfsense_web/lib/message-utils.ts`
+
+Nya Zod-schemas och extraktion:
+
+```typescript
+const ReasoningTextPartSchema = z.object({
+  type: z.literal("reasoning-text"),
+  text: z.string(),
+});
+
+const StructuredFieldsPartSchema = z.object({
+  type: z.literal("structured-fields"),
+  fields: z.record(z.array(z.object({
+    node: z.string(),
+    field: z.string(),
+    value: z.unknown(),
+  }))),
+});
+
+export function extractReasoningText(content: unknown[]): string { ... }
+export function extractStructuredFields(content: unknown[]): Map<...> { ... }
+```
+
+#### Återställning vid sidladdning
+
+I `restoreMessagesFromDB()` (new-chat-page.tsx):
+
+```typescript
+// Återställ reasoning
+const reasoning = extractReasoningText(msg.content);
+if (reasoning) {
+  restoredReasoningMap.set(msgId, reasoning);
+}
+
+// Återställ structured fields
+const fields = extractStructuredFields(msg.content);
+if (fields.size > 0) {
+  restoredStructuredFields.set(msgId, fields);
+}
+```
+
+**Acceptanskriterier:**
+- [ ] Reasoning-text persisteras i `buildContentForPersistence()`
+- [ ] Strukturerade fält persisteras
+- [ ] Vid sidladdning återställs reasoning i FadeLayer
+- [ ] Vid sidladdning återställs strukturerade badges
+- [ ] Zod-schemas validerar korrekt
+- [ ] Inga regressioner i befintlig meddelandehantering
+
+---
+
+### P1-Extra.7 — Promptjusteringar
+
+> **Status:** [ ] Ej påbörjad
+
+**Mål:** Uppdatera systemprompts att instruera modellen att producera JSON med
+thinking-fältet, istället för `<think>`-taggar.
+
+**Ändrade filer:**
+
+#### `surfsense_backend/app/agents/new_chat/supervisor_pipeline_prompts.py`
+
+Alla prompts (intent, planner, critic, synthesizer, agent_resolver, response_layer)
+uppdateras med:
+
+```
+DIN RESNING SKA FINNAS I "thinking"-FÄLTET I JSON-SVARET.
+Använd INTE <think>-taggar. All intern resonering går i "thinking"-fältet.
+Producera EXAKT det JSON-schema som anges. Inga extra fält.
+```
+
+#### `surfsense_backend/app/agents/new_chat/system_prompt.py`
+
+Villkorad `<think>`-instruktion:
+
+```python
+def inject_core_prompt(
+    include_think_instructions: bool = True,
+    structured_output: bool = False,   # NY PARAM
+) -> str:
+    if structured_output:
+        # JSON-schema-läge: thinking i JSON-fältet
+        return SURFSENSE_CORE_GLOBAL_PROMPT_STRUCTURED
+    elif include_think_instructions:
+        return SURFSENSE_CORE_GLOBAL_PROMPT
+    else:
+        return SURFSENSE_CORE_GLOBAL_PROMPT_NO_THINK
+```
+
+**Acceptanskriterier:**
+- [ ] Alla LLM-prompts instruerar om JSON-thinking istället för `<think>`-taggar
+- [ ] `inject_core_prompt(structured_output=True)` returnerar rätt prompt
+- [ ] `structured_output=False` behåller legacy-beteende
+- [ ] Prompterna matchar exakt de Pydantic-schemat (fältnamn, typer)
+
+---
+
+### P1-Extra.8 — Tester
+
+> **Status:** [ ] Ej påbörjad
+
+**Ny testfil:** `surfsense_backend/tests/test_structured_output.py`
+
+| Test | Testar |
+|------|--------|
+| `test_intent_schema_valid_json_schema` | IntentResult.model_json_schema() producerar giltig JSON Schema |
+| `test_intent_schema_parse_valid` | IntentResult parsar giltigt LLM-svar |
+| `test_intent_schema_parse_invalid_fallback` | Ogiltig JSON → fallback till regex |
+| `test_planner_schema_max_4_steps` | PlannerResult avvisar > 4 steg |
+| `test_critic_schema_decision_enum` | CriticResult avvisar ogiltig decision |
+| `test_synthesizer_schema_response_field` | SynthesizerResult extraherar response |
+| `test_response_format_helper` | pydantic_to_response_format() korrekt dict |
+| `test_incremental_parser_thinking` | IncrementalSchemaParser extraherar thinking progressivt |
+| `test_incremental_parser_complete` | IncrementalSchemaParser.finalize() returnerar komplett JSON |
+| `test_incremental_parser_partial_json` | Partiell JSON hanteras utan crash |
+| `test_structured_output_env_flag` | STRUCTURED_OUTPUT_ENABLED=false → legacy-beteende |
+| `test_prompt_structured_mode` | inject_core_prompt(structured_output=True) → rätt prompt |
+| `test_thinking_field_first_in_all_schemas` | Alla schemas har thinking som första fält |
+| `test_sse_structured_field_event` | structured-field SSE-event serialiseras korrekt |
+
+**Frontend-tester** (manuella/E2E):
+
+| Test | Testar |
+|------|--------|
+| `FadeLayer visar reasoning från thinking-fält` | Thinking streamar korrekt i think-box |
+| `Structured badges visas i timeline` | Intent, critic-beslut etc. visas som badges |
+| `Sidladdning bevarar reasoning` | Thinking bevaras efter refresh |
+| `Fallback vid legacy-svar` | Fungerar med modeller utan json_schema-stöd |
+
+**Acceptanskriterier:**
+- [ ] ALLA backend-tester passerar
+- [ ] Inga regressioner i befintlig testsvit
+- [ ] Manuell verifiering av frontend-rendering
+
+---
+
+### Konfiguration & Miljövariabler
+
+| Variabel | Default | Beskrivning |
+|----------|---------|-------------|
+| `STRUCTURED_OUTPUT_ENABLED` | `true` | Aktivera JSON Schema structured output |
+| `STRUCTURED_OUTPUT_FALLBACK` | `true` | Fallback till regex-parsning vid fel |
+| `THINK_ON_TOOL_CALLS` | `false` (befintlig) | Think i executor (ortogonalt) |
+
+---
+
+### Fil-index (alla filer som berörs i P1 Extra)
+
+| Fil | Åtgärd | Sub-task |
+|-----|--------|----------|
+| `app/agents/new_chat/structured_schemas.py` | **NY** | P1-Extra.1 |
+| `app/agents/new_chat/incremental_json_parser.py` | **NY** | P1-Extra.3 |
+| `app/agents/new_chat/nodes/intent.py` | Ändrad | P1-Extra.2 |
+| `app/agents/new_chat/nodes/agent_resolver.py` | Ändrad | P1-Extra.2 |
+| `app/agents/new_chat/nodes/planner.py` | Ändrad | P1-Extra.2 |
+| `app/agents/new_chat/nodes/critic.py` | Ändrad | P1-Extra.2 |
+| `app/agents/new_chat/nodes/synthesizer.py` | Ändrad | P1-Extra.2 |
+| `app/agents/new_chat/nodes/response_layer.py` | Ändrad | P1-Extra.3 |
+| `app/agents/new_chat/system_prompt.py` | Ändrad | P1-Extra.7 |
+| `app/agents/new_chat/supervisor_pipeline_prompts.py` | Ändrad | P1-Extra.7 |
+| `app/tasks/chat/stream_new_chat.py` | Ändrad | P1-Extra.4 |
+| `tests/test_structured_output.py` | **NY** | P1-Extra.8 |
+| `surfsense_web/package.json` | Ändrad (dep) | P1-Extra.5 |
+| `surfsense_web/.../new-chat-page.tsx` | Ändrad | P1-Extra.5, P1-Extra.6 |
+| `surfsense_web/.../thinking-steps.tsx` | Ändrad | P1-Extra.5 |
+| `surfsense_web/.../structured-stream-viewer.tsx` | **NY** | P1-Extra.5 |
+| `surfsense_web/lib/message-utils.ts` | Ändrad | P1-Extra.6 |
+
+---
+
+### Risker & Mitigation
+
+| Risk | Allvarlighet | Mitigation |
+|------|-------------|------------|
+| LM Studio stödjer inte `json_schema` response_format | HÖG | Fallback-flagga `STRUCTURED_OUTPUT_FALLBACK=true` behåller legacy-parsning |
+| `max_tokens` för lågt → trunkerad JSON | MEDEL | Höj max_tokens per nod, validera med Pydantic |
+| Thinking-fältet gör svaren långsammare | LÅG | Thinking är snabbt (modellen tänker ändå), grammatik-overhead minimal |
+| Inkrementell JSON-parser missar edge cases | MEDEL | Robust felhantering + fallback till komplett parsning |
+| Frontend-regressioner i FadeLayer | MEDEL | reasoning-delta redan stött, minimal ändring |
+| Modeller utan thinking-kapacitet | LÅG | `thinking: ""` (tom sträng) är giltigt schema |
+
+---
+
+### Ordning: Implementationssekvens
+
+```
+P1-Extra.1 (Schemas)                    ← Ingen dependency
+    ↓
+P1-Extra.7 (Prompts)                    ← Behöver schemas
+    ↓
+P1-Extra.2 (ainvoke-noder)              ← Behöver schemas + prompts
+    ↓
+P1-Extra.3 (astream-noder + parser)     ← Behöver schemas
+    ↓
+P1-Extra.4 (SSE-protokoll)              ← Behöver ainvoke + astream ändringarna
+    ↓
+P1-Extra.5 (Frontend SSE + rendering)   ← Behöver nya SSE events
+    ↓
+P1-Extra.6 (Frontend persistering)      ← Behöver P1-Extra.5
+    ↓
+P1-Extra.8 (Tester)                     ← Sist, verifierar allt
+```
 
 ---
 
@@ -287,8 +1089,9 @@ resolve_intent → memory_context → [route_after_intent]
 ## Sprint P4 — Arkitekturell Evolution (Framtida)
 
 > **Status:** [ ] Planeras
-> **Mål:** Subagent mini-graphs, convergence, structured output
+> **Mål:** Subagent mini-graphs, convergence
 > **Källa:** Issue #44
+> **Not:** Pydantic structured output (tidigare P4.2) har flyttats till **P1 Extra**.
 
 ### P4.1 — Subagent Mini-Graphs
 
@@ -327,23 +1130,12 @@ domain_planner → subagent_spawner → [SubagentMiniGraph x N parallellt]
 - Checkpointer-hantering för nested graphs
 - Stor omskrivning: ~500-800 rader ny kod
 
-### P4.2 — Pydantic Structured Output
+### ~~P4.2 — Pydantic Structured Output~~ → Flyttad till **P1 Extra**
 
-**Vad:** Ersätt JSON-parsing med Pydantic-modeller för alla LLM-bedömningar:
-- IntentResult(route, confidence, sub_intents)
-- CriticDecision(decision, reason, adaptive_threshold, missing_critical)
-- PlanStep(action, tool_id, expected_output)
+> Denna uppgift täcks nu helt av Sprint P1 Extra (P1-Extra.1 — P1-Extra.8).
+> Se [Sprint P1 Extra](#sprint-p1-extra--strukturerad-output-json-schema).
 
-**Fördelar:**
-- Typning och validering av LLM-output
-- Bättre felhantering vid malformad JSON
-- Structured output via LiteLLM `response_format`
-
-**Notering:** REGEX-baserade guards (max_steps, token, loop detection) ska
-BEHÅLLAS som mekaniska guards. Bara LLM-bedömningar (critic, routing,
-synthesis) ska använda Pydantic structured output.
-
-### P4.3 — Adaptive Everything
+### P4.2 — Adaptive Everything (omnumrerad från P4.3)
 
 **Vad:** Alla trösklar blir dynamiska baserat på flödets progress:
 - Confidence threshold: sjunker från 0.7 → 0.4 med steg
@@ -434,12 +1226,25 @@ synthesis_hitl → [progressive_synthesizer →] synthesizer
 | `app/agents/new_chat/supervisor_constants.py` | P1, P2 |
 | `app/agents/new_chat/supervisor_agent.py` | P1, P2 |
 | `app/agents/new_chat/complete_graph.py` | P1 |
-| `app/agents/new_chat/nodes/critic.py` | P1 |
+| `app/agents/new_chat/nodes/critic.py` | P1, P1 Extra |
 | `app/agents/new_chat/nodes/smart_critic.py` | P1 |
 | `app/agents/new_chat/nodes/executor.py` | P1 |
-| `app/agents/new_chat/system_prompt.py` | P1 |
-| `app/tasks/chat/stream_new_chat.py` | P1, P2 |
+| `app/agents/new_chat/system_prompt.py` | P1, P1 Extra |
+| `app/tasks/chat/stream_new_chat.py` | P1, P1 Extra, P2 |
 | `app/langgraph_studio.py` | P2 |
+| `app/agents/new_chat/structured_schemas.py` | **P1 Extra (ny)** |
+| `app/agents/new_chat/incremental_json_parser.py` | **P1 Extra (ny)** |
+| `app/agents/new_chat/nodes/intent.py` | P1 Extra |
+| `app/agents/new_chat/nodes/agent_resolver.py` | P1 Extra |
+| `app/agents/new_chat/nodes/planner.py` | P1 Extra |
+| `app/agents/new_chat/nodes/synthesizer.py` | P1 Extra |
+| `app/agents/new_chat/nodes/response_layer.py` | P1 Extra |
+| `app/agents/new_chat/supervisor_pipeline_prompts.py` | P1 Extra |
+| `tests/test_structured_output.py` | **P1 Extra (ny)** |
+| `surfsense_web/.../new-chat-page.tsx` | P1 Extra |
+| `surfsense_web/.../thinking-steps.tsx` | P1 Extra |
+| `surfsense_web/.../structured-stream-viewer.tsx` | **P1 Extra (ny)** |
+| `surfsense_web/lib/message-utils.ts` | P1 Extra |
 | `app/agents/new_chat/nodes/multi_query_decomposer.py` | P3 (ny) |
 | `app/agents/new_chat/nodes/subagent_mini_graph.py` | P4 (ny) |
 | `app/agents/new_chat/nodes/convergence_node.py` | P4 (ny) |
