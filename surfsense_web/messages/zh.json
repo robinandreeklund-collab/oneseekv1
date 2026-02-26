@@ -851,8 +851,10 @@
 		"routing_needs_more": "→ 工具解析器（获取更多数据）",
 		"routing_replan": "→ 规划器（创建新计划）",
 
-		"providers_title": "20+个LLM提供商",
-		"providers_subtitle": "灵活架构，通过LiteLLM支持所有主要语言模型。",
+		"providers_title": "7个AI模型。30个LLM提供商。",
+		"providers_subtitle": "Oneseek实时比较所有领先AI模型的答案——并通过LiteLLM支持30+提供商。",
+		"providers_litellm": "另有30个提供商通过LiteLLM",
+		"providers_more": "更多",
 
 		"cta_headline": "准备好更智能地搜索了吗？",
 		"cta_description": "体验瑞典最透明的AI搜索平台。比较、验证和信赖答案。",

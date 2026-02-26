@@ -866,8 +866,10 @@
 		"routing_needs_more": "→ Tool Resolver (fetch more data)",
 		"routing_replan": "→ Planner (create new plan)",
 
-		"providers_title": "20+ LLM providers",
-		"providers_subtitle": "Flexible architecture supporting all major language models via LiteLLM.",
+		"providers_title": "7 AI models. 30 LLM providers.",
+		"providers_subtitle": "Oneseek compares answers from all leading AI models in real-time — and supports 30+ providers via LiteLLM.",
+		"providers_litellm": "Plus 30 providers via LiteLLM",
+		"providers_more": "more",
 
 		"cta_headline": "Ready to search smarter?",
 		"cta_description": "Experience Sweden's most transparent AI search platform. Compare, verify and trust the answers.",

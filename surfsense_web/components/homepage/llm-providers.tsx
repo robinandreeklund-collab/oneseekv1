@@ -1,29 +1,31 @@
 "use client";
 
 import { motion, useInView } from "motion/react";
+import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { useRef } from "react";
 import { cn } from "@/lib/utils";
 
-const PROVIDERS = [
-	{ name: "OpenAI", color: "from-green-500/15 to-emerald-500/15 dark:from-green-500/25 dark:to-emerald-500/25" },
-	{ name: "Anthropic", color: "from-orange-500/15 to-amber-500/15 dark:from-orange-500/25 dark:to-amber-500/25" },
-	{ name: "Google", color: "from-blue-500/15 to-cyan-500/15 dark:from-blue-500/25 dark:to-cyan-500/25" },
-	{ name: "xAI", color: "from-purple-500/15 to-pink-500/15 dark:from-purple-500/25 dark:to-pink-500/25" },
-	{ name: "DeepSeek", color: "from-indigo-500/15 to-blue-500/15 dark:from-indigo-500/25 dark:to-blue-500/25" },
-	{ name: "Perplexity", color: "from-cyan-500/15 to-teal-500/15 dark:from-cyan-500/25 dark:to-teal-500/25" },
-	{ name: "Qwen", color: "from-yellow-500/15 to-orange-500/15 dark:from-yellow-500/25 dark:to-orange-500/25" },
-	{ name: "OpenRouter", color: "from-pink-500/15 to-rose-500/15 dark:from-pink-500/25 dark:to-rose-500/25" },
-	{ name: "Groq", color: "from-red-500/15 to-orange-500/15 dark:from-red-500/25 dark:to-orange-500/25" },
-	{ name: "Together", color: "from-violet-500/15 to-purple-500/15 dark:from-violet-500/25 dark:to-purple-500/25" },
-	{ name: "Azure", color: "from-blue-500/15 to-indigo-500/15 dark:from-blue-500/25 dark:to-indigo-500/25" },
-	{ name: "Mistral", color: "from-orange-500/15 to-red-500/15 dark:from-orange-500/25 dark:to-red-500/25" },
-	{ name: "Cohere", color: "from-teal-500/15 to-green-500/15 dark:from-teal-500/25 dark:to-green-500/25" },
-	{ name: "Fireworks", color: "from-amber-500/15 to-yellow-500/15 dark:from-amber-500/25 dark:to-yellow-500/25" },
-	{ name: "Cerebras", color: "from-rose-500/15 to-pink-500/15 dark:from-rose-500/25 dark:to-pink-500/25" },
-	{ name: "DeepInfra", color: "from-emerald-500/15 to-teal-500/15 dark:from-emerald-500/25 dark:to-teal-500/25" },
-	{ name: "Replicate", color: "from-indigo-500/15 to-violet-500/15 dark:from-indigo-500/25 dark:to-violet-500/25" },
-	{ name: "Ollama", color: "from-neutral-500/15 to-neutral-500/15 dark:from-neutral-500/25 dark:to-neutral-400/25" },
+/* ────────────────────────────────────────────────────────────
+   Primary models — the 7 compare-mode models with real logos
+   ──────────────────────────────────────────────────────────── */
+const PRIMARY_MODELS = [
+	{ name: "ChatGPT", logo: "/model-logos/chatgpt.png", accent: "from-emerald-500/20 to-green-500/20", border: "border-emerald-500/30", glow: "group-hover:shadow-emerald-500/20" },
+	{ name: "Claude", logo: "/model-logos/claude.png", accent: "from-orange-500/20 to-amber-500/20", border: "border-orange-500/30", glow: "group-hover:shadow-orange-500/20" },
+	{ name: "Gemini", logo: "/model-logos/gemini.png", accent: "from-blue-500/20 to-cyan-500/20", border: "border-blue-500/30", glow: "group-hover:shadow-blue-500/20" },
+	{ name: "Grok", logo: "/model-logos/grok.png", accent: "from-neutral-500/20 to-neutral-400/20", border: "border-neutral-500/30", glow: "group-hover:shadow-neutral-500/20" },
+	{ name: "DeepSeek", logo: "/model-logos/deepseek.png", accent: "from-indigo-500/20 to-blue-500/20", border: "border-indigo-500/30", glow: "group-hover:shadow-indigo-500/20" },
+	{ name: "Perplexity", logo: "/model-logos/perplexity.png", accent: "from-cyan-500/20 to-teal-500/20", border: "border-cyan-500/30", glow: "group-hover:shadow-cyan-500/20" },
+	{ name: "Qwen", logo: "/model-logos/qwen.png", accent: "from-violet-500/20 to-purple-500/20", border: "border-violet-500/30", glow: "group-hover:shadow-violet-500/20" },
+];
+
+/* ────────────────────────────────────────────────────────────
+   Secondary — LiteLLM provider ecosystem (text pills)
+   ──────────────────────────────────────────────────────────── */
+const LITELLM_PROVIDERS = [
+	"OpenRouter", "Azure", "Bedrock", "Vertex AI", "Groq", "Mistral",
+	"Together AI", "Fireworks", "Cohere", "Replicate", "Ollama",
+	"Cerebras", "DeepInfra", "Moonshot", "SambaNova", "AI21",
 ];
 
 export function LLMProviders() {
@@ -43,49 +45,101 @@ export function LLMProviders() {
 			</div>
 
 			<div className="mx-auto max-w-7xl px-6">
+				{/* Header */}
 				<motion.div
-					className="text-center mb-12"
+					className="text-center mb-14"
 					initial={{ opacity: 0, y: 20 }}
-					animate={isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
+					animate={isInView ? { opacity: 1, y: 0 } : {}}
 					transition={{ duration: 0.6 }}
 				>
 					<h2 className="text-3xl md:text-5xl font-bold tracking-tight text-neutral-900 dark:text-white">
 						{t("providers_title")}
 					</h2>
-					<p className="mt-4 text-lg text-neutral-500 dark:text-neutral-400">
+					<p className="mt-4 text-lg text-neutral-500 dark:text-neutral-400 max-w-2xl mx-auto">
 						{t("providers_subtitle")}
 					</p>
 				</motion.div>
 
+				{/* Primary models — logo cards */}
 				<motion.div
-					className="flex flex-wrap justify-center gap-3"
+					className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-4 max-w-5xl mx-auto mb-12"
 					initial={{ opacity: 0 }}
-					animate={isInView ? { opacity: 1 } : { opacity: 0 }}
-					transition={{ duration: 0.6, delay: 0.2 }}
+					animate={isInView ? { opacity: 1 } : {}}
+					transition={{ duration: 0.5, delay: 0.2 }}
 				>
-					{PROVIDERS.map((provider, index) => (
+					{PRIMARY_MODELS.map((model, index) => (
 						<motion.div
-							key={provider.name}
-							initial={{ opacity: 0, scale: 0.8, y: 10 }}
-							animate={
-								isInView
-									? { opacity: 1, scale: 1, y: 0 }
-									: { opacity: 0, scale: 0.8, y: 10 }
-							}
-							transition={{ delay: index * 0.03, duration: 0.3 }}
-							whileHover={{ scale: 1.08, y: -3 }}
-							className="group relative"
+							key={model.name}
+							initial={{ opacity: 0, y: 15, scale: 0.9 }}
+							animate={isInView ? { opacity: 1, y: 0, scale: 1 } : {}}
+							transition={{ delay: 0.15 + index * 0.06, duration: 0.4 }}
+							whileHover={{ y: -6, scale: 1.04 }}
+							className="group"
 						>
 							<div
 								className={cn(
-									"rounded-full border border-neutral-200/60 dark:border-neutral-800/60 bg-gradient-to-br px-5 py-2.5 text-sm font-semibold text-neutral-800 dark:text-white backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-300 cursor-default",
-									provider.color
+									"relative flex flex-col items-center gap-3 p-5 rounded-2xl border backdrop-blur-sm",
+									"bg-gradient-to-b transition-all duration-300 cursor-default",
+									"shadow-sm group-hover:shadow-xl",
+									model.accent,
+									model.border,
+									model.glow,
 								)}
 							>
-								{provider.name}
+								{/* Logo */}
+								<div className="relative w-12 h-12 flex items-center justify-center">
+									<Image
+										src={model.logo}
+										alt={model.name}
+										width={48}
+										height={48}
+										className="object-contain rounded-lg"
+									/>
+								</div>
+								{/* Name */}
+								<span className="text-sm font-semibold text-neutral-800 dark:text-white">
+									{model.name}
+								</span>
 							</div>
 						</motion.div>
 					))}
+				</motion.div>
+
+				{/* Divider with "+" */}
+				<motion.div
+					className="flex items-center justify-center gap-4 mb-10"
+					initial={{ opacity: 0 }}
+					animate={isInView ? { opacity: 1 } : {}}
+					transition={{ delay: 0.8 }}
+				>
+					<div className="h-px w-24 bg-gradient-to-r from-transparent to-neutral-300 dark:to-neutral-700" />
+					<span className="text-xs font-semibold text-neutral-400 dark:text-neutral-500 uppercase tracking-widest">
+						{t("providers_litellm")}
+					</span>
+					<div className="h-px w-24 bg-gradient-to-l from-transparent to-neutral-300 dark:to-neutral-700" />
+				</motion.div>
+
+				{/* Secondary — LiteLLM provider pills */}
+				<motion.div
+					className="flex flex-wrap justify-center gap-2 max-w-3xl mx-auto"
+					initial={{ opacity: 0 }}
+					animate={isInView ? { opacity: 1 } : {}}
+					transition={{ delay: 0.9, duration: 0.5 }}
+				>
+					{LITELLM_PROVIDERS.map((name, index) => (
+						<motion.span
+							key={name}
+							initial={{ opacity: 0, scale: 0.85 }}
+							animate={isInView ? { opacity: 1, scale: 1 } : {}}
+							transition={{ delay: 0.95 + index * 0.02, duration: 0.25 }}
+							className="px-3.5 py-1.5 rounded-full text-xs font-medium bg-neutral-100 dark:bg-neutral-800/60 text-neutral-500 dark:text-neutral-400 border border-neutral-200/60 dark:border-neutral-700/40"
+						>
+							{name}
+						</motion.span>
+					))}
+					<span className="px-3.5 py-1.5 rounded-full text-xs font-medium bg-neutral-100 dark:bg-neutral-800/60 text-neutral-400 dark:text-neutral-500 border border-neutral-200/60 dark:border-neutral-700/40">
+						+{t("providers_more")}
+					</span>
 				</motion.div>
 			</div>
 		</section>
