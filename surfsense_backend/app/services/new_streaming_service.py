@@ -288,6 +288,22 @@ class VercelStreamingService:
             self.context.active_reasoning_id = None
         return self._format_sse({"type": "reasoning-end", "id": reasoning_id})
 
+    def format_text_clear(self) -> str:
+        """
+        Format a text-clear event to tell the frontend to discard accumulated
+        text content for the current message.
+
+        Used when the think-stream filter detects that text previously sent as
+        ``text-delta`` was actually reasoning (template-prefilled ``<think>``).
+
+        Returns:
+            str: SSE formatted text-clear event
+
+        Example output:
+            data: {"type":"text-clear"}
+        """
+        return self._format_sse({"type": "text-clear"})
+
     # =========================================================================
     # Source Parts
     # =========================================================================
@@ -449,6 +465,36 @@ class VercelStreamingService:
                 "trace_session_id": trace_session_id,
                 "event": event,
                 "span": span,
+            },
+        )
+
+    def format_node_reasoning(
+        self,
+        step_id: str,
+        node_name: str,
+        delta: str,
+    ) -> str:
+        """
+        Format a per-node reasoning delta for the unified pipeline think-box.
+
+        This carries live ``<think>`` reasoning from internal pipeline nodes
+        (intent resolver, planner, critic, etc.) so the frontend can display
+        rolling reasoning text attached to the corresponding thinking step.
+
+        Args:
+            step_id: The thinking-step id this reasoning belongs to.
+            node_name: Pipeline node name (e.g. ``"resolve_intent"``).
+            delta: Incremental reasoning text.
+
+        Returns:
+            str: SSE formatted ``data-node-reasoning`` event.
+        """
+        return self.format_data(
+            "node-reasoning",
+            {
+                "step_id": step_id,
+                "node": node_name,
+                "delta": delta,
             },
         )
 

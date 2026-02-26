@@ -1,11 +1,20 @@
 import { useAssistantState, useThreadViewport } from "@assistant-ui/react";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import type { FC } from "react";
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { ChainOfThoughtItem } from "@/components/prompt-kit/chain-of-thought";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { TextShimmerLoader } from "@/components/prompt-kit/loader";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { cn } from "@/lib/utils";
+import { ContextStatsContext } from "@/components/assistant-ui/context-stats";
+
+// ---------------------------------------------------------------------------
+// Timeline — ordered list of reasoning chunks interleaved with tool steps
+// ---------------------------------------------------------------------------
+
+/** A single entry in the chronological fade-layer timeline. */
+export type TimelineEntry =
+	| { kind: "reasoning"; text: string }
+	| { kind: "step"; stepId: string };
 
 // Context to pass thinking steps to AssistantMessage
 export const ThinkingStepsContext = createContext<Map<string, ThinkingStep[]>>(new Map());
@@ -13,149 +22,242 @@ export const ThinkingStepsContext = createContext<Map<string, ThinkingStep[]>>(n
 // Context to pass live reasoning text (from <think> tags / reasoning-delta events) to AssistantMessage
 export const ReasoningContext = createContext<Map<string, string>>(new Map());
 
-/**
- * Chain of thought display component - single collapsible dropdown design
- */
-export const ThinkingStepsDisplay: FC<{ steps: ThinkingStep[]; isThreadRunning?: boolean }> = ({
-	steps,
-	isThreadRunning = true,
-}) => {
-	const [isOpen, setIsOpen] = useState(true);
+// Context for the interleaved timeline (reasoning chunks + step markers, in arrival order)
+export const TimelineContext = createContext<Map<string, TimelineEntry[]>>(new Map());
 
-	// Derive effective status for each step
-	const getEffectiveStatus = useCallback(
-		(step: ThinkingStep): "pending" | "in_progress" | "completed" => {
-			if (step.status === "in_progress" && !isThreadRunning) {
-				return "completed";
-			}
-			return step.status;
-		},
-		[isThreadRunning]
+// ---------------------------------------------------------------------------
+// FadeLayer — unified rolling reasoning + thinking-steps component
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders tool-call steps as compact inline badges within the fade layer.
+ */
+const InlineToolStep: FC<{ step: ThinkingStep }> = ({ step }) => (
+	<div className="my-0.5 flex items-start gap-1.5 rounded border border-border/60 bg-muted/60 px-2 py-0.5 text-[0.7rem] text-muted-foreground">
+		<span className="mt-px shrink-0 opacity-70">&#9728;</span>
+		<div className="min-w-0 flex-1">
+			<span>{step.title}</span>
+			{step.items && step.items.length > 0 && (
+				<div className="mt-0.5 space-y-px text-[0.6rem] opacity-50">
+					{step.items.map((item, idx) => (
+						<div key={`${step.id}-item-${idx}`} className="truncate">{item}</div>
+					))}
+				</div>
+			)}
+		</div>
+	</div>
+);
+
+/**
+ * Renders a reasoning text chunk, splitting by --- Title --- headers.
+ */
+const ReasoningChunk: FC<{ text: string; keyPrefix: string }> = ({ text, keyPrefix }) => {
+	const segments = text.split(/^(---\s+.+?\s+---)\s*$/m).filter(Boolean);
+	return (
+		<>
+			{segments.map((segment, i) => {
+				const isHeader = /^---\s+.+?\s+---$/.test(segment);
+				if (isHeader) {
+					const title = segment.replace(/^---\s+/, "").replace(/\s+---$/, "");
+					return (
+						<div key={`${keyPrefix}-${i}`} className="flex items-center gap-2 pt-1.5 pb-0.5">
+							<span className="text-[0.68rem] font-semibold text-primary/80">
+								{title}
+							</span>
+							<span className="h-px flex-1 bg-primary/10" />
+						</div>
+					);
+				}
+				const trimmed = segment.trim();
+				if (!trimmed) return null;
+				return (
+					<div
+						key={`${keyPrefix}-${i}`}
+						className="text-[0.76rem] leading-relaxed text-muted-foreground whitespace-pre-wrap"
+					>
+						{trimmed}
+					</div>
+				);
+			})}
+		</>
+	);
+};
+
+/** Max collapsed height in px (≈ 11rem) */
+const MAX_COLLAPSED_HEIGHT = 176;
+
+/**
+ * FadeLayer – unified component that merges the reasoning stream
+ * (from <think> / reasoning-delta events) with structured thinking
+ * steps (tool calls etc.) into a single rolling container.
+ *
+ * Uses the timeline (ordered list of reasoning chunks + step markers)
+ * to render entries in the correct chronological order.
+ *
+ * Design:
+ * - Max-height with top gradient fade-out (content dissolves upward)
+ * - overflow:hidden clips content; JS scrollTop shows the latest
+ * - Dims to low opacity when streaming finishes; hover reveals
+ * - Clean expand toggle ("▾ N steg · Xs")
+ */
+export const FadeLayer: FC<{
+	timeline: TimelineEntry[];
+	stepsById: Map<string, ThinkingStep>;
+	isStreaming: boolean;
+	messageId?: string;
+}> = ({ timeline, stepsById, isStreaming, messageId }) => {
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const [isExpanded, setIsExpanded] = useState(false);
+	const [streamStartTime] = useState(() => Date.now());
+	const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+	// Context stats from context
+	const contextStatsMap = useContext(ContextStatsContext);
+	const contextEntries = messageId ? contextStatsMap.get(messageId) : undefined;
+	const latestContext = contextEntries?.[contextEntries.length - 1];
+
+	// Filter context-stats from the timeline — rendered separately
+	const filteredTimeline = useMemo(
+		() => timeline.filter((e) => !(e.kind === "step" && e.stepId === "context-stats")),
+		[timeline],
 	);
 
-	// Calculate summary info
-	const completedSteps = steps.filter((s) => getEffectiveStatus(s) === "completed").length;
-	const inProgressStep = steps.find((s) => getEffectiveStatus(s) === "in_progress");
-	const allCompleted = completedSteps === steps.length && steps.length > 0 && !isThreadRunning;
-	const isProcessing = isThreadRunning && !allCompleted;
-
-	// Auto-collapse when all tasks are completed
+	// Track elapsed time during streaming
 	useEffect(() => {
-		if (allCompleted) {
-			setIsOpen(false);
+		if (!isStreaming) {
+			setElapsedSeconds(Math.round((Date.now() - streamStartTime) / 1000));
+			return;
 		}
-	}, [allCompleted]);
+		const interval = setInterval(() => {
+			setElapsedSeconds(Math.round((Date.now() - streamStartTime) / 1000));
+		}, 1000);
+		return () => clearInterval(interval);
+	}, [isStreaming, streamStartTime]);
 
-	if (steps.length === 0) return null;
+	// Scroll to bottom during streaming (works with overflow:hidden too)
+	useEffect(() => {
+		if (scrollRef.current) {
+			if (isStreaming || !isExpanded) {
+				scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+			}
+		}
+	}, [filteredTimeline, isStreaming, isExpanded]);
 
-	// Generate header text
-	const getHeaderText = () => {
-		if (allCompleted) {
-			return `Reviewed ${completedSteps} ${completedSteps === 1 ? "step" : "steps"}`;
-		}
-		if (inProgressStep) {
-			return inProgressStep.title;
-		}
-		if (isProcessing) {
-			return `Processing ${completedSteps}/${steps.length} steps`;
-		}
-		return `Reviewed ${completedSteps} ${completedSteps === 1 ? "step" : "steps"}`;
-	};
+	if (filteredTimeline.length === 0) return null;
+
+	const isDone = !isStreaming;
+	const stepCount = filteredTimeline.filter((e) => e.kind === "step").length;
+
+	// When collapsed: overflow hidden clips content, maxHeight constrains.
+	// When expanded: overflow auto lets user scroll freely, no maxHeight.
+	const containerStyle: React.CSSProperties = isExpanded
+		? { overflowY: "auto" }
+		: { maxHeight: MAX_COLLAPSED_HEIGHT, overflow: "hidden" };
+
+	// Format context tokens for the floating indicator
+	const contextTokensLabel = latestContext?.total_tokens
+		? `${latestContext.total_tokens.toLocaleString("sv-SE")} tok`
+		: null;
 
 	return (
-		<div className="mx-auto w-full max-w-(--thread-max-width) px-2 py-2">
-			<div className="rounded-lg">
-				{/* Main collapsible header */}
+		<div
+			style={{ maxWidth: "var(--thread-max-width)", margin: "0 auto", width: "100%", padding: "0 0.5rem 0.25rem" }}
+		>
+			{/* Rolling container */}
+			<div
+				ref={scrollRef}
+				style={{ ...containerStyle, position: "relative" }}
+			>
+				{/* Top gradient fade-out mask (only when collapsed) */}
+				{!isExpanded && (
+					<div
+						style={{
+							position: "sticky",
+							top: 0,
+							left: 0,
+							right: 0,
+							zIndex: 10,
+							height: "2.5rem",
+							pointerEvents: "none",
+							background: "linear-gradient(to bottom, var(--background) 0%, transparent 100%)",
+						}}
+					/>
+				)}
+
+				{/* Content — interleaved reasoning + steps */}
+				<div
+					className="space-y-0.5 px-1 pb-1"
+					style={{
+						opacity: isDone && !isExpanded ? 0.35 : undefined,
+						transition: "opacity 400ms",
+					}}
+					onMouseEnter={(e) => {
+						if (isDone && !isExpanded) {
+							e.currentTarget.style.opacity = "0.75";
+						}
+					}}
+					onMouseLeave={(e) => {
+						if (isDone && !isExpanded) {
+							e.currentTarget.style.opacity = "0.35";
+						}
+					}}
+				>
+					{filteredTimeline.map((entry, i) => {
+						if (entry.kind === "reasoning") {
+							return (
+								<ReasoningChunk
+									key={`tl-${i}`}
+									text={entry.text}
+									keyPrefix={`tl-${i}`}
+								/>
+							);
+						}
+						// entry.kind === "step"
+						const step = stepsById.get(entry.stepId);
+						if (!step) return null;
+						return <InlineToolStep key={`tl-${i}-s-${entry.stepId}`} step={step} />;
+					})}
+
+					{/* Streaming cursor */}
+					{isStreaming && (
+						<span
+							className="inline-block animate-pulse align-text-bottom"
+							style={{ height: "0.875rem", width: "0.125rem", marginLeft: "0.125rem", background: "hsl(var(--primary) / 0.7)" }}
+						/>
+					)}
+				</div>
+			</div>
+
+			{/* Bottom bar: toggle + context stats */}
+			<div className="mt-0.5 flex items-center justify-between">
+				{/* Toggle button */}
 				<button
 					type="button"
-					onClick={() => setIsOpen(!isOpen)}
-					className={cn(
-						"flex w-full items-center gap-1.5 text-left text-sm transition-colors",
-						"text-muted-foreground hover:text-foreground"
-					)}
+					onClick={() => setIsExpanded(!isExpanded)}
+					className="flex items-center gap-1.5 text-[0.65rem] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
 				>
-					{/* Header text with shimmer if processing (streaming) */}
-					{isProcessing ? (
-						<TextShimmerLoader text={getHeaderText()} size="sm" />
-					) : (
-						<span>{getHeaderText()}</span>
-					)}
-
-					{/* Chevron */}
-					<ChevronRightIcon
-						className={cn("size-4 transition-transform duration-200", isOpen && "rotate-90")}
+					<ChevronDownIcon
+						className={cn(
+							"size-3 transition-transform duration-200",
+							isExpanded && "rotate-180",
+						)}
 					/>
+					{isStreaming ? (
+						<TextShimmerLoader text="Tänker..." size="sm" />
+					) : (
+						<span>
+							{stepCount > 0 ? `${stepCount} steg` : "Tankar"}
+							{elapsedSeconds > 0 ? ` \u00B7 ${elapsedSeconds}s` : ""}
+						</span>
+					)}
 				</button>
 
-				{/* Collapsible content with CSS grid animation */}
-				<div
-					className={cn(
-						"grid transition-[grid-template-rows] duration-300 ease-out",
-						isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-					)}
-				>
-					<div className="overflow-hidden">
-						<div className="mt-3 pl-1">
-							{steps.map((step, index) => {
-								const effectiveStatus = getEffectiveStatus(step);
-								const isLast = index === steps.length - 1;
-
-								return (
-									<div key={step.id} className="relative flex gap-3">
-										{/* Dot and line column */}
-										<div className="relative flex flex-col items-center w-2">
-											{/* Vertical connection line - extends to next dot */}
-											{!isLast && (
-												<div className="absolute left-1/2 top-[15px] -bottom-[7px] w-px -translate-x-1/2 bg-muted-foreground/30" />
-											)}
-											{/* Step dot - on top of line */}
-											<div className="relative z-10 mt-[7px] flex shrink-0 items-center justify-center">
-												{effectiveStatus === "in_progress" ? (
-													<span className="relative flex size-2">
-														<span className="absolute inline-flex size-full animate-ping rounded-full bg-primary/60" />
-														<span className="relative inline-flex size-2 rounded-full bg-primary" />
-													</span>
-												) : (
-													<span className="size-2 rounded-full bg-muted-foreground/30" />
-												)}
-											</div>
-										</div>
-
-										{/* Step content */}
-										<div className="flex-1 min-w-0 pb-4">
-											{/* Step title */}
-											<div
-												className={cn(
-													"text-sm leading-5",
-													effectiveStatus === "in_progress" && "text-foreground font-medium",
-													effectiveStatus === "completed" && "text-muted-foreground",
-													effectiveStatus === "pending" && "text-muted-foreground/60"
-												)}
-											>
-												{effectiveStatus === "in_progress" ? (
-													<TextShimmerLoader text={step.title} size="sm" />
-												) : (
-													step.title
-												)}
-											</div>
-
-											{/* Step items (sub-content) */}
-											{step.items && step.items.length > 0 && (
-												<div className="mt-1 space-y-0.5">
-													{step.items.map((item, idx) => (
-														<ChainOfThoughtItem key={`${step.id}-item-${idx}`} className="text-xs">
-															{item}
-														</ChainOfThoughtItem>
-													))}
-												</div>
-											)}
-										</div>
-									</div>
-								);
-							})}
-						</div>
-					</div>
-				</div>
+				{/* Context stats — floating right */}
+				{contextTokensLabel && (
+					<span className="text-[0.6rem] tabular-nums text-muted-foreground/40">
+						{contextTokensLabel}
+					</span>
+				)}
 			</div>
 		</div>
 	);
@@ -170,18 +272,14 @@ export const ThinkingStepsScrollHandler: FC = () => {
 	const thinkingStepsMap = useContext(ThinkingStepsContext);
 	const viewport = useThreadViewport();
 	const isRunning = useAssistantState(({ thread }) => thread.isRunning);
-	// Track the serialized state to detect any changes
 	const prevStateRef = useRef<string>("");
 
 	useEffect(() => {
-		// Only act during streaming
 		if (!isRunning) {
 			prevStateRef.current = "";
 			return;
 		}
 
-		// Serialize the thinking steps state to detect any changes
-		// This catches new steps, status changes, and item additions
 		let stateString = "";
 		thinkingStepsMap.forEach((steps, msgId) => {
 			steps.forEach((step) => {
@@ -189,11 +287,8 @@ export const ThinkingStepsScrollHandler: FC = () => {
 			});
 		});
 
-		// If state changed at all during streaming, scroll
 		if (stateString !== prevStateRef.current && stateString !== "") {
 			prevStateRef.current = stateString;
-
-			// Multiple attempts to ensure scroll happens after DOM updates
 			const scrollAttempt = () => {
 				try {
 					viewport.scrollToBottom();
@@ -201,12 +296,10 @@ export const ThinkingStepsScrollHandler: FC = () => {
 					// Ignore errors - viewport might not be ready
 				}
 			};
-
-			// Delayed attempts to handle async DOM updates
 			requestAnimationFrame(scrollAttempt);
 			setTimeout(scrollAttempt, 100);
 		}
 	}, [thinkingStepsMap, viewport, isRunning]);
 
-	return null; // This component doesn't render anything
+	return null;
 };

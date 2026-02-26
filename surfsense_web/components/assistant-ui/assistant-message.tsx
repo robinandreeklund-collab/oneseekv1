@@ -7,7 +7,7 @@ import {
 	useComposerRuntime,
 } from "@assistant-ui/react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Activity, CheckIcon, ChevronRightIcon, CopyIcon, DownloadIcon, MessageSquare, RefreshCwIcon } from "lucide-react";
+import { Activity, CheckIcon, CopyIcon, DownloadIcon, MessageSquare, RefreshCwIcon } from "lucide-react";
 import type { FC } from "react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -21,11 +21,10 @@ import { activeSearchSpaceIdAtom } from "@/atoms/search-spaces/search-space-quer
 import { BranchPicker } from "@/components/assistant-ui/branch-picker";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import {
-	ReasoningContext,
+	FadeLayer,
 	ThinkingStepsContext,
-	ThinkingStepsDisplay,
+	TimelineContext,
 } from "@/components/assistant-ui/thinking-steps";
-import { TextShimmerLoader } from "@/components/prompt-kit/loader";
 import { TracePanelContext } from "@/components/assistant-ui/trace-context";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
@@ -48,83 +47,38 @@ export const MessageError: FC = () => {
 };
 
 /**
- * Custom component to render thinking steps from Context
+ * Unified FadeLayer part — combines reasoning stream + thinking steps
+ * into a single rolling container with top gradient fade-out.
+ * Uses the timeline for correct chronological ordering.
  */
-const ThinkingStepsPart: FC = () => {
+const FadeLayerPart: FC = () => {
 	const thinkingStepsMap = useContext(ThinkingStepsContext);
-
-	// Get the current message ID to look up thinking steps
+	const timelineMap = useContext(TimelineContext);
 	const messageId = useAssistantState(({ message }) => message?.id);
+	const timeline = messageId ? (timelineMap.get(messageId) ?? []) : [];
 	const thinkingSteps = thinkingStepsMap.get(messageId) || [];
-
-	// Check if this specific message is currently streaming
-	// A message is streaming if: thread is running AND this is the last assistant message
-	const isThreadRunning = useAssistantState(({ thread }) => thread.isRunning);
-	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
-	const isMessageStreaming = isThreadRunning && isLastMessage;
-
-	if (thinkingSteps.length === 0) return null;
-
-	return (
-		<div className="mb-3">
-			<ThinkingStepsDisplay steps={thinkingSteps} isThreadRunning={isMessageStreaming} />
-		</div>
-	);
-};
-
-
-/**
- * Collapsible reasoning block - displays <think> tag / reasoning-delta content streamed from the model
- */
-const ReasoningBlock: FC = () => {
-	const reasoningMap = useContext(ReasoningContext);
-	const messageId = useAssistantState(({ message }) => message?.id);
-	const reasoning = messageId ? (reasoningMap.get(messageId) ?? "") : "";
 	const isThreadRunning = useAssistantState(({ thread }) => thread.isRunning);
 	const isLastMessage = useAssistantState(({ message }) => message?.isLast ?? false);
 	const isStreaming = isThreadRunning && isLastMessage;
-	const [isOpen, setIsOpen] = useState(true);
 
-	// Auto-collapse when streaming finishes
-	useEffect(() => {
-		if (!isStreaming && reasoning) {
-			setIsOpen(false);
+	// Build a lookup map for step data by ID
+	const stepsById = useMemo(() => {
+		const map = new Map<string, (typeof thinkingSteps)[number]>();
+		for (const step of thinkingSteps) {
+			map.set(step.id, step);
 		}
-	}, [isStreaming, reasoning]);
+		return map;
+	}, [thinkingSteps]);
 
-	if (!reasoning) return null;
+	if (timeline.length === 0) return null;
 
 	return (
-		<div className="mx-auto w-full max-w-(--thread-max-width) px-2 pb-1">
-			<div className="rounded-lg">
-				<button
-					type="button"
-					onClick={() => setIsOpen(!isOpen)}
-					className="flex w-full items-center gap-1.5 text-left text-sm transition-colors text-muted-foreground hover:text-foreground"
-				>
-					{isStreaming ? (
-						<TextShimmerLoader text="Tänker..." size="sm" />
-					) : (
-						<span>Tankar</span>
-					)}
-					<ChevronRightIcon
-						className={cn("size-4 transition-transform duration-200", isOpen && "rotate-90")}
-					/>
-				</button>
-				<div
-					className={cn(
-						"grid transition-[grid-template-rows] duration-300 ease-out",
-						isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-					)}
-				>
-					<div className="overflow-hidden">
-						<div className="mt-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground font-mono whitespace-pre-wrap leading-relaxed">
-							{reasoning}
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
+		<FadeLayer
+			timeline={timeline}
+			stepsById={stepsById}
+			isStreaming={isStreaming}
+			messageId={messageId}
+		/>
 	);
 };
 
@@ -256,10 +210,8 @@ const FollowUpSuggestions: FC = () => {
 const AssistantMessageInner: FC = () => {
 	return (
 		<>
-			{/* Render thinking steps from message content - this ensures proper scroll tracking */}
-			<ThinkingStepsPart />
-			{/* Render live reasoning from <think> tags / reasoning-delta events */}
-			<ReasoningBlock />
+			{/* Unified fade layer: reasoning stream + thinking steps */}
+			<FadeLayerPart />
 
 			<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
 				<MessagePrimitive.Parts

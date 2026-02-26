@@ -9,10 +9,10 @@ Supports loading LLM configurations from:
 - NewLLMConfig database table (positive IDs for user-created configs with prompt settings)
 """
 
+import ast
 import json
 import re
 import uuid
-import ast
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 from typing import Any
@@ -23,18 +23,6 @@ from langchain_core.runnables import RunnableLambda
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.agents.new_chat.checkpointer import (
-    build_checkpoint_namespace,
-    get_checkpointer,
-    resolve_checkpoint_namespace_for_thread,
-)
-from app.agents.new_chat.llm_config import (
-    AgentConfig,
-    create_chat_litellm_from_agent_config,
-    create_chat_litellm_from_config,
-    load_agent_config,
-    load_llm_config_from_yaml,
-)
 from app.agents.new_chat.bigtool_prompts import (
     DEFAULT_WORKER_ACTION_PROMPT,
     DEFAULT_WORKER_KNOWLEDGE_PROMPT,
@@ -45,47 +33,63 @@ from app.agents.new_chat.bolag_prompts import (
     DEFAULT_BOLAG_SYSTEM_PROMPT,
     build_bolag_prompt,
 )
+from app.agents.new_chat.checkpointer import (
+    build_checkpoint_namespace,
+    get_checkpointer,
+    resolve_checkpoint_namespace_for_thread,
+)
 from app.agents.new_chat.compare_prompts import (
     COMPARE_SUPERVISOR_INSTRUCTIONS,
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
     build_compare_synthesis_prompt,
 )
+from app.agents.new_chat.complete_graph import build_complete_graph
 from app.agents.new_chat.dispatcher import (
     DEFAULT_ROUTE_SYSTEM_PROMPT,
     dispatch_route_with_trace,
 )
-from app.agents.new_chat.prompt_registry import resolve_prompt
-from app.agents.new_chat.routing import Route
-from app.agents.new_chat.system_prompt import (
-    SURFSENSE_CITATION_INSTRUCTIONS,
-    SURFSENSE_SYSTEM_INSTRUCTIONS,
-    append_datetime_context,
+from app.agents.new_chat.llm_config import (
+    AgentConfig,
+    create_chat_litellm_from_agent_config,
+    create_chat_litellm_from_config,
+    load_agent_config,
+    load_llm_config_from_yaml,
 )
-from app.agents.new_chat.complete_graph import build_complete_graph
-from app.agents.new_chat.supervisor_prompts import (
-    DEFAULT_SUPERVISOR_PROMPT,
-    build_supervisor_prompt,
-)
-from app.agents.new_chat.statistics_prompts import (
-    DEFAULT_STATISTICS_SYSTEM_PROMPT,
-    build_statistics_system_prompt,
-)
-from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
 from app.agents.new_chat.marketplace_prompts import (
     DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
     build_marketplace_prompt,
 )
+from app.agents.new_chat.prompt_registry import resolve_prompt
+from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
+from app.agents.new_chat.routing import Route
+from app.agents.new_chat.statistics_prompts import (
+    DEFAULT_STATISTICS_SYSTEM_PROMPT,
+    build_statistics_system_prompt,
+)
 from app.agents.new_chat.subagent_utils import (
     SMALLTALK_INSTRUCTIONS,
 )
+from app.agents.new_chat.supervisor_prompts import (
+    DEFAULT_SUPERVISOR_PROMPT,
+    build_supervisor_prompt,
+)
+from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CITATION_INSTRUCTIONS,
+    SURFSENSE_CORE_GLOBAL_PROMPT,
+    SURFSENSE_SYSTEM_INSTRUCTIONS,
+    append_datetime_context,
+    inject_core_prompt,
+)
+from app.agents.new_chat.tools.display_image import extract_domain, generate_image_id
+from app.agents.new_chat.tools.external_models import (
+    DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+    EXTERNAL_MODEL_SPECS,
+)
+from app.agents.new_chat.tools.user_memory import create_save_memory_tool
 from app.agents.new_chat.trafik_prompts import (
     DEFAULT_TRAFFIC_SYSTEM_PROMPT,
     build_trafik_prompt,
 )
-from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
-from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
-from app.agents.new_chat.tools.display_image import extract_domain, generate_image_id
-from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.db import (
     ChatTraceSession,
     Document,
@@ -95,32 +99,32 @@ from app.db import (
     async_session_maker,
 )
 from app.schemas.new_chat import ChatAttachment
+from app.services.agent_prompt_service import get_global_prompt_overrides
 from app.services.chat_session_state_service import (
     clear_ai_responding,
     set_ai_responding,
 )
-from app.agents.new_chat.tools.user_memory import create_save_memory_tool
 from app.services.connector_service import ConnectorService
-from app.services.new_streaming_service import VercelStreamingService
-from app.services.trace_service import TraceRecorder
 from app.services.intent_definition_service import (
     get_default_intent_definitions,
     get_effective_intent_definitions,
 )
-from app.tasks.chat.stream_compare_chat import (
-    extract_compare_query,
-    is_compare_request,
-)
+from app.services.new_streaming_service import VercelStreamingService
+from app.services.trace_service import TraceRecorder
 from app.tasks.chat.context_formatters import (
     format_attachments_as_context,
     format_mentioned_documents_as_context,
     format_mentioned_surfsense_docs_as_context,
 )
+from app.tasks.chat.stream_compare_chat import (
+    extract_compare_query,
+    is_compare_request,
+)
+from app.utils.content_utils import bootstrap_history_from_db, extract_text_content
 from app.utils.context_metrics import (
     estimate_tokens_from_text,
     serialize_context_payload,
 )
-from app.utils.content_utils import bootstrap_history_from_db, extract_text_content
 
 AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (
@@ -164,12 +168,18 @@ AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
         "User prefers {value}",
     ),
     (
-        re.compile(r"\bjag heter ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)", re.IGNORECASE),
+        re.compile(
+            r"\bjag heter ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)",
+            re.IGNORECASE,
+        ),
         "fact",
         "User's name is {value}",
     ),
     (
-        re.compile(r"\bkalla mig ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)", re.IGNORECASE),
+        re.compile(
+            r"\bkalla mig ([A-ZÅÄÖ][\wÅÄÖåäö\-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö\-]+)*)",
+            re.IGNORECASE,
+        ),
         "fact",
         "User prefers to be called {value}",
     ),
@@ -184,12 +194,16 @@ AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
         "User lives in {value}",
     ),
     (
-        re.compile(r"\bjag (?:jobbar|arbetar) som ([A-Za-zÅÄÖåäö\s\-]{2,80})\b", re.IGNORECASE),
+        re.compile(
+            r"\bjag (?:jobbar|arbetar) som ([A-Za-zÅÄÖåäö\s\-]{2,80})\b", re.IGNORECASE
+        ),
         "fact",
         "User works as {value}",
     ),
     (
-        re.compile(r"\bjag (?:gillar|föredrar|tycker om) ([^.!?\n]{2,80})", re.IGNORECASE),
+        re.compile(
+            r"\bjag (?:gillar|föredrar|tycker om) ([^.!?\n]{2,80})", re.IGNORECASE
+        ),
         "preference",
         "User prefers {value}",
     ),
@@ -251,7 +265,10 @@ async def _load_conversation_history_for_routing(
     history: list[dict[str, str]] = []
     for row in rows:
         role = str(getattr(row.role, "value", row.role) or "").strip().lower()
-        if role not in {NewChatMessageRole.USER.value, NewChatMessageRole.ASSISTANT.value}:
+        if role not in {
+            NewChatMessageRole.USER.value,
+            NewChatMessageRole.ASSISTANT.value,
+        }:
             continue
         text = _normalize_router_text(extract_text_content(row.content))
         if not text:
@@ -311,9 +328,7 @@ def _looks_contextual_followup(query: str) -> bool:
         return True
     if _FOLLOWUP_COMPARE_RE.search(lowered):
         return True
-    if _FOLLOWUP_MARKER_RE.search(lowered):
-        return True
-    return False
+    return bool(_FOLLOWUP_MARKER_RE.search(lowered))
 
 
 def _extract_previous_assistant_answers_from_history(
@@ -348,17 +363,17 @@ def _build_followup_context_block(
         return ""
     if previous.lower() == current.lower():
         return ""
-    
+
     # Check if previous query was a compare request
     previous_was_compare = previous.strip().lower().startswith("/compare")
-    
+
     context = (
         "<followup_context>\n"
         "Detta är en uppföljningsfråga. Tolka den med samma ämne, metod och verktygsnivå "
         "som föregående användarfråga om inget annat uttryckligen anges.\n"
         f"Föregående användarfråga: {previous}\n"
     )
-    
+
     # Add special context for compare followups
     if previous_was_compare:
         context += (
@@ -367,7 +382,7 @@ def _build_followup_context_block(
             "Du kan söka efter dem med search_knowledge_base för att ge sammanhangsberoende svar "
             "baserade på jämförelsen.\n"
         )
-    
+
     if _FOLLOWUP_COMPARE_RE.search(current.lower()):
         previous_answers = _extract_previous_assistant_answers_from_history(
             routing_history, limit=2
@@ -381,8 +396,6 @@ def _build_followup_context_block(
             )
     context += "</followup_context>"
     return context
-
-
 
 
 def extract_todos_from_deepagents(command_output) -> dict:
@@ -447,6 +460,47 @@ def _summarize_text(value: object, limit: int = 140) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
+def _format_tool_input_items(
+    tool_input: object, *, max_items: int = 6, max_value_len: int = 100
+) -> list[str]:
+    """Format a tool's input parameters as compact display items.
+
+    Returns a list like:
+        ["location: Stockholm", "days: 5", "units: metric"]
+
+    Skips internal/large fields and limits value lengths.
+    """
+    if not isinstance(tool_input, dict) or not tool_input:
+        if tool_input:
+            text = str(tool_input).strip()
+            if text:
+                return [_summarize_text(text, max_value_len)]
+        return []
+
+    skip_keys = frozenset({
+        "source_content", "content", "text", "body", "markdown",
+        "html", "raw", "data", "payload", "context",
+    })
+    items: list[str] = []
+    for key, value in tool_input.items():
+        if len(items) >= max_items:
+            remaining = len(tool_input) - len(items)
+            if remaining > 0:
+                items.append(f"(+{remaining} fler parametrar)")
+            break
+        if key.lower() in skip_keys and isinstance(value, str) and len(value) > 200:
+                items.append(f"{key}: ({len(value):,} tecken)")
+                continue
+        if value is None or value == "":
+            continue
+        if isinstance(value, (dict, list)):
+            summary = json.dumps(value, ensure_ascii=False, default=str)
+            items.append(f"{key}: {_summarize_text(summary, max_value_len)}")
+        else:
+            items.append(f"{key}: {_summarize_text(value, max_value_len)}")
+    return items
+
+
 def _build_image_payload(
     *,
     src: str,
@@ -506,9 +560,7 @@ def _collect_trafikverket_photos(payload: Any) -> list[dict[str, str]]:
                         or "Trafikverket kamera"
                     )
                     description = str(
-                        node.get("Description")
-                        or node.get("LocationDescriptor")
-                        or ""
+                        node.get("Description") or node.get("LocationDescriptor") or ""
                     ).strip()
                     photos.append(
                         {
@@ -565,7 +617,9 @@ def _extract_assistant_text_from_message(message: Any) -> str:
     class_name = message.__class__.__name__.lower()
     if any(token in class_name for token in ("human", "system", "tool")):
         return ""
-    tool_calls = getattr(message, "tool_calls", None) or getattr(message, "toolCalls", None)
+    tool_calls = getattr(message, "tool_calls", None) or getattr(
+        message, "toolCalls", None
+    )
     if tool_calls:
         return ""
     return _content_to_text(getattr(message, "content", "")).strip()
@@ -602,92 +656,138 @@ def _extract_assistant_text_from_event_output(output: Any) -> str:
                 return text
         return ""
     if hasattr(output, "generations"):
-        return _extract_assistant_text_from_event_output(getattr(output, "generations"))
+        return _extract_assistant_text_from_event_output(output.generations)
     if hasattr(output, "message"):
-        return _extract_assistant_text_from_event_output(getattr(output, "message"))
+        return _extract_assistant_text_from_event_output(output.message)
     if hasattr(output, "content"):
         return _extract_assistant_text_from_message(output)
     return ""
 
 
-def _extract_and_stream_tool_calls(output: Any, streaming_service: Any, streamed_ids: set[str]) -> list[str]:
+def _extract_and_stream_tool_calls(
+    output: Any, streaming_service: Any, streamed_ids: set[str]
+) -> list[str]:
     """
     Extract AIMessage with tool_calls and corresponding ToolMessages from chain output.
     Returns list of SSE events to stream to frontend.
-    
+
     This is critical for compare mode where compare_fan_out creates:
     - AIMessage with tool_calls array (one per external model)
     - ToolMessage responses (one per model with results)
-    
+
     Without this, frontend doesn't receive tool call events and can't render model cards.
-    
+
     Args:
         output: Chain output dictionary containing messages
         streaming_service: Service for formatting SSE events
         streamed_ids: Set of tool_call_ids already streamed (prevents duplicates)
     """
     events = []
-    
+
     if not isinstance(output, dict):
         return events
-    
+
     messages = output.get("messages")
     if not isinstance(messages, list) or len(messages) == 0:
         return events
-    
+
     # Find AIMessage with tool_calls and collect corresponding ToolMessages
     ai_message_with_tools = None
     tool_messages_by_id = {}
-    
+
     for msg in messages:
         # Check for AIMessage with tool_calls
-        if isinstance(msg, AIMessage) or (isinstance(msg, dict) and msg.get("type") == "ai"):
-            tool_calls = getattr(msg, "tool_calls", None) if hasattr(msg, "tool_calls") else msg.get("tool_calls")
+        if isinstance(msg, AIMessage) or (
+            isinstance(msg, dict) and msg.get("type") == "ai"
+        ):
+            tool_calls = (
+                getattr(msg, "tool_calls", None)
+                if hasattr(msg, "tool_calls")
+                else msg.get("tool_calls")
+            )
             if tool_calls and isinstance(tool_calls, list) and len(tool_calls) > 0:
                 ai_message_with_tools = (msg, tool_calls)
-        
+
         # Collect ToolMessages
-        if isinstance(msg, ToolMessage) or (isinstance(msg, dict) and msg.get("type") == "tool"):
-            tool_call_id = getattr(msg, "tool_call_id", None) if hasattr(msg, "tool_call_id") else msg.get("tool_call_id")
+        if isinstance(msg, ToolMessage) or (
+            isinstance(msg, dict) and msg.get("type") == "tool"
+        ):
+            tool_call_id = (
+                getattr(msg, "tool_call_id", None)
+                if hasattr(msg, "tool_call_id")
+                else msg.get("tool_call_id")
+            )
             if tool_call_id:
                 tool_messages_by_id[tool_call_id] = msg
-    
+
     # If we found tool calls and messages, stream them (but only if not already streamed)
     if ai_message_with_tools:
         _msg, tool_calls = ai_message_with_tools
-        
+
         for tool_call in tool_calls:
-            tool_call_id = tool_call.get("id") if isinstance(tool_call, dict) else getattr(tool_call, "id", None)
-            tool_name = tool_call.get("name") if isinstance(tool_call, dict) else getattr(tool_call, "name", None)
-            tool_args = tool_call.get("args") if isinstance(tool_call, dict) else getattr(tool_call, "args", {})
-            
+            tool_call_id = (
+                tool_call.get("id")
+                if isinstance(tool_call, dict)
+                else getattr(tool_call, "id", None)
+            )
+            tool_name = (
+                tool_call.get("name")
+                if isinstance(tool_call, dict)
+                else getattr(tool_call, "name", None)
+            )
+            tool_args = (
+                tool_call.get("args")
+                if isinstance(tool_call, dict)
+                else getattr(tool_call, "args", {})
+            )
+
             if not tool_call_id or not tool_name:
                 continue
-            
+
             # Skip if already streamed
             if tool_call_id in streamed_ids:
                 continue
-            
+
             # Mark as streamed
             streamed_ids.add(tool_call_id)
-            
+
             # Stream tool input
-            events.append(streaming_service.format_tool_input_start(tool_call_id, tool_name))
-            events.append(streaming_service.format_tool_input_available(tool_call_id, tool_name, tool_args))
-            
+            events.append(
+                streaming_service.format_tool_input_start(tool_call_id, tool_name)
+            )
+            events.append(
+                streaming_service.format_tool_input_available(
+                    tool_call_id, tool_name, tool_args
+                )
+            )
+
             # Stream tool output if available
             tool_msg = tool_messages_by_id.get(tool_call_id)
             if tool_msg:
-                content = getattr(tool_msg, "content", None) if hasattr(tool_msg, "content") else tool_msg.get("content")
+                content = (
+                    getattr(tool_msg, "content", None)
+                    if hasattr(tool_msg, "content")
+                    else tool_msg.get("content")
+                )
                 if content:
                     # Try to parse as JSON
                     try:
-                        output_data = json.loads(content) if isinstance(content, str) else content
-                        events.append(streaming_service.format_tool_output_available(tool_call_id, output_data))
+                        output_data = (
+                            json.loads(content) if isinstance(content, str) else content
+                        )
+                        events.append(
+                            streaming_service.format_tool_output_available(
+                                tool_call_id, output_data
+                            )
+                        )
                     except (json.JSONDecodeError, TypeError):
                         # If not JSON, send as-is
-                        events.append(streaming_service.format_tool_output_available(tool_call_id, content))
-    
+                        events.append(
+                            streaming_service.format_tool_output_available(
+                                tool_call_id, content
+                            )
+                        )
+
     return events
 
 
@@ -701,7 +801,7 @@ _REPEAT_BULLET_PREFIX_RE = re.compile(r"^[-*•]+\s*")
 _STREAM_JSON_DECODER = json.JSONDecoder()
 _CRITIC_JSON_START_RE = re.compile(r"\{\s*[\"']status[\"']\s*:", re.IGNORECASE)
 _PIPELINE_JSON_START_RE = re.compile(
-    r"\{\s*[\"'](?:intent_id|graph_complexity|selected_agents|status|decision|steps|execution_strategy|speculative_candidates|speculative_reused_tools|synthesis_drafts)\b",
+    r"\{\s*[\"'](?:intent_id|graph_complexity|selected_agents|status|decision|steps|execution_strategy|speculative_candidates|speculative_reused_tools|synthesis_drafts|chosen_layer)\b",
     re.IGNORECASE,
 )
 _PIPELINE_JSON_PARTIAL_KEY_RE = re.compile(
@@ -734,10 +834,110 @@ _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "planner",
     "tool_resolver",
     "execution_router",
+    "executor",
+    "worker",
+    "domain_planner",
     "critic",
-    "progressive_synthesizer",
-    "synthesizer",
+    "response_layer_router",
 )
+
+# Pipeline nodes whose model output IS the final user-facing response.
+# These are intentionally NOT in _INTERNAL_PIPELINE_CHAIN_TOKENS so their
+# text streams as text-delta (visible response) rather than being buffered.
+_OUTPUT_PIPELINE_CHAIN_TOKENS = (
+    "synthesizer",
+    "progressive_synthesizer",
+    "response_layer",
+    "smalltalk",
+    "compare_synthesizer",
+)
+
+# Generic intermediate chain names inserted by LangGraph/LangChain between
+# the actual graph node and the model call.  When walking parent_ids to find
+# the graph node that owns a model, these must be skipped so the real node
+# name (e.g. "planner") is found instead of a meaningless wrapper.
+_GENERIC_CHAIN_NAMES: frozenset[str] = frozenset({
+    "runnablesequence",
+    "runnablelambda",
+    "runnableparallel",
+    "runnablebranch",
+    "runnablewithfallbacks",
+    "runnablepassthrough",
+    "chatmodel",
+    "chatlitellm",
+    "basechatmodel",
+    "llm",
+    "chatprompttemplate",
+    "prompttemplate",
+    "chain",
+    # Infrastructure/gate nodes that don't own model calls and should be
+    # skipped when walking the parent chain to find the real pipeline node.
+    "memory_context",
+    "planner_hitl_gate",
+    "execution_hitl_gate",
+    "synthesis_hitl",
+    "post_tools",
+    "artifact_indexer",
+    "context_compactor",
+    "orchestration_guard",
+    "tools",
+    # LangGraph model wrapper names (the acall_model / call_model functions
+    # used by executor show up as chain names — skip them).
+    "call_model",
+    "acall_model",
+    "callmodel",
+    "acallmodel",
+})
+
+# Regex to strip <think>…</think> blocks and bare tags from pipeline text
+# so that reasoning content doesn't leak into visible step items.
+_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
+_THINK_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
+
+# Regex to strip stray XML-like tags that models sometimes emit in their
+# output (e.g. </final_planner>, </tool_call>, <tool_call>, etc.).
+# These are NOT <think> tags — those are handled by _ThinkStreamFilter.
+# This catches opening and closing tags with optional attributes.
+_STRAY_XML_TAG_RE = re.compile(
+    r"</?(?:final_planner|tool_call|tool_result|function_call|function_result"
+    r"|assistant|system|user|output|response|answer|result|plan|execution"
+    r"|synthesis|critique|reflection|observation|action|thought"
+    r"|step|task|query|context|instruction|reasoning|analysis)(?:\s[^>]*)?>",
+    re.IGNORECASE,
+)
+
+# Mapping from pipeline chain-name tokens to user-facing titles for the
+# unified think-box.  Nodes not listed here fall back to a title derived
+# from the chain name.
+_PIPELINE_NODE_TITLES: dict[str, str] = {
+    "resolve_intent": "Analyserar frågan",
+    "agent_resolver": "Väljer agenter",
+    "planner": "Bygger plan",
+    "tool_resolver": "Väljer verktyg",
+    "execution_router": "Planerar utförande",
+    "executor": "Utför uppgift",
+    "worker": "Kör agent",
+    "domain_planner": "Planerar domänkörning",
+    "critic": "Granskar resultat",
+    "progressive_synthesizer": "Förbereder utkast",
+    "synthesizer": "Sammanställer svar",
+    "response_layer_router": "Väljer presentationsläge",
+    "response_layer": "Formaterar svar",
+    "speculative": "Spekulativ förkörning",
+    "speculative_merge": "Sammanfogar spekulativa resultat",
+    "smalltalk": "Svarar direkt",
+    "compare_synthesizer": "Sammanställer jämförelse",
+}
+
+
+def _pipeline_node_title(chain_name: str) -> str:
+    """Return a user-facing title for the pipeline node identified by *chain_name*."""
+    normalized = str(chain_name or "").strip().lower()
+    for token, title in _PIPELINE_NODE_TITLES.items():
+        if token in normalized:
+            return title
+    # Fallback: capitalize the chain name
+    return chain_name.replace("_", " ").capitalize() if chain_name else "Bearbetar"
 
 
 def _strip_inline_critic_payloads(text: str) -> tuple[str, bool]:
@@ -803,7 +1003,10 @@ def _normalize_line_for_dedupe(line: str) -> str:
 def _clean_assistant_output_text(text: str) -> str:
     if not text:
         return ""
-    cleaned = _CRITIC_JSON_SNIPPET_RE.sub("", text)
+    # Strip <think>…</think> blocks and bare tags first
+    cleaned = _THINK_BLOCK_RE.sub("", text)
+    cleaned = _THINK_TAG_RE.sub("", cleaned)
+    cleaned = _CRITIC_JSON_SNIPPET_RE.sub("", cleaned)
     cleaned, removed_inline = _strip_inline_critic_payloads(cleaned)
     cleaned, removed_payloads = _strip_inline_pipeline_payloads(cleaned)
     cleaned = _HTML_COMMENT_RE.sub("", cleaned)
@@ -830,7 +1033,9 @@ def _clean_assistant_output_text(text: str) -> str:
     return cleaned.strip()
 
 
-def _extract_json_objects_from_text(text: str, *, max_objects: int = 6) -> list[dict[str, Any]]:
+def _extract_json_objects_from_text(
+    text: str, *, max_objects: int = 6
+) -> list[dict[str, Any]]:
     value = str(text or "").strip()
     if not value:
         return []
@@ -882,21 +1087,16 @@ def _extract_json_objects_from_text(text: str, *, max_objects: int = 6) -> list[
 def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
     if not isinstance(payload, dict):
         return None
-    if "intent_id" in payload and (
-        "reason" in payload or "confidence" in payload
-    ):
+    if "intent_id" in payload and ("reason" in payload or "confidence" in payload):
         return "intent"
     if isinstance(payload.get("selected_agents"), list):
         return "agent_resolver"
-    if (
-        isinstance(payload.get("steps"), list)
-        and (
-            "reason" in payload
-            or any(
-                isinstance(step, dict)
-                and ("content" in step or "status" in step or "id" in step)
-                for step in payload.get("steps")[:4]
-            )
+    if isinstance(payload.get("steps"), list) and (
+        "reason" in payload
+        or any(
+            isinstance(step, dict)
+            and ("content" in step or "status" in step or "id" in step)
+            for step in payload.get("steps")[:4]
         )
     ):
         return "planner"
@@ -920,6 +1120,8 @@ def _pipeline_payload_kind(payload: dict[str, Any]) -> str | None:
         return "speculative"
     if isinstance(payload.get("synthesis_drafts"), list):
         return "progressive_synthesizer"
+    if "chosen_layer" in payload and isinstance(payload.get("chosen_layer"), str):
+        return "response_layer_router"
     return None
 
 
@@ -976,19 +1178,19 @@ def _extract_synthesis_drafts_from_event_output(output: Any) -> list[dict[str, A
         return []
     if hasattr(output, "generations"):
         nested = _extract_synthesis_drafts_from_event_output(
-            getattr(output, "generations"),
+            output.generations,
         )
         if nested:
             return nested
     if hasattr(output, "message"):
         nested = _extract_synthesis_drafts_from_event_output(
-            getattr(output, "message"),
+            output.message,
         )
         if nested:
             return nested
     if hasattr(output, "synthesis_drafts"):
         return _extract_synthesis_drafts_from_event_output(
-            getattr(output, "synthesis_drafts"),
+            output.synthesis_drafts,
         )
     return []
 
@@ -1074,10 +1276,30 @@ def _split_trailing_pipeline_prefix(text: str) -> tuple[str, str]:
 
 
 def _is_internal_pipeline_chain_name(chain_name: str) -> bool:
+    """Return True if *chain_name* belongs to an internal (non-output) pipeline node.
+
+    Models under these nodes have their content buffered and routed to
+    reasoning-delta, NOT to text-delta.
+    """
     normalized = str(chain_name or "").strip().lower()
     if not normalized:
         return False
     return any(token in normalized for token in _INTERNAL_PIPELINE_CHAIN_TOKENS)
+
+
+def _is_any_pipeline_chain_name(chain_name: str) -> bool:
+    """Return True if *chain_name* belongs to ANY pipeline node (internal or output).
+
+    Used for step labeling and chain-end text extraction where we want to
+    recognise all known pipeline nodes, not just the buffered ones.
+    """
+    normalized = str(chain_name or "").strip().lower()
+    if not normalized:
+        return False
+    return any(
+        token in normalized
+        for token in (*_INTERNAL_PIPELINE_CHAIN_TOKENS, *_OUTPUT_PIPELINE_CHAIN_TOKENS)
+    )
 
 
 def _coerce_runtime_flag(value: Any, *, default: bool = False) -> bool:
@@ -1104,25 +1326,71 @@ class _ThinkStreamFilter:
     buffers the trailing bytes that could be the start of the next tag and only
     emits them once the ambiguity is resolved.
 
+    **Template-prefilled <think> support:**
+
+    When *assume_think* is ``True`` (the default) the filter starts in think
+    mode, which means all initial content is emitted as reasoning.  This
+    handles models whose chat template pre-fills ``<think>`` in the assistant
+    turn (e.g. Qwen3) so that reasoning content is streamed in real-time
+    instead of being retroactively reclassified when ``</think>`` appears.
+
+    If the model does NOT use ``<think>`` tags at all, the entire response
+    will be classified as reasoning (the ``flush()`` method keeps it as
+    reasoning).  In practice this is rare since the global core prompt
+    instructs all models to use ``<think>`` blocks.
+
+    When *assume_think* is ``False`` the filter uses the legacy behaviour:
+    content is treated as text until ``<think>`` is explicitly seen, and
+    template-prefilled detection is performed retroactively.
+
     Usage::
 
-        f = _ThinkStreamFilter()
+        f = _ThinkStreamFilter(assume_think=True)
         for chunk in model_stream:
             reasoning, text = f.feed(chunk)
-            # stream reasoning → reasoning-delta, text → text-delta
+            # stream reasoning -> reasoning-delta, text -> text-delta
         reasoning, text = f.flush()   # resolve any trailing buffer at end-of-stream
     """
 
     _OPEN = "<think>"
     _CLOSE = "</think>"
 
-    def __init__(self) -> None:
-        self._in_think = False
+    def __init__(self, *, assume_think: bool = True) -> None:
+        self._assume_think = assume_think
+        self._in_think = assume_think
         self._buf = ""
+        self._ever_opened = assume_think
+        # Text returned as main text before late-close was detected.
+        # The streaming handler must re-emit this as reasoning-delta.
+        self._pre_close_text_parts: list[str] = []
+        self._late_close_detected = False
 
     @property
     def in_think(self) -> bool:
         return self._in_think
+
+    @property
+    def late_close_detected(self) -> bool:
+        """True if ``</think>`` was found before any ``<think>``.
+
+        This indicates the model's chat template pre-filled the opening
+        ``<think>`` tag, so text emitted before the detection was actually
+        reasoning content.
+        """
+        return self._late_close_detected
+
+    def drain_retroactive_reasoning(self) -> str:
+        """Return and clear text that was wrongly emitted as main text.
+
+        Call this once after :attr:`late_close_detected` becomes ``True``
+        to get the accumulated text from previous :meth:`feed` calls that
+        should have been reasoning.
+        """
+        if not self._pre_close_text_parts:
+            return ""
+        text = "".join(self._pre_close_text_parts)
+        self._pre_close_text_parts.clear()
+        return text
 
     @staticmethod
     def _longest_prefix_match(s: str, pattern: str) -> int:
@@ -1139,23 +1407,101 @@ class _ThinkStreamFilter:
         text_parts: list[str] = []
 
         while self._buf:
-            tag = self._CLOSE if self._in_think else self._OPEN
-            idx = self._buf.find(tag)
+            if self._in_think:
+                # Inside a think block - look for the closing tag.
+                # Also strip any redundant <think> tag that might appear
+                # when assume_think is active and the model also outputs
+                # an explicit <think> tag.
+                close_idx = self._buf.find(self._CLOSE)
+                open_idx = self._buf.find(self._OPEN)
 
-            if idx == -1:
-                # Tag not complete yet — keep any partial tag suffix buffered.
-                partial = self._longest_prefix_match(self._buf, tag)
-                safe = self._buf[:-partial] if partial else self._buf
-                (reasoning_parts if self._in_think else text_parts).append(safe)
-                self._buf = self._buf[-partial:] if partial else ""
-                break
+                # Strip redundant <think> if it appears before </think>
+                if open_idx != -1 and (close_idx == -1 or open_idx < close_idx):
+                    reasoning_parts.append(self._buf[:open_idx])
+                    self._buf = self._buf[open_idx + len(self._OPEN) :]
+                    continue
+
+                if close_idx == -1:
+                    partial = max(
+                        self._longest_prefix_match(self._buf, self._CLOSE),
+                        self._longest_prefix_match(self._buf, self._OPEN),
+                    )
+                    safe = self._buf[:-partial] if partial else self._buf
+                    reasoning_parts.append(safe)
+                    self._buf = self._buf[-partial:] if partial else ""
+                    break
+                else:
+                    reasoning_parts.append(self._buf[:close_idx])
+                    self._buf = self._buf[close_idx + len(self._CLOSE) :]
+                    self._in_think = False
             else:
-                before = self._buf[:idx]
-                (reasoning_parts if self._in_think else text_parts).append(before)
-                self._buf = self._buf[idx + len(tag):]
-                self._in_think = not self._in_think
+                # Outside a think block.
+                if not self._ever_opened and not self._late_close_detected:
+                    # Haven't seen any tag yet — look for both <think> and </think>
+                    # to handle template-prefilled <think>.
+                    open_idx = self._buf.find(self._OPEN)
+                    close_idx = self._buf.find(self._CLOSE)
+
+                    if open_idx != -1 and (close_idx == -1 or open_idx <= close_idx):
+                        # Normal case: <think> found first.
+                        self._ever_opened = True
+                        text_parts.append(self._buf[:open_idx])
+                        self._buf = self._buf[open_idx + len(self._OPEN) :]
+                        self._in_think = True
+                    elif close_idx != -1:
+                        # </think> found before any <think> — template prefill.
+                        self._late_close_detected = True
+                        reasoning_parts.append(self._buf[:close_idx])
+                        self._buf = self._buf[close_idx + len(self._CLOSE) :]
+                        # _in_think stays False (we just exited the implicit block)
+                    else:
+                        # Neither tag found — check partial match for both tags.
+                        partial = max(
+                            self._longest_prefix_match(self._buf, self._OPEN),
+                            self._longest_prefix_match(self._buf, self._CLOSE),
+                        )
+                        safe = self._buf[:-partial] if partial else self._buf
+                        # Track text that might need retroactive reclassification.
+                        self._pre_close_text_parts.append(safe)
+                        text_parts.append(safe)
+                        self._buf = self._buf[-partial:] if partial else ""
+                        break
+                else:
+                    # Resolved state — only look for <think>.
+                    idx = self._buf.find(self._OPEN)
+                    if idx == -1:
+                        partial = self._longest_prefix_match(self._buf, self._OPEN)
+                        safe = self._buf[:-partial] if partial else self._buf
+                        text_parts.append(safe)
+                        self._buf = self._buf[-partial:] if partial else ""
+                        break
+                    else:
+                        text_parts.append(self._buf[:idx])
+                        self._buf = self._buf[idx + len(self._OPEN) :]
+                        self._in_think = True
+                        self._ever_opened = True
 
         return "".join(reasoning_parts), "".join(text_parts)
+
+    def reset_think_mode(self) -> tuple[str, str]:
+        """Flush buffer and re-enter think mode for a new model call.
+
+        When multiple models stream through the same filter instance, each
+        model should start in think mode (if *assume_think* is True) so that
+        a previous model's ``</think>`` doesn't cause the next model's
+        content to be classified as main text.
+
+        Returns the same ``(reasoning, text)`` tuple as :meth:`flush` for
+        any residual buffered content.
+        """
+        result = self.flush()
+        if self._assume_think:
+            self._in_think = True
+            self._ever_opened = True
+        # Clear late-close state so the next model starts fresh
+        self._late_close_detected = False
+        self._pre_close_text_parts.clear()
+        return result
 
     def flush(self) -> tuple[str, str]:
         """Drain any remaining buffer at end-of-stream."""
@@ -1164,6 +1510,8 @@ class _ThinkStreamFilter:
             return "", ""
         if self._in_think:
             return remaining, ""
+        # If we never resolved (no tags seen at all), check if there's
+        # buffered speculative text that should just be flushed as text.
         return "", remaining
 
 
@@ -1351,10 +1699,23 @@ async def stream_new_chat(
             trace_recorder.set_tokenizer_model(tokenizer_model)
 
         prompt_overrides = await get_global_prompt_overrides(session)
+
+        # Resolve the global core prompt (Swedish thinking, date/time) and
+        # resolve its date/time placeholders so it is ready to prepend.
+        _raw_core_prompt = resolve_prompt(
+            prompt_overrides,
+            "system.core.global",
+            SURFSENSE_CORE_GLOBAL_PROMPT,
+        )
+        core_global_prompt = append_datetime_context(_raw_core_prompt.strip())
+
         default_system_prompt = resolve_prompt(
             prompt_overrides,
             "system.default.instructions",
             SURFSENSE_SYSTEM_INSTRUCTIONS,
+        )
+        default_system_prompt = inject_core_prompt(
+            core_global_prompt, default_system_prompt
         )
         if agent_config is not None:
             has_custom_system_prompt = bool(
@@ -1370,8 +1731,11 @@ async def stream_new_chat(
                     system_instructions=default_system_prompt,
                     use_default_system_instructions=False,
                 )
-        router_prompt = resolve_prompt(
-            prompt_overrides, "router.top_level", DEFAULT_ROUTE_SYSTEM_PROMPT
+        router_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides, "router.top_level", DEFAULT_ROUTE_SYSTEM_PROMPT
+            ),
         )
         try:
             routing_history = await _load_conversation_history_for_routing(
@@ -1399,7 +1763,7 @@ async def stream_new_chat(
             conversation_history=routing_history,
             intent_definitions=intent_definitions,
         )
-        
+
         # Sync compare_mode with route decision
         # Router can identify compare requests even without /compare prefix
         if route == Route.JAMFORELSE:
@@ -1410,7 +1774,7 @@ async def stream_new_chat(
             if compare_query:
                 user_query = compare_query
             followup_context_block = ""
-        
+
         worker_system_prompt: str | None = None
         supervisor_system_prompt: str | None = None
         smalltalk_prompt: str | None = None
@@ -1432,10 +1796,13 @@ async def stream_new_chat(
                 else None
             )
         citations_enabled = bool(citation_instructions_block)
-        supervisor_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.supervisor.system",
-            DEFAULT_SUPERVISOR_PROMPT,
+        supervisor_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.supervisor.system",
+                DEFAULT_SUPERVISOR_PROMPT,
+            ),
         )
         supervisor_system_prompt = build_supervisor_prompt(
             supervisor_prompt,
@@ -1451,13 +1818,16 @@ async def stream_new_chat(
                 supervisor_system_prompt + "\n\n" + compare_supervisor_instructions
             )
 
-        knowledge_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.knowledge.system",
+        knowledge_prompt = inject_core_prompt(
+            core_global_prompt,
             resolve_prompt(
                 prompt_overrides,
-                "agent.worker.knowledge",
-                DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+                "agent.knowledge.system",
+                resolve_prompt(
+                    prompt_overrides,
+                    "agent.worker.knowledge",
+                    DEFAULT_WORKER_KNOWLEDGE_PROMPT,
+                ),
             ),
         )
         knowledge_worker_prompt = build_worker_prompt(
@@ -1465,13 +1835,16 @@ async def stream_new_chat(
             citations_enabled=citations_enabled,
             citation_instructions=citation_instructions_block,
         )
-        action_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.action.system",
+        action_prompt = inject_core_prompt(
+            core_global_prompt,
             resolve_prompt(
                 prompt_overrides,
-                "agent.worker.action",
-                DEFAULT_WORKER_ACTION_PROMPT,
+                "agent.action.system",
+                resolve_prompt(
+                    prompt_overrides,
+                    "agent.worker.action",
+                    DEFAULT_WORKER_ACTION_PROMPT,
+                ),
             ),
         )
         action_worker_prompt = build_worker_prompt(
@@ -1479,98 +1852,137 @@ async def stream_new_chat(
             citations_enabled=citations_enabled,
             citation_instructions=citation_instructions_block,
         )
-        media_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.media.system",
-            action_prompt,
+        media_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.media.system",
+                action_prompt,
+            ),
         )
-        browser_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.browser.system",
-            knowledge_prompt,
+        browser_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.browser.system",
+                knowledge_prompt,
+            ),
         )
-        code_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.code.system",
-            knowledge_prompt,
+        code_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.code.system",
+                knowledge_prompt,
+            ),
         )
-        kartor_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.kartor.system",
-            action_prompt,
+        kartor_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.kartor.system",
+                action_prompt,
+            ),
         )
-        statistics_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.statistics.system",
-            DEFAULT_STATISTICS_SYSTEM_PROMPT,
+        statistics_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.statistics.system",
+                DEFAULT_STATISTICS_SYSTEM_PROMPT,
+            ),
         )
         statistics_worker_prompt = build_statistics_system_prompt(
             statistics_prompt,
             citation_instructions=citation_instructions_block,
         )
-        synthesis_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.synthesis.system",
-            statistics_prompt,
+        synthesis_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.synthesis.system",
+                statistics_prompt,
+            ),
         )
-        bolag_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.bolag.system",
-            DEFAULT_BOLAG_SYSTEM_PROMPT,
+        bolag_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.bolag.system",
+                DEFAULT_BOLAG_SYSTEM_PROMPT,
+            ),
         )
         bolag_worker_prompt = build_bolag_prompt(
             bolag_prompt,
             citation_instructions=citation_instructions_block,
         )
-        trafik_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.trafik.system",
-            DEFAULT_TRAFFIC_SYSTEM_PROMPT,
+        trafik_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.trafik.system",
+                DEFAULT_TRAFFIC_SYSTEM_PROMPT,
+            ),
         )
         trafik_worker_prompt = build_trafik_prompt(
             trafik_prompt,
             citation_instructions=citation_instructions_block,
         )
-        riksdagen_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.riksdagen.system",
-            DEFAULT_RIKSDAGEN_SYSTEM_PROMPT,
+        riksdagen_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.riksdagen.system",
+                DEFAULT_RIKSDAGEN_SYSTEM_PROMPT,
+            ),
         )
         riksdagen_worker_prompt = build_worker_prompt(
             riksdagen_prompt,
             citations_enabled=citations_enabled,
             citation_instructions=citation_instructions_block,
         )
-        marketplace_prompt = resolve_prompt(
-            prompt_overrides,
-            "agent.marketplace.system",
-            DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+        marketplace_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "agent.marketplace.system",
+                DEFAULT_MARKETPLACE_SYSTEM_PROMPT,
+            ),
         )
         marketplace_worker_prompt = build_marketplace_prompt(
             marketplace_prompt,
             citation_instructions=citation_instructions_block,
         )
-        compare_analysis_prompt = resolve_prompt(
-            prompt_overrides,
-            "compare.analysis.system",
-            DEFAULT_COMPARE_ANALYSIS_PROMPT,
+        compare_analysis_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "compare.analysis.system",
+                DEFAULT_COMPARE_ANALYSIS_PROMPT,
+            ),
         )
         compare_synthesis_prompt = build_compare_synthesis_prompt(
             compare_analysis_prompt,
             citations_enabled=citations_enabled,
             citation_instructions=citation_instructions_block,
         )
-        compare_external_prompt = resolve_prompt(
-            prompt_overrides,
-            "compare.external.system",
-            DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+        compare_external_prompt = inject_core_prompt(
+            core_global_prompt,
+            resolve_prompt(
+                prompt_overrides,
+                "compare.external.system",
+                DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+            ),
         )
 
         if route == Route.KONVERSATION:
-            smalltalk_prompt = resolve_prompt(
-                prompt_overrides,
-                "agent.smalltalk.system",
-                SMALLTALK_INSTRUCTIONS,
+            smalltalk_prompt = inject_core_prompt(
+                core_global_prompt,
+                resolve_prompt(
+                    prompt_overrides,
+                    "agent.smalltalk.system",
+                    SMALLTALK_INSTRUCTIONS,
+                ),
             )
         else:
             worker_system_prompt = supervisor_system_prompt
@@ -1588,7 +2000,9 @@ async def stream_new_chat(
             runtime_flags.get("sandbox_enabled"),
             default=False,
         )
-        sandbox_mode = str(runtime_flags.get("sandbox_mode") or "docker").strip().lower()
+        sandbox_mode = (
+            str(runtime_flags.get("sandbox_mode") or "docker").strip().lower()
+        )
         if sandbox_mode == "remote":
             sandbox_mode = "provisioner"
         sandbox_provisioner_url = str(
@@ -1596,25 +2010,26 @@ async def stream_new_chat(
             or runtime_flags.get("sandbox_service_url")
             or ""
         ).strip()
-        sandbox_state_store = str(
-            runtime_flags.get("sandbox_state_store") or "file"
-        ).strip().lower()
+        sandbox_state_store = (
+            str(runtime_flags.get("sandbox_state_store") or "file").strip().lower()
+        )
         try:
             sandbox_idle_timeout_seconds = int(
                 runtime_flags.get("sandbox_idle_timeout_seconds") or 15 * 60
             )
         except (TypeError, ValueError):
             sandbox_idle_timeout_seconds = 15 * 60
+        think_enabled = _coerce_runtime_flag(
+            runtime_flags.get("think_enabled"),
+            default=True,
+        )
         subagent_enabled = _coerce_runtime_flag(
             runtime_flags.get("subagent_enabled"),
             default=True,
         )
-        subagent_isolation_enabled = (
-            subagent_enabled
-            and _coerce_runtime_flag(
-                runtime_flags.get("subagent_isolation_enabled"),
-                default=False,
-            )
+        subagent_isolation_enabled = subagent_enabled and _coerce_runtime_flag(
+            runtime_flags.get("subagent_isolation_enabled"),
+            default=False,
         )
         try:
             subagent_max_concurrency = int(
@@ -1634,18 +2049,24 @@ async def stream_new_chat(
             )
         except (TypeError, ValueError):
             subagent_result_max_chars = 1000
-        subagent_sandbox_scope = str(
-            runtime_flags.get("subagent_sandbox_scope")
-            or runtime_flags.get("sandbox_scope")
-            or "thread"
-        ).strip().lower()
+        subagent_sandbox_scope = (
+            str(
+                runtime_flags.get("subagent_sandbox_scope")
+                or runtime_flags.get("sandbox_scope")
+                or "thread"
+            )
+            .strip()
+            .lower()
+        )
         artifact_offload_enabled = _coerce_runtime_flag(
             runtime_flags.get("artifact_offload_enabled"),
             default=False,
         )
-        artifact_offload_storage_mode = str(
-            runtime_flags.get("artifact_offload_storage_mode") or "auto"
-        ).strip().lower()
+        artifact_offload_storage_mode = (
+            str(runtime_flags.get("artifact_offload_storage_mode") or "auto")
+            .strip()
+            .lower()
+        )
         if artifact_offload_storage_mode not in {"auto", "sandbox", "local"}:
             artifact_offload_storage_mode = "auto"
         context_compaction_enabled = _coerce_runtime_flag(
@@ -1839,7 +2260,9 @@ async def stream_new_chat(
                         if latest_query:
                             break
                 if not latest_query and incoming:
-                    latest_query = str(getattr(incoming[-1], "content", "") or "").strip()
+                    latest_query = str(
+                        getattr(incoming[-1], "content", "") or ""
+                    ).strip()
                 if not latest_query:
                     latest_query = str(raw_user_query or "").strip()
                 response = await llm.ainvoke(
@@ -2059,11 +2482,24 @@ async def stream_new_chat(
         internal_model_buffers: dict[str, str] = {}
         emitted_pipeline_payload_signatures: set[str] = set()
         emitted_synthesis_draft_signatures: set[str] = set()
-        streamed_tool_call_ids: set[str] = set()  # Track tool calls already streamed to prevent duplicates
+        streamed_tool_call_ids: set[str] = (
+            set()
+        )  # Track tool calls already streamed to prevent duplicates
         stream_pipeline_prefix_buffer: str = ""
         # Think-tag streaming state
-        _think_filter = _ThinkStreamFilter()
+        _think_filter = _ThinkStreamFilter(assume_think=think_enabled)
         active_reasoning_id: str | None = None
+        _late_close_handled = False  # Guard for template-prefilled <think> handling
+
+        # --- Node-by-node think-box state ---
+        # Per-node ThinkStreamFilter instances keyed by model run_id.
+        # When a pipeline node's LLM call streams tokens, we run them
+        # through a dedicated filter to extract <think> reasoning per node.
+        internal_node_think_filters: dict[str, _ThinkStreamFilter] = {}
+        # Track which pipeline node last emitted reasoning so we can inject
+        # transition headers (e.g. "--- Resolving intent ---") into the
+        # global rolling reasoning stream.
+        last_reasoning_pipeline_node: str = ""
 
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
@@ -2113,28 +2549,32 @@ async def stream_new_chat(
                     events.append(completion_event)
 
                 step_id = next_thinking_step_id()
-                title = format_step_title("Updating internal planner state")
+                title = format_step_title("Uppdaterar intern planerare")
                 items: list[str] = []
                 if kind == "intent":
-                    title = format_step_title("Resolving intent")
+                    title = format_step_title("Tolkar avsikt")
                     intent_id = str(payload.get("intent_id") or "").strip()
-                    graph_complexity = str(payload.get("graph_complexity") or "").strip()
+                    graph_complexity = str(
+                        payload.get("graph_complexity") or ""
+                    ).strip()
                     reason = str(payload.get("reason") or "").strip()
                     confidence = payload.get("confidence")
                     if intent_id:
-                        items.append(f"Intent: {intent_id}")
+                        items.append(f"Avsikt: {intent_id}")
                     if graph_complexity:
-                        items.append(f"Graph complexity: {graph_complexity}")
+                        items.append(f"Komplexitet: {graph_complexity}")
                     if isinstance(confidence, (int, float)):
-                        items.append(f"Confidence: {float(confidence):.2f}")
+                        items.append(f"Konfidens: {float(confidence):.2f}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "agent_resolver":
-                    title = format_step_title("Selecting agents")
+                    title = format_step_title("Väljer agenter")
                     selected_agents = payload.get("selected_agents")
                     if isinstance(selected_agents, list):
                         clean_agents = [
-                            str(agent).strip() for agent in selected_agents if str(agent).strip()
+                            str(agent).strip()
+                            for agent in selected_agents
+                            if str(agent).strip()
                         ]
                         if clean_agents:
                             items.append(f"Agenter: {', '.join(clean_agents[:4])}")
@@ -2142,7 +2582,7 @@ async def stream_new_chat(
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "planner":
-                    title = format_step_title("Building plan")
+                    title = format_step_title("Bygger plan")
                     steps = payload.get("steps")
                     if isinstance(steps, list):
                         for step in steps[:4]:
@@ -2155,25 +2595,29 @@ async def stream_new_chat(
                     if reason:
                         items.append(f"Planmotiv: {reason[:180]}")
                 elif kind == "critic":
-                    title = format_step_title("Reviewing findings, gaps, and next steps")
+                    title = format_step_title(
+                        "Granskar resultat och nästa steg"
+                    )
                     decision = str(payload.get("decision") or "").strip()
                     if not decision:
                         decision = str(payload.get("status") or "").strip()
                     reason = str(payload.get("reason") or "").strip()
                     if decision:
-                        items.append(f"Decision: {decision}")
+                        items.append(f"Beslut: {decision}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "execution_router":
-                    title = format_step_title("Routing execution strategy")
+                    title = format_step_title("Planerar exekveringsstrategi")
                     strategy = str(payload.get("execution_strategy") or "").strip()
-                    reason = str(payload.get("execution_reason") or payload.get("reason") or "").strip()
+                    reason = str(
+                        payload.get("execution_reason") or payload.get("reason") or ""
+                    ).strip()
                     if strategy:
                         items.append(f"Strategi: {strategy}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "speculative":
-                    title = format_step_title("Running speculative tools")
+                    title = format_step_title("Kör spekulativa verktyg")
                     candidates = payload.get("speculative_candidates")
                     if isinstance(candidates, list):
                         candidate_ids = [
@@ -2183,27 +2627,46 @@ async def stream_new_chat(
                         ]
                         candidate_ids = [item for item in candidate_ids if item]
                         if candidate_ids:
-                            items.append(
-                                f"Kandidater: {', '.join(candidate_ids[:4])}"
-                            )
+                            items.append(f"Kandidater: {', '.join(candidate_ids[:4])}")
                     reused = payload.get("speculative_reused_tools")
                     if isinstance(reused, list) and reused:
                         items.append(f"Återanvända: {len(reused)}")
                     remaining = payload.get("speculative_remaining_tools")
                     if isinstance(remaining, list) and remaining:
                         items.append(f"Kvar att köra: {len(remaining)}")
+                elif kind == "response_layer_router":
+                    title = format_step_title("Väljer presentationsläge")
+                    chosen = str(payload.get("chosen_layer") or "").strip()
+                    reason = str(payload.get("reason") or "").strip()
+                    data_chars = str(
+                        payload.get("data_characteristics") or ""
+                    ).strip()
+                    layer_labels = {
+                        "kunskap": "Kunskap",
+                        "analys": "Analys",
+                        "syntes": "Syntes",
+                        "visualisering": "Visualisering",
+                    }
+                    if chosen:
+                        items.append(
+                            f"Valt läge: {layer_labels.get(chosen, chosen)}"
+                        )
+                    if data_chars:
+                        items.append(f"Data: {data_chars[:180]}")
+                    if reason:
+                        items.append(f"Motivering: {reason[:180]}")
                 elif kind == "progressive_synthesizer":
-                    title = format_step_title("Preparing answer draft")
+                    title = format_step_title("Förbereder svarsutkast")
                     drafts = payload.get("synthesis_drafts")
                     if isinstance(drafts, list) and drafts:
                         first_draft = drafts[0] if isinstance(drafts[0], dict) else {}
                         confidence = first_draft.get("confidence")
                         draft_text = str(first_draft.get("draft") or "").strip()
                         if isinstance(confidence, (int, float)):
-                            items.append(f"Draft confidence: {float(confidence):.2f}")
+                            items.append(f"Utkastskonfidens: {float(confidence):.2f}")
                         if draft_text:
                             items.append(draft_text[:180])
-                if source_chain and _is_internal_pipeline_chain_name(source_chain):
+                if source_chain and _is_any_pipeline_chain_name(source_chain):
                     items.insert(0, f"Nod: {source_chain}")
                 events.append(
                     streaming_service.format_thinking_step(
@@ -2229,12 +2692,18 @@ async def stream_new_chat(
             *,
             source_chain: str | None = None,
         ) -> list[str]:
+            # Strip <think>…</think> blocks and bare tags to prevent
+            # reasoning content from leaking into visible step items.
+            stripped = _THINK_BLOCK_RE.sub("", text) if text else text
+            stripped = _THINK_TAG_RE.sub("", stripped) if stripped else stripped
             payloads = [
                 payload
-                for payload in _extract_json_objects_from_text(text, max_objects=6)
+                for payload in _extract_json_objects_from_text(stripped, max_objects=6)
                 if _pipeline_payload_kind(payload)
             ]
-            return emit_pipeline_steps_from_payloads(payloads, source_chain=source_chain)
+            return emit_pipeline_steps_from_payloads(
+                payloads, source_chain=source_chain
+            )
 
         def emit_synthesis_draft_events(output: Any) -> list[str]:
             events: list[str] = []
@@ -2253,25 +2722,25 @@ async def stream_new_chat(
             return events
 
         route_step_id = next_thinking_step_id()
-        route_items = [f"Route: {route.value}"]
+        route_items = [f"Rutt: {route.value}"]
         route_source = str(route_decision.get("source") or "").strip()
         route_confidence = route_decision.get("confidence")
         route_reason = str(route_decision.get("reason") or "").strip()
         if route_source:
             route_items.append(f"Källa: {route_source}")
         if isinstance(route_confidence, (int, float)):
-            route_items.append(f"Confidence: {float(route_confidence):.2f}")
+            route_items.append(f"Konfidens: {float(route_confidence):.2f}")
         if route_reason:
             route_items.append(f"Orsak: {route_reason}")
         yield streaming_service.format_thinking_step(
             step_id=route_step_id,
-            title=format_step_title("Routing request"),
+            title=format_step_title("Dirigerar förfrågan"),
             status="in_progress",
             items=route_items,
         )
         yield streaming_service.format_thinking_step(
             step_id=route_step_id,
-            title=format_step_title("Routing request"),
+            title=format_step_title("Dirigerar förfrågan"),
             status="completed",
             items=route_items,
         )
@@ -2283,17 +2752,17 @@ async def stream_new_chat(
 
         # Determine step title and action verb based on context
         if attachments and (mentioned_documents or mentioned_surfsense_docs):
-            last_active_step_title = format_step_title("Analyzing your content")
-            action_verb = "Reading"
+            last_active_step_title = format_step_title("Analyserar ditt innehåll")
+            action_verb = "Läser"
         elif attachments:
-            last_active_step_title = format_step_title("Reading your content")
-            action_verb = "Reading"
+            last_active_step_title = format_step_title("Läser ditt innehåll")
+            action_verb = "Läser"
         elif mentioned_documents or mentioned_surfsense_docs:
-            last_active_step_title = format_step_title("Analyzing referenced content")
-            action_verb = "Analyzing"
+            last_active_step_title = format_step_title("Analyserar refererat innehåll")
+            action_verb = "Analyserar"
         else:
-            last_active_step_title = format_step_title("Understanding your request")
-            action_verb = "Processing"
+            last_active_step_title = format_step_title("Analyserar din fråga")
+            action_verb = "Bearbetar"
 
         # Build the message with inline context about attachments/documents
         processing_parts = []
@@ -2313,7 +2782,7 @@ async def stream_new_chat(
             if len(attachment_names) == 1:
                 processing_parts.append(f"[{attachment_names[0]}]")
             else:
-                processing_parts.append(f"[{len(attachment_names)} files]")
+                processing_parts.append(f"[{len(attachment_names)} filer]")
 
         # Add mentioned document names inline
         if mentioned_documents:
@@ -2326,7 +2795,7 @@ async def stream_new_chat(
             if len(doc_names) == 1:
                 processing_parts.append(f"[{doc_names[0]}]")
             else:
-                processing_parts.append(f"[{len(doc_names)} documents]")
+                processing_parts.append(f"[{len(doc_names)} dokument]")
 
         # Add mentioned SurfSense docs inline
         if mentioned_surfsense_docs:
@@ -2339,7 +2808,7 @@ async def stream_new_chat(
             if len(doc_names) == 1:
                 processing_parts.append(f"[{doc_names[0]}]")
             else:
-                processing_parts.append(f"[{len(doc_names)} docs]")
+                processing_parts.append(f"[{len(doc_names)} dokument]")
 
         last_active_step_items = [f"{action_verb}: {' '.join(processing_parts)}"]
 
@@ -2436,28 +2905,184 @@ async def stream_new_chat(
                 chain_name_by_run_id.setdefault(
                     run_id, str(event.get("name") or "chain")
                 )
-            elif event_type in ("on_chat_model_start", "on_llm_start") and run_id:
-                if run_id not in model_parent_chain_by_run_id:
-                    parent_chain_name = ""
-                    parent_ids = [
-                        str(value)
-                        for value in (event.get("parent_ids") or [])
-                        if str(value)
-                    ]
-                    for parent_id in reversed(parent_ids):
-                        candidate_chain_name = chain_name_by_run_id.get(parent_id)
-                        if candidate_chain_name:
-                            parent_chain_name = str(candidate_chain_name)
-                            break
-                    if _is_internal_pipeline_chain_name(parent_chain_name):
-                        model_parent_chain_by_run_id[run_id] = parent_chain_name
-                        internal_model_buffers.setdefault(run_id, "")
+            elif (
+                event_type in ("on_chat_model_start", "on_llm_start")
+                and run_id
+                and run_id not in model_parent_chain_by_run_id
+            ):
+                parent_ids = [
+                    str(value)
+                    for value in (event.get("parent_ids") or [])
+                    if str(value)
+                ]
+                # Walk ALL parents: track both the immediate non-generic
+                # parent (for display/headers) and the pipeline ancestor
+                # (for classification as internal vs output).
+                immediate_parent = ""
+                pipeline_parent = ""
+                for parent_id in reversed(parent_ids):
+                    candidate_chain_name = chain_name_by_run_id.get(parent_id)
+                    if not candidate_chain_name:
+                        continue
+                    normalized = str(candidate_chain_name).strip().lower()
+                    if normalized in _GENERIC_CHAIN_NAMES:
+                        continue
+                    cname = str(candidate_chain_name)
+                    # Remember the closest non-generic chain
+                    if not immediate_parent:
+                        immediate_parent = cname
+                    # If this ancestor is a known pipeline node, use it
+                    if _is_internal_pipeline_chain_name(cname) or _is_any_pipeline_chain_name(cname):
+                        pipeline_parent = cname
+                        break
+
+                # Use pipeline parent for classification, fall back to immediate
+                parent_chain_name = pipeline_parent or immediate_parent
+
+                # Build a display key that tracks transitions at the
+                # agent level (not just pipeline node), so headers also
+                # appear when switching between domain agents inside the
+                # same executor loop.
+                display_key = immediate_parent or parent_chain_name
+
+                if _is_internal_pipeline_chain_name(parent_chain_name):
+                    model_parent_chain_by_run_id[run_id] = parent_chain_name
+                    internal_model_buffers.setdefault(run_id, "")
+                    # Create per-node think filter so reasoning streams
+                    # in real-time into the FadeLayer think-box.
+                    internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                        assume_think=_think_filter._assume_think,
+                    )
+                    # Emit a node-transition header immediately so the
+                    # frontend shows which pipeline phase is now active.
+                    if display_key != last_reasoning_pipeline_node:
+                        last_reasoning_pipeline_node = display_key
+                        # If the immediate parent differs from the pipeline
+                        # node, it's a domain agent — show its name.
+                        if immediate_parent and immediate_parent != parent_chain_name:
+                            node_title = _pipeline_node_title(parent_chain_name)
+                            agent_label = immediate_parent.replace("_", " ").title()
+                            header = f"\n--- {agent_label} ({node_title}) ---\n"
+                        else:
+                            node_title = _pipeline_node_title(parent_chain_name)
+                            header = f"\n--- {node_title} ---\n"
+                        if active_reasoning_id is None:
+                            active_reasoning_id = (
+                                streaming_service.generate_reasoning_id()
+                            )
+                            yield streaming_service.format_reasoning_start(
+                                active_reasoning_id
+                            )
+                        yield streaming_service.format_reasoning_delta(
+                            active_reasoning_id, header
+                        )
+                elif _is_any_pipeline_chain_name(parent_chain_name):
+                    # Output pipeline node (synthesizer / response_layer):
+                    # not registered as internal, but emit a header so the
+                    # user sees which phase is producing the final response.
+                    #
+                    # When the response_layer output node starts AFTER the
+                    # synthesizer has already streamed text, clear the
+                    # existing text so the formatted version replaces it
+                    # rather than being appended.
+                    pcn_lower = str(parent_chain_name).strip().lower()
+                    if (
+                        "response_layer" in pcn_lower
+                        and "response_layer_router" not in pcn_lower
+                        and current_text_id is not None
+                    ):
+                        yield streaming_service.format_text_end(current_text_id)
+                        current_text_id = None
+                        yield streaming_service.format_text_clear()
+                        accumulated_text = ""
+                    if display_key != last_reasoning_pipeline_node:
+                        last_reasoning_pipeline_node = display_key
+                        node_title = _pipeline_node_title(parent_chain_name)
+                        header = f"\n--- {node_title} ---\n"
+                        if active_reasoning_id is None:
+                            active_reasoning_id = (
+                                streaming_service.generate_reasoning_id()
+                            )
+                            yield streaming_service.format_reasoning_start(
+                                active_reasoning_id
+                            )
+                        yield streaming_service.format_reasoning_delta(
+                            active_reasoning_id, header
+                        )
+                    if _think_filter._assume_think:
+                        flush_r, flush_t = _think_filter.reset_think_mode()
+                        if flush_r:
+                            if active_reasoning_id is None:
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, flush_r
+                            )
+                        # Flushed text from a PREVIOUS model goes to
+                        # reasoning, NOT text-delta, to prevent leaks.
+                        if flush_t:
+                            if active_reasoning_id is None:
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, flush_t
+                            )
+                        # The response_layer formatting LLM produces the
+                        # final user-facing text.  reset_think_mode() puts
+                        # the filter back in think mode, which would cause
+                        # ALL its output to be classified as reasoning
+                        # instead of text-delta.  Force out of think mode
+                        # for response_layer so text streams correctly.
+                        # (The synthesizer keeps assume_think behaviour
+                        # for Qwen3-style models that pre-fill <think>.)
+                        if (
+                            "response_layer" in pcn_lower
+                            and "response_layer_router" not in pcn_lower
+                        ):
+                            _think_filter._in_think = False
+                else:
+                    # Unknown / unclassified model: treat as INTERNAL to
+                    # prevent any internal reasoning from leaking into the
+                    # visible response.  Only output pipeline nodes
+                    # (synthesizer, response_layer) should emit text-delta.
+                    model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
+                    internal_model_buffers.setdefault(run_id, "")
+                    internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                        assume_think=_think_filter._assume_think,
+                    )
+                    if _think_filter._assume_think:
+                        flush_r, flush_t = _think_filter.reset_think_mode()
+                        if flush_r or flush_t:
+                            if active_reasoning_id is None:
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            if flush_r:
+                                yield streaming_service.format_reasoning_delta(
+                                    active_reasoning_id, flush_r
+                                )
+                            if flush_t:
+                                yield streaming_service.format_reasoning_delta(
+                                    active_reasoning_id, flush_t
+                                )
 
             if trace_recorder:
                 if event_type == "on_chain_start":
                     chain_name = event.get("name") or "chain"
                     if run_id:
                         chain_name_by_run_id[run_id] = str(chain_name)
+
                     chain_input = event.get("data", {}).get("input")
                     chain_meta = {
                         "tags": event.get("tags") or [],
@@ -2484,13 +3109,20 @@ async def stream_new_chat(
                     )
                     if trace_event:
                         yield trace_event
-                    
-                    # Extract and stream tool calls from chain output (critical for compare mode)
-                    # Pass tracking set to prevent duplicate tool call streaming
-                    tool_call_events = _extract_and_stream_tool_calls(chain_output, streaming_service, streamed_tool_call_ids)
-                    for tool_event in tool_call_events:
-                        yield tool_event
-                    
+
+                    # Extract and stream tool calls from chain output — only
+                    # needed for compare-mode chains where tool calls don't go
+                    # through the normal on_tool_start/on_tool_end pipeline.
+                    # Skipping non-compare chains prevents duplicate emission
+                    # of tool results that are already handled by on_tool_end.
+                    _chain_name_for_extract = chain_name_by_run_id.get(run_id, "")
+                    if "compare" in str(_chain_name_for_extract).lower():
+                        tool_call_events = _extract_and_stream_tool_calls(
+                            chain_output, streaming_service, streamed_tool_call_ids
+                        )
+                        for tool_event in tool_call_events:
+                            yield tool_event
+
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
                     )
@@ -2500,7 +3132,7 @@ async def stream_new_chat(
                     if candidate_text:
                         source_chain = (
                             chain_name
-                            if _is_internal_pipeline_chain_name(chain_name)
+                            if _is_any_pipeline_chain_name(chain_name)
                             else None
                         )
                         for step_event in emit_pipeline_steps_from_text(
@@ -2524,15 +3156,41 @@ async def stream_new_chat(
                 elif event_type in ("on_chat_model_start", "on_llm_start"):
                     model_data = event.get("data", {})
                     parent_chain_name = ""
-                    parent_ids = [str(value) for value in (event.get("parent_ids") or []) if str(value)]
+                    parent_ids = [
+                        str(value)
+                        for value in (event.get("parent_ids") or [])
+                        if str(value)
+                    ]
+                    # Walk ALL parents to find the nearest pipeline node.
                     for parent_id in reversed(parent_ids):
                         candidate_chain_name = chain_name_by_run_id.get(parent_id)
-                        if candidate_chain_name:
+                        if not candidate_chain_name:
+                            continue
+                        normalized = str(candidate_chain_name).strip().lower()
+                        if normalized in _GENERIC_CHAIN_NAMES:
+                            continue
+                        if not parent_chain_name:
+                            parent_chain_name = str(candidate_chain_name)
+                        if _is_internal_pipeline_chain_name(str(candidate_chain_name)):
                             parent_chain_name = str(candidate_chain_name)
                             break
-                    if run_id and _is_internal_pipeline_chain_name(parent_chain_name):
-                        model_parent_chain_by_run_id[run_id] = parent_chain_name
-                        internal_model_buffers.setdefault(run_id, "")
+                        if _is_any_pipeline_chain_name(str(candidate_chain_name)):
+                            parent_chain_name = str(candidate_chain_name)
+                            break
+                    if run_id and run_id not in model_parent_chain_by_run_id:
+                        # If the primary handler already classified this model,
+                        # don't overwrite.  Otherwise, treat as internal unless
+                        # it's an explicit output pipeline node.
+                        is_output = (
+                            _is_any_pipeline_chain_name(parent_chain_name)
+                            and not _is_internal_pipeline_chain_name(parent_chain_name)
+                        )
+                        if not is_output:
+                            model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
+                            internal_model_buffers.setdefault(run_id, "")
+                            internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                                assume_think=_think_filter._assume_think,
+                            )
                     model_input = (
                         model_data.get("input")
                         or model_data.get("messages")
@@ -2569,6 +3227,27 @@ async def stream_new_chat(
                     )
                     internal_chain_name = model_parent_chain_by_run_id.pop(run_id, "")
                     internal_buffer = internal_model_buffers.pop(run_id, "")
+                    # Flush per-node think filter and emit remaining reasoning
+                    # into the global rolling think-box (reasoning-delta).
+                    node_filter = internal_node_think_filters.pop(run_id, None)
+                    if node_filter:
+                        flush_reasoning, flush_node_text = node_filter.flush()
+                        # Node text also goes to reasoning (never text-delta)
+                        flush_reasoning = (flush_reasoning or "") + (flush_node_text or "")
+                        if flush_reasoning:
+                            # Inject node header if this is a new pipeline node
+                            if internal_chain_name and internal_chain_name != last_reasoning_pipeline_node:
+                                last_reasoning_pipeline_node = internal_chain_name
+                                node_title = _pipeline_node_title(internal_chain_name)
+                                header = f"\n--- {node_title} ---\n"
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = streaming_service.generate_reasoning_id()
+                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                yield streaming_service.format_reasoning_delta(active_reasoning_id, header)
+                            if active_reasoning_id is None:
+                                active_reasoning_id = streaming_service.generate_reasoning_id()
+                                yield streaming_service.format_reasoning_start(active_reasoning_id)
+                            yield streaming_service.format_reasoning_delta(active_reasoning_id, flush_reasoning)
                     if internal_chain_name:
                         internal_text = internal_buffer or candidate_text
                         for step_event in emit_pipeline_steps_from_text(
@@ -2579,9 +3258,8 @@ async def stream_new_chat(
                     elif candidate_text:
                         for step_event in emit_pipeline_steps_from_text(candidate_text):
                             yield step_event
-                        cleaned_candidate = _clean_assistant_output_text(candidate_text)
-                        if cleaned_candidate:
-                            fallback_assistant_text = cleaned_candidate
+                        # Do NOT store as fallback text — this came from an
+                        # unclassified model, not an output pipeline node.
 
             # Handle chat model stream events (text streaming)
             if event_type == "on_chat_model_stream":
@@ -2590,13 +3268,40 @@ async def stream_new_chat(
                     # Handle native reasoning_content (DeepSeek-R1 / models with separate field)
                     native_reasoning: str | None = None
                     if hasattr(chunk, "additional_kwargs"):
-                        native_reasoning = chunk.additional_kwargs.get("reasoning_content")
+                        native_reasoning = chunk.additional_kwargs.get(
+                            "reasoning_content"
+                        )
                     if native_reasoning and isinstance(native_reasoning, str):
-                        if not (run_id and run_id in model_parent_chain_by_run_id):
+                        if run_id and run_id in model_parent_chain_by_run_id:
+                            # Pipeline node: emit as reasoning-delta in the
+                            # global rolling think-box.
+                            parent_chain = model_parent_chain_by_run_id.get(run_id, "")
+                            if parent_chain != last_reasoning_pipeline_node:
+                                last_reasoning_pipeline_node = parent_chain
+                                node_title = _pipeline_node_title(parent_chain)
+                                header = f"\n--- {node_title} ---\n"
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = streaming_service.generate_reasoning_id()
+                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                yield streaming_service.format_reasoning_delta(active_reasoning_id, header)
                             if active_reasoning_id is None:
                                 active_reasoning_id = streaming_service.generate_reasoning_id()
                                 yield streaming_service.format_reasoning_start(active_reasoning_id)
-                            yield streaming_service.format_reasoning_delta(active_reasoning_id, native_reasoning)
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, native_reasoning
+                            )
+                        else:
+                            # Executor node: emit as global reasoning-delta
+                            if active_reasoning_id is None:
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, native_reasoning
+                            )
 
                     content = chunk.content
                     if content and isinstance(content, str):
@@ -2610,34 +3315,113 @@ async def stream_new_chat(
                                 )
                                 if trace_update:
                                     yield trace_update
+                            # --- Node-by-node think-box: stream per-node reasoning
+                            # into the global rolling think-box (reasoning-delta). ---
+                            node_filter = internal_node_think_filters.get(run_id)
+                            if node_filter:
+                                node_reasoning, _node_text = node_filter.feed(content)
+                                if node_reasoning:
+                                    parent_chain = model_parent_chain_by_run_id.get(
+                                        run_id, ""
+                                    )
+                                    # Inject node header when the pipeline node changes
+                                    if parent_chain != last_reasoning_pipeline_node:
+                                        last_reasoning_pipeline_node = parent_chain
+                                        node_title = _pipeline_node_title(parent_chain)
+                                        header = f"\n--- {node_title} ---\n"
+                                        if active_reasoning_id is None:
+                                            active_reasoning_id = streaming_service.generate_reasoning_id()
+                                            yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                        yield streaming_service.format_reasoning_delta(
+                                            active_reasoning_id, header
+                                        )
+                                    if active_reasoning_id is None:
+                                        active_reasoning_id = streaming_service.generate_reasoning_id()
+                                        yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                    yield streaming_service.format_reasoning_delta(
+                                        active_reasoning_id, node_reasoning
+                                    )
                             continue
                         # Split <think>…</think> tags into reasoning vs. main text
                         reasoning_chunk, content = _think_filter.feed(content)
-                        if reasoning_chunk:
+
+                        # Handle template-prefilled <think> detection:
+                        # When </think> appears before any <think>, text that was
+                        # previously streamed as text-delta was actually reasoning.
+                        if (
+                            _think_filter.late_close_detected
+                            and not _late_close_handled
+                        ):
+                            _late_close_handled = True
+                            retro_text = _think_filter.drain_retroactive_reasoning()
+                            if retro_text or reasoning_chunk:
+                                if active_reasoning_id is None:
+                                    active_reasoning_id = (
+                                        streaming_service.generate_reasoning_id()
+                                    )
+                                    yield streaming_service.format_reasoning_start(
+                                        active_reasoning_id
+                                    )
+                                if retro_text:
+                                    yield streaming_service.format_reasoning_delta(
+                                        active_reasoning_id, retro_text
+                                    )
+                                if reasoning_chunk:
+                                    yield streaming_service.format_reasoning_delta(
+                                        active_reasoning_id, reasoning_chunk
+                                    )
+                                yield streaming_service.format_reasoning_end(
+                                    active_reasoning_id
+                                )
+                                active_reasoning_id = None
+                                reasoning_chunk = ""  # already handled
+                            if retro_text:
+                                # Tell the frontend to discard text it already rendered
+                                yield streaming_service.format_text_clear()
+                                # Reset the text block so subsequent text starts fresh
+                                if current_text_id is not None:
+                                    yield streaming_service.format_text_end(
+                                        current_text_id
+                                    )
+                                    current_text_id = None
+                                accumulated_text = ""
+
+                        elif reasoning_chunk:
                             if active_reasoning_id is None:
-                                active_reasoning_id = streaming_service.generate_reasoning_id()
-                                yield streaming_service.format_reasoning_start(active_reasoning_id)
-                            yield streaming_service.format_reasoning_delta(active_reasoning_id, reasoning_chunk)
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, reasoning_chunk
+                            )
                         # Close reasoning block the moment main text starts arriving
                         if content and active_reasoning_id is not None:
-                            yield streaming_service.format_reasoning_end(active_reasoning_id)
+                            yield streaming_service.format_reasoning_end(
+                                active_reasoning_id
+                            )
                             active_reasoning_id = None
                         if not content:
                             continue
                         content = filter_critic_json(content)
+                        # Strip stray XML tags that models sometimes emit
+                        # (e.g. </final_planner>, <tool_call>, etc.)
+                        content = _STRAY_XML_TAG_RE.sub("", content)
                         if stream_pipeline_prefix_buffer:
                             content = stream_pipeline_prefix_buffer + content
                             stream_pipeline_prefix_buffer = ""
-                        content, inline_pipeline_payloads = _strip_inline_pipeline_payloads(
-                            content
+                        content, inline_pipeline_payloads = (
+                            _strip_inline_pipeline_payloads(content)
                         )
                         if inline_pipeline_payloads:
                             for step_event in emit_pipeline_steps_from_payloads(
                                 inline_pipeline_payloads
                             ):
                                 yield step_event
-                        content, stream_pipeline_prefix_buffer = _split_trailing_pipeline_prefix(
-                            content
+                        content, stream_pipeline_prefix_buffer = (
+                            _split_trailing_pipeline_prefix(content)
                         )
                         content = filter_repeated_output(content)
                         if not content:
@@ -2700,7 +3484,7 @@ async def stream_new_chat(
 
                 # Complete any previous step EXCEPT "Synthesizing response"
                 # (we want to reuse the Synthesizing step after tools complete)
-                if last_active_step_title != format_step_title("Synthesizing response"):
+                if last_active_step_title != format_step_title("Sammanställer svar"):
                     completion_event = complete_current_step()
                     if completion_event:
                         yield completion_event
@@ -2724,11 +3508,19 @@ async def stream_new_chat(
                         else str(tool_input)
                     )
                     last_active_step_title = format_step_title(
-                        "Searching knowledge base"
+                        "Söker i kunskapsbasen"
                     )
                     last_active_step_items = [
-                        f"Query: {query[:100]}{'...' if len(query) > 100 else ''}"
+                        "API: search_knowledge_base",
+                        f"Fråga: {query[:100]}{'...' if len(query) > 100 else ''}",
                     ]
+                    # Show additional parameters (e.g. filters, limit)
+                    if isinstance(tool_input, dict):
+                        for k, v in tool_input.items():
+                            if k != "query" and v is not None and v != "":
+                                last_active_step_items.append(
+                                    f"{k}: {_summarize_text(v, 80)}"
+                                )
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -2741,9 +3533,7 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = format_step_title(
-                        "Fetching link preview"
-                    )
+                    last_active_step_title = format_step_title("Hämtar länkförhandsgranskning")
                     last_active_step_items = [
                         f"URL: {url[:80]}{'...' if len(url) > 80 else ''}"
                     ]
@@ -2764,9 +3554,9 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else ""
                     )
-                    last_active_step_title = format_step_title("Analyzing the image")
+                    last_active_step_title = format_step_title("Analyserar bilden")
                     last_active_step_items = [
-                        f"Analyzing: {title[:50] if title else src[:50]}{'...' if len(title or src) > 50 else ''}"
+                        f"Analyserar: {title[:50] if title else src[:50]}{'...' if len(title or src) > 50 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -2780,7 +3570,7 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = format_step_title("Scraping webpage")
+                    last_active_step_title = format_step_title("Hämtar webbsida")
                     last_active_step_items = [
                         f"URL: {url[:80]}{'...' if len(url) > 80 else ''}"
                     ]
@@ -2800,12 +3590,18 @@ async def stream_new_chat(
                             location = f"{lat}, {lon}"
                     else:
                         location = str(tool_input)
-                    last_active_step_title = format_step_title(
-                        "Fetching SMHI data"
-                    )
+                    last_active_step_title = format_step_title("Hämtar SMHI-data")
                     last_active_step_items = [
-                        f"Location: {location[:80]}{'...' if len(location) > 80 else ''}"
+                        f"API: {tool_name}",
+                        f"Plats: {location[:80]}{'...' if len(location) > 80 else ''}",
                     ]
+                    # Show additional parameters the model passed
+                    if isinstance(tool_input, dict):
+                        for k, v in tool_input.items():
+                            if k not in ("location", "lat", "lon") and v is not None and v != "":
+                                last_active_step_items.append(
+                                    f"{k}: {_summarize_text(v, 80)}"
+                                )
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -2817,24 +3613,38 @@ async def stream_new_chat(
                     destination = ""
                     time_value = ""
                     if isinstance(tool_input, dict):
-                        origin = tool_input.get("origin") or tool_input.get("origin_id") or ""
+                        origin = (
+                            tool_input.get("origin")
+                            or tool_input.get("origin_id")
+                            or ""
+                        )
                         destination = (
-                            tool_input.get("destination") or tool_input.get("destination_id") or ""
+                            tool_input.get("destination")
+                            or tool_input.get("destination_id")
+                            or ""
                         )
                         time_value = tool_input.get("time") or ""
                     else:
                         origin = str(tool_input)
                     last_active_step_title = format_step_title(
-                        "Planning route (Trafiklab)"
+                        "Planerar resväg (Trafiklab)"
                     )
                     route_text = f"{origin} -> {destination}".strip()
                     last_active_step_items = [
-                        f"Route: {route_text[:80]}{'...' if len(route_text) > 80 else ''}"
+                        "API: trafiklab_route",
+                        f"Resväg: {route_text[:80]}{'...' if len(route_text) > 80 else ''}",
                     ]
                     if time_value:
                         last_active_step_items.append(
-                            f"Time: {time_value[:40]}{'...' if len(time_value) > 40 else ''}"
+                            f"Tid: {time_value[:40]}{'...' if len(time_value) > 40 else ''}"
                         )
+                    # Show additional parameters
+                    if isinstance(tool_input, dict):
+                        for k, v in tool_input.items():
+                            if k not in ("origin", "origin_id", "destination", "destination_id", "time") and v is not None and v != "":
+                                last_active_step_items.append(
+                                    f"{k}: {_summarize_text(v, 80)}"
+                                )
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -2850,10 +3660,10 @@ async def stream_new_chat(
                     else:
                         query = str(tool_input)
                     last_active_step_title = format_step_title(
-                        "Searching Libris catalog"
+                        "Söker i Libris-katalogen"
                     )
                     item_label = (
-                        f"Record: {record_id}" if record_id else f"Query: {query}"
+                        f"Post: {record_id}" if record_id else f"Fråga: {query}"
                     )
                     last_active_step_items = [
                         f"{item_label[:100]}{'...' if len(item_label) > 100 else ''}"
@@ -2872,10 +3682,10 @@ async def stream_new_chat(
                         location = tool_input.get("location") or ""
                     else:
                         query = str(tool_input)
-                    last_active_step_title = format_step_title("Searching job ads")
+                    last_active_step_title = format_step_title("Söker jobbannonser")
                     details = f"{query} {location}".strip()
                     last_active_step_items = [
-                        f"Search: {details[:100]}{'...' if len(details) > 100 else ''}"
+                        f"Sökning: {details[:100]}{'...' if len(details) > 100 else ''}"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -2895,8 +3705,8 @@ async def stream_new_chat(
 
                     if write_todos_call_count == 1:
                         # First call - creating the plan
-                        last_active_step_title = format_step_title("Creating plan")
-                        last_active_step_items = [f"Defining {todo_count} tasks..."]
+                        last_active_step_title = format_step_title("Skapar plan")
+                        last_active_step_items = [f"Definierar {todo_count} uppgifter..."]
                     else:
                         # Subsequent calls - updating the plan
                         in_progress_count = (
@@ -2920,14 +3730,14 @@ async def stream_new_chat(
                             else 0
                         )
 
-                        last_active_step_title = format_step_title("Updating plan")
+                        last_active_step_title = format_step_title("Uppdaterar plan")
                         last_active_step_items = (
                             [
-                                f"Progress: {completed_count}/{todo_count} completed",
-                                f"In progress: {in_progress_count} tasks",
+                                f"Framsteg: {completed_count}/{todo_count} klara",
+                                f"Pågår: {in_progress_count} uppgifter",
                             ]
                             if completed_count > 0
-                            else [f"Working on {todo_count} tasks"]
+                            else [f"Arbetar med {todo_count} uppgifter"]
                         )
 
                     yield streaming_service.format_thinking_step(
@@ -2937,14 +3747,20 @@ async def stream_new_chat(
                         items=last_active_step_items,
                     )
                 elif tool_name == "retrieve_agents":
-                    query = tool_input.get("query") if isinstance(tool_input, dict) else tool_input
-                    limit = tool_input.get("limit") if isinstance(tool_input, dict) else None
-                    last_active_step_title = format_step_title("Selecting agents")
-                    last_active_step_items = [
-                        f"Query: {_summarize_text(query)}"
-                    ]
+                    query = (
+                        tool_input.get("query")
+                        if isinstance(tool_input, dict)
+                        else tool_input
+                    )
+                    limit = (
+                        tool_input.get("limit")
+                        if isinstance(tool_input, dict)
+                        else None
+                    )
+                    last_active_step_title = format_step_title("Väljer agenter")
+                    last_active_step_items = [f"Fråga: {_summarize_text(query)}"]
                     if limit:
-                        last_active_step_items.append(f"Limit: {limit}")
+                        last_active_step_items.append(f"Gräns: {limit}")
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -2955,21 +3771,23 @@ async def stream_new_chat(
                     agent_name = ""
                     task = ""
                     if isinstance(tool_input, dict):
-                        agent_name = tool_input.get("agent_name") or tool_input.get("agent") or ""
+                        agent_name = (
+                            tool_input.get("agent_name")
+                            or tool_input.get("agent")
+                            or ""
+                        )
                         task = tool_input.get("task") or ""
                     else:
                         task = str(tool_input)
                     title_agent = agent_name or "worker"
                     last_active_step_title = format_step_title(
-                        f"Delegating to {title_agent}"
+                        f"Delegerar till {title_agent}"
                     )
                     last_active_step_items = []
                     if agent_name:
                         last_active_step_items.append(f"Agent: {agent_name}")
                     if task:
-                        last_active_step_items.append(
-                            f"Task: {_summarize_text(task)}"
-                        )
+                        last_active_step_items.append(f"Uppgift: {_summarize_text(task)}")
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -2977,9 +3795,13 @@ async def stream_new_chat(
                         items=last_active_step_items,
                     )
                 elif tool_name == "retrieve_tools":
-                    query = tool_input.get("query") if isinstance(tool_input, dict) else tool_input
-                    last_active_step_title = format_step_title("Selecting tools")
-                    last_active_step_items = [f"Query: {_summarize_text(query)}"]
+                    query = (
+                        tool_input.get("query")
+                        if isinstance(tool_input, dict)
+                        else tool_input
+                    )
+                    last_active_step_title = format_step_title("Väljer verktyg")
+                    last_active_step_items = [f"Fråga: {_summarize_text(query)}"]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -2992,11 +3814,11 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else ""
                     )
-                    last_active_step_title = format_step_title("Reflecting on progress")
+                    last_active_step_title = format_step_title("Reflekterar över framsteg")
                     last_active_step_items = [
                         _summarize_text(reflection)
                         if reflection
-                        else "Reviewing findings, gaps, and next steps"
+                        else "Granskar resultat och nästa steg"
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -3016,11 +3838,11 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else ""
                     )
-                    last_active_step_title = format_step_title("Generating podcast")
+                    last_active_step_title = format_step_title("Genererar podd")
                     last_active_step_items = [
-                        f"Title: {podcast_title}",
-                        f"Content: {content_len:,} characters",
-                        "Preparing audio generation...",
+                        f"Titel: {podcast_title}",
+                        f"Innehåll: {content_len:,} tecken",
+                        "Förbereder ljudgenerering...",
                     ]
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
@@ -3039,13 +3861,14 @@ async def stream_new_chat(
                 #     )
                 else:
                     last_active_step_title = format_step_title(
-                        f"Using {tool_name.replace('_', ' ')}"
+                        f"Använder {tool_name.replace('_', ' ')}"
                     )
-                    last_active_step_items = []
+                    last_active_step_items = _format_tool_input_items(tool_input)
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
                         status="in_progress",
+                        items=last_active_step_items if last_active_step_items else None,
                     )
 
                 # Stream tool info
@@ -3102,8 +3925,7 @@ async def stream_new_chat(
                 if trace_recorder:
                     status = "completed"
                     if isinstance(tool_output, dict) and (
-                        tool_output.get("status") == "error"
-                        or "error" in tool_output
+                        tool_output.get("status") == "error" or "error" in tool_output
                     ):
                         status = "error"
                     trace_event = await trace_recorder.end_span(
@@ -3167,8 +3989,12 @@ async def stream_new_chat(
                                     or location.get("display_name")
                                     or "location"
                                 )
-                                category = str(tool_output.get("category") or "").strip()
-                                category_label = category.replace("_", " ") if category else "data"
+                                category = str(
+                                    tool_output.get("category") or ""
+                                ).strip()
+                                category_label = (
+                                    category.replace("_", " ") if category else "data"
+                                )
                                 tool_title = f"SMHI {category_label}: {location_name}"
                                 tool_metadata = {
                                     "provider": "SMHI",
@@ -3179,9 +4005,13 @@ async def stream_new_chat(
                                 }
                             elif tool_name == "trafiklab_route":
                                 origin = (tool_output.get("origin") or {}).get("name")
-                                destination = (tool_output.get("destination") or {}).get("name")
+                                destination = (
+                                    tool_output.get("destination") or {}
+                                ).get("name")
                                 if origin and destination:
-                                    tool_title = f"Trafiklab route: {origin} → {destination}"
+                                    tool_title = (
+                                        f"Trafiklab route: {origin} → {destination}"
+                                    )
                                 tool_metadata = {
                                     "provider": "Trafiklab",
                                     "origin": tool_output.get("origin", {}),
@@ -3214,18 +4044,18 @@ async def stream_new_chat(
                 completed_step_ids.add(original_step_id)
                 if tool_name == "search_knowledge_base":
                     # Get result count if available
-                    result_info = "Search completed"
+                    result_info = "Sökning klar"
                     if isinstance(tool_output, dict):
                         result_len = tool_output.get("result_length", 0)
                         if result_len > 0:
                             result_info = (
-                                f"Found relevant information ({result_len} chars)"
+                                f"Hittade relevant information ({result_len} tecken)"
                             )
                     # Include original query in completed items
                     completed_items = [*last_active_step_items, result_info]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Searching knowledge base"),
+                        title=format_step_title("Söker i kunskapsbasen"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3238,9 +4068,7 @@ async def stream_new_chat(
                     todo_items = format_todo_items(
                         todos if isinstance(todos, list) else []
                     )
-                    completed_items = (
-                        todo_items if todo_items else ["Plan updated"]
-                    )
+                    completed_items = todo_items if todo_items else ["Plan uppdaterad"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Plan"),
@@ -3257,13 +4085,13 @@ async def stream_new_chat(
                         if isinstance(agent, dict) and agent.get("name")
                     ]
                     completed_items = (
-                        [f"Agents: {', '.join(agent_names)}"]
+                        [f"Agenter: {', '.join(agent_names)}"]
                         if agent_names
-                        else ["Agents selected"]
+                        else ["Agenter valda"]
                     )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Selecting agents"),
+                        title=format_step_title("Väljer agenter"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3277,13 +4105,13 @@ async def stream_new_chat(
                     if agent_name:
                         completed_items.append(f"Agent: {agent_name}")
                     if response:
-                        completed_items.append(f"Result: {_summarize_text(response)}")
+                        completed_items.append(f"Resultat: {_summarize_text(response)}")
                     if not completed_items:
-                        completed_items = ["Delegation completed"]
+                        completed_items = ["Delegering klar"]
                     title = (
-                        f"Delegated to {agent_name}"
+                        f"Delegerade till {agent_name}"
                         if agent_name
-                        else "Delegation completed"
+                        else "Delegering klar"
                     )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
@@ -3298,9 +4126,9 @@ async def stream_new_chat(
                     elif isinstance(tool_output, dict):
                         tool_ids = tool_output.get("tools") or []
                     completed_items = (
-                        [f"Tools: {', '.join(tool_ids)}"]
+                        [f"Verktyg: {', '.join(tool_ids)}"]
                         if tool_ids
-                        else ["Tools selected"]
+                        else ["Verktyg valda"]
                     )
                     rerank_query = ""
                     tool_input = tool_inputs.get(run_id) if run_id else None
@@ -3321,7 +4149,7 @@ async def stream_new_chat(
                                 )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Selecting tools"),
+                        title=format_step_title("Väljer verktyg"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3332,11 +4160,11 @@ async def stream_new_chat(
                     completed_items = (
                         [_summarize_text(reflection)]
                         if reflection
-                        else ["Reflection logged"]
+                        else ["Reflektion loggad"]
                     )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Reflecting on progress"),
+                        title=format_step_title("Reflekterar över framsteg"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3349,19 +4177,19 @@ async def stream_new_chat(
                         if has_error:
                             completed_items = [
                                 *last_active_step_items,
-                                f"Error: {tool_output.get('error', 'Failed to fetch')}",
+                                f"Fel: {tool_output.get('error', 'Kunde inte hämta')}",
                             ]
                         else:
                             completed_items = [
                                 *last_active_step_items,
-                                f"Title: {title[:60]}{'...' if len(title) > 60 else ''}",
-                                f"Domain: {domain}" if domain else "Preview loaded",
+                                f"Titel: {title[:60]}{'...' if len(title) > 60 else ''}",
+                                f"Domän: {domain}" if domain else "Förhandsgranskning laddad",
                             ]
                     else:
-                        completed_items = [*last_active_step_items, "Preview loaded"]
+                        completed_items = [*last_active_step_items, "Förhandsgranskning laddad"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Fetching link preview"),
+                        title=format_step_title("Hämtar länkförhandsgranskning"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3369,17 +4197,17 @@ async def stream_new_chat(
                     # Build completion items for image analysis
                     if isinstance(tool_output, dict):
                         title = tool_output.get("title", "")
-                        alt = tool_output.get("alt", "Image")
+                        alt = tool_output.get("alt", "Bild")
                         display_name = title or alt
                         completed_items = [
                             *last_active_step_items,
-                            f"Analyzed: {display_name[:50]}{'...' if len(display_name) > 50 else ''}",
+                            f"Analyserad: {display_name[:50]}{'...' if len(display_name) > 50 else ''}",
                         ]
                     else:
-                        completed_items = [*last_active_step_items, "Image analyzed"]
+                        completed_items = [*last_active_step_items, "Bild analyserad"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Analyzing the image"),
+                        title=format_step_title("Analyserar bilden"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3392,19 +4220,19 @@ async def stream_new_chat(
                         if has_error:
                             completed_items = [
                                 *last_active_step_items,
-                                f"Error: {tool_output.get('error', 'Failed to scrape')[:50]}",
+                                f"Fel: {tool_output.get('error', 'Kunde inte hämta')[:50]}",
                             ]
                         else:
                             completed_items = [
                                 *last_active_step_items,
-                                f"Title: {title[:50]}{'...' if len(title) > 50 else ''}",
-                                f"Extracted: {word_count:,} words",
+                                f"Titel: {title[:50]}{'...' if len(title) > 50 else ''}",
+                                f"Extraherat: {word_count:,} ord",
                             ]
                     else:
-                        completed_items = [*last_active_step_items, "Content extracted"]
+                        completed_items = [*last_active_step_items, "Innehåll extraherat"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Scraping webpage"),
+                        title=format_step_title("Hämtar webbsida"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3423,15 +4251,18 @@ async def stream_new_chat(
                         completed_items = [*last_active_step_items]
                         if location_name:
                             completed_items.append(
-                                f"Location: {location_name[:60]}{'...' if len(location_name) > 60 else ''}"
+                                f"Plats: {location_name[:60]}{'...' if len(location_name) > 60 else ''}"
                             )
                         if temperature is not None:
-                            completed_items.append(f"Temperature: {temperature} C")
+                            completed_items.append(f"Temperatur: {temperature}\u00b0C")
                     else:
-                        completed_items = [*last_active_step_items, "SMHI data retrieved"]
+                        completed_items = [
+                            *last_active_step_items,
+                            "SMHI-data hämtad",
+                        ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Fetching SMHI data"),
+                        title=format_step_title("Hämtar SMHI-data"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3454,16 +4285,17 @@ async def stream_new_chat(
                         route_summary = f"{origin} -> {destination}".strip(" ->")
                         if route_summary:
                             completed_items.append(
-                                f"Route: {route_summary[:60]}{'...' if len(route_summary) > 60 else ''}"
+                                f"Resväg: {route_summary[:60]}{'...' if len(route_summary) > 60 else ''}"
                             )
-                        completed_items.append(
-                            f"Matches: {len(matches)}"
-                        )
+                        completed_items.append(f"Träffar: {len(matches)}")
                     else:
-                        completed_items = [*last_active_step_items, "Route results ready"]
+                        completed_items = [
+                            *last_active_step_items,
+                            "Reseresultat klara",
+                        ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Planning route (Trafiklab)"),
+                        title=format_step_title("Planerar resväg (Trafiklab)"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3473,18 +4305,24 @@ async def stream_new_chat(
                         if mode == "record":
                             record = tool_output.get("record", {}) or {}
                             title = record.get("title") or "Record"
-                            completed_items = [*last_active_step_items, f"Record: {title}"]
+                            completed_items = [
+                                *last_active_step_items,
+                                f"Post: {title}",
+                            ]
                         else:
                             results = tool_output.get("results", []) or []
                             completed_items = [
                                 *last_active_step_items,
-                                f"Results: {len(results)}",
+                                f"Resultat: {len(results)}",
                             ]
                     else:
-                        completed_items = [*last_active_step_items, "Libris results ready"]
+                        completed_items = [
+                            *last_active_step_items,
+                            "Libris-resultat klara",
+                        ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Searching Libris catalog"),
+                        title=format_step_title("Söker i Libris-katalogen"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3493,13 +4331,13 @@ async def stream_new_chat(
                         results = tool_output.get("results", []) or []
                         completed_items = [
                             *last_active_step_items,
-                            f"Results: {len(results)}",
+                            f"Resultat: {len(results)}",
                         ]
                     else:
-                        completed_items = [*last_active_step_items, "Job ads ready"]
+                        completed_items = [*last_active_step_items, "Jobbannonser klara"]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Searching job ads"),
+                        title=format_step_title("Söker jobbannonser"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3518,32 +4356,32 @@ async def stream_new_chat(
 
                     if podcast_status == "processing":
                         completed_items = [
-                            f"Title: {podcast_title}",
-                            "Audio generation started",
-                            "Processing in background...",
+                            f"Titel: {podcast_title}",
+                            "Ljudgenerering startad",
+                            "Bearbetar i bakgrunden...",
                         ]
                     elif podcast_status == "already_generating":
                         completed_items = [
-                            f"Title: {podcast_title}",
-                            "Podcast already in progress",
-                            "Please wait for it to complete",
+                            f"Titel: {podcast_title}",
+                            "Podd redan under generering",
+                            "Vänta tills den är klar",
                         ]
                     elif podcast_status == "error":
                         error_msg = (
-                            tool_output.get("error", "Unknown error")
+                            tool_output.get("error", "Okänt fel")
                             if isinstance(tool_output, dict)
-                            else "Unknown error"
+                            else "Okänt fel"
                         )
                         completed_items = [
-                            f"Title: {podcast_title}",
-                            f"Error: {error_msg[:50]}",
+                            f"Titel: {podcast_title}",
+                            f"Fel: {error_msg[:50]}",
                         ]
                     else:
                         completed_items = last_active_step_items
 
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Generating podcast"),
+                        title=format_step_title("Genererar podd"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3579,7 +4417,7 @@ async def stream_new_chat(
                 #         else:
                 #             # Updating progress - show stats
                 #             completed_items = [
-                #                 f"Progress: {completed_count}/{todo_count} completed",
+                #                 f"Framsteg: {completed_count}/{todo_count} klara",
                 #             ]
                 #             if in_progress_count > 0:
                 #                 # Find the currently in-progress task name
@@ -3597,7 +4435,7 @@ async def stream_new_chat(
                 #                         f"Current: {in_progress_task}..."
                 #                     )
                 #     else:
-                #         completed_items = ["Plan updated"]
+                #         completed_items = ["Plan uppdaterad"]
                 #     yield streaming_service.format_thinking_step(
                 #         step_id=original_step_id,
                 #         title=last_active_step_title,
@@ -3637,11 +4475,11 @@ async def stream_new_chat(
                             completed_items = [f"[{name}]" for name in file_names[:4]]
                             completed_items.append(f"(+{len(file_names) - 4} more)")
                     else:
-                        completed_items = ["No files found"]
+                        completed_items = ["Inga filer hittades"]
 
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title("Exploring files"),
+                        title=format_step_title("Utforskar filer"),
                         status="completed",
                         items=completed_items,
                     )
@@ -3649,7 +4487,7 @@ async def stream_new_chat(
                     title = (
                         last_active_step_title
                         if last_active_step_title
-                        else format_step_title(f"Using {tool_name.replace('_', ' ')}")
+                        else format_step_title(f"Använder {tool_name.replace('_', ' ')}")
                     )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
@@ -3660,9 +4498,7 @@ async def stream_new_chat(
                 else:
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title(
-                            f"Using {tool_name.replace('_', ' ')}"
-                        ),
+                        title=format_step_title(f"Använder {tool_name.replace('_', ' ')}"),
                         status="completed",
                         items=last_active_step_items,
                     )
@@ -3690,17 +4526,17 @@ async def stream_new_chat(
                         and tool_output.get("status") == "success"
                     ):
                         yield streaming_service.format_terminal_info(
-                            f"Podcast generated successfully: {tool_output.get('title', 'Podcast')}",
+                            f"Podd genererad: {tool_output.get('title', 'Podd')}",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Unknown error")
+                            tool_output.get("error", "Okänt fel")
                             if isinstance(tool_output, dict)
-                            else "Unknown error"
+                            else "Okänt fel"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Podcast generation failed: {error_msg}",
+                            f"Poddgenerering misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "link_preview":
@@ -3715,17 +4551,17 @@ async def stream_new_chat(
                     if isinstance(tool_output, dict) and "error" not in tool_output:
                         title = tool_output.get("title", "Link")
                         yield streaming_service.format_terminal_info(
-                            f"Link preview loaded: {title[:50]}{'...' if len(title) > 50 else ''}",
+                            f"Länkförhandsgranskning laddad: {title[:50]}{'...' if len(title) > 50 else ''}",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Failed to fetch")
+                            tool_output.get("error", "Kunde inte hämta")
                             if isinstance(tool_output, dict)
-                            else "Failed to fetch"
+                            else "Kunde inte hämta"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Link preview failed: {error_msg}",
+                            f"Länkförhandsgranskning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "display_image":
@@ -3742,7 +4578,7 @@ async def stream_new_chat(
                             "alt", "Image"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Image analyzed: {title[:40]}{'...' if len(title) > 40 else ''}",
+                            f"Bild analyserad: {title[:40]}{'...' if len(title) > 40 else ''}",
                             "success",
                         )
                 elif tool_name == "scrape_webpage":
@@ -3773,25 +4609,30 @@ async def stream_new_chat(
                         title = tool_output.get("title", "Webpage")
                         word_count = tool_output.get("word_count", 0)
                         yield streaming_service.format_terminal_info(
-                            f"Scraped: {title[:40]}{'...' if len(title) > 40 else ''} ({word_count:,} words)",
+                            f"Hämtad: {title[:40]}{'...' if len(title) > 40 else ''} ({word_count:,} ord)",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Failed to scrape")
+                            tool_output.get("error", "Kunde inte hämta sida")
                             if isinstance(tool_output, dict)
-                            else "Failed to scrape"
+                            else "Kunde inte hämta sida"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Scrape failed: {error_msg}",
+                            f"Hämtning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name.startswith("smhi_"):
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                        tool_output
+                        if isinstance(tool_output, dict)
+                        else {"result": tool_output},
                     )
-                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                    if (
+                        isinstance(tool_output, dict)
+                        and tool_output.get("status") == "ok"
+                    ):
                         location = tool_output.get("location", {}) or {}
                         location_name = (
                             location.get("name")
@@ -3799,80 +4640,95 @@ async def stream_new_chat(
                             or "location"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"SMHI data loaded for {location_name[:40]}",
+                            f"SMHI-data laddad för {location_name[:40]}",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Failed to fetch SMHI data")
+                            tool_output.get("error", "Kunde inte hämta SMHI-data")
                             if isinstance(tool_output, dict)
-                            else "Failed to fetch SMHI data"
+                            else "Kunde inte hämta SMHI-data"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"SMHI lookup failed: {error_msg}",
+                            f"SMHI-hämtning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "trafiklab_route":
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                        tool_output
+                        if isinstance(tool_output, dict)
+                        else {"result": tool_output},
                     )
-                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                    if (
+                        isinstance(tool_output, dict)
+                        and tool_output.get("status") == "ok"
+                    ):
                         matches = tool_output.get("matching_entries", []) or []
                         yield streaming_service.format_terminal_info(
-                            f"Trafiklab departures loaded ({len(matches)} matches)",
+                            f"Trafiklab-avgångar laddade ({len(matches)} träffar)",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Failed to fetch departures")
+                            tool_output.get("error", "Kunde inte hämta avgångar")
                             if isinstance(tool_output, dict)
-                            else "Failed to fetch departures"
+                            else "Kunde inte hämta avgångar"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Trafiklab route failed: {error_msg}",
+                            f"Trafiklab-rutt misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "libris_search":
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                        tool_output
+                        if isinstance(tool_output, dict)
+                        else {"result": tool_output},
                     )
-                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                    if (
+                        isinstance(tool_output, dict)
+                        and tool_output.get("status") == "ok"
+                    ):
                         results = tool_output.get("results", []) or []
                         yield streaming_service.format_terminal_info(
-                            f"Libris results loaded ({len(results)} items)",
+                            f"Libris-resultat laddade ({len(results)} poster)",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Libris search failed")
+                            tool_output.get("error", "Libris-sökning misslyckades")
                             if isinstance(tool_output, dict)
-                            else "Libris search failed"
+                            else "Libris-sökning misslyckades"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Libris search failed: {error_msg}",
+                            f"Libris-sökning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "jobad_links_search":
                     yield streaming_service.format_tool_output_available(
                         tool_call_id,
-                        tool_output if isinstance(tool_output, dict) else {"result": tool_output},
+                        tool_output
+                        if isinstance(tool_output, dict)
+                        else {"result": tool_output},
                     )
-                    if isinstance(tool_output, dict) and tool_output.get("status") == "ok":
+                    if (
+                        isinstance(tool_output, dict)
+                        and tool_output.get("status") == "ok"
+                    ):
                         results = tool_output.get("results", []) or []
                         yield streaming_service.format_terminal_info(
-                            f"Job ads loaded ({len(results)} items)",
+                            f"Jobbannonser laddade ({len(results)} poster)",
                             "success",
                         )
                     else:
                         error_msg = (
-                            tool_output.get("error", "Job ad search failed")
+                            tool_output.get("error", "Jobbsökning misslyckades")
                             if isinstance(tool_output, dict)
-                            else "Job ad search failed"
+                            else "Jobbsökning misslyckades"
                         )
                         yield streaming_service.format_terminal_info(
-                            f"Job ad search failed: {error_msg}",
+                            f"Jobbsökning misslyckades: {error_msg}",
                             "error",
                         )
                 elif tool_name == "search_knowledge_base":
@@ -3882,7 +4738,7 @@ async def stream_new_chat(
                         {"status": "completed", "result_length": len(str(tool_output))},
                     )
                     yield streaming_service.format_terminal_info(
-                        "Knowledge base search completed", "success"
+                        "Sökning i kunskapsbasen klar", "success"
                     )
                 elif tool_name == "write_todos":
                     todos = (
@@ -3902,7 +4758,7 @@ async def stream_new_chat(
                         else {"result": tool_output},
                     )
                     yield streaming_service.format_terminal_info(
-                        f"Plan updated ({len(todo_items) or len(todos) if isinstance(todos, list) else 0} tasks)",
+                        f"Plan uppdaterad ({len(todo_items) or len(todos) if isinstance(todos, list) else 0} uppgifter)",
                         "success",
                     )
                 elif tool_name == "write_todos":
@@ -3918,17 +4774,20 @@ async def stream_new_chat(
                         todos = tool_output.get("todos", [])
                         todo_count = len(todos) if isinstance(todos, list) else 0
                         yield streaming_service.format_terminal_info(
-                            f"Plan updated ({todo_count} tasks)",
+                            f"Plan uppdaterad ({todo_count} uppgifter)",
                             "success",
                         )
                     else:
                         yield streaming_service.format_terminal_info(
-                            "Plan updated",
+                            "Plan uppdaterad",
                             "success",
                         )
                 else:
                     # Default handling for other tools
-                    payload = {"status": "completed", "result_length": len(str(tool_output))}
+                    payload = {
+                        "status": "completed",
+                        "result_length": len(str(tool_output)),
+                    }
                     if tool_name in external_model_tool_names:
                         payload = (
                             tool_output
@@ -3991,7 +4850,7 @@ async def stream_new_chat(
                                 display_call_id, image_result
                             )
                     yield streaming_service.format_terminal_info(
-                        f"Tool {tool_name} completed", "success"
+                        f"Verktyg {tool_name} klart", "success"
                     )
 
             # Handle chain/agent end to close any open text blocks
@@ -3999,51 +4858,148 @@ async def stream_new_chat(
                 chain_output = event.get("data", {}).get("output")
                 for synthesis_event in emit_synthesis_draft_events(chain_output):
                     yield synthesis_event
-                chain_name = chain_name_by_run_id.get(run_id) or str(event.get("name") or "")
-                candidate_text = _extract_assistant_text_from_event_output(
-                    chain_output
+                chain_name = chain_name_by_run_id.get(run_id) or str(
+                    event.get("name") or ""
                 )
+                # ── response_layer_router structured step (fallback) ──
+                # When the router node completes, emit a structured step
+                # showing the chosen presentation mode.  This is a
+                # fallback — if the LLM's streaming events propagated
+                # correctly, the step may already have been emitted by
+                # emit_pipeline_steps_from_text.  We guard against
+                # duplicates via _pipeline_payload_kind-based signature
+                # tracking (emitted_pipeline_payload_signatures).
+                _cn_lower_ce = str(chain_name).strip().lower()
+                if (
+                    "response_layer_router" in _cn_lower_ce
+                    and isinstance(chain_output, dict)
+                ):
+                    _chosen = str(
+                        chain_output.get("response_mode") or ""
+                    ).strip().lower()
+                    if _chosen:
+                        _rl_sig = f"response_layer_router::{_chosen}"
+                        if _rl_sig not in emitted_pipeline_payload_signatures:
+                            emitted_pipeline_payload_signatures.add(_rl_sig)
+                            layer_labels = {
+                                "kunskap": "Kunskap",
+                                "analys": "Analys",
+                                "syntes": "Syntes",
+                                "visualisering": "Visualisering",
+                            }
+                            _rl_step_id = next_thinking_step_id()
+                            _rl_title = format_step_title(
+                                "Väljer presentationsläge"
+                            )
+                            _rl_items = [
+                                "Nod: response_layer_router",
+                                f"Valt läge: {layer_labels.get(_chosen, _chosen)}",
+                            ]
+                            completion_event = complete_current_step()
+                            if completion_event:
+                                yield completion_event
+                            yield streaming_service.format_thinking_step(
+                                step_id=_rl_step_id,
+                                title=_rl_title,
+                                status="in_progress",
+                                items=_rl_items,
+                            )
+                            yield streaming_service.format_thinking_step(
+                                step_id=_rl_step_id,
+                                title=_rl_title,
+                                status="completed",
+                                items=_rl_items,
+                            )
+                            completed_step_ids.add(_rl_step_id)
+                candidate_text = _extract_assistant_text_from_event_output(chain_output)
                 if candidate_text:
-                    source_chain = chain_name if _is_internal_pipeline_chain_name(chain_name) else None
+                    source_chain = (
+                        chain_name
+                        if _is_any_pipeline_chain_name(chain_name)
+                        else None
+                    )
                     for step_event in emit_pipeline_steps_from_text(
                         candidate_text,
                         source_chain=source_chain,
                     ):
                         yield step_event
-                    cleaned_candidate = _clean_assistant_output_text(candidate_text)
-                    if cleaned_candidate:
-                        fallback_assistant_text = cleaned_candidate
+                    # Only store fallback text from OUTPUT pipeline nodes
+                    # (synthesizer, response_layer, etc.). Internal nodes
+                    # must NEVER become the visible response.
+                    is_output_chain = (
+                        _is_any_pipeline_chain_name(chain_name)
+                        and not _is_internal_pipeline_chain_name(chain_name)
+                    )
+                    if is_output_chain:
+                        cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                        if cleaned_candidate:
+                            fallback_assistant_text = cleaned_candidate
+                            # ── response_layer authoritative replacement ──
+                            # The response_layer's chain_end carries the
+                            # authoritative formatted text.  Emit it
+                            # immediately, replacing any text that was
+                            # previously streamed (from synthesizer or
+                            # from the response_layer's own LLM).
+                            # This is the safety net that guarantees the
+                            # final visible response is ALWAYS the
+                            # response_layer's output, regardless of
+                            # whether the LLM's streaming events
+                            # propagated correctly.
+                            _cn_lower = str(chain_name).strip().lower()
+                            if (
+                                "response_layer" in _cn_lower
+                                and "response_layer_router" not in _cn_lower
+                            ):
+                                # Skip replacement if the LLM's streaming
+                                # events already produced the correct text
+                                # (avoids a brief flicker from text-clear).
+                                _stripped_acc = accumulated_text.strip()
+                                _stripped_rl = cleaned_candidate.strip()
+                                if _stripped_acc != _stripped_rl:
+                                    if current_text_id is not None:
+                                        yield streaming_service.format_text_end(
+                                            current_text_id
+                                        )
+                                        current_text_id = None
+                                    yield streaming_service.format_text_clear()
+                                    current_text_id = (
+                                        streaming_service.generate_text_id()
+                                    )
+                                    yield streaming_service.format_text_start(
+                                        current_text_id
+                                    )
+                                    yield streaming_service.format_text_delta(
+                                        current_text_id, cleaned_candidate
+                                    )
+                                    accumulated_text = cleaned_candidate
                 if current_text_id is not None:
                     yield streaming_service.format_text_end(current_text_id)
                     current_text_id = None
                 if event_type == "on_chain_end" and run_id:
                     chain_name_by_run_id.pop(run_id, None)
 
-        # Flush think-filter buffer and close any open reasoning block
+        # Flush think-filter buffer — EVERYTHING goes to reasoning to
+        # prevent any leftover internal text from leaking as response.
         flush_reasoning, flush_text = _think_filter.flush()
-        if flush_reasoning:
+        if flush_reasoning or flush_text:
             if active_reasoning_id is None:
                 active_reasoning_id = streaming_service.generate_reasoning_id()
                 yield streaming_service.format_reasoning_start(active_reasoning_id)
-            yield streaming_service.format_reasoning_delta(active_reasoning_id, flush_reasoning)
-        if flush_text:
-            if current_text_id is None:
-                current_text_id = streaming_service.generate_text_id()
-                yield streaming_service.format_text_start(current_text_id)
-            yield streaming_service.format_text_delta(current_text_id, flush_text)
-            accumulated_text += flush_text
+            if flush_reasoning:
+                yield streaming_service.format_reasoning_delta(
+                    active_reasoning_id, flush_reasoning
+                )
+            if flush_text:
+                yield streaming_service.format_reasoning_delta(
+                    active_reasoning_id, flush_text
+                )
         if active_reasoning_id is not None:
             yield streaming_service.format_reasoning_end(active_reasoning_id)
             active_reasoning_id = None
 
-        # Ensure text block is closed
-        if repeat_buffer and not suppress_repeat:
-            if current_text_id is None:
-                current_text_id = streaming_service.generate_text_id()
-                yield streaming_service.format_text_start(current_text_id)
-            yield streaming_service.format_text_delta(current_text_id, repeat_buffer)
-            accumulated_text += repeat_buffer
-            repeat_buffer = ""
+        # Discard any leftover repeat buffer — it contains internal
+        # pipeline text that should never reach the visible response.
+        repeat_buffer = ""
         fallback_assistant_text = _clean_assistant_output_text(fallback_assistant_text)
         if not accumulated_text.strip() and fallback_assistant_text.strip():
             if current_text_id is None:

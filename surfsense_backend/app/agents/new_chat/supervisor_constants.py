@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
+from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
@@ -129,12 +130,22 @@ class AgentToolProfile:
 
 def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
     profiles: dict[str, list[AgentToolProfile]] = {
+        "väder": [],
         "trafik": [],
         "statistik": [],
         "riksdagen": [],
         "bolag": [],
         "marknad": [],
     }
+    for definition in SMHI_TOOL_DEFINITIONS:
+        profiles["väder"].append(
+            AgentToolProfile(
+                tool_id=str(getattr(definition, "tool_id", "")),
+                category=str(getattr(definition, "category", "väder")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+            )
+        )
     for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
         profiles["trafik"].append(
             AgentToolProfile(

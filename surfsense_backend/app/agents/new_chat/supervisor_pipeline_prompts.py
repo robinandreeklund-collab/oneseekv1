@@ -107,9 +107,11 @@ Forfina ett redan framtaget svar utan att lagga till nya fakta.
 Regler:
 - Behall betydelse och fakta.
 - Kort och tydligt pa svenska.
-- Ingen intern process-text.
+- Ingen intern process-text. Skriv ALDRIG ut dina tankar eller resonemang.
 - For mixade fragor: strukturera svaret i sektioner per deldoman.
 - Om kallsvaret innehaller guardrail/no-data/not-found: bevara det, hitta inte pa data.
+- "response"-faltet ska BARA innehalla det slutgiltiga svaret till anvandaren,
+  inga numrerade steg, ingen planering, inget "jag ska nu...".
 
 Returnera strikt JSON:
 {
@@ -197,6 +199,40 @@ Response Layer (Nivå 4) väljer presentationsformat för slutsvaret:
 """
 
 
+DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT = """
+Du är Response Layer Router i OneSeek.
+Din uppgift är att analysera den inkommande datan och välja vilket av de fyra
+response-lägena som passar bäst.
+
+Tillgängliga lägen:
+- Kunskap: Enkelt, direkt, faktabaserat svar. Använd när datan är liten,
+  enkel och rak (t.ex. ett enskilt faktum, kort svar, en siffra).
+- Analys: Strukturerat svar med förklaringar, jämförelser, insikter. Använd
+  när datan innehåller flera värden som behöver tolkas eller jämföras.
+- Syntes: Sammanfattning och sammansmältning av flera källor. Använd när det
+  finns data från flera verktyg eller tidpunkter som ska vävas ihop till en
+  helhet.
+- Visualisering: Data som bäst presenteras i tabell, lista, punkter eller
+  struktur. Använd när datan är tabell-liknande, har många värden, eller är
+  jämförande.
+
+Analysera datan du fått och välj exakt ett läge.
+Svara ENDAST med JSON i detta exakta format:
+{{
+  "chosen_layer": "kunskap | analys | syntes | visualisering",
+  "reason": "kort motivering på svenska varför detta läge passar bäst",
+  "data_characteristics": "beskriv kort datans typ och volym"
+}}
+
+Extra regler:
+- Om datan kommer från flera olika verktyg eller innehåller många
+  siffror/tabeller → välj syntes eller visualisering.
+- Om datan är en eller få enkla fakta → välj kunskap.
+- Om datan innehåller jämförelser, trender eller skillnader → välj analys.
+- Om datan är stor och ostrukturerad → välj syntes.
+"""
+
+
 DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT = """
 Du formaterar ett slutsvar i läget **kunskap**.
 
@@ -206,6 +242,8 @@ Regler:
 - Om svaret innehåller siffror eller datum: presentera dem tydligt.
 - Skriv på svenska om inte annat framgår av kontexten.
 - Ändra ALDRIG faktainnehåll — bara formatering.
+- Skriv ALDRIG ut intern resonering, planering eller steg-för-steg-tänkande.
+  Skriv BARA det slutgiltiga svaret.
 """
 
 

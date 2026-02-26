@@ -49,6 +49,7 @@ from app.agents.new_chat.nodes import (
     build_planner_node,
     build_progressive_synthesizer_node,
     build_response_layer_node,
+    build_response_layer_router_node,
     build_smart_critic_node,
     build_speculative_merge_node,
     build_speculative_node,
@@ -73,6 +74,11 @@ from app.agents.new_chat.retrieval_feedback import (
 from app.agents.new_chat.sandbox_runtime import sandbox_write_text_file
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
+from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CORE_GLOBAL_PROMPT,
+    append_datetime_context,
+    inject_core_prompt,
+)
 from app.agents.new_chat.response_compressor import compress_response
 from app.agents.new_chat.subagent_utils import SMALLTALK_INSTRUCTIONS
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
@@ -104,6 +110,7 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
     DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
     DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
     DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
     DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
 )
@@ -1758,10 +1765,23 @@ async def create_supervisor_agent(
 ):
     prompt_overrides = dict(tool_prompt_overrides or {})
     tool_prompt_overrides = dict(prompt_overrides)
-    critic_prompt_template = resolve_prompt(
+
+    # Resolve the global core prompt so it can be prepended to every pipeline
+    # system prompt (but NOT to enforcement/guard/template messages).
+    _raw_core = resolve_prompt(
         prompt_overrides,
-        "supervisor.critic.system",
-        DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+        "system.core.global",
+        SURFSENSE_CORE_GLOBAL_PROMPT,
+    )
+    _core = append_datetime_context(_raw_core.strip())
+
+    critic_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.critic.system",
+            DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+        ),
     )
     loop_guard_template = resolve_prompt(
         prompt_overrides,
@@ -1803,70 +1823,117 @@ async def create_supervisor_agent(
         "supervisor.subagent.context.template",
         DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE,
     )
-    intent_resolver_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "supervisor.intent_resolver.system",
-        DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    intent_resolver_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.intent_resolver.system",
+            DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+        ),
     )
-    agent_resolver_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "supervisor.agent_resolver.system",
-        DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    agent_resolver_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.agent_resolver.system",
+            DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+        ),
     )
-    planner_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "supervisor.planner.system",
-        DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    planner_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.planner.system",
+            DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+        ),
     )
-    multi_domain_planner_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "supervisor.planner.multi_domain.system",
-        DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
+    multi_domain_planner_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.planner.multi_domain.system",
+            DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
+        ),
     )
-    tool_resolver_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "supervisor.tool_resolver.system",
-        DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+    tool_resolver_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.tool_resolver.system",
+            DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
+        ),
     )
-    critic_gate_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "supervisor.critic_gate.system",
-        DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    critic_gate_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.critic_gate.system",
+            DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+        ),
     )
-    domain_planner_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "supervisor.domain_planner.system",
-        DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
+    domain_planner_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.domain_planner.system",
+            DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
+        ),
     )
-    response_layer_kunskap_prompt = resolve_prompt(
-        prompt_overrides,
-        "supervisor.response_layer.kunskap",
-        DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    response_layer_kunskap_prompt = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.response_layer.kunskap",
+            DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+        ),
     )
-    response_layer_analys_prompt = resolve_prompt(
-        prompt_overrides,
-        "supervisor.response_layer.analys",
-        DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    response_layer_analys_prompt = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.response_layer.analys",
+            DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+        ),
     )
-    response_layer_syntes_prompt = resolve_prompt(
-        prompt_overrides,
-        "supervisor.response_layer.syntes",
-        DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    response_layer_syntes_prompt = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.response_layer.syntes",
+            DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+        ),
     )
-    response_layer_visualisering_prompt = resolve_prompt(
-        prompt_overrides,
-        "supervisor.response_layer.visualisering",
-        DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
+    response_layer_visualisering_prompt = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.response_layer.visualisering",
+            DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
+        ),
     )
-    synthesizer_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "supervisor.synthesizer.system",
-        DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+    response_layer_router_prompt = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.response_layer.router",
+            DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
+        ),
     )
-    compare_synthesizer_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "compare.analysis.system",
-        DEFAULT_COMPARE_ANALYSIS_PROMPT,
+    synthesizer_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.synthesizer.system",
+            DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
+        ),
+    )
+    compare_synthesizer_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "compare.analysis.system",
+            DEFAULT_COMPARE_ANALYSIS_PROMPT,
+        ),
     )
     hitl_planner_message_template = resolve_prompt(
         prompt_overrides,
@@ -1883,10 +1950,13 @@ async def create_supervisor_agent(
         "supervisor.hitl.synthesis.message",
         DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
     )
-    smalltalk_prompt_template = resolve_prompt(
-        prompt_overrides,
-        "agent.smalltalk.system",
-        SMALLTALK_INSTRUCTIONS,
+    smalltalk_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "agent.smalltalk.system",
+            SMALLTALK_INSTRUCTIONS,
+        ),
     )
     worker_configs: dict[str, WorkerConfig] = {
         "kunskap": WorkerConfig(
@@ -5562,6 +5632,12 @@ async def create_supervisor_agent(
         extract_first_json_object_fn=_extract_first_json_object,
     )
 
+    response_layer_router_node = build_response_layer_router_node(
+        llm=llm,
+        router_prompt=response_layer_router_prompt,
+        latest_user_query_fn=_latest_user_query,
+    )
+
     response_layer_node = build_response_layer_node(
         llm=llm,
         mode_prompts={
@@ -6479,6 +6555,7 @@ async def create_supervisor_agent(
             )
         graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
         graph_builder.add_node("domain_planner", RunnableCallable(None, domain_planner_node))
+        graph_builder.add_node("response_layer_router", RunnableCallable(None, response_layer_router_node))
         graph_builder.add_node("response_layer", RunnableCallable(None, response_layer_node))
         graph_builder.set_entry_point("resolve_intent")
         resolve_intent_paths = [
@@ -6554,7 +6631,8 @@ async def create_supervisor_agent(
         )
         if hybrid_mode and not compare_mode:
             graph_builder.add_edge("progressive_synthesizer", "synthesizer")
-        graph_builder.add_edge("synthesizer", "response_layer")
+        graph_builder.add_edge("synthesizer", "response_layer_router")
+        graph_builder.add_edge("response_layer_router", "response_layer")
         graph_builder.add_edge("response_layer", END)
 
     return graph_builder.compile(checkpointer=checkpointer, name="supervisor-agent")

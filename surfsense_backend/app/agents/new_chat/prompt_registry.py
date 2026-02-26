@@ -1,32 +1,25 @@
 from dataclasses import dataclass
 
-from app.agents.new_chat.bolag_prompts import DEFAULT_BOLAG_SYSTEM_PROMPT
 from app.agents.new_chat.bigtool_prompts import (
     DEFAULT_WORKER_ACTION_PROMPT,
     DEFAULT_WORKER_KNOWLEDGE_PROMPT,
 )
+from app.agents.new_chat.bolag_prompts import DEFAULT_BOLAG_SYSTEM_PROMPT
 from app.agents.new_chat.compare_prompts import (
     COMPARE_SUPERVISOR_INSTRUCTIONS,
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
 )
 from app.agents.new_chat.dispatcher import DEFAULT_ROUTE_SYSTEM_PROMPT
-from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
+from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
 from app.agents.new_chat.statistics_prompts import DEFAULT_STATISTICS_SYSTEM_PROMPT
 from app.agents.new_chat.subagent_utils import SMALLTALK_INSTRUCTIONS
-from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
-from app.agents.new_chat.supervisor_runtime_prompts import (
-    DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
-    DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
-    DEFAULT_SUPERVISOR_CRITIC_PROMPT,
-    DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
-    DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
-    DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE,
-    DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
-    DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
-    DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
-)
 from app.agents.new_chat.supervisor_pipeline_prompts import (
+    DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
+    DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
     DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
@@ -38,15 +31,29 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
-    DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
-    DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
-    DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
-    DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
 )
-from app.agents.new_chat.system_prompt import SURFSENSE_CITATION_INSTRUCTIONS
-from app.agents.new_chat.system_prompt import SURFSENSE_SYSTEM_INSTRUCTIONS
-from app.agents.new_chat.trafik_prompts import DEFAULT_TRAFFIC_SYSTEM_PROMPT
+from app.agents.new_chat.supervisor_prompts import DEFAULT_SUPERVISOR_PROMPT
+from app.agents.new_chat.supervisor_constants import (
+    _AGENT_TOOL_PROFILE_BY_ID,
+)
+from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
+    DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
+    DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
+    DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE,
+    DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
+    DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+)
+from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CITATION_INSTRUCTIONS,
+    SURFSENSE_CORE_GLOBAL_PROMPT,
+    SURFSENSE_SYSTEM_INSTRUCTIONS,
+)
 from app.agents.new_chat.tools.external_models import DEFAULT_EXTERNAL_SYSTEM_PROMPT
+from app.agents.new_chat.trafik_prompts import DEFAULT_TRAFFIC_SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)
@@ -80,12 +87,16 @@ def infer_prompt_node_group(key: str) -> tuple[str, str]:
         return ("supervisor", "Supervisor")
     if normalized_key.startswith("agent.") and normalized_key != "agent.supervisor.system":
         return ("subagent", "Subagent/Worker")
+    if normalized_key.startswith("tool."):
+        return ("tool", "Verktyg")
     if normalized_key.startswith("system.") or normalized_key.startswith("citation."):
         return ("system", "System")
     return ("other", "Övrigt")
 
 
 ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
+    # Global core prompt - injected into every node
+    "system.core.global",
     # Platform ingress
     "system.default.instructions",
     "citation.instructions",
@@ -111,6 +122,7 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "supervisor.scoped_tool_prompt.template",
     "supervisor.tool_default_prompt.template",
     "supervisor.subagent.context.template",
+    "supervisor.response_layer.router",
     "supervisor.response_layer.kunskap",
     "supervisor.response_layer.analys",
     "supervisor.response_layer.syntes",
@@ -140,6 +152,15 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
 
 
 _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
+    "system.core.global": PromptDefinition(
+        key="system.core.global",
+        label="Global core prompt",
+        description=(
+            "Injiceras i ALLA noder i agentflödet. "
+            "Innehåller grundläggande direktiv som språk och datum/tid."
+        ),
+        default_prompt=SURFSENSE_CORE_GLOBAL_PROMPT,
+    ),
     "system.default.instructions": PromptDefinition(
         key="system.default.instructions",
         label="Core system prompt",
@@ -219,6 +240,12 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Supervisor critic gate prompt",
         description="Prompt for critic node decisioning in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    ),
+    "supervisor.response_layer.router": PromptDefinition(
+        key="supervisor.response_layer.router",
+        label="Response Layer · Router",
+        description="LLM-prompt som analyserar data och väljer presentationsläge (Kunskap/Analys/Syntes/Visualisering). Reasoning visas i think-boxen.",
+        default_prompt=DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
     ),
     "supervisor.response_layer.kunskap": PromptDefinition(
         key="supervisor.response_layer.kunskap",
@@ -488,24 +515,69 @@ _DEFAULT_CUSTOM_AGENT_PROMPT = DEFAULT_WORKER_KNOWLEDGE_PROMPT
 def make_dynamic_prompt_definition(prompt_key: str) -> PromptDefinition | None:
     """Create a PromptDefinition on-the-fly for a key not in the static registry.
 
-    Accepts keys matching ``agent.<name>.system`` and returns a definition
-    with the default worker knowledge prompt so that custom agents created
-    via the admin UI are immediately editable.
+    Accepts keys matching ``agent.<name>.system`` or ``tool.<name>.system``
+    and returns a definition so that custom agents/tools created via the
+    admin UI are immediately editable.
     """
     if prompt_key in PROMPT_DEFINITION_MAP:
         return None  # already registered statically
-    if not prompt_key.startswith("agent.") or not prompt_key.endswith(".system"):
-        return None
-    agent_slug = prompt_key.removeprefix("agent.").removesuffix(".system")
-    if not agent_slug:
-        return None
-    return PromptDefinition(
-        key=prompt_key,
-        label=f"{agent_slug.replace('_', ' ').title()}-agent prompt",
-        description=f"System-prompt for custom agent '{agent_slug}'.",
-        default_prompt=_DEFAULT_CUSTOM_AGENT_PROMPT,
-        active_in_admin=True,
-    )
+
+    # agent.<slug>.system
+    if prompt_key.startswith("agent.") and prompt_key.endswith(".system"):
+        agent_slug = prompt_key.removeprefix("agent.").removesuffix(".system")
+        if not agent_slug:
+            return None
+        return PromptDefinition(
+            key=prompt_key,
+            label=f"{agent_slug.replace('_', ' ').title()}-agent prompt",
+            description=f"System-prompt for custom agent '{agent_slug}'.",
+            default_prompt=_DEFAULT_CUSTOM_AGENT_PROMPT,
+            active_in_admin=True,
+        )
+
+    # tool.<tool_id>.system
+    if prompt_key.startswith("tool.") and prompt_key.endswith(".system"):
+        tool_id = prompt_key.removeprefix("tool.").removesuffix(".system")
+        if not tool_id:
+            return None
+        # Render the default prompt with actual tool metadata when available
+        default_prompt = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE
+        profile = _AGENT_TOOL_PROFILE_BY_ID.get(tool_id)
+        if profile:
+            keywords = ", ".join(profile.keywords[:8]) if profile.keywords else "-"
+            description = profile.description.strip() or "-"
+            try:
+                default_prompt = DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE.format(
+                    tool_id=profile.tool_id,
+                    category=profile.category,
+                    description=description,
+                    keywords=keywords,
+                )
+            except (KeyError, IndexError):
+                pass
+        return PromptDefinition(
+            key=prompt_key,
+            label=f"{tool_id} runtime prompt",
+            description=f"Runtime-prompt injected when tool '{tool_id}' is selected by the supervisor.",
+            default_prompt=default_prompt,
+            active_in_admin=True,
+        )
+
+    return None
+
+
+def get_all_tool_prompt_definitions() -> list[PromptDefinition]:
+    """Generate PromptDefinitions for every tool in the profile registry.
+
+    This ensures tool prompts are discoverable in the admin UI regardless
+    of whether the parent agent has ``flow_tools`` populated.
+    """
+    defs: list[PromptDefinition] = []
+    for tool_id in _AGENT_TOOL_PROFILE_BY_ID:
+        defn = make_dynamic_prompt_definition(f"tool.{tool_id}.system")
+        if defn:
+            defs.append(defn)
+    return defs
 
 
 def resolve_prompt(

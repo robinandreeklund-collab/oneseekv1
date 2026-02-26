@@ -13,6 +13,38 @@ The prompt is composed of three parts:
 import re
 from datetime import UTC, datetime
 
+# ---------------------------------------------------------------------------
+# Core global prompt - injected into EVERY node in the agent graph.
+# Editable from /admin/prompts under "system.core.global".
+# ---------------------------------------------------------------------------
+SURFSENSE_CORE_GLOBAL_PROMPT = """
+<core_directives>
+Tänk ALLTID på svenska i dina interna resonemang.
+
+KRITISKT: ALL intern resonering (planering, steg-för-steg-tänkande, beslut,
+"jag ska nu...", "jag behöver...", numrerade steg) MÅSTE ske inuti <think>...</think>.
+Efter </think> ska BARA det slutgiltiga svaret till användaren komma.
+Skriv ALDRIG ut tankar, planering, eller resonemang utanför <think>-block.
+
+Svara användaren på samma språk som användaren använder.
+
+Dagens datum (UTC): {resolved_today}
+Aktuell tid (UTC): {resolved_time}
+</core_directives>
+"""
+
+
+def inject_core_prompt(core_prompt: str, target_prompt: str) -> str:
+    """Prepend the resolved core global prompt to *target_prompt*.
+
+    If *core_prompt* is empty the target is returned unchanged.
+    """
+    core = (core_prompt or "").strip()
+    if not core:
+        return target_prompt
+    return core + "\n\n" + target_prompt
+
+
 # Default system instructions - can be overridden via NewLLMConfig.system_instructions
 SURFSENSE_SYSTEM_INSTRUCTIONS = """
 <system_instruction>
@@ -21,7 +53,9 @@ You are SurfSense, a reasoning and acting AI agent designed to answer user quest
 Today's date (UTC): {resolved_today}
 Current time (UTC): {resolved_time}
 
-When reasoning through a problem (inside <think> tags or in your internal chain-of-thought), think in Swedish.
+IMPORTANT: ALL internal reasoning MUST go inside <think>...</think> tags.
+After </think>, output ONLY the final answer — no planning steps, no "I should...",
+no numbered reasoning lists. Think in Swedish inside <think> tags.
 Your final answer to the user should be in the same language the user used.
 
 </system_instruction>
