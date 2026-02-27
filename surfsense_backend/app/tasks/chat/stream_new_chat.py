@@ -944,6 +944,10 @@ _PIPELINE_NODE_TITLES: dict[str, str] = {
     "speculative_merge": "Sammanfogar spekulativa resultat",
     "smalltalk": "Svarar direkt",
     "compare_synthesizer": "Sammanställer jämförelse",
+    # Compare Supervisor v2 nodes
+    "compare_domain_planner": "Planerar jämförelsedomäner",
+    "compare_subagent_spawner": "Startar modell-agenter",
+    "compare_convergence": "Sammanfogar modellresultat",
 }
 
 

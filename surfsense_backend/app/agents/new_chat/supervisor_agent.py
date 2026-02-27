@@ -1993,6 +1993,36 @@ async def create_supervisor_agent(
             DEFAULT_COMPARE_ANALYSIS_PROMPT,
         ),
     )
+    # Compare Supervisor v2: P4-style prompts
+    from app.agents.new_chat.compare_prompts import (
+        DEFAULT_COMPARE_CONVERGENCE_PROMPT,
+        DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
+        DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
+        DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
+    )
+    compare_domain_planner_prompt = resolve_prompt(
+        prompt_overrides,
+        "compare.domain_planner.system",
+        DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
+    )
+    compare_mini_planner_prompt = resolve_prompt(
+        prompt_overrides,
+        "compare.mini_planner.system",
+        DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
+    )
+    compare_mini_critic_prompt = resolve_prompt(
+        prompt_overrides,
+        "compare.mini_critic.system",
+        DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
+    )
+    compare_convergence_prompt = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "compare.convergence.system",
+            DEFAULT_COMPARE_CONVERGENCE_PROMPT,
+        ),
+    )
     hitl_planner_message_template = resolve_prompt(
         prompt_overrides,
         "supervisor.hitl.planner.message",
@@ -6639,32 +6669,58 @@ async def create_supervisor_agent(
     
     # Conditional graph structure based on compare_mode
     if compare_mode:
-        # Compare mode: use deterministic compare subgraph
-        from functools import partial
+        # Compare Supervisor v2: unified P4 architecture
+        # Same infrastructure as normal mode: subagent mini-graphs,
+        # convergence node, proper handoff contracts.
         from app.agents.new_chat.compare_executor import (
-            compare_fan_out,
-            compare_collect,
-            compare_tavily,
-            compare_synthesizer,
+            build_compare_domain_planner_node,
+            build_compare_subagent_spawner_node,
+            build_compare_synthesizer_node,
         )
-        
-        # Create compare_synthesizer with resolved prompt override
-        compare_synthesizer_with_prompt = partial(
-            compare_synthesizer,
-            prompt_override=compare_synthesizer_prompt_template
+        from app.agents.new_chat.nodes.convergence_node import (
+            build_convergence_node,
         )
-        
-        graph_builder.add_node("compare_fan_out", RunnableCallable(None, compare_fan_out))
-        graph_builder.add_node("compare_collect", RunnableCallable(None, compare_collect))
-        graph_builder.add_node("compare_tavily", RunnableCallable(None, compare_tavily))
-        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synthesizer_with_prompt))
-        
-        # Direct routing: resolve_intent -> compare_fan_out -> ... -> END
+
+        # Build compare domain planner (deterministic — 8 domains always)
+        compare_domain_planner_node = build_compare_domain_planner_node(
+            external_model_specs=list(EXTERNAL_MODEL_SPECS),
+            include_research=True,
+        )
+
+        # Build compare subagent spawner (P4 pattern with specialized workers)
+        compare_spawner_node = build_compare_subagent_spawner_node(
+            llm=llm,
+            compare_mini_critic_prompt=compare_mini_critic_prompt,
+            latest_user_query_fn=_latest_user_query,
+            extract_first_json_object_fn=_extract_first_json_object,
+            execution_timeout_seconds=90,
+        )
+
+        # Build compare convergence node (reuses P4 convergence)
+        compare_convergence_node_fn = build_convergence_node(
+            llm=llm,
+            convergence_prompt_template=compare_convergence_prompt,
+            latest_user_query_fn=_latest_user_query,
+            extract_first_json_object_fn=_extract_first_json_object,
+        )
+
+        # Build compare synthesizer
+        compare_synth_node = build_compare_synthesizer_node(
+            prompt_override=compare_synthesizer_prompt_template,
+        )
+
+        # Add nodes
+        graph_builder.add_node("compare_domain_planner", RunnableCallable(None, compare_domain_planner_node))
+        graph_builder.add_node("compare_subagent_spawner", RunnableCallable(None, compare_spawner_node))
+        graph_builder.add_node("compare_convergence", RunnableCallable(None, compare_convergence_node_fn))
+        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synth_node))
+
+        # Graph routing: resolve_intent → domain_planner → spawner → convergence → synthesizer → END
         graph_builder.set_entry_point("resolve_intent")
-        graph_builder.add_edge("resolve_intent", "compare_fan_out")
-        graph_builder.add_edge("compare_fan_out", "compare_collect")
-        graph_builder.add_edge("compare_collect", "compare_tavily")
-        graph_builder.add_edge("compare_tavily", "compare_synthesizer")
+        graph_builder.add_edge("resolve_intent", "compare_domain_planner")
+        graph_builder.add_edge("compare_domain_planner", "compare_subagent_spawner")
+        graph_builder.add_edge("compare_subagent_spawner", "compare_convergence")
+        graph_builder.add_edge("compare_convergence", "compare_synthesizer")
         graph_builder.add_edge("compare_synthesizer", END)
     else:
         # Normal mode: use standard supervisor pipeline

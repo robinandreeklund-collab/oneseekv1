@@ -8,6 +8,10 @@ from app.agents.new_chat.bolag_prompts import DEFAULT_BOLAG_SYSTEM_PROMPT
 from app.agents.new_chat.compare_prompts import (
     COMPARE_SUPERVISOR_INSTRUCTIONS,
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
+    DEFAULT_COMPARE_CONVERGENCE_PROMPT,
+    DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
+    DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
+    DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
 )
 from app.agents.new_chat.dispatcher import DEFAULT_ROUTE_SYSTEM_PROMPT
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
@@ -87,6 +91,11 @@ def infer_prompt_node_group(key: str) -> tuple[str, str]:
     normalized_key = str(key or "").strip().lower()
     if normalized_key.startswith("router."):
         return ("router", "Router")
+    # Compare Supervisor v2: P4-style mini-graph prompts → dedicated subgroup
+    if normalized_key.startswith("compare.mini_") or normalized_key.startswith(
+        "compare.convergence"
+    ) or normalized_key.startswith("compare.domain_planner"):
+        return ("compare_mini", "Compare Mini-Graph")
     if normalized_key.startswith("compare."):
         return ("compare", "Compare")
     # P4: Mini-graph internal nodes → subagent_mini group
@@ -170,6 +179,11 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     # Compare execution
     "compare.analysis.system",
     "compare.external.system",
+    # Compare Supervisor v2 — P4-style prompts
+    "compare.domain_planner.system",
+    "compare.mini_planner.system",
+    "compare.mini_critic.system",
+    "compare.convergence.system",
 )
 
 
@@ -531,6 +545,31 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Compare external model prompt",
         description="System prompt sent to external compare models.",
         default_prompt=DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+    ),
+    # ── Compare Supervisor v2 — P4-style prompts ──
+    "compare.domain_planner.system": PromptDefinition(
+        key="compare.domain_planner.system",
+        label="Compare Domain Planner prompt",
+        description="Prompt for compare_domain_planner — genererar domänplaner för jämförelseläget (deterministisk).",
+        default_prompt=DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
+    ),
+    "compare.mini_planner.system": PromptDefinition(
+        key="compare.mini_planner.system",
+        label="Compare Mini Planner prompt",
+        description="Prompt for mini_planner inuti compare subagent mini-graf — skapar kompakt mikro-plan per modell/research.",
+        default_prompt=DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
+    ),
+    "compare.mini_critic.system": PromptDefinition(
+        key="compare.mini_critic.system",
+        label="Compare Mini Critic prompt",
+        description="Prompt for mini_critic inuti compare subagent mini-graf — bedömer modellresultat.",
+        default_prompt=DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
+    ),
+    "compare.convergence.system": PromptDefinition(
+        key="compare.convergence.system",
+        label="Compare Convergence prompt",
+        description="Prompt for convergence_node i compare-grafen — mergar resultat från alla modeller + research med overlap/conflict.",
+        default_prompt=DEFAULT_COMPARE_CONVERGENCE_PROMPT,
     ),
 }
 

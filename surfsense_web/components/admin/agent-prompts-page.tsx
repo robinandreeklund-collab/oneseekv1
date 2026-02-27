@@ -27,13 +27,14 @@ import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
 import { cn } from "@/lib/utils";
 
 type PromptViewMode = "all" | "agent" | "system" | "node";
-type PromptNodeGroup = "router" | "supervisor" | "subagent" | "compare" | "system" | "other";
+type PromptNodeGroup = "router" | "supervisor" | "subagent" | "compare" | "compare_mini" | "system" | "other";
 
 const NODE_GROUP_ORDER: PromptNodeGroup[] = [
 	"router",
 	"supervisor",
 	"subagent",
 	"compare",
+	"compare_mini",
 	"system",
 	"other",
 ];
@@ -42,6 +43,7 @@ const NODE_GROUP_LABELS: Record<PromptNodeGroup, string> = {
 	supervisor: "Supervisor",
 	subagent: "Subagent/Worker",
 	compare: "Compare",
+	compare_mini: "Compare Mini-Graph",
 	system: "System",
 	other: "Övrigt",
 };
@@ -49,6 +51,14 @@ const NODE_GROUP_LABELS: Record<PromptNodeGroup, string> = {
 function inferNodeGroupFromKey(key: string): PromptNodeGroup {
 	const normalized = (key ?? "").trim().toLowerCase();
 	if (normalized.startsWith("router.")) return "router";
+	// Compare v2 P4-style mini-graph prompts
+	if (
+		normalized.startsWith("compare.mini_") ||
+		normalized.startsWith("compare.convergence") ||
+		normalized.startsWith("compare.domain_planner")
+	) {
+		return "compare_mini";
+	}
 	if (normalized.startsWith("compare.")) return "compare";
 	if (normalized === "agent.supervisor.system" || normalized.startsWith("supervisor.")) {
 		return "supervisor";
@@ -85,6 +95,7 @@ const SYSTEM_SECTION_ORDER = [
 	"supervisor",
 	"worker",
 	"compare",
+	"compare_mini",
 	"citations",
 	"other",
 ];
@@ -94,6 +105,7 @@ const SYSTEM_SECTION_LABELS: Record<string, string> = {
 	supervisor: "Supervisor",
 	worker: "Workers",
 	compare: "Compare",
+	compare_mini: "Compare Mini-Graph",
 	citations: "Citations",
 	other: "Övrigt",
 };
@@ -149,6 +161,11 @@ const SYSTEM_NODES = [
 	{ label: "Compare · Analysis", key: "compare.analysis.system" },
 	{ label: "Compare · Supervisor", key: "compare.supervisor.instructions" },
 	{ label: "Compare · External", key: "compare.external.system" },
+	// Compare Supervisor v2 (P4-style)
+	{ label: "Compare · Domain Planner", key: "compare.domain_planner.system" },
+	{ label: "Compare · Mini Planner", key: "compare.mini_planner.system" },
+	{ label: "Compare · Mini Critic", key: "compare.mini_critic.system" },
+	{ label: "Compare · Convergence", key: "compare.convergence.system" },
 	{ label: "Citation instructions", key: "citation.instructions" },
 ];
 

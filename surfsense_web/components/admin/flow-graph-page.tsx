@@ -370,11 +370,12 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		"node:pev_verify": { x: 2160, y: 950 },
 		"node:mini_synthesizer": { x: 2400, y: 1100 },
 		"node:convergence_node": { x: 2400, y: 1250 },
-		// ── Compare mode (separate branch from resolve_intent) ──
-		"node:compare_fan_out": { x: 240, y: 1400 },
-		"node:compare_collect": { x: 480, y: 1400 },
-		"node:compare_tavily": { x: 720, y: 1400 },
-		"node:compare_synthesizer": { x: 960, y: 1400 },
+		// ── Compare Supervisor v2 (unified P4 architecture) ──
+		"node:compare_domain_planner": { x: 240, y: 1400 },
+		"node:compare_subagent_spawner": { x: 520, y: 1400 },
+		"node:compare_mini_critic": { x: 520, y: 1550 },
+		"node:compare_convergence": { x: 800, y: 1400 },
+		"node:compare_synthesizer": { x: 1080, y: 1400 },
 	};
 
 	return pipelineNodes.map((node) => ({

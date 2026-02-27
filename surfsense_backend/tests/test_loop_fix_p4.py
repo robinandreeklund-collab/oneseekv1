@@ -1158,9 +1158,10 @@ class TestCompareModePipelineNodes:
     """Compare mode nodes are in pipeline graph."""
 
     _COMPARE_NODE_IDS = [
-        "node:compare_fan_out",
-        "node:compare_collect",
-        "node:compare_tavily",
+        "node:compare_domain_planner",
+        "node:compare_subagent_spawner",
+        "node:compare_mini_critic",
+        "node:compare_convergence",
         "node:compare_synthesizer",
     ]
 
@@ -1179,9 +1180,10 @@ class TestCompareModePipelineNodes:
     def test_compare_edges_exist(self):
         routes_path = _PROJECT_ROOT / "app/routes/admin_flow_graph_routes.py"
         content = routes_path.read_text()
-        assert '"node:compare_fan_out"' in content
-        assert '"node:compare_collect"' in content
-        assert '"node:compare_tavily"' in content
+        assert '"node:compare_domain_planner"' in content
+        assert '"node:compare_subagent_spawner"' in content
+        assert '"node:compare_mini_critic"' in content
+        assert '"node:compare_convergence"' in content
         assert '"node:compare_synthesizer"' in content
         # Edge from resolve_intent
         assert "jämförelse" in content
@@ -1190,7 +1192,7 @@ class TestCompareModePipelineNodes:
         routes_path = _PROJECT_ROOT / "app/routes/admin_flow_graph_routes.py"
         content = routes_path.read_text()
         compare_count = content.count('"stage": "compare"')
-        assert compare_count == 4, f"Expected 4 compare-stage nodes, got {compare_count}"
+        assert compare_count == 5, f"Expected 5 compare-stage nodes, got {compare_count}"
 
 
 class TestFrontendPipelineNodePositions:
@@ -1217,9 +1219,10 @@ class TestFrontendPipelineNodePositions:
         tsx_path = _PROJECT_ROOT.parent / "surfsense_web/components/admin/flow-graph-page.tsx"
         content = tsx_path.read_text()
         compare_nodes = [
-            "node:compare_fan_out",
-            "node:compare_collect",
-            "node:compare_tavily",
+            "node:compare_domain_planner",
+            "node:compare_subagent_spawner",
+            "node:compare_mini_critic",
+            "node:compare_convergence",
             "node:compare_synthesizer",
         ]
         for node_id in compare_nodes:
