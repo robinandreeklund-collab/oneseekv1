@@ -553,6 +553,67 @@ class VercelStreamingService:
         )
 
     # =========================================================================
+    # Structured Output Parts (P1-Extra.4)
+    # =========================================================================
+
+    def format_structured_field(
+        self,
+        node: str,
+        field: str,
+        value: Any,
+    ) -> str:
+        """
+        Format a structured field decision from a pipeline node.
+
+        Emitted after an ainvoke-based node completes, carrying the
+        typed JSON field value so the frontend can render structured
+        decision badges (e.g. ``intent → kunskap``, ``critic → ok``).
+
+        Args:
+            node: Pipeline node name (e.g. ``"intent"``, ``"critic"``)
+            field: The schema field name (e.g. ``"route"``, ``"decision"``)
+            value: The field value (any JSON-serializable type)
+
+        Returns:
+            str: SSE formatted structured-field data part
+
+        Example output:
+            data: {"type":"structured-field","node":"intent","field":"route","value":"kunskap"}
+        """
+        return self._format_sse(
+            {
+                "type": "structured-field",
+                "node": node,
+                "field": field,
+                "value": value,
+            }
+        )
+
+    def format_thinking_persist(
+        self,
+        node: str,
+        thinking: str,
+    ) -> str:
+        """
+        Format a thinking-persist event for DB persistence.
+
+        Sent after a node's thinking field has been fully extracted,
+        allowing the frontend to persist it so reasoning survives
+        page reloads.
+
+        Args:
+            node: Pipeline node name (e.g. ``"intent"``, ``"synthesizer"``)
+            thinking: The complete thinking text from the node
+
+        Returns:
+            str: SSE formatted data-thinking-persist part
+        """
+        return self.format_data(
+            "thinking-persist",
+            {"node": node, "thinking": thinking},
+        )
+
+    # =========================================================================
     # Error Part
     # =========================================================================
 

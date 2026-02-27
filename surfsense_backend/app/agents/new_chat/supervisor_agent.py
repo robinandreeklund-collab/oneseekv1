@@ -5,6 +5,7 @@ import ast
 import json
 import hashlib
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ from app.agents.new_chat.nodes import (
     build_executor_nodes,
     build_execution_hitl_gate_node,
     build_intent_resolver_node,
+    build_multi_query_decomposer_node,
     build_planner_hitl_gate_node,
     build_planner_node,
     build_progressive_synthesizer_node,
@@ -74,6 +76,7 @@ from app.agents.new_chat.retrieval_feedback import (
 from app.agents.new_chat.sandbox_runtime import sandbox_write_text_file
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
 from app.agents.new_chat.prompt_registry import resolve_prompt
+from app.agents.new_chat.structured_schemas import structured_output_enabled
 from app.agents.new_chat.system_prompt import (
     SURFSENSE_CORE_GLOBAL_PROMPT,
     append_datetime_context,
@@ -99,6 +102,7 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
 from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT,
     DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
@@ -213,6 +217,7 @@ from app.agents.new_chat.supervisor_constants import (
     TOOL_CONTEXT_MAX_CHARS,
     TOOL_CONTEXT_MAX_ITEMS,
     TOOL_MSG_THRESHOLD,
+    MAX_TOTAL_STEPS,
 )
 from app.agents.new_chat.supervisor_types import (
     AgentDefinition,
@@ -325,9 +330,12 @@ from app.agents.new_chat.supervisor_memory import (
 
 
 
-_MAX_TOOL_CALLS_PER_TURN = 12
+_MAX_TOOL_CALLS_PER_TURN = int(os.environ.get("MAX_TOOL_CALLS", "8"))
 _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
-_MAX_REPLAN_ATTEMPTS = 2
+# If the same direct tool (e.g. scb_befolkning, smhi_vaderprognoser_metfcst)
+# is called this many times consecutively, force finalization.
+_MAX_CONSECUTIVE_SAME_TOOL = 2
+_MAX_REPLAN_ATTEMPTS = int(os.environ.get("MAX_REPLAN_ATTEMPTS", "2"))
 
 
 
@@ -1530,6 +1538,37 @@ def _count_consecutive_loop_tools(messages: list[Any], *, turn_id: str | None = 
     return count
 
 
+def _count_consecutive_same_direct_tool(messages: list[Any]) -> tuple[int, str]:
+    """Count consecutive calls to the same *direct* tool since the last HumanMessage.
+
+    Returns (count, tool_name).  For example if the last 3 ToolMessage results
+    are all from ``scb_befolkning``, returns ``(3, "scb_befolkning")``.
+
+    Only counts non-agent tools (i.e. not ``call_agent``, ``retrieve_agents``,
+    ``reflect_on_progress``, ``write_todos``).  These have their own guards.
+    """
+    skip = {"call_agent", "retrieve_agents", "reflect_on_progress", "write_todos"}
+    tool_call_index = _tool_call_name_index(messages)
+    last_name: str = ""
+    count = 0
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        if not isinstance(message, ToolMessage):
+            continue
+        name = _resolve_tool_message_name(message, tool_call_index=tool_call_index)
+        if name in skip:
+            # Agent-level calls are guarded separately.
+            break
+        if not last_name:
+            last_name = name
+        if name == last_name:
+            count += 1
+        else:
+            break
+    return count, last_name
+
+
 def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
     name = (tool_name or "tool").strip() or "tool"
     status = str(payload.get("status") or "completed").lower()
@@ -1762,6 +1801,7 @@ async def create_supervisor_agent(
     riksdagen_prompt: str | None = None,
     marketplace_prompt: str | None = None,
     tool_prompt_overrides: dict[str, str] | None = None,
+    think_on_tool_calls: bool = True,
 ):
     prompt_overrides = dict(tool_prompt_overrides or {})
     tool_prompt_overrides = dict(prompt_overrides)
@@ -1774,6 +1814,7 @@ async def create_supervisor_agent(
         SURFSENSE_CORE_GLOBAL_PROMPT,
     )
     _core = append_datetime_context(_raw_core.strip())
+    _use_structured = structured_output_enabled()
 
     critic_prompt_template = inject_core_prompt(
         _core,
@@ -1830,6 +1871,16 @@ async def create_supervisor_agent(
             "supervisor.intent_resolver.system",
             DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
         ),
+        structured_output=_use_structured,
+    )
+    decomposer_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.decomposer.system",
+            DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT,
+        ),
+        structured_output=_use_structured,
     )
     agent_resolver_prompt_template = inject_core_prompt(
         _core,
@@ -1838,6 +1889,7 @@ async def create_supervisor_agent(
             "supervisor.agent_resolver.system",
             DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     planner_prompt_template = inject_core_prompt(
         _core,
@@ -1846,6 +1898,7 @@ async def create_supervisor_agent(
             "supervisor.planner.system",
             DEFAULT_SUPERVISOR_PLANNER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     multi_domain_planner_prompt_template = inject_core_prompt(
         _core,
@@ -1854,6 +1907,7 @@ async def create_supervisor_agent(
             "supervisor.planner.multi_domain.system",
             DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     tool_resolver_prompt_template = inject_core_prompt(
         _core,
@@ -1870,6 +1924,7 @@ async def create_supervisor_agent(
             "supervisor.critic_gate.system",
             DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     domain_planner_prompt_template = inject_core_prompt(
         _core,
@@ -1878,6 +1933,7 @@ async def create_supervisor_agent(
             "supervisor.domain_planner.system",
             DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     response_layer_kunskap_prompt = inject_core_prompt(
         _core,
@@ -1918,6 +1974,7 @@ async def create_supervisor_agent(
             "supervisor.response_layer.router",
             DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     synthesizer_prompt_template = inject_core_prompt(
         _core,
@@ -1926,6 +1983,7 @@ async def create_supervisor_agent(
             "supervisor.synthesizer.system",
             DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
         ),
+        structured_output=_use_structured,
     )
     compare_synthesizer_prompt_template = inject_core_prompt(
         _core,
@@ -1957,6 +2015,7 @@ async def create_supervisor_agent(
             "agent.smalltalk.system",
             SMALLTALK_INSTRUCTIONS,
         ),
+        include_think_instructions=False,
     )
     worker_configs: dict[str, WorkerConfig] = {
         "kunskap": WorkerConfig(
@@ -3353,14 +3412,17 @@ async def create_supervisor_agent(
         # respect that choice and DON'T override with route_policy.
         # This scales to 100s of APIs without needing regex patterns.
         if requested_raw in agent_by_name:
+            # Specialized agents (statistik, marknad, etc.) must NEVER be
+            # remapped by selected_agents_lock — they own domain-specific
+            # tools that other agents cannot substitute.
+            if requested_raw in _SPECIALIZED_AGENTS:
+                return requested_raw, None
             if selected_agent_set and requested_raw not in selected_agent_set:
                 fallback = _selected_fallback(
                     "marknad" if marketplace_task else default_for_route
                 )
                 if fallback and fallback in agent_by_name:
                     return fallback, f"selected_agents_lock:{requested_raw}->{fallback}"
-            if requested_raw in _SPECIALIZED_AGENTS:
-                return requested_raw, None
             if route_allowed and requested_raw not in route_allowed:
                 if default_for_route in agent_by_name:
                     return default_for_route, f"route_policy:{requested_raw}->{default_for_route}"
@@ -4460,7 +4522,7 @@ async def create_supervisor_agent(
                 worker_configurable["checkpoint_ns"] = f"{worker_checkpoint_ns}:worker:{name}"
         config = {
             "configurable": worker_configurable,
-            "recursion_limit": 60,
+            "recursion_limit": 12,
         }
         try:
             result = await asyncio.wait_for(
@@ -4565,6 +4627,16 @@ async def create_supervisor_agent(
             messages_out = result.get("messages") or []
             if messages_out:
                 response_text = str(getattr(messages_out[-1], "content", "") or "")
+            # Fallback: if the bigtool worker returned empty text but there
+            # are ToolMessages with real data, extract the last ToolMessage
+            # content so we don't lose the tool results entirely.
+            if not response_text.strip():
+                for msg in reversed(messages_out):
+                    if isinstance(msg, ToolMessage):
+                        tool_content = str(getattr(msg, "content", "") or "").strip()
+                        if tool_content and len(tool_content) > 10:
+                            response_text = tool_content
+                            break
             initial_tool_names = _tool_names_from_messages(messages_out)
             enforcement_message: str | None = None
             if name == "trafik":
@@ -5251,7 +5323,7 @@ async def create_supervisor_agent(
                         )
                 config = {
                     "configurable": worker_configurable,
-                    "recursion_limit": 60,
+                    "recursion_limit": 12,
                 }
                 try:
                     result = await asyncio.wait_for(
@@ -5517,6 +5589,14 @@ async def create_supervisor_agent(
         live_routing_config=live_routing_config,
     )
 
+    decomposer_node = build_multi_query_decomposer_node(
+        llm=llm,
+        decomposer_prompt_template=decomposer_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+    )
+
     resolve_agents_node = build_agent_resolver_node(
         llm=llm,
         agent_resolver_prompt_template=agent_resolver_prompt_template,
@@ -5594,6 +5674,7 @@ async def create_supervisor_agent(
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
         render_guard_message_fn=_render_guard_message,
+        max_total_steps=MAX_TOTAL_STEPS,
     )
     smart_critic_node = build_smart_critic_node(
         fallback_critic_node=critic_node,
@@ -5667,6 +5748,8 @@ async def create_supervisor_agent(
         format_cross_session_memory_context_fn=_format_cross_session_memory_context,
         format_rolling_context_summary_context_fn=_format_rolling_context_summary_context,
         coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
+        think_on_tool_calls=think_on_tool_calls,
+        use_structured_output=_use_structured,
     )
 
     async def memory_context_node(
@@ -5703,7 +5786,7 @@ async def create_supervisor_agent(
     ) -> SupervisorState:
         latest_user_query = _latest_user_query(state.get("messages") or [])
         if not latest_user_query:
-            fallback = "Hej! Hur kan jag hjalpa dig idag?"
+            fallback = "Hej! Hur kan jag hjälpa dig idag?"
             return {
                 "messages": [AIMessage(content=fallback)],
                 "final_agent_response": fallback,
@@ -5726,13 +5809,19 @@ async def create_supervisor_agent(
                 ],
                 max_tokens=180,
             )
-            response_text = _strip_critic_json(
-                str(getattr(message, "content", "") or "")
+            raw_content = str(getattr(message, "content", "") or "")
+            # Strip any <think>…</think> that the model may produce despite
+            # instructions — smalltalk must never expose internal reasoning.
+            response_text = re.sub(
+                r"<think>[\s\S]*?</think>", "", raw_content
             ).strip()
+            # Also strip bare opening <think> with no closing tag (truncated)
+            response_text = re.sub(r"<think>[\s\S]*$", "", response_text).strip()
+            response_text = _strip_critic_json(response_text).strip()
         except Exception:
             response_text = ""
         if not response_text:
-            response_text = "Hej! Jag ar OneSeek. Hur kan jag hjalpa dig idag?"
+            response_text = "Hej! Jag är OneSeek. Hur kan jag hjälpa dig idag?"
         return {
             "messages": [AIMessage(content=response_text)],
             "final_agent_response": response_text,
@@ -6128,6 +6217,8 @@ async def create_supervisor_agent(
         **kwargs,
     ) -> SupervisorState:
         updates: dict[str, Any] = {}
+        # P1: increment total_steps for every pass through orchestration_guard.
+        updates["total_steps"] = int(state.get("total_steps") or 0) + 1
         route_hint = str(state.get("route_hint") or "").strip().lower()
         latest_user_query = _latest_user_query(state.get("messages") or [])
         parallel_preview = list(state.get("guard_parallel_preview") or [])[:3]
@@ -6179,18 +6270,16 @@ async def create_supervisor_agent(
         if call_entries:
             last_entry = call_entries[-1]
             last_agent = str(last_entry.get("agent") or "").strip().lower()
-            last_task = _normalize_task_for_fingerprint(
-                str(last_entry.get("task") or "")
-            )
-            last_fp = f"{last_agent}|{last_task}" if (last_agent or last_task) else ""
+            # P2.5: Fingerprint based on agent_name + route_hint instead of
+            # agent_name + task_text.  Minimal task variations (e.g.
+            # "invånare Göteborg 2023" vs "befolkning Göteborg 2023") no
+            # longer reset the counter — same agent + same route = no progress.
+            last_fp = f"{last_agent}|{route_hint}" if last_agent else ""
             if last_fp:
                 fp_count = 0
                 for entry in call_entries:
                     agent = str(entry.get("agent") or "").strip().lower()
-                    task_fp = _normalize_task_for_fingerprint(
-                        str(entry.get("task") or "")
-                    )
-                    if f"{agent}|{task_fp}" == last_fp:
+                    if f"{agent}|{route_hint}" == last_fp:
                         fp_count += 1
                 no_progress_runs = no_progress_runs + 1 if fp_count >= 2 else 0
             else:
@@ -6224,6 +6313,7 @@ async def create_supervisor_agent(
                     str(last_entry.get("agent") or "").strip() or "agent"
                 )
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         if (
             "final_agent_response" not in updates
@@ -6239,6 +6329,7 @@ async def create_supervisor_agent(
                 updates["final_response"] = ai_fallback
                 updates["final_agent_name"] = "assistant"
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         if (
             "final_agent_response" not in updates
@@ -6250,6 +6341,7 @@ async def create_supervisor_agent(
                 updates["final_response"] = best[0]
                 updates["final_agent_name"] = best[1]
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
             else:
                 rendered = _render_guard_message(loop_guard_template, parallel_preview)
                 if not rendered:
@@ -6262,6 +6354,7 @@ async def create_supervisor_agent(
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         if last_call_payload:
             last_contract = _contract_from_payload(last_call_payload)
@@ -6270,6 +6363,47 @@ async def create_supervisor_agent(
                 and "final_agent_response" not in updates
             ):
                 updates["plan_complete"] = False
+
+        # Guard: detect repeated calls to the same direct tool (e.g. scb_befolkning
+        # or smhi_vaderprognoser_metfcst called 2+ times in a row without progress).
+        if "final_agent_response" not in updates:
+            same_tool_count, same_tool_name = _count_consecutive_same_direct_tool(
+                state.get("messages") or []
+            )
+            if same_tool_count >= _MAX_CONSECUTIVE_SAME_TOOL:
+                # Try to use the last tool result as the final response
+                last_tool_response = ""
+                for message in reversed(messages):
+                    if isinstance(message, HumanMessage):
+                        break
+                    if isinstance(message, ToolMessage):
+                        content = str(getattr(message, "content", "") or "")
+                        parsed = _safe_json(content)
+                        if isinstance(parsed, dict):
+                            last_tool_response = _strip_critic_json(
+                                str(parsed.get("summary") or parsed.get("response") or content)
+                            ).strip()
+                        else:
+                            last_tool_response = _strip_critic_json(content).strip()
+                        break
+                if last_tool_response:
+                    updates["final_agent_response"] = last_tool_response
+                    updates["final_response"] = last_tool_response
+                    updates["final_agent_name"] = same_tool_name or "agent"
+                else:
+                    rendered = _render_guard_message(
+                        loop_guard_template, parallel_preview
+                    )
+                    if not rendered:
+                        rendered = _render_guard_message(
+                            DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE, parallel_preview
+                        )
+                    updates["final_agent_response"] = rendered
+                    updates["final_response"] = rendered
+                    updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
+                updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         # Fallback safety: avoid endless supervisor loops on repeated retrieval/delegation tools.
         if "final_agent_response" not in updates:
@@ -6289,6 +6423,7 @@ async def create_supervisor_agent(
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         if "final_agent_response" not in updates and agent_hops >= _MAX_AGENT_HOPS_PER_TURN:
             best = _best_actionable_entry(call_entries)
@@ -6311,6 +6446,7 @@ async def create_supervisor_agent(
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
             updates["orchestration_phase"] = "finalize"
+            updates["guard_finalized"] = True
 
         # Hard guardrail: stop runaway tool loops within a single user turn.
         if "final_agent_response" not in updates:
@@ -6332,6 +6468,7 @@ async def create_supervisor_agent(
                 updates["final_agent_name"] = "supervisor"
                 updates["plan_complete"] = True
                 updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         # Progressive message pruning when messages get long
         if len(messages) > MESSAGE_PRUNING_THRESHOLD:
@@ -6399,8 +6536,9 @@ async def create_supervisor_agent(
                 if has_final:
                     return "synthesis_hitl"
                 return "agent_resolver"
-            if complexity == "complex" and speculative_enabled:
-                return "speculative"
+            # P3: complex queries go through multi_query_decomposer first.
+            if complexity == "complex":
+                return "multi_query_decomposer"
             return "agent_resolver"
         return "agent_resolver"
 
@@ -6423,9 +6561,35 @@ async def create_supervisor_agent(
         if not messages:
             return "critic"
         last_message = messages[-1]
-        if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
-            return "tools"
-        return "critic"
+        if not (isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None)):
+            return "critic"
+
+        # --- Loop guard: detect repeated calls to the same direct tool ---
+        # Count how many consecutive ToolMessage results come from the same
+        # tool name.  If the executor keeps requesting the same tool, force
+        # exit to critic instead of executing the tool again.
+        tool_call_index = _tool_call_name_index(messages)
+        consecutive = 0
+        last_tool_name = ""
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                break
+            if not isinstance(msg, ToolMessage):
+                continue
+            name = _resolve_tool_message_name(msg, tool_call_index=tool_call_index)
+            if not name or name in {"call_agent", "retrieve_agents", "reflect_on_progress", "write_todos"}:
+                break
+            if not last_tool_name:
+                last_tool_name = name
+            if name == last_tool_name:
+                consecutive += 1
+            else:
+                break
+        if consecutive >= _MAX_CONSECUTIVE_SAME_TOOL:
+            # Force to critic — the same tool has been called enough times.
+            return "critic"
+
+        return "tools"
 
     def critic_should_continue(state: SupervisorState, *, store=None):
         decision = str(state.get("critic_decision") or "").strip().lower()
@@ -6433,6 +6597,10 @@ async def create_supervisor_agent(
             state.get("final_response") or state.get("final_agent_response") or ""
         ).strip()
         replan_count = int(state.get("replan_count") or 0)
+        total_steps = int(state.get("total_steps") or 0)
+        # P1: guard_finalized or total_steps cap → always exit to synthesis.
+        if state.get("guard_finalized") or total_steps >= MAX_TOTAL_STEPS:
+            return "synthesis_hitl"
         if final_response and decision in {"ok", "pass", "finalize"}:
             return "synthesis_hitl"
         if decision == "replan" and replan_count < _MAX_REPLAN_ATTEMPTS:
@@ -6504,6 +6672,12 @@ async def create_supervisor_agent(
             graph_builder.add_node("speculative", RunnableCallable(None, speculative_node))
         graph_builder.add_node("memory_context", RunnableCallable(None, memory_context_node))
         graph_builder.add_node("smalltalk", RunnableCallable(None, smalltalk_node))
+        # P3: multi_query_decomposer for complex queries (hybrid_mode only)
+        if hybrid_mode and not compare_mode:
+            graph_builder.add_node(
+                "multi_query_decomposer",
+                RunnableCallable(None, decomposer_node),
+            )
         graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
         graph_builder.add_node("planner", RunnableCallable(None, planner_node))
         graph_builder.add_node(
@@ -6568,6 +6742,8 @@ async def create_supervisor_agent(
             "synthesis_hitl",
             END,
         ]
+        if hybrid_mode and not compare_mode:
+            resolve_intent_paths.append("multi_query_decomposer")
         if hybrid_mode and not compare_mode and speculative_enabled:
             resolve_intent_paths.append("speculative")
         graph_builder.add_edge("resolve_intent", "memory_context")
@@ -6577,6 +6753,12 @@ async def create_supervisor_agent(
             path_map=resolve_intent_paths,
         )
         graph_builder.add_edge("smalltalk", END)
+        if hybrid_mode and not compare_mode:
+            # P3: decomposer feeds into speculative (if enabled) or agent_resolver.
+            if speculative_enabled:
+                graph_builder.add_edge("multi_query_decomposer", "speculative")
+            else:
+                graph_builder.add_edge("multi_query_decomposer", "agent_resolver")
         if hybrid_mode and not compare_mode and speculative_enabled:
             graph_builder.add_edge("speculative", "agent_resolver")
         graph_builder.add_edge("agent_resolver", "planner")

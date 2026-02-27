@@ -1,6 +1,7 @@
 """Constants and configuration for the supervisor agent."""
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from datetime import timedelta
@@ -233,7 +234,10 @@ _LOOP_GUARD_TOOL_NAMES = {
     "write_todos",
 }
 _LOOP_GUARD_MAX_CONSECUTIVE = 4  # Was 12 — unreachable given _MAX_AGENT_HOPS_PER_TURN=3
-_MAX_AGENT_HOPS_PER_TURN = 3
+_MAX_AGENT_HOPS_PER_TURN = int(os.environ.get("MAX_AGENT_HOPS", "3"))
+# P1 loop-fix: hard cap on total meaningful steps across the entire flow.
+# At this threshold the flow is forced to synthesis regardless of critic decision.
+MAX_TOTAL_STEPS = int(os.environ.get("MAX_TOTAL_STEPS", "8"))
 _SANDBOX_CODE_TOOL_IDS = (
     "sandbox_write_file",
     "sandbox_read_file",

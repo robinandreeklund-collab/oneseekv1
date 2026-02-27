@@ -57,17 +57,13 @@ class SmhiToolDefinition:
 SMHI_TOOL_DEFINITIONS: list[SmhiToolDefinition] = [
     SmhiToolDefinition(
         tool_id="smhi_weather",
-        name="SMHI Weather (legacy)",
+        name="SMHI Weather (DEPRECATED)",
         description=(
-            "Bakåtkompatibelt verktyg för väderprognoser från SMHI (metfcst pmp3g). "
-            "Ange platsnamn via location (t.ex. location='Malmö') — verktyget geocodar automatiskt till lat/long. "
-            "Du behöver INTE ange lat/lon separat om du anger location."
+            "DEPRECATED — använd smhi_vaderprognoser_metfcst istället. "
+            "Anropa ALDRIG detta verktyg. Det är ett legacyverktyg som finns kvar enbart för bakåtkompatibilitet."
         ),
-        keywords=["smhi", "vader", "väder", "prognos", "temperatur", "vind", "regn"],
-        example_queries=[
-            "Vad blir vädret i Göteborg imorgon?",
-            "Temperatur i Stockholm nu",
-        ],
+        keywords=["smhi_weather_legacy_deprecated"],
+        example_queries=[],
         category=SMHI_CATEGORY_VADERPROGNOS,
         base_path="/api/category/pmp3g/version/2/geotype/point/lon/{lon}/lat/{lat}/data.json",
     ),

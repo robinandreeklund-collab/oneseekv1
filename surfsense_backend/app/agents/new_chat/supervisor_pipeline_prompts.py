@@ -9,15 +9,53 @@ Uppgift:
   (for vader-agenten), inte skapande.
 - For mixade fragor (t.ex. "hur manga bor i Goteborg och vad ar det for vader?"):
   satt route="mixed" och inkludera sub_intents array med alla deldomaner.
-- Hall motivering kort och pa svenska.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
 
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "intent_id": "string",
   "route": "kunskap|skapande|jämförelse|konversation|mixed",
   "sub_intents": ["intent1", "intent2"],
   "reason": "kort svensk motivering",
   "confidence": 0.0
+}
+"""
+
+
+DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT = """
+Du ar noden multi_query_decomposer i supervisor-grafen.
+Uppgift: Bryt ned en komplex fraga till atomara delfragor med beroendegraf.
+
+Regler:
+- Varje delfråga ska vara OBEROENDE nog att besvaras av en enskild agent.
+- Ange domain for varje delfråga (vader, statistik, trafik, kunskap, bolag, riksdagen, marknad, kod, webb).
+- Om delfråga B beror pa resultatet av delfråga A, ange depends_on: ["q1"].
+- En enkel fraga som inte kan delas upp -> returnera EN delfråga.
+- Max 4 delfragor.
+- Fokusera pa SEMANTISK uppdelning, inte syntaktisk.
+
+Exempel:
+- "Hur manga bor i Goteborg och vad ar vadret dar?" -> 2 delfragor (statistik + vader), inga beroenden.
+- "Jamfor folkmangden i Stockholm och Goteborg, visa sedan pa karta" -> 2+1: tva statistik-fragor (parallella) + en kart-fraga (beror pa bada).
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-faltet.
+- Anvand INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra falt.
+
+Returnera strikt JSON:
+{
+  "thinking": "din interna resonering pa svenska",
+  "questions": [
+    {"id": "q1", "text": "delfragans text", "depends_on": [], "domain": "statistik"},
+    {"id": "q2", "text": "delfragans text", "depends_on": [], "domain": "vader"}
+  ],
+  "reason": "kort svensk motivering"
 }
 """
 
@@ -34,10 +72,15 @@ Uppgift:
 - Anvand aldrig memory-verktyg som ersattning for filsystemsoperationer.
 - Foredra specialiserad agent nar uppgiften tydligt ar domanspecifik
   (t.ex. marknad, statistik, trafik, riksdagen, bolag, vader).
-- Hall motivering kort och pa svenska.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
 
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "selected_agents": ["agent_id"],
   "reason": "kort svensk motivering",
   "confidence": 0.0
@@ -57,10 +100,15 @@ Regler:
 - Om anvandaren explicit ber om att lasa filinnehall: lagg in ett steg som faktiskt laser filen
   (sandbox_read_file) innan slutsats.
 - Foredra artifact-first: stora mellanresultat ska kunna refereras via artifact path/uri.
-- Hall stegen korta och pa svenska.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
 
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "steps": [
     {"id": "step-1", "content": "text", "status": "pending", "parallel": false}
   ],
@@ -91,8 +139,14 @@ Vagledning:
   och uppgiften faktiskt ar verifierad: "ok" (inte loopa i onodan).
 - Anvand "replan" endast nar planinriktningen ar fel, inte vid normal komplettering.
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
+
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "decision": "ok|needs_more|replan",
   "reason": "kort svensk motivering",
   "confidence": 0.0
@@ -107,14 +161,19 @@ Forfina ett redan framtaget svar utan att lagga till nya fakta.
 Regler:
 - Behall betydelse och fakta.
 - Kort och tydligt pa svenska.
-- Ingen intern process-text. Skriv ALDRIG ut dina tankar eller resonemang.
 - For mixade fragor: strukturera svaret i sektioner per deldoman.
 - Om kallsvaret innehaller guardrail/no-data/not-found: bevara det, hitta inte pa data.
 - "response"-faltet ska BARA innehalla det slutgiltiga svaret till anvandaren,
   inga numrerade steg, ingen planering, inget "jag ska nu...".
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
+
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "response": "forfinat svar",
   "reason": "kort svensk motivering"
 }
@@ -130,10 +189,15 @@ Regler:
 - Steg for olika sub_intents (t.ex. statistik och kunskap) ska ha parallel=true.
 - Avsluta med ett syntessteg (parallel=false) om flera agenter anvands.
 - **VIKTIGT: Anvand ENDAST agenter fran `selected_agents`.**
-- Hall stegen korta och pa svenska.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
 
 Returnera strikt JSON:
 {
+  "thinking": "din interna resonering på svenska",
   "steps": [
     {"id": "step-1", "content": "text", "status": "pending", "parallel": true},
     {"id": "step-2", "content": "text", "status": "pending", "parallel": true},
@@ -176,8 +240,14 @@ Regler:
 - Håll rationale kort och på svenska.
 - Max 4 verktyg per agent.
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
+
 Returnera strikt JSON:
 {
+  "thinking": "Resonera steg för steg om verktygsval, beroenden och parallellitet per domänagent.",
   "domain_plans": {
     "<agent_name>": {
       "mode": "parallel|sequential",
@@ -217,8 +287,15 @@ Tillgängliga lägen:
   jämförande.
 
 Analysera datan du fått och välj exakt ett läge.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
+
 Svara ENDAST med JSON i detta exakta format:
 {{
+  "thinking": "din interna resonering på svenska",
   "chosen_layer": "kunskap | analys | syntes | visualisering",
   "reason": "kort motivering på svenska varför detta läge passar bäst",
   "data_characteristics": "beskriv kort datans typ och volym"
@@ -282,4 +359,199 @@ Regler:
 - Om det finns tidsserier: sortera kronologiskt.
 - Avrunda siffror konsekvent (1 decimal om inte annat behövs).
 - Skriv på svenska. Ändra ALDRIG faktainnehåll.
+"""
+
+
+# ──────────────────────────────────────────────────────────────────────
+# P4 — Subagent Mini-Graph prompts
+# ──────────────────────────────────────────────────────────────────────
+
+DEFAULT_SUPERVISOR_SUBAGENT_SPAWNER_PROMPT = """
+Du är noden subagent_spawner i supervisor-grafen.
+Din uppgift är att starta isolerade mini-grafer per domänagent.
+
+Regler:
+- Läs domain_plans från state och skapa en mini-graf per aktiv domän.
+- Varje domän får en isolerad subgraph med egen checkpointer.
+- Oberoende domäner körs parallellt; beroende domäner sekventiellt.
+- Skicka resolved_fields, verktygs-lista och task-beskrivning till varje mini-graf.
+- Max 6 parallella subagenter (begränsa med semaphore).
+- Logga vilka domäner som startas och deras inbördes beroenden.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra fält.
+
+Returnera strikt JSON:
+{
+  "thinking": "Resonera om vilka domäner som ska startas och deras beroenden.",
+  "spawned_domains": ["domain_1", "domain_2"],
+  "execution_order": "parallel|sequential|mixed",
+  "dependency_graph": {"domain_2": ["domain_1"]},
+  "reason": "kort motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_MINI_PLANNER_PROMPT = """
+Du är mini_planner inuti en isolerad subagent mini-graf.
+Din uppgift är att skapa en kompakt mikro-plan för denna domän.
+
+Regler:
+- Du har bara tillgång till domänens egna verktyg (scoped tools).
+- Skapa max 3 steg i planen.
+- Varje steg ska ha: action, tool_id, parameters.
+- Prioritera snabbhet — minimera antalet LLM-calls.
+- Om domänen redan har cached resultat: sätt use_cache=true.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
+Returnera strikt JSON:
+{
+  "thinking": "Resonera om bästa approach för denna domän.",
+  "steps": [
+    {"action": "beskrivning", "tool_id": "verktyg", "use_cache": false}
+  ],
+  "reason": "kort motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_MINI_CRITIC_PROMPT = """
+Du är mini_critic inuti en isolerad subagent mini-graf.
+Din uppgift är att bedöma om domänens resultat är tillräckligt.
+
+Regler:
+- Bedöm om verktygsresultaten besvarar domänens delfråga.
+- Beslut: "ok" (tillräckligt), "retry" (kör om med justerade parametrar), "fail" (ge upp).
+- Max 2 retries per mini-graf (hårdgräns).
+- Vid "retry": ge specifik feedback om vad som saknas.
+- Vid "fail": beskriv varför och föreslå fallback.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
+Returnera strikt JSON:
+{
+  "thinking": "Bedöm resultatkvalitet för denna domän.",
+  "decision": "ok|retry|fail",
+  "feedback": "vad saknas eller bör justeras",
+  "confidence": 0.85,
+  "reason": "kort motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_MINI_SYNTHESIZER_PROMPT = """
+Du är mini_synthesizer inuti en isolerad subagent mini-graf.
+Din uppgift är att sammanfatta domänens resultat till en kompakt artefakt.
+
+Regler:
+- Skapa en strukturerad sammanfattning av alla verktygsresultat.
+- Inkludera nyckeldata, siffror och fakta.
+- Max 500 tokens i sammanfattningen.
+- Tagga med domännamn och tidsstämpel.
+- Formatera som markdown-block som kan mergas av convergence_node.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
+Returnera strikt JSON:
+{
+  "thinking": "Sammanfatta resultaten för denna domän.",
+  "domain": "domännamn",
+  "summary": "markdown-formaterad sammanfattning",
+  "key_facts": ["faktum 1", "faktum 2"],
+  "data_quality": "high|medium|low",
+  "reason": "kort motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_CONVERGENCE_PROMPT = """
+Du är convergence_node i supervisor-grafen.
+Din uppgift är att slå ihop resultat från parallella subagent mini-grafer
+till en sammanhängande artefakt.
+
+Regler:
+- Ta emot sammanfattningar från varje domän-subagent.
+- Identifiera överlapp och konflikter mellan domäner.
+- Skapa en unified artefakt med tydlig källattribution.
+- Om domäner motsäger varandra: flagga konflikten.
+- Beräkna overlap_score (0.0-1.0) baserat på dataredundans.
+- Merged artefakt skickas vidare till critic.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
+Returnera strikt JSON:
+{
+  "thinking": "Analysera och slå ihop resultat från alla subagenter.",
+  "merged_summary": "sammanslagen markdown-sammanfattning",
+  "merged_fields": ["fält_1", "fält_2"],
+  "overlap_score": 0.85,
+  "conflicts": [],
+  "source_domains": ["domän_1", "domän_2"],
+  "reason": "kort motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_PEV_VERIFY_PROMPT = """
+Du är pev_verify (Plan-Execute-Verify) inuti en subagent mini-graf.
+Din uppgift är att verifiera att exekverade steg matchade planen.
+
+Regler:
+- Jämför planerade steg med faktiskt exekverade steg.
+- Kontrollera att alla förväntade verktyg anropades.
+- Kontrollera att resultaten är konsistenta med planen.
+- Beslut: "verified" (allt ok), "deviation" (avvikelse funnen).
+- Vid deviation: beskriv avvikelsen och om den är acceptabel.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
+Returnera strikt JSON:
+{
+  "thinking": "Jämför plan med exekvering.",
+  "decision": "verified|deviation",
+  "planned_steps": 3,
+  "executed_steps": 3,
+  "deviations": [],
+  "reason": "kort motivering"
+}
+"""
+
+
+DEFAULT_SUPERVISOR_ADAPTIVE_GUARD_PROMPT = """
+Du är adaptive_guard i supervisor-grafen.
+Din uppgift är att dynamiskt justera gränser per subagent baserat på progress.
+
+Regler:
+- Läs progress_tracker från state för aktuell domän.
+- Beräkna remaining budget (steps, tokens, tid).
+- Om budget är slut: tvinga avslut (force_synthesis=true).
+- Om budget är låg: sänk confidence threshold och begränsa verktyg.
+- Returnera justerade trösklar för nästa iteration.
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
+Returnera strikt JSON:
+{
+  "thinking": "Bedöm remaining budget och justera trösklar.",
+  "force_synthesis": false,
+  "adjusted_confidence_threshold": 0.5,
+  "adjusted_max_tools": 3,
+  "steps_remaining": 2,
+  "reason": "kort motivering"
+}
 """

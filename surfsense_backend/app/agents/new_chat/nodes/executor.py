@@ -8,6 +8,10 @@ from typing import Any, Callable
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
+from app.agents.new_chat.structured_schemas import (
+    ExecutorThinkingResult,
+    pydantic_to_response_format,
+)
 from app.agents.new_chat.token_budget import TokenBudget
 
 logger = logging.getLogger(__name__)
@@ -452,6 +456,7 @@ def _build_executor_updates_for_new_user_turn(
         "agent_hops": 0,
         "no_progress_runs": 0,
         "guard_parallel_preview": [],
+        "atomic_questions": [],
     }
     if incoming_turn_id:
         updates["active_turn_id"] = incoming_turn_id
@@ -477,6 +482,8 @@ def build_executor_nodes(
     format_cross_session_memory_context_fn: Callable[[dict[str, Any]], str | None],
     format_rolling_context_summary_context_fn: Callable[[dict[str, Any]], str | None],
     coerce_supervisor_tool_calls_fn: Callable[..., Any],
+    think_on_tool_calls: bool = True,
+    use_structured_output: bool = False,
 ):
     def _build_context_messages(
         *,
@@ -502,6 +509,17 @@ def build_executor_nodes(
 
         # Base system prompt (stored once per chat, not repeated per turn).
         base_system_prompt = str(state.get("worker_system_prompt") or "").strip()
+        # P1: strip <think> instructions from executor system prompt when
+        # THINK_ON_TOOL_CALLS is disabled.  This prevents the model from
+        # wasting tokens on reasoning blocks before making tool calls.
+        if not think_on_tool_calls and base_system_prompt:
+            base_system_prompt = _THINK_TAG_RE.sub("", base_system_prompt)
+            base_system_prompt = re.sub(
+                r"KRITISKT:.*?<think>-block\.",
+                "",
+                base_system_prompt,
+                flags=re.DOTALL,
+            ).strip()
 
         plan_context = None if new_user_turn else format_plan_context_fn(state)
         recent_context = None if new_user_turn else format_recent_calls_fn(state)
@@ -556,6 +574,51 @@ def build_executor_nodes(
             budget = TokenBudget(model_name=str(model_name))
             messages = budget.fit_messages(messages)
         return messages
+
+    # NOTE: Do NOT pass response_format to the executor.
+    # The executor's primary job is making tool calls.  Setting
+    # response_format forces the model to produce JSON instead of
+    # choosing tool calls, which causes an infinite loop (executor →
+    # planner → executor) where tools never execute.
+    # Thinking capture for the executor is handled by the streaming
+    # layer (_ThinkStreamFilter / native reasoning_content).
+    _executor_invoke_kwargs: dict[str, Any] = {}
+
+    def _strip_thinking_from_response(response: AIMessage) -> AIMessage:
+        """Remove ``{"thinking": ...}`` JSON from content if present.
+
+        Safety net: even without response_format, some models may emit
+        structured JSON with a thinking field in the content (e.g. when
+        the system prompt asks for it).  Strip it to keep history clean.
+        """
+        raw = getattr(response, "content", "") or ""
+        if not isinstance(raw, str) or not raw.strip():
+            return response
+        trimmed = raw.strip()
+        if not trimmed.startswith("{"):
+            return response
+        try:
+            parsed = json.loads(trimmed)
+        except (json.JSONDecodeError, ValueError):
+            return response
+        if not isinstance(parsed, dict) or "thinking" not in parsed:
+            return response
+        parsed.pop("thinking", None)
+        clean = json.dumps(parsed, ensure_ascii=False) if parsed else ""
+        try:
+            return response.model_copy(update={"content": clean})
+        except Exception:
+            return AIMessage(
+                content=clean,
+                tool_calls=getattr(response, "tool_calls", []) or [],
+                additional_kwargs=dict(
+                    getattr(response, "additional_kwargs", {}) or {}
+                ),
+                response_metadata=dict(
+                    getattr(response, "response_metadata", {}) or {}
+                ),
+                id=getattr(response, "id", None),
+            )
 
     def call_model(
         state: dict[str, Any],
@@ -678,7 +741,7 @@ def build_executor_nodes(
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
         messages = _normalize_messages_for_provider_compat(messages)
         try:
-            response = llm_with_tools.invoke(messages)
+            response = llm_with_tools.invoke(messages, **_executor_invoke_kwargs)
         except Exception as exc:
             if not _is_jinja_nullvalue_error(exc):
                 raise
@@ -687,7 +750,7 @@ def build_executor_nodes(
                 "Template NullValue in sync invoke; retrying with tool-result compaction"
             )
             try:
-                response = llm_with_tools.invoke(retry_messages)
+                response = llm_with_tools.invoke(retry_messages, **_executor_invoke_kwargs)
             except Exception as retry_exc:
                 if not _is_jinja_nullvalue_error(retry_exc):
                     raise
@@ -703,6 +766,7 @@ def build_executor_nodes(
             allow_multiple=bool(compare_mode),
             state=state,
         )
+        response = _strip_thinking_from_response(response)
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:
             updates.update(
@@ -738,7 +802,7 @@ def build_executor_nodes(
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
         messages = _normalize_messages_for_provider_compat(messages)
         try:
-            response = await llm_with_tools.ainvoke(messages)
+            response = await llm_with_tools.ainvoke(messages, **_executor_invoke_kwargs)
         except Exception as exc:
             if not _is_jinja_nullvalue_error(exc):
                 raise
@@ -747,7 +811,7 @@ def build_executor_nodes(
                 "Template NullValue in async invoke; retrying with tool-result compaction"
             )
             try:
-                response = await llm_with_tools.ainvoke(retry_messages)
+                response = await llm_with_tools.ainvoke(retry_messages, **_executor_invoke_kwargs)
             except Exception as retry_exc:
                 if not _is_jinja_nullvalue_error(retry_exc):
                     raise
@@ -763,6 +827,7 @@ def build_executor_nodes(
             allow_multiple=bool(compare_mode),
             state=state,
         )
+        response = _strip_thinking_from_response(response)
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:
             updates.update(
@@ -861,6 +926,41 @@ def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
     return tool_def
 
 
+_BIGTOOL_MAX_SAME_TOOL_CALLS = 2
+
+_FORCE_SUMMARIZE_INSTRUCTION = (
+    "Du har redan hämtat tillräckligt med data från verktygen ovan. "
+    "Sammanfatta nu resultaten i ett kort, tydligt svar till användaren. "
+    "Anropa INGA fler verktyg — svara enbart med text."
+)
+
+
+def _detect_repeated_tool_in_history(messages: Any) -> bool:
+    """Return True if the same non-retrieval tool has been called >= threshold times consecutively."""
+    if not isinstance(messages, list):
+        return False
+    consecutive = 0
+    last_tool_name = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            break
+        if not isinstance(msg, ToolMessage):
+            continue
+        name = getattr(msg, "name", "") or ""
+        if not name:
+            continue
+        # Skip the retrieve-tools meta-tool; only guard domain tools
+        if "retrieve" in name.lower() and "tool" in name.lower():
+            continue
+        if not last_tool_name:
+            last_tool_name = name
+        if name == last_tool_name:
+            consecutive += 1
+        else:
+            break
+    return consecutive >= _BIGTOOL_MAX_SAME_TOOL_CALLS
+
+
 class NormalizingChatWrapper:
     """Wraps any LanguageModelLike and normalizes messages before every invocation.
 
@@ -870,6 +970,11 @@ class NormalizingChatWrapper:
     ``_normalize_messages_for_provider_compat`` is applied at the point of
     invocation regardless of which graph node initiated the call.
 
+    Also applies a **tool-call loop guard**: if the message history shows the
+    same domain tool has been called >= ``_BIGTOOL_MAX_SAME_TOOL_CALLS`` times
+    consecutively, the LLM is re-invoked *without tools* and with an explicit
+    instruction to summarize the data it already has, forcing a text response.
+
     Usage::
 
         from app.agents.new_chat.nodes.executor import NormalizingChatWrapper
@@ -877,8 +982,11 @@ class NormalizingChatWrapper:
         graph = create_bigtool_agent(wrapped_llm, tool_registry, ...)
     """
 
-    def __init__(self, llm: Any) -> None:
+    def __init__(self, llm: Any, *, _base_llm: Any = None) -> None:
         self._llm = llm
+        # _base_llm is the original un-bound LLM, needed to re-invoke
+        # without tools when the loop guard triggers.
+        self._base_llm = _base_llm or llm
 
     # ------------------------------------------------------------------ #
     # Delegate attribute access to the wrapped LLM so that LangChain /
@@ -911,18 +1019,28 @@ class NormalizingChatWrapper:
                     raw = tool_def
                 formatted.append(_sanitize_tool_schema_for_strict_templates(raw))
             return NormalizingChatWrapper(
-                self._llm.bind(tools=formatted, **kwargs)
+                self._llm.bind(tools=formatted, **kwargs),
+                _base_llm=self._base_llm,
             )
         except Exception:
             # Fallback: let the underlying LLM handle bind_tools directly.
-            return NormalizingChatWrapper(self._llm.bind_tools(tools, **kwargs))
+            return NormalizingChatWrapper(
+                self._llm.bind_tools(tools, **kwargs),
+                _base_llm=self._base_llm,
+            )
 
     def bind(self, **kwargs: Any) -> "NormalizingChatWrapper":
         """Return a new wrapper around the kwarg-bound LLM."""
-        return NormalizingChatWrapper(self._llm.bind(**kwargs))
+        return NormalizingChatWrapper(
+            self._llm.bind(**kwargs),
+            _base_llm=self._base_llm,
+        )
 
     def with_config(self, *args: Any, **kwargs: Any) -> "NormalizingChatWrapper":
-        return NormalizingChatWrapper(self._llm.with_config(*args, **kwargs))
+        return NormalizingChatWrapper(
+            self._llm.with_config(*args, **kwargs),
+            _base_llm=self._base_llm,
+        )
 
     def _normalize(self, input_: Any) -> Any:
         """Normalize a messages list or a dict with a 'messages' key."""
@@ -932,11 +1050,47 @@ class NormalizingChatWrapper:
             return {**input_, "messages": _normalize_messages_for_provider_compat(input_["messages"])}
         return input_
 
+    def _should_force_summary(self, input_: Any) -> bool:
+        """Check if the same tool has been called too many times."""
+        messages = input_ if isinstance(input_, list) else (
+            input_.get("messages") if isinstance(input_, dict) else None
+        )
+        return bool(messages and _detect_repeated_tool_in_history(messages))
+
+    def _build_summary_messages(self, input_: Any) -> list:
+        """Build a message list that asks the LLM to summarize tool results (no tools)."""
+        messages = input_ if isinstance(input_, list) else (
+            input_.get("messages", []) if isinstance(input_, dict) else []
+        )
+        return list(messages) + [
+            SystemMessage(content=_FORCE_SUMMARIZE_INSTRUCTION)
+        ]
+
     def invoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
-        return self._llm.invoke(self._normalize(input_), config, **kwargs)
+        normalized = self._normalize(input_)
+        if self._should_force_summary(normalized):
+            logger.info(
+                "bigtool loop guard: re-invoking LLM without tools to force "
+                "text summary (same tool called %d+ times)",
+                _BIGTOOL_MAX_SAME_TOOL_CALLS,
+            )
+            summary_msgs = self._build_summary_messages(normalized)
+            summary_msgs = _normalize_messages_for_provider_compat(summary_msgs)
+            return self._base_llm.invoke(summary_msgs, config)
+        return self._llm.invoke(normalized, config, **kwargs)
 
     async def ainvoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
-        return await self._llm.ainvoke(self._normalize(input_), config, **kwargs)
+        normalized = self._normalize(input_)
+        if self._should_force_summary(normalized):
+            logger.info(
+                "bigtool loop guard: re-invoking LLM without tools to force "
+                "text summary (same tool called %d+ times)",
+                _BIGTOOL_MAX_SAME_TOOL_CALLS,
+            )
+            summary_msgs = self._build_summary_messages(normalized)
+            summary_msgs = _normalize_messages_for_provider_compat(summary_msgs)
+            return await self._base_llm.ainvoke(summary_msgs, config)
+        return await self._llm.ainvoke(normalized, config, **kwargs)
 
     def stream(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
         return self._llm.stream(self._normalize(input_), config, **kwargs)

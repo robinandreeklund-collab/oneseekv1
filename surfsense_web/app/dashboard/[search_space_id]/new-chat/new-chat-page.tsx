@@ -72,7 +72,11 @@ import { chatTraceApiService } from "@/lib/apis/chat-trace-api.service";
 import { documentsApiService } from "@/lib/apis/documents-api.service";
 import { getBearerToken } from "@/lib/auth-utils";
 import { createAttachmentAdapter, extractAttachmentContent } from "@/lib/chat/attachment-adapter";
-import { convertToThreadMessage } from "@/lib/chat/message-utils";
+import {
+	convertToThreadMessage,
+	extractReasoningText as extractReasoningTextZod,
+	extractStructuredFields,
+} from "@/lib/chat/message-utils";
 import {
 	isPodcastGenerating,
 	looksLikePodcastRequest,
@@ -133,6 +137,24 @@ function extractThinkingSteps(content: unknown): ThinkingStep[] {
 	) as { type: "thinking-steps"; steps: ThinkingStep[] } | undefined;
 
 	return thinkingPart?.steps || [];
+}
+
+/**
+ * Extract persisted reasoning text from message content.
+ * Returns the reasoning string or empty string if not persisted.
+ */
+function extractReasoningText(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+
+	const part = content.find(
+		(p: unknown) =>
+			typeof p === "object" &&
+			p !== null &&
+			"type" in p &&
+			(p as { type: string }).type === "reasoning-text"
+	) as { type: "reasoning-text"; text: string } | undefined;
+
+	return part?.text || "";
 }
 
 /**
@@ -293,6 +315,9 @@ export default function NewChatPage() {
 	const [threadId, setThreadId] = useState<number | null>(null);
 	const [currentThread, setCurrentThread] = useState<ThreadRecord | null>(null);
 	const lastAutoTitleRef = useRef<string | null>(null);
+	// Track thread IDs created in this session to prevent initializeThread from
+	// wiping state when window.history.replaceState triggers useSearchParams update
+	const justCreatedThreadRef = useRef<number | null>(null);
 	const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
 	const [isRunning, setIsRunning] = useState(false);
 	// Store thinking steps per message ID - kept separate from content to avoid
@@ -305,6 +330,11 @@ export default function NewChatPage() {
 	>(new Map());
 	const [messageReasoningMap, setMessageReasoningMap] = useState<Map<string, string>>(new Map());
 	const [messageTimeline, setMessageTimeline] = useState<Map<string, TimelineEntry[]>>(new Map());
+	// P1-Extra.5: Per-message structured field decisions from pipeline nodes.
+	// Map<messageId, Map<node, Array<{node, field, value}>>>
+	const [messageStructuredFields, setMessageStructuredFields] = useState<
+		Map<string, Map<string, { node: string; field: string; value: unknown }[]>>
+	>(new Map());
 	const [messageTraceSessions, setMessageTraceSessions] = useState<Map<string, string>>(
 		new Map()
 	);
@@ -485,6 +515,14 @@ export default function NewChatPage() {
 	// Initialize thread and load messages
 	// For new chats (no urlChatId), we use lazy creation - thread is created on first message
 	const initializeThread = useCallback(async () => {
+		// In Next.js 14+, window.history.replaceState is intercepted by the App Router,
+		// causing useSearchParams to update and urlChatId to change. This would re-trigger
+		// initializeThread and wipe all state (messages, threadId, etc.) while streaming
+		// is still in progress. Skip re-initialization if we just created this thread.
+		if (urlChatId > 0 && urlChatId === justCreatedThreadRef.current) {
+			return;
+		}
+
 		setIsInitializing(true);
 
 		// Reset all state when switching between chats to prevent stale data
@@ -527,8 +565,10 @@ export default function NewChatPage() {
 					const loadedMessages = messagesResponse.messages.map(convertToThreadMessage);
 					setMessages(loadedMessages);
 
-					// Extract and restore thinking steps from persisted messages
+					// Extract and restore thinking steps + reasoning from persisted messages
 					const restoredThinkingSteps = new Map<string, ThinkingStep[]>();
+					const restoredReasoningMap = new Map<string, string>();
+					const restoredStructuredFields = new Map<string, Map<string, { node: string; field: string; value: unknown }[]>>();
 					// Extract and restore mentioned documents from persisted messages
 					const restoredDocsMap: Record<string, MentionedDocumentInfo[]> = {};
 
@@ -538,6 +578,16 @@ export default function NewChatPage() {
 							if (steps.length > 0) {
 								restoredThinkingSteps.set(`msg-${msg.id}`, steps);
 							}
+							// P1 Extra: restore persisted reasoning text
+							const reasoning = extractReasoningText(msg.content);
+							if (reasoning) {
+								restoredReasoningMap.set(`msg-${msg.id}`, reasoning);
+							}
+							// P1-Extra.6: restore persisted structured fields
+							const structFields = extractStructuredFields(msg.content);
+							if (structFields) {
+								restoredStructuredFields.set(`msg-${msg.id}`, structFields);
+							}
 						}
 						if (msg.role === "user") {
 							const docs = extractMentionedDocuments(msg.content);
@@ -546,16 +596,51 @@ export default function NewChatPage() {
 							}
 						}
 					}
-					if (restoredThinkingSteps.size > 0) {
-						setMessageThinkingSteps(restoredThinkingSteps);
-						// Build timeline from restored thinking steps (reasoning not persisted)
+					if (restoredThinkingSteps.size > 0 || restoredReasoningMap.size > 0 || restoredStructuredFields.size > 0) {
+						if (restoredThinkingSteps.size > 0) {
+							setMessageThinkingSteps(restoredThinkingSteps);
+						}
+						if (restoredReasoningMap.size > 0) {
+							setMessageReasoningMap(restoredReasoningMap);
+						}
+						if (restoredStructuredFields.size > 0) {
+							setMessageStructuredFields(restoredStructuredFields);
+						}
+						// Build timeline from restored thinking steps, reasoning text, and structured fields
 						const restoredTimeline = new Map<string, TimelineEntry[]>();
-						restoredThinkingSteps.forEach((steps, msgId) => {
-							restoredTimeline.set(
-								msgId,
-								steps.map((s) => ({ kind: "step" as const, stepId: s.id })),
-							);
-						});
+						const allMsgIds = new Set([
+							...restoredThinkingSteps.keys(),
+							...restoredReasoningMap.keys(),
+							...restoredStructuredFields.keys(),
+						]);
+						for (const msgId of allMsgIds) {
+							const entries: TimelineEntry[] = [];
+							const reasoning = restoredReasoningMap.get(msgId);
+							const steps = restoredThinkingSteps.get(msgId);
+							const sf = restoredStructuredFields.get(msgId);
+							// Add reasoning as a single block (original interleaving is lost,
+							// but the full text is preserved for display)
+							if (reasoning) {
+								entries.push({ kind: "reasoning" as const, text: reasoning });
+							}
+							// Add structured field badges
+							if (sf) {
+								for (const [, fieldEntries] of sf) {
+									for (const entry of fieldEntries) {
+										entries.push({ kind: "structured" as const, node: entry.node, field: entry.field, value: entry.value });
+									}
+								}
+							}
+							// Add step entries after reasoning
+							if (steps) {
+								for (const s of steps) {
+									entries.push({ kind: "step" as const, stepId: s.id });
+								}
+							}
+							if (entries.length > 0) {
+								restoredTimeline.set(msgId, entries);
+							}
+						}
 						setMessageTimeline(restoredTimeline);
 					}
 					if (Object.keys(restoredDocsMap).length > 0) {
@@ -863,6 +948,9 @@ export default function NewChatPage() {
 					trackChatCreated(searchSpaceId, currentThreadId);
 
 					isNewThread = true;
+					// Mark this thread as just-created so initializeThread won't wipe
+					// state when the URL change triggers useSearchParams to update
+					justCreatedThreadRef.current = currentThreadId;
 					// Update URL silently using browser API (not router.replace) to avoid
 					// interrupting the ongoing fetch/streaming with React navigation
 					window.history.replaceState(
@@ -1016,6 +1104,7 @@ export default function NewChatPage() {
 			let currentReasoningText = "";
 			const currentTimeline: TimelineEntry[] = [];
 			const timelineStepIds = new Set<string>();
+			const currentStructuredFields = new Map<string, { node: string; field: string; value: unknown }[]>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 
@@ -1097,7 +1186,7 @@ export default function NewChatPage() {
 					: [{ type: "text", text: "" }];
 			};
 
-			// Helper to build content for persistence (includes thinking-steps for restoration)
+			// Helper to build content for persistence (includes thinking-steps and reasoning for restoration)
 			const buildContentForPersistence = (): unknown[] => {
 				const parts: unknown[] = [];
 
@@ -1108,8 +1197,23 @@ export default function NewChatPage() {
 						steps: Array.from(currentThinkingSteps.values()),
 					});
 				}
+				// P1 Extra: persist reasoning text so it survives page refresh
+				if (currentReasoningText) {
+					parts.push({
+						type: "reasoning-text",
+						text: currentReasoningText,
+					});
+				}
 				if (compareSummary) {
 					parts.push({ type: "compare-summary", summary: compareSummary });
+				}
+				// P1-Extra.6: persist structured field decisions
+				if (currentStructuredFields.size > 0) {
+					const fieldsObj: Record<string, { node: string; field: string; value: unknown }[]> = {};
+					for (const [node, entries] of currentStructuredFields) {
+						fieldsObj[node] = entries;
+					}
+					parts.push({ type: "structured-fields", fields: fieldsObj });
 				}
 
 				// Add content parts (filtered)
@@ -1394,6 +1498,50 @@ export default function NewChatPage() {
 											break;
 										}
 
+										// P1-Extra.5: structured field decisions from pipeline nodes
+										case "structured-field": {
+											const sfNode = String((parsed as any).node ?? "");
+											const sfField = String((parsed as any).field ?? "");
+											const sfValue = (parsed as any).value;
+											if (sfNode && sfField) {
+												setMessageStructuredFields((prev) => {
+													const next = new Map(prev);
+													const fields = next.get(assistantMsgId) ?? new Map<string, { node: string; field: string; value: unknown }[]>();
+													const entries = fields.get(sfNode) ?? [];
+													entries.push({ node: sfNode, field: sfField, value: sfValue });
+													fields.set(sfNode, entries);
+													next.set(assistantMsgId, fields);
+													return next;
+												});
+												// Also accumulate locally for persistence
+												const localEntries = currentStructuredFields.get(sfNode) ?? [];
+												localEntries.push({ node: sfNode, field: sfField, value: sfValue });
+												currentStructuredFields.set(sfNode, localEntries);
+												currentTimeline.push({ kind: "structured", node: sfNode, field: sfField, value: sfValue });
+												setMessageTimeline((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentTimeline]);
+													return newMap;
+												});
+											}
+											break;
+										}
+
+										// P1-Extra.5: thinking-persist for DB persistence
+										case "data-thinking-persist": {
+											const tpData = parsed.data as { node?: string; thinking?: string } | undefined;
+											const tpNode = String(tpData?.node ?? "");
+											const tpThinking = String(tpData?.thinking ?? "");
+											if (tpNode && tpThinking) {
+												currentReasoningText += `\n--- ${tpNode} ---\n${tpThinking}`;
+												setMessageReasoningMap((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, currentReasoningText);
+													return newMap;
+												});
+											}
+											break;
+										}
 
 										case "reasoning-delta": {
 											if (parsed.delta) {
@@ -1488,6 +1636,16 @@ export default function NewChatPage() {
 								const newMap = new Map(prev);
 								newMap.delete(assistantMsgId);
 								newMap.set(newMsgId, tl);
+								return newMap;
+							}
+							return prev;
+						});
+						setMessageStructuredFields((prev) => {
+							const sf = prev.get(assistantMsgId);
+							if (sf) {
+								const newMap = new Map(prev);
+								newMap.delete(assistantMsgId);
+								newMap.set(newMsgId, sf);
 								return newMap;
 							}
 							return prev;
@@ -1777,6 +1935,7 @@ export default function NewChatPage() {
 			let currentReasoningText = "";
 			const currentTimeline: TimelineEntry[] = [];
 			const timelineStepIds = new Set<string>();
+			const currentStructuredFields = new Map<string, { node: string; field: string; value: unknown }[]>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 
@@ -1846,8 +2005,23 @@ export default function NewChatPage() {
 						steps: Array.from(currentThinkingSteps.values()),
 					});
 				}
+				// P1 Extra: persist reasoning text so it survives page refresh
+				if (currentReasoningText) {
+					parts.push({
+						type: "reasoning-text",
+						text: currentReasoningText,
+					});
+				}
 				if (compareSummary) {
 					parts.push({ type: "compare-summary", summary: compareSummary });
+				}
+				// P1-Extra.6: persist structured field decisions
+				if (currentStructuredFields.size > 0) {
+					const fieldsObj: Record<string, { node: string; field: string; value: unknown }[]> = {};
+					for (const [node, entries] of currentStructuredFields) {
+						fieldsObj[node] = entries;
+					}
+					parts.push({ type: "structured-fields", fields: fieldsObj });
 				}
 				for (const part of contentParts) {
 					if (part.type === "text" && part.text.length > 0) {
@@ -2093,6 +2267,50 @@ export default function NewChatPage() {
 											break;
 										}
 
+										// P1-Extra.5: structured field decisions from pipeline nodes
+										case "structured-field": {
+											const sfNode2 = String((parsed as any).node ?? "");
+											const sfField2 = String((parsed as any).field ?? "");
+											const sfValue2 = (parsed as any).value;
+											if (sfNode2 && sfField2) {
+												setMessageStructuredFields((prev) => {
+													const next = new Map(prev);
+													const fields = next.get(assistantMsgId) ?? new Map<string, { node: string; field: string; value: unknown }[]>();
+													const entries = fields.get(sfNode2) ?? [];
+													entries.push({ node: sfNode2, field: sfField2, value: sfValue2 });
+													fields.set(sfNode2, entries);
+													next.set(assistantMsgId, fields);
+													return next;
+												});
+												// Also accumulate locally for persistence
+												const localEntries2 = currentStructuredFields.get(sfNode2) ?? [];
+												localEntries2.push({ node: sfNode2, field: sfField2, value: sfValue2 });
+												currentStructuredFields.set(sfNode2, localEntries2);
+												currentTimeline.push({ kind: "structured", node: sfNode2, field: sfField2, value: sfValue2 });
+												setMessageTimeline((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, [...currentTimeline]);
+													return newMap;
+												});
+											}
+											break;
+										}
+
+										// P1-Extra.5: thinking-persist for DB persistence
+										case "data-thinking-persist": {
+											const tpData2 = parsed.data as { node?: string; thinking?: string } | undefined;
+											const tpNode2 = String(tpData2?.node ?? "");
+											const tpThinking2 = String(tpData2?.thinking ?? "");
+											if (tpNode2 && tpThinking2) {
+												currentReasoningText += `\n--- ${tpNode2} ---\n${tpThinking2}`;
+												setMessageReasoningMap((prev) => {
+													const newMap = new Map(prev);
+													newMap.set(assistantMsgId, currentReasoningText);
+													return newMap;
+												});
+											}
+											break;
+										}
 
 										case "reasoning-delta": {
 											if (parsed.delta) {
@@ -2191,6 +2409,16 @@ export default function NewChatPage() {
 							const newMap = new Map(prev);
 							newMap.delete(assistantMsgId);
 							newMap.set(newMsgId, tl);
+							return newMap;
+						}
+						return prev;
+					});
+					setMessageStructuredFields((prev) => {
+						const sf = prev.get(assistantMsgId);
+						if (sf) {
+							const newMap = new Map(prev);
+							newMap.delete(assistantMsgId);
+							newMap.set(newMsgId, sf);
 							return newMap;
 						}
 						return prev;

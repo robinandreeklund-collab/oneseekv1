@@ -20,15 +20,23 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
     DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
     DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
+    DEFAULT_SUPERVISOR_ADAPTIVE_GUARD_PROMPT,
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_CONVERGENCE_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT,
     DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
     DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    DEFAULT_SUPERVISOR_MINI_CRITIC_PROMPT,
+    DEFAULT_SUPERVISOR_MINI_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_MINI_SYNTHESIZER_PROMPT,
     DEFAULT_SUPERVISOR_MULTI_DOMAIN_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_PEV_VERIFY_PROMPT,
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
+    DEFAULT_SUPERVISOR_SUBAGENT_SPAWNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
 )
@@ -81,6 +89,11 @@ def infer_prompt_node_group(key: str) -> tuple[str, str]:
         return ("router", "Router")
     if normalized_key.startswith("compare."):
         return ("compare", "Compare")
+    # P4: Mini-graph internal nodes → subagent_mini group
+    if normalized_key.startswith("supervisor.mini_") or normalized_key.startswith(
+        "supervisor.pev_"
+    ):
+        return ("subagent_mini", "Subagent Mini-Graph")
     if normalized_key == "agent.supervisor.system" or normalized_key.startswith(
         "supervisor."
     ):
@@ -106,6 +119,7 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "agent.supervisor.system",
     "compare.supervisor.instructions",
     "supervisor.intent_resolver.system",
+    "supervisor.decomposer.system",
     "supervisor.agent_resolver.system",
     "supervisor.planner.system",
     "supervisor.planner.multi_domain.system",
@@ -130,6 +144,14 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "supervisor.hitl.planner.message",
     "supervisor.hitl.execution.message",
     "supervisor.hitl.synthesis.message",
+    # P4 — Subagent Mini-Graph prompts
+    "supervisor.subagent_spawner.system",
+    "supervisor.mini_planner.system",
+    "supervisor.mini_critic.system",
+    "supervisor.mini_synthesizer.system",
+    "supervisor.convergence.system",
+    "supervisor.pev_verify.system",
+    "supervisor.adaptive_guard.system",
     # Worker prompts
     "agent.worker.knowledge",
     "agent.knowledge.system",
@@ -204,6 +226,12 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Supervisor intent resolver prompt",
         description="Prompt for intent_resolver node in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    ),
+    "supervisor.decomposer.system": PromptDefinition(
+        key="supervisor.decomposer.system",
+        label="Supervisor multi-query decomposer prompt",
+        description="Prompt for multi_query_decomposer node — bryter ned komplexa frågor till atomära delfrågor med beroendegraf.",
+        default_prompt=DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT,
     ),
     "supervisor.agent_resolver.system": PromptDefinition(
         key="supervisor.agent_resolver.system",
@@ -364,6 +392,49 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Supervisor HITL synthesis confirmation message",
         description="User-facing confirmation message before final delivery.",
         default_prompt=DEFAULT_SUPERVISOR_HITL_SYNTHESIS_MESSAGE,
+    ),
+    # ── P4 — Subagent Mini-Graph prompts ──
+    "supervisor.subagent_spawner.system": PromptDefinition(
+        key="supervisor.subagent_spawner.system",
+        label="Subagent Spawner prompt",
+        description="Prompt for subagent_spawner node — startar isolerade mini-grafer per domänagent (P4.1).",
+        default_prompt=DEFAULT_SUPERVISOR_SUBAGENT_SPAWNER_PROMPT,
+    ),
+    "supervisor.mini_planner.system": PromptDefinition(
+        key="supervisor.mini_planner.system",
+        label="Mini Planner prompt",
+        description="Prompt for mini_planner inuti subagent mini-graf — skapar kompakt mikro-plan per domän (P4.1).",
+        default_prompt=DEFAULT_SUPERVISOR_MINI_PLANNER_PROMPT,
+    ),
+    "supervisor.mini_critic.system": PromptDefinition(
+        key="supervisor.mini_critic.system",
+        label="Mini Critic prompt",
+        description="Prompt for mini_critic inuti subagent mini-graf — bedömer domänresultat (P4.1).",
+        default_prompt=DEFAULT_SUPERVISOR_MINI_CRITIC_PROMPT,
+    ),
+    "supervisor.mini_synthesizer.system": PromptDefinition(
+        key="supervisor.mini_synthesizer.system",
+        label="Mini Synthesizer prompt",
+        description="Prompt for mini_synthesizer inuti subagent mini-graf — sammanfattar domänresultat (P4.1).",
+        default_prompt=DEFAULT_SUPERVISOR_MINI_SYNTHESIZER_PROMPT,
+    ),
+    "supervisor.convergence.system": PromptDefinition(
+        key="supervisor.convergence.system",
+        label="Convergence Node prompt",
+        description="Prompt for convergence_node — slår ihop resultat från parallella subagent mini-grafer (P4.1).",
+        default_prompt=DEFAULT_SUPERVISOR_CONVERGENCE_PROMPT,
+    ),
+    "supervisor.pev_verify.system": PromptDefinition(
+        key="supervisor.pev_verify.system",
+        label="PEV Verify prompt",
+        description="Prompt for pev_verify (Plan-Execute-Verify) — verifierar att exekvering matchar plan (P4.1d).",
+        default_prompt=DEFAULT_SUPERVISOR_PEV_VERIFY_PROMPT,
+    ),
+    "supervisor.adaptive_guard.system": PromptDefinition(
+        key="supervisor.adaptive_guard.system",
+        label="Adaptive Guard prompt",
+        description="Prompt for adaptive_guard — dynamisk budget- och tröskeljustering per subagent (P4.2a).",
+        default_prompt=DEFAULT_SUPERVISOR_ADAPTIVE_GUARD_PROMPT,
     ),
     "agent.worker.knowledge": PromptDefinition(
         key="agent.worker.knowledge",

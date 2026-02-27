@@ -311,6 +311,8 @@ const STAGE_COLORS: Record<string, string> = {
 	speculative: "hsl(215 14% 50%)",
 	planning: "hsl(217 91% 60%)",
 	tool_resolution: "hsl(189 94% 43%)",
+	subagent: "hsl(245 58% 51%)",
+	compare: "hsl(280 65% 55%)",
 	execution: "hsl(160 84% 39%)",
 	post_processing: "hsl(215 14% 50%)",
 	evaluation: "hsl(25 95% 53%)",
@@ -322,9 +324,11 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		// ── Entry ──
 		"node:resolve_intent": { x: 0, y: 260 },
 		"node:memory_context": { x: 240, y: 260 },
+		// ── Multi-query decomposer (P3) ──
+		"node:multi_query_decomposer": { x: 360, y: 140 },
 		// ── Fast path & speculative ──
 		"node:smalltalk": { x: 480, y: 20 },
-		"node:speculative": { x: 480, y: 140 },
+		"node:speculative": { x: 580, y: 140 },
 		// ── Planning ──
 		"node:agent_resolver": { x: 480, y: 260 },
 		"node:planner": { x: 720, y: 260 },
@@ -334,7 +338,7 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		"node:speculative_merge": { x: 720, y: 400 },
 		"node:execution_router": { x: 960, y: 400 },
 		"node:domain_planner": { x: 1200, y: 400 },
-		// ── Execution ──
+		// ── Execution (inline path) ──
 		"node:execution_hitl_gate": { x: 1440, y: 330 },
 		"node:executor": { x: 1680, y: 330 },
 		"node:tools": { x: 1920, y: 220 },
@@ -356,6 +360,21 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		"node:response_layer_analys": { x: 2640, y: 670 },
 		"node:response_layer_syntes": { x: 2640, y: 750 },
 		"node:response_layer_visualisering": { x: 2640, y: 830 },
+		// ── P4: Subagent Mini-Graphs (below main flow) ──
+		"node:subagent_spawner": { x: 1200, y: 950 },
+		"node:mini_planner": { x: 1440, y: 950 },
+		"node:semantic_cache": { x: 1680, y: 950 },
+		"node:mini_executor": { x: 1680, y: 1100 },
+		"node:mini_critic": { x: 1920, y: 1100 },
+		"node:adaptive_guard": { x: 2160, y: 1100 },
+		"node:pev_verify": { x: 2160, y: 950 },
+		"node:mini_synthesizer": { x: 2400, y: 1100 },
+		"node:convergence_node": { x: 2400, y: 1250 },
+		// ── Compare mode (separate branch from resolve_intent) ──
+		"node:compare_fan_out": { x: 240, y: 1400 },
+		"node:compare_collect": { x: 480, y: 1400 },
+		"node:compare_tavily": { x: 720, y: 1400 },
+		"node:compare_synthesizer": { x: 960, y: 1400 },
 	};
 
 	return pipelineNodes.map((node) => ({

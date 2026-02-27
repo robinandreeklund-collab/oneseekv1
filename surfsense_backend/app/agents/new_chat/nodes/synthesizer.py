@@ -7,6 +7,12 @@ from typing import Any, Callable
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from ..structured_schemas import (
+    SynthesizerResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 _FILESYSTEM_QUERY_RE = re.compile(
     r"(/workspace|/tmp|sandbox_|\\b(file|files|fil|filer|directory|katalog|mapp|read|write|l[aä]s|skriv)\\b)",
     re.IGNORECASE,
@@ -182,12 +188,23 @@ def build_synthesizer_node(
         )
         refined_response = source_response
         try:
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 800}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    SynthesizerResult, "synthesizer_result"
+                )
             message = await llm.ainvoke(
                 [SystemMessage(content=prompt), HumanMessage(content=synth_input)],
-                max_tokens=220,
+                **_invoke_kwargs,
             )
-            parsed = extract_first_json_object_fn(str(getattr(message, "content", "") or ""))
-            candidate = str(parsed.get("response") or "").strip()
+            _raw_content = str(getattr(message, "content", "") or "")
+            # P1 Extra: try Pydantic structured parse, fall back to regex
+            try:
+                _structured = SynthesizerResult.model_validate_json(_raw_content)
+                candidate = _structured.response.strip()
+            except Exception:
+                parsed = extract_first_json_object_fn(_raw_content)
+                candidate = str(parsed.get("response") or "").strip()
             if (
                 candidate
                 and not _candidate_conflicts_with_no_data(source_response, candidate)

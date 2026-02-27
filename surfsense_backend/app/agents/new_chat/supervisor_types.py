@@ -153,3 +153,26 @@ class SupervisorState(TypedDict, total=False):
     domain_fan_out_trace: Annotated[dict[str, Any] | None, _replace]
     domain_plans: Annotated[dict[str, Any] | None, _replace]
     response_mode: Annotated[str | None, _replace]
+    # P1 loop-fix: guard_finalized prevents critic from overriding orchestration_guard.
+    guard_finalized: Annotated[bool, _replace]
+    # P1 loop-fix: total_steps counts all meaningful work nodes, hard cap at MAX_TOTAL_STEPS.
+    total_steps: Annotated[int, _replace]
+    # P1 loop-fix: critic_history tracks previous critic decisions for adaptive behavior.
+    critic_history: Annotated[list[dict[str, Any]], _replace]
+    # P3: atomic_questions produced by multi_query_decomposer for complex queries.
+    # Each item: {"id": "q1", "text": "...", "depends_on": [], "domain": "väder"}
+    atomic_questions: Annotated[list[dict[str, Any]], _replace]
+    # P4: micro_plans per subagent domain.
+    # Dict: subagent_id → [{"action": "...", "tool_id": "...", "use_cache": bool}, ...]
+    micro_plans: Annotated[dict[str, list[dict[str, Any]]], _replace]
+    # P4: convergence_status after merging parallel subagent results.
+    # {"merged_fields": [...], "overlap_score": 0.92, "conflicts": [], "source_domains": [...]}
+    convergence_status: Annotated[dict[str, Any] | None, _replace]
+    # P4: spawned_domains tracks which domains have active mini-graphs.
+    spawned_domains: Annotated[list[str], _replace]
+    # P4: subagent_summaries collects mini_synthesizer outputs before convergence.
+    # List of {"domain": "...", "summary": "...", "key_facts": [...], "data_quality": "..."}
+    subagent_summaries: Annotated[list[dict[str, Any]], _replace]
+    # P4: adaptive thresholds per domain from adaptive_guard.
+    # {"force_synthesis": bool, "adjusted_confidence_threshold": float, ...}
+    adaptive_thresholds: Annotated[dict[str, Any] | None, _replace]
