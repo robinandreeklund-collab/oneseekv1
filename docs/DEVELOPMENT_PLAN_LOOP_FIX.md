@@ -3,7 +3,7 @@
 > **Startdatum:** 2026-02-26
 > **Branch:** `claude/debug-longgraph-loop-TCV0N`
 > **Issue:** #44 (Loop issues)
-> **Status:** Sprint P1 — **KLAR** ✓ | Sprint P1 Extra — **KLAR** ✓ (väntar E2E-testning) | Sprint P2 — **KLAR** ✓ | Sprint P3 — **KLAR** ✓
+> **Status:** Sprint P1 — **KLAR** ✓ | Sprint P1 Extra — **KLAR** ✓ (väntar E2E-testning) | Sprint P2 — **KLAR** ✓ | Sprint P3 — **KLAR** ✓ | Sprint P4 — **KLAR** ✓
 
 ---
 
@@ -1260,7 +1260,7 @@ tests/test_multi_query_decomposer.py: 11 passed (0.29s)
   Göra systemet **loop-immun på arkitekturnivå** genom att utnyttja LangGraph's inbyggda primitives + 2026-best-practices. Bygga vidare på befintliga subagenter, state-machine, idempotent final_response, CriticVeto och mock-env så att varje domän är helt isolerad, självhelande och kostnadseffektiv.
 
 **Tid:** 5–7 dagar
-**Status:** Ej påbörjad (bygger på existerande subagent-omnämnanden)
+**Status:** **KLAR** ✓ (40/40 tester gröna)
 
 > **Not:** ~~P4.2 — Pydantic Structured Output~~ har flyttats till **P1 Extra** (P1-Extra.1 — P1-Extra.8).
 
@@ -1617,6 +1617,18 @@ Testresultat EFTER Sprint P1:
 
 P1-specifikt:
   tests/test_loop_fix_p1.py: 20/20 passed (0.16s)
+```
+
+### Sprint P4 testresultat (2026-02-27)
+
+```
+Testresultat EFTER Sprint P4:
+  P4-specifikt:
+    tests/test_loop_fix_p4.py: 40/40 passed (0.34s)
+  Regression:
+    tests/test_loop_fix_p2.py: 2/2 passed
+    tests/test_multi_query_decomposer.py: 12/12 passed
+    0 nya regressioner
 ```
 
 ---
