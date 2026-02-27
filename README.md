@@ -10,7 +10,7 @@ Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalo
 1. [Plattformsoversikt](#plattformsoversikt)
 2. [Karnfunktioner](#karnfunktioner)
 3. [Senaste uppdateringar (denna PR)](#senaste-uppdateringar-denna-pr)
-4. [LangGraph-flode (Fas 1-4 + subagent A-F)](#langgraph-flode-fas-1-4--subagent-a-f)
+4. [LangGraph-flode (Fas 1-4 + subagent A-F + P1-P4)](#langgraph-flode-fas-1-4--subagent-a-f--p1-p4)
 5. [Strict subagent isolation + DeerFlow-style context (A-F)](#strict-subagent-isolation--deerflow-style-context-a-f)
 6. [Intent + Bigtool + Namespace + Rerank](#intent--bigtool--namespace--rerank)
 7. [Centrala metadataganser och normaliserad scoring](#centrala-metadataganser-och-normaliserad-scoring)
@@ -26,7 +26,7 @@ Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalo
 17. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
 18. [Sandbox step-by-step guide](#sandbox-step-by-step-guide)
 19. [Copy-paste only quickstart (Docker + K8s)](#copy-paste-only-quickstart-docker--k8s)
-20. [Teststatus for Fas 1-4 + eval](#teststatus-for-fas-1-4--eval)
+20. [Teststatus for Fas 1-4 + eval + P1-P4](#teststatus-for-fas-1-4--eval--loop-fix-p1-p4)
 
 ---
 
@@ -53,12 +53,18 @@ Tekniskt anvands:
 
 ## Karnfunktioner
 
-- **Hybrid Supervisor v2 (Fas 1-4)**
+- **Hybrid Supervisor v2 (Fas 1-4 + P1-P4)**
   - graph complexity-klassning (`trivial`, `simple`, `complex`)
   - execution strategy-router (`inline`, `parallel`, `subagent`)
   - speculative branch + merge
   - progressive synthesizer med draft-streaming
   - strict subagent isolation + DeerFlow-style context management (A-F)
+  - loop-fix med `guard_finalized`, `total_steps` hard cap, adaptiv `critic_history` (P1-P2)
+  - multi-query decomposer med beroendegraf for komplexa fragor (P3)
+  - subagent mini-graphs med isolerade per-doman looper (P4)
+  - convergence node for sammanslagning av parallella subagentresultat (P4)
+  - adaptive guard med sjunkande confidence-trosklar och force-synthesis (P4)
+  - semantisk tool-caching per doman+query (P4)
 - **Deterministiskt compare-lage**
   - parallella externa modellanrop
   - separat compare-subgraf
@@ -80,14 +86,16 @@ Tekniskt anvands:
 - **DB-driven flodesgraf + visuell admin**
   - databas-backade route/tool-mappningar i stallet for hardkodning
   - inline prompt-redigering, intent-redigering, drag-and-drop tool-grupper i admin-UI
+  - 45 pipeline-noder med 10 stage-grupper och fargkodning
+  - subagent mini-graph noder (mini_planner, mini_executor, mini_critic, mini_synthesizer, pev_verify) synliga i pipeline
 
 ---
 
 ## Senaste uppdateringar (denna PR)
 
-Denna PR innehaller loop-fix (P1-P2), multi-query decomposer (P3), bigtool subagent loop guard, samt uppgradering av admin-ytan for metadata-kvalitet och kontrollerad live-rollout for routing.
+Denna PR innehaller loop-fix (P1-P2), multi-query decomposer (P3), subagent mini-graphs med convergence (P4), bigtool subagent loop guard, samt uppgradering av admin-ytan for metadata-kvalitet och kontrollerad live-rollout for routing.
 
-### 0) Loop-fix + Multi-query decomposer (P1-P3)
+### 0) Loop-fix + Multi-query decomposer + Subagent Mini-Graphs (P1-P4)
 
 **Loop-fix (P1-P2):**
 - `guard_finalized` forhindrar critic fran att overrida orchestration_guard
@@ -106,6 +114,20 @@ Denna PR innehaller loop-fix (P1-P2), multi-query decomposer (P3), bigtool subag
 - Skippar dekomponering for simple/trivial fragor (noll extra latens)
 - Pydantic-scheman: `AtomicQuestion`, `DecomposerResult`
 - 11 tester i `tests/test_multi_query_decomposer.py`, alla passerar
+
+**Subagent mini-graphs + convergence (P4):**
+- `subagent_spawner` orkestrerar parallella per-doman mini-grafer (max 6 parallella)
+- Varje mini-graf har: `mini_planner` → `mini_executor` → `mini_critic` → (retry | `mini_synthesizer`)
+- `MiniGraphState` isolerar domanspecifikt tillstand (plan_steps, tool_results, critic_decision, summary)
+- `adaptive_guard` justerar confidence-troskel nedat med varje retry (0.7 → 0.55 → 0.4) och tvangar syntes efter max 2 retries
+- `convergence_node` slar ihop parallella subagentresultat med LLM-driven overlap-detektering och konfliktflaggning
+- Semantisk tool-caching med deterministiska SHA-256-nycklar per doman+query
+- `pev_verify` for post-execution verifiering av resultat
+- 5 nya state-falt: `micro_plans`, `convergence_status`, `spawned_domains`, `subagent_summaries`, `adaptive_thresholds`
+- 7 nya default-prompter registrerade i prompt_registry (56 nycklar totalt)
+- 9 nya pipeline-noder och 14 nya kanter i admin flow graph
+- Ny "subagent_mini" nodgrupp i LangGraph Studio
+- 40 tester i `tests/test_loop_fix_p4.py`, alla passerar
 
 ### 1) Metadata Catalog + Metadata Audit (admin)
 
@@ -440,9 +462,9 @@ Hardkodade agent-policyer ar ersatta med databas-backade metadata:
 
 #### Pipeline-visualisering (full-width)
 
-- Alla 21 execution-noder visas med stage-gruppering och fargkodning
+- Alla 45 pipeline-noder visas med 10 stage-grupper och fargkodning
 - Full-width layout (utanfor max-w-7xl container)
-- Noder grupperade efter fas: Routing, Planning, Execution, Synthesis
+- Noder grupperade efter fas: Ingang, Snabbsvar, Spekulativ, Planering, Verktygsval/Domanplan, Subagent Mini-Graphs, Exekvering, Efterbehandling, Utvardering, Syntes/Response Layer
 
 #### Inline-redigering i sidopaneler
 
@@ -472,7 +494,7 @@ Hardkodade agent-policyer ar ersatta med databas-backade metadata:
 
 ---
 
-## LangGraph-flode (Fas 1-4 + subagent A-F)
+## LangGraph-flode (Fas 1-4 + subagent A-F + P1-P4)
 
 ### Huvudflode (normal mode)
 
@@ -529,6 +551,44 @@ flowchart TD
     RL --> END4([END])
 ```
 
+### Subagent mini-graph flode (P4)
+
+Nar `domain_planner` identifierar flera domaner kors parallella mini-grafer via `subagent_spawner`:
+
+```mermaid
+flowchart TD
+    DP[domain_planner] --> SS[subagent_spawner]
+
+    SS --> MG1["mini-graph doman 1"]
+    SS --> MG2["mini-graph doman 2"]
+    SS --> MGN["mini-graph doman N"]
+
+    subgraph mini_graph["Per-doman mini-graf (max 6 parallella)"]
+        MP[mini_planner] --> ME[mini_executor]
+        ME --> MC2[mini_critic]
+        MC2 -->|ok| MS[mini_synthesizer]
+        MC2 -->|retry| AG[adaptive_guard]
+        AG -->|force_synthesis| MS
+        AG -->|retry_allowed| ME
+        MS --> PV[pev_verify]
+    end
+
+    MG1 --> mini_graph
+    MG2 --> mini_graph
+    MGN --> mini_graph
+
+    mini_graph --> CN[convergence_node]
+    CN --> CR[critic]
+```
+
+**Mini-graph loop-begransningar:**
+- Max 2 retries per mini-graf (`_MAX_MINI_RETRIES`)
+- Max 3 plan-steg per doman (`_MAX_MINI_PLAN_STEPS`)
+- Max 6 parallella subagenter (`_MAX_PARALLEL_SUBAGENTS`)
+- Adaptive guard sanker confidence-troskeln per retry (0.7 → 0.55 → 0.4)
+- Vid max retries: `force_synthesis=True` tvangar mini_synthesizer utan fler verktygsanrop
+- Semantisk tool-caching med SHA-256-nycklar per doman+query
+
 ### Nodlogik som tillkommit i Fas 1-4 + A-F
 
 - **Fas 1**
@@ -564,6 +624,17 @@ flowchart TD
   - `atomic_questions` med beroendegraf (`depends_on`) for parallellisering
   - Planner konsumerar `atomic_questions` och valjer multi-domain-template automatiskt
   - Skippar dekomponering for simple/trivial fragor (noll extra latens)
+- **Subagent mini-graphs + convergence (P4)**
+  - `subagent_spawner`: orkestrerar parallella per-doman mini-grafer (max 6 st)
+  - `mini_planner`: LLM-driven mikroplan per doman (max 3 steg)
+  - `mini_executor`: domanspecifik verktygskorning
+  - `mini_critic`: utvardering av domantresultat
+  - `mini_synthesizer`: sammanfattning av domanresultat till kompakt artefakt
+  - `adaptive_guard`: budget- och troskeljustering per retry-iteration
+  - `convergence_node`: LLM-driven sammanslagning av parallella subagentresultat med overlap-detektering
+  - `pev_verify`: post-execution verifiering
+  - `MiniGraphState`: isolerat tillstand per doman (plan_steps, tool_results, critic_decision, summary)
+  - Semantisk tool-caching med deterministiska SHA-256-nycklar
 
 ---
 
@@ -786,11 +857,13 @@ Hardkodade agent-policyer ar ersatta med databas-backade metadata:
 
 ### Visuell pipeline
 
-- 21 execution-noder med stage-gruppering och fargkodning
+- 45 pipeline-noder med 10 stage-grupper och fargkodning
+- Stages: Ingang, Snabbsvar, Spekulativ, Planering, Verktygsval/Domanplan, **Subagent Mini-Graphs** (ny), Exekvering, Efterbehandling, Utvardering, Syntes/Response Layer
 - Full-width layout
 - Inline prompt-redigering med versionshistorik
 - Inline intent-redigering (label, description, keywords, priority, enabled)
 - Kollapsbara tool-grupper med drag-and-drop mellan agenter
+- P4-noder synliga i pipeline: subagent_spawner, mini_planner, mini_executor, mini_critic, mini_synthesizer, pev_verify, adaptive_guard, convergence_node, semantic_cache
 
 ---
 
@@ -976,7 +1049,16 @@ Frontend far live-events via Vercel AI data stream. Exempel:
 - `surfsense_backend/app/agents/new_chat/nodes/progressive_synthesizer.py` - syntes
 - `surfsense_backend/app/agents/new_chat/nodes/tool_resolver.py` - tool-val med namespace-stod
 - `surfsense_backend/app/agents/new_chat/nodes/multi_query_decomposer.py` - multi-query decomposer (P3)
+- `surfsense_backend/app/agents/new_chat/nodes/subagent_mini_graph.py` - subagent spawner + mini-graph loop (P4)
+- `surfsense_backend/app/agents/new_chat/nodes/convergence_node.py` - convergence node for parallella resultat (P4)
 - `surfsense_backend/app/agents/new_chat/nodes/response_layer.py` - response layer + router
+
+### Prompt-registrering, Studio och state
+
+- `surfsense_backend/app/agents/new_chat/prompt_registry.py` - prompt-definitioner och template-nycklar (56 st)
+- `surfsense_backend/app/agents/new_chat/supervisor_pipeline_prompts.py` - default-prompter for alla noder
+- `surfsense_backend/app/agents/new_chat/supervisor_types.py` - LangGraph state-schema (inkl. P4-falt)
+- `surfsense_backend/app/langgraph_studio.py` - nodgrupp-mappning for LangGraph Studio
 
 ### Retrieval, metadata och scoring
 
@@ -1181,7 +1263,7 @@ Use this runtime payload:
 
 ---
 
-## Teststatus for Fas 1-4 + eval + loop-fix
+## Teststatus for Fas 1-4 + eval + loop-fix (P1-P4)
 
 Karnsviter for hybrid och eval:
 
@@ -1197,6 +1279,7 @@ Karnsviter for hybrid och eval:
 - `tests/test_tool_evaluation_service.py`
 - `tests/test_loop_fix_p1.py` — 20 tester for loop-fix (P1)
 - `tests/test_multi_query_decomposer.py` — 11 tester for multi-query decomposer (P3)
+- `tests/test_loop_fix_p4.py` — 40 tester for subagent mini-graphs, convergence, adaptive guard, admin-integration (P4)
 
 Exempelkommando:
 
@@ -1212,7 +1295,10 @@ python3 -m pytest -q \
   tests/test_sandbox_phase2_filesystem.py \
   tests/test_sandbox_phase3_robustness.py \
   tests/test_sandbox_phase3_provisioner.py \
-  tests/test_sandbox_phase3_trace_spans.py
+  tests/test_sandbox_phase3_trace_spans.py \
+  tests/test_loop_fix_p1.py \
+  tests/test_multi_query_decomposer.py \
+  tests/test_loop_fix_p4.py
 ```
 
 ---
@@ -1221,8 +1307,12 @@ python3 -m pytest -q \
 
 OneSeek ar nu en hybrid, transparent och eval-driven agentplattform med:
 
-- adaptiv LangGraph-orkestrering (Fas 1-4) med loop-fix (P1-P2) och multi-query decomposer (P3)
+- adaptiv LangGraph-orkestrering (Fas 1-4) med loop-fix (P1-P2), multi-query decomposer (P3) och subagent mini-graphs (P4)
 - **multi-query decomposer** som bryter ned komplexa fragor till atomara delfragor med beroendegraf
+- **subagent mini-graphs** (P4) med isolerade per-doman looper: mini_planner → mini_executor → mini_critic → mini_synthesizer
+- **convergence node** (P4) som slar ihop parallella subagentresultat med LLM-driven overlap-detektering och konfliktflaggning
+- **adaptive guard** (P4) med sjunkande confidence-trosklar och force-synthesis efter max retries
+- **semantisk tool-caching** (P4) med deterministiska SHA-256-nycklar per doman+query
 - **bigtool subagent loop guard** som forhindrar subagenter fran att loopa pa samma verktyg
 - strict subagent isolation + DeerFlow-style context management (A-F)
 - artifact-first offload + `artifact_manifest` for stora payloads
@@ -1239,9 +1329,11 @@ OneSeek ar nu en hybrid, transparent och eval-driven agentplattform med:
 - **centrala metadataganser** (`enforce_metadata_limits`) med 3-lagers validering (frontend Zod, backend Pydantic, core enforcement)
 - **normaliserad lexical scoring** som forhindrar orattvis faltlangsboost
 - **identitetsmetadata** (main_identifier, core_activity, unique_scope, geographic_scope, excludes) for precisare retrieval och separation
-- **DB-driven flodesgraf** med redigerbara route-mappningar och tool-tillhorighet via admin-API
+- **DB-driven flodesgraf** med 45 pipeline-noder, 10 stage-grupper, redigerbara route-mappningar och tool-tillhorighet via admin-API
 - **visuell pipeline-editor** med inline prompt-redigering, intent-redigering och drag-and-drop tool-grupper
+- **56 prompt-nycklar** registrerade i prompt_registry med full admin-redigerbarhet
 - realtidsdata och compare-subgraf
 - LangSmith + intern trace for full observability
 - produktionsnara evalloop for kontinuerlig forbattring
+- **71 loop-fix-tester** (P1: 20, P3: 11, P4: 40) som sakerstaller loop-begransningar och integration
 
