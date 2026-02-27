@@ -368,22 +368,17 @@ def build_response_layer_node(
             bool(mode_prompt and llm is not None),
         )
 
-        # Always include the final text in the output so the streaming
-        # pipeline's fallback mechanism (chain_end → fallback_assistant_text)
-        # picks up the response_layer's text rather than the synthesizer's
-        # raw output.  This is the safety net that prevents think-leakage
-        # even when the LLM's streaming events don't propagate.
-        updates: dict[str, Any] = {
+        # BUG-B fix: ALWAYS include AIMessage in the return dict so the
+        # streaming pipeline's chain_end handler can extract the
+        # authoritative response text via _extract_assistant_text_from_event_output.
+        # Previously, when the existing message already matched the formatted
+        # text, the AIMessage was omitted — causing the chain_end output to
+        # have no extractable text and allowing synthesizer's text to leak
+        # through fallback_assistant_text.
+        return {
             "response_mode": mode,
             "final_response": formatted,
+            "messages": [AIMessage(content=formatted)],
         }
-        messages = list(state.get("messages") or [])
-        last_message = messages[-1] if messages else None
-        if isinstance(last_message, AIMessage):
-            existing = str(getattr(last_message, "content", "") or "").strip()
-            if existing == formatted:
-                return updates
-        updates["messages"] = [AIMessage(content=formatted)]
-        return updates
 
     return response_layer_node

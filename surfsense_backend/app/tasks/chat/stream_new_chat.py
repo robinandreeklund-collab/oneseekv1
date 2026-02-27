@@ -1282,14 +1282,35 @@ def _split_trailing_pipeline_prefix(text: str) -> tuple[str, str]:
     return text, ""
 
 
+def _is_output_pipeline_chain_name(chain_name: str) -> bool:
+    """Return True if *chain_name* belongs to an output (user-facing) pipeline node.
+
+    Output nodes produce text-delta visible to the user.  This check is
+    performed BEFORE the internal check so that ``compare_synthesizer``
+    (which contains the substring ``synthesizer``) is correctly classified
+    as output rather than internal.
+    """
+    normalized = str(chain_name or "").strip().lower()
+    if not normalized:
+        return False
+    return any(token in normalized for token in _OUTPUT_PIPELINE_CHAIN_TOKENS)
+
+
 def _is_internal_pipeline_chain_name(chain_name: str) -> bool:
     """Return True if *chain_name* belongs to an internal (non-output) pipeline node.
 
     Models under these nodes have their content buffered and routed to
     reasoning-delta, NOT to text-delta.
+
+    **Important:** Output nodes are excluded — ``compare_synthesizer``
+    contains the substring ``synthesizer`` but must NOT be classified as
+    internal.  The output check runs first.
     """
     normalized = str(chain_name or "").strip().lower()
     if not normalized:
+        return False
+    # Output nodes win over internal substring matches
+    if _is_output_pipeline_chain_name(normalized):
         return False
     return any(token in normalized for token in _INTERNAL_PIPELINE_CHAIN_TOKENS)
 
@@ -3167,9 +3188,20 @@ async def stream_new_chat(
                             source_chain=source_chain,
                         ):
                             yield step_event
-                        cleaned_candidate = _clean_assistant_output_text(candidate_text)
-                        if cleaned_candidate:
-                            fallback_assistant_text = cleaned_candidate
+                        # BUG-A fix: Only store fallback text from OUTPUT
+                        # pipeline nodes.  Previously this was unconditional,
+                        # allowing internal nodes (synthesizer, executor, etc.)
+                        # to overwrite fallback_assistant_text — which leaked
+                        # their text as the visible response when response_layer
+                        # didn't produce streaming text-delta.
+                        _is_output_for_fallback = (
+                            _is_any_pipeline_chain_name(chain_name)
+                            and not _is_internal_pipeline_chain_name(chain_name)
+                        )
+                        if _is_output_for_fallback:
+                            cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                            if cleaned_candidate:
+                                fallback_assistant_text = cleaned_candidate
                 elif event_type == "on_chain_error":
                     trace_event = await trace_recorder.end_span(
                         span_id=run_id,
@@ -3301,6 +3333,36 @@ async def stream_new_chat(
                             active_reasoning_id = streaming_service.generate_reasoning_id()
                             yield streaming_service.format_reasoning_start(active_reasoning_id)
                         yield streaming_service.format_reasoning_delta(active_reasoning_id, flush_reasoning)
+
+                    # P1-Extra.4: Emit structured-field + data-thinking-persist
+                    # events when a structured parser finalized successfully.
+                    # These let the frontend display per-node decisions as
+                    # badges and persist thinking text for page-reload survival.
+                    if structured_parser and _structured_mode and internal_chain_name:
+                        try:
+                            _final_obj = structured_parser.finalize()
+                            if isinstance(_final_obj, dict):
+                                _node_short = str(internal_chain_name).strip().lower()
+                                # Emit thinking-persist for every node
+                                _full_thinking = str(_final_obj.get("thinking") or "")
+                                if _full_thinking:
+                                    yield streaming_service.format_thinking_persist(
+                                        _node_short, _full_thinking
+                                    )
+                                # Emit structured-field for key decision fields
+                                _STRUCTURED_FIELD_KEYS = {
+                                    "route", "intent_id", "confidence",
+                                    "decision", "reason", "chosen_layer",
+                                    "selected_agents",
+                                }
+                                for _sf_key, _sf_val in _final_obj.items():
+                                    if _sf_key in _STRUCTURED_FIELD_KEYS:
+                                        yield streaming_service.format_structured_field(
+                                            _node_short, _sf_key, _sf_val
+                                        )
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+
                     if internal_chain_name:
                         internal_text = internal_buffer or candidate_text
                         for step_event in emit_pipeline_steps_from_text(
@@ -3371,35 +3433,17 @@ async def stream_new_chat(
                             # --- Node-by-node think-box: stream per-node reasoning
                             # into the global rolling think-box (reasoning-delta). ---
                             # P1 Extra: when structured output is enabled, use
-                            # IncrementalSchemaParser instead of ThinkStreamFilter.
-                            # If the parser fails (model isn't producing JSON),
-                            # fall back to a per-node ThinkStreamFilter.
+                            # IncrementalSchemaParser (backed by partial-json-parser)
+                            # instead of ThinkStreamFilter.  The parser handles
+                            # partial JSON robustly — no 30-char heuristic needed.
+                            # Fallback to raw buffer happens at model_end if the
+                            # parser never extracted any thinking.
                             node_reasoning = ""
-                            _used_fallback_filter = False
                             if _structured_mode:
                                 sp = _structured_parsers.get(run_id)
                                 if sp:
                                     node_reasoning, _ = sp.feed(content)
-                                    # Detect non-JSON output: if buffer grows
-                                    # past 30 chars without extracting any
-                                    # thinking, the model isn't using structured
-                                    # output.  Switch to ThinkStreamFilter.
-                                    if (
-                                        not node_reasoning
-                                        and sp._last_thinking_len == 0
-                                        and len(sp._buffer) > 30
-                                    ):
-                                        _structured_parsers.pop(run_id, None)
-                                        accumulated_buf = sp._buffer
-                                        node_filter = _ThinkStreamFilter(
-                                            assume_think=_think_filter._assume_think,
-                                        )
-                                        internal_node_think_filters[run_id] = node_filter
-                                        # Feed entire accumulated buffer (includes
-                                        # current chunk); skip per-chunk feed below.
-                                        node_reasoning, _ = node_filter.feed(accumulated_buf)
-                                        _used_fallback_filter = True
-                            if not _used_fallback_filter and run_id not in _structured_parsers:
+                            if run_id not in _structured_parsers:
                                 node_filter = internal_node_think_filters.get(run_id)
                                 if node_filter:
                                     node_reasoning, _node_text = node_filter.feed(content)
@@ -3431,20 +3475,10 @@ async def stream_new_chat(
                         if _structured_mode and run_id in _structured_parsers:
                             sp = _structured_parsers[run_id]
                             reasoning_chunk, content, _ = sp.feed_all(content)
-                            # Detect non-JSON output: if buffer grows past 30
-                            # chars without extracting anything, the model isn't
-                            # producing structured JSON.  Fall back to
-                            # <think>-tag filtering for this model call.
-                            if (
-                                not reasoning_chunk
-                                and not content
-                                and sp._last_thinking_len == 0
-                                and sp._last_response_len == 0
-                                and len(sp._buffer) > 30
-                            ):
-                                _structured_parsers.pop(run_id, None)
-                                accumulated_buf = sp._buffer
-                                reasoning_chunk, content = _think_filter.feed(accumulated_buf)
+                            # partial-json-parser handles partial JSON robustly
+                            # — no 30-char heuristic needed.  If the model isn't
+                            # producing JSON, feed_all returns empty deltas and
+                            # the model_end handler uses the raw buffer.
                         else:
                             reasoning_chunk, content = _think_filter.feed(content)
 

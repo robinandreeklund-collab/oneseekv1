@@ -5,15 +5,17 @@ Sprint P1 Extra: Parses JSON tokens as they arrive during ``astream()``,
 extracting the ``thinking`` field progressively so it can be streamed
 as reasoning-delta events while the rest of the schema fills in.
 
-Uses ``json.JSONDecoder().raw_decode`` for best-effort partial parsing
-(no external dependency).
+Uses ``partial-json-parser`` for robust partial JSON parsing — handles
+all edge cases (nested objects, escaped strings, incomplete arrays)
+that the previous regex-based approach missed.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
+
+from partial_json_parser import loads as partial_loads
 
 
 class IncrementalSchemaParser:
@@ -36,14 +38,6 @@ class IncrementalSchemaParser:
         self._buffer: str = ""
         self._last_thinking_len: int = 0
         self._last_response_len: int = 0
-
-    # ── regex for extracting a complete string value ──────────────
-    _THINKING_RE = re.compile(
-        r'"thinking"\s*:\s*"', re.DOTALL
-    )
-    _RESPONSE_RE = re.compile(
-        r'"response"\s*:\s*"', re.DOTALL
-    )
 
     def feed(self, chunk: str) -> tuple[str, dict[str, Any] | None]:
         """Feed a new chunk.  Returns ``(thinking_delta, partial_result)``.
@@ -117,80 +111,21 @@ class IncrementalSchemaParser:
     # ── internals ─────────────────────────────────────────────────
 
     def _try_partial_parse(self) -> dict[str, Any] | None:
-        """Best-effort parse of the current buffer.
+        """Best-effort parse of the current buffer using partial-json-parser.
 
-        Strategy:
-        1. Try ``json.loads`` on the buffer directly.
-        2. If that fails, try appending closing braces/brackets.
-        3. If that fails, try extracting string values via regex.
+        ``partial_loads`` handles incomplete JSON gracefully — it can parse
+        ``{"thinking": "partial text`` and return ``{"thinking": "partial text"}``
+        without needing regex fallbacks or suffix-guessing heuristics.
         """
         buf = self._buffer.strip()
         if not buf:
             return None
 
-        # 1. Direct parse (complete JSON)
         try:
-            obj = json.loads(buf)
+            obj = partial_loads(buf)
             if isinstance(obj, dict):
                 return obj
-        except (json.JSONDecodeError, ValueError):
+        except Exception:
             pass
 
-        # 2. Try closing incomplete JSON
-        for suffix in ("}", '"}', '"]}', '"}]}', '"}],"reason":""}'):
-            try:
-                obj = json.loads(buf + suffix)
-                if isinstance(obj, dict):
-                    return obj
-            except (json.JSONDecodeError, ValueError):
-                continue
-
-        # 3. Regex extraction of string fields
-        result: dict[str, Any] = {}
-        for field_name, pattern in [
-            ("thinking", self._THINKING_RE),
-            ("response", self._RESPONSE_RE),
-        ]:
-            match = pattern.search(buf)
-            if match:
-                start = match.end()
-                value = self._extract_json_string(buf, start)
-                if value is not None:
-                    result[field_name] = value
-
-        return result if result else None
-
-    @staticmethod
-    def _extract_json_string(buf: str, start: int) -> str | None:
-        """Extract a JSON string value starting at *start* (after opening quote).
-
-        Handles escape sequences.  Returns ``None`` if no content found.
-        """
-        chars: list[str] = []
-        i = start
-        while i < len(buf):
-            c = buf[i]
-            if c == "\\":
-                # Escape sequence — take next char as-is
-                if i + 1 < len(buf):
-                    next_c = buf[i + 1]
-                    if next_c == "n":
-                        chars.append("\n")
-                    elif next_c == "t":
-                        chars.append("\t")
-                    elif next_c == '"':
-                        chars.append('"')
-                    elif next_c == "\\":
-                        chars.append("\\")
-                    else:
-                        chars.append(next_c)
-                    i += 2
-                else:
-                    break
-            elif c == '"':
-                # End of string
-                break
-            else:
-                chars.append(c)
-                i += 1
-        return "".join(chars) if chars else None
+        return None

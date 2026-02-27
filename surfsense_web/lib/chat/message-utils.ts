@@ -37,6 +37,72 @@ function extractPersistedAttachments(content: unknown): PersistedAttachment[] {
 	return [];
 }
 
+/**
+ * Zod schema for persisted reasoning text (P1-Extra.6)
+ */
+const ReasoningTextPartSchema = z.object({
+	type: z.literal("reasoning-text"),
+	text: z.string(),
+});
+
+/**
+ * Zod schema for a single structured field entry
+ */
+const StructuredFieldEntrySchema = z.object({
+	node: z.string(),
+	field: z.string(),
+	value: z.unknown(),
+});
+
+/**
+ * Zod schema for persisted structured fields (P1-Extra.6)
+ */
+const StructuredFieldsPartSchema = z.object({
+	type: z.literal("structured-fields"),
+	fields: z.record(z.string(), z.array(StructuredFieldEntrySchema)),
+});
+
+export type StructuredFieldEntry = z.infer<typeof StructuredFieldEntrySchema>;
+
+/**
+ * Extract persisted reasoning text from message content (type-safe with Zod)
+ */
+export function extractReasoningText(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+
+	for (const part of content) {
+		const result = ReasoningTextPartSchema.safeParse(part);
+		if (result.success) {
+			return result.data.text;
+		}
+	}
+
+	return "";
+}
+
+/**
+ * Extract persisted structured fields from message content (type-safe with Zod).
+ * Returns Map<node, Array<{node, field, value}>> or null if not persisted.
+ */
+export function extractStructuredFields(
+	content: unknown
+): Map<string, StructuredFieldEntry[]> | null {
+	if (!Array.isArray(content)) return null;
+
+	for (const part of content) {
+		const result = StructuredFieldsPartSchema.safeParse(part);
+		if (result.success) {
+			const map = new Map<string, StructuredFieldEntry[]>();
+			for (const [node, entries] of Object.entries(result.data.fields)) {
+				map.set(node, entries);
+			}
+			return map;
+		}
+	}
+
+	return null;
+}
+
 // Strips <think>...</think> blocks (including their content) from text.
 // Used to clean up messages that were persisted before the backend streaming
 // filter was introduced, or as a safety net for any that slip through.
@@ -69,7 +135,8 @@ export function convertToThreadMessage(msg: MessageRecord): ThreadMessageLike {
 					partType !== "reasoning-text" &&
 					partType !== "mentioned-documents" &&
 					partType !== "attachments" &&
-					partType !== "compare-summary"
+					partType !== "compare-summary" &&
+					partType !== "structured-fields"
 				);
 			})
 			.map((part: unknown) => {

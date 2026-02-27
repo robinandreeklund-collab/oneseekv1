@@ -2,10 +2,10 @@ import { useAssistantState, useThreadViewport } from "@assistant-ui/react";
 import { ChevronDownIcon } from "lucide-react";
 import type { FC } from "react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { ContextStatsContext } from "@/components/assistant-ui/context-stats";
 import { TextShimmerLoader } from "@/components/prompt-kit/loader";
 import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
 import { cn } from "@/lib/utils";
-import { ContextStatsContext } from "@/components/assistant-ui/context-stats";
 
 // ---------------------------------------------------------------------------
 // Timeline — ordered list of reasoning chunks interleaved with tool steps
@@ -14,7 +14,8 @@ import { ContextStatsContext } from "@/components/assistant-ui/context-stats";
 /** A single entry in the chronological fade-layer timeline. */
 export type TimelineEntry =
 	| { kind: "reasoning"; text: string }
-	| { kind: "step"; stepId: string };
+	| { kind: "step"; stepId: string }
+	| { kind: "structured"; node: string; field: string; value: unknown };
 
 // Context to pass thinking steps to AssistantMessage
 export const ThinkingStepsContext = createContext<Map<string, ThinkingStep[]>>(new Map());
@@ -40,7 +41,9 @@ const InlineToolStep: FC<{ step: ThinkingStep }> = ({ step }) => (
 			{step.items && step.items.length > 0 && (
 				<div className="mt-0.5 space-y-px text-[0.6rem] opacity-50">
 					{step.items.map((item, idx) => (
-						<div key={`${step.id}-item-${idx}`} className="truncate">{item}</div>
+						<div key={`${step.id}-item-${idx}`} className="truncate">
+							{item}
+						</div>
 					))}
 				</div>
 			)}
@@ -61,9 +64,7 @@ const ReasoningChunk: FC<{ text: string; keyPrefix: string }> = ({ text, keyPref
 					const title = segment.replace(/^---\s+/, "").replace(/\s+---$/, "");
 					return (
 						<div key={`${keyPrefix}-${i}`} className="flex items-center gap-2 pt-1.5 pb-0.5">
-							<span className="text-[0.68rem] font-semibold text-primary/80">
-								{title}
-							</span>
+							<span className="text-[0.68rem] font-semibold text-primary/80">{title}</span>
 							<span className="h-px flex-1 bg-primary/10" />
 						</div>
 					);
@@ -80,6 +81,32 @@ const ReasoningChunk: FC<{ text: string; keyPrefix: string }> = ({ text, keyPref
 				);
 			})}
 		</>
+	);
+};
+
+/**
+ * Renders a compact badge for a structured-field decision from a pipeline node.
+ * Shows decisions like "intent → kunskap" or "critic → ok" inline within the fade layer.
+ */
+const StructuredFieldBadge: FC<{ node: string; field: string; value: unknown }> = ({
+	node,
+	field,
+	value,
+}) => {
+	const displayValue =
+		typeof value === "string"
+			? value
+			: typeof value === "number" || typeof value === "boolean"
+				? String(value)
+				: JSON.stringify(value);
+	return (
+		<div className="my-0.5 inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[0.65rem] text-primary/70">
+			<span className="font-medium">{node}</span>
+			<span className="opacity-40">·</span>
+			<span className="opacity-60">{field}</span>
+			<span className="opacity-40">→</span>
+			<span className="font-semibold">{displayValue}</span>
+		</div>
 	);
 };
 
@@ -119,7 +146,7 @@ export const FadeLayer: FC<{
 	// Filter context-stats from the timeline — rendered separately
 	const filteredTimeline = useMemo(
 		() => timeline.filter((e) => !(e.kind === "step" && e.stepId === "context-stats")),
-		[timeline],
+		[timeline]
 	);
 
 	// Track elapsed time during streaming
@@ -161,13 +188,15 @@ export const FadeLayer: FC<{
 
 	return (
 		<div
-			style={{ maxWidth: "var(--thread-max-width)", margin: "0 auto", width: "100%", padding: "0 0.5rem 0.25rem" }}
+			style={{
+				maxWidth: "var(--thread-max-width)",
+				margin: "0 auto",
+				width: "100%",
+				padding: "0 0.5rem 0.25rem",
+			}}
 		>
 			{/* Rolling container */}
-			<div
-				ref={scrollRef}
-				style={{ ...containerStyle, position: "relative" }}
-			>
+			<div ref={scrollRef} style={{ ...containerStyle, position: "relative" }}>
 				{/* Top gradient fade-out mask (only when collapsed) */}
 				{!isExpanded && (
 					<div
@@ -204,11 +233,15 @@ export const FadeLayer: FC<{
 				>
 					{filteredTimeline.map((entry, i) => {
 						if (entry.kind === "reasoning") {
+							return <ReasoningChunk key={`tl-${i}`} text={entry.text} keyPrefix={`tl-${i}`} />;
+						}
+						if (entry.kind === "structured") {
 							return (
-								<ReasoningChunk
-									key={`tl-${i}`}
-									text={entry.text}
-									keyPrefix={`tl-${i}`}
+								<StructuredFieldBadge
+									key={`tl-${i}-sf-${entry.node}-${entry.field}`}
+									node={entry.node}
+									field={entry.field}
+									value={entry.value}
 								/>
 							);
 						}
@@ -222,7 +255,12 @@ export const FadeLayer: FC<{
 					{isStreaming && (
 						<span
 							className="inline-block animate-pulse align-text-bottom"
-							style={{ height: "0.875rem", width: "0.125rem", marginLeft: "0.125rem", background: "hsl(var(--primary) / 0.7)" }}
+							style={{
+								height: "0.875rem",
+								width: "0.125rem",
+								marginLeft: "0.125rem",
+								background: "hsl(var(--primary) / 0.7)",
+							}}
 						/>
 					)}
 				</div>
@@ -237,10 +275,7 @@ export const FadeLayer: FC<{
 					className="flex items-center gap-1.5 text-[0.65rem] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
 				>
 					<ChevronDownIcon
-						className={cn(
-							"size-3 transition-transform duration-200",
-							isExpanded && "rotate-180",
-						)}
+						className={cn("size-3 transition-transform duration-200", isExpanded && "rotate-180")}
 					/>
 					{isStreaming ? (
 						<TextShimmerLoader text="Tänker..." size="sm" />

@@ -942,21 +942,31 @@ Inga nya regressioner.
 
 ### Avvikelser från originalplanen
 
-Under implementationen visade det sig att flera planerade features var onödiga tack
-vare en förenklad arkitektur. Backenden konverterar JSON-fält till befintliga SSE-events
-(`reasoning-delta`, `text-delta`) — frontend behöver aldrig se rå JSON.
+~~Under implementationen visade det sig att flera planerade features var onödiga tack
+vare en förenklad arkitektur.~~
 
-| Planerat | Utfall | Anledning |
-|----------|--------|-----------|
-| `partial-json-parser` (Python-dependency) | Egen implementation i `IncrementalSchemaParser` | `json.JSONDecoder` + regex-fallback räcker, inga externa beroenden |
-| `partial-json` (npm-dependency) | Inte behövt | Frontend parsar aldrig JSON — tar emot samma SSE-events som förut |
-| `structured-field` SSE-event | Inte implementerat | Befintliga `reasoning-delta` och `text-delta` räcker |
-| `data-thinking-persist` SSE-event | Inte implementerat | Thinking persisteras via `reasoning-text` content part i DB |
-| `StructuredFieldBadge` komponent | Uppskjutet (nice-to-have) | Kräver nya SSE-events som inte behövdes |
-| `structured-stream-viewer.tsx` (ny fil) | Inte skapad | Ingen progressiv JSON-rendering på frontend |
-| Ändringar i `thinking-steps.tsx` | Inte behövt | Timeline-typer oförändrade |
-| Ändringar i `message-utils.ts` | Inte behövt | Reasoning-extraction sker inline i `new-chat-page.tsx` |
-| Zod-schemas för nya content parts | Inline type-check | Enklare approach, färre filer att underhålla |
+**Uppdatering 2026-02-27:** Avvikelserna orsakade 3 buggar (BUG-A/B/C) i streaming-
+pipelinen. Alla planerade features har nu implementerats enligt originalplanen.
+
+| Planerat | Utfall | Status |
+|----------|--------|--------|
+| `partial-json-parser` (Python-dependency) | **Implementerat** — ersätter egen regex+json.loads | ✅ KLAR |
+| `partial-json` (npm-dependency) | **Installerat** — `structured-stream-viewer.tsx` | ✅ KLAR |
+| `structured-field` SSE-event | **Implementerat** — emitteras vid model_end för interna noder | ✅ KLAR |
+| `data-thinking-persist` SSE-event | **Implementerat** — thinking-text per nod för DB-persistering | ✅ KLAR |
+| `StructuredFieldBadge` komponent | **Implementerat** i `thinking-steps.tsx` | ✅ KLAR |
+| `structured-stream-viewer.tsx` (ny fil) | **Skapad** — progressiv JSON-rendering med `partial-json` | ✅ KLAR |
+| Ändringar i `thinking-steps.tsx` | **Implementerat** — `TimelineEntry` utökad med `structured` kind | ✅ KLAR |
+| Ändringar i `message-utils.ts` | **Implementerat** — Zod-schemas, `extractReasoningText`, `extractStructuredFields` | ✅ KLAR |
+| Zod-schemas för nya content parts | **Implementerat** — `ReasoningTextPartSchema`, `StructuredFieldsPartSchema` | ✅ KLAR |
+
+#### Buggfixar (identifierade vid analys av avvikelsernas konsekvenser)
+
+| Bugg | Beskrivning | Fix |
+|------|-------------|-----|
+| BUG-A | `fallback_assistant_text` sattes från ALLA chains (inkl. interna) | Guard: kontrollera `_is_output_pipeline_chain_name()` |
+| BUG-B | `response_layer` utelämnade AIMessage vid content-match | Alltid inkludera AIMessage i return dict |
+| BUG-C | `compare_synthesizer` klassificerades som INTERNAL (substring-match) | Ny `_is_output_pipeline_chain_name()` med prioritet över internal |
 
 ---
 
