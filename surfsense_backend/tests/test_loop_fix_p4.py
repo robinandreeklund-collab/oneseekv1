@@ -985,3 +985,253 @@ class TestP4NoLooseEnds:
         ws = captured_states[0]
         assert "sandbox_scope_mode" not in ws
         assert "sandbox_scope_id" not in ws
+
+    def test_max_nesting_depth_constant(self):
+        """_MAX_NESTING_DEPTH exists and is sensible."""
+        assert _mini_graph_mod._MAX_NESTING_DEPTH == 2
+
+
+# ---------------------------------------------------------------------------
+# P4.1+ Tests — Recursive Mini-Agent Spawning
+# ---------------------------------------------------------------------------
+class TestRecursiveSubagentSpawning:
+    """P4.1+: Subagents can recursively spawn sub-agents."""
+
+    def test_spawner_accepts_nesting_depth(self):
+        """build_subagent_spawner_node accepts max_nesting_depth param."""
+        pool = _make_mock_worker_pool()
+        node = _build_spawner(worker_pool=pool, max_nesting_depth=1)
+        state = {
+            "messages": [HumanMessage(content="test")],
+            "domain_plans": {"väder": {"tools": ["smhi"], "rationale": "t"}},
+            "total_steps": 0,
+        }
+        result = asyncio.get_event_loop().run_until_complete(node(state))
+        assert len(result["spawned_domains"]) == 1
+
+    def test_sub_spawn_triggers_when_llm_says_yes(self):
+        """When sub-spawn check says yes, nested workers are invoked."""
+        invoke_count = {"n": 0}
+
+        async def _counted_invoke(state, config=None, **kw):
+            invoke_count["n"] += 1
+            return {"messages": [AIMessage(content=f"result {invoke_count['n']}")]}
+
+        worker = AsyncMock()
+        worker.ainvoke = AsyncMock(side_effect=_counted_invoke)
+        pool = _make_mock_worker_pool({"väder": worker, "smhi_detail": worker})
+
+        # LLM sequence: planner → critic(ok) → sub_spawn(yes with 1 sub-domain)
+        # → sub_planner → sub_critic(ok) → sub_spawn(no)
+        call_count = {"n": 0}
+
+        async def _llm_invoke(msgs, **kwargs):
+            call_count["n"] += 1
+            n = call_count["n"]
+            if n == 1:  # planner
+                return _make_llm_response(json.dumps({
+                    "steps": [{"action": "hämta", "tool_id": "smhi"}]
+                }))
+            elif n == 2:  # critic → ok
+                return _make_llm_response(json.dumps({
+                    "decision": "ok", "feedback": ""
+                }))
+            elif n == 3:  # sub_spawn check → yes
+                return _make_llm_response(json.dumps({
+                    "needs_sub_spawn": True,
+                    "sub_domains": {
+                        "smhi_detail": {"tools": ["smhi_detail"], "rationale": "detaljer"}
+                    }
+                }))
+            elif n == 4:  # sub_planner
+                return _make_llm_response(json.dumps({
+                    "steps": [{"action": "query", "tool_id": "smhi_detail"}]
+                }))
+            elif n == 5:  # sub_critic → ok
+                return _make_llm_response(json.dumps({
+                    "decision": "ok", "feedback": ""
+                }))
+            else:  # sub_spawn check → no (depth 1, but result checks)
+                return _make_llm_response(json.dumps({
+                    "needs_sub_spawn": False
+                }))
+
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(side_effect=_llm_invoke)
+
+        node = _build_spawner(llm=llm, worker_pool=pool, max_nesting_depth=2)
+        state = {
+            "messages": [HumanMessage(content="detaljerad väderprognos")],
+            "domain_plans": {"väder": {"tools": ["smhi"], "rationale": "v"}},
+            "total_steps": 0,
+        }
+        result = asyncio.get_event_loop().run_until_complete(node(state))
+
+        # Parent worker invoked once + sub-agent worker invoked once = 2
+        assert invoke_count["n"] == 2
+        assert len(result["spawned_domains"]) == 1
+
+    def test_nesting_depth_zero_prevents_sub_spawn(self):
+        """When max_nesting_depth=0, no sub-spawning occurs."""
+        call_count = {"n": 0}
+
+        async def _llm_invoke(msgs, **kwargs):
+            call_count["n"] += 1
+            n = call_count["n"]
+            if n == 1:  # planner
+                return _make_llm_response(json.dumps({
+                    "steps": [{"action": "hämta", "tool_id": "smhi"}]
+                }))
+            else:  # critic → ok
+                return _make_llm_response(json.dumps({
+                    "decision": "ok", "feedback": ""
+                }))
+
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(side_effect=_llm_invoke)
+        pool = _make_mock_worker_pool()
+
+        node = _build_spawner(llm=llm, worker_pool=pool, max_nesting_depth=0)
+        state = {
+            "messages": [HumanMessage(content="test")],
+            "domain_plans": {"väder": {"tools": ["smhi"], "rationale": "t"}},
+            "total_steps": 0,
+        }
+        result = asyncio.get_event_loop().run_until_complete(node(state))
+
+        # Only planner + critic calls, NO sub_spawn check
+        assert call_count["n"] == 2
+        assert len(result["spawned_domains"]) == 1
+
+
+class TestConvergenceFlattenSubResults:
+    """Convergence node flattens sub_results from recursive spawning."""
+
+    def test_flatten_no_sub_results(self):
+        """No sub_results → no flattening needed."""
+        node = _build_convergence()
+        state = {
+            "messages": [HumanMessage(content="test")],
+            "subagent_summaries": [{
+                "domain": "väder", "subagent_id": "sa-1",
+                "summary": "Sol", "findings": ["sol"],
+                "status": "success", "confidence": 0.8,
+            }],
+            "total_steps": 0,
+        }
+        result = asyncio.get_event_loop().run_until_complete(node(state))
+        cs = result["convergence_status"]
+        assert cs["source_domains"] == ["väder"]
+
+    def test_flatten_with_sub_results(self):
+        """Sub-results are flattened with qualified domain names."""
+        node = _build_convergence()
+        state = {
+            "messages": [HumanMessage(content="test")],
+            "subagent_summaries": [
+                {
+                    "domain": "statistik", "subagent_id": "sa-1",
+                    "summary": "SCB data", "findings": ["500k"],
+                    "status": "success", "confidence": 0.8,
+                    "sub_results": [
+                        {
+                            "domain": "scb", "subagent_id": "sa-1-sub-1",
+                            "summary": "Befolkning", "findings": ["500k"],
+                            "status": "success", "confidence": 0.9,
+                        },
+                    ],
+                },
+            ],
+            "total_steps": 0,
+        }
+        result = asyncio.get_event_loop().run_until_complete(node(state))
+        cs = result["convergence_status"]
+        # Flattened: "statistik" + "statistik.scb"
+        assert "statistik" in cs["source_domains"]
+        assert "statistik.scb" in cs["source_domains"]
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Graph Tests — Compare Mode + P4 Node Positions
+# ---------------------------------------------------------------------------
+class TestCompareModePipelineNodes:
+    """Compare mode nodes are in pipeline graph."""
+
+    _COMPARE_NODE_IDS = [
+        "node:compare_fan_out",
+        "node:compare_collect",
+        "node:compare_tavily",
+        "node:compare_synthesizer",
+    ]
+
+    def test_all_compare_nodes_in_pipeline(self):
+        routes_path = _PROJECT_ROOT / "app/routes/admin_flow_graph_routes.py"
+        content = routes_path.read_text()
+        for node_id in self._COMPARE_NODE_IDS:
+            assert f'"{node_id}"' in content, f"Missing pipeline node: {node_id}"
+
+    def test_compare_stage_exists(self):
+        routes_path = _PROJECT_ROOT / "app/routes/admin_flow_graph_routes.py"
+        content = routes_path.read_text()
+        assert '"compare"' in content
+        assert '"Jämförelse"' in content
+
+    def test_compare_edges_exist(self):
+        routes_path = _PROJECT_ROOT / "app/routes/admin_flow_graph_routes.py"
+        content = routes_path.read_text()
+        assert '"node:compare_fan_out"' in content
+        assert '"node:compare_collect"' in content
+        assert '"node:compare_tavily"' in content
+        assert '"node:compare_synthesizer"' in content
+        # Edge from resolve_intent
+        assert "jämförelse" in content
+
+    def test_compare_nodes_have_compare_stage(self):
+        routes_path = _PROJECT_ROOT / "app/routes/admin_flow_graph_routes.py"
+        content = routes_path.read_text()
+        compare_count = content.count('"stage": "compare"')
+        assert compare_count == 4, f"Expected 4 compare-stage nodes, got {compare_count}"
+
+
+class TestFrontendPipelineNodePositions:
+    """Frontend nodePositions map includes all P4 and compare nodes."""
+
+    def test_p4_nodes_have_positions(self):
+        tsx_path = _PROJECT_ROOT.parent / "surfsense_web/components/admin/flow-graph-page.tsx"
+        content = tsx_path.read_text()
+        p4_nodes = [
+            "node:subagent_spawner",
+            "node:mini_planner",
+            "node:mini_executor",
+            "node:mini_critic",
+            "node:mini_synthesizer",
+            "node:pev_verify",
+            "node:adaptive_guard",
+            "node:convergence_node",
+            "node:semantic_cache",
+        ]
+        for node_id in p4_nodes:
+            assert f'"{node_id}"' in content, f"Missing position for: {node_id}"
+
+    def test_compare_nodes_have_positions(self):
+        tsx_path = _PROJECT_ROOT.parent / "surfsense_web/components/admin/flow-graph-page.tsx"
+        content = tsx_path.read_text()
+        compare_nodes = [
+            "node:compare_fan_out",
+            "node:compare_collect",
+            "node:compare_tavily",
+            "node:compare_synthesizer",
+        ]
+        for node_id in compare_nodes:
+            assert f'"{node_id}"' in content, f"Missing position for: {node_id}"
+
+    def test_subagent_stage_color_exists(self):
+        tsx_path = _PROJECT_ROOT.parent / "surfsense_web/components/admin/flow-graph-page.tsx"
+        content = tsx_path.read_text()
+        assert "subagent:" in content
+        assert "compare:" in content
+
+    def test_multi_query_decomposer_has_position(self):
+        tsx_path = _PROJECT_ROOT.parent / "surfsense_web/components/admin/flow-graph-page.tsx"
+        content = tsx_path.read_text()
+        assert '"node:multi_query_decomposer"' in content

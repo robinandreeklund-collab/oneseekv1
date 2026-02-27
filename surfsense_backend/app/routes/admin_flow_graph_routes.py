@@ -237,6 +237,35 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "description": "Redis/LangGraph Store cache per domän — cache hit skippar verktygsanrop (P4.3).",
         "prompt_key": None,
     },
+    # ── Compare mode ──
+    {
+        "id": "node:compare_fan_out",
+        "label": "Compare Fan-Out",
+        "stage": "compare",
+        "description": "Fördela jämförelse-frågan parallellt till externa modeller (compare-subgraph).",
+        "prompt_key": None,
+    },
+    {
+        "id": "node:compare_collect",
+        "label": "Compare Collect",
+        "stage": "compare",
+        "description": "Samla in svar från alla externa modeller (timeout-guard).",
+        "prompt_key": None,
+    },
+    {
+        "id": "node:compare_tavily",
+        "label": "Compare Tavily",
+        "stage": "compare",
+        "description": "Valfri Tavily-sökning för att berika jämförelse med extern källa.",
+        "prompt_key": None,
+    },
+    {
+        "id": "node:compare_synthesizer",
+        "label": "Compare Synthesizer",
+        "stage": "compare",
+        "description": "Sammanställ jämförelse-svar från alla modeller till strukturerat resultat. → END",
+        "prompt_key": None,
+    },
     # ── Evaluation ──
     {
         "id": "node:critic",
@@ -359,6 +388,11 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:pev_verify", "target": "node:mini_executor", "type": "conditional", "label": "deviation"},
     {"source": "node:mini_synthesizer", "target": "node:convergence_node", "type": "normal"},
     {"source": "node:convergence_node", "target": "node:critic", "type": "normal"},
+    # ── Compare mode edges ──
+    {"source": "node:resolve_intent", "target": "node:compare_fan_out", "type": "conditional", "label": "jämförelse"},
+    {"source": "node:compare_fan_out", "target": "node:compare_collect", "type": "normal"},
+    {"source": "node:compare_collect", "target": "node:compare_tavily", "type": "normal"},
+    {"source": "node:compare_tavily", "target": "node:compare_synthesizer", "type": "normal"},
     # ── Critic decisions ──
     {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},
     {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more"},
@@ -384,6 +418,7 @@ _PIPELINE_STAGES: list[dict[str, str]] = [
     {"id": "planning", "label": "Planering", "color": "blue"},
     {"id": "tool_resolution", "label": "Verktygsval / Domänplan", "color": "cyan"},
     {"id": "subagent", "label": "Subagent Mini-Graphs", "color": "indigo"},
+    {"id": "compare", "label": "Jämförelse", "color": "purple"},
     {"id": "execution", "label": "Exekvering", "color": "emerald"},
     {"id": "post_processing", "label": "Efterbehandling", "color": "slate"},
     {"id": "evaluation", "label": "Utvärdering", "color": "orange"},

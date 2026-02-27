@@ -118,16 +118,23 @@ Denna PR innehaller loop-fix (P1-P2), multi-query decomposer (P3), subagent mini
 **Subagent mini-graphs + convergence (P4):**
 - `subagent_spawner` orkestrerar parallella per-doman mini-grafer (max 6 parallella)
 - Varje mini-graf har: `mini_planner` → `mini_executor` → `mini_critic` → (retry | `mini_synthesizer`)
-- `MiniGraphState` isolerar domanspecifikt tillstand (plan_steps, tool_results, critic_decision, summary)
+- **Rekursiv nesting (P4.1+):** Varje subagent har egen mini-planner och kan spawna sub-agenter pa exakt samma satt som supervisor → sub-agent. Djupet begransas av `max_nesting_depth` (default 2). Varje nivanivå far eget subagent_id, checkpoint_ns och sandbox_scope — fullt isolerat fran foraldra- och syskondomanener.
+- Full isolation per doman: unikt `subagent_id` (sa-mini_{doman}-{hash}), isolerad checkpoint namespace, `sandbox_scope_mode=subagent`
+- Identiska handoff-kontrakt som `call_agent`: status, confidence, summary, findings, artifact_refs
 - `adaptive_guard` justerar confidence-troskel nedat med varje retry (0.7 → 0.55 → 0.4) och tvangar syntes efter max 2 retries
-- `convergence_node` slar ihop parallella subagentresultat med LLM-driven overlap-detektering och konfliktflaggning
+- `convergence_node` slar ihop parallella subagentresultat med LLM-driven overlap-detektering, konfliktflaggning och hierarkisk flattering av sub-resultat
 - Semantisk tool-caching med deterministiska SHA-256-nycklar per doman+query
 - `pev_verify` for post-execution verifiering av resultat
 - 5 nya state-falt: `micro_plans`, `convergence_status`, `spawned_domains`, `subagent_summaries`, `adaptive_thresholds`
 - 7 nya default-prompter registrerade i prompt_registry (56 nycklar totalt)
-- 9 nya pipeline-noder och 14 nya kanter i admin flow graph
-- Ny "subagent_mini" nodgrupp i LangGraph Studio
-- 40 tester i `tests/test_loop_fix_p4.py`, alla passerar
+- 9 subagent-noder + 4 compare-noder med korrekta positioner och kanter i admin flow graph
+- Ny "subagent_mini" nodgrupp i LangGraph Studio + "compare" stage for jamforelseflodet
+- 59 tester i `tests/test_loop_fix_p4.py`, alla passerar
+
+**Compare-mode pipeline (synlig i admin):**
+- 4 nya pipeline-noder: `compare_fan_out` → `compare_collect` → `compare_tavily` → `compare_synthesizer`
+- Egen `compare`-stage (lila) i admin flow graph med korrekta kanter fran `resolve_intent`
+- Fullt kopplad i pipeline-grafen med korrekta positioner i frontend
 
 ### 1) Metadata Catalog + Metadata Audit (admin)
 

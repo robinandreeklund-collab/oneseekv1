@@ -3,7 +3,7 @@
 > **Startdatum:** 2026-02-26
 > **Branch:** `claude/debug-longgraph-loop-TCV0N`
 > **Issue:** #44 (Loop issues)
-> **Status:** Sprint P1 — **KLAR** ✓ | Sprint P1 Extra — **KLAR** ✓ (väntar E2E-testning) | Sprint P2 — **KLAR** ✓ | Sprint P3 — **KLAR** ✓ | Sprint P4 — **KLAR** ✓
+> **Status:** Sprint P1 — **KLAR** ✓ | Sprint P1 Extra — **KLAR** ✓ (väntar E2E-testning) | Sprint P2 — **KLAR** ✓ | Sprint P3 — **KLAR** ✓ | Sprint P4 — **KLAR** ✓ (59/59 tester, rekursiv nesting + admin pipeline + compare-noder)
 
 ---
 
@@ -1254,13 +1254,13 @@ tests/test_multi_query_decomposer.py: 11 passed (0.29s)
 
 ---
 
-### Sprint P4 – Arkitekturell Evolution (Framtida)
+### Sprint P4 – Arkitekturell Evolution
 
 **Mål:**
   Göra systemet **loop-immun på arkitekturnivå** genom att utnyttja LangGraph's inbyggda primitives + 2026-best-practices. Bygga vidare på befintliga subagenter, state-machine, idempotent final_response, CriticVeto och mock-env så att varje domän är helt isolerad, självhelande och kostnadseffektiv.
 
 **Tid:** 5–7 dagar
-**Status:** **KLAR** ✓ (40/40 tester gröna)
+**Status:** **KLAR** ✓ (59/59 tester gröna)
 
 > **Not:** ~~P4.2 — Pydantic Structured Output~~ har flyttats till **P1 Extra** (P1-Extra.1 — P1-Extra.8).
 
@@ -1269,11 +1269,26 @@ tests/test_multi_query_decomposer.py: 11 passed (0.29s)
 ### P4.1 — Subagent Mini-Graphs
 
 **Vad:** Varje subagent (kunskap, statistik, trafik, etc.) får en egen isolerad
-mini-LangGraph med:
-- Mini-planner (optional)
-- Mini-executor med scoped tools
-- Mini-critic
-- Mini-synthesizer
+mini-graf med full isolation via worker pool:
+- Mini-planner (LLM-driven mikro-plan per domän)
+- Mini-executor (real worker invocation via worker pool)
+- Mini-critic (LLM-driven utvärdering)
+- Adaptive guard (budget- och tröskeljustering)
+- Mini-synthesizer (sammanfattning)
+
+**Rekursiv nesting (P4.1+):** Varje subagent har egen mini-planner och kan
+spawna sub-agenter på exakt samma sätt som supervisor → sub-agent:
+- LLM-driven `_check_needs_sub_spawning()` efter varje domänresultat
+- Rekursiv `_run_single_domain()` med djupspårning
+- `max_nesting_depth` begränsar rekursion (default 2)
+- Varje nivå får eget `subagent_id`, `checkpoint_ns`, `sandbox_scope`
+- Konvergensnodens `_flatten_summaries()` hanterar hierarkiska sub-resultat
+
+**Isolation per domän (identisk med call_agent):**
+- Unikt `subagent_id`: `sa-mini_{domän}-{hash}`
+- Isolerad `checkpoint_ns`: `{parent}:subagent:mini_{domän}:{id}`
+- `sandbox_scope_mode=subagent`, `sandbox_scope_id={subagent_id}`
+- Proper handoff-kontrakt: status, confidence, summary, findings, artifact_refs
 
 **State-tillägg:**
 ```python
@@ -1288,6 +1303,11 @@ convergence_status: dict             # {"merged_fields": [...], "overlap_score":
 **Grafändring:**
 ```
 domain_planner → subagent_spawner → [SubagentMiniGraph x N parallellt]
+                                     │  ├→ mini_planner → semantic_cache → mini_executor
+                                     │  ├→ mini_critic → adaptive_guard → (retry | synth)
+                                     │  ├→ pev_verify (valfritt)
+                                     │  └→ mini_synthesizer
+                                     │       └→ [sub-spawning] → [SubagentMiniGraph × M, depth+1]
                                      → convergence_node → critic
 ```
 
@@ -1296,6 +1316,7 @@ domain_planner → subagent_spawner → [SubagentMiniGraph x N parallellt]
 - Max 4-6 calls per subagent (begränsar looping)
 - Parallell exekvering av oberoende subagenter
 - Varje subagent har egen critic (snabbare feedback)
+- Rekursiv nesting ger supervisor-liknande kapabilitet åt subagenter
 
 **Risker:**
 - Streaming-pipelinen måste hantera nested graphs
@@ -1538,26 +1559,32 @@ Validera att **varje** ny P4-nod uppfyller samtliga krav:
 
 ### P4.4 — Tester för Sprint P4
 
-| Test | Testar |
-|------|--------|
-| `test_subagent_mini_graph_isolation` | P4.1: Subagent state läcker inte till parent |
-| `test_subagent_max_calls_per_agent` | P4.1: Max 4-6 calls per mini-graph |
-| `test_convergence_node_merges_results` | P4.1: Convergence skapar unified artifact |
-| `test_per_domain_checkpointer_isolation` | P4.1a: Separate checkpointers per domän |
-| `test_command_pattern_handoff` | P4.1b: Command-baserad subgraph-handoff |
-| `test_subagent_summarization_token_budget` | P4.1c: Historik max 6k tokens |
-| `test_pev_verify_node` | P4.1d: PEV inner-subgraph |
-| `test_adaptive_threshold_by_step` | P4.2: Trösklar sjunker med steg |
-| `test_adaptive_limits_per_domain` | P4.2a: Per-domän max_steps |
-| `test_semantic_cache_hit` | P4.3: Cache hit på repetitiva queries |
-| `test_semantic_cache_miss_fallback` | P4.3: Cache miss → normal exekvering |
-| `test_parallel_subagents_execution` | P4.1: Oberoende subagenter körs parallellt |
-| `test_p4_prompt_registry_completeness` | P4.5a: Alla P4-prompt-nycklar finns i registry + definitions |
-| `test_p4_studio_node_group_mapping` | P4.5b: Alla P4-noder finns i `_PROMPT_NODE_GROUP_TO_GRAPH_NODES` |
-| `test_p4_pipeline_nodes_have_prompt_key` | P4.5c: Alla P4 pipeline-noder har korrekt `prompt_key` |
-| `test_p4_pipeline_edges_connected` | P4.5c: Alla P4 pipeline-kanter har giltiga source/target |
-| `test_p4_admin_flow_graph_endpoint` | P4.5c: `/admin/flow-graph` returnerar P4-noder i response |
-| `test_p4_no_loose_ends` | P4.5e: Varje P4-nod uppfyller samtliga krav i checklistan |
+**59 tester i `tests/test_loop_fix_p4.py`, alla passerar.**
+
+| Testklass | Antal | Testar |
+|-----------|-------|--------|
+| `TestSubagentWorkerIsolation` | 4 | P4.1: subagent_id, sandbox_scope, checkpoint_ns, handoff kontrakt |
+| `TestSubagentMaxCallsPerAgent` | 1 | P4.1: Retry cap + parallelism-konstanter |
+| `TestConvergenceNodeMergesResults` | 2 | P4.1: Single + multi-domain merge |
+| `TestPerDomainCheckpointerIsolation` | 5 | P4.1a: State-fält existerar |
+| `TestCommandPatternHandoff` | 1 | P4.1b: spawned_domains tracking |
+| `TestSubagentSummariesContainHandoffFields` | 1 | P4.1c: Handoff-fält i summaries |
+| `TestPevVerifyNode` | 1 | P4.1d: PEV prompt-konstant |
+| `TestAdaptiveThresholdByStep` | 1 | P4.2: Confidence sjunker |
+| `TestAdaptiveLimitsPerDomain` | 2 | P4.2a: force_synthesis vid max retries |
+| `TestAdaptiveGuardRetryCycle` | 1 | P4.2: Retry → worker anropas igen |
+| `TestSemanticCacheHit` | 3 | P4.3: Deterministiska cache-nycklar |
+| `TestParallelSubagentsExecution` | 5 | P4.1: Tom/null plans, 3-domän parallellt, timeout, pool calls |
+| `TestP4PromptRegistryCompleteness` | 3 | P4.5a: Alla P4-prompt-nycklar i registry |
+| `TestP4StudioNodeGroupMapping` | 4 | P4.5b: Studio nod-grupp-mappning |
+| `TestP4PipelineNodesHavePromptKey` | 1 | P4.5c: Pipeline-noder med prompt_key |
+| `TestP4PipelineEdgesConnected` | 2 | P4.5c: Pipeline-kanter + subagent stage |
+| `TestP4AdminFlowGraphEndpoint` | 1 | P4.5c: 9 subagent-stage noder |
+| `TestP4NoLooseEnds` | 8 | P4.5e: Inga loose ends + _MAX_NESTING_DEPTH |
+| `TestRecursiveSubagentSpawning` | 3 | P4.1+: Rekursiv nesting, depth=0 blockerar |
+| `TestConvergenceFlattenSubResults` | 2 | P4.1+: Hierarkisk flattering av sub-resultat |
+| `TestCompareModePipelineNodes` | 4 | Compare: Noder, stage, kanter |
+| `TestFrontendPipelineNodePositions` | 4 | Frontend: P4 + compare positioner i nodePositions |
 
 ---
 
@@ -1569,10 +1596,13 @@ Validera att **varje** ny P4-nod uppfyller samtliga krav:
 * 100 % av 30 loop-prone queries → final answer inom 6 steps
 * Full time-travel + human-in-the-loop fungerar per subagent
 * Subagent state läcker inte till parent graph
-* Convergence node mergar subagent-resultat korrekt
+* Convergence node mergar subagent-resultat korrekt (inkl. hierarkiska sub-resultat)
 * 100 % av P4-noder synliga + redigerbara i admin flow graph (P4.5c)
 * Alla P4-prompts synliga under Routing i admin UI (P4.5a)
 * LangGraph Studio visar alla P4-noder med editerbara promptfält (P4.5b)
+* Compare-mode noder synliga i pipeline-grafen med korrekta kanter
+* Rekursiv nesting bounded av max_nesting_depth (default 2)
+* Alla 59 tester passerar
 
 #### Risker & Mitigation
 

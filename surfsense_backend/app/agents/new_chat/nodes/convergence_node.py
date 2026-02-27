@@ -5,6 +5,10 @@ contain proper handoff contract fields: subagent_id, status, confidence,
 summary, findings) and creates a unified artifact with source attribution,
 overlap detection, and conflict flagging.
 
+Supports hierarchical results from recursive sub-spawning: if a domain
+has ``sub_results``, those are flattened into the merge with proper
+source attribution (e.g. "statistik.scb", "statistik.kolada").
+
 The merged result is passed to the critic for final quality evaluation.
 """
 
@@ -34,6 +38,28 @@ def build_convergence_node(
     and produces ``convergence_status`` with the merged artifact.
     """
 
+    def _flatten_summaries(
+        summaries: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Flatten hierarchical summaries from recursive sub-spawning.
+
+        If a summary has a ``sub_results`` list, each sub-result is
+        included as a separate entry with a qualified domain name
+        (e.g. "statistik.scb").
+        """
+        flat: list[dict[str, Any]] = []
+        for s in summaries:
+            flat.append(s)
+            sub_results = s.get("sub_results") or []
+            parent_domain = s.get("domain", "unknown")
+            for sub in sub_results:
+                qualified = {**sub}
+                sub_domain = sub.get("domain", "sub")
+                qualified["domain"] = f"{parent_domain}.{sub_domain}"
+                qualified["parent_domain"] = parent_domain
+                flat.append(qualified)
+        return flat
+
     async def convergence_node(
         state: dict[str, Any],
         config: RunnableConfig | None = None,
@@ -41,7 +67,8 @@ def build_convergence_node(
         store=None,
         **kwargs,
     ) -> dict[str, Any]:
-        summaries = state.get("subagent_summaries") or []
+        raw_summaries = state.get("subagent_summaries") or []
+        summaries = _flatten_summaries(raw_summaries)
         if not summaries:
             logger.info("convergence_node: no subagent_summaries, skipping")
             return {

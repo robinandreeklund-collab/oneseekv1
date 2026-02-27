@@ -8,7 +8,12 @@ Each domain gets proper subagent isolation identical to call_agent:
 
 The subagent_spawner orchestrates parallel domain execution using the
 same worker infrastructure as call_agent / call_agents_parallel.
-Each worker can in turn call call_agent recursively (nested subagents).
+
+**Recursive nesting (P4.1+):** Each subagent has its own mini-planner and can
+spawn sub-agents in the exact same way as supervisor → sub-agent. Depth is
+bounded by ``max_nesting_depth`` (default 2) to prevent infinite recursion.
+Each recursive level receives its own subagent_id, checkpoint_ns, and
+sandbox_scope, fully isolated from parent and sibling domains.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ logger = logging.getLogger(__name__)
 _MAX_MINI_RETRIES = 2
 _MAX_PARALLEL_SUBAGENTS = 6
 _MAX_MINI_PLAN_STEPS = 3
+_MAX_NESTING_DEPTH = 2
 
 
 # ─── Cache helper ────────────────────────────────────────────────────
@@ -111,6 +117,8 @@ def build_subagent_spawner_node(
     subagent_isolation_enabled: bool,
     subagent_result_max_chars: int,
     execution_timeout_seconds: float,
+    # Recursive nesting config
+    max_nesting_depth: int = _MAX_NESTING_DEPTH,
 ):
     """Return an async node function for the subagent spawner.
 
@@ -124,8 +132,11 @@ def build_subagent_spawner_node(
     4. Retries with adaptive thresholds if needed  (adaptive_guard)
     5. Builds a proper handoff contract identical to call_agent's
 
-    Each worker can in turn call call_agent recursively, enabling
-    nested subagent spawning.
+    **Recursive nesting:** After step 3, if the mini_critic determines the
+    result could benefit from sub-domain decomposition AND nesting_depth < max,
+    the spawner recursively spawns sub-agents for the identified sub-domains.
+    Each recursive level gets its own subagent_id, checkpoint_ns, and
+    sandbox_scope — fully isolated from parent and sibling domains.
     """
 
     async def _run_mini_planner(
@@ -296,23 +307,131 @@ def build_subagent_spawner_node(
         )
         return result
 
+    async def _check_needs_sub_spawning(
+        domain: str,
+        response_text: str,
+        user_query: str,
+        nesting_depth: int,
+    ) -> dict[str, list[dict[str, Any]]] | None:
+        """LLM-driven check: does this domain result need sub-spawning?
+
+        Returns sub-domain plans dict if yes, None if no.
+        Only called when nesting_depth < max_nesting_depth.
+        """
+        if nesting_depth >= max_nesting_depth:
+            return None
+
+        system_msg = SystemMessage(content=(
+            "Du är en sub-spawning-beslutare. Analysera domänresultatet "
+            "och avgör om det behöver brytas ner i sub-domäner.\n"
+            "Svara ALLTID med JSON:\n"
+            '{"needs_sub_spawn": false} om resultatet är tillräckligt.\n'
+            '{"needs_sub_spawn": true, "sub_domains": {'
+            '"sub_namn": {"tools": ["tool_id"], "rationale": "varför"}'
+            "}} om det behöver sub-domäner.\n"
+            "Var restriktiv — sub-spawna BARA om resultatet uppenbart "
+            "saknar en hel informationsdomän som kräver separata verktyg."
+        ))
+        human_msg = HumanMessage(content=(
+            f"Domän: {domain} (nesting_depth={nesting_depth})\n"
+            f"Fråga: {user_query}\n"
+            f"Resultat (förhandsgranskning):\n{response_text[:1500]}"
+        ))
+        try:
+            raw = await llm.ainvoke([system_msg, human_msg], max_tokens=400)
+            raw_content = str(getattr(raw, "content", "") or "")
+            parsed = extract_first_json_object_fn(raw_content)
+            if parsed.get("needs_sub_spawn") is True:
+                sub_domains = parsed.get("sub_domains") or {}
+                if sub_domains and isinstance(sub_domains, dict):
+                    logger.info(
+                        "sub_spawn_check[%s]: needs sub-spawning → %d sub-domains",
+                        domain, len(sub_domains),
+                    )
+                    return sub_domains
+        except Exception:
+            logger.debug("sub_spawn_check[%s]: failed, skipping", domain)
+        return None
+
+    async def _run_sub_spawning(
+        *,
+        parent_domain: str,
+        sub_domain_plans: dict[str, list[dict[str, Any]]],
+        user_query: str,
+        parent_turn_key: str,
+        parent_subagent_id: str,
+        nesting_depth: int,
+    ) -> list[dict[str, Any]]:
+        """Recursively spawn sub-agents for identified sub-domains.
+
+        Uses the same _run_single_domain with incremented nesting_depth.
+        Each sub-agent gets a nested subagent_id and checkpoint_ns.
+        """
+        sub_turn_key = f"{parent_turn_key}:{parent_domain}"
+        sub_semaphore = asyncio.Semaphore(_MAX_PARALLEL_SUBAGENTS)
+
+        async def _run_sub(
+            sub_domain: str, sub_plan_data: dict[str, Any], idx: int,
+        ) -> dict[str, Any]:
+            async with sub_semaphore:
+                return await _run_single_domain(
+                    sub_domain, sub_plan_data, idx,
+                    user_query, sub_turn_key,
+                    nesting_depth=nesting_depth + 1,
+                    parent_prefix=f"{parent_domain}.",
+                )
+
+        sub_completed = await asyncio.gather(
+            *[
+                _run_sub(sub_domain, sub_plan, idx)
+                for idx, (sub_domain, sub_plan) in enumerate(sub_domain_plans.items())
+            ],
+            return_exceptions=True,
+        )
+
+        sub_results: list[dict[str, Any]] = []
+        for r in sub_completed:
+            if isinstance(r, Exception):
+                logger.error(
+                    "sub_spawn[%s]: sub-agent failed: %s",
+                    parent_domain, r,
+                )
+                continue
+            sub_results.append(r)
+
+        logger.info(
+            "sub_spawn[%s]: %d/%d sub-agents completed (depth=%d)",
+            parent_domain, len(sub_results),
+            len(sub_domain_plans), nesting_depth + 1,
+        )
+        return sub_results
+
     async def _run_single_domain(
         domain: str,
         plan_data: dict[str, Any],
         call_index: int,
         user_query: str,
         turn_key: str,
+        *,
+        nesting_depth: int = 0,
+        parent_prefix: str = "",
     ) -> dict[str, Any]:
         """Execute a complete mini-graph loop for one domain.
 
-        1. mini_planner  → create micro-plan
-        2. worker invoke → real tool execution with isolation
-        3. mini_critic   → evaluate result
-        4. adaptive_guard → decide retry
-        5. Build handoff contract
+        1. mini_planner    → create micro-plan
+        2. worker invoke   → real tool execution with isolation
+        3. mini_critic     → evaluate result
+        4. adaptive_guard  → decide retry
+        5. sub_spawn_check → recursively spawn sub-agents if needed
+        6. Build handoff contract
 
-        Returns a dict with domain, subagent_id, handoff, micro_plan.
+        The ``nesting_depth`` parameter controls recursion. At each level,
+        the subagent gets a deeper subagent_id and checkpoint_ns.
+
+        Returns a dict with domain, subagent_id, handoff, micro_plan,
+        and optionally sub_results for nested spawning.
         """
+        qualified_domain = f"{parent_prefix}{domain}"
         agent_name = domain
         tool_ids = plan_data.get("tools") or [] if isinstance(plan_data, dict) else []
 
@@ -320,7 +439,7 @@ def build_subagent_spawner_node(
         subagent_id = build_subagent_id_fn(
             base_thread_id=base_thread_id,
             turn_key=turn_key,
-            agent_name=f"mini_{domain}",
+            agent_name=f"mini_{qualified_domain}",
             call_index=call_index,
             task=user_query,
         )
@@ -372,8 +491,8 @@ def build_subagent_spawner_node(
                 domain, response_text, used_tools, user_query,
             )
             logger.info(
-                "mini_critic[%s]: decision=%s (attempt %d)",
-                domain, critic_result["decision"], attempt,
+                "mini_critic[%s]: decision=%s (attempt %d, depth=%d)",
+                domain, critic_result["decision"], attempt, nesting_depth,
             )
 
             if critic_result["decision"] == "ok":
@@ -396,7 +515,36 @@ def build_subagent_spawner_node(
 
             critic_feedback = critic_result.get("feedback", "")
 
-        # Step 5: Build proper handoff contract (same as call_agent)
+        # Step 5: Recursive sub-spawning check
+        sub_results: list[dict[str, Any]] = []
+        if not error_text and nesting_depth < max_nesting_depth:
+            sub_plans = await _check_needs_sub_spawning(
+                domain, response_text, user_query, nesting_depth,
+            )
+            if sub_plans:
+                sub_results = await _run_sub_spawning(
+                    parent_domain=domain,
+                    sub_domain_plans=sub_plans,
+                    user_query=user_query,
+                    parent_turn_key=turn_key,
+                    parent_subagent_id=subagent_id,
+                    nesting_depth=nesting_depth,
+                )
+                # Enrich response with sub-agent results
+                if sub_results:
+                    sub_summaries = []
+                    for sr in sub_results:
+                        h = sr.get("handoff", {})
+                        sub_summaries.append(
+                            f"[{sr['domain']}] {h.get('summary', '')}"
+                        )
+                    response_text = (
+                        f"{response_text}\n\n"
+                        f"--- Sub-agentresultat ---\n"
+                        + "\n".join(sub_summaries)
+                    )
+
+        # Step 6: Build proper handoff contract (same as call_agent)
         handoff = build_handoff_payload_fn(
             subagent_id=subagent_id,
             agent_name=agent_name,
@@ -406,13 +554,18 @@ def build_subagent_spawner_node(
             error_text=error_text,
         )
 
-        return {
+        domain_result: dict[str, Any] = {
             "domain": domain,
             "subagent_id": subagent_id,
             "handoff": handoff,
             "micro_plan": plan_steps,
             "used_tools": used_tools,
+            "nesting_depth": nesting_depth,
         }
+        if sub_results:
+            domain_result["sub_results"] = sub_results
+
+        return domain_result
 
     async def subagent_spawner_node(
         state: dict[str, Any],
