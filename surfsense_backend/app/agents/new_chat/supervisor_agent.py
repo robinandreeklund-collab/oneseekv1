@@ -1969,6 +1969,7 @@ async def create_supervisor_agent(
             "agent.smalltalk.system",
             SMALLTALK_INSTRUCTIONS,
         ),
+        include_think_instructions=False,
     )
     worker_configs: dict[str, WorkerConfig] = {
         "kunskap": WorkerConfig(
@@ -5718,7 +5719,7 @@ async def create_supervisor_agent(
     ) -> SupervisorState:
         latest_user_query = _latest_user_query(state.get("messages") or [])
         if not latest_user_query:
-            fallback = "Hej! Hur kan jag hjalpa dig idag?"
+            fallback = "Hej! Hur kan jag hjälpa dig idag?"
             return {
                 "messages": [AIMessage(content=fallback)],
                 "final_agent_response": fallback,
@@ -5741,13 +5742,19 @@ async def create_supervisor_agent(
                 ],
                 max_tokens=180,
             )
-            response_text = _strip_critic_json(
-                str(getattr(message, "content", "") or "")
+            raw_content = str(getattr(message, "content", "") or "")
+            # Strip any <think>…</think> that the model may produce despite
+            # instructions — smalltalk must never expose internal reasoning.
+            response_text = re.sub(
+                r"<think>[\s\S]*?</think>", "", raw_content
             ).strip()
+            # Also strip bare opening <think> with no closing tag (truncated)
+            response_text = re.sub(r"<think>[\s\S]*$", "", response_text).strip()
+            response_text = _strip_critic_json(response_text).strip()
         except Exception:
             response_text = ""
         if not response_text:
-            response_text = "Hej! Jag ar OneSeek. Hur kan jag hjalpa dig idag?"
+            response_text = "Hej! Jag är OneSeek. Hur kan jag hjälpa dig idag?"
         return {
             "messages": [AIMessage(content=response_text)],
             "final_agent_response": response_text,

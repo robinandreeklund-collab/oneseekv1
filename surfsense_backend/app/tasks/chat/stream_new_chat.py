@@ -2015,6 +2015,7 @@ async def stream_new_chat(
                     "agent.smalltalk.system",
                     SMALLTALK_INSTRUCTIONS,
                 ),
+                include_think_instructions=False,
             )
         else:
             worker_system_prompt = supervisor_system_prompt
@@ -2313,11 +2314,13 @@ async def stream_new_chat(
                     ]
                 )
                 if isinstance(response, AIMessage):
-                    assistant_message = response
+                    raw_content = str(response.content or "")
                 else:
-                    assistant_message = AIMessage(
-                        content=str(getattr(response, "content", "") or response or "")
-                    )
+                    raw_content = str(getattr(response, "content", "") or response or "")
+                # Smalltalk must never expose <think> reasoning to the user.
+                cleaned = re.sub(r"<think>[\s\S]*?</think>", "", raw_content).strip()
+                cleaned = re.sub(r"<think>[\s\S]*$", "", cleaned).strip()
+                assistant_message = AIMessage(content=cleaned)
                 return {"messages": [assistant_message]}
 
             agent = RunnableLambda(_run_smalltalk_fast_path).with_config(

@@ -104,8 +104,9 @@ def action_route_instructions(route: ActionRoute) -> str:
 
 
 SMALLTALK_INSTRUCTIONS = (
-    "Keep responses friendly, concise, and conversational. "
-    "Do not use tools. Avoid long explanations unless asked."
+    "Svara vänligt, kort och konversationellt. "
+    "Använd INGA verktyg. Undvik långa förklaringar om inte användaren ber om det. "
+    "Resonera INTE internt — ge svaret direkt utan <think>-taggar."
 )
 
 
