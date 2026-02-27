@@ -6529,9 +6529,35 @@ async def create_supervisor_agent(
         if not messages:
             return "critic"
         last_message = messages[-1]
-        if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
-            return "tools"
-        return "critic"
+        if not (isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None)):
+            return "critic"
+
+        # --- Loop guard: detect repeated calls to the same direct tool ---
+        # Count how many consecutive ToolMessage results come from the same
+        # tool name.  If the executor keeps requesting the same tool, force
+        # exit to critic instead of executing the tool again.
+        tool_call_index = _tool_call_name_index(messages)
+        consecutive = 0
+        last_tool_name = ""
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                break
+            if not isinstance(msg, ToolMessage):
+                continue
+            name = _resolve_tool_message_name(msg, tool_call_index=tool_call_index)
+            if not name or name in {"call_agent", "retrieve_agents", "reflect_on_progress", "write_todos"}:
+                break
+            if not last_tool_name:
+                last_tool_name = name
+            if name == last_tool_name:
+                consecutive += 1
+            else:
+                break
+        if consecutive >= _MAX_CONSECUTIVE_SAME_TOOL:
+            # Force to critic — the same tool has been called enough times.
+            return "critic"
+
+        return "tools"
 
     def critic_should_continue(state: SupervisorState, *, store=None):
         decision = str(state.get("critic_decision") or "").strip().lower()
