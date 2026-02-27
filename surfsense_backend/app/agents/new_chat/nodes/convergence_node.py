@@ -21,6 +21,12 @@ from typing import Any, Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from ..structured_schemas import (
+    ConvergenceResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,9 +88,7 @@ def build_convergence_node(
             }
 
         user_query = latest_user_query_fn(state.get("messages") or [])
-        source_domains = [
-            s.get("domain", s.get("agent", "unknown")) for s in summaries
-        ]
+        source_domains = [s.get("domain", s.get("agent", "unknown")) for s in summaries]
 
         # If only one domain, skip LLM merge and pass through.
         if len(summaries) == 1:
@@ -122,9 +126,19 @@ def build_convergence_node(
         }
 
         try:
-            raw = await llm.ainvoke([system_msg, human_msg], max_tokens=800)
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 800}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    ConvergenceResult, "convergence_result"
+                )
+            raw = await llm.ainvoke([system_msg, human_msg], **_invoke_kwargs)
             raw_content = str(getattr(raw, "content", "") or "")
-            parsed = extract_first_json_object_fn(raw_content)
+            # P4: try Pydantic structured parse, fall back to regex
+            try:
+                _structured = ConvergenceResult.model_validate_json(raw_content)
+                parsed = _structured.model_dump(exclude={"thinking"})
+            except Exception:
+                parsed = extract_first_json_object_fn(raw_content)
 
             convergence_status = {
                 "merged_fields": parsed.get("merged_fields", []),

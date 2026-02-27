@@ -27,6 +27,14 @@ from typing import Any, Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from ..structured_schemas import (
+    MiniCriticResult,
+    MiniPlannerResult,
+    SubSpawnCheckResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 logger = logging.getLogger(__name__)
 
 # Hard limits per mini-graph to prevent infinite loops.
@@ -38,6 +46,7 @@ _MAX_NESTING_DEPTH = 2
 
 # ─── Cache helper ────────────────────────────────────────────────────
 
+
 def _cache_key(domain: str, query: str) -> str:
     """Generate a deterministic cache key for semantic tool caching (P4.3)."""
     raw = f"cache:{domain}:{query}"
@@ -45,6 +54,7 @@ def _cache_key(domain: str, query: str) -> str:
 
 
 # ─── Response extraction from worker result ──────────────────────────
+
 
 def _extract_response_text(result: dict[str, Any] | Any) -> str:
     """Extract final response text from worker.ainvoke result.
@@ -65,7 +75,10 @@ def _extract_response_text(result: dict[str, Any] | Any) -> str:
                 tool_content = str(getattr(msg, "content", "") or "").strip()
                 if tool_content and len(tool_content) > 10:
                     return tool_content
-            elif isinstance(msg, dict) and str(msg.get("type") or "").strip().lower() == "tool":
+            elif (
+                isinstance(msg, dict)
+                and str(msg.get("type") or "").strip().lower() == "tool"
+            ):
                 tool_content = str(msg.get("content") or "").strip()
                 if tool_content and len(tool_content) > 10:
                     return tool_content
@@ -93,6 +106,7 @@ def _extract_used_tools(result: dict[str, Any] | Any) -> list[str]:
 
 
 # ─── Subagent Spawner ────────────────────────────────────────────────
+
 
 def build_subagent_spawner_node(
     *,
@@ -157,9 +171,19 @@ def build_subagent_spawner_node(
             )
         )
         try:
-            raw = await llm.ainvoke([system_msg, human_msg], max_tokens=400)
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 400}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    MiniPlannerResult, "mini_planner_result"
+                )
+            raw = await llm.ainvoke([system_msg, human_msg], **_invoke_kwargs)
             raw_content = str(getattr(raw, "content", "") or "")
-            parsed = extract_first_json_object_fn(raw_content)
+            # P4: try Pydantic structured parse, fall back to regex
+            try:
+                _structured = MiniPlannerResult.model_validate_json(raw_content)
+                parsed = _structured.model_dump(exclude={"thinking"})
+            except Exception:
+                parsed = extract_first_json_object_fn(raw_content)
             steps = parsed.get("steps", [])[:_MAX_MINI_PLAN_STEPS]
             logger.info(
                 "mini_planner[%s]: %d steps planned",
@@ -189,13 +213,26 @@ def build_subagent_spawner_node(
             )
         )
         try:
-            raw = await llm.ainvoke([system_msg, human_msg], max_tokens=300)
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 300}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    MiniCriticResult, "mini_critic_result"
+                )
+            raw = await llm.ainvoke([system_msg, human_msg], **_invoke_kwargs)
             raw_content = str(getattr(raw, "content", "") or "")
-            parsed = extract_first_json_object_fn(raw_content)
-            return {
-                "decision": parsed.get("decision", "ok"),
-                "feedback": parsed.get("feedback", ""),
-            }
+            # P4: try Pydantic structured parse, fall back to regex
+            try:
+                _structured = MiniCriticResult.model_validate_json(raw_content)
+                return {
+                    "decision": _structured.decision,
+                    "feedback": _structured.feedback,
+                }
+            except Exception:
+                parsed = extract_first_json_object_fn(raw_content)
+                return {
+                    "decision": parsed.get("decision", "ok"),
+                    "feedback": parsed.get("feedback", ""),
+                }
         except Exception:
             logger.exception("mini_critic[%s]: failed, defaulting to ok", domain)
             return {"decision": "ok", "feedback": ""}
@@ -240,23 +277,17 @@ def build_subagent_spawner_node(
         """
         worker = await worker_pool.get(agent_name)
         if worker is None:
-            raise RuntimeError(
-                f"Worker '{agent_name}' not available in worker pool"
-            )
+            raise RuntimeError(f"Worker '{agent_name}' not available in worker pool")
 
         # Format the task for the worker with the micro-plan
         plan_text = json.dumps(plan_steps, ensure_ascii=False, default=str)
         retry_hint = ""
         if attempt > 0 and critic_feedback:
             retry_hint = (
-                f"\n\nDetta är retry #{attempt}. "
-                f"Tidigare feedback: {critic_feedback}"
+                f"\n\nDetta är retry #{attempt}. Tidigare feedback: {critic_feedback}"
             )
         task_for_worker = (
-            f"Domän: {domain}\n"
-            f"Fråga: {user_query}\n"
-            f"Mikroplan:\n{plan_text}"
-            f"{retry_hint}"
+            f"Domän: {domain}\nFråga: {user_query}\nMikroplan:\n{plan_text}{retry_hint}"
         )
 
         # Build system prompt with spawner context
@@ -321,34 +352,61 @@ def build_subagent_spawner_node(
         if nesting_depth >= max_nesting_depth:
             return None
 
-        system_msg = SystemMessage(content=(
-            "Du är en sub-spawning-beslutare. Analysera domänresultatet "
-            "och avgör om det behöver brytas ner i sub-domäner.\n"
-            "Svara ALLTID med JSON:\n"
-            '{"needs_sub_spawn": false} om resultatet är tillräckligt.\n'
-            '{"needs_sub_spawn": true, "sub_domains": {'
-            '"sub_namn": {"tools": ["tool_id"], "rationale": "varför"}'
-            "}} om det behöver sub-domäner.\n"
-            "Var restriktiv — sub-spawna BARA om resultatet uppenbart "
-            "saknar en hel informationsdomän som kräver separata verktyg."
-        ))
-        human_msg = HumanMessage(content=(
-            f"Domän: {domain} (nesting_depth={nesting_depth})\n"
-            f"Fråga: {user_query}\n"
-            f"Resultat (förhandsgranskning):\n{response_text[:1500]}"
-        ))
+        system_msg = SystemMessage(
+            content=(
+                "Du är en sub-spawning-beslutare. Analysera domänresultatet "
+                "och avgör om det behöver brytas ner i sub-domäner.\n"
+                "Var restriktiv — sub-spawna BARA om resultatet uppenbart "
+                "saknar en hel informationsdomän som kräver separata verktyg.\n\n"
+                "INSTRUKTIONER FÖR OUTPUT:\n"
+                '- All intern resonering ska skrivas i "thinking"-fältet.\n'
+                "- Använd INTE <think>-taggar.\n\n"
+                "Returnera strikt JSON:\n"
+                "{\n"
+                '  "thinking": "Resonering om sub-spawning-behov.",\n'
+                '  "needs_sub_spawn": false,\n'
+                '  "sub_domains": {},\n'
+                '  "reason": "kort motivering"\n'
+                "}\n"
+                "Vid needs_sub_spawn=true, fyll sub_domains med:\n"
+                '{"sub_namn": {"tools": ["tool_id"], "rationale": "varför"}}'
+            )
+        )
+        human_msg = HumanMessage(
+            content=(
+                f"Domän: {domain} (nesting_depth={nesting_depth})\n"
+                f"Fråga: {user_query}\n"
+                f"Resultat (förhandsgranskning):\n{response_text[:1500]}"
+            )
+        )
         try:
-            raw = await llm.ainvoke([system_msg, human_msg], max_tokens=400)
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 400}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    SubSpawnCheckResult, "sub_spawn_check_result"
+                )
+            raw = await llm.ainvoke([system_msg, human_msg], **_invoke_kwargs)
             raw_content = str(getattr(raw, "content", "") or "")
-            parsed = extract_first_json_object_fn(raw_content)
-            if parsed.get("needs_sub_spawn") is True:
+            # P4: try Pydantic structured parse, fall back to regex
+            needs_sub = False
+            sub_domains: dict[str, Any] = {}
+            try:
+                _structured = SubSpawnCheckResult.model_validate_json(raw_content)
+                needs_sub = _structured.needs_sub_spawn
+                sub_domains = {
+                    k: v.model_dump() for k, v in _structured.sub_domains.items()
+                }
+            except Exception:
+                parsed = extract_first_json_object_fn(raw_content)
+                needs_sub = parsed.get("needs_sub_spawn") is True
                 sub_domains = parsed.get("sub_domains") or {}
-                if sub_domains and isinstance(sub_domains, dict):
-                    logger.info(
-                        "sub_spawn_check[%s]: needs sub-spawning → %d sub-domains",
-                        domain, len(sub_domains),
-                    )
-                    return sub_domains
+            if needs_sub and sub_domains and isinstance(sub_domains, dict):
+                logger.info(
+                    "sub_spawn_check[%s]: needs sub-spawning → %d sub-domains",
+                    domain,
+                    len(sub_domains),
+                )
+                return sub_domains
         except Exception:
             logger.debug("sub_spawn_check[%s]: failed, skipping", domain)
         return None
@@ -371,12 +429,17 @@ def build_subagent_spawner_node(
         sub_semaphore = asyncio.Semaphore(_MAX_PARALLEL_SUBAGENTS)
 
         async def _run_sub(
-            sub_domain: str, sub_plan_data: dict[str, Any], idx: int,
+            sub_domain: str,
+            sub_plan_data: dict[str, Any],
+            idx: int,
         ) -> dict[str, Any]:
             async with sub_semaphore:
                 return await _run_single_domain(
-                    sub_domain, sub_plan_data, idx,
-                    user_query, sub_turn_key,
+                    sub_domain,
+                    sub_plan_data,
+                    idx,
+                    user_query,
+                    sub_turn_key,
                     nesting_depth=nesting_depth + 1,
                     parent_prefix=f"{parent_domain}.",
                 )
@@ -394,15 +457,18 @@ def build_subagent_spawner_node(
             if isinstance(r, Exception):
                 logger.error(
                     "sub_spawn[%s]: sub-agent failed: %s",
-                    parent_domain, r,
+                    parent_domain,
+                    r,
                 )
                 continue
             sub_results.append(r)
 
         logger.info(
             "sub_spawn[%s]: %d/%d sub-agents completed (depth=%d)",
-            parent_domain, len(sub_results),
-            len(sub_domain_plans), nesting_depth + 1,
+            parent_domain,
+            len(sub_results),
+            len(sub_domain_plans),
+            nesting_depth + 1,
         )
         return sub_results
 
@@ -476,23 +542,33 @@ def build_subagent_spawner_node(
                 )
                 logger.warning(
                     "mini_executor[%s]: %s (attempt %d)",
-                    domain, error_text, attempt,
+                    domain,
+                    error_text,
+                    attempt,
                 )
                 break
             except Exception as exc:
                 error_text = str(exc)
                 logger.exception(
-                    "mini_executor[%s]: failed (attempt %d)", domain, attempt,
+                    "mini_executor[%s]: failed (attempt %d)",
+                    domain,
+                    attempt,
                 )
                 break
 
             # Mini-critic: evaluate the result
             critic_result = await _run_mini_critic(
-                domain, response_text, used_tools, user_query,
+                domain,
+                response_text,
+                used_tools,
+                user_query,
             )
             logger.info(
                 "mini_critic[%s]: decision=%s (attempt %d, depth=%d)",
-                domain, critic_result["decision"], attempt, nesting_depth,
+                domain,
+                critic_result["decision"],
+                attempt,
+                nesting_depth,
             )
 
             if critic_result["decision"] == "ok":
@@ -500,7 +576,8 @@ def build_subagent_spawner_node(
 
             if critic_result["decision"] == "fail":
                 logger.warning(
-                    "mini_critic[%s]: fail decision, stopping", domain,
+                    "mini_critic[%s]: fail decision, stopping",
+                    domain,
                 )
                 break
 
@@ -509,7 +586,8 @@ def build_subagent_spawner_node(
             if guard["force_synthesis"]:
                 logger.warning(
                     "adaptive_guard[%s]: forcing synthesis after %d retries",
-                    domain, attempt + 1,
+                    domain,
+                    attempt + 1,
                 )
                 break
 
@@ -519,7 +597,10 @@ def build_subagent_spawner_node(
         sub_results: list[dict[str, Any]] = []
         if not error_text and nesting_depth < max_nesting_depth:
             sub_plans = await _check_needs_sub_spawning(
-                domain, response_text, user_query, nesting_depth,
+                domain,
+                response_text,
+                user_query,
+                nesting_depth,
             )
             if sub_plans:
                 sub_results = await _run_sub_spawning(
@@ -535,13 +616,10 @@ def build_subagent_spawner_node(
                     sub_summaries = []
                     for sr in sub_results:
                         h = sr.get("handoff", {})
-                        sub_summaries.append(
-                            f"[{sr['domain']}] {h.get('summary', '')}"
-                        )
+                        sub_summaries.append(f"[{sr['domain']}] {h.get('summary', '')}")
                     response_text = (
                         f"{response_text}\n\n"
-                        f"--- Sub-agentresultat ---\n"
-                        + "\n".join(sub_summaries)
+                        f"--- Sub-agentresultat ---\n" + "\n".join(sub_summaries)
                     )
 
         # Step 6: Build proper handoff contract (same as call_agent)
@@ -604,7 +682,11 @@ def build_subagent_spawner_node(
         ) -> dict[str, Any]:
             async with semaphore:
                 return await _run_single_domain(
-                    domain, plan_data, idx, user_query, turn_key,
+                    domain,
+                    plan_data,
+                    idx,
+                    user_query,
+                    turn_key,
                 )
 
         # Execute all domains in parallel
@@ -631,15 +713,17 @@ def build_subagent_spawner_node(
             spawned_domains.append(domain_name)
             handoff = domain_result["handoff"]
             # subagent_summaries keeps backward compat for convergence_node
-            subagent_summaries.append({
-                "domain": domain_name,
-                "subagent_id": domain_result["subagent_id"],
-                "summary": handoff.get("summary", ""),
-                "findings": handoff.get("findings", []),
-                "status": handoff.get("status", "partial"),
-                "confidence": handoff.get("confidence", 0.0),
-                "used_tools": domain_result.get("used_tools", []),
-            })
+            subagent_summaries.append(
+                {
+                    "domain": domain_name,
+                    "subagent_id": domain_result["subagent_id"],
+                    "summary": handoff.get("summary", ""),
+                    "findings": handoff.get("findings", []),
+                    "status": handoff.get("status", "partial"),
+                    "confidence": handoff.get("confidence", 0.0),
+                    "used_tools": domain_result.get("used_tools", []),
+                }
+            )
             handoff_updates.append(handoff)
             micro_plans[domain_name] = domain_result["micro_plan"]
 

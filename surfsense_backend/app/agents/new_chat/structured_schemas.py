@@ -68,11 +68,11 @@ class IntentResult(BaseModel):
         ...,
         description="ID för vald intent, måste matcha en av kandidaterna.",
     )
-    route: Literal[
-        "kunskap", "skapande", "jämförelse", "konversation", "mixed"
-    ] = Field(
-        ...,
-        description="Övergripande rutt-kategori.",
+    route: Literal["kunskap", "skapande", "jämförelse", "konversation", "mixed"] = (
+        Field(
+            ...,
+            description="Övergripande rutt-kategori.",
+        )
     )
     sub_intents: list[str] = Field(
         default_factory=list,
@@ -231,8 +231,7 @@ class DomainPlannerResult(BaseModel):
     thinking: str = Field(
         ...,
         description=(
-            "Resonering om verktygsval, beroenden och parallellitet "
-            "per domänagent."
+            "Resonering om verktygsval, beroenden och parallellitet per domänagent."
         ),
     )
     domain_plans: dict[str, DomainAgentPlan] = Field(
@@ -255,9 +254,7 @@ class CriticResult(BaseModel):
 
     thinking: str = Field(
         ...,
-        description=(
-            "Resonering om svarets kvalitet, fullständighet och brister."
-        ),
+        description=("Resonering om svarets kvalitet, fullständighet och brister."),
     )
     decision: Literal["ok", "needs_more", "replan"] = Field(
         ...,
@@ -310,13 +307,9 @@ class ResponseLayerRouterResult(BaseModel):
 
     thinking: str = Field(
         ...,
-        description=(
-            "Resonering om vilken presentationsform som passar bäst."
-        ),
+        description=("Resonering om vilken presentationsform som passar bäst."),
     )
-    chosen_layer: Literal[
-        "kunskap", "analys", "syntes", "visualisering"
-    ] = Field(
+    chosen_layer: Literal["kunskap", "analys", "syntes", "visualisering"] = Field(
         ...,
         description="Vald presentationsform.",
     )
@@ -366,4 +359,150 @@ class ExecutorThinkingResult(BaseModel):
             "Resonering om vilka verktyg/agenter som ska anropas, "
             "i vilken ordning, och varför."
         ),
+    )
+
+
+# ────────────────────────────────────────────────────────────────
+# P4 Mini-Graph: Mini Planner
+# ────────────────────────────────────────────────────────────────
+
+
+class MiniPlanStep(BaseModel):
+    """A single step in a mini-graph micro-plan."""
+
+    action: str = Field(
+        ...,
+        description="Beskrivning av steget.",
+    )
+    tool_id: str = Field(
+        ...,
+        description="Verktygs-ID att anropa.",
+    )
+    use_cache: bool = Field(
+        default=False,
+        description="Om cached resultat ska användas.",
+    )
+
+
+class MiniPlannerResult(BaseModel):
+    """Output schema for the mini planner node (P4)."""
+
+    thinking: str = Field(
+        ...,
+        description="Resonera om bästa approach för denna domän.",
+    )
+    steps: list[MiniPlanStep] = Field(
+        ...,
+        description="Mikro-plansteg (max 3).",
+    )
+    reason: str = Field(
+        ...,
+        description="Kort motivering på svenska.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
+# P4 Mini-Graph: Mini Critic
+# ────────────────────────────────────────────────────────────────
+
+
+class MiniCriticResult(BaseModel):
+    """Output schema for the mini critic node (P4)."""
+
+    thinking: str = Field(
+        ...,
+        description="Bedöm resultatkvalitet för denna domän.",
+    )
+    decision: Literal["ok", "retry", "fail"] = Field(
+        ...,
+        description="Beslut: ok, retry, eller fail.",
+    )
+    feedback: str = Field(
+        ...,
+        description="Vad saknas eller bör justeras.",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Konfidens 0.0-1.0.",
+    )
+    reason: str = Field(
+        ...,
+        description="Kort motivering på svenska.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
+# P4 Mini-Graph: Sub-Spawn Check
+# ────────────────────────────────────────────────────────────────
+
+
+class SubSpawnDomain(BaseModel):
+    """A single sub-domain identified for recursive spawning."""
+
+    tools: list[str] = Field(
+        ...,
+        description="Verktygs-ID:n för sub-domänen.",
+    )
+    rationale: str = Field(
+        ...,
+        description="Varför sub-spawning behövs.",
+    )
+
+
+class SubSpawnCheckResult(BaseModel):
+    """Output schema for the sub-spawn check (P4)."""
+
+    thinking: str = Field(
+        ...,
+        description="Resonering om sub-spawning-behov.",
+    )
+    needs_sub_spawn: bool = Field(
+        ...,
+        description="Om resultatet behöver sub-domäner.",
+    )
+    sub_domains: dict[str, SubSpawnDomain] = Field(
+        default_factory=dict,
+        description="Sub-domäner vid needs_sub_spawn=true.",
+    )
+    reason: str = Field(
+        ...,
+        description="Kort motivering på svenska.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
+# P4 Convergence
+# ────────────────────────────────────────────────────────────────
+
+
+class ConvergenceResult(BaseModel):
+    """Output schema for the convergence node (P4)."""
+
+    thinking: str = Field(
+        ...,
+        description="Analysera och slå ihop resultat från alla subagenter.",
+    )
+    merged_summary: str = Field(
+        ...,
+        description="Sammanslagen markdown-sammanfattning.",
+    )
+    merged_fields: list[str] = Field(
+        ...,
+        description="Fält som ingår i sammanslagningen.",
+    )
+    overlap_score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Dataredundans 0.0-1.0.",
+    )
+    conflicts: list[str] = Field(
+        default_factory=list,
+        description="Identifierade konflikter mellan domäner.",
+    )
+    reason: str = Field(
+        ...,
+        description="Kort motivering på svenska.",
     )
