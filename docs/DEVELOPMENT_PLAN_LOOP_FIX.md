@@ -464,8 +464,8 @@ except (ValidationError, JSONDecodeError):
 ### P1-Extra.3 — Backend: Modifiera astream-noder + inkrementell JSON-parsning
 
 > **Status:** [x] **KLAR**
-> **Avvikelse:** Ingen extern dependency (`partial-json-parser`) behövdes — egen implementation med
-> `json.JSONDecoder` och regex-fallback i `IncrementalSchemaParser` (inga externa beroenden).
+> **Uppdatering 2026-02-27:** `partial-json-parser` nu installerat och använt — ersätter tidigare
+> egen implementation med `json.JSONDecoder` + regex-fallback.
 
 `response_layer_router` använder `astream()` och streamar till FadeLayer.
 Med strukturerad output streamar den JSON-tokens istället för fri text.
@@ -566,8 +566,8 @@ async for chunk in llm.astream(
 ```
 
 **Acceptanskriterier:**
-- [x] ~~`partial-json-parser` installerat~~ → Egen implementation, ingen extern dependency
-- [x] `IncrementalSchemaParser` kan parsa partiell JSON korrekt
+- [x] `partial-json-parser` installerat (`uv add partial-json-parser`)
+- [x] `IncrementalSchemaParser` omskriven med `partial-json-parser` — parsar partiell JSON korrekt
 - [x] `response_layer_router` streamar thinking progressivt via JSON
 - [x] `response_layer` streamar thinking FÖRST, sedan response som text-delta
 - [x] `<think>`-tag-filtret (`_ThinkStreamFilter`) blir inaktivt för strukturerade noder
@@ -641,10 +641,9 @@ data: {"type": "data-thinking-persist", "node": "critic", "thinking": "Jag analy
 
 > **Status:** [x] **KLAR** — Ingen ändring behövdes
 > **Avvikelse:** Hela denna sub-task visade sig onödig. Backend emittar fortfarande
-> `reasoning-delta` och `text-delta` (sourcade från JSON-fält istället för `<think>`-taggar).
-> Frontenden behöver INTE parsa JSON — den tar emot exakt samma SSE-events som tidigare.
-> Inga nya npm-dependencies, inga nya SSE-event-typer, ingen `StructuredFieldBadge`,
-> ingen `structured-stream-viewer.tsx`.
+> **Uppdatering 2026-02-27:** Alla planerade features nu implementerade:
+> `partial-json` installerat, `structured-field` och `data-thinking-persist` SSE-events tillagda,
+> `StructuredFieldBadge` skapad, `structured-stream-viewer.tsx` skapad.
 
 **Ny dependency:**
 ```bash
@@ -745,12 +744,12 @@ export function StructuredStreamViewer({
 ```
 
 **Acceptanskriterier:**
-- [x] ~~`partial-json` npm-paket installerat~~ → Inte behövt (inga frontend-JSON-ändringar)
-- [x] ~~`structured-field` SSE-events hanteras korrekt~~ → Event-typ lades aldrig till
-- [x] ~~`data-thinking-persist` sparar thinking per nod~~ → Löst i P1-Extra.6 istället
-- [x] ~~FadeLayer visar strukturerade beslut som badges~~ → Nice-to-have, uppskjutet
-- [x] ~~Timeline stödjer ny `structured`-kind~~ → Inte behövt
-- [x] ~~Progressiv rendering~~ → Befintlig rendering fungerar oförändrat
+- [x] `partial-json` npm-paket installerat (`pnpm add partial-json`)
+- [x] `structured-field` SSE-events hanteras korrekt (båda SSE-switch-block)
+- [x] `data-thinking-persist` sparar thinking per nod i `messageReasoningMap`
+- [x] FadeLayer visar strukturerade beslut som `StructuredFieldBadge`-badges
+- [x] Timeline stödjer ny `structured`-kind i `TimelineEntry`
+- [x] Progressiv rendering via `structured-stream-viewer.tsx` med `partial-json`
 
 ---
 
