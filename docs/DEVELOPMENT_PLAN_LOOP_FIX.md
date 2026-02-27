@@ -1262,10 +1262,50 @@ tests/test_multi_query_decomposer.py: 11 passed (0.29s)
 **Tid:** 5–7 dagar
 **Status:** Ej påbörjad (bygger på existerande subagent-omnämnanden)
 
-#### Implementation Roadmap (utökning av befintligt)
+> **Not:** ~~P4.2 — Pydantic Structured Output~~ har flyttats till **P1 Extra** (P1-Extra.1 — P1-Extra.8).
 
-**7. Förbättra befintliga subagenter med per-domain checkpointer**
-Varje subagent (statistik, väder, trafik etc.) får egen persistence – loops kan aldrig spilla över mellan domäner.
+---
+
+### P4.1 — Subagent Mini-Graphs
+
+**Vad:** Varje subagent (kunskap, statistik, trafik, etc.) får en egen isolerad
+mini-LangGraph med:
+- Mini-planner (optional)
+- Mini-executor med scoped tools
+- Mini-critic
+- Mini-synthesizer
+
+**State-tillägg:**
+```python
+micro_plans: dict[str, list[dict]]  # subagent_id → [step1, step2...]
+convergence_status: dict             # {"merged_fields": [...], "overlap_score": 0.92}
+```
+
+**Nya filer:**
+- `surfsense_backend/app/agents/new_chat/nodes/subagent_mini_graph.py`
+- `surfsense_backend/app/agents/new_chat/nodes/convergence_node.py`
+
+**Grafändring:**
+```
+domain_planner → subagent_spawner → [SubagentMiniGraph x N parallellt]
+                                     → convergence_node → critic
+```
+
+**Fördelar:**
+- Isolerat state per subagent (ingen korsförorening)
+- Max 4-6 calls per subagent (begränsar looping)
+- Parallell exekvering av oberoende subagenter
+- Varje subagent har egen critic (snabbare feedback)
+
+**Risker:**
+- Streaming-pipelinen måste hantera nested graphs
+- Frontend FadeLayer måste anpassas för per-subagent reasoning
+- Checkpointer-hantering för nested graphs
+- Stor omskrivning: ~500-800 rader ny kod
+
+#### P4.1a — Per-domain checkpointer (utökning)
+
+Varje subagent mini-graph får egen persistence – loops kan aldrig spilla över mellan domäner.
 
 ```python
 # I supervisor_agent.py
@@ -1279,8 +1319,9 @@ def create_domain_subgraph(domain: str):
 supervisor_builder.add_subgraph("statistics", create_domain_subgraph("statistics"))
 ```
 
-**8. Command-pattern för ren cross-subgraph-handoff**
-Använd Command för att skicka mellan parent/subagent utan conditional edges (bygger på era befintliga subagenter).
+#### P4.1b — Command-pattern för cross-subgraph-handoff
+
+Använd `Command` för att skicka mellan parent/subagent utan conditional edges (bygger på befintliga subagenter).
 
 ```python
 from langgraph.types import Command
@@ -1295,7 +1336,8 @@ def subagent_router(state: SupervisorState) -> Command:
     return Command(goto=END)
 ```
 
-**9. Automatic summarization inuti varje subagent**
+#### P4.1c — Automatic summarization inuti varje subagent
+
 Lägg till i varje subagent-graph (efter 8–10 messages):
 
 ```python
@@ -1305,18 +1347,27 @@ def summary_node(state):
     return {"messages": Summarizer(model="claude-3-5-sonnet-20241022").summarize(state["messages"])}
 ```
 
-**10. Semantic Tool Caching per subagent**
-Redis/LangGraph Store med namespace per subagent (t.ex. `cache:scb:goteborg:2023`).
+#### P4.1d — PEV-pattern som valfritt inner-subgraph
+
+Ersätt critic i subagenter med Plan-Execute-Verify (valfritt).
 
 ```python
-# I tool-wrapper för SCB
-cache_key = f"cache:{domain}:{fingerprint(query)}"
-if hit := store.get(cache_key):
-    return Command(update={"tool_output": hit}, goto=END)
+pev_subgraph = StateGraph(PEVState).add_node("verify", verify_node).compile()
+supervisor_builder.add_subgraph("pev", pev_subgraph)  # kan användas inuti befintliga subagenter
 ```
 
-**11. Adaptive limits per subagent via ProgressTracker**
-Utöka er befintliga ProgressTracker:
+---
+
+### P4.2 — Adaptive Everything
+
+**Vad:** Alla trösklar blir dynamiska baserat på flödets progress:
+- Confidence threshold: sjunker från 0.7 → 0.4 med steg
+- Max tool calls per subagent: sjunker från 6 → 3 med steg
+- Synthesis aggressivitet: ökar med steg (mer merge, mer komprimering)
+
+#### P4.2a — Adaptive limits per subagent via ProgressTracker
+
+Utöka befintlig ProgressTracker med per-domän max_steps:
 
 ```python
 def adaptive_subagent_guard(state):
@@ -1326,27 +1377,60 @@ def adaptive_subagent_guard(state):
     return Command(goto="critic")  # behåll CriticVeto
 ```
 
-**12. PEV-pattern som valfritt inner-subgraph**
-Ersätt critic i subagenter med Plan-Execute-Verify (valfritt).
+---
+
+### P4.3 — Semantic Tool Caching
+
+Redis/LangGraph Store med namespace per subagent (t.ex. `cache:scb:goteborg:2023`).
 
 ```python
-pev_subgraph = StateGraph(PEVState).add_node("verify", verify_node).compile()
-supervisor_builder.add_subgraph("pev", pev_subgraph)  # kan användas inuti befintliga subagenter
+# I tool-wrapper för SCB
+cache_key = f"cache:{domain}:{fingerprint(query)}"
+if hit := store.get(cache_key):
+    return Command(update={"tool_output": hit}, goto=END)
 ```
 
-#### Utökade Success Criteria
+---
+
+### P4.4 — Tester för Sprint P4
+
+| Test | Testar |
+|------|--------|
+| `test_subagent_mini_graph_isolation` | P4.1: Subagent state läcker inte till parent |
+| `test_subagent_max_calls_per_agent` | P4.1: Max 4-6 calls per mini-graph |
+| `test_convergence_node_merges_results` | P4.1: Convergence skapar unified artifact |
+| `test_per_domain_checkpointer_isolation` | P4.1a: Separate checkpointers per domän |
+| `test_command_pattern_handoff` | P4.1b: Command-baserad subgraph-handoff |
+| `test_subagent_summarization_token_budget` | P4.1c: Historik max 6k tokens |
+| `test_pev_verify_node` | P4.1d: PEV inner-subgraph |
+| `test_adaptive_threshold_by_step` | P4.2: Trösklar sjunker med steg |
+| `test_adaptive_limits_per_domain` | P4.2a: Per-domän max_steps |
+| `test_semantic_cache_hit` | P4.3: Cache hit på repetitiva queries |
+| `test_semantic_cache_miss_fallback` | P4.3: Cache miss → normal exekvering |
+| `test_parallel_subagents_execution` | P4.1: Oberoende subagenter körs parallellt |
+
+---
+
+#### Success Criteria
 
 * Varje subagent har egen checkpointer → 0 cross-domain loop-spill
 * Historik per subagent max 6k tokens (summarization)
 * Cache hit-rate > 70 % på repetitiva domäner (SCB, SMHI)
 * 100 % av 30 loop-prone queries → final answer inom 6 steps
 * Full time-travel + human-in-the-loop fungerar per subagent
+* Subagent state läcker inte till parent graph
+* Convergence node mergar subagent-resultat korrekt
 
-#### Risker & Mitigation (utökad)
+#### Risker & Mitigation
 
-* **Risk:** För många checkpointers → **Mitigation:** Shared connection pool + prune_policy
-* **Risk:** Subgraph-komplexitet → **Mitigation:** Börja med 3 domäner, använd befintliga subagent-komponenter
-* **Risk:** Command vs legacy edges → **Mitigation:** Gradvis migration, behåll conditional edges som fallback
+| Risk | Allvarlighet | Mitigation |
+|------|-------------|------------|
+| För många checkpointers | MEDEL | Shared connection pool + prune_policy |
+| Subgraph-komplexitet | HÖG | Börja med 3 domäner, använd befintliga subagent-komponenter |
+| Command vs legacy edges | MEDEL | Gradvis migration, behåll conditional edges som fallback |
+| Streaming-pipeline med nested graphs | HÖG | Utöka `_INTERNAL_PIPELINE_CHAIN_TOKENS` med subgraph-prefixes |
+| Frontend FadeLayer med per-subagent reasoning | MEDEL | Ny `subagent`-kind i `TimelineEntry` |
+| Stor omskrivning (~500-800 rader) | HÖG | Inkrementell approach: P4.1 → P4.1a → P4.1b → P4.2 → P4.3 |
 
 ---
 
@@ -1444,6 +1528,8 @@ synthesis_hitl → [progressive_synthesizer →] synthesizer
 | `surfsense_web/lib/message-utils.ts` | P1 Extra |
 | `app/agents/new_chat/nodes/multi_query_decomposer.py` | **P3 (ny)** |
 | `app/agents/new_chat/nodes/__init__.py` | P3 |
+| `app/agents/new_chat/nodes/subagent_mini_graph.py` | **P4 (ny)** |
+| `app/agents/new_chat/nodes/convergence_node.py` | **P4 (ny)** |
 | `tests/test_loop_fix_p1.py` | **P1 (ny)** |
 | `tests/test_loop_fix_p2.py` | **P2 (ny)** |
 | `tests/test_multi_query_decomposer.py` | **P3 (ny)** |
