@@ -927,25 +927,11 @@ def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
 
 _BIGTOOL_MAX_SAME_TOOL_CALLS = 2
 
-
-def _strip_tool_calls_from_response(response: Any) -> Any:
-    """Remove tool_calls from an AIMessage so the bigtool agent terminates."""
-    if not isinstance(response, AIMessage):
-        return response
-    if not getattr(response, "tool_calls", None):
-        return response
-    content = getattr(response, "content", "") or ""
-    if not content:
-        content = "(Verktyget har redan anropats — sammanfattar resultaten.)"
-    try:
-        return response.model_copy(
-            update={"tool_calls": [], "additional_kwargs": {}}
-        )
-    except Exception:
-        return AIMessage(
-            content=content,
-            id=getattr(response, "id", None),
-        )
+_FORCE_SUMMARIZE_INSTRUCTION = (
+    "Du har redan hämtat tillräckligt med data från verktygen ovan. "
+    "Sammanfatta nu resultaten i ett kort, tydligt svar till användaren. "
+    "Anropa INGA fler verktyg — svara enbart med text."
+)
 
 
 def _detect_repeated_tool_in_history(messages: Any) -> bool:
@@ -985,8 +971,8 @@ class NormalizingChatWrapper:
 
     Also applies a **tool-call loop guard**: if the message history shows the
     same domain tool has been called >= ``_BIGTOOL_MAX_SAME_TOOL_CALLS`` times
-    consecutively, any new tool_calls in the LLM response are stripped so that
-    the bigtool agent terminates its ReAct loop and produces a final answer.
+    consecutively, the LLM is re-invoked *without tools* and with an explicit
+    instruction to summarize the data it already has, forcing a text response.
 
     Usage::
 
@@ -995,8 +981,11 @@ class NormalizingChatWrapper:
         graph = create_bigtool_agent(wrapped_llm, tool_registry, ...)
     """
 
-    def __init__(self, llm: Any) -> None:
+    def __init__(self, llm: Any, *, _base_llm: Any = None) -> None:
         self._llm = llm
+        # _base_llm is the original un-bound LLM, needed to re-invoke
+        # without tools when the loop guard triggers.
+        self._base_llm = _base_llm or llm
 
     # ------------------------------------------------------------------ #
     # Delegate attribute access to the wrapped LLM so that LangChain /
@@ -1029,18 +1018,28 @@ class NormalizingChatWrapper:
                     raw = tool_def
                 formatted.append(_sanitize_tool_schema_for_strict_templates(raw))
             return NormalizingChatWrapper(
-                self._llm.bind(tools=formatted, **kwargs)
+                self._llm.bind(tools=formatted, **kwargs),
+                _base_llm=self._base_llm,
             )
         except Exception:
             # Fallback: let the underlying LLM handle bind_tools directly.
-            return NormalizingChatWrapper(self._llm.bind_tools(tools, **kwargs))
+            return NormalizingChatWrapper(
+                self._llm.bind_tools(tools, **kwargs),
+                _base_llm=self._base_llm,
+            )
 
     def bind(self, **kwargs: Any) -> "NormalizingChatWrapper":
         """Return a new wrapper around the kwarg-bound LLM."""
-        return NormalizingChatWrapper(self._llm.bind(**kwargs))
+        return NormalizingChatWrapper(
+            self._llm.bind(**kwargs),
+            _base_llm=self._base_llm,
+        )
 
     def with_config(self, *args: Any, **kwargs: Any) -> "NormalizingChatWrapper":
-        return NormalizingChatWrapper(self._llm.with_config(*args, **kwargs))
+        return NormalizingChatWrapper(
+            self._llm.with_config(*args, **kwargs),
+            _base_llm=self._base_llm,
+        )
 
     def _normalize(self, input_: Any) -> Any:
         """Normalize a messages list or a dict with a 'messages' key."""
@@ -1050,29 +1049,47 @@ class NormalizingChatWrapper:
             return {**input_, "messages": _normalize_messages_for_provider_compat(input_["messages"])}
         return input_
 
-    def _guard_response(self, input_: Any, response: Any) -> Any:
-        """Strip tool_calls if the same tool has already been called too many times."""
+    def _should_force_summary(self, input_: Any) -> bool:
+        """Check if the same tool has been called too many times."""
         messages = input_ if isinstance(input_, list) else (
             input_.get("messages") if isinstance(input_, dict) else None
         )
-        if messages and _detect_repeated_tool_in_history(messages):
-            stripped = _strip_tool_calls_from_response(response)
-            if stripped is not response:
-                logger.info(
-                    "bigtool loop guard: stripped tool_calls from response "
-                    "(same tool called %d+ times consecutively)",
-                    _BIGTOOL_MAX_SAME_TOOL_CALLS,
-                )
-            return stripped
-        return response
+        return bool(messages and _detect_repeated_tool_in_history(messages))
+
+    def _build_summary_messages(self, input_: Any) -> list:
+        """Build a message list that asks the LLM to summarize tool results (no tools)."""
+        messages = input_ if isinstance(input_, list) else (
+            input_.get("messages", []) if isinstance(input_, dict) else []
+        )
+        return list(messages) + [
+            SystemMessage(content=_FORCE_SUMMARIZE_INSTRUCTION)
+        ]
 
     def invoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
-        response = self._llm.invoke(self._normalize(input_), config, **kwargs)
-        return self._guard_response(input_, response)
+        normalized = self._normalize(input_)
+        if self._should_force_summary(normalized):
+            logger.info(
+                "bigtool loop guard: re-invoking LLM without tools to force "
+                "text summary (same tool called %d+ times)",
+                _BIGTOOL_MAX_SAME_TOOL_CALLS,
+            )
+            summary_msgs = self._build_summary_messages(normalized)
+            summary_msgs = _normalize_messages_for_provider_compat(summary_msgs)
+            return self._base_llm.invoke(summary_msgs, config)
+        return self._llm.invoke(normalized, config, **kwargs)
 
     async def ainvoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
-        response = await self._llm.ainvoke(self._normalize(input_), config, **kwargs)
-        return self._guard_response(input_, response)
+        normalized = self._normalize(input_)
+        if self._should_force_summary(normalized):
+            logger.info(
+                "bigtool loop guard: re-invoking LLM without tools to force "
+                "text summary (same tool called %d+ times)",
+                _BIGTOOL_MAX_SAME_TOOL_CALLS,
+            )
+            summary_msgs = self._build_summary_messages(normalized)
+            summary_msgs = _normalize_messages_for_provider_compat(summary_msgs)
+            return await self._base_llm.ainvoke(summary_msgs, config)
+        return await self._llm.ainvoke(normalized, config, **kwargs)
 
     def stream(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
         return self._llm.stream(self._normalize(input_), config, **kwargs)

@@ -3400,14 +3400,17 @@ async def create_supervisor_agent(
         # respect that choice and DON'T override with route_policy.
         # This scales to 100s of APIs without needing regex patterns.
         if requested_raw in agent_by_name:
+            # Specialized agents (statistik, marknad, etc.) must NEVER be
+            # remapped by selected_agents_lock — they own domain-specific
+            # tools that other agents cannot substitute.
+            if requested_raw in _SPECIALIZED_AGENTS:
+                return requested_raw, None
             if selected_agent_set and requested_raw not in selected_agent_set:
                 fallback = _selected_fallback(
                     "marknad" if marketplace_task else default_for_route
                 )
                 if fallback and fallback in agent_by_name:
                     return fallback, f"selected_agents_lock:{requested_raw}->{fallback}"
-            if requested_raw in _SPECIALIZED_AGENTS:
-                return requested_raw, None
             if route_allowed and requested_raw not in route_allowed:
                 if default_for_route in agent_by_name:
                     return default_for_route, f"route_policy:{requested_raw}->{default_for_route}"
@@ -4612,6 +4615,16 @@ async def create_supervisor_agent(
             messages_out = result.get("messages") or []
             if messages_out:
                 response_text = str(getattr(messages_out[-1], "content", "") or "")
+            # Fallback: if the bigtool worker returned empty text but there
+            # are ToolMessages with real data, extract the last ToolMessage
+            # content so we don't lose the tool results entirely.
+            if not response_text.strip():
+                for msg in reversed(messages_out):
+                    if isinstance(msg, ToolMessage):
+                        tool_content = str(getattr(msg, "content", "") or "").strip()
+                        if tool_content and len(tool_content) > 10:
+                            response_text = tool_content
+                            break
             initial_tool_names = _tool_names_from_messages(messages_out)
             enforcement_message: str | None = None
             if name == "trafik":
