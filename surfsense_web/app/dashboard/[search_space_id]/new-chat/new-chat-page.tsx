@@ -315,6 +315,9 @@ export default function NewChatPage() {
 	const [threadId, setThreadId] = useState<number | null>(null);
 	const [currentThread, setCurrentThread] = useState<ThreadRecord | null>(null);
 	const lastAutoTitleRef = useRef<string | null>(null);
+	// Track thread IDs created in this session to prevent initializeThread from
+	// wiping state when window.history.replaceState triggers useSearchParams update
+	const justCreatedThreadRef = useRef<number | null>(null);
 	const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
 	const [isRunning, setIsRunning] = useState(false);
 	// Store thinking steps per message ID - kept separate from content to avoid
@@ -512,6 +515,14 @@ export default function NewChatPage() {
 	// Initialize thread and load messages
 	// For new chats (no urlChatId), we use lazy creation - thread is created on first message
 	const initializeThread = useCallback(async () => {
+		// In Next.js 14+, window.history.replaceState is intercepted by the App Router,
+		// causing useSearchParams to update and urlChatId to change. This would re-trigger
+		// initializeThread and wipe all state (messages, threadId, etc.) while streaming
+		// is still in progress. Skip re-initialization if we just created this thread.
+		if (urlChatId > 0 && urlChatId === justCreatedThreadRef.current) {
+			return;
+		}
+
 		setIsInitializing(true);
 
 		// Reset all state when switching between chats to prevent stale data
@@ -937,6 +948,9 @@ export default function NewChatPage() {
 					trackChatCreated(searchSpaceId, currentThreadId);
 
 					isNewThread = true;
+					// Mark this thread as just-created so initializeThread won't wipe
+					// state when the URL change triggers useSearchParams to update
+					justCreatedThreadRef.current = currentThreadId;
 					// Update URL silently using browser API (not router.replace) to avoid
 					// interrupting the ongoing fetch/streaming with React navigation
 					window.history.replaceState(
