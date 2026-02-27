@@ -1392,6 +1392,150 @@ if hit := store.get(cache_key):
 
 ---
 
+### P4.5 — Admin & Studio Integration (Enhetlighet)
+
+**Mål:** Alla P4-noder, prompts och kanter ska vara fullt synliga och redigerbara i admin UI och LangGraph Studio — exakt samma funktioner som övriga noder (redigera, ändra, ta bort). **Inga loose ends.**
+
+**Princip:** Följ den 3-lagers-pattern som etablerades i P3 (multi_query_decomposer):
+1. `prompt_registry.py` — PromptDefinition + template-nyckel
+2. `langgraph_studio.py` — nod-grupp-mappning
+3. `admin_flow_graph_routes.py` — pipeline-noder + kanter + stage
+
+---
+
+#### P4.5a — Nya prompts i `prompt_registry.py`
+
+Lägg till `PromptDefinition` och template-nycklar för varje ny P4-nod som har en LLM-prompt:
+
+| Prompt-nyckel | Nod | Sprint |
+|---|---|---|
+| `supervisor.subagent_spawner.system` | `subagent_spawner` | P4.1 |
+| `supervisor.mini_planner.system` | Mini-planner (inuti subagent) | P4.1 |
+| `supervisor.mini_critic.system` | Mini-critic (inuti subagent) | P4.1 |
+| `supervisor.mini_synthesizer.system` | Mini-synthesizer (inuti subagent) | P4.1 |
+| `supervisor.convergence.system` | `convergence_node` | P4.1 |
+| `supervisor.pev_verify.system` | PEV verify (inner-subgraph) | P4.1d |
+| `supervisor.adaptive_guard.system` | Adaptive subagent guard | P4.2a |
+
+**Steg:**
+1. Skapa default-prompt-konstanter i `supervisor_pipeline_prompts.py`
+2. Importera dem i `prompt_registry.py`
+3. Lägg till varje nyckel i `ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS` (validering kräver detta)
+4. Lägg till motsvarande `PromptDefinition` i `_PROMPT_DEFINITIONS_BY_KEY`
+5. Verifiera att `ast.parse()` + registry-validering fungerar (inga RuntimeError)
+
+---
+
+#### P4.5b — LangGraph Studio nod-mappning i `langgraph_studio.py`
+
+Utöka `_PROMPT_NODE_GROUP_TO_GRAPH_NODES` med alla nya P4-noder:
+
+```python
+_PROMPT_NODE_GROUP_TO_GRAPH_NODES: dict[str, list[str]] = {
+    "supervisor": [
+        ...befintliga...,
+        # P4 nya noder:
+        "subagent_spawner",
+        "convergence_node",
+        "adaptive_guard",
+    ],
+    # Ny grupp för subagent mini-graphs:
+    "subagent_mini": [
+        "mini_planner",
+        "mini_executor",
+        "mini_critic",
+        "mini_synthesizer",
+        "pev_verify",
+    ],
+}
+```
+
+**Steg:**
+1. Lägg till `"subagent_spawner"`, `"convergence_node"`, `"adaptive_guard"` i supervisor-listan
+2. Skapa ny grupp `"subagent_mini"` för mini-graph-noder
+3. Lägg till `"subagent_mini"` i `_GRAPH_RELEVANT_PROMPT_GROUPS`
+4. Uppdatera `infer_prompt_node_group()` i `prompt_registry.py` med prefix-regel (t.ex. `supervisor.mini_*` → `"subagent_mini"`)
+5. Verifiera att Studio-UI:t visar alla nya fält via `_build_studio_prompt_field_specs()`
+
+---
+
+#### P4.5c — Admin Flow Pipeline i `admin_flow_graph_routes.py`
+
+Lägg till nya pipeline-noder och kanter för hela P4-flödet:
+
+**Nya `_PIPELINE_NODES`:**
+
+| Node ID | Label | Stage | prompt_key |
+|---|---|---|---|
+| `node:subagent_spawner` | Subagent Spawner | `subagent` | `supervisor.subagent_spawner.system` |
+| `node:mini_planner` | Mini Planner | `subagent` | `supervisor.mini_planner.system` |
+| `node:mini_executor` | Mini Executor | `subagent` | `None` |
+| `node:mini_critic` | Mini Critic | `subagent` | `supervisor.mini_critic.system` |
+| `node:mini_synthesizer` | Mini Synthesizer | `subagent` | `supervisor.mini_synthesizer.system` |
+| `node:convergence_node` | Convergence | `subagent` | `supervisor.convergence.system` |
+| `node:adaptive_guard` | Adaptive Guard | `subagent` | `supervisor.adaptive_guard.system` |
+| `node:pev_verify` | PEV Verify | `subagent` | `supervisor.pev_verify.system` |
+| `node:semantic_cache` | Semantic Cache | `subagent` | `None` |
+
+**Nya `_PIPELINE_EDGES`:**
+```
+domain_planner → subagent_spawner
+subagent_spawner → [mini_planner × N parallellt]
+mini_planner → mini_executor → mini_critic
+mini_critic → mini_synthesizer (ok) | mini_executor (retry)
+mini_critic → adaptive_guard
+adaptive_guard → mini_synthesizer (limit) | mini_executor (continue)
+[mini_synthesizer × N] → convergence_node → critic
+```
+
+**Ny `_PIPELINE_STAGES` post:**
+```python
+{"id": "subagent", "label": "Subagent Mini-Graphs", "color": "indigo"},
+```
+
+**Steg:**
+1. Lägg till alla noder ovan i `_PIPELINE_NODES`
+2. Lägg till alla kanter ovan i `_PIPELINE_EDGES` (befintlig `domain_planner → execution_hitl_gate` ersätts med `domain_planner → subagent_spawner`)
+3. Lägg till ny stage `"subagent"` i `_PIPELINE_STAGES`
+4. Verifiera att frontend GraphView renderar de nya noderna korrekt
+
+---
+
+#### P4.5d — Grafflöde-uppdatering
+
+Uppdatera grafflöde-referensen i detta dokument med det kompletta P4-flödet:
+
+```
+domain_planner → subagent_spawner → [SubagentMiniGraph × N parallellt]
+                                       ├→ mini_planner → mini_executor → mini_critic
+                                       │   ├→ adaptive_guard
+                                       │   ├→ semantic_cache (hit → mini_synthesizer)
+                                       │   └→ pev_verify (valfritt)
+                                       └→ mini_synthesizer
+                                    → convergence_node → critic
+```
+
+---
+
+#### P4.5e — Checklista: Inga loose ends
+
+Validera att **varje** ny P4-nod uppfyller samtliga krav:
+
+| Krav | Fil | Kontroll |
+|---|---|---|
+| PromptDefinition finns | `prompt_registry.py` | Nyckel i `ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS` + `_PROMPT_DEFINITIONS_BY_KEY` |
+| Studio-fält genereras | `langgraph_studio.py` | Nod i `_PROMPT_NODE_GROUP_TO_GRAPH_NODES` → fält i `_build_studio_prompt_field_specs()` |
+| Pipeline-nod synlig | `admin_flow_graph_routes.py` | Post i `_PIPELINE_NODES` med `prompt_key` |
+| Pipeline-kant korrekt | `admin_flow_graph_routes.py` | Post i `_PIPELINE_EDGES` med source/target |
+| Stage-färg korrekt | `admin_flow_graph_routes.py` | Använd befintlig eller ny stage |
+| Prompt redigerbar i admin | Frontend admin panel | Prompten syns under Routing-tabben och kan ändras/sparas |
+| Default-prompt exporterad | `supervisor_pipeline_prompts.py` | Konstant definierad och importerad i registry |
+| Test finns | `tests/test_loop_fix_p4.py` | Minst ett test per prompt-nyckel |
+
+**Noder utan LLM-prompt** (t.ex. `mini_executor`, `semantic_cache`) sätter `prompt_key: None` men ska ändå synas som pipeline-noder i admin flow graph.
+
+---
+
 ### P4.4 — Tester för Sprint P4
 
 | Test | Testar |
@@ -1408,6 +1552,12 @@ if hit := store.get(cache_key):
 | `test_semantic_cache_hit` | P4.3: Cache hit på repetitiva queries |
 | `test_semantic_cache_miss_fallback` | P4.3: Cache miss → normal exekvering |
 | `test_parallel_subagents_execution` | P4.1: Oberoende subagenter körs parallellt |
+| `test_p4_prompt_registry_completeness` | P4.5a: Alla P4-prompt-nycklar finns i registry + definitions |
+| `test_p4_studio_node_group_mapping` | P4.5b: Alla P4-noder finns i `_PROMPT_NODE_GROUP_TO_GRAPH_NODES` |
+| `test_p4_pipeline_nodes_have_prompt_key` | P4.5c: Alla P4 pipeline-noder har korrekt `prompt_key` |
+| `test_p4_pipeline_edges_connected` | P4.5c: Alla P4 pipeline-kanter har giltiga source/target |
+| `test_p4_admin_flow_graph_endpoint` | P4.5c: `/admin/flow-graph` returnerar P4-noder i response |
+| `test_p4_no_loose_ends` | P4.5e: Varje P4-nod uppfyller samtliga krav i checklistan |
 
 ---
 
@@ -1420,6 +1570,9 @@ if hit := store.get(cache_key):
 * Full time-travel + human-in-the-loop fungerar per subagent
 * Subagent state läcker inte till parent graph
 * Convergence node mergar subagent-resultat korrekt
+* 100 % av P4-noder synliga + redigerbara i admin flow graph (P4.5c)
+* Alla P4-prompts synliga under Routing i admin UI (P4.5a)
+* LangGraph Studio visar alla P4-noder med editerbara promptfält (P4.5b)
 
 #### Risker & Mitigation
 
@@ -1510,7 +1663,7 @@ synthesis_hitl → [progressive_synthesizer →] synthesizer
 | `app/agents/new_chat/nodes/executor.py` | P1, P3 |
 | `app/agents/new_chat/system_prompt.py` | P1, P1 Extra |
 | `app/tasks/chat/stream_new_chat.py` | P1, P1 Extra, P2, P3 |
-| `app/langgraph_studio.py` | P2, P3 |
+| `app/langgraph_studio.py` | P2, P3, **P4.5b** |
 | `app/agents/new_chat/structured_schemas.py` | **P1 Extra (ny)**, P3 |
 | `app/agents/new_chat/incremental_json_parser.py` | **P1 Extra (ny)** |
 | `app/agents/new_chat/nodes/intent.py` | P1 Extra |
@@ -1518,9 +1671,9 @@ synthesis_hitl → [progressive_synthesizer →] synthesizer
 | `app/agents/new_chat/nodes/planner.py` | P1 Extra, P3 |
 | `app/agents/new_chat/nodes/synthesizer.py` | P1 Extra |
 | `app/agents/new_chat/nodes/response_layer.py` | P1 Extra |
-| `app/agents/new_chat/supervisor_pipeline_prompts.py` | P1 Extra, P3 |
-| `app/agents/new_chat/prompt_registry.py` | P3 |
-| `app/routes/admin_flow_graph_routes.py` | P3 |
+| `app/agents/new_chat/supervisor_pipeline_prompts.py` | P1 Extra, P3, **P4.5a** |
+| `app/agents/new_chat/prompt_registry.py` | P3, **P4.5a** |
+| `app/routes/admin_flow_graph_routes.py` | P3, **P4.5c** |
 | `tests/test_structured_output.py` | **P1 Extra (ny)** |
 | `surfsense_web/.../new-chat-page.tsx` | P1 Extra |
 | `surfsense_web/.../thinking-steps.tsx` | P1 Extra |
@@ -1533,3 +1686,4 @@ synthesis_hitl → [progressive_synthesizer →] synthesizer
 | `tests/test_loop_fix_p1.py` | **P1 (ny)** |
 | `tests/test_loop_fix_p2.py` | **P2 (ny)** |
 | `tests/test_multi_query_decomposer.py` | **P3 (ny)** |
+| `tests/test_loop_fix_p4.py` | **P4 (ny)** |
