@@ -27,6 +27,10 @@ import {
 } from "@/components/assistant-ui/thinking-steps";
 import { TracePanelContext } from "@/components/assistant-ui/trace-context";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
+import {
+	SpotlightArenaActiveContext,
+	SpotlightArenaLayout,
+} from "@/components/tool-ui/spotlight-arena";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { CommentPanelContainer } from "@/components/chat-comments/comment-panel-container/comment-panel-container";
 import { CommentSheet } from "@/components/chat-comments/comment-sheet/comment-sheet";
@@ -208,7 +212,7 @@ const FollowUpSuggestions: FC = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Compare-mode grid layout helpers
+// Compare-mode detection
 // ---------------------------------------------------------------------------
 
 const COMPARE_TOOL_NAMES = new Set([
@@ -222,13 +226,6 @@ const COMPARE_TOOL_NAMES = new Set([
 	"call_oneseek",
 ]);
 
-/** Wrapper that forces text parts to span all grid columns in compare mode. */
-const CompareMarkdownText: FC = (props) => (
-	<div className="col-span-full">
-		<MarkdownText {...props} />
-	</div>
-);
-
 const AssistantMessageInner: FC = () => {
 	const isCompare = useAssistantState(({ message }) => {
 		if (!message || message.role !== "assistant") return false;
@@ -241,30 +238,21 @@ const AssistantMessageInner: FC = () => {
 	});
 
 	return (
-		<>
+		<SpotlightArenaActiveContext.Provider value={isCompare}>
 			{/* Unified fade layer: reasoning stream + thinking steps */}
 			<FadeLayerPart />
 
-			<div
-				className={cn(
-					"aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed",
-					isCompare &&
-						"grid gap-3 sm:grid-cols-2 lg:grid-cols-3 [&>*]:my-0",
-				)}
-			>
+			{/* Spotlight Arena layout for compare mode */}
+			{isCompare && <SpotlightArenaLayout />}
+
+			<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
 				<MessagePrimitive.Parts
 					components={{
-						Text: isCompare ? CompareMarkdownText : MarkdownText,
+						Text: MarkdownText,
 						tools: { Fallback: ToolFallback },
 					}}
 				/>
-				{isCompare ? (
-					<div className="col-span-full">
-						<MessageError />
-					</div>
-				) : (
-					<MessageError />
-				)}
+				<MessageError />
 			</div>
 			<FollowUpSuggestions />
 
@@ -272,7 +260,7 @@ const AssistantMessageInner: FC = () => {
 				<BranchPicker />
 				<AssistantActionBar />
 			</div>
-		</>
+		</SpotlightArenaActiveContext.Provider>
 	);
 };
 
