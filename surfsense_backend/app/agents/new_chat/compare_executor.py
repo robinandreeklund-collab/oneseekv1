@@ -80,12 +80,12 @@ def build_compare_domain_planner_node(
             domain_plans[domain_key] = {
                 "agent": f"compare_{domain_key}",
                 "tools": [spec.tool_name],
-                "rationale": f"Extern modell: {spec.display} ({spec.provider})",
+                "rationale": f"Extern modell: {spec.display} ({spec.key})",
                 "spec": {
                     "tool_name": spec.tool_name,
                     "display": spec.display,
-                    "provider": spec.provider,
-                    "model": spec.model,
+                    "key": spec.key,
+                    "config_id": spec.config_id,
                 },
             }
 
