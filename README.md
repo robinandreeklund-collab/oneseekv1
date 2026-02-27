@@ -85,7 +85,27 @@ Tekniskt anvands:
 
 ## Senaste uppdateringar (denna PR)
 
-Denna PR innehaller en stor uppgradering av admin-ytan for metadata-kvalitet och en kontrollerad live-rollout for routing.
+Denna PR innehaller loop-fix (P1-P2), multi-query decomposer (P3), bigtool subagent loop guard, samt uppgradering av admin-ytan for metadata-kvalitet och kontrollerad live-rollout for routing.
+
+### 0) Loop-fix + Multi-query decomposer (P1-P3)
+
+**Loop-fix (P1-P2):**
+- `guard_finalized` forhindrar critic fran att overrida orchestration_guard
+- `total_steps` hard cap (MAX_TOTAL_STEPS=12) tvangar synthesis vid overtid
+- `critic_history` med adaptiv loop-breaking (2x `needs_more` → force `ok`)
+- `NormalizingChatWrapper` med bigtool loop guard — stoppar subagenter som anropar samma verktyg >2 ggr
+- Executor `executor_should_continue` loop guard for direkt-tool-anrop
+- `response_layer_router` + `response_layer` som enda synliga text-output
+- `THINK_ON_TOOL_CALLS` toggle for att stanga av `<think>`-block i executor
+
+**Multi-query decomposer (P3):**
+- Ny nod `multi_query_decomposer` for komplexa fragor
+- Bryter ned sammansatta fragor till atomara delfragor med beroendegraf
+- `atomic_questions` state-falt: `[{id, text, depends_on, domain}]`
+- Planner konsumerar `atomic_questions` och valjer multi-domain-template automatiskt
+- Skippar dekomponering for simple/trivial fragor (noll extra latens)
+- Pydantic-scheman: `AtomicQuestion`, `DecomposerResult`
+- 11 tester i `tests/test_multi_query_decomposer.py`, alla passerar
 
 ### 1) Metadata Catalog + Metadata Audit (admin)
 
@@ -468,10 +488,12 @@ flowchart TD
 
     RI --> MC[memory_context]
 
-    MC -->|hybrid complex + speculative_enabled| SP[speculative]
+    MC -->|hybrid complex| MQD[multi_query_decomposer]
     MC -->|hybrid simple| TR[tool_resolver]
     MC -->|default/trivial| AR[agent_resolver]
 
+    MQD -->|speculative_enabled| SP[speculative]
+    MQD -->|direct| AR
     SP --> AR
     AR --> PL[planner]
     PL --> PH[planner_hitl_gate]
@@ -482,7 +504,8 @@ flowchart TD
     SM --> ER[execution_router]
     TR -->|no speculative| ER
 
-    ER --> EH[execution_hitl_gate]
+    ER --> DP[domain_planner]
+    DP --> EH[execution_hitl_gate]
     EH -->|continue| EX[executor]
     EH -->|stop| END3([END])
 
@@ -498,10 +521,12 @@ flowchart TD
     CR -->|needs_more| TR
     CR -->|replan| PL
 
-    SH -->|hybrid| PS[progressive_synthesizer]
-    SH -->|legacy/skip| SY[synthesizer]
+    SH -->|hybrid complex| PS[progressive_synthesizer]
+    SH -->|simple/trivial/legacy| SY[synthesizer]
     PS --> SY
-    SY --> END4([END])
+    SY --> RLR[response_layer_router]
+    RLR --> RL[response_layer]
+    RL --> END4([END])
 ```
 
 ### Nodlogik som tillkommit i Fas 1-4 + A-F
@@ -529,6 +554,16 @@ flowchart TD
 - **Fas F**
   - `memory_context`: selektiv cross-session memory-injektion fran `user_memories`
   - tydlig separering mellan aktiv session-kontekst och persistent minneskontekst
+- **Loop-fix (P1-P2)**
+  - `guard_finalized` + `total_steps` + `critic_history` for adaptiv loop-breaking
+  - `NormalizingChatWrapper` med bigtool loop guard (max 2 identiska tool-anrop)
+  - `response_layer_router` + `response_layer` som enda synliga text-output
+  - `THINK_ON_TOOL_CALLS` toggle for att eliminera onodiga `<think>`-block
+- **Multi-query decomposer (P3)**
+  - `multi_query_decomposer`: bryter ned komplexa fragor till atomara delfragor
+  - `atomic_questions` med beroendegraf (`depends_on`) for parallellisering
+  - Planner konsumerar `atomic_questions` och valjer multi-domain-template automatiskt
+  - Skippar dekomponering for simple/trivial fragor (noll extra latens)
 
 ---
 
@@ -940,6 +975,8 @@ Frontend far live-events via Vercel AI data stream. Exempel:
 - `surfsense_backend/app/agents/new_chat/nodes/speculative.py` - speculative branch
 - `surfsense_backend/app/agents/new_chat/nodes/progressive_synthesizer.py` - syntes
 - `surfsense_backend/app/agents/new_chat/nodes/tool_resolver.py` - tool-val med namespace-stod
+- `surfsense_backend/app/agents/new_chat/nodes/multi_query_decomposer.py` - multi-query decomposer (P3)
+- `surfsense_backend/app/agents/new_chat/nodes/response_layer.py` - response layer + router
 
 ### Retrieval, metadata och scoring
 
@@ -1144,7 +1181,7 @@ Use this runtime payload:
 
 ---
 
-## Teststatus for Fas 1-4 + eval
+## Teststatus for Fas 1-4 + eval + loop-fix
 
 Karnsviter for hybrid och eval:
 
@@ -1158,6 +1195,8 @@ Karnsviter for hybrid och eval:
 - `tests/test_sandbox_phase3_provisioner.py`
 - `tests/test_sandbox_phase3_trace_spans.py`
 - `tests/test_tool_evaluation_service.py`
+- `tests/test_loop_fix_p1.py` — 20 tester for loop-fix (P1)
+- `tests/test_multi_query_decomposer.py` — 11 tester for multi-query decomposer (P3)
 
 Exempelkommando:
 
@@ -1182,7 +1221,9 @@ python3 -m pytest -q \
 
 OneSeek ar nu en hybrid, transparent och eval-driven agentplattform med:
 
-- adaptiv LangGraph-orkestrering (Fas 1-4)
+- adaptiv LangGraph-orkestrering (Fas 1-4) med loop-fix (P1-P2) och multi-query decomposer (P3)
+- **multi-query decomposer** som bryter ned komplexa fragor till atomara delfragor med beroendegraf
+- **bigtool subagent loop guard** som forhindrar subagenter fran att loopa pa samma verktyg
 - strict subagent isolation + DeerFlow-style context management (A-F)
 - artifact-first offload + `artifact_manifest` for stora payloads
 - semantisk context compaction med `rolling_context_summary`

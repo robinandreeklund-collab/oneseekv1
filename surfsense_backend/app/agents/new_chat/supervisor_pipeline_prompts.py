@@ -27,6 +27,39 @@ Returnera strikt JSON:
 """
 
 
+DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT = """
+Du ar noden multi_query_decomposer i supervisor-grafen.
+Uppgift: Bryt ned en komplex fraga till atomara delfragor med beroendegraf.
+
+Regler:
+- Varje delfråga ska vara OBEROENDE nog att besvaras av en enskild agent.
+- Ange domain for varje delfråga (vader, statistik, trafik, kunskap, bolag, riksdagen, marknad, kod, webb).
+- Om delfråga B beror pa resultatet av delfråga A, ange depends_on: ["q1"].
+- En enkel fraga som inte kan delas upp -> returnera EN delfråga.
+- Max 4 delfragor.
+- Fokusera pa SEMANTISK uppdelning, inte syntaktisk.
+
+Exempel:
+- "Hur manga bor i Goteborg och vad ar vadret dar?" -> 2 delfragor (statistik + vader), inga beroenden.
+- "Jamfor folkmangden i Stockholm och Goteborg, visa sedan pa karta" -> 2+1: tva statistik-fragor (parallella) + en kart-fraga (beror pa bada).
+
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-faltet.
+- Anvand INTE <think>-taggar.
+- Returnera EXAKT det JSON-schema som anges, inga extra falt.
+
+Returnera strikt JSON:
+{
+  "thinking": "din interna resonering pa svenska",
+  "questions": [
+    {"id": "q1", "text": "delfragans text", "depends_on": [], "domain": "statistik"},
+    {"id": "q2", "text": "delfragans text", "depends_on": [], "domain": "vader"}
+  ],
+  "reason": "kort svensk motivering"
+}
+"""
+
+
 DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT = """
 Du ar noden agent_resolver i supervisor-grafen.
 Du far kandidatagenter fran retrieval.

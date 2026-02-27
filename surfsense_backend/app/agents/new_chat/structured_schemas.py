@@ -91,6 +91,49 @@ class IntentResult(BaseModel):
 
 
 # ────────────────────────────────────────────────────────────────
+# Multi-Query Decomposer (P3)
+# ────────────────────────────────────────────────────────────────
+
+
+class AtomicQuestion(BaseModel):
+    """A single atomic sub-question decomposed from a complex query."""
+
+    id: str = Field(
+        ...,
+        description="Unik fråge-ID, t.ex. q1, q2.",
+    )
+    text: str = Field(
+        ...,
+        description="Den atomära delfrågan på svenska.",
+    )
+    depends_on: list[str] = Field(
+        default_factory=list,
+        description="Lista med ID:n för frågor som måste besvaras först.",
+    )
+    domain: str = Field(
+        ...,
+        description="Domän som bäst matchar frågan, t.ex. väder, statistik, trafik, kunskap.",
+    )
+
+
+class DecomposerResult(BaseModel):
+    """Output schema for the multi-query decomposer node."""
+
+    thinking: str = Field(
+        ...,
+        description="Intern resonering om hur frågan ska brytas ned.",
+    )
+    questions: list[AtomicQuestion] = Field(
+        ...,
+        description="Lista med atomära delfrågor.",
+    )
+    reason: str = Field(
+        ...,
+        description="Kort motivering på svenska.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
 # Agent Resolver
 # ────────────────────────────────────────────────────────────────
 

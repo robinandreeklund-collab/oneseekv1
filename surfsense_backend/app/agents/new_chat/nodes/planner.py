@@ -74,23 +74,31 @@ def build_planner_node(
             for s in (state.get("sub_intents") or [])
             if str(s).strip()
         ]
+        # P3: atomic_questions from the multi_query_decomposer.
+        atomic_questions: list[dict[str, Any]] = [
+            q for q in (state.get("atomic_questions") or [])
+            if isinstance(q, dict) and str(q.get("text") or "").strip()
+        ]
+        # Use multi-domain template if we have atomic questions with multiple
+        # domains OR the legacy mixed-route path with sub_intents.
         is_mixed = route_hint == "mixed" and bool(sub_intents)
+        has_decomposition = len(atomic_questions) >= 2
         chosen_template = (
             multi_domain_planner_prompt_template
-            if is_mixed and multi_domain_planner_prompt_template
+            if (is_mixed or has_decomposition) and multi_domain_planner_prompt_template
             else planner_prompt_template
         )
 
         prompt = append_datetime_context_fn(chosen_template)
-        planner_input = json.dumps(
-            {
-                "query": latest_user_query,
-                "resolved_intent": state.get("resolved_intent") or {},
-                "selected_agents": selected_agents,
-                "current_plan": current_plan,
-            },
-            ensure_ascii=True,
-        )
+        planner_payload: dict[str, Any] = {
+            "query": latest_user_query,
+            "resolved_intent": state.get("resolved_intent") or {},
+            "selected_agents": selected_agents,
+            "current_plan": current_plan,
+        }
+        if atomic_questions:
+            planner_payload["atomic_questions"] = atomic_questions
+        planner_input = json.dumps(planner_payload, ensure_ascii=True)
         new_plan: list[dict[str, Any]] = []
         try:
             _invoke_kwargs: dict[str, Any] = {"max_tokens": 500}

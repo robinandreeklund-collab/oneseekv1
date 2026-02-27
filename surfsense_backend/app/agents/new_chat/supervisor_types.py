@@ -159,3 +159,6 @@ class SupervisorState(TypedDict, total=False):
     total_steps: Annotated[int, _replace]
     # P1 loop-fix: critic_history tracks previous critic decisions for adaptive behavior.
     critic_history: Annotated[list[dict[str, Any]], _replace]
+    # P3: atomic_questions produced by multi_query_decomposer for complex queries.
+    # Each item: {"id": "q1", "text": "...", "depends_on": [], "domain": "väder"}
+    atomic_questions: Annotated[list[dict[str, Any]], _replace]

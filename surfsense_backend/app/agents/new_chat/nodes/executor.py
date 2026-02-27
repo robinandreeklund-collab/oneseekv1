@@ -456,6 +456,7 @@ def _build_executor_updates_for_new_user_turn(
         "agent_hops": 0,
         "no_progress_runs": 0,
         "guard_parallel_preview": [],
+        "atomic_questions": [],
     }
     if incoming_turn_id:
         updates["active_turn_id"] = incoming_turn_id

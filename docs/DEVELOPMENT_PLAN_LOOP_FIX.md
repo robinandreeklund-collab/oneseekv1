@@ -3,7 +3,7 @@
 > **Startdatum:** 2026-02-26
 > **Branch:** `claude/debug-longgraph-loop-TCV0N`
 > **Issue:** #44 (Loop issues)
-> **Status:** Sprint P1 — **KLAR** ✓ | Sprint P1 Extra — **KLAR** ✓ (väntar E2E-testning) | Sprint P2 — **KLAR** ✓
+> **Status:** Sprint P1 — **KLAR** ✓ | Sprint P1 Extra — **KLAR** ✓ (väntar E2E-testning) | Sprint P2 — **KLAR** ✓ | Sprint P3 — **KLAR** ✓
 
 ---
 
@@ -39,7 +39,7 @@ som gör att frågor tar onödigt lång tid och ibland aldrig når response_laye
 | **P1** | Kritisk | Loop-fix, response layer, think-toggle | BUG 1-3, 5-8 | **KLAR** |
 | **P1 Extra** | Hög | Strukturerad output (JSON Schema) för alla noder + streaming | Kvalitet, parsning, determinism | **KLAR** (väntar E2E) |
 | **P2** | Hög | Studio, konfigurerbara guards | BUG 4, 9-12 | **KLAR** |
-| **P3** | Medel | Multi-query decomposer | Ny funktionalitet | Ej påbörjad |
+| **P3** | Medel | Multi-query decomposer | Ny funktionalitet | **KLAR** |
 | **P4** | Framtida | Subagent mini-graphs, convergence | Arkitekturell omskrivning | Planeras |
 
 ---
@@ -1184,46 +1184,73 @@ P1-Extra.8 (Tester)                     ← Sist, verifierar allt
 
 ## Sprint P3 — Multi-Query Decomposer
 
-> **Status:** [ ] Ej påbörjad
+> **Status:** [x] **KLAR** (2026-02-27)
 > **Mål:** Intelligent fråge-dekomponering för komplexa frågor
 > **Källa:** Issue #44
 
 ### P3.1 — Multi-query decomposer node
 
-**Vad:** Ny nod `multi_query_decomposer` som körs EFTER intent resolution
-men FÖRE planner, BARA för `complex`-klassade frågor.
+> **Status:** [x] **KLAR**
 
-**Ny fil:** `surfsense_backend/app/agents/new_chat/nodes/multi_query_decomposer.py`
+**Vad:** Ny nod `multi_query_decomposer` som körs EFTER intent resolution
+men FÖRE agent_resolver, BARA för `complex`-klassade frågor (hybrid_mode).
+Bryter ned komplexa frågor till atomära delfrågor med beroendegraf.
+
+**Nya filer:**
+- `surfsense_backend/app/agents/new_chat/nodes/multi_query_decomposer.py` — Noden
+- `surfsense_backend/app/agents/new_chat/structured_schemas.py` — `AtomicQuestion` + `DecomposerResult` Pydantic-scheman
 
 **State-tillägg:**
 ```python
 atomic_questions: list[dict]  # [{"id": "q1", "text": "...", "depends_on": [], "domain": "väder"}]
 ```
 
+**Ändrade filer:**
+- `surfsense_backend/app/agents/new_chat/supervisor_types.py` — `atomic_questions` fält i SupervisorState
+- `surfsense_backend/app/agents/new_chat/structured_schemas.py` — `AtomicQuestion` + `DecomposerResult`
+- `surfsense_backend/app/agents/new_chat/supervisor_pipeline_prompts.py` — `DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT`
+- `surfsense_backend/app/agents/new_chat/supervisor_agent.py` — Import, prompt resolution, nod-bygge, graf-routing, edge-wiring
+- `surfsense_backend/app/agents/new_chat/nodes/__init__.py` — Export `build_multi_query_decomposer_node`
+- `surfsense_backend/app/agents/new_chat/nodes/planner.py` — Konsumerar `atomic_questions` i LLM-input
+- `surfsense_backend/app/agents/new_chat/nodes/executor.py` — Resettar `atomic_questions` vid ny tur
+- `surfsense_backend/app/tasks/chat/stream_new_chat.py` — `multi_query_decomposer` i `_INTERNAL_PIPELINE_CHAIN_TOKENS`
+
 **Grafändring:**
 ```
 resolve_intent → memory_context → [route_after_intent]
-                                    ├→ (complex) multi_query_decomposer → agent_resolver → planner
+                                    ├→ (complex) multi_query_decomposer → [speculative →] agent_resolver → planner
                                     ├→ (simple) tool_resolver
-                                    └→ (trivial) smalltalk/END
+                                    └→ (trivial) agent_resolver / smalltalk / END
 ```
 
 **Acceptanskriterier:**
-- [ ] Decomposer producerar atomic_questions med dependencies
-- [ ] Planner använder atomic_questions för att generera bättre plan
-- [ ] Simple och trivial frågor hoppar ÖVER decomposer (ingen extra latens)
-- [ ] FadeLayer visar decomposer-reasoning i think-box
+- [x] Decomposer producerar atomic_questions med dependencies
+- [x] Planner använder atomic_questions för att generera bättre plan
+- [x] Simple och trivial frågor hoppar ÖVER decomposer (ingen extra latens)
+- [x] FadeLayer visar decomposer-reasoning i think-box (via `_INTERNAL_PIPELINE_CHAIN_TOKENS`)
+- [x] Enstaka frågor (1 atomic_question) resulterar i tom lista (ingen onödig dekomponering)
+- [x] LLM-fel → graceful degradation (tom atomic_questions, planner kör som vanligt)
 
 ### P3.2 — Tester för Sprint P3
 
-**Ny testfil:** `surfsense_backend/tests/test_multi_query_decomposer.py`
+> **Status:** [x] **KLAR**
 
-| Test | Testar |
-|------|--------|
-| `test_decomposer_splits_compound_question` | "Vad är vädret och trafiken?" → 2 atomic_questions |
-| `test_decomposer_single_question_passthrough` | "Vad är vädret?" → 1 atomic_question |
-| `test_decomposer_dependency_graph` | "Jämför A och B" → dep-graph med beroenden |
-| `test_decomposer_skipped_for_simple` | Simple-query → decomposer körs inte |
+**Ny testfil:** `surfsense_backend/tests/test_multi_query_decomposer.py` — **11 tester, alla passerar**
+
+| Testklass | Antal | Testar |
+|-----------|-------|--------|
+| `TestDecomposerSplitsCompoundQuestion` | 2 | Två/tre domäner → rätt antal atomic_questions med korrekt domain |
+| `TestDecomposerSingleQuestionPassthrough` | 1 | Enkel fråga → tom atomic_questions (ingen onödig dekomponering) |
+| `TestDecomposerDependencyGraph` | 1 | depends_on-referenserna bevaras korrekt |
+| `TestDecomposerSkippedForSimple` | 3 | Simple/trivial/None-complexity → LLM anropas ALDRIG |
+| `TestDecomposerLLMFailure` | 1 | LLM-exception → tom lista (graceful degradation) |
+| `TestStateFieldExists` | 1 | `atomic_questions` finns i SupervisorState |
+| `TestPydanticSchemas` | 2 | DecomposerResult och AtomicQuestion parsas korrekt |
+
+**Testresultat:**
+```
+tests/test_multi_query_decomposer.py: 11 passed (0.29s)
+```
 
 ---
 

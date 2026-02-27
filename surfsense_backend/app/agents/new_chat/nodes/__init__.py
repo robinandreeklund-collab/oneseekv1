@@ -9,6 +9,9 @@ from app.agents.new_chat.nodes.hitl_gates import (
     build_synthesis_hitl_gate_node,
 )
 from app.agents.new_chat.nodes.intent import build_intent_resolver_node
+from app.agents.new_chat.nodes.multi_query_decomposer import (
+    build_multi_query_decomposer_node,
+)
 from app.agents.new_chat.nodes.planner import build_planner_node
 from app.agents.new_chat.nodes.progressive_synthesizer import (
     build_progressive_synthesizer_node,
@@ -31,6 +34,7 @@ __all__ = [
     "build_executor_nodes",
     "build_execution_hitl_gate_node",
     "build_intent_resolver_node",
+    "build_multi_query_decomposer_node",
     "build_planner_hitl_gate_node",
     "build_planner_node",
     "build_progressive_synthesizer_node",

@@ -835,6 +835,7 @@ _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "speculative",
     "speculative_merge",
     "agent_resolver",
+    "multi_query_decomposer",
     "planner",
     "planner_hitl_gate",
     "tool_resolver",

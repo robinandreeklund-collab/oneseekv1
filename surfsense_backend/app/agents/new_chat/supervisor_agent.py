@@ -46,6 +46,7 @@ from app.agents.new_chat.nodes import (
     build_executor_nodes,
     build_execution_hitl_gate_node,
     build_intent_resolver_node,
+    build_multi_query_decomposer_node,
     build_planner_hitl_gate_node,
     build_planner_node,
     build_progressive_synthesizer_node,
@@ -101,6 +102,7 @@ from app.agents.new_chat.supervisor_runtime_prompts import (
 from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT,
     DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
@@ -1868,6 +1870,15 @@ async def create_supervisor_agent(
             prompt_overrides,
             "supervisor.intent_resolver.system",
             DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+        ),
+        structured_output=_use_structured,
+    )
+    decomposer_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "supervisor.decomposer.system",
+            DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT,
         ),
         structured_output=_use_structured,
     )
@@ -5578,6 +5589,14 @@ async def create_supervisor_agent(
         live_routing_config=live_routing_config,
     )
 
+    decomposer_node = build_multi_query_decomposer_node(
+        llm=llm,
+        decomposer_prompt_template=decomposer_prompt_template,
+        latest_user_query_fn=_latest_user_query,
+        append_datetime_context_fn=append_datetime_context,
+        extract_first_json_object_fn=_extract_first_json_object,
+    )
+
     resolve_agents_node = build_agent_resolver_node(
         llm=llm,
         agent_resolver_prompt_template=agent_resolver_prompt_template,
@@ -6517,8 +6536,9 @@ async def create_supervisor_agent(
                 if has_final:
                     return "synthesis_hitl"
                 return "agent_resolver"
-            if complexity == "complex" and speculative_enabled:
-                return "speculative"
+            # P3: complex queries go through multi_query_decomposer first.
+            if complexity == "complex":
+                return "multi_query_decomposer"
             return "agent_resolver"
         return "agent_resolver"
 
@@ -6652,6 +6672,12 @@ async def create_supervisor_agent(
             graph_builder.add_node("speculative", RunnableCallable(None, speculative_node))
         graph_builder.add_node("memory_context", RunnableCallable(None, memory_context_node))
         graph_builder.add_node("smalltalk", RunnableCallable(None, smalltalk_node))
+        # P3: multi_query_decomposer for complex queries (hybrid_mode only)
+        if hybrid_mode and not compare_mode:
+            graph_builder.add_node(
+                "multi_query_decomposer",
+                RunnableCallable(None, decomposer_node),
+            )
         graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
         graph_builder.add_node("planner", RunnableCallable(None, planner_node))
         graph_builder.add_node(
@@ -6716,6 +6742,8 @@ async def create_supervisor_agent(
             "synthesis_hitl",
             END,
         ]
+        if hybrid_mode and not compare_mode:
+            resolve_intent_paths.append("multi_query_decomposer")
         if hybrid_mode and not compare_mode and speculative_enabled:
             resolve_intent_paths.append("speculative")
         graph_builder.add_edge("resolve_intent", "memory_context")
@@ -6725,6 +6753,12 @@ async def create_supervisor_agent(
             path_map=resolve_intent_paths,
         )
         graph_builder.add_edge("smalltalk", END)
+        if hybrid_mode and not compare_mode:
+            # P3: decomposer feeds into speculative (if enabled) or agent_resolver.
+            if speculative_enabled:
+                graph_builder.add_edge("multi_query_decomposer", "speculative")
+            else:
+                graph_builder.add_edge("multi_query_decomposer", "agent_resolver")
         if hybrid_mode and not compare_mode and speculative_enabled:
             graph_builder.add_edge("speculative", "agent_resolver")
         graph_builder.add_edge("agent_resolver", "planner")
