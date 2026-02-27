@@ -574,28 +574,30 @@ def build_executor_nodes(
             messages = budget.fit_messages(messages)
         return messages
 
-    # Build extra invoke kwargs for structured output when applicable.
+    # NOTE: Do NOT pass response_format to the executor.
+    # The executor's primary job is making tool calls.  Setting
+    # response_format forces the model to produce JSON instead of
+    # choosing tool calls, which causes an infinite loop (executor →
+    # planner → executor) where tools never execute.
+    # Thinking capture for the executor is handled by the streaming
+    # layer (_ThinkStreamFilter / native reasoning_content).
     _executor_invoke_kwargs: dict[str, Any] = {}
-    if use_structured_output and think_on_tool_calls:
-        _executor_invoke_kwargs["response_format"] = pydantic_to_response_format(
-            ExecutorThinkingResult, "executor_thinking_result"
-        )
 
     def _strip_thinking_from_response(response: AIMessage) -> AIMessage:
-        """Remove the ``thinking`` field from structured JSON content.
+        """Remove ``{"thinking": ...}`` JSON from content if present.
 
-        When structured output is enabled the executor's ``content`` is a
-        JSON string like ``{"thinking": "..."}`` which pollutes message
-        history and can leak into visible text if the graph terminates
-        early.  All other pipeline nodes use
-        ``model_dump(exclude={"thinking"})`` — this is the executor
-        equivalent.
+        Safety net: even without response_format, some models may emit
+        structured JSON with a thinking field in the content (e.g. when
+        the system prompt asks for it).  Strip it to keep history clean.
         """
         raw = getattr(response, "content", "") or ""
         if not isinstance(raw, str) or not raw.strip():
             return response
+        trimmed = raw.strip()
+        if not trimmed.startswith("{"):
+            return response
         try:
-            parsed = json.loads(raw)
+            parsed = json.loads(trimmed)
         except (json.JSONDecodeError, ValueError):
             return response
         if not isinstance(parsed, dict) or "thinking" not in parsed:
@@ -763,8 +765,7 @@ def build_executor_nodes(
             allow_multiple=bool(compare_mode),
             state=state,
         )
-        if use_structured_output and think_on_tool_calls:
-            response = _strip_thinking_from_response(response)
+        response = _strip_thinking_from_response(response)
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:
             updates.update(
@@ -825,8 +826,7 @@ def build_executor_nodes(
             allow_multiple=bool(compare_mode),
             state=state,
         )
-        if use_structured_output and think_on_tool_calls:
-            response = _strip_thinking_from_response(response)
+        response = _strip_thinking_from_response(response)
         updates: dict[str, Any] = {"messages": [response]}
         if new_user_turn:
             updates.update(

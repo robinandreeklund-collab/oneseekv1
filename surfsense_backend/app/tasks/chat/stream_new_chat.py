@@ -1803,6 +1803,10 @@ async def stream_new_chat(
                 else None
             )
         citations_enabled = bool(citation_instructions_block)
+        # NOTE: The executor/supervisor prompt must NOT use structured_output
+        # because setting response_format on a tool-calling node forces the
+        # model to produce JSON instead of making tool calls, causing an
+        # infinite planner→executor loop.
         supervisor_prompt = inject_core_prompt(
             core_global_prompt,
             resolve_prompt(
@@ -1810,7 +1814,6 @@ async def stream_new_chat(
                 "agent.supervisor.system",
                 DEFAULT_SUPERVISOR_PROMPT,
             ),
-            structured_output=structured_output_enabled(),
         )
         supervisor_system_prompt = build_supervisor_prompt(
             supervisor_prompt,
