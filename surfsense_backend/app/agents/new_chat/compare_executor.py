@@ -435,6 +435,46 @@ def _build_synthesis_from_convergence(
             blocks.append(f"  - {c}")
         blocks.append("")
 
+    # Model scores from convergence
+    model_scores = convergence.get("model_scores", {})
+    if model_scores:
+        blocks.append("PER-MODELL POÄNG (från convergence):")
+        for domain, scores in model_scores.items():
+            if isinstance(scores, dict):
+                blocks.append(
+                    f"  {domain}: relevans={scores.get('relevans', 0)}, "
+                    f"djup={scores.get('djup', 0)}, "
+                    f"klarhet={scores.get('klarhet', 0)}, "
+                    f"korrekthet={scores.get('korrekthet', 0)}"
+                )
+        blocks.append("")
+
+    # Agreements and disagreements
+    agreements = convergence.get("agreements", [])
+    if agreements:
+        blocks.append("KONSENSUS:")
+        for a in agreements:
+            blocks.append(f"  - {a}")
+        blocks.append("")
+
+    disagreements = convergence.get("disagreements", [])
+    if disagreements:
+        blocks.append("MENINGSSKILJAKTIGHETER:")
+        for d in disagreements:
+            blocks.append(f"  - {d}")
+        blocks.append("")
+
+    unique_insights = convergence.get("unique_insights", {})
+    if unique_insights:
+        blocks.append("UNIKA INSIKTER:")
+        for domain, insight in unique_insights.items():
+            blocks.append(f"  - {domain}: {insight}")
+        blocks.append("")
+
+    comparative = convergence.get("comparative_summary", "")
+    if comparative:
+        blocks.append(f"JÄMFÖRANDE ANALYS:\n{comparative}\n")
+
     # Per-domain summaries
     for s in summaries:
         domain = s.get("domain", "unknown")
@@ -562,6 +602,15 @@ def build_compare_synthesizer_node(
                 "messages": [synthesis_message],
                 "final_response": synthesis_text,
                 "orchestration_phase": "compare_synthesis_complete",
+                "compare_arena_data": {
+                    "model_scores": convergence.get("model_scores", {}),
+                    "agreements": convergence.get("agreements", []),
+                    "disagreements": convergence.get("disagreements", []),
+                    "unique_insights": convergence.get("unique_insights", {}),
+                    "comparative_summary": convergence.get("comparative_summary", ""),
+                    "overlap_score": convergence.get("overlap_score", 0.0),
+                    "conflicts": convergence.get("conflicts", []),
+                },
             }
         except Exception as e:
             error_msg = f"Error during synthesis: {e}"

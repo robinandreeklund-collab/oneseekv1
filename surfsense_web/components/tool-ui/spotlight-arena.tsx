@@ -1,9 +1,31 @@
 "use client";
 
 import { useAssistantState } from "@assistant-ui/react";
-import { type FC, createContext, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import {
+	ChevronDownIcon,
+	ClockIcon,
+	CoinsIcon,
+	LeafIcon,
+	ZapIcon,
+} from "lucide-react";
+import {
+	type FC,
+	createContext,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
 // ============================================================================
@@ -23,15 +45,45 @@ interface ModelScore {
 	korrekthet: number;
 }
 
+interface ModelMeta {
+	provider: string;
+	model: string;
+	modelString: string;
+	source: string;
+	latencyMs: number | null;
+	tokens: {
+		prompt: number | null;
+		completion: number | null;
+		total: number | null;
+		isEstimated: boolean;
+	};
+	truncated: boolean;
+}
+
 interface RankedModel {
 	toolName: string;
 	displayName: string;
 	rank: number;
 	scores: ModelScore;
+	hasRealScores: boolean;
 	totalScore: number;
-	latencyMs: number | null;
+	meta: ModelMeta;
+	summary: string;
+	fullResponse: string;
 	status: "running" | "complete" | "error";
 	errorMessage?: string;
+}
+
+interface ArenaAnalysis {
+	consensus: string[];
+	disagreements: {
+		topic: string;
+		sides: Record<string, string>;
+		verdict: string;
+	}[];
+	unique_contributions: { model: string; insight: string }[];
+	winner_rationale: string;
+	reliability_notes: string;
 }
 
 type ArenaPhase = "fanout" | "granskning" | "analyserar" | "rankar";
@@ -62,6 +114,18 @@ const MODEL_DISPLAY: Record<string, string> = {
 	call_oneseek: "OneSeek Research",
 };
 
+/** Map tool_name → domain key used in convergence model_scores */
+const TOOL_TO_DOMAIN: Record<string, string> = {
+	call_grok: "grok",
+	call_claude: "claude",
+	call_gpt: "gpt",
+	call_gemini: "gemini",
+	call_deepseek: "deepseek",
+	call_perplexity: "perplexity",
+	call_qwen: "qwen",
+	call_oneseek: "research",
+};
+
 const MODEL_LOGOS: Record<string, string> = {
 	call_grok: "/model-logos/grok.png",
 	call_gpt: "/model-logos/chatgpt.png",
@@ -80,7 +144,12 @@ const PHASE_LABELS: { id: ArenaPhase; label: string }[] = [
 	{ id: "rankar", label: "Rankar" },
 ];
 
-const SCORE_KEYS: (keyof ModelScore)[] = ["relevans", "djup", "klarhet", "korrekthet"];
+const SCORE_KEYS: (keyof ModelScore)[] = [
+	"relevans",
+	"djup",
+	"klarhet",
+	"korrekthet",
+];
 
 const SCORE_COLORS: Record<keyof ModelScore, string> = {
 	relevans: "bg-blue-500",
@@ -89,22 +158,20 @@ const SCORE_COLORS: Record<keyof ModelScore, string> = {
 	korrekthet: "bg-violet-500",
 };
 
+const SCORE_TEXT_COLORS: Record<keyof ModelScore, string> = {
+	relevans: "text-blue-500",
+	djup: "text-emerald-500",
+	klarhet: "text-amber-500",
+	korrekthet: "text-violet-500",
+};
+
+// CO2 / energy constants (same as compare-model.tsx)
+const ENERGY_WH_PER_1K_TOKENS = 0.2;
+const CO2G_PER_1K_TOKENS = 0.1;
+
 // ============================================================================
 // Helpers
 // ============================================================================
-
-function clamp(val: number, min: number, max: number): number {
-	return Math.max(min, Math.min(max, val));
-}
-
-/** Deterministic hash for consistent per-model score variation. */
-function stableHash(str: string): number {
-	let h = 0;
-	for (let i = 0; i < str.length; i++) {
-		h = ((h << 5) - h + str.charCodeAt(i)) | 0;
-	}
-	return h;
-}
 
 function parseResult(raw: unknown): Record<string, unknown> | null {
 	if (!raw) return null;
@@ -119,44 +186,62 @@ function parseResult(raw: unknown): Record<string, unknown> | null {
 	return null;
 }
 
-function computeHeuristicScores(
+function extractMeta(
 	result: Record<string, unknown> | null,
-	toolName: string,
-): ModelScore {
-	if (!result || result.status === "error") {
-		return { relevans: 0, djup: 0, klarhet: 0, korrekthet: 0 };
+	responseText: string,
+	queryText: string,
+): ModelMeta {
+	if (!result) {
+		return {
+			provider: "",
+			model: "",
+			modelString: "",
+			source: "",
+			latencyMs: null,
+			tokens: {
+				prompt: null,
+				completion: null,
+				total: null,
+				isEstimated: false,
+			},
+			truncated: false,
+		};
 	}
 
-	const response = String(result.response || result.summary || "");
-	const responseLen = response.length;
-	const hasSummary =
-		typeof result.summary === "string" && (result.summary as string).length > 20;
-	const latency =
-		typeof result.latency_ms === "number" ? (result.latency_ms as number) : 5000;
+	const usage = result.usage as Record<string, unknown> | null | undefined;
+	let prompt: number | null = null;
+	let completion: number | null = null;
+	let total: number | null = null;
+	let isEstimated = false;
 
-	const h = stableHash(toolName);
-	const v1 = ((h % 20) + 20) % 20 - 10;
-	const v2 = (((h * 7) % 20) + 20) % 20 - 10;
-	const v3 = (((h * 13) % 20) + 20) % 20 - 10;
-	const v4 = (((h * 19) % 20) + 20) % 20 - 10;
+	if (usage) {
+		if (typeof usage.prompt_tokens === "number") prompt = usage.prompt_tokens;
+		if (typeof usage.completion_tokens === "number")
+			completion = usage.completion_tokens;
+		if (typeof usage.total_tokens === "number") total = usage.total_tokens;
+	}
+
+	if (total === null) {
+		const estPrompt = Math.max(1, Math.round((queryText || "").length / 4));
+		const estCompletion = Math.max(
+			1,
+			Math.round((responseText || "").length / 4),
+		);
+		total = estPrompt + estCompletion;
+		prompt = estPrompt;
+		completion = estCompletion;
+		isEstimated = true;
+	}
 
 	return {
-		relevans: Math.round(
-			clamp(72 + (responseLen > 300 ? 12 : 0) + v1 * 0.8, 45, 97),
-		),
-		djup: Math.round(
-			clamp(
-				Math.min(93, Math.log2(Math.max(1, responseLen)) * 7.5) + v2 * 0.5,
-				30,
-				97,
-			),
-		),
-		klarhet: Math.round(
-			clamp(hasSummary ? 75 + v3 * 0.7 : 52 + v3 * 0.4, 40, 97),
-		),
-		korrekthet: Math.round(
-			clamp(68 + (latency < 3000 ? 8 : 0) + v4 * 0.6, 40, 97),
-		),
+		provider: String(result.provider || ""),
+		model: String(result.model || ""),
+		modelString: String(result.model_string || ""),
+		source: String(result.source || result.provider || ""),
+		latencyMs:
+			typeof result.latency_ms === "number" ? result.latency_ms : null,
+		tokens: { prompt, completion, total, isEstimated },
+		truncated: result.truncated === true,
 	};
 }
 
@@ -164,10 +249,121 @@ function totalScore(s: ModelScore): number {
 	return s.relevans + s.djup + s.klarhet + s.korrekthet;
 }
 
-function bestDimension(s: ModelScore): string {
-	const entries = Object.entries(s) as [keyof ModelScore, number][];
-	entries.sort((a, b) => b[1] - a[1]);
-	return entries[0][0].charAt(0).toUpperCase() + entries[0][0].slice(1);
+function formatLatency(ms: number | null): string {
+	if (ms === null) return "";
+	if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+	return `${Math.round(ms)}ms`;
+}
+
+function formatTokens(meta: ModelMeta): string {
+	const t = meta.tokens;
+	if (t.total !== null) {
+		return `${t.isEstimated ? "~" : ""}${t.total} tokens`;
+	}
+	return "";
+}
+
+function estimateCo2(meta: ModelMeta): { co2g: number; energyWh: number } | null {
+	const total = meta.tokens.total;
+	if (total === null || total === 0) return null;
+	return {
+		co2g: (total / 1000) * CO2G_PER_1K_TOKENS,
+		energyWh: (total / 1000) * ENERGY_WH_PER_1K_TOKENS,
+	};
+}
+
+function formatNum(n: number): string {
+	if (n < 0.01) return n.toFixed(3);
+	if (n < 1) return n.toFixed(2);
+	return n.toFixed(1);
+}
+
+/** Extract ```spotlight-arena-data JSON block from synthesis text */
+function extractArenaAnalysis(
+	textParts: string[],
+): ArenaAnalysis | null {
+	for (const text of textParts) {
+		const match = text.match(
+			/```spotlight-arena-data\s*\n([\s\S]*?)```/,
+		);
+		if (match?.[1]) {
+			try {
+				const parsed = JSON.parse(match[1]);
+				return parsed.arena_analysis || null;
+			} catch {
+				// ignore parse errors
+			}
+		}
+	}
+	return null;
+}
+
+/** Extract convergence model_scores from arena-data or text */
+function extractModelScores(
+	textParts: string[],
+): Record<string, ModelScore> | null {
+	for (const text of textParts) {
+		const match = text.match(
+			/```spotlight-arena-data\s*\n([\s\S]*?)```/,
+		);
+		if (match?.[1]) {
+			try {
+				const parsed = JSON.parse(match[1]);
+				if (parsed.model_scores) return parsed.model_scores;
+			} catch {
+				// ignore
+			}
+		}
+	}
+	return null;
+}
+
+/** Heuristic fallback scores when convergence hasn't run yet */
+function computeFallbackScores(
+	result: Record<string, unknown> | null,
+	toolName: string,
+): ModelScore {
+	if (!result || result.status === "error") {
+		return { relevans: 0, djup: 0, klarhet: 0, korrekthet: 0 };
+	}
+	const response = String(result.response || result.summary || "");
+	const len = response.length;
+	const hasSummary =
+		typeof result.summary === "string" &&
+		(result.summary as string).length > 20;
+	const latency =
+		typeof result.latency_ms === "number" ? result.latency_ms : 5000;
+
+	// Simple deterministic variation per model
+	let h = 0;
+	for (let i = 0; i < toolName.length; i++) {
+		h = ((h << 5) - h + toolName.charCodeAt(i)) | 0;
+	}
+	const v = (n: number) => (((h * n) % 20) + 20) % 20 - 10;
+
+	return {
+		relevans: Math.round(
+			Math.max(45, Math.min(97, 72 + (len > 300 ? 12 : 0) + v(1) * 0.8)),
+		),
+		djup: Math.round(
+			Math.max(
+				30,
+				Math.min(97, Math.log2(Math.max(1, len)) * 7.5 + v(7) * 0.5),
+			),
+		),
+		klarhet: Math.round(
+			Math.max(
+				40,
+				Math.min(97, hasSummary ? 75 + v(13) * 0.7 : 52 + v(13) * 0.4),
+			),
+		),
+		korrekthet: Math.round(
+			Math.max(
+				40,
+				Math.min(97, 68 + (latency < 3000 ? 8 : 0) + v(19) * 0.6),
+			),
+		),
+	};
 }
 
 // ============================================================================
@@ -179,40 +375,57 @@ const ScoreBar: FC<{
 	value: number;
 	colorClass: string;
 	compact?: boolean;
-}> = ({ label, value, colorClass, compact = false }) => (
-	<div className={cn("flex items-center", compact ? "gap-1" : "gap-2")}>
-		<span
-			className={cn(
-				"text-muted-foreground shrink-0 capitalize",
-				compact ? "text-[10px] w-16" : "text-xs w-20",
-			)}
-		>
-			{label}
-		</span>
-		<div
-			className={cn(
-				"flex-1 rounded-full bg-muted/50 overflow-hidden",
-				compact ? "h-1.5" : "h-2",
-			)}
-		>
+	animate?: boolean;
+}> = ({ label, value, colorClass, compact = false, animate = true }) => {
+	const barRef = useRef<HTMLDivElement>(null);
+	const [width, setWidth] = useState(animate ? 0 : value);
+
+	useEffect(() => {
+		if (!animate) {
+			setWidth(value);
+			return;
+		}
+		// Animate bar from 0 to value
+		const timer = setTimeout(() => setWidth(value), 50);
+		return () => clearTimeout(timer);
+	}, [value, animate]);
+
+	return (
+		<div className={cn("flex items-center", compact ? "gap-1" : "gap-2")}>
+			<span
+				className={cn(
+					"text-muted-foreground shrink-0 capitalize",
+					compact ? "text-[10px] w-16" : "text-xs w-20",
+				)}
+			>
+				{label}
+			</span>
 			<div
 				className={cn(
-					"h-full rounded-full transition-all duration-700 ease-out",
-					colorClass,
+					"flex-1 rounded-full bg-muted/50 overflow-hidden",
+					compact ? "h-1.5" : "h-2",
 				)}
-				style={{ width: `${value}%` }}
-			/>
+			>
+				<div
+					ref={barRef}
+					className={cn(
+						"h-full rounded-full transition-all duration-1000 ease-out",
+						colorClass,
+					)}
+					style={{ width: `${width}%` }}
+				/>
+			</div>
+			<span
+				className={cn(
+					"text-muted-foreground tabular-nums shrink-0",
+					compact ? "text-[10px] w-7" : "text-xs w-8",
+				)}
+			>
+				{value}%
+			</span>
 		</div>
-		<span
-			className={cn(
-				"text-muted-foreground tabular-nums shrink-0",
-				compact ? "text-[10px] w-7" : "text-xs w-8",
-			)}
-		>
-			{value}%
-		</span>
-	</div>
-);
+	);
+};
 
 const ModelLogo: FC<{ toolName: string; size?: "sm" | "md" }> = ({
 	toolName,
@@ -249,7 +462,9 @@ const ModelLogo: FC<{ toolName: string; size?: "sm" | "md" }> = ({
 	);
 };
 
-const PhaseIndicator: FC<{ currentPhase: ArenaPhase }> = ({ currentPhase }) => {
+const PhaseIndicator: FC<{ currentPhase: ArenaPhase }> = ({
+	currentPhase,
+}) => {
 	const currentIdx = PHASE_LABELS.findIndex((p) => p.id === currentPhase);
 	return (
 		<div className="flex gap-1">
@@ -257,7 +472,7 @@ const PhaseIndicator: FC<{ currentPhase: ArenaPhase }> = ({ currentPhase }) => {
 				<div
 					key={id}
 					className={cn(
-						"rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors",
+						"rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors duration-500",
 						idx === currentIdx
 							? "bg-primary text-primary-foreground"
 							: idx < currentIdx
@@ -266,23 +481,163 @@ const PhaseIndicator: FC<{ currentPhase: ArenaPhase }> = ({ currentPhase }) => {
 					)}
 				>
 					{label}
+					{idx === currentIdx && (
+						<span className="ml-1 inline-block size-1 rounded-full bg-current animate-pulse" />
+					)}
 				</div>
 			))}
 		</div>
 	);
 };
 
+// ── Metadata badges ─────────────────────────────────────────────────────────
+
+const MetaBadges: FC<{ meta: ModelMeta; compact?: boolean }> = ({
+	meta,
+	compact = false,
+}) => {
+	const latency = formatLatency(meta.latencyMs);
+	const tokens = formatTokens(meta);
+	const co2 = estimateCo2(meta);
+
+	if (!latency && !tokens) return null;
+
+	return (
+		<div className={cn("flex flex-wrap gap-1.5", compact ? "mt-1" : "mt-2")}>
+			{latency && (
+				<Badge
+					variant="secondary"
+					className={cn("gap-1", compact ? "text-[9px] px-1.5 py-0" : "text-[10px]")}
+				>
+					<ClockIcon className="size-2.5" />
+					{latency}
+				</Badge>
+			)}
+			{tokens && (
+				<Badge
+					variant="secondary"
+					className={cn("gap-1", compact ? "text-[9px] px-1.5 py-0" : "text-[10px]")}
+				>
+					<CoinsIcon className="size-2.5" />
+					{tokens}
+				</Badge>
+			)}
+			{co2 && (
+				<Badge
+					variant="secondary"
+					className={cn("gap-1", compact ? "text-[9px] px-1.5 py-0" : "text-[10px]")}
+				>
+					<LeafIcon className="size-2.5" />
+					CO₂ {meta.tokens.isEstimated ? "≈" : ""}
+					{formatNum(co2.co2g)}g
+				</Badge>
+			)}
+			{co2 && !compact && (
+				<Badge
+					variant="secondary"
+					className="gap-1 text-[10px]"
+				>
+					<ZapIcon className="size-2.5" />
+					{formatNum(co2.energyWh)} Wh
+				</Badge>
+			)}
+		</div>
+	);
+};
+
+// ── Expandable response view ────────────────────────────────────────────────
+
+const ExpandableResponse: FC<{
+	model: RankedModel;
+	compact?: boolean;
+}> = ({ model, compact = false }) => {
+	const [open, setOpen] = useState(false);
+
+	if (!model.fullResponse && !model.summary) return null;
+
+	return (
+		<Collapsible open={open} onOpenChange={setOpen}>
+			<CollapsibleTrigger asChild>
+				<Button
+					variant="ghost"
+					size="sm"
+					className={cn(
+						"w-full justify-center text-muted-foreground",
+						compact ? "mt-1 text-[10px] h-6" : "mt-2 text-xs",
+					)}
+				>
+					<span>{open ? "Dölj svar" : "Visa svar"}</span>
+					<ChevronDownIcon
+						className={cn(
+							"ml-1 transition-transform duration-200",
+							compact ? "size-3" : "size-4",
+							open && "rotate-180",
+						)}
+					/>
+				</Button>
+			</CollapsibleTrigger>
+			<CollapsibleContent>
+				<div className="mt-2 rounded-lg border border-border/60 bg-background/60 p-3 space-y-2">
+					{/* Metadata row */}
+					{(model.meta.model || model.meta.provider) && (
+						<div className="grid gap-1 text-[10px] text-muted-foreground">
+							{model.meta.model && (
+								<div className="flex justify-between">
+									<span>Modell</span>
+									<span className="text-foreground">{model.meta.model}</span>
+								</div>
+							)}
+							{model.meta.provider && (
+								<div className="flex justify-between">
+									<span>Provider</span>
+									<span className="text-foreground">{model.meta.provider}</span>
+								</div>
+							)}
+							{model.meta.modelString && (
+								<div className="flex justify-between">
+									<span>Model string</span>
+									<span className="text-foreground font-mono text-[9px]">
+										{model.meta.modelString}
+									</span>
+								</div>
+							)}
+						</div>
+					)}
+					{/* Full response */}
+					<div className="whitespace-pre-wrap text-sm text-foreground leading-relaxed max-h-96 overflow-y-auto">
+						{model.fullResponse || model.summary}
+					</div>
+					{model.meta.truncated && (
+						<p className="text-[10px] text-amber-600 dark:text-amber-400">
+							Svaret trunkerades (max 12 000 tecken)
+						</p>
+					)}
+				</div>
+			</CollapsibleContent>
+		</Collapsible>
+	);
+};
+
 // ── Duel card (top-2 models) ────────────────────────────────────────────────
 
-const DuelCard: FC<{ model: RankedModel }> = ({ model }) => {
+const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
+	model,
+	delay = 0,
+}) => {
 	if (model.status === "running") {
 		return (
 			<Card className="flex-1 animate-pulse">
 				<CardContent className="p-4 space-y-3">
-					<div className="h-4 w-1/3 rounded bg-muted" />
+					<div className="flex items-center gap-2">
+						<div className="size-10 rounded-lg bg-muted" />
+						<div className="space-y-1.5 flex-1">
+							<div className="h-4 w-1/3 rounded bg-muted" />
+							<div className="h-3 w-1/4 rounded bg-muted" />
+						</div>
+					</div>
 					<div className="h-2.5 w-full rounded bg-muted" />
 					<div className="h-2.5 w-full rounded bg-muted" />
-					<div className="h-2.5 w-full rounded bg-muted" />
+					<div className="h-2.5 w-3/4 rounded bg-muted" />
 					<div className="h-2.5 w-full rounded bg-muted" />
 				</CardContent>
 			</Card>
@@ -291,43 +646,91 @@ const DuelCard: FC<{ model: RankedModel }> = ({ model }) => {
 
 	if (model.status === "error") {
 		return (
-			<Card className="flex-1 border-destructive/20 bg-destructive/5">
-				<CardContent className="p-4">
-					<div className="flex items-center gap-2 mb-2">
-						<span className="text-lg font-bold text-muted-foreground">
-							#{model.rank}
-						</span>
-						<ModelLogo toolName={model.toolName} />
-						<span className="font-semibold text-sm">{model.displayName}</span>
-					</div>
-					<p className="text-xs text-destructive">
-						{model.errorMessage || "Modellen svarade inte"}
-					</p>
-				</CardContent>
-			</Card>
+			<motion.div
+				initial={{ opacity: 0, y: 12 }}
+				animate={{ opacity: 1, y: 0 }}
+				transition={{ duration: 0.4, delay }}
+				className="flex-1"
+			>
+				<Card className="h-full border-destructive/20 bg-destructive/5">
+					<CardContent className="p-4">
+						<div className="flex items-center gap-2 mb-2">
+							<span className="text-lg font-bold text-muted-foreground">
+								#{model.rank}
+							</span>
+							<ModelLogo toolName={model.toolName} />
+							<span className="font-semibold text-sm">
+								{model.displayName}
+							</span>
+						</div>
+						<p className="text-xs text-destructive">
+							{model.errorMessage || "Modellen svarade inte"}
+						</p>
+					</CardContent>
+				</Card>
+			</motion.div>
 		);
 	}
 
 	return (
-		<Card className="flex-1">
-			<CardContent className="p-4">
-				<div className="flex items-center gap-2 mb-3">
-					<span className="text-lg font-bold text-primary">#{model.rank}</span>
-					<ModelLogo toolName={model.toolName} />
-					<span className="font-semibold">{model.displayName}</span>
-				</div>
-				<div className="space-y-2">
-					{SCORE_KEYS.map((key) => (
-						<ScoreBar
-							key={key}
-							label={key}
-							value={model.scores[key]}
-							colorClass={SCORE_COLORS[key]}
-						/>
-					))}
-				</div>
-			</CardContent>
-		</Card>
+		<motion.div
+			initial={{ opacity: 0, y: 16 }}
+			animate={{ opacity: 1, y: 0 }}
+			transition={{ duration: 0.5, delay }}
+			className="flex-1"
+		>
+			<Card className="h-full">
+				<CardContent className="p-4">
+					{/* Header: rank + logo + name + source badge */}
+					<div className="flex items-center gap-2 mb-1">
+						<span className="text-lg font-bold text-primary">
+							#{model.rank}
+						</span>
+						<ModelLogo toolName={model.toolName} />
+						<div className="flex-1 min-w-0">
+							<span className="font-semibold text-sm">
+								{model.displayName}
+							</span>
+							{model.meta.source && (
+								<Badge
+									variant="secondary"
+									className="ml-2 text-[9px] px-1.5 py-0"
+								>
+									{model.meta.source}
+								</Badge>
+							)}
+						</div>
+					</div>
+
+					{/* Meta badges: latency, tokens, CO2 */}
+					<MetaBadges meta={model.meta} />
+
+					{/* Score bars */}
+					<div className="space-y-2 mt-3">
+						{SCORE_KEYS.map((key, i) => (
+							<ScoreBar
+								key={key}
+								label={key}
+								value={model.scores[key]}
+								colorClass={SCORE_COLORS[key]}
+								animate={model.hasRealScores}
+							/>
+						))}
+					</div>
+
+					{/* Total score */}
+					<div className="mt-2 flex items-center justify-between text-xs">
+						<span className="text-muted-foreground">Totalpoäng</span>
+						<span className="font-bold tabular-nums text-primary">
+							{model.totalScore}/400
+						</span>
+					</div>
+
+					{/* Expandable full response */}
+					<ExpandableResponse model={model} />
+				</CardContent>
+			</Card>
+		</motion.div>
 	);
 };
 
@@ -338,24 +741,35 @@ const VsDuel: FC<{ first: RankedModel; second: RankedModel }> = ({
 	second,
 }) => (
 	<div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-stretch">
-		<DuelCard model={first} />
+		<DuelCard model={first} delay={0.1} />
 		<div className="flex items-center justify-center">
-			<div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm">
+			<motion.div
+				initial={{ scale: 0, opacity: 0 }}
+				animate={{ scale: 1, opacity: 1 }}
+				transition={{ duration: 0.4, delay: 0.3, type: "spring" }}
+				className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm"
+			>
 				VS
-			</div>
+			</motion.div>
 		</div>
-		<DuelCard model={second} />
+		<DuelCard model={second} delay={0.2} />
 	</div>
 );
 
 // ── Runner-up card (rank 3+) ────────────────────────────────────────────────
 
-const RunnerUpCard: FC<{ model: RankedModel }> = ({ model }) => {
+const RunnerUpCard: FC<{
+	model: RankedModel;
+	delay?: number;
+}> = ({ model, delay = 0 }) => {
 	if (model.status === "running") {
 		return (
 			<Card className="animate-pulse">
 				<CardContent className="p-3 space-y-2">
-					<div className="h-3 w-1/2 rounded bg-muted" />
+					<div className="flex items-center gap-1.5">
+						<div className="size-7 rounded-lg bg-muted" />
+						<div className="h-3 w-1/2 rounded bg-muted" />
+					</div>
 					<div className="h-1.5 w-full rounded bg-muted" />
 					<div className="h-1.5 w-full rounded bg-muted" />
 				</CardContent>
@@ -365,69 +779,214 @@ const RunnerUpCard: FC<{ model: RankedModel }> = ({ model }) => {
 
 	if (model.status === "error") {
 		return (
-			<Card className="border-destructive/20 bg-destructive/5 opacity-60">
-				<CardContent className="p-3">
-					<div className="flex items-center gap-1.5">
-						<span className="text-sm font-bold text-muted-foreground">
-							#{model.rank}
-						</span>
-						<ModelLogo toolName={model.toolName} size="sm" />
-						<span className="text-xs font-medium line-through">
-							{model.displayName}
-						</span>
-					</div>
-				</CardContent>
-			</Card>
+			<motion.div
+				initial={{ opacity: 0, scale: 0.95 }}
+				animate={{ opacity: 1, scale: 1 }}
+				transition={{ duration: 0.3, delay }}
+			>
+				<Card className="border-destructive/20 bg-destructive/5 opacity-60">
+					<CardContent className="p-3">
+						<div className="flex items-center gap-1.5">
+							<span className="text-sm font-bold text-muted-foreground">
+								#{model.rank}
+							</span>
+							<ModelLogo toolName={model.toolName} size="sm" />
+							<span className="text-xs font-medium line-through">
+								{model.displayName}
+							</span>
+						</div>
+					</CardContent>
+				</Card>
+			</motion.div>
 		);
 	}
 
 	return (
-		<Card>
-			<CardContent className="p-3">
-				<div className="flex items-center gap-1.5 mb-2">
-					<span className="text-sm font-bold text-primary">#{model.rank}</span>
-					<ModelLogo toolName={model.toolName} size="sm" />
-					<span className="text-xs font-semibold">{model.displayName}</span>
-				</div>
-				<div className="space-y-1">
-					{SCORE_KEYS.map((key) => (
-						<ScoreBar
-							key={key}
-							label={key}
-							value={model.scores[key]}
-							colorClass={SCORE_COLORS[key]}
-							compact
-						/>
-					))}
-				</div>
-			</CardContent>
-		</Card>
+		<motion.div
+			initial={{ opacity: 0, y: 12 }}
+			animate={{ opacity: 1, y: 0 }}
+			transition={{ duration: 0.4, delay }}
+		>
+			<Card>
+				<CardContent className="p-3">
+					<div className="flex items-center gap-1.5 mb-1">
+						<span className="text-sm font-bold text-primary">
+							#{model.rank}
+						</span>
+						<ModelLogo toolName={model.toolName} size="sm" />
+						<span className="text-xs font-semibold">{model.displayName}</span>
+						{model.meta.source && (
+							<Badge
+								variant="secondary"
+								className="text-[8px] px-1 py-0 ml-auto"
+							>
+								{model.meta.source}
+							</Badge>
+						)}
+					</div>
+					<MetaBadges meta={model.meta} compact />
+					<div className="space-y-1 mt-2">
+						{SCORE_KEYS.map((key) => (
+							<ScoreBar
+								key={key}
+								label={key}
+								value={model.scores[key]}
+								colorClass={SCORE_COLORS[key]}
+								compact
+								animate={model.hasRealScores}
+							/>
+						))}
+					</div>
+					<div className="mt-1.5 flex items-center justify-between text-[10px]">
+						<span className="text-muted-foreground">Total</span>
+						<span className="font-bold tabular-nums text-primary">
+							{model.totalScore}/400
+						</span>
+					</div>
+					<ExpandableResponse model={model} compact />
+				</CardContent>
+			</Card>
+		</motion.div>
 	);
 };
 
 // ── Convergence summary ─────────────────────────────────────────────────────
 
-const ConvergenceSummary: FC<{ models: RankedModel[] }> = ({ models }) => {
-	const top = models.filter((m) => m.status === "complete").slice(0, 2);
-	if (top.length < 2) return null;
+const ConvergenceSummary: FC<{
+	models: RankedModel[];
+	analysis: ArenaAnalysis | null;
+}> = ({ models, analysis }) => {
+	const completed = models.filter((m) => m.status === "complete");
+	if (completed.length < 2) return null;
 
 	return (
-		<Card className="bg-muted/30 border-border/40">
-			<CardContent className="p-4">
-				<h4 className="text-sm font-semibold mb-2">
-					Sammanfattande bedömning
-				</h4>
-				<p className="text-xs text-muted-foreground leading-relaxed">
-					<strong className="text-foreground">{top[0].displayName}</strong> och{" "}
-					<strong className="text-foreground">{top[1].displayName}</strong>{" "}
-					levererar de mest kompletta svaren.{" "}
-					{top[0].displayName} utmärker sig inom{" "}
-					{bestDimension(top[0].scores).toLowerCase()} medan{" "}
-					{top[1].displayName} visar styrka i{" "}
-					{bestDimension(top[1].scores).toLowerCase()}.
-				</p>
-			</CardContent>
-		</Card>
+		<motion.div
+			initial={{ opacity: 0, y: 16 }}
+			animate={{ opacity: 1, y: 0 }}
+			transition={{ duration: 0.5, delay: 0.5 }}
+		>
+			<Card className="bg-muted/30 border-border/40">
+				<CardContent className="p-4 space-y-3">
+					<h4 className="text-sm font-semibold">Sammanfattande bedömning</h4>
+
+					{analysis ? (
+						<>
+							{/* Winner rationale */}
+							{analysis.winner_rationale && (
+								<p className="text-xs text-foreground leading-relaxed">
+									{analysis.winner_rationale}
+								</p>
+							)}
+
+							{/* Consensus */}
+							{analysis.consensus.length > 0 && (
+								<div>
+									<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">
+										Konsensus
+									</p>
+									<ul className="space-y-0.5">
+										{analysis.consensus.map((item, i) => (
+											<li
+												key={`c-${i}`}
+												className="text-xs text-foreground leading-relaxed flex gap-1.5"
+											>
+												<span className="text-emerald-500 shrink-0">
+													+
+												</span>
+												{item}
+											</li>
+										))}
+									</ul>
+								</div>
+							)}
+
+							{/* Disagreements */}
+							{analysis.disagreements.length > 0 && (
+								<div>
+									<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">
+										Meningsskiljaktigheter
+									</p>
+									<div className="space-y-2">
+										{analysis.disagreements.map((d, i) => (
+											<div
+												key={`d-${i}`}
+												className="rounded-lg border border-border/40 p-2 text-xs"
+											>
+												<p className="font-medium text-foreground mb-1">
+													{d.topic}
+												</p>
+												<div className="space-y-0.5 text-muted-foreground">
+													{Object.entries(d.sides).map(
+														([models, stance]) => (
+															<p key={models}>
+																<strong className="text-foreground">
+																	{models}
+																</strong>
+																: {stance}
+															</p>
+														),
+													)}
+												</div>
+												{d.verdict && (
+													<p className="mt-1 text-[10px] text-primary font-medium">
+														Bedömning: {d.verdict}
+													</p>
+												)}
+											</div>
+										))}
+									</div>
+								</div>
+							)}
+
+							{/* Unique contributions */}
+							{analysis.unique_contributions.length > 0 && (
+								<div>
+									<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">
+										Unika bidrag
+									</p>
+									<div className="space-y-1">
+										{analysis.unique_contributions.map((uc, i) => (
+											<div
+												key={`u-${i}`}
+												className="flex gap-2 text-xs"
+											>
+												<strong className="text-foreground shrink-0">
+													{uc.model}:
+												</strong>
+												<span className="text-muted-foreground">
+													{uc.insight}
+												</span>
+											</div>
+										))}
+									</div>
+								</div>
+							)}
+
+							{/* Reliability */}
+							{analysis.reliability_notes && (
+								<p className="text-[10px] text-muted-foreground italic border-t border-border/40 pt-2">
+									{analysis.reliability_notes}
+								</p>
+							)}
+						</>
+					) : (
+						/* Fallback when no structured analysis is available */
+						<p className="text-xs text-muted-foreground leading-relaxed">
+							<strong className="text-foreground">
+								{completed[0].displayName}
+							</strong>{" "}
+							och{" "}
+							<strong className="text-foreground">
+								{completed[1].displayName}
+							</strong>{" "}
+							levererar de mest kompletta svaren. Klicka{" "}
+							<em>Visa svar</em> på varje modell för att se fullständiga svar
+							och jämföra själv.
+						</p>
+					)}
+				</CardContent>
+			</Card>
+		</motion.div>
 	);
 };
 
@@ -436,11 +995,33 @@ const ConvergenceSummary: FC<{ models: RankedModel[] }> = ({ models }) => {
 // ============================================================================
 
 export const SpotlightArenaLayout: FC = () => {
-	const messageContent = useAssistantState(
-		({ message }) => message?.content,
-	);
+	const messageContent = useAssistantState(({ message }) => message?.content);
 	const isStreaming = useAssistantState(
 		({ thread, message }) => thread.isRunning && (message?.isLast ?? false),
+	);
+
+	// Track previously seen completed count for stagger animation
+	const prevCompletedRef = useRef(0);
+
+	// Extract text parts to find arena analysis
+	const textParts = useMemo(() => {
+		if (!Array.isArray(messageContent)) return [];
+		return messageContent
+			.filter(
+				(part: { type: string; text?: string }) =>
+					part.type === "text" && typeof part.text === "string",
+			)
+			.map((part: { text: string }) => part.text);
+	}, [messageContent]);
+
+	const arenaAnalysis = useMemo(
+		() => extractArenaAnalysis(textParts),
+		[textParts],
+	);
+
+	const externalModelScores = useMemo(
+		() => extractModelScores(textParts),
+		[textParts],
 	);
 
 	const rankedModels = useMemo((): RankedModel[] => {
@@ -455,14 +1036,22 @@ export const SpotlightArenaLayout: FC = () => {
 		const parsed: RankedModel[] = toolParts.map(
 			(part: {
 				toolName: string;
+				args?: { query?: string };
 				result?: unknown;
 				status?: { type: string };
 			}) => {
 				const result = parseResult(part.result);
 				const isRunning = part.status?.type === "running";
-				const isError =
-					!isRunning && (!result || result.status === "error");
-				const scores = computeHeuristicScores(result, part.toolName);
+				const isError = !isRunning && (!result || result.status === "error");
+				const responseText = String(result?.response || "");
+				const queryText = String(part.args?.query || "");
+
+				// Try real scores from convergence, fall back to heuristic
+				const domain = TOOL_TO_DOMAIN[part.toolName] || part.toolName;
+				const realScores = externalModelScores?.[domain] as
+					| ModelScore
+					| undefined;
+				const scores = realScores || computeFallbackScores(result, part.toolName);
 
 				return {
 					toolName: part.toolName,
@@ -472,16 +1061,12 @@ export const SpotlightArenaLayout: FC = () => {
 						part.toolName,
 					rank: 0,
 					scores,
+					hasRealScores: !!realScores,
 					totalScore: totalScore(scores),
-					latencyMs:
-						typeof result?.latency_ms === "number"
-							? (result.latency_ms as number)
-							: null,
-					status: isRunning
-						? "running"
-						: isError
-							? "error"
-							: "complete",
+					meta: extractMeta(result, responseText, queryText),
+					summary: String(result?.summary || ""),
+					fullResponse: responseText,
+					status: isRunning ? "running" : isError ? "error" : "complete",
 					errorMessage:
 						typeof result?.error === "string"
 							? (result.error as string)
@@ -502,15 +1087,26 @@ export const SpotlightArenaLayout: FC = () => {
 		});
 
 		return parsed;
-	}, [messageContent]);
+	}, [messageContent, externalModelScores]);
+
+	// Track completed count for determining new arrivals
+	const completedCount = rankedModels.filter(
+		(m) => m.status === "complete",
+	).length;
+	useEffect(() => {
+		prevCompletedRef.current = completedCount;
+	}, [completedCount]);
 
 	const phase: ArenaPhase = useMemo(() => {
 		if (rankedModels.length === 0) return "fanout";
-		const allDone = rankedModels.every((m) => m.status !== "running");
-		if (!allDone) return "fanout";
+		const someRunning = rankedModels.some((m) => m.status === "running");
+		if (someRunning) return "fanout";
+		// All done, check if synthesis has arena analysis yet
+		if (arenaAnalysis) return "rankar";
 		if (isStreaming) return "analyserar";
-		return "rankar";
-	}, [rankedModels, isStreaming]);
+		// Results in but no analysis yet → granskning
+		return "granskning";
+	}, [rankedModels, isStreaming, arenaAnalysis]);
 
 	const top2 = rankedModels.slice(0, 2);
 	const runnerUps = rankedModels.slice(2);
@@ -520,7 +1116,12 @@ export const SpotlightArenaLayout: FC = () => {
 	return (
 		<div className="space-y-4 px-2 mb-4">
 			{/* Header */}
-			<div className="flex flex-wrap items-center justify-between gap-2">
+			<motion.div
+				initial={{ opacity: 0, y: -8 }}
+				animate={{ opacity: 1, y: 0 }}
+				transition={{ duration: 0.4 }}
+				className="flex flex-wrap items-center justify-between gap-2"
+			>
 				<div className="flex items-center gap-3">
 					<h3 className="text-sm font-semibold">Spotlight Arena</h3>
 					<Badge
@@ -532,7 +1133,7 @@ export const SpotlightArenaLayout: FC = () => {
 					</Badge>
 				</div>
 				<PhaseIndicator currentPhase={phase} />
-			</div>
+			</motion.div>
 
 			{/* VS Duel (top 2) */}
 			{top2.length >= 2 && <VsDuel first={top2[0]} second={top2[1]} />}
@@ -545,14 +1146,23 @@ export const SpotlightArenaLayout: FC = () => {
 			{/* Runner-ups */}
 			{runnerUps.length > 0 && (
 				<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-					{runnerUps.map((model) => (
-						<RunnerUpCard key={model.toolName} model={model} />
+					{runnerUps.map((model, i) => (
+						<RunnerUpCard
+							key={model.toolName}
+							model={model}
+							delay={0.3 + i * 0.08}
+						/>
 					))}
 				</div>
 			)}
 
 			{/* Convergence summary */}
-			<ConvergenceSummary models={rankedModels} />
+			{phase === "rankar" && (
+				<ConvergenceSummary
+					models={rankedModels}
+					analysis={arenaAnalysis}
+				/>
+			)}
 		</div>
 	);
 };

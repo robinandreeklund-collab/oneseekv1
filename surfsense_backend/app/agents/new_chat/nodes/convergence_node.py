@@ -148,6 +148,11 @@ def build_convergence_node(
                 "merged_summary": parsed.get("merged_summary", ""),
                 "subagent_ids": subagent_ids,
                 "domain_statuses": domain_statuses,
+                "model_scores": parsed.get("model_scores", {}),
+                "agreements": parsed.get("agreements", []),
+                "disagreements": parsed.get("disagreements", []),
+                "unique_insights": parsed.get("unique_insights", {}),
+                "comparative_summary": parsed.get("comparative_summary", ""),
             }
 
             logger.info(

@@ -477,6 +477,15 @@ class SubSpawnCheckResult(BaseModel):
 # ────────────────────────────────────────────────────────────────
 
 
+class ModelDimensionScores(BaseModel):
+    """Per-dimension scores for a single model."""
+
+    relevans: int = Field(..., ge=0, le=100, description="Relevans 0-100")
+    djup: int = Field(..., ge=0, le=100, description="Djup 0-100")
+    klarhet: int = Field(..., ge=0, le=100, description="Klarhet 0-100")
+    korrekthet: int = Field(..., ge=0, le=100, description="Korrekthet 0-100")
+
+
 class ConvergenceResult(BaseModel):
     """Output schema for the convergence node (P4)."""
 
@@ -505,4 +514,24 @@ class ConvergenceResult(BaseModel):
     reason: str = Field(
         ...,
         description="Kort motivering på svenska.",
+    )
+    model_scores: dict[str, ModelDimensionScores] = Field(
+        default_factory=dict,
+        description="Per-modell poäng: {domain: {relevans, djup, klarhet, korrekthet}}",
+    )
+    agreements: list[str] = Field(
+        default_factory=list,
+        description="Saker modellerna håller med om.",
+    )
+    disagreements: list[str] = Field(
+        default_factory=list,
+        description="Saker modellerna inte håller med om.",
+    )
+    unique_insights: dict[str, str] = Field(
+        default_factory=dict,
+        description="Unika insikter per modell: {domain: insikt}",
+    )
+    comparative_summary: str = Field(
+        default="",
+        description="Djup jämförande analys med konkreta exempel.",
     )
