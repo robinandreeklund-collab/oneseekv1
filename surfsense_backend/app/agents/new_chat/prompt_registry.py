@@ -22,6 +22,7 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
+    DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT,
     DEFAULT_SUPERVISOR_DOMAIN_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_HITL_EXECUTION_MESSAGE,
     DEFAULT_SUPERVISOR_HITL_PLANNER_MESSAGE,
@@ -106,6 +107,7 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "agent.supervisor.system",
     "compare.supervisor.instructions",
     "supervisor.intent_resolver.system",
+    "supervisor.decomposer.system",
     "supervisor.agent_resolver.system",
     "supervisor.planner.system",
     "supervisor.planner.multi_domain.system",
@@ -204,6 +206,12 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Supervisor intent resolver prompt",
         description="Prompt for intent_resolver node in supervisor pipeline.",
         default_prompt=DEFAULT_SUPERVISOR_INTENT_RESOLVER_PROMPT,
+    ),
+    "supervisor.decomposer.system": PromptDefinition(
+        key="supervisor.decomposer.system",
+        label="Supervisor multi-query decomposer prompt",
+        description="Prompt for multi_query_decomposer node — bryter ned komplexa frågor till atomära delfrågor med beroendegraf.",
+        default_prompt=DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT,
     ),
     "supervisor.agent_resolver.system": PromptDefinition(
         key="supervisor.agent_resolver.system",

@@ -97,6 +97,7 @@ _PROMPT_NODE_GROUP_TO_GRAPH_NODES: dict[str, list[str]] = {
     "supervisor": [
         "resolve_intent",
         "memory_context",
+        "multi_query_decomposer",
         "agent_resolver",
         "planner",
         "tool_resolver",

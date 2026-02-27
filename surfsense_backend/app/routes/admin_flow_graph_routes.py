@@ -55,6 +55,14 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "description": "Snabb hälsningssvar (konversation-route). → END",
         "prompt_key": "agent.smalltalk.system",
     },
+    # ── Multi-query decomposition ──
+    {
+        "id": "node:multi_query_decomposer",
+        "label": "Multi-Query Decomposer",
+        "stage": "entry",
+        "description": "Bryter ned komplexa frågor till atomära delfrågor med beroendegraf (P3). Skippas för enkla/triviala frågor.",
+        "prompt_key": "supervisor.decomposer.system",
+    },
     # ── Speculative ──
     {
         "id": "node:speculative",
@@ -245,10 +253,12 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:resolve_intent", "target": "node:memory_context", "type": "normal"},
     # ── Conditional from memory_context (route_after_intent) ──
     {"source": "node:memory_context", "target": "node:smalltalk", "type": "conditional", "label": "konversation"},
-    {"source": "node:memory_context", "target": "node:speculative", "type": "conditional", "label": "komplex"},
+    {"source": "node:memory_context", "target": "node:multi_query_decomposer", "type": "conditional", "label": "komplex"},
     {"source": "node:memory_context", "target": "node:agent_resolver", "type": "conditional", "label": "default"},
     {"source": "node:memory_context", "target": "node:tool_resolver", "type": "conditional", "label": "enkel"},
     {"source": "node:memory_context", "target": "node:synthesis_hitl", "type": "conditional", "label": "finalize"},
+    # ── Multi-query decomposer → speculative ──
+    {"source": "node:multi_query_decomposer", "target": "node:speculative", "type": "normal"},
     # ── Speculative → planning ──
     {"source": "node:speculative", "target": "node:agent_resolver", "type": "normal"},
     # ── Planning flow ──
