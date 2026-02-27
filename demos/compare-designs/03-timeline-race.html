@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timeline Race - OneSeek Compare</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3a;
+    --text: #e8e8f0;
+    --text-dim: #8888a0;
+    --accent: #7c5cfc;
+    --green: #4ade80;
+    --amber: #fbbf24;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+  }
+
+  .bg-glow {
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 40% at 50% 10%, #4ade8010 0%, transparent 50%),
+      radial-gradient(ellipse 40% 30% at 80% 50%, #7c5cfc08 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #4ade80, #22c55e, #16a34a);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+
+  .header .subtitle {
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  .query-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .query-bar .cmd {
+    background: var(--accent);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  /* Stopwatch */
+  .stopwatch {
+    text-align: center;
+    margin-bottom: 16px;
+    font-size: 32px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--green);
+    letter-spacing: 2px;
+    text-shadow: 0 0 30px #4ade8033;
+  }
+
+  .stopwatch .ms {
+    font-size: 18px;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+
+  /* Race tracks */
+  .race-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .race-lane {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    opacity: 0;
+    transform: translateX(-30px);
+    transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .race-lane.visible {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .race-lane.finished {
+    border-color: var(--green);
+    box-shadow: 0 0 20px #4ade8011;
+  }
+
+  .lane-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .lane-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+    color: white;
+    flex-shrink: 0;
+  }
+
+  .lane-info {
+    flex: 1;
+  }
+
+  .lane-name {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .lane-provider {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .lane-status {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--surface2);
+    color: var(--text-dim);
+    transition: all 0.3s ease;
+  }
+
+  .lane-status.streaming {
+    background: #7c5cfc22;
+    color: var(--accent);
+    animation: pulse-status 1.5s ease-in-out infinite;
+  }
+
+  .lane-status.done {
+    background: #4ade8022;
+    color: var(--green);
+    animation: none;
+  }
+
+  @keyframes pulse-status {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .lane-time {
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 50px;
+    text-align: right;
+  }
+
+  /* Progress track */
+  .lane-track {
+    height: 28px;
+    background: var(--surface2);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    margin-bottom: 8px;
+  }
+
+  .lane-fill {
+    height: 100%;
+    border-radius: 6px;
+    width: 0%;
+    transition: width 0.1s linear;
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding-left: 8px;
+  }
+
+  .lane-fill-text {
+    font-size: 10px;
+    font-weight: 700;
+    color: white;
+    white-space: nowrap;
+  }
+
+  /* Racer dot */
+  .racer-dot {
+    position: absolute;
+    right: -4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 0 10px currentColor;
+    animation: racer-glow 0.5s ease-in-out infinite;
+  }
+
+  @keyframes racer-glow {
+    0%, 100% { box-shadow: 0 0 6px currentColor; }
+    50% { box-shadow: 0 0 14px currentColor; }
+  }
+
+  /* Token counter */
+  .lane-tokens {
+    display: flex;
+    gap: 14px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .token-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .token-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+
+  /* Finish line */
+  .finish-order {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    margin-bottom: 20px;
+  }
+
+  .finish-order.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .finish-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .finish-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .finish-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--surface2);
+    opacity: 0;
+    transform: translateX(-15px);
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .finish-item.visible {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .finish-pos {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .pos-1 { background: #ffd700; color: #000; }
+  .pos-2 { background: #c0c0c0; color: #000; }
+  .pos-3 { background: #cd7f32; color: #fff; }
+  .pos-4 { background: var(--surface); color: var(--text-dim); border: 1px solid var(--border); }
+  .pos-5 { background: var(--surface); color: var(--text-dim); border: 1px solid var(--border); }
+
+  .finish-name { flex: 1; font-size: 13px; font-weight: 600; }
+  .finish-time { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+  .finish-tokens { font-size: 11px; color: var(--text-dim); }
+
+  .finish-bar {
+    width: 120px;
+    height: 6px;
+    background: var(--surface);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .finish-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* Speed insights */
+  .speed-insight {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    opacity: 0;
+    transition: all 0.5s ease;
+  }
+
+  .speed-insight.visible { opacity: 1; }
+
+  .speed-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  .speed-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .speed-stat {
+    text-align: center;
+    padding: 10px;
+    border-radius: 8px;
+    background: var(--surface2);
+  }
+
+  .stat-value {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--green);
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-glow"></div>
+
+<div class="container">
+  <div class="header">
+    <h1>Timeline Race</h1>
+    <p class="subtitle">Se modellerna tävla i realtid - vem svarar snabbast?</p>
+  </div>
+
+  <div class="query-bar">
+    <span class="cmd">/compare</span>
+    <span>Hur fungerar TCP/IP-stacken och vad skiljer TCP från UDP?</span>
+  </div>
+
+  <div class="stopwatch" id="stopwatch">00:00<span class="ms">.000</span></div>
+
+  <div class="race-container" id="raceContainer">
+    <!-- Gemini - fastest -->
+    <div class="race-lane" id="lane-gemini">
+      <div class="lane-header">
+        <div class="lane-icon" style="background: linear-gradient(135deg, #4285f4, #34a853);">G</div>
+        <div class="lane-info">
+          <div class="lane-name">Gemini 2.5 Pro</div>
+          <div class="lane-provider">Google</div>
+        </div>
+        <div class="lane-status" id="status-gemini">Väntar</div>
+        <div class="lane-time" id="time-gemini" style="color: #4285f4;">—</div>
+      </div>
+      <div class="lane-track">
+        <div class="lane-fill" id="fill-gemini" style="background: linear-gradient(90deg, #4285f4, #34a853);">
+          <span class="lane-fill-text" id="filltext-gemini"></span>
+          <div class="racer-dot" style="color: #4285f4;"></div>
+        </div>
+      </div>
+      <div class="lane-tokens" id="tokens-gemini">
+        <span class="token-item"><span class="token-dot" style="background: #4285f4;"></span> <span id="tcount-gemini">0</span> tokens</span>
+        <span class="token-item">TPS: <span id="tps-gemini">0</span></span>
+      </div>
+    </div>
+
+    <!-- GPT -->
+    <div class="race-lane" id="lane-gpt">
+      <div class="lane-header">
+        <div class="lane-icon" style="background: linear-gradient(135deg, #10a37f, #1a7f5a);">G</div>
+        <div class="lane-info">
+          <div class="lane-name">GPT-4o</div>
+          <div class="lane-provider">OpenAI</div>
+        </div>
+        <div class="lane-status" id="status-gpt">Väntar</div>
+        <div class="lane-time" id="time-gpt" style="color: #10a37f;">—</div>
+      </div>
+      <div class="lane-track">
+        <div class="lane-fill" id="fill-gpt" style="background: linear-gradient(90deg, #10a37f, #4ade80);">
+          <span class="lane-fill-text" id="filltext-gpt"></span>
+          <div class="racer-dot" style="color: #10a37f;"></div>
+        </div>
+      </div>
+      <div class="lane-tokens" id="tokens-gpt">
+        <span class="token-item"><span class="token-dot" style="background: #10a37f;"></span> <span id="tcount-gpt">0</span> tokens</span>
+        <span class="token-item">TPS: <span id="tps-gpt">0</span></span>
+      </div>
+    </div>
+
+    <!-- Grok -->
+    <div class="race-lane" id="lane-grok">
+      <div class="lane-header">
+        <div class="lane-icon" style="background: linear-gradient(135deg, #1d9bf0, #0e7aba);">X</div>
+        <div class="lane-info">
+          <div class="lane-name">Grok-3</div>
+          <div class="lane-provider">xAI</div>
+        </div>
+        <div class="lane-status" id="status-grok">Väntar</div>
+        <div class="lane-time" id="time-grok" style="color: #1d9bf0;">—</div>
+      </div>
+      <div class="lane-track">
+        <div class="lane-fill" id="fill-grok" style="background: linear-gradient(90deg, #1d9bf0, #60a5fa);">
+          <span class="lane-fill-text" id="filltext-grok"></span>
+          <div class="racer-dot" style="color: #1d9bf0;"></div>
+        </div>
+      </div>
+      <div class="lane-tokens" id="tokens-grok">
+        <span class="token-item"><span class="token-dot" style="background: #1d9bf0;"></span> <span id="tcount-grok">0</span> tokens</span>
+        <span class="token-item">TPS: <span id="tps-grok">0</span></span>
+      </div>
+    </div>
+
+    <!-- Claude -->
+    <div class="race-lane" id="lane-claude">
+      <div class="lane-header">
+        <div class="lane-icon" style="background: linear-gradient(135deg, #d97706, #f59e0b);">C</div>
+        <div class="lane-info">
+          <div class="lane-name">Claude 4 Opus</div>
+          <div class="lane-provider">Anthropic</div>
+        </div>
+        <div class="lane-status" id="status-claude">Väntar</div>
+        <div class="lane-time" id="time-claude" style="color: #d97706;">—</div>
+      </div>
+      <div class="lane-track">
+        <div class="lane-fill" id="fill-claude" style="background: linear-gradient(90deg, #d97706, #fbbf24);">
+          <span class="lane-fill-text" id="filltext-claude"></span>
+          <div class="racer-dot" style="color: #d97706;"></div>
+        </div>
+      </div>
+      <div class="lane-tokens" id="tokens-claude">
+        <span class="token-item"><span class="token-dot" style="background: #d97706;"></span> <span id="tcount-claude">0</span> tokens</span>
+        <span class="token-item">TPS: <span id="tps-claude">0</span></span>
+      </div>
+    </div>
+
+    <!-- DeepSeek -->
+    <div class="race-lane" id="lane-deepseek">
+      <div class="lane-header">
+        <div class="lane-icon" style="background: linear-gradient(135deg, #6366f1, #818cf8);">D</div>
+        <div class="lane-info">
+          <div class="lane-name">DeepSeek R1</div>
+          <div class="lane-provider">DeepSeek</div>
+        </div>
+        <div class="lane-status" id="status-deepseek">Väntar</div>
+        <div class="lane-time" id="time-deepseek" style="color: #6366f1;">—</div>
+      </div>
+      <div class="lane-track">
+        <div class="lane-fill" id="fill-deepseek" style="background: linear-gradient(90deg, #6366f1, #a78bfa);">
+          <span class="lane-fill-text" id="filltext-deepseek"></span>
+          <div class="racer-dot" style="color: #6366f1;"></div>
+        </div>
+      </div>
+      <div class="lane-tokens" id="tokens-deepseek">
+        <span class="token-item"><span class="token-dot" style="background: #6366f1;"></span> <span id="tcount-deepseek">0</span> tokens</span>
+        <span class="token-item">TPS: <span id="tps-deepseek">0</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Finish order -->
+  <div class="finish-order" id="finishOrder">
+    <div class="finish-title">Målgång</div>
+    <div class="finish-list" id="finishList"></div>
+  </div>
+
+  <!-- Speed insight -->
+  <div class="speed-insight" id="speedInsight">
+    <div class="speed-title">Prestanda-analys</div>
+    <div class="speed-stats">
+      <div class="speed-stat">
+        <div class="stat-value" id="stat-fastest">—</div>
+        <div class="stat-label">Snabbast (s)</div>
+      </div>
+      <div class="speed-stat">
+        <div class="stat-value" id="stat-avg" style="color: var(--amber);">—</div>
+        <div class="stat-label">Medel (s)</div>
+      </div>
+      <div class="speed-stat">
+        <div class="stat-value" id="stat-tps" style="color: var(--accent);">—</div>
+        <div class="stat-label">Max TPS</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Race configuration - each model has speed, total tokens, and start delay
+const models = [
+  { id: 'gemini', name: 'Gemini 2.5 Pro', totalTokens: 580, duration: 2800, startDelay: 100, finishTime: '2.9s', tps: 207, color: '#4285f4' },
+  { id: 'gpt', name: 'GPT-4o', totalTokens: 720, duration: 3500, startDelay: 200, finishTime: '3.7s', tps: 194, color: '#10a37f' },
+  { id: 'grok', name: 'Grok-3', totalTokens: 650, duration: 3800, startDelay: 300, finishTime: '4.1s', tps: 159, color: '#1d9bf0' },
+  { id: 'claude', name: 'Claude 4 Opus', totalTokens: 890, duration: 4200, startDelay: 150, finishTime: '4.35s', tps: 211, color: '#d97706' },
+  { id: 'deepseek', name: 'DeepSeek R1', totalTokens: 1100, duration: 5000, startDelay: 400, finishTime: '5.4s', tps: 204, color: '#6366f1' },
+];
+
+// Sort by actual finish for placement
+const finishOrder = [...models].sort((a, b) => (a.startDelay + a.duration) - (b.startDelay + b.duration));
+
+let raceStartTime;
+let stopwatchInterval;
+let finishedCount = 0;
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  const millis = ms % 1000;
+  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}<span class="ms">.${String(millis).padStart(3,'0')}</span>`;
+}
+
+function startStopwatch() {
+  raceStartTime = performance.now();
+  stopwatchInterval = setInterval(() => {
+    const elapsed = performance.now() - raceStartTime;
+    document.getElementById('stopwatch').innerHTML = formatTime(Math.floor(elapsed));
+  }, 16);
+}
+
+function stopStopwatch() {
+  clearInterval(stopwatchInterval);
+}
+
+async function runRace() {
+  // Show all lanes
+  const lanes = document.querySelectorAll('.race-lane');
+  for (let i = 0; i < lanes.length; i++) {
+    await new Promise(r => setTimeout(r, 120));
+    lanes[i].classList.add('visible');
+  }
+
+  await new Promise(r => setTimeout(r, 400));
+
+  // Start stopwatch
+  startStopwatch();
+
+  // Start each model's race
+  models.forEach(model => {
+    setTimeout(() => {
+      startModelRace(model);
+    }, model.startDelay);
+  });
+}
+
+function startModelRace(model) {
+  const status = document.getElementById(`status-${model.id}`);
+  const fill = document.getElementById(`fill-${model.id}`);
+  const fillText = document.getElementById(`filltext-${model.id}`);
+  const timeEl = document.getElementById(`time-${model.id}`);
+  const tcount = document.getElementById(`tcount-${model.id}`);
+  const tps = document.getElementById(`tps-${model.id}`);
+
+  status.textContent = 'Strömmar';
+  status.className = 'lane-status streaming';
+
+  const startTime = performance.now();
+  let lastTokens = 0;
+
+  function tick() {
+    const elapsed = performance.now() - startTime;
+    const progress = Math.min(elapsed / model.duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+
+    const currentTokens = Math.floor(eased * model.totalTokens);
+    const pct = eased * 100;
+
+    fill.style.width = pct + '%';
+    fillText.textContent = `${Math.floor(pct)}%`;
+    tcount.textContent = currentTokens;
+
+    // Calculate TPS
+    const currentTPS = elapsed > 0 ? Math.floor(currentTokens / (elapsed / 1000)) : 0;
+    tps.textContent = currentTPS;
+
+    // Update time
+    timeEl.textContent = (elapsed / 1000).toFixed(1) + 's';
+
+    if (progress < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      // Finished!
+      status.textContent = 'Klar';
+      status.className = 'lane-status done';
+      document.getElementById(`lane-${model.id}`).classList.add('finished');
+      fill.querySelector('.racer-dot').style.display = 'none';
+
+      finishedCount++;
+      if (finishedCount === models.length) {
+        onAllFinished();
+      }
+    }
+  }
+
+  requestAnimationFrame(tick);
+}
+
+async function onAllFinished() {
+  stopStopwatch();
+
+  await new Promise(r => setTimeout(r, 500));
+
+  // Show finish order
+  const finishEl = document.getElementById('finishOrder');
+  finishEl.classList.add('visible');
+
+  const listEl = document.getElementById('finishList');
+
+  for (let i = 0; i < finishOrder.length; i++) {
+    const m = finishOrder[i];
+    const item = document.createElement('div');
+    item.className = 'finish-item';
+    item.innerHTML = `
+      <div class="finish-pos pos-${i+1}">${i+1}</div>
+      <div class="finish-name" style="color: ${m.color};">${m.name}</div>
+      <div class="finish-time">${m.finishTime}</div>
+      <div class="finish-bar"><div class="finish-bar-fill" style="background: ${m.color};" data-w="${100 - (i * 12)}"></div></div>
+      <div class="finish-tokens">${m.totalTokens} tok | ${m.tps} t/s</div>
+    `;
+    listEl.appendChild(item);
+
+    await new Promise(r => setTimeout(r, 250));
+    item.classList.add('visible');
+
+    // Animate bar
+    setTimeout(() => {
+      item.querySelector('.finish-bar-fill').style.width = item.querySelector('.finish-bar-fill').dataset.w + '%';
+    }, 100);
+  }
+
+  // Speed stats
+  await new Promise(r => setTimeout(r, 400));
+  const speedEl = document.getElementById('speedInsight');
+  speedEl.classList.add('visible');
+
+  setTimeout(() => {
+    document.getElementById('stat-fastest').textContent = '2.9';
+    document.getElementById('stat-avg').textContent = '4.1';
+    document.getElementById('stat-tps').textContent = '211';
+  }, 200);
+}
+
+setTimeout(runRace, 500);
+</script>
+</body>
+</html>

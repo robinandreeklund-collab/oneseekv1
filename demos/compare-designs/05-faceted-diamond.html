@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Faceted Diamond - OneSeek Compare</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3a;
+    --text: #e8e8f0;
+    --text-dim: #8888a0;
+    --accent: #7c5cfc;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+  }
+
+  .bg-diamond {
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 30%, #7c5cfc06 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #c4b5fd, #a78bfa, #7c5cfc);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+
+  .header .subtitle {
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  .query-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .query-bar .cmd {
+    background: var(--accent);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  /* Radar chart section */
+  .radar-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-bottom: 24px;
+    align-items: start;
+  }
+
+  .radar-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    opacity: 0;
+    transition: all 0.6s ease;
+  }
+
+  .radar-container.visible { opacity: 1; }
+
+  .radar-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 16px;
+  }
+
+  /* SVG Radar */
+  .radar-svg {
+    width: 380px;
+    height: 380px;
+  }
+
+  .radar-grid {
+    stroke: var(--border);
+    stroke-width: 1;
+    fill: none;
+  }
+
+  .radar-axis {
+    stroke: var(--border);
+    stroke-width: 0.5;
+  }
+
+  .radar-axis-label {
+    font-size: 10px;
+    font-weight: 600;
+    fill: var(--text-dim);
+    text-anchor: middle;
+  }
+
+  .radar-polygon {
+    fill-opacity: 0.08;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: all 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .radar-dot {
+    r: 3.5;
+    stroke-width: 2;
+    stroke: var(--bg);
+    transition: all 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 12px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: all 0.3s ease;
+  }
+
+  .legend-item:hover {
+    background: var(--surface2);
+  }
+
+  .legend-item.dimmed { opacity: 0.3; }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  /* Model detail cards */
+  .detail-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    opacity: 0;
+    transition: all 0.6s ease;
+  }
+
+  .detail-panel.visible { opacity: 1; }
+
+  .detail-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+
+  .detail-models {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .detail-model {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--surface2);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 1px solid transparent;
+    opacity: 0;
+    transform: translateX(10px);
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .detail-model.visible {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .detail-model.selected {
+    border-color: var(--model-color, var(--accent));
+    background: color-mix(in srgb, var(--model-color, var(--accent)) 8%, var(--surface2));
+  }
+
+  .detail-model-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .detail-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .detail-name {
+    font-size: 13px;
+    font-weight: 600;
+    flex: 1;
+  }
+
+  .detail-total {
+    font-size: 15px;
+    font-weight: 800;
+  }
+
+  .detail-scores {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  .mini-score {
+    text-align: center;
+    padding: 4px;
+    border-radius: 4px;
+    background: var(--bg);
+  }
+
+  .mini-score-value {
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .mini-score-label {
+    font-size: 9px;
+    color: var(--text-dim);
+  }
+
+  /* Heatmap section */
+  .heatmap-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 24px;
+    opacity: 0;
+    transition: all 0.6s ease;
+  }
+
+  .heatmap-section.visible { opacity: 1; }
+
+  .heatmap-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+
+  .heatmap-grid {
+    display: grid;
+    grid-template-columns: 100px repeat(6, 1fr);
+    gap: 3px;
+    font-size: 11px;
+  }
+
+  .hm-header {
+    font-weight: 700;
+    color: var(--text-dim);
+    text-align: center;
+    padding: 6px 4px;
+    font-size: 10px;
+  }
+
+  .hm-label {
+    font-weight: 600;
+    padding: 6px 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .hm-cell {
+    text-align: center;
+    padding: 8px 4px;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 12px;
+    opacity: 0;
+    transform: scale(0.8);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .hm-cell.show {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .hm-excellent { background: #4ade8022; color: #4ade80; }
+  .hm-good { background: #fbbf2422; color: #fbbf24; }
+  .hm-ok { background: #60a5fa22; color: #60a5fa; }
+  .hm-weak { background: #f8717122; color: #f87171; }
+
+  /* Strength/weakness diamonds */
+  .diamond-insights {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .diamond-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    text-align: center;
+    opacity: 0;
+    transform: translateY(15px);
+    transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .diamond-card.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .diamond-model-name {
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .diamond-shape {
+    width: 50px;
+    height: 50px;
+    margin: 0 auto 8px;
+    position: relative;
+  }
+
+  .diamond-shape svg {
+    width: 50px;
+    height: 50px;
+  }
+
+  .diamond-mini-poly {
+    fill-opacity: 0.15;
+    stroke-width: 1.5;
+    transition: all 1s ease;
+  }
+
+  .diamond-strength {
+    font-size: 10px;
+    color: #4ade80;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+
+  .diamond-weakness {
+    font-size: 10px;
+    color: #f87171;
+    font-weight: 600;
+  }
+
+  /* Final synthesis */
+  .synthesis {
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 14px;
+    padding: 16px 20px;
+    opacity: 0;
+    transform: translateY(15px);
+    transition: all 0.6s ease;
+    box-shadow: 0 0 30px #7c5cfc11;
+  }
+
+  .synthesis.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .synthesis-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    background: linear-gradient(135deg, #c4b5fd, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .synthesis-text {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+
+  .synthesis-text strong { color: #a78bfa; }
+
+  @media (max-width: 768px) {
+    .radar-section { grid-template-columns: 1fr; }
+    .diamond-insights { grid-template-columns: repeat(2, 1fr); }
+    .heatmap-grid { grid-template-columns: 80px repeat(6, 1fr); font-size: 9px; }
+    .radar-svg { width: 300px; height: 300px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-diamond"></div>
+
+<div class="container">
+  <div class="header">
+    <h1>Faceted Diamond</h1>
+    <p class="subtitle">Radardiagram + heatmap - multidimensionell jämförelse</p>
+  </div>
+
+  <div class="query-bar">
+    <span class="cmd">/compare</span>
+    <span>Förklara hur man designar ett robust autentiseringssystem</span>
+  </div>
+
+  <!-- Radar + Detail -->
+  <div class="radar-section">
+    <div class="radar-container" id="radarContainer">
+      <div class="radar-title">Multidimensionell Analys</div>
+      <svg class="radar-svg" viewBox="0 0 380 380" id="radarSvg">
+        <!-- Grid circles -->
+        <g id="radarGrid"></g>
+        <!-- Axes -->
+        <g id="radarAxes"></g>
+        <!-- Model polygons -->
+        <g id="radarPolygons"></g>
+        <!-- Dots -->
+        <g id="radarDots"></g>
+      </svg>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="detail-panel" id="detailPanel">
+      <div class="detail-title">Modell-detaljer</div>
+      <div class="detail-models" id="detailModels"></div>
+    </div>
+  </div>
+
+  <!-- Heatmap -->
+  <div class="heatmap-section" id="heatmap">
+    <div class="heatmap-title">Styrke-heatmap</div>
+    <div class="heatmap-grid" id="heatmapGrid"></div>
+  </div>
+
+  <!-- Diamond insights -->
+  <div class="diamond-insights" id="diamondInsights"></div>
+
+  <!-- Synthesis -->
+  <div class="synthesis" id="synthesis">
+    <div class="synthesis-title">Diamantens Slutsats</div>
+    <div class="synthesis-text" id="synthesisText"></div>
+  </div>
+</div>
+
+<script>
+const cx = 190, cy = 190, maxR = 140;
+const dimensions = ['Korrekthet', 'Klarhet', 'Djup', 'Praktik', 'Säkerhet', 'Helhet'];
+const dimAngles = dimensions.map((_, i) => (Math.PI * 2 * i / dimensions.length) - Math.PI/2);
+
+const models = [
+  {
+    id: 'gpt', name: 'GPT-4o', color: '#10a37f',
+    scores: [9.2, 9.4, 8.5, 9.1, 8.8, 9.0], total: 9.0,
+    strength: 'Klarhet', weakness: 'Djup'
+  },
+  {
+    id: 'claude', name: 'Claude 4', color: '#d97706',
+    scores: [9.5, 8.8, 9.4, 8.6, 9.3, 9.2], total: 9.1,
+    strength: 'Korrekthet', weakness: 'Praktik'
+  },
+  {
+    id: 'gemini', name: 'Gemini', color: '#4285f4',
+    scores: [8.6, 9.1, 8.0, 9.0, 8.4, 8.5], total: 8.6,
+    strength: 'Klarhet', weakness: 'Djup'
+  },
+  {
+    id: 'grok', name: 'Grok-3', color: '#1d9bf0',
+    scores: [8.0, 8.5, 7.8, 8.3, 7.9, 8.0], total: 8.1,
+    strength: 'Klarhet', weakness: 'Djup'
+  },
+  {
+    id: 'deepseek', name: 'DeepSeek', color: '#6366f1',
+    scores: [8.8, 7.6, 9.2, 7.5, 8.9, 8.4], total: 8.4,
+    strength: 'Djup', weakness: 'Klarhet'
+  },
+];
+
+function getPoint(angle, value) {
+  const r = (value / 10) * maxR;
+  return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+}
+
+function buildPolygonPoints(scores, scale = 1) {
+  return scores.map((s, i) => {
+    const p = getPoint(dimAngles[i], s * scale);
+    return `${p.x},${p.y}`;
+  }).join(' ');
+}
+
+function scoreClass(v) {
+  if (v >= 9.0) return 'hm-excellent';
+  if (v >= 8.5) return 'hm-good';
+  if (v >= 8.0) return 'hm-ok';
+  return 'hm-weak';
+}
+
+// Build radar grid
+function buildGrid() {
+  const grid = document.getElementById('radarGrid');
+  const axes = document.getElementById('radarAxes');
+
+  // Concentric circles (actually polygons)
+  for (let level = 2; level <= 10; level += 2) {
+    const pts = dimAngles.map(a => {
+      const p = getPoint(a, level);
+      return `${p.x},${p.y}`;
+    }).join(' ');
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', pts);
+    poly.setAttribute('class', 'radar-grid');
+    poly.style.opacity = level === 10 ? 0.4 : 0.15;
+    grid.appendChild(poly);
+  }
+
+  // Axis lines + labels
+  dimAngles.forEach((a, i) => {
+    const p = getPoint(a, 10);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', cx);
+    line.setAttribute('y1', cy);
+    line.setAttribute('x2', p.x);
+    line.setAttribute('y2', p.y);
+    line.setAttribute('class', 'radar-axis');
+    axes.appendChild(line);
+
+    // Label
+    const lp = getPoint(a, 11.5);
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', lp.x);
+    text.setAttribute('y', lp.y + 4);
+    text.setAttribute('class', 'radar-axis-label');
+    text.textContent = dimensions[i];
+    axes.appendChild(text);
+  });
+}
+
+function buildRadarPolygons() {
+  const polyGroup = document.getElementById('radarPolygons');
+  const dotGroup = document.getElementById('radarDots');
+
+  models.forEach(m => {
+    // Polygon - starts at center
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', buildPolygonPoints(m.scores, 0));
+    poly.setAttribute('class', 'radar-polygon');
+    poly.style.fill = m.color;
+    poly.style.stroke = m.color;
+    poly.id = `poly-${m.id}`;
+    polyGroup.appendChild(poly);
+
+    // Dots
+    m.scores.forEach((s, i) => {
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', cx);
+      dot.setAttribute('cy', cy);
+      dot.setAttribute('class', 'radar-dot');
+      dot.style.fill = m.color;
+      dot.id = `dot-${m.id}-${i}`;
+      dotGroup.appendChild(dot);
+    });
+  });
+}
+
+function animatePolygons() {
+  models.forEach(m => {
+    const poly = document.getElementById(`poly-${m.id}`);
+    poly.setAttribute('points', buildPolygonPoints(m.scores, 1));
+
+    m.scores.forEach((s, i) => {
+      const dot = document.getElementById(`dot-${m.id}-${i}`);
+      const p = getPoint(dimAngles[i], s);
+      dot.setAttribute('cx', p.x);
+      dot.setAttribute('cy', p.y);
+    });
+  });
+}
+
+function buildLegend() {
+  const legend = document.getElementById('legend');
+  models.forEach(m => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `<div class="legend-dot" style="background: ${m.color};"></div>${m.name}`;
+    item.onclick = () => toggleModel(m.id);
+    item.id = `legend-${m.id}`;
+    legend.appendChild(item);
+  });
+}
+
+function toggleModel(id) {
+  const poly = document.getElementById(`poly-${id}`);
+  const legend = document.getElementById(`legend-${id}`);
+  const isHidden = poly.style.opacity === '0.05';
+
+  poly.style.opacity = isHidden ? '' : '0.05';
+  legend.classList.toggle('dimmed');
+
+  // Toggle dots
+  models.find(m => m.id === id).scores.forEach((_, i) => {
+    const dot = document.getElementById(`dot-${id}-${i}`);
+    dot.style.opacity = isHidden ? '' : '0.05';
+  });
+}
+
+function buildDetailPanel() {
+  const container = document.getElementById('detailModels');
+  models.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'detail-model';
+    card.style.setProperty('--model-color', m.color);
+    card.id = `detail-${m.id}`;
+
+    const miniScores = dimensions.map((d, i) =>
+      `<div class="mini-score"><div class="mini-score-value" style="color: ${m.color};">${m.scores[i]}</div><div class="mini-score-label">${d.substring(0,4)}</div></div>`
+    ).join('');
+
+    card.innerHTML = `
+      <div class="detail-model-header">
+        <div class="detail-dot" style="background: ${m.color};"></div>
+        <div class="detail-name">${m.name}</div>
+        <div class="detail-total" style="color: ${m.color};">${m.total}</div>
+      </div>
+      <div class="detail-scores">${miniScores}</div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function buildHeatmap() {
+  const grid = document.getElementById('heatmapGrid');
+
+  // Headers
+  grid.innerHTML = '<div class="hm-header"></div>';
+  dimensions.forEach(d => {
+    grid.innerHTML += `<div class="hm-header">${d}</div>`;
+  });
+
+  // Model rows
+  models.forEach(m => {
+    grid.innerHTML += `<div class="hm-label"><div class="detail-dot" style="background: ${m.color};"></div>${m.name}</div>`;
+    m.scores.forEach(s => {
+      grid.innerHTML += `<div class="hm-cell ${scoreClass(s)}" data-val="${s}">${s}</div>`;
+    });
+  });
+}
+
+function buildDiamondInsights() {
+  const container = document.getElementById('diamondInsights');
+  models.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'diamond-card';
+    card.id = `dcard-${m.id}`;
+
+    // Mini radar for each model
+    const miniDims = 6;
+    const miniCx = 25, miniCy = 25, miniR = 20;
+    const miniAngles = [...Array(miniDims)].map((_, i) => (Math.PI * 2 * i / miniDims) - Math.PI/2);
+    const miniPts = m.scores.map((s, i) => {
+      const r = (s / 10) * miniR;
+      return `${miniCx + r * Math.cos(miniAngles[i])},${miniCy + r * Math.sin(miniAngles[i])}`;
+    }).join(' ');
+
+    card.innerHTML = `
+      <div class="diamond-model-name" style="color: ${m.color};">${m.name}</div>
+      <div class="diamond-shape">
+        <svg viewBox="0 0 50 50">
+          <polygon points="${miniPts}" class="diamond-mini-poly" fill="${m.color}" stroke="${m.color}"/>
+        </svg>
+      </div>
+      <div class="diamond-strength">+ ${m.strength}</div>
+      <div class="diamond-weakness">- ${m.weakness}</div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+const synthesisContent = 'Den facetterade analysen visar att <strong>Claude 4 Opus</strong> (9.1) och <strong>GPT-4o</strong> (9.0) ligger i topp med olika styrkor: Claude excels i korrekthet och säkerhetsaspekter, medan GPT-4o har bättre klarhet och praktiska råd. <strong>Gemini</strong> erbjuder den bästa balansen mellan klarhet och praktik. <strong>DeepSeek R1</strong> har det djupaste tekniska svaret men lägst klarhet, medan <strong>Grok-3</strong> är mest konsistent men utan toppnoteringar. Sammantaget rekommenderas Claude för säkerhetskritiska system och GPT-4o för implementation-fokuserade frågor.';
+
+async function animate() {
+  buildGrid();
+  buildRadarPolygons();
+  buildLegend();
+  buildDetailPanel();
+  buildHeatmap();
+  buildDiamondInsights();
+
+  // Show radar
+  await new Promise(r => setTimeout(r, 300));
+  document.getElementById('radarContainer').classList.add('visible');
+
+  // Animate polygons from center to full
+  await new Promise(r => setTimeout(r, 400));
+  animatePolygons();
+
+  // Show detail panel
+  await new Promise(r => setTimeout(r, 300));
+  document.getElementById('detailPanel').classList.add('visible');
+
+  // Animate detail cards
+  const detailCards = document.querySelectorAll('.detail-model');
+  for (let i = 0; i < detailCards.length; i++) {
+    await new Promise(r => setTimeout(r, 200));
+    detailCards[i].classList.add('visible');
+  }
+
+  // Highlight winner
+  await new Promise(r => setTimeout(r, 500));
+  document.getElementById('detail-claude').classList.add('selected');
+
+  // Show heatmap
+  await new Promise(r => setTimeout(r, 600));
+  document.getElementById('heatmap').classList.add('visible');
+
+  // Animate heatmap cells
+  const cells = document.querySelectorAll('.hm-cell');
+  for (let i = 0; i < cells.length; i++) {
+    setTimeout(() => cells[i].classList.add('show'), i * 50);
+  }
+
+  // Diamond insights
+  await new Promise(r => setTimeout(r, 800));
+  const dcards = document.querySelectorAll('.diamond-card');
+  for (let i = 0; i < dcards.length; i++) {
+    await new Promise(r => setTimeout(r, 150));
+    dcards[i].classList.add('visible');
+  }
+
+  // Synthesis
+  await new Promise(r => setTimeout(r, 600));
+  document.getElementById('synthesis').classList.add('visible');
+  await new Promise(r => setTimeout(r, 200));
+  document.getElementById('synthesisText').innerHTML = synthesisContent;
+}
+
+setTimeout(animate, 500);
+</script>
+</body>
+</html>

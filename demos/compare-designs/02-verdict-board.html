@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verdict Board - OneSeek Compare</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --surface3: #222233;
+    --border: #2a2a3a;
+    --text: #e8e8f0;
+    --text-dim: #8888a0;
+    --accent: #7c5cfc;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --blue: #60a5fa;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+  }
+
+  .bg-pattern {
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 100% 60% at 50% 0%, #7c5cfc08 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #fbbf24, #f59e0b, #d97706);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+
+  .header .subtitle {
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  .query-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .query-bar .cmd {
+    background: var(--accent);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  /* Criteria categories tabs */
+  .criteria-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .criteria-tab {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.3s ease;
+  }
+
+  .criteria-tab.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: #7c5cfc11;
+  }
+
+  /* Verdict table */
+  .verdict-table {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+
+  .table-header {
+    display: grid;
+    grid-template-columns: 180px repeat(5, 1fr);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    gap: 8px;
+  }
+
+  .table-header .th {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    text-align: center;
+  }
+
+  .table-header .th:first-child {
+    text-align: left;
+  }
+
+  .model-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .model-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-bottom: 2px;
+  }
+
+  .table-row {
+    display: grid;
+    grid-template-columns: 180px repeat(5, 1fr);
+    padding: 14px 16px;
+    border-bottom: 1px solid #1e1e2e;
+    gap: 8px;
+    align-items: center;
+    opacity: 0;
+    transform: translateX(-20px);
+    transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .table-row.visible {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .table-row:last-child { border-bottom: none; }
+
+  .row-label {
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .row-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    background: var(--surface2);
+  }
+
+  /* Verdict cells */
+  .verdict-cell {
+    text-align: center;
+    position: relative;
+  }
+
+  .cell-score {
+    font-size: 20px;
+    font-weight: 800;
+    opacity: 0;
+    transform: scale(0.5);
+    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .cell-score.show {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .cell-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 2px;
+    opacity: 0;
+    transition: opacity 0.3s ease 0.2s;
+  }
+
+  .cell-label.show { opacity: 1; }
+
+  .score-excellent { color: var(--green); }
+  .score-good { color: var(--amber); }
+  .score-ok { color: var(--blue); }
+  .score-weak { color: var(--red); }
+
+  /* Winner highlight */
+  .cell-winner {
+    position: relative;
+  }
+
+  .cell-winner::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 8px;
+    border: 2px solid var(--green);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  .cell-winner.highlight::after { opacity: 1; }
+
+  /* Summary verdict */
+  .summary-row {
+    display: grid;
+    grid-template-columns: 180px repeat(5, 1fr);
+    padding: 16px;
+    background: var(--surface2);
+    border-top: 2px solid var(--border);
+    gap: 8px;
+    align-items: center;
+    opacity: 0;
+    transition: all 0.6s ease;
+  }
+
+  .summary-row.visible { opacity: 1; }
+
+  .summary-label {
+    font-size: 14px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .total-score {
+    text-align: center;
+    font-size: 24px;
+    font-weight: 900;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .total-score.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Trophy animation */
+  .trophy {
+    font-size: 16px;
+    display: inline-block;
+    opacity: 0;
+    transform: scale(0) rotate(-20deg);
+    transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .trophy.show {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+
+  /* Insight panel */
+  .insight-panel {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .insight-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    opacity: 0;
+    transform: translateY(15px);
+    transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .insight-card.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .insight-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  .insight-content {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .insight-content strong {
+    color: var(--green);
+  }
+
+  /* Doughnut chart */
+  .doughnut-wrapper {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+
+  .doughnut {
+    position: relative;
+    width: 80px;
+    height: 80px;
+  }
+
+  .doughnut svg {
+    transform: rotate(-90deg);
+    width: 80px;
+    height: 80px;
+  }
+
+  .doughnut circle {
+    fill: none;
+    stroke-width: 6;
+    stroke-linecap: round;
+  }
+
+  .doughnut .bg { stroke: var(--surface2); }
+
+  .doughnut .fill {
+    stroke-dasharray: 0, 226;
+    transition: stroke-dasharray 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .doughnut .label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  .doughnut .model-name-small {
+    font-size: 9px;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+
+  /* Bar chart comparison */
+  .bar-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .bar-name {
+    width: 70px;
+    font-size: 11px;
+    font-weight: 600;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 18px;
+    background: var(--surface2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    width: 0%;
+    transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+    display: flex;
+    align-items: center;
+    padding-left: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: white;
+  }
+
+  @media (max-width: 768px) {
+    .table-header, .table-row, .summary-row {
+      grid-template-columns: 120px repeat(5, 1fr);
+    }
+    .insight-panel { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-pattern"></div>
+
+<div class="container">
+  <div class="header">
+    <h1>Verdict Board</h1>
+    <p class="subtitle">Strukturerad bedömning med kriteriebaserad scoring</p>
+  </div>
+
+  <div class="query-bar">
+    <span class="cmd">/compare</span>
+    <span>Analysera fördelar och nackdelar med microservices vs monolith-arkitektur</span>
+  </div>
+
+  <div class="criteria-tabs">
+    <div class="criteria-tab active">Alla kriterier</div>
+    <div class="criteria-tab">Korrekthet</div>
+    <div class="criteria-tab">Praktiska råd</div>
+    <div class="criteria-tab">Balans</div>
+    <div class="criteria-tab">Tekniskt djup</div>
+  </div>
+
+  <div class="verdict-table">
+    <div class="table-header">
+      <div class="th">Kriterium</div>
+      <div class="th">
+        <div class="model-header">
+          <div class="model-dot" style="background: #10a37f;"></div>
+          GPT-4o
+        </div>
+      </div>
+      <div class="th">
+        <div class="model-header">
+          <div class="model-dot" style="background: #d97706;"></div>
+          Claude 4
+        </div>
+      </div>
+      <div class="th">
+        <div class="model-header">
+          <div class="model-dot" style="background: #4285f4;"></div>
+          Gemini
+        </div>
+      </div>
+      <div class="th">
+        <div class="model-header">
+          <div class="model-dot" style="background: #1d9bf0;"></div>
+          Grok-3
+        </div>
+      </div>
+      <div class="th">
+        <div class="model-header">
+          <div class="model-dot" style="background: #6366f1;"></div>
+          DeepSeek
+        </div>
+      </div>
+    </div>
+
+    <!-- Rows will be animated in -->
+    <div class="table-row" id="row-accuracy">
+      <div class="row-label"><div class="row-icon">&#9679;</div> Korrekthet</div>
+      <div class="verdict-cell cell-winner"><div class="cell-score score-excellent" data-val="9.4">—</div><div class="cell-label">Utmärkt</div></div>
+      <div class="verdict-cell cell-winner"><div class="cell-score score-excellent" data-val="9.5">—</div><div class="cell-label">Utmärkt</div></div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.8">—</div><div class="cell-label">Bra</div></div>
+      <div class="verdict-cell"><div class="cell-score score-ok" data-val="8.2">—</div><div class="cell-label">OK</div></div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.9">—</div><div class="cell-label">Bra</div></div>
+    </div>
+
+    <div class="table-row" id="row-advice">
+      <div class="row-label"><div class="row-icon">&#9733;</div> Praktiska råd</div>
+      <div class="verdict-cell cell-winner"><div class="cell-score score-excellent" data-val="9.2">—</div><div class="cell-label">Utmärkt</div></div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.7">—</div><div class="cell-label">Bra</div></div>
+      <div class="verdict-cell cell-winner"><div class="cell-score score-excellent" data-val="9.1">—</div><div class="cell-label">Utmärkt</div></div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.5">—</div><div class="cell-label">Bra</div></div>
+      <div class="verdict-cell"><div class="cell-score score-ok" data-val="7.8">—</div><div class="cell-label">OK</div></div>
+    </div>
+
+    <div class="table-row" id="row-balance">
+      <div class="row-label"><div class="row-icon">&#9878;</div> Balans</div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.6">—</div><div class="cell-label">Bra</div></div>
+      <div class="verdict-cell cell-winner"><div class="cell-score score-excellent" data-val="9.6">—</div><div class="cell-label">Utmärkt</div></div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.4">—</div><div class="cell-label">Bra</div></div>
+      <div class="verdict-cell"><div class="cell-score score-ok" data-val="7.9">—</div><div class="cell-label">OK</div></div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.8">—</div><div class="cell-label">Bra</div></div>
+    </div>
+
+    <div class="table-row" id="row-depth">
+      <div class="row-label"><div class="row-icon">&#9881;</div> Tekniskt djup</div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.8">—</div><div class="cell-label">Bra</div></div>
+      <div class="verdict-cell cell-winner"><div class="cell-score score-excellent" data-val="9.3">—</div><div class="cell-label">Utmärkt</div></div>
+      <div class="verdict-cell"><div class="cell-score score-ok" data-val="8.0">—</div><div class="cell-label">OK</div></div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.6">—</div><div class="cell-label">Bra</div></div>
+      <div class="verdict-cell cell-winner"><div class="cell-score score-excellent" data-val="9.2">—</div><div class="cell-label">Utmärkt</div></div>
+    </div>
+
+    <div class="table-row" id="row-clarity">
+      <div class="row-label"><div class="row-icon">&#9788;</div> Klarhet</div>
+      <div class="verdict-cell cell-winner"><div class="cell-score score-excellent" data-val="9.5">—</div><div class="cell-label">Utmärkt</div></div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.9">—</div><div class="cell-label">Bra</div></div>
+      <div class="verdict-cell cell-winner"><div class="cell-score score-excellent" data-val="9.3">—</div><div class="cell-label">Utmärkt</div></div>
+      <div class="verdict-cell"><div class="cell-score score-good" data-val="8.8">—</div><div class="cell-label">Bra</div></div>
+      <div class="verdict-cell"><div class="cell-score score-ok" data-val="7.6">—</div><div class="cell-label">OK</div></div>
+    </div>
+
+    <!-- Summary row -->
+    <div class="summary-row" id="summaryRow">
+      <div class="summary-label">Totalt</div>
+      <div class="total-score" style="color: #10a37f;">
+        <span class="trophy" id="trophy-gpt"></span>
+        <span data-total="9.1">—</span>
+      </div>
+      <div class="total-score" style="color: #d97706;">
+        <span class="trophy" id="trophy-claude">&#127942;</span>
+        <span data-total="9.2">—</span>
+      </div>
+      <div class="total-score" style="color: #4285f4;">
+        <span class="trophy" id="trophy-gemini"></span>
+        <span data-total="8.7">—</span>
+      </div>
+      <div class="total-score" style="color: #1d9bf0;">
+        <span class="trophy" id="trophy-grok"></span>
+        <span data-total="8.4">—</span>
+      </div>
+      <div class="total-score" style="color: #6366f1;">
+        <span class="trophy" id="trophy-deepseek"></span>
+        <span data-total="8.5">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Insight panels -->
+  <div class="insight-panel">
+    <div class="insight-card" id="insight1">
+      <div class="insight-title">Totalpoang</div>
+      <div class="doughnut-wrapper">
+        <div class="doughnut" id="donut-gpt">
+          <svg viewBox="0 0 80 80">
+            <circle class="bg" cx="40" cy="40" r="36"/>
+            <circle class="fill" cx="40" cy="40" r="36" stroke="#10a37f" data-pct="91"/>
+          </svg>
+          <div class="label"><span style="color:#10a37f;">9.1</span><span class="model-name-small">GPT-4o</span></div>
+        </div>
+        <div class="doughnut" id="donut-claude">
+          <svg viewBox="0 0 80 80">
+            <circle class="bg" cx="40" cy="40" r="36"/>
+            <circle class="fill" cx="40" cy="40" r="36" stroke="#d97706" data-pct="92"/>
+          </svg>
+          <div class="label"><span style="color:#d97706;">9.2</span><span class="model-name-small">Claude 4</span></div>
+        </div>
+        <div class="doughnut" id="donut-gemini">
+          <svg viewBox="0 0 80 80">
+            <circle class="bg" cx="40" cy="40" r="36"/>
+            <circle class="fill" cx="40" cy="40" r="36" stroke="#4285f4" data-pct="87"/>
+          </svg>
+          <div class="label"><span style="color:#4285f4;">8.7</span><span class="model-name-small">Gemini</span></div>
+        </div>
+        <div class="doughnut" id="donut-grok">
+          <svg viewBox="0 0 80 80">
+            <circle class="bg" cx="40" cy="40" r="36"/>
+            <circle class="fill" cx="40" cy="40" r="36" stroke="#1d9bf0" data-pct="84"/>
+          </svg>
+          <div class="label"><span style="color:#1d9bf0;">8.4</span><span class="model-name-small">Grok-3</span></div>
+        </div>
+        <div class="doughnut" id="donut-ds">
+          <svg viewBox="0 0 80 80">
+            <circle class="bg" cx="40" cy="40" r="36"/>
+            <circle class="fill" cx="40" cy="40" r="36" stroke="#6366f1" data-pct="85"/>
+          </svg>
+          <div class="label"><span style="color:#6366f1;">8.5</span><span class="model-name-small">DeepSeek</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="insight-card" id="insight2">
+      <div class="insight-title">Styrkeanalys</div>
+      <div class="bar-chart">
+        <div class="bar-row">
+          <div class="bar-name" style="color:#d97706;">Claude 4</div>
+          <div class="bar-track"><div class="bar-fill" style="background: linear-gradient(90deg, #d97706, #fbbf24);" data-w="92">9.2</div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-name" style="color:#10a37f;">GPT-4o</div>
+          <div class="bar-track"><div class="bar-fill" style="background: linear-gradient(90deg, #10a37f, #4ade80);" data-w="91">9.1</div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-name" style="color:#4285f4;">Gemini</div>
+          <div class="bar-track"><div class="bar-fill" style="background: linear-gradient(90deg, #4285f4, #93c5fd);" data-w="87">8.7</div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-name" style="color:#6366f1;">DeepSeek</div>
+          <div class="bar-track"><div class="bar-fill" style="background: linear-gradient(90deg, #6366f1, #a78bfa);" data-w="85">8.5</div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-name" style="color:#1d9bf0;">Grok-3</div>
+          <div class="bar-track"><div class="bar-fill" style="background: linear-gradient(90deg, #1d9bf0, #60a5fa);" data-w="84">8.4</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="insight-card" id="insight3" style="margin-bottom: 24px;">
+    <div class="insight-title">Domarens sammanfattning</div>
+    <div class="insight-content" id="judgeText"></div>
+  </div>
+</div>
+
+<script>
+const judgeContent = '<strong>Claude 4 Opus</strong> vinner med bäst balans mellan fördelar och nackdelar samt djupast teknisk analys. <strong>GPT-4o</strong> följer tätt efter med utmärkta praktiska råd och klarhet. <strong>Gemini</strong> imponerar med koncisa och handlingsbara rekommendationer. Alla modeller identifierar nyckelfaktorer som teamstorlek, skalbarhet och driftkomplexitet korrekt.';
+
+async function animate() {
+  const rows = document.querySelectorAll('.table-row');
+
+  // Show rows one by one
+  for (let i = 0; i < rows.length; i++) {
+    await new Promise(r => setTimeout(r, 400));
+    rows[i].classList.add('visible');
+
+    // Animate scores in this row
+    await new Promise(r => setTimeout(r, 200));
+    const scores = rows[i].querySelectorAll('.cell-score');
+    const labels = rows[i].querySelectorAll('.cell-label');
+
+    scores.forEach((s, j) => {
+      setTimeout(() => {
+        s.textContent = parseFloat(s.dataset.val).toFixed(1);
+        s.classList.add('show');
+      }, j * 100);
+    });
+
+    labels.forEach((l, j) => {
+      setTimeout(() => l.classList.add('show'), j * 100 + 200);
+    });
+
+    // Highlight winners
+    await new Promise(r => setTimeout(r, 400));
+    rows[i].querySelectorAll('.cell-winner').forEach(c => c.classList.add('highlight'));
+  }
+
+  // Summary row
+  await new Promise(r => setTimeout(r, 600));
+  const summaryRow = document.getElementById('summaryRow');
+  summaryRow.classList.add('visible');
+
+  await new Promise(r => setTimeout(r, 300));
+  const totals = summaryRow.querySelectorAll('.total-score');
+  totals.forEach((t, i) => {
+    setTimeout(() => {
+      const span = t.querySelector('[data-total]');
+      span.textContent = span.dataset.total;
+      t.classList.add('show');
+    }, i * 150);
+  });
+
+  // Trophy for winner
+  await new Promise(r => setTimeout(r, 800));
+  document.getElementById('trophy-claude').classList.add('show');
+
+  // Insights
+  await new Promise(r => setTimeout(r, 400));
+  document.getElementById('insight1').classList.add('visible');
+  document.getElementById('insight2').classList.add('visible');
+
+  // Doughnuts
+  await new Promise(r => setTimeout(r, 200));
+  document.querySelectorAll('.doughnut .fill').forEach(c => {
+    const pct = parseInt(c.dataset.pct);
+    const circumference = 2 * Math.PI * 36;
+    c.style.strokeDasharray = `${(pct / 100) * circumference}, ${circumference}`;
+  });
+
+  // Bar fills
+  document.querySelectorAll('.bar-fill').forEach(b => {
+    b.style.width = b.dataset.w + '%';
+  });
+
+  // Judge text
+  await new Promise(r => setTimeout(r, 600));
+  document.getElementById('insight3').classList.add('visible');
+  await new Promise(r => setTimeout(r, 200));
+  document.getElementById('judgeText').innerHTML = judgeContent;
+}
+
+setTimeout(animate, 500);
+</script>
+</body>
+</html>
