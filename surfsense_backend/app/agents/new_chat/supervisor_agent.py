@@ -4507,7 +4507,7 @@ async def create_supervisor_agent(
                 worker_configurable["checkpoint_ns"] = f"{worker_checkpoint_ns}:worker:{name}"
         config = {
             "configurable": worker_configurable,
-            "recursion_limit": 60,
+            "recursion_limit": 12,
         }
         try:
             result = await asyncio.wait_for(
@@ -5298,7 +5298,7 @@ async def create_supervisor_agent(
                         )
                 config = {
                     "configurable": worker_configurable,
-                    "recursion_limit": 60,
+                    "recursion_limit": 12,
                 }
                 try:
                     result = await asyncio.wait_for(

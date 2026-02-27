@@ -925,6 +925,55 @@ def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
     return tool_def
 
 
+_BIGTOOL_MAX_SAME_TOOL_CALLS = 2
+
+
+def _strip_tool_calls_from_response(response: Any) -> Any:
+    """Remove tool_calls from an AIMessage so the bigtool agent terminates."""
+    if not isinstance(response, AIMessage):
+        return response
+    if not getattr(response, "tool_calls", None):
+        return response
+    content = getattr(response, "content", "") or ""
+    if not content:
+        content = "(Verktyget har redan anropats — sammanfattar resultaten.)"
+    try:
+        return response.model_copy(
+            update={"tool_calls": [], "additional_kwargs": {}}
+        )
+    except Exception:
+        return AIMessage(
+            content=content,
+            id=getattr(response, "id", None),
+        )
+
+
+def _detect_repeated_tool_in_history(messages: Any) -> bool:
+    """Return True if the same non-retrieval tool has been called >= threshold times consecutively."""
+    if not isinstance(messages, list):
+        return False
+    consecutive = 0
+    last_tool_name = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            break
+        if not isinstance(msg, ToolMessage):
+            continue
+        name = getattr(msg, "name", "") or ""
+        if not name:
+            continue
+        # Skip the retrieve-tools meta-tool; only guard domain tools
+        if "retrieve" in name.lower() and "tool" in name.lower():
+            continue
+        if not last_tool_name:
+            last_tool_name = name
+        if name == last_tool_name:
+            consecutive += 1
+        else:
+            break
+    return consecutive >= _BIGTOOL_MAX_SAME_TOOL_CALLS
+
+
 class NormalizingChatWrapper:
     """Wraps any LanguageModelLike and normalizes messages before every invocation.
 
@@ -933,6 +982,11 @@ class NormalizingChatWrapper:
     null-value sanitization.  Wrapping the LLM with this class ensures that
     ``_normalize_messages_for_provider_compat`` is applied at the point of
     invocation regardless of which graph node initiated the call.
+
+    Also applies a **tool-call loop guard**: if the message history shows the
+    same domain tool has been called >= ``_BIGTOOL_MAX_SAME_TOOL_CALLS`` times
+    consecutively, any new tool_calls in the LLM response are stripped so that
+    the bigtool agent terminates its ReAct loop and produces a final answer.
 
     Usage::
 
@@ -996,11 +1050,29 @@ class NormalizingChatWrapper:
             return {**input_, "messages": _normalize_messages_for_provider_compat(input_["messages"])}
         return input_
 
+    def _guard_response(self, input_: Any, response: Any) -> Any:
+        """Strip tool_calls if the same tool has already been called too many times."""
+        messages = input_ if isinstance(input_, list) else (
+            input_.get("messages") if isinstance(input_, dict) else None
+        )
+        if messages and _detect_repeated_tool_in_history(messages):
+            stripped = _strip_tool_calls_from_response(response)
+            if stripped is not response:
+                logger.info(
+                    "bigtool loop guard: stripped tool_calls from response "
+                    "(same tool called %d+ times consecutively)",
+                    _BIGTOOL_MAX_SAME_TOOL_CALLS,
+                )
+            return stripped
+        return response
+
     def invoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
-        return self._llm.invoke(self._normalize(input_), config, **kwargs)
+        response = self._llm.invoke(self._normalize(input_), config, **kwargs)
+        return self._guard_response(input_, response)
 
     async def ainvoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
-        return await self._llm.ainvoke(self._normalize(input_), config, **kwargs)
+        response = await self._llm.ainvoke(self._normalize(input_), config, **kwargs)
+        return self._guard_response(input_, response)
 
     def stream(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
         return self._llm.stream(self._normalize(input_), config, **kwargs)
