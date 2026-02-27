@@ -1,20 +1,18 @@
 """
-Sprint P4 tests — Subagent Mini-Graphs, Convergence, Adaptive Guard,
-Semantic Cache, Admin & Studio Integration.
+Sprint P4 tests — Subagent Mini-Graphs with Real Isolation, Convergence,
+Adaptive Guard, Semantic Cache, Admin & Studio Integration.
 
 Tests verify:
-- P4.1:  Subagent mini-graph isolation (state doesn't leak)
-- P4.1:  Max 4-6 calls per mini-graph (retry cap)
-- P4.1:  Convergence node merges results from multiple domains
+- P4.1:  Subagent mini-graph uses real worker invocation with isolation
+- P4.1:  Each domain gets unique subagent_id, checkpoint_ns, sandbox_scope
+- P4.1:  Proper handoff contracts identical to call_agent
+- P4.1:  Convergence node merges handoff contracts from multiple domains
 - P4.1a: Per-domain checkpointer isolation (state fields)
 - P4.1b: Command-pattern handoff (spawned_domains tracking)
-- P4.1c: Summarization token budget (mini_synthesizer output)
-- P4.1d: PEV verify node prompt exists
 - P4.2:  Adaptive threshold by step (confidence drops)
 - P4.2a: Adaptive limits per domain (force_synthesis)
 - P4.3:  Semantic cache hit (cache_key determinism)
-- P4.3:  Semantic cache miss fallback
-- P4.1:  Parallel subagents execution
+- P4.1:  Parallel subagents execution with semaphore
 - P4.5a: Prompt registry completeness
 - P4.5b: Studio node group mapping
 - P4.5c: Pipeline nodes have prompt_key
@@ -22,18 +20,19 @@ Tests verify:
 - P4.5c: Admin flow-graph endpoint includes P4 nodes
 - P4.5e: No loose ends
 
-These tests run WITHOUT a running LLM or DB — they use mocked LLM responses.
+These tests run WITHOUT a running LLM or DB — they use mocked workers.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib.util
 import json
 import sys
 import types
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -140,7 +139,6 @@ _mini_graph_mod = _load_module(
     "app/agents/new_chat/nodes/subagent_mini_graph.py",
 )
 build_subagent_spawner_node = _mini_graph_mod.build_subagent_spawner_node
-MiniGraphState = _mini_graph_mod.MiniGraphState
 _cache_key = _mini_graph_mod._cache_key
 
 _convergence_mod = _load_module(
@@ -182,59 +180,124 @@ def _latest_user_query(msgs):
     return ""
 
 
+def _mock_build_subagent_id(
+    *, base_thread_id, turn_key, agent_name, call_index, task,
+):
+    """Mimic _build_subagent_id from supervisor_agent.py."""
+    seed = "|".join([
+        str(base_thread_id or "thread"),
+        str(turn_key or "turn"),
+        str(agent_name or "agent").lower(),
+        str(call_index),
+        hashlib.sha1(str(task or "").encode()).hexdigest()[:10],
+    ])
+    digest = hashlib.sha1(seed.encode()).hexdigest()[:14]
+    slug = str(agent_name or "agent").replace(" ", "_")[:18]
+    return f"sa-{slug}-{digest}"
+
+
+def _mock_build_handoff_payload(
+    *, subagent_id, agent_name, response_text, result_contract,
+    result_max_chars, error_text="",
+):
+    """Mimic _build_subagent_handoff_payload from supervisor_agent.py."""
+    summary = str(response_text or "")[:max(180, result_max_chars)]
+    findings = []
+    for line in str(response_text or "").splitlines():
+        cleaned = line.strip(" -*")
+        if cleaned:
+            findings.append(cleaned[:180])
+        if len(findings) >= 4:
+            break
+    if not findings and summary:
+        findings = [summary[:180]]
+    return {
+        "subagent_id": str(subagent_id or ""),
+        "agent": str(agent_name or ""),
+        "status": "success" if response_text and not error_text else "partial",
+        "confidence": 0.7 if response_text and not error_text else 0.0,
+        "summary": summary,
+        "findings": findings,
+        "artifact_refs": [],
+        "error": str(error_text or "")[:240],
+    }
+
+
+def _make_mock_worker(response_text: str = "Testresultat från worker"):
+    """Create a mock worker that simulates worker.ainvoke()."""
+    worker = AsyncMock()
+    worker.ainvoke = AsyncMock(return_value={
+        "messages": [AIMessage(content=response_text)],
+    })
+    return worker
+
+
+def _make_mock_worker_pool(agents: dict[str, Any] | None = None):
+    """Create a mock worker pool.
+
+    Args:
+        agents: dict mapping agent name → mock worker (or None for default)
+    """
+    pool = AsyncMock()
+    agent_workers = agents or {}
+
+    async def _get(name):
+        if name in agent_workers:
+            return agent_workers[name]
+        # Return a default worker for any agent
+        return _make_mock_worker(f"Resultat för {name}")
+
+    pool.get = AsyncMock(side_effect=_get)
+    return pool
+
+
 def _build_spawner(**overrides):
-    """Build a subagent_spawner_node with sensible defaults."""
-    llm = overrides.pop("llm", _make_llm({
-        "thinking": "test",
-        "steps": [{"action": "hämta data", "tool_id": "tool_a", "use_cache": False}],
-        "reason": "test",
-    }))
-    # The LLM returns different responses for different calls:
-    # - mini_planner: steps
-    # - mini_critic: decision ok
-    # - mini_synthesizer: summary
-    critic_response = json.dumps({
-        "thinking": "ok", "decision": "ok",
-        "feedback": "", "confidence": 0.9, "reason": "bra"
-    })
-    synthesizer_response = json.dumps({
-        "thinking": "sammanfatta", "domain": "test",
-        "summary": "Testsammanfattning", "key_facts": ["fakt1"],
-        "data_quality": "high", "reason": "klar"
-    })
-    planner_response = json.dumps({
-        "thinking": "plan", "steps": [
-            {"action": "hämta", "tool_id": "tool_a", "use_cache": False}
-        ], "reason": "plan klar"
-    })
+    """Build a subagent_spawner_node with sensible defaults + mock worker pool."""
+    llm = overrides.pop("llm", None)
+    if llm is None:
+        planner_response = json.dumps({
+            "thinking": "plan", "steps": [
+                {"action": "hämta", "tool_id": "tool_a"}
+            ], "reason": "plan klar"
+        })
+        critic_response = json.dumps({
+            "thinking": "ok", "decision": "ok",
+            "feedback": "", "confidence": 0.9, "reason": "bra"
+        })
 
-    # Mock LLM that returns different responses per call
-    call_count = {"n": 0}
+        # Mock LLM: planner (odd) → critic (even)
+        call_count = {"n": 0}
 
-    async def _ainvoke(msgs, **kwargs):
-        call_count["n"] += 1
-        n = call_count["n"]
-        if n % 3 == 1:
-            return _make_llm_response(planner_response)
-        elif n % 3 == 2:
-            return _make_llm_response(critic_response)
-        else:
-            return _make_llm_response(synthesizer_response)
+        async def _ainvoke(msgs, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] % 2 == 1:
+                return _make_llm_response(planner_response)
+            else:
+                return _make_llm_response(critic_response)
 
-    llm.ainvoke = AsyncMock(side_effect=_ainvoke)
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(side_effect=_ainvoke)
 
-    return build_subagent_spawner_node(
-        llm=llm,
-        spawner_prompt_template="Test spawner",
-        mini_planner_prompt_template="Test mini planner",
-        mini_critic_prompt_template="Test mini critic",
-        mini_synthesizer_prompt_template="Test mini synthesizer",
-        adaptive_guard_prompt_template="Test adaptive guard",
-        latest_user_query_fn=_latest_user_query,
-        append_datetime_context_fn=lambda s: s,
-        extract_first_json_object_fn=_extract_first_json_object,
-        **overrides,
-    )
+    defaults = {
+        "llm": llm,
+        "spawner_prompt_template": "Test spawner",
+        "mini_planner_prompt_template": "Test mini planner",
+        "mini_critic_prompt_template": "Test mini critic",
+        "mini_synthesizer_prompt_template": "Test mini synthesizer",
+        "adaptive_guard_prompt_template": "Test adaptive guard",
+        "latest_user_query_fn": _latest_user_query,
+        "extract_first_json_object_fn": _extract_first_json_object,
+        "worker_pool": _make_mock_worker_pool(),
+        "build_subagent_id_fn": _mock_build_subagent_id,
+        "build_handoff_payload_fn": _mock_build_handoff_payload,
+        "base_thread_id": "test-thread-123",
+        "parent_checkpoint_ns": "new_chat_v2_user_test",
+        "subagent_isolation_enabled": True,
+        "subagent_result_max_chars": 1000,
+        "execution_timeout_seconds": 30.0,
+    }
+    defaults.update(overrides)
+    return build_subagent_spawner_node(**defaults)
 
 
 def _build_convergence(**overrides):
@@ -258,67 +321,165 @@ def _build_convergence(**overrides):
 
 
 # ---------------------------------------------------------------------------
-# P4.1 Tests — Subagent Mini-Graph
+# P4.1 Tests — Subagent Mini-Graph with Real Isolation
 # ---------------------------------------------------------------------------
-class TestSubagentMiniGraphIsolation:
-    """P4.1: Subagent state doesn't leak to parent."""
+class TestSubagentWorkerIsolation:
+    """P4.1: Each domain gets unique subagent_id, checkpoint_ns, sandbox_scope."""
 
-    def test_mini_graph_state_independent(self):
-        ms1 = MiniGraphState(domain="väder", task="väder i sthlm", tools=["smhi"])
-        ms2 = MiniGraphState(domain="statistik", task="befolkning", tools=["scb"])
-        ms1.summary = "Soligt"
-        ms2.summary = "500k"
-        # States are independent
-        assert ms1.summary != ms2.summary
-        assert ms1.domain != ms2.domain
-        assert ms1.tools != ms2.tools
+    def test_spawner_generates_unique_subagent_ids(self):
+        """Each domain should get a unique subagent_id."""
+        captured_states = []
+        captured_configs = []
 
-    def test_mini_graph_to_dict(self):
-        ms = MiniGraphState(domain="trafik", task="förseningar", tools=["trafikverket"])
-        ms.summary = "Inga förseningar"
-        ms.key_facts = ["punktligt"]
-        ms.data_quality = "high"
-        d = ms.to_dict()
-        assert d["domain"] == "trafik"
-        assert d["summary"] == "Inga förseningar"
-        assert d["key_facts"] == ["punktligt"]
-        assert d["data_quality"] == "high"
+        async def _capture_invoke(state, config=None, **kw):
+            captured_states.append(dict(state))
+            captured_configs.append(config)
+            return {"messages": [AIMessage(content="ok")]}
+
+        worker = AsyncMock()
+        worker.ainvoke = AsyncMock(side_effect=_capture_invoke)
+        pool = _make_mock_worker_pool({"väder": worker, "statistik": worker})
+
+        node = _build_spawner(worker_pool=pool)
+        state = {
+            "messages": [HumanMessage(content="väder och statistik")],
+            "domain_plans": {
+                "väder": {"tools": ["smhi"], "rationale": "väder"},
+                "statistik": {"tools": ["scb"], "rationale": "statistik"},
+            },
+            "total_steps": 0,
+        }
+        asyncio.get_event_loop().run_until_complete(node(state))
+
+        # Both domains should have been invoked
+        assert len(captured_states) == 2
+
+        # Each should have a unique subagent_id
+        ids = [s.get("subagent_id") for s in captured_states]
+        assert ids[0] is not None
+        assert ids[1] is not None
+        assert ids[0] != ids[1]
+        assert all(sid.startswith("sa-") for sid in ids)
+
+    def test_spawner_sets_sandbox_scope(self):
+        """Worker state should have sandbox_scope_mode=subagent."""
+        captured_states = []
+
+        async def _capture_invoke(state, config=None, **kw):
+            captured_states.append(dict(state))
+            return {"messages": [AIMessage(content="ok")]}
+
+        worker = AsyncMock()
+        worker.ainvoke = AsyncMock(side_effect=_capture_invoke)
+        pool = _make_mock_worker_pool({"trafik": worker})
+
+        node = _build_spawner(worker_pool=pool, subagent_isolation_enabled=True)
+        state = {
+            "messages": [HumanMessage(content="trafik")],
+            "domain_plans": {"trafik": {"tools": ["trafikverket"], "rationale": "t"}},
+            "total_steps": 0,
+        }
+        asyncio.get_event_loop().run_until_complete(node(state))
+
+        assert len(captured_states) == 1
+        ws = captured_states[0]
+        assert ws["sandbox_scope_mode"] == "subagent"
+        assert ws["sandbox_scope_id"] == ws["subagent_id"]
+
+    def test_spawner_sets_checkpoint_namespace(self):
+        """Worker config should have isolated checkpoint_ns."""
+        captured_configs = []
+
+        async def _capture_invoke(state, config=None, **kw):
+            captured_configs.append(config)
+            return {"messages": [AIMessage(content="ok")]}
+
+        worker = AsyncMock()
+        worker.ainvoke = AsyncMock(side_effect=_capture_invoke)
+        pool = _make_mock_worker_pool({"väder": worker})
+
+        node = _build_spawner(
+            worker_pool=pool,
+            parent_checkpoint_ns="ns_parent",
+            subagent_isolation_enabled=True,
+        )
+        state = {
+            "messages": [HumanMessage(content="väder")],
+            "domain_plans": {"väder": {"tools": ["smhi"], "rationale": "v"}},
+            "total_steps": 0,
+        }
+        asyncio.get_event_loop().run_until_complete(node(state))
+
+        assert len(captured_configs) == 1
+        cfg = captured_configs[0]
+        cp_ns = cfg["configurable"]["checkpoint_ns"]
+        assert cp_ns.startswith("ns_parent:subagent:mini_väder:")
+        assert "sa-" in cp_ns
+
+    def test_spawner_returns_handoff_contracts(self):
+        """Results should contain proper handoff contracts."""
+        pool = _make_mock_worker_pool()
+        node = _build_spawner(worker_pool=pool)
+        state = {
+            "messages": [HumanMessage(content="test")],
+            "domain_plans": {"väder": {"tools": ["smhi"], "rationale": "t"}},
+            "total_steps": 0,
+        }
+        result = asyncio.get_event_loop().run_until_complete(node(state))
+
+        # Check subagent_handoffs contains proper contracts
+        handoffs = result.get("subagent_handoffs", [])
+        assert len(handoffs) == 1
+        h = handoffs[0]
+        assert "subagent_id" in h
+        assert "agent" in h
+        assert "status" in h
+        assert "confidence" in h
+        assert "summary" in h
+        assert "findings" in h
+        assert h["subagent_id"].startswith("sa-")
 
 
 class TestSubagentMaxCallsPerAgent:
-    """P4.1: Max 4-6 calls per mini-graph (retry cap = 2)."""
+    """P4.1: Retry cap prevents infinite loops."""
 
-    def test_retry_cap_enforced(self):
-        ms = MiniGraphState(domain="test", task="test", tools=["t"])
-        ms.retry_count = 3  # Beyond the cap
-        # adaptive_guard would force_synthesis
-        assert ms.retry_count > _mini_graph_mod._MAX_MINI_RETRIES
+    def test_retry_cap_constant(self):
+        assert _mini_graph_mod._MAX_MINI_RETRIES == 2
+        assert _mini_graph_mod._MAX_PARALLEL_SUBAGENTS == 6
 
 
 class TestConvergenceNodeMergesResults:
-    """P4.1: Convergence creates unified artifact."""
+    """P4.1: Convergence creates unified artifact from handoff contracts."""
 
     def test_single_domain_passthrough(self):
         node = _build_convergence()
         state = {
             "messages": [HumanMessage(content="test")],
-            "subagent_summaries": [
-                {"domain": "väder", "summary": "Soligt", "key_facts": ["sol"], "data_quality": "high"}
-            ],
+            "subagent_summaries": [{
+                "domain": "väder",
+                "subagent_id": "sa-mini_väder-abc123",
+                "summary": "Soligt",
+                "findings": ["sol"],
+                "status": "success",
+                "confidence": 0.8,
+            }],
         }
         result = asyncio.get_event_loop().run_until_complete(node(state))
         cs = result["convergence_status"]
         assert cs["source_domains"] == ["väder"]
         assert cs["overlap_score"] == 0.0
         assert "Soligt" in cs["merged_summary"]
+        assert cs["subagent_ids"] == ["sa-mini_väder-abc123"]
 
     def test_multi_domain_merge(self):
         node = _build_convergence()
         state = {
             "messages": [HumanMessage(content="test")],
             "subagent_summaries": [
-                {"domain": "väder", "summary": "Soligt", "key_facts": ["sol"], "data_quality": "high"},
-                {"domain": "statistik", "summary": "500k invånare", "key_facts": ["500k"], "data_quality": "high"},
+                {"domain": "väder", "subagent_id": "sa-1", "summary": "Soligt",
+                 "findings": ["sol"], "status": "success", "confidence": 0.8},
+                {"domain": "statistik", "subagent_id": "sa-2", "summary": "500k",
+                 "findings": ["500k"], "status": "success", "confidence": 0.7},
             ],
         }
         result = asyncio.get_event_loop().run_until_complete(node(state))
@@ -326,6 +487,8 @@ class TestConvergenceNodeMergesResults:
         assert len(cs["source_domains"]) == 2
         assert "väder" in cs["source_domains"]
         assert "statistik" in cs["source_domains"]
+        assert cs["subagent_ids"] == ["sa-1", "sa-2"]
+        assert cs["domain_statuses"]["väder"] == "success"
 
 
 class TestPerDomainCheckpointerIsolation:
@@ -356,7 +519,8 @@ class TestCommandPatternHandoff:
     """P4.1b: Spawned domains tracking works."""
 
     def test_spawner_tracks_domains(self):
-        node = _build_spawner()
+        pool = _make_mock_worker_pool()
+        node = _build_spawner(worker_pool=pool)
         state = {
             "messages": [HumanMessage(content="väder och statistik")],
             "domain_plans": {
@@ -372,23 +536,27 @@ class TestCommandPatternHandoff:
         assert "statistik" in result["micro_plans"]
 
 
-class TestSubagentSummarizationTokenBudget:
-    """P4.1c: Mini-synthesizer produces compact output."""
+class TestSubagentSummariesContainHandoffFields:
+    """P4.1c: Subagent summaries contain handoff contract fields."""
 
-    def test_summary_in_output(self):
-        node = _build_spawner()
+    def test_summary_has_handoff_fields(self):
+        pool = _make_mock_worker_pool()
+        node = _build_spawner(worker_pool=pool)
         state = {
             "messages": [HumanMessage(content="test")],
-            "domain_plans": {
-                "väder": {"tools": ["smhi"], "rationale": "test"},
-            },
+            "domain_plans": {"väder": {"tools": ["smhi"], "rationale": "test"}},
             "total_steps": 0,
         }
         result = asyncio.get_event_loop().run_until_complete(node(state))
         summaries = result["subagent_summaries"]
         assert len(summaries) == 1
-        assert summaries[0]["domain"] == "väder"
-        assert "summary" in summaries[0]
+        s = summaries[0]
+        assert s["domain"] == "väder"
+        assert "subagent_id" in s
+        assert "summary" in s
+        assert "status" in s
+        assert "confidence" in s
+        assert "findings" in s
 
 
 class TestPevVerifyNode:
@@ -411,22 +579,17 @@ class TestAdaptiveThresholdByStep:
     """P4.2: Thresholds decrease with retries."""
 
     def test_confidence_drops_with_retries(self):
-        ms = MiniGraphState(domain="test", task="test", tools=["t"])
-
         # At retry 0: confidence should be 0.7
-        ms.retry_count = 0
-        conf_0 = max(0.3, 0.7 - (ms.retry_count * 0.15))
+        conf_0 = max(0.3, 0.7 - (0 * 0.15))
         assert conf_0 == 0.7
 
         # At retry 1: confidence should drop
-        ms.retry_count = 1
-        conf_1 = max(0.3, 0.7 - (ms.retry_count * 0.15))
+        conf_1 = max(0.3, 0.7 - (1 * 0.15))
         assert abs(conf_1 - 0.55) < 1e-9
         assert conf_1 < conf_0
 
         # At retry 2: confidence drops further
-        ms.retry_count = 2
-        conf_2 = max(0.3, 0.7 - (ms.retry_count * 0.15))
+        conf_2 = max(0.3, 0.7 - (2 * 0.15))
         assert abs(conf_2 - 0.4) < 1e-9
         assert conf_2 < conf_1
 
@@ -435,16 +598,61 @@ class TestAdaptiveLimitsPerDomain:
     """P4.2a: Per-domain max_steps with force_synthesis."""
 
     def test_force_synthesis_after_max_retries(self):
-        ms = MiniGraphState(domain="test", task="test", tools=["t"])
-        ms.retry_count = 3  # > MAX_MINI_RETRIES (2)
-        force = ms.retry_count >= _mini_graph_mod._MAX_MINI_RETRIES
+        force = 3 >= _mini_graph_mod._MAX_MINI_RETRIES
         assert force is True
 
     def test_no_force_before_limit(self):
-        ms = MiniGraphState(domain="test", task="test", tools=["t"])
-        ms.retry_count = 1
-        force = ms.retry_count >= _mini_graph_mod._MAX_MINI_RETRIES
+        force = 1 >= _mini_graph_mod._MAX_MINI_RETRIES
         assert force is False
+
+
+class TestAdaptiveGuardRetryCycle:
+    """P4.2: Critic 'needs_more' triggers retry with feedback."""
+
+    def test_retry_invokes_worker_again(self):
+        """When critic says needs_more, worker is invoked again."""
+        invoke_count = {"n": 0}
+
+        async def _counted_invoke(state, config=None, **kw):
+            invoke_count["n"] += 1
+            return {"messages": [AIMessage(content=f"attempt {invoke_count['n']}")]}
+
+        worker = AsyncMock()
+        worker.ainvoke = AsyncMock(side_effect=_counted_invoke)
+        pool = _make_mock_worker_pool({"väder": worker})
+
+        # LLM: planner → critic(needs_more) → critic(ok)
+        call_count = {"n": 0}
+
+        async def _llm_invoke(msgs, **kwargs):
+            call_count["n"] += 1
+            n = call_count["n"]
+            if n == 1:  # planner
+                return _make_llm_response(json.dumps({
+                    "steps": [{"action": "hämta", "tool_id": "smhi"}]
+                }))
+            elif n == 2:  # first critic → needs_more
+                return _make_llm_response(json.dumps({
+                    "decision": "needs_more", "feedback": "behöver mer data"
+                }))
+            else:  # second critic → ok
+                return _make_llm_response(json.dumps({
+                    "decision": "ok", "feedback": ""
+                }))
+
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(side_effect=_llm_invoke)
+
+        node = _build_spawner(llm=llm, worker_pool=pool)
+        state = {
+            "messages": [HumanMessage(content="väder")],
+            "domain_plans": {"väder": {"tools": ["smhi"], "rationale": "v"}},
+            "total_steps": 0,
+        }
+        asyncio.get_event_loop().run_until_complete(node(state))
+
+        # Worker should be invoked twice (initial + 1 retry)
+        assert invoke_count["n"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -469,14 +677,6 @@ class TestSemanticCacheHit:
         assert key1 != key2
 
 
-class TestSemanticCacheMissFallback:
-    """P4.3: Cache miss falls through to normal execution."""
-
-    def test_no_cache_hit_by_default(self):
-        ms = MiniGraphState(domain="test", task="test", tools=["t"])
-        assert ms.cache_hit is False
-
-
 # ---------------------------------------------------------------------------
 # P4.1 — Parallel Execution
 # ---------------------------------------------------------------------------
@@ -492,6 +692,7 @@ class TestParallelSubagentsExecution:
         result = asyncio.get_event_loop().run_until_complete(node(state))
         assert result["spawned_domains"] == []
         assert result["subagent_summaries"] == []
+        assert result["subagent_handoffs"] == []
 
     def test_spawner_none_domain_plans(self):
         node = _build_spawner()
@@ -503,7 +704,8 @@ class TestParallelSubagentsExecution:
         assert result["spawned_domains"] == []
 
     def test_three_domains_parallel(self):
-        node = _build_spawner()
+        pool = _make_mock_worker_pool()
+        node = _build_spawner(worker_pool=pool)
         state = {
             "messages": [HumanMessage(content="tre domäner")],
             "domain_plans": {
@@ -516,6 +718,48 @@ class TestParallelSubagentsExecution:
         result = asyncio.get_event_loop().run_until_complete(node(state))
         assert len(result["spawned_domains"]) == 3
         assert len(result["subagent_summaries"]) == 3
+        assert len(result["subagent_handoffs"]) == 3
+
+    def test_worker_timeout_handled_gracefully(self):
+        """Timeout on one domain should not crash other domains."""
+        async def _timeout_invoke(state, config=None, **kw):
+            raise asyncio.TimeoutError()
+
+        timeout_worker = AsyncMock()
+        timeout_worker.ainvoke = AsyncMock(side_effect=_timeout_invoke)
+        ok_worker = _make_mock_worker("ok resultat")
+        pool = _make_mock_worker_pool({"väder": timeout_worker, "statistik": ok_worker})
+
+        node = _build_spawner(worker_pool=pool)
+        state = {
+            "messages": [HumanMessage(content="test")],
+            "domain_plans": {
+                "väder": {"tools": ["smhi"], "rationale": "v"},
+                "statistik": {"tools": ["scb"], "rationale": "s"},
+            },
+            "total_steps": 0,
+        }
+        result = asyncio.get_event_loop().run_until_complete(node(state))
+        # Both should complete (väder with error, statistik ok)
+        assert len(result["spawned_domains"]) == 2
+        handoffs = result["subagent_handoffs"]
+        assert len(handoffs) == 2
+
+    def test_worker_pool_get_called_per_domain(self):
+        """Worker pool .get() should be called for each domain."""
+        pool = _make_mock_worker_pool()
+        node = _build_spawner(worker_pool=pool)
+        state = {
+            "messages": [HumanMessage(content="test")],
+            "domain_plans": {
+                "väder": {"tools": ["smhi"], "rationale": "a"},
+                "statistik": {"tools": ["scb"], "rationale": "b"},
+            },
+            "total_steps": 0,
+        }
+        asyncio.get_event_loop().run_until_complete(node(state))
+        # pool.get should have been called for each domain
+        assert pool.get.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +802,6 @@ class TestP4PromptRegistryCompleteness:
     def test_p4_keys_in_template_tuple(self):
         registry_path = _PROJECT_ROOT / "app/agents/new_chat/prompt_registry.py"
         content = registry_path.read_text()
-        # Check they're in the ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS tuple
         template_section = content.split("ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS")[1].split(")")[0]
         for key in self._P4_PROMPT_KEYS:
             assert f'"{key}"' in template_section, f"Missing in template tuple: {key}"
@@ -591,7 +834,6 @@ class TestP4StudioNodeGroupMapping:
         studio_path = _PROJECT_ROOT / "app/langgraph_studio.py"
         content = studio_path.read_text()
         assert '"subagent_mini"' in content
-        # Should be in _GRAPH_RELEVANT_PROMPT_GROUPS
         assert "subagent_mini" in content
 
 
@@ -626,7 +868,6 @@ class TestP4PipelineEdgesConnected:
     def test_subagent_edges_exist(self):
         routes_path = _PROJECT_ROOT / "app/routes/admin_flow_graph_routes.py"
         content = routes_path.read_text()
-        # Key edges
         assert '"node:subagent_spawner"' in content
         assert '"node:mini_planner"' in content
         assert '"node:convergence_node"' in content
@@ -644,10 +885,8 @@ class TestP4AdminFlowGraphEndpoint:
     """P4.5c: /admin/flow-graph would return P4 nodes."""
 
     def test_p4_nodes_in_pipeline_nodes_list(self):
-        # We verify the _PIPELINE_NODES list by parsing the file
         routes_path = _PROJECT_ROOT / "app/routes/admin_flow_graph_routes.py"
         content = routes_path.read_text()
-        # Count P4 nodes (stage = "subagent")
         subagent_count = content.count('"stage": "subagent"')
         assert subagent_count == 9, f"Expected 9 subagent-stage nodes, got {subagent_count}"
 
@@ -662,7 +901,6 @@ class TestP4NoLooseEnds:
         """Mini-graph prompts map to subagent_mini group."""
         registry_path = _PROJECT_ROOT / "app/agents/new_chat/prompt_registry.py"
         content = registry_path.read_text()
-        # The infer function should handle supervisor.mini_* → subagent_mini
         assert "supervisor.mini_" in content
         assert "subagent_mini" in content
 
@@ -701,9 +939,11 @@ class TestP4NoLooseEnds:
         node = _build_convergence()
         state = {
             "messages": [HumanMessage(content="test")],
-            "subagent_summaries": [
-                {"domain": "väder", "summary": "Sol", "key_facts": [], "data_quality": "high"},
-            ],
+            "subagent_summaries": [{
+                "domain": "väder", "subagent_id": "sa-1",
+                "summary": "Sol", "findings": [], "status": "success",
+                "confidence": 0.8,
+            }],
             "total_steps": 5,
         }
         result = asyncio.get_event_loop().run_until_complete(node(state))
@@ -711,7 +951,8 @@ class TestP4NoLooseEnds:
 
     def test_spawner_node_increments_total_steps(self):
         """Spawner node increments total_steps."""
-        node = _build_spawner()
+        pool = _make_mock_worker_pool()
+        node = _build_spawner(worker_pool=pool)
         state = {
             "messages": [HumanMessage(content="test")],
             "domain_plans": {"väder": {"tools": ["smhi"], "rationale": "test"}},
@@ -719,3 +960,28 @@ class TestP4NoLooseEnds:
         }
         result = asyncio.get_event_loop().run_until_complete(node(state))
         assert result.get("total_steps") == 4
+
+    def test_spawner_isolation_disabled_skips_sandbox_fields(self):
+        """When isolation is disabled, worker state has no sandbox fields."""
+        captured_states = []
+
+        async def _capture_invoke(state, config=None, **kw):
+            captured_states.append(dict(state))
+            return {"messages": [AIMessage(content="ok")]}
+
+        worker = AsyncMock()
+        worker.ainvoke = AsyncMock(side_effect=_capture_invoke)
+        pool = _make_mock_worker_pool({"väder": worker})
+
+        node = _build_spawner(worker_pool=pool, subagent_isolation_enabled=False)
+        state = {
+            "messages": [HumanMessage(content="test")],
+            "domain_plans": {"väder": {"tools": ["smhi"], "rationale": "t"}},
+            "total_steps": 0,
+        }
+        asyncio.get_event_loop().run_until_complete(node(state))
+
+        assert len(captured_states) == 1
+        ws = captured_states[0]
+        assert "sandbox_scope_mode" not in ws
+        assert "sandbox_scope_id" not in ws
