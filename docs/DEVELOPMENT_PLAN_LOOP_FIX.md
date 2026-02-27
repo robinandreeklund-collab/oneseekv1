@@ -1254,72 +1254,99 @@ tests/test_multi_query_decomposer.py: 11 passed (0.29s)
 
 ---
 
-## Sprint P4 — Arkitekturell Evolution (Framtida)
+### Sprint P4 – Arkitekturell Evolution (Framtida)
 
-> **Status:** [ ] Planeras
-> **Mål:** Subagent mini-graphs, convergence
-> **Källa:** Issue #44
-> **Not:** Pydantic structured output (tidigare P4.2) har flyttats till **P1 Extra**.
+**Mål:**
+  Göra systemet **loop-immun på arkitekturnivå** genom att utnyttja LangGraph's inbyggda primitives + 2026-best-practices. Bygga vidare på befintliga subagenter, state-machine, idempotent final_response, CriticVeto och mock-env så att varje domän är helt isolerad, självhelande och kostnadseffektiv.
 
-### P4.1 — Subagent Mini-Graphs
+**Tid:** 5–7 dagar
+**Status:** Ej påbörjad (bygger på existerande subagent-omnämnanden)
 
-**Vad:** Varje subagent (kunskap, statistik, trafik, etc.) får en egen isolerad
-mini-LangGraph med:
-- Mini-planner (optional)
-- Mini-executor med scoped tools
-- Mini-critic
-- Mini-synthesizer
+#### Implementation Roadmap (utökning av befintligt)
 
-**State-tillägg:**
+**7. Förbättra befintliga subagenter med per-domain checkpointer**
+Varje subagent (statistik, väder, trafik etc.) får egen persistence – loops kan aldrig spilla över mellan domäner.
+
 ```python
-micro_plans: dict[str, list[dict]]  # subagent_id → [step1, step2...]
-convergence_status: dict             # {"merged_fields": [...], "overlap_score": 0.92}
+# I supervisor_agent.py
+def create_domain_subgraph(domain: str):
+    subgraph = StateGraph(DomainState).compile(
+        checkpointer=PostgresSaver.from_conn_string(f"{DB_URI}?application_name=oneseek-{domain}"),
+        interrupt_before=["critic"]  # behåll CriticVeto
+    )
+    return subgraph
+
+supervisor_builder.add_subgraph("statistics", create_domain_subgraph("statistics"))
 ```
 
-**Nya filer:**
-- `surfsense_backend/app/agents/new_chat/nodes/subagent_mini_graph.py`
-- `surfsense_backend/app/agents/new_chat/nodes/convergence_node.py`
+**8. Command-pattern för ren cross-subgraph-handoff**
+Använd Command för att skicka mellan parent/subagent utan conditional edges (bygger på era befintliga subagenter).
 
-**Grafändring:**
+```python
+from langgraph.types import Command
+
+def subagent_router(state: SupervisorState) -> Command:
+    if state["current_domain"] == "statistics":
+        return Command(
+            graph="statistics",  # befintlig subagent
+            update={"resolved_fields": {...}},
+            goto="critic" if not sufficient else END
+        )
+    return Command(goto=END)
 ```
-domain_planner → subagent_spawner → [SubagentMiniGraph x N parallellt]
-                                     → convergence_node → critic
+
+**9. Automatic summarization inuti varje subagent**
+Lägg till i varje subagent-graph (efter 8–10 messages):
+
+```python
+from langgraph.managed import Summarizer
+
+def summary_node(state):
+    return {"messages": Summarizer(model="claude-3-5-sonnet-20241022").summarize(state["messages"])}
 ```
 
-**Fördelar:**
-- Isolerat state per subagent (ingen korsförorening)
-- Max 4-6 calls per subagent (begränsar looping)
-- Parallell exekvering av oberoende subagenter
-- Varje subagent har egen critic (snabbare feedback)
+**10. Semantic Tool Caching per subagent**
+Redis/LangGraph Store med namespace per subagent (t.ex. `cache:scb:goteborg:2023`).
 
-**Risker:**
-- Streaming-pipelinen måste hantera nested graphs
-- Frontend FadeLayer måste anpassas för per-subagent reasoning
-- Checkpointer-hantering för nested graphs
-- Stor omskrivning: ~500-800 rader ny kod
+```python
+# I tool-wrapper för SCB
+cache_key = f"cache:{domain}:{fingerprint(query)}"
+if hit := store.get(cache_key):
+    return Command(update={"tool_output": hit}, goto=END)
+```
 
-### ~~P4.2 — Pydantic Structured Output~~ → Flyttad till **P1 Extra**
+**11. Adaptive limits per subagent via ProgressTracker**
+Utöka er befintliga ProgressTracker:
 
-> Denna uppgift täcks nu helt av Sprint P1 Extra (P1-Extra.1 — P1-Extra.8).
-> Se [Sprint P1 Extra](#sprint-p1-extra--strukturerad-output-json-schema).
+```python
+def adaptive_subagent_guard(state):
+    tracker = state["progress_tracker"]
+    if tracker.steps > domain_max_steps.get(state["current_domain"], 6):
+        return Command(update={"final_response_locked": True}, goto=END)
+    return Command(goto="critic")  # behåll CriticVeto
+```
 
-### P4.2 — Adaptive Everything (omnumrerad från P4.3)
+**12. PEV-pattern som valfritt inner-subgraph**
+Ersätt critic i subagenter med Plan-Execute-Verify (valfritt).
 
-**Vad:** Alla trösklar blir dynamiska baserat på flödets progress:
-- Confidence threshold: sjunker från 0.7 → 0.4 med steg
-- Max tool calls per subagent: sjunker från 6 → 3 med steg
-- Synthesis aggressivitet: ökar med steg (mer merge, mer komprimering)
+```python
+pev_subgraph = StateGraph(PEVState).add_node("verify", verify_node).compile()
+supervisor_builder.add_subgraph("pev", pev_subgraph)  # kan användas inuti befintliga subagenter
+```
 
-### P4.4 — Tester för Sprint P4
+#### Utökade Success Criteria
 
-| Test | Testar |
-|------|--------|
-| `test_subagent_mini_graph_isolation` | Subagent state läcker inte till parent |
-| `test_subagent_max_calls_per_agent` | Max 4-6 calls per mini-graph |
-| `test_convergence_node_merges_results` | Convergence skapar unified artifact |
-| `test_pydantic_critic_decision_parsing` | Structured output parsning |
-| `test_adaptive_threshold_by_step` | Trösklar sjunker med steg |
-| `test_parallel_subagents_execution` | Oberoende subagenter körs parallellt |
+* Varje subagent har egen checkpointer → 0 cross-domain loop-spill
+* Historik per subagent max 6k tokens (summarization)
+* Cache hit-rate > 70 % på repetitiva domäner (SCB, SMHI)
+* 100 % av 30 loop-prone queries → final answer inom 6 steps
+* Full time-travel + human-in-the-loop fungerar per subagent
+
+#### Risker & Mitigation (utökad)
+
+* **Risk:** För många checkpointers → **Mitigation:** Shared connection pool + prune_policy
+* **Risk:** Subgraph-komplexitet → **Mitigation:** Börja med 3 domäner, använd befintliga subagent-komponenter
+* **Risk:** Command vs legacy edges → **Mitigation:** Gradvis migration, behåll conditional edges som fallback
 
 ---
 
@@ -1362,7 +1389,7 @@ P1-specifikt:
 ```
 resolve_intent → memory_context → [CONDITIONAL: route_after_intent]
 ├→ smalltalk → END
-├→ speculative → agent_resolver
+├→ (complex) multi_query_decomposer → speculative → agent_resolver
 ├→ agent_resolver → planner → planner_hitl_gate
 │                                ├→ tool_resolver
 │                                └→ END
@@ -1390,32 +1417,33 @@ synthesis_hitl → [progressive_synthesizer →] synthesizer
 
 | Fil | Sprint |
 |-----|--------|
-| `app/agents/new_chat/supervisor_types.py` | P1 |
+| `app/agents/new_chat/supervisor_types.py` | P1, P3 |
 | `app/agents/new_chat/supervisor_constants.py` | P1, P2 |
-| `app/agents/new_chat/supervisor_agent.py` | P1, P2 |
+| `app/agents/new_chat/supervisor_agent.py` | P1, P2, P3 |
 | `app/agents/new_chat/complete_graph.py` | P1 |
 | `app/agents/new_chat/nodes/critic.py` | P1, P1 Extra |
 | `app/agents/new_chat/nodes/smart_critic.py` | P1 |
-| `app/agents/new_chat/nodes/executor.py` | P1 |
+| `app/agents/new_chat/nodes/executor.py` | P1, P3 |
 | `app/agents/new_chat/system_prompt.py` | P1, P1 Extra |
-| `app/tasks/chat/stream_new_chat.py` | P1, P1 Extra, P2 |
-| `app/langgraph_studio.py` | P2 |
-| `app/agents/new_chat/structured_schemas.py` | **P1 Extra (ny)** |
+| `app/tasks/chat/stream_new_chat.py` | P1, P1 Extra, P2, P3 |
+| `app/langgraph_studio.py` | P2, P3 |
+| `app/agents/new_chat/structured_schemas.py` | **P1 Extra (ny)**, P3 |
 | `app/agents/new_chat/incremental_json_parser.py` | **P1 Extra (ny)** |
 | `app/agents/new_chat/nodes/intent.py` | P1 Extra |
 | `app/agents/new_chat/nodes/agent_resolver.py` | P1 Extra |
-| `app/agents/new_chat/nodes/planner.py` | P1 Extra |
+| `app/agents/new_chat/nodes/planner.py` | P1 Extra, P3 |
 | `app/agents/new_chat/nodes/synthesizer.py` | P1 Extra |
 | `app/agents/new_chat/nodes/response_layer.py` | P1 Extra |
-| `app/agents/new_chat/supervisor_pipeline_prompts.py` | P1 Extra |
+| `app/agents/new_chat/supervisor_pipeline_prompts.py` | P1 Extra, P3 |
+| `app/agents/new_chat/prompt_registry.py` | P3 |
+| `app/routes/admin_flow_graph_routes.py` | P3 |
 | `tests/test_structured_output.py` | **P1 Extra (ny)** |
 | `surfsense_web/.../new-chat-page.tsx` | P1 Extra |
 | `surfsense_web/.../thinking-steps.tsx` | P1 Extra |
 | `surfsense_web/.../structured-stream-viewer.tsx` | **P1 Extra (ny)** |
 | `surfsense_web/lib/message-utils.ts` | P1 Extra |
-| `app/agents/new_chat/nodes/multi_query_decomposer.py` | P3 (ny) |
-| `app/agents/new_chat/nodes/subagent_mini_graph.py` | P4 (ny) |
-| `app/agents/new_chat/nodes/convergence_node.py` | P4 (ny) |
-| `tests/test_loop_fix_p1.py` | P1 (ny) |
-| `tests/test_loop_fix_p2.py` | P2 (ny) |
-| `tests/test_multi_query_decomposer.py` | P3 (ny) |
+| `app/agents/new_chat/nodes/multi_query_decomposer.py` | **P3 (ny)** |
+| `app/agents/new_chat/nodes/__init__.py` | P3 |
+| `tests/test_loop_fix_p1.py` | **P1 (ny)** |
+| `tests/test_loop_fix_p2.py` | **P2 (ny)** |
+| `tests/test_multi_query_decomposer.py` | **P3 (ny)** |
