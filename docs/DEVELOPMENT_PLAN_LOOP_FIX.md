@@ -3,7 +3,7 @@
 > **Startdatum:** 2026-02-26
 > **Branch:** `claude/debug-longgraph-loop-TCV0N`
 > **Issue:** #44 (Loop issues)
-> **Status:** Sprint P1 — **KLAR** ✓ | Sprint P1 Extra — **KLAR** ✓ (väntar E2E-testning)
+> **Status:** Sprint P1 — **KLAR** ✓ | Sprint P1 Extra — **KLAR** ✓ (väntar E2E-testning) | Sprint P2 — **KLAR** ✓
 
 ---
 
@@ -38,7 +38,7 @@ som gör att frågor tar onödigt lång tid och ibland aldrig når response_laye
 |--------|----------|----------|-------------|--------|
 | **P1** | Kritisk | Loop-fix, response layer, think-toggle | BUG 1-3, 5-8 | **KLAR** |
 | **P1 Extra** | Hög | Strukturerad output (JSON Schema) för alla noder + streaming | Kvalitet, parsning, determinism | **KLAR** (väntar E2E) |
-| **P2** | Hög | Studio, konfigurerbara guards | BUG 4, 9-12 | Ej påbörjad |
+| **P2** | Hög | Studio, konfigurerbara guards | BUG 4, 9-12 | **KLAR** |
 | **P3** | Medel | Multi-query decomposer | Ny funktionalitet | Ej påbörjad |
 | **P4** | Framtida | Subagent mini-graphs, convergence | Arkitekturell omskrivning | Planeras |
 
@@ -1108,7 +1108,7 @@ P1-Extra.8 (Tester)                     ← Sist, verifierar allt
 
 ## Sprint P2 — Studio & Konfiguration
 
-> **Status:** [ ] Ej påbörjad
+> **Status:** [x] **KLAR** (2026-02-27)
 > **Mål:** Full Studio-integration, konfigurerbara guards
 
 ### P2.1 — Uppdatera LangGraph Studio nod-mappning
