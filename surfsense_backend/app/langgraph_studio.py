@@ -110,14 +110,26 @@ _PROMPT_NODE_GROUP_TO_GRAPH_NODES: dict[str, list[str]] = {
         "response_layer_router",
         "response_layer",
         "smalltalk",
+        # P4 — Subagent orchestration nodes
+        "subagent_spawner",
+        "convergence_node",
+        "adaptive_guard",
     ],
     "subagent": ["executor"],
+    # P4 — Subagent mini-graph internal nodes
+    "subagent_mini": [
+        "mini_planner",
+        "mini_executor",
+        "mini_critic",
+        "mini_synthesizer",
+        "pev_verify",
+    ],
     "compare": ["compare_fan_out", "compare_synthesizer"],
     "system": ["executor", "context_compactor", "artifact_indexer"],
     "speculative": ["speculative", "speculative_merge"],
     "other": ["executor"],
 }
-_GRAPH_RELEVANT_PROMPT_GROUPS = {"router", "supervisor", "subagent", "compare", "system"}
+_GRAPH_RELEVANT_PROMPT_GROUPS = {"router", "supervisor", "subagent", "subagent_mini", "compare", "system"}
 _PROMPT_KEY_FIELD_NAME_OVERRIDES: dict[str, str] = {
     "agent.supervisor.system": "prompt_supervisor_system",
     "agent.knowledge.system": "prompt_knowledge_system",
