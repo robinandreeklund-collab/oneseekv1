@@ -207,20 +207,64 @@ const FollowUpSuggestions: FC = () => {
 	);
 };
 
+// ---------------------------------------------------------------------------
+// Compare-mode grid layout helpers
+// ---------------------------------------------------------------------------
+
+const COMPARE_TOOL_NAMES = new Set([
+	"call_grok",
+	"call_claude",
+	"call_gpt",
+	"call_gemini",
+	"call_deepseek",
+	"call_perplexity",
+	"call_qwen",
+	"call_oneseek",
+]);
+
+/** Wrapper that forces text parts to span all grid columns in compare mode. */
+const CompareMarkdownText: FC = (props) => (
+	<div className="col-span-full">
+		<MarkdownText {...props} />
+	</div>
+);
+
 const AssistantMessageInner: FC = () => {
+	const isCompare = useAssistantState(({ message }) => {
+		if (!message || message.role !== "assistant") return false;
+		const content = message.content;
+		if (!Array.isArray(content)) return false;
+		return content.some(
+			(part: { type: string; toolName?: string }) =>
+				part.type === "tool-call" && COMPARE_TOOL_NAMES.has(part.toolName ?? ""),
+		);
+	});
+
 	return (
 		<>
 			{/* Unified fade layer: reasoning stream + thinking steps */}
 			<FadeLayerPart />
 
-			<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
+			<div
+				className={cn(
+					"aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed",
+					isCompare &&
+						"grid gap-3 sm:grid-cols-2 lg:grid-cols-3 [&>*]:my-0",
+				)}
+			>
 				<MessagePrimitive.Parts
 					components={{
-						Text: MarkdownText,
+						Text: isCompare ? CompareMarkdownText : MarkdownText,
 						tools: { Fallback: ToolFallback },
 					}}
 				/>
-				<MessageError />
+				{isCompare ? (
+					<div className="col-span-full">
+						<MessageError />
+					</div>
+				) : (
+					<MessageError />
+				)}
 			</div>
 			<FollowUpSuggestions />
 
