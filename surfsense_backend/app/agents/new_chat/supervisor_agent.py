@@ -327,8 +327,11 @@ from app.agents.new_chat.supervisor_memory import (
 
 
 
-_MAX_TOOL_CALLS_PER_TURN = 12
+_MAX_TOOL_CALLS_PER_TURN = 8
 _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
+# If the same direct tool (e.g. scb_befolkning, smhi_vaderprognoser_metfcst)
+# is called this many times consecutively, force finalization.
+_MAX_CONSECUTIVE_SAME_TOOL = 2
 _MAX_REPLAN_ATTEMPTS = 2
 
 
@@ -1530,6 +1533,37 @@ def _count_consecutive_loop_tools(messages: list[Any], *, turn_id: str | None = 
             continue
         break
     return count
+
+
+def _count_consecutive_same_direct_tool(messages: list[Any]) -> tuple[int, str]:
+    """Count consecutive calls to the same *direct* tool since the last HumanMessage.
+
+    Returns (count, tool_name).  For example if the last 3 ToolMessage results
+    are all from ``scb_befolkning``, returns ``(3, "scb_befolkning")``.
+
+    Only counts non-agent tools (i.e. not ``call_agent``, ``retrieve_agents``,
+    ``reflect_on_progress``, ``write_todos``).  These have their own guards.
+    """
+    skip = {"call_agent", "retrieve_agents", "reflect_on_progress", "write_todos"}
+    tool_call_index = _tool_call_name_index(messages)
+    last_name: str = ""
+    count = 0
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        if not isinstance(message, ToolMessage):
+            continue
+        name = _resolve_tool_message_name(message, tool_call_index=tool_call_index)
+        if name in skip:
+            # Agent-level calls are guarded separately.
+            break
+        if not last_name:
+            last_name = name
+        if name == last_name:
+            count += 1
+        else:
+            break
+    return count, last_name
 
 
 def _summarize_tool_payload(tool_name: str, payload: dict[str, Any]) -> str:
@@ -6298,6 +6332,47 @@ async def create_supervisor_agent(
                 and "final_agent_response" not in updates
             ):
                 updates["plan_complete"] = False
+
+        # Guard: detect repeated calls to the same direct tool (e.g. scb_befolkning
+        # or smhi_vaderprognoser_metfcst called 2+ times in a row without progress).
+        if "final_agent_response" not in updates:
+            same_tool_count, same_tool_name = _count_consecutive_same_direct_tool(
+                state.get("messages") or []
+            )
+            if same_tool_count >= _MAX_CONSECUTIVE_SAME_TOOL:
+                # Try to use the last tool result as the final response
+                last_tool_response = ""
+                for message in reversed(messages):
+                    if isinstance(message, HumanMessage):
+                        break
+                    if isinstance(message, ToolMessage):
+                        content = str(getattr(message, "content", "") or "")
+                        parsed = _safe_json(content)
+                        if isinstance(parsed, dict):
+                            last_tool_response = _strip_critic_json(
+                                str(parsed.get("summary") or parsed.get("response") or content)
+                            ).strip()
+                        else:
+                            last_tool_response = _strip_critic_json(content).strip()
+                        break
+                if last_tool_response:
+                    updates["final_agent_response"] = last_tool_response
+                    updates["final_response"] = last_tool_response
+                    updates["final_agent_name"] = same_tool_name or "agent"
+                else:
+                    rendered = _render_guard_message(
+                        loop_guard_template, parallel_preview
+                    )
+                    if not rendered:
+                        rendered = _render_guard_message(
+                            DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE, parallel_preview
+                        )
+                    updates["final_agent_response"] = rendered
+                    updates["final_response"] = rendered
+                    updates["final_agent_name"] = "supervisor"
+                updates["plan_complete"] = True
+                updates["orchestration_phase"] = "finalize"
+                updates["guard_finalized"] = True
 
         # Fallback safety: avoid endless supervisor loops on repeated retrieval/delegation tools.
         if "final_agent_response" not in updates:
