@@ -11,6 +11,7 @@ Supports loading LLM configurations from:
 
 import ast
 import json
+import os
 import re
 import uuid
 from collections.abc import AsyncGenerator
@@ -830,16 +831,24 @@ _PIPELINE_JSON_KEYS = (
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
 _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "resolve_intent",
+    "memory_context",
     "speculative",
     "speculative_merge",
     "agent_resolver",
     "planner",
+    "planner_hitl_gate",
     "tool_resolver",
     "execution_router",
+    "domain_planner",
+    "execution_hitl_gate",
     "executor",
     "worker",
-    "domain_planner",
+    "post_tools",
+    "artifact_indexer",
+    "context_compactor",
+    "orchestration_guard",
     "critic",
+    "synthesis_hitl",
     "response_layer_router",
     # P1 loop-fix: synthesizer and progressive_synthesizer are now internal
     # so their text routes to FadeLayer (think-box) as reasoning-delta.
@@ -2470,7 +2479,7 @@ async def stream_new_chat(
 
         config = {
             "configurable": configurable,
-            "recursion_limit": 80,  # Increase from default 25 to allow more tool iterations
+            "recursion_limit": int(os.environ.get("LANGGRAPH_RECURSION_LIMIT", "80")),
         }
 
         # Start the message stream

@@ -96,15 +96,24 @@ _PROMPT_NODE_GROUP_TO_GRAPH_NODES: dict[str, list[str]] = {
     "router": ["resolve_intent"],
     "supervisor": [
         "resolve_intent",
+        "memory_context",
         "agent_resolver",
         "planner",
         "tool_resolver",
+        "execution_router",
+        "domain_planner",
+        "orchestration_guard",
         "critic",
+        "progressive_synthesizer",
         "synthesizer",
+        "response_layer_router",
+        "response_layer",
+        "smalltalk",
     ],
     "subagent": ["executor"],
     "compare": ["compare_fan_out", "compare_synthesizer"],
-    "system": ["executor"],
+    "system": ["executor", "context_compactor", "artifact_indexer"],
+    "speculative": ["speculative", "speculative_merge"],
     "other": ["executor"],
 }
 _GRAPH_RELEVANT_PROMPT_GROUPS = {"router", "supervisor", "subagent", "compare", "system"}
@@ -150,8 +159,8 @@ class StudioGraphConfigurationBase(BaseModel):
     checkpointer_mode: str = Field(default="memory", description="memory or postgres")
     checkpoint_ns: str | None = Field(default=None, description="Checkpoint namespace")
     recursion_limit: int = Field(
-        default=120,
-        description="Graph recursion limit for Studio runs (default 120).",
+        default=int(os.environ.get("LANGGRAPH_RECURSION_LIMIT", "80")),
+        description="Graph recursion limit (shared with prod via LANGGRAPH_RECURSION_LIMIT env).",
     )
     citation_instructions: bool | str | None = Field(
         default=False,
@@ -165,6 +174,22 @@ class StudioGraphConfigurationBase(BaseModel):
     runtime_hitl: dict[str, Any] | str | None = Field(
         default=None,
         description="Runtime HITL overrides (dict or JSON string)",
+    )
+    max_total_steps: int = Field(
+        default=int(os.environ.get("MAX_TOTAL_STEPS", "8")),
+        description="Hard cap on total meaningful graph steps before forcing synthesis.",
+    )
+    max_replan_attempts: int = Field(
+        default=int(os.environ.get("MAX_REPLAN_ATTEMPTS", "2")),
+        description="Max number of replans before forcing synthesis.",
+    )
+    max_agent_hops: int = Field(
+        default=int(os.environ.get("MAX_AGENT_HOPS", "3")),
+        description="Max agent hops per turn.",
+    )
+    max_tool_calls: int = Field(
+        default=int(os.environ.get("MAX_TOOL_CALLS", "12")),
+        description="Max tool calls per turn.",
     )
     prompt_overrides_json: str | None = Field(
         default=None,

@@ -5,6 +5,7 @@ import ast
 import json
 import hashlib
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -327,12 +328,12 @@ from app.agents.new_chat.supervisor_memory import (
 
 
 
-_MAX_TOOL_CALLS_PER_TURN = 8
+_MAX_TOOL_CALLS_PER_TURN = int(os.environ.get("MAX_TOOL_CALLS", "8"))
 _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
 # If the same direct tool (e.g. scb_befolkning, smhi_vaderprognoser_metfcst)
 # is called this many times consecutively, force finalization.
 _MAX_CONSECUTIVE_SAME_TOOL = 2
-_MAX_REPLAN_ATTEMPTS = 2
+_MAX_REPLAN_ATTEMPTS = int(os.environ.get("MAX_REPLAN_ATTEMPTS", "2"))
 
 
 
@@ -6250,18 +6251,16 @@ async def create_supervisor_agent(
         if call_entries:
             last_entry = call_entries[-1]
             last_agent = str(last_entry.get("agent") or "").strip().lower()
-            last_task = _normalize_task_for_fingerprint(
-                str(last_entry.get("task") or "")
-            )
-            last_fp = f"{last_agent}|{last_task}" if (last_agent or last_task) else ""
+            # P2.5: Fingerprint based on agent_name + route_hint instead of
+            # agent_name + task_text.  Minimal task variations (e.g.
+            # "invånare Göteborg 2023" vs "befolkning Göteborg 2023") no
+            # longer reset the counter — same agent + same route = no progress.
+            last_fp = f"{last_agent}|{route_hint}" if last_agent else ""
             if last_fp:
                 fp_count = 0
                 for entry in call_entries:
                     agent = str(entry.get("agent") or "").strip().lower()
-                    task_fp = _normalize_task_for_fingerprint(
-                        str(entry.get("task") or "")
-                    )
-                    if f"{agent}|{task_fp}" == last_fp:
+                    if f"{agent}|{route_hint}" == last_fp:
                         fp_count += 1
                 no_progress_runs = no_progress_runs + 1 if fp_count >= 2 else 0
             else:
