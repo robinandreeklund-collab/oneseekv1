@@ -3372,12 +3372,34 @@ async def stream_new_chat(
                             # into the global rolling think-box (reasoning-delta). ---
                             # P1 Extra: when structured output is enabled, use
                             # IncrementalSchemaParser instead of ThinkStreamFilter.
+                            # If the parser fails (model isn't producing JSON),
+                            # fall back to a per-node ThinkStreamFilter.
                             node_reasoning = ""
+                            _used_fallback_filter = False
                             if _structured_mode:
                                 sp = _structured_parsers.get(run_id)
                                 if sp:
                                     node_reasoning, _ = sp.feed(content)
-                            else:
+                                    # Detect non-JSON output: if buffer grows
+                                    # past 30 chars without extracting any
+                                    # thinking, the model isn't using structured
+                                    # output.  Switch to ThinkStreamFilter.
+                                    if (
+                                        not node_reasoning
+                                        and sp._last_thinking_len == 0
+                                        and len(sp._buffer) > 30
+                                    ):
+                                        _structured_parsers.pop(run_id, None)
+                                        accumulated_buf = sp._buffer
+                                        node_filter = _ThinkStreamFilter(
+                                            assume_think=_think_filter._assume_think,
+                                        )
+                                        internal_node_think_filters[run_id] = node_filter
+                                        # Feed entire accumulated buffer (includes
+                                        # current chunk); skip per-chunk feed below.
+                                        node_reasoning, _ = node_filter.feed(accumulated_buf)
+                                        _used_fallback_filter = True
+                            if not _used_fallback_filter and run_id not in _structured_parsers:
                                 node_filter = internal_node_think_filters.get(run_id)
                                 if node_filter:
                                     node_reasoning, _node_text = node_filter.feed(content)
@@ -3409,6 +3431,20 @@ async def stream_new_chat(
                         if _structured_mode and run_id in _structured_parsers:
                             sp = _structured_parsers[run_id]
                             reasoning_chunk, content, _ = sp.feed_all(content)
+                            # Detect non-JSON output: if buffer grows past 30
+                            # chars without extracting anything, the model isn't
+                            # producing structured JSON.  Fall back to
+                            # <think>-tag filtering for this model call.
+                            if (
+                                not reasoning_chunk
+                                and not content
+                                and sp._last_thinking_len == 0
+                                and sp._last_response_len == 0
+                                and len(sp._buffer) > 30
+                            ):
+                                _structured_parsers.pop(run_id, None)
+                                accumulated_buf = sp._buffer
+                                reasoning_chunk, content = _think_filter.feed(accumulated_buf)
                         else:
                             reasoning_chunk, content = _think_filter.feed(content)
 
