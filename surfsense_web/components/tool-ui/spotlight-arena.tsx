@@ -6,6 +6,7 @@ import {
 	ChevronDownIcon,
 	ClockIcon,
 	CoinsIcon,
+	InfoIcon,
 	LeafIcon,
 	ZapIcon,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 // ============================================================================
@@ -50,6 +52,8 @@ interface ModelScore {
 	korrekthet: number;
 }
 
+type ModelReasonings = Partial<Record<keyof ModelScore, string>>;
+
 interface ModelMeta {
 	provider: string;
 	model: string;
@@ -70,6 +74,7 @@ interface RankedModel {
 	displayName: string;
 	rank: number;
 	scores: ModelScore;
+	reasonings: ModelReasonings;
 	hasRealScores: boolean;
 	totalScore: number;
 	weightedScore: number;
@@ -425,9 +430,10 @@ const ScoreBar: FC<{
 	label: string;
 	value: number;
 	colorClass: string;
+	rationale?: string;
 	compact?: boolean;
 	animate?: boolean;
-}> = ({ label, value, colorClass, compact = false, animate = true }) => {
+}> = ({ label, value, colorClass, rationale, compact = false, animate = true }) => {
 	const barRef = useRef<HTMLDivElement>(null);
 	const [width, setWidth] = useState(animate ? 0 : value);
 
@@ -445,11 +451,27 @@ const ScoreBar: FC<{
 		<div className={cn("flex items-center", compact ? "gap-1" : "gap-2")}>
 			<span
 				className={cn(
-					"text-muted-foreground shrink-0 capitalize",
+					"text-muted-foreground shrink-0 capitalize flex items-center",
 					compact ? "text-[10px] w-16" : "text-xs w-20",
 				)}
 			>
 				{label}
+				{rationale && (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								className="ml-0.5 shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
+								aria-label={`Motivering för ${label}`}
+							>
+								<InfoIcon className={compact ? "size-2.5" : "size-3"} />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="top" className="max-w-xs pointer-events-auto">
+							<p className="text-xs">{rationale}</p>
+						</TooltipContent>
+					</Tooltip>
+				)}
 			</span>
 			<div
 				className={cn(
@@ -758,12 +780,13 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 
 					{/* Score bars */}
 					<div className="space-y-2 mt-3">
-						{SCORE_KEYS.map((key, i) => (
+						{SCORE_KEYS.map((key) => (
 							<ScoreBar
 								key={key}
 								label={key}
 								value={model.scores[key]}
 								colorClass={SCORE_COLORS[key]}
+								rationale={model.reasonings[key]}
 								animate={model.hasRealScores}
 							/>
 						))}
@@ -889,6 +912,7 @@ const RunnerUpCard: FC<{
 								label={key}
 								value={model.scores[key]}
 								colorClass={SCORE_COLORS[key]}
+								rationale={model.reasonings[key]}
 								compact
 								animate={model.hasRealScores}
 							/>
@@ -1142,6 +1166,10 @@ export const SpotlightArenaLayout: FC = () => {
 					computeFallbackScores(result, part.toolName);
 				const hasReal = !!(criterionScores || fullLiveScores || convergenceScores);
 
+				// Extract criterion reasonings (motivations for each score)
+				const reasonings: ModelReasonings =
+					(result?.criterion_reasonings as ModelReasonings) || {};
+
 				return {
 					toolName: part.toolName,
 					displayName:
@@ -1150,6 +1178,7 @@ export const SpotlightArenaLayout: FC = () => {
 						part.toolName,
 					rank: 0,
 					scores,
+					reasonings,
 					hasRealScores: hasReal,
 					totalScore: totalScore(scores),
 					weightedScore: weightedScore(scores),

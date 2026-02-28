@@ -1079,17 +1079,22 @@ def build_compare_synthesizer_node(
 
             # Compute confidence-weighted ranking for arena data
             all_model_scores = convergence.get("model_scores", {})
-            # Also collect scores from subagent summaries
+            all_model_reasonings: dict[str, dict[str, str]] = {}
+            # Also collect scores and reasonings from subagent summaries
             for s in subagent_summaries:
                 domain = s.get("domain", "unknown")
                 cs = s.get("criterion_scores", {})
                 if cs and domain not in all_model_scores:
                     all_model_scores[domain] = cs
+                cr = s.get("criterion_reasonings", {})
+                if cr and domain not in all_model_reasonings:
+                    all_model_reasonings[domain] = cr
             weighted_ranking = rank_models_by_weighted_score(all_model_scores)
 
             # Build arena_data: merge backend scores with LLM-generated analysis
             arena_data: dict[str, Any] = {
                 "model_scores": all_model_scores,
+                "model_reasonings": all_model_reasonings,
                 "weighted_ranking": weighted_ranking,
                 "criterion_weights": CRITERION_WEIGHTS,
                 "agreements": convergence.get("agreements", []),
