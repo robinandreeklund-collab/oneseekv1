@@ -124,6 +124,9 @@ def build_compare_subagent_spawner_node(
     call_external_model_fn: Any | None = None,
     tavily_search_fn: Any | None = None,
     execution_timeout_seconds: float = 90,
+    sandbox_enabled: bool = False,
+    sandbox_isolation_enabled: bool = False,
+    runtime_hitl_cfg: dict[str, Any] | None = None,
 ):
     """Build the compare-specific subagent spawner.
 
@@ -137,10 +140,15 @@ def build_compare_subagent_spawner_node(
     - Mini-critic evaluation
     - Adaptive retry (max 1 for external models)
     - Proper handoff contract
+    - Sandbox scope isolation (when sandbox_isolation_enabled=True):
+      Each domain receives sandbox_scope_mode="subagent" and a unique
+      sandbox_scope_id, enabling per-model isolated execution environments
+      (Docker containers, K8s pods, or local workspaces).
     """
     _call_external = call_external_model_fn or call_external_model
     _max_retries_external = 1
     _max_retries_research = 2
+    _runtime_hitl = dict(runtime_hitl_cfg or {})
 
     async def _run_external_model_domain(
         domain: str,
@@ -223,6 +231,14 @@ def build_compare_subagent_spawner_node(
             except Exception as exc:
                 logger.warning("compare_executor[%s]: criterion eval failed: %s", domain, exc)
 
+        # Sandbox scope for this domain
+        scope_info: dict[str, Any] = {}
+        if sandbox_isolation_enabled and sandbox_enabled:
+            scope_info = {
+                "sandbox_scope_mode": "subagent",
+                "sandbox_scope_id": subagent_id,
+            }
+
         return {
             "domain": domain,
             "subagent_id": subagent_id,
@@ -236,6 +252,7 @@ def build_compare_subagent_spawner_node(
                 "used_tools": plan_data.get("tools", []),
                 "criterion_scores": criterion_scores,
                 "criterion_reasonings": criterion_reasonings,
+                **scope_info,
             },
             "raw_result": result,
             "micro_plan": [{"action": "call_model", "tool_id": plan_data.get("tools", [None])[0]}],
@@ -283,6 +300,13 @@ def build_compare_subagent_spawner_node(
         web_sources = result.get("web_sources", [])
         confidence = min(0.9, 0.3 + 0.1 * len(web_sources)) if status == "complete" else 0.0
 
+        scope_info_r: dict[str, Any] = {}
+        if sandbox_isolation_enabled and sandbox_enabled:
+            scope_info_r = {
+                "sandbox_scope_mode": "subagent",
+                "sandbox_scope_id": subagent_id,
+            }
+
         return {
             "domain": "research",
             "subagent_id": subagent_id,
@@ -297,6 +321,7 @@ def build_compare_subagent_spawner_node(
                     for src in web_sources[:5]
                 ],
                 "used_tools": ["call_oneseek"],
+                **scope_info_r,
             },
             "raw_result": result,
             "micro_plan": [{"action": "web_research", "tool_id": "call_oneseek"}],
@@ -344,10 +369,25 @@ def build_compare_subagent_spawner_node(
                 "timestamp": time.time(),
             })
 
-        # Generate subagent IDs
+        # Generate subagent IDs with sandbox scope info
         domain_subagent_ids: dict[str, str] = {}
         for domain in domain_plans:
             domain_subagent_ids[domain] = f"sa-compare_{domain}-{uuid.uuid4().hex[:8]}"
+
+        if sandbox_isolation_enabled and sandbox_enabled:
+            logger.info(
+                "compare_subagent_spawner: sandbox isolation ENABLED "
+                "(mode=%s, scope=subagent, %d domains)",
+                _runtime_hitl.get("sandbox_mode", "docker"),
+                len(domain_plans),
+            )
+        else:
+            logger.debug(
+                "compare_subagent_spawner: sandbox isolation disabled "
+                "(sandbox_enabled=%s, isolation=%s)",
+                sandbox_enabled,
+                sandbox_isolation_enabled,
+            )
 
         # Build AI message with tool_calls for frontend model cards
         tool_calls = []
@@ -432,11 +472,14 @@ def build_compare_subagent_spawner_node(
             tool_name = tools[0] if tools else f"call_{domain}"
             tc_id = f"tc-{domain_subagent_ids[domain]}"
 
-            # Inject criterion_scores into raw result so frontend gets them
+            # Inject criterion_scores and sandbox scope into raw result
             raw_with_scores = {**raw}
             if handoff.get("criterion_scores"):
                 raw_with_scores["criterion_scores"] = handoff["criterion_scores"]
                 raw_with_scores["criterion_reasonings"] = handoff.get("criterion_reasonings", {})
+            if handoff.get("sandbox_scope_mode"):
+                raw_with_scores["sandbox_scope"] = handoff["sandbox_scope_mode"]
+                raw_with_scores["sandbox_scope_id"] = handoff.get("sandbox_scope_id", "")
 
             compare_outputs.append({
                 "tool_name": tool_name,

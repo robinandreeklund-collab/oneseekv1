@@ -2646,6 +2646,10 @@ async def create_supervisor_agent(
         runtime_hitl_cfg.get("sandbox_enabled"),
         default=False,
     )
+    compare_sandbox_isolation = _coerce_bool(
+        runtime_hitl_cfg.get("compare_sandbox_isolation"),
+        default=False,
+    )
     artifact_offload_enabled = _coerce_bool(
         runtime_hitl_cfg.get("artifact_offload_enabled"),
         default=False,
@@ -6694,6 +6698,9 @@ async def create_supervisor_agent(
             latest_user_query_fn=_latest_user_query,
             extract_first_json_object_fn=_extract_first_json_object,
             execution_timeout_seconds=90,
+            sandbox_enabled=sandbox_enabled,
+            sandbox_isolation_enabled=compare_sandbox_isolation,
+            runtime_hitl_cfg=runtime_hitl_cfg,
         )
 
         # Build compare convergence node (reuses P4 convergence)
