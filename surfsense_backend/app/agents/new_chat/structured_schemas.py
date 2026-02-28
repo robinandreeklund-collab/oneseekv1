@@ -631,3 +631,31 @@ class ConvergenceResult(BaseModel):
         default="",
         description="Djup jämförande analys med konkreta exempel.",
     )
+
+
+class CompareSynthesisResult(BaseModel):
+    """Output schema for the compare synthesizer node.
+
+    The ``thinking`` field captures internal reasoning (streamed to
+    the think-box as reasoning-delta).  The ``response`` field is the
+    final user-facing markdown text (streamed as text-delta).
+    """
+
+    thinking: str = Field(
+        ...,
+        description=(
+            "Din interna resonemang på svenska.  Analysera konvergens-"
+            "resultaten, identifiera huvudsakliga slutsatser, och "
+            "planera hur du ska formulera det slutgiltiga svaret."
+        ),
+    )
+    response: str = Field(
+        ...,
+        description=(
+            "Det slutgiltiga svaret till användaren i markdown.  "
+            "Innehåller en sammanfattande analys med fokus på "
+            "faktasvar, modellernas styrkor/svagheter, och en "
+            "tydlig slutsats.  Inkludera INTE spotlight-arena-data "
+            "eller rå JSON — bara ren markdown-text."
+        ),
+    )

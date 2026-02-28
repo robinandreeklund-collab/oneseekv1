@@ -3123,16 +3123,14 @@ async def stream_new_chat(
                         yield streaming_service.format_reasoning_delta(
                             active_reasoning_id, header
                         )
-                    # compare_synthesizer generates free-form markdown,
-                    # NOT structured JSON.  Do NOT create a parser for it —
-                    # feed_all() would silently swallow all text.
-                    _is_compare_synth = "compare_synthesizer" in pcn_lower
-                    if _structured_mode and not _is_compare_synth:
-                        # P1 Extra: structured JSON mode — create an
-                        # IncrementalSchemaParser for this output model run
-                        # so on_chat_model_stream can split thinking/response.
+                    if _structured_mode:
+                        # Structured JSON mode: create an IncrementalSchemaParser
+                        # so on_chat_model_stream splits thinking → reasoning-delta
+                        # and response → text-delta.  All output nodes now use
+                        # structured output (including compare_synthesizer via
+                        # CompareSynthesisResult schema).
                         _structured_parsers[run_id] = IncrementalSchemaParser()
-                    if not _is_compare_synth and _think_filter._assume_think:
+                    elif _think_filter._assume_think:
                         flush_r, flush_t = _think_filter.reset_think_mode()
                         if flush_r:
                             if active_reasoning_id is None:
@@ -3158,20 +3156,17 @@ async def stream_new_chat(
                             yield streaming_service.format_reasoning_delta(
                                 active_reasoning_id, flush_t
                             )
-                    # Force text mode for output nodes that produce final
-                    # user-facing text.  Must run OUTSIDE the structured-mode
-                    # branches so it always applies.
-                    # - response_layer (normal mode formatting LLM)
-                    # - compare_synthesizer (compare mode final synthesis)
-                    _force_text = (
-                        (
-                            "response_layer" in pcn_lower
-                            and "response_layer_router" not in pcn_lower
+                        # Force text mode for output nodes that produce final
+                        # user-facing text (response_layer, compare_synthesizer).
+                        _force_text = (
+                            (
+                                "response_layer" in pcn_lower
+                                and "response_layer_router" not in pcn_lower
+                            )
+                            or "compare_synthesizer" in pcn_lower
                         )
-                        or _is_compare_synth
-                    )
-                    if _force_text:
-                        _think_filter._in_think = False
+                        if _force_text:
+                            _think_filter._in_think = False
                 else:
                     # Unknown / unclassified model: treat as INTERNAL to
                     # prevent any internal reasoning from leaking into the

@@ -1033,12 +1033,38 @@ def build_compare_synthesizer_node(
         ]
 
         try:
-            response = await llm.ainvoke(synthesis_messages)
-            raw_synthesis = response.content if hasattr(response, "content") else str(response)
+            from app.agents.new_chat.structured_schemas import (
+                CompareSynthesisResult,
+                pydantic_to_response_format,
+                structured_output_enabled,
+            )
+
+            _invoke_kwargs: dict[str, Any] = {}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    CompareSynthesisResult, "compare_synthesis"
+                )
+
+            response = await llm.ainvoke(synthesis_messages, **_invoke_kwargs)
+            raw_content = response.content if hasattr(response, "content") else str(response)
+
+            # Parse structured JSON → extract response field
+            synthesis_text = raw_content
+            if structured_output_enabled():
+                try:
+                    _structured = CompareSynthesisResult.model_validate_json(raw_content)
+                    synthesis_text = _structured.response
+                except Exception:
+                    # Fallback: try to extract JSON manually
+                    try:
+                        _obj = json.loads(raw_content)
+                        synthesis_text = str(_obj.get("response", raw_content))
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
             # Extract arena analysis JSON before sanitizing (frontend also does this)
             _arena_match = re.search(
-                r"```spotlight-arena-data\s*\n([\s\S]*?)```", raw_synthesis,
+                r"```spotlight-arena-data\s*\n([\s\S]*?)```", synthesis_text,
             )
             _parsed_arena: dict[str, Any] | None = None
             if _arena_match:
@@ -1048,7 +1074,7 @@ def build_compare_synthesizer_node(
                     pass
 
             # Sanitize: remove raw JSON leakage from visible text
-            synthesis_text = _sanitize_synthesis_text(raw_synthesis)
+            synthesis_text = _sanitize_synthesis_text(synthesis_text)
             synthesis_message = AIMessage(content=synthesis_text)
 
             # Compute confidence-weighted ranking for arena data
