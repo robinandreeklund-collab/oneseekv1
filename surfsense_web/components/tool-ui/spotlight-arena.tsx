@@ -13,6 +13,7 @@ import {
 	type FC,
 	createContext,
 	useCallback,
+	useContext,
 	useEffect,
 	useMemo,
 	useRef,
@@ -33,6 +34,10 @@ import { cn } from "@/lib/utils";
 // ============================================================================
 
 export const SpotlightArenaActiveContext = createContext(false);
+
+// Live criterion scores context — SSE events push partial scores here before tool completion
+export type LiveCriterionMap = Record<string, Partial<ModelScore>>;
+export const LiveCriterionContext = createContext<LiveCriterionMap>({});
 
 // ============================================================================
 // Types
@@ -1000,6 +1005,9 @@ export const SpotlightArenaLayout: FC = () => {
 		({ thread, message }) => thread.isRunning && (message?.isLast ?? false),
 	);
 
+	// Live criterion scores from SSE events (partial, before tool completion)
+	const liveCriterionScores = useContext(LiveCriterionContext);
+
 	// Track previously seen completed count for stagger animation
 	const prevCompletedRef = useRef(0);
 
@@ -1046,12 +1054,33 @@ export const SpotlightArenaLayout: FC = () => {
 				const responseText = String(result?.response || "");
 				const queryText = String(part.args?.query || "");
 
-				// Try real scores from convergence, fall back to heuristic
+				// Score priority:
+				// 1. criterion_scores from tool result (real LLM evaluation per dimension)
+				// 2. live SSE criterion scores (partial, streamed before tool completion)
+				// 3. model_scores from convergence (LLM merge evaluation)
+				// 4. Heuristic fallback
 				const domain = TOOL_TO_DOMAIN[part.toolName] || part.toolName;
-				const realScores = externalModelScores?.[domain] as
+				const criterionScores = result?.criterion_scores as
 					| ModelScore
 					| undefined;
-				const scores = realScores || computeFallbackScores(result, part.toolName);
+				const liveScores = liveCriterionScores[domain];
+				const fullLiveScores =
+					liveScores &&
+					liveScores.relevans != null &&
+					liveScores.djup != null &&
+					liveScores.klarhet != null &&
+					liveScores.korrekthet != null
+						? (liveScores as ModelScore)
+						: undefined;
+				const convergenceScores = externalModelScores?.[domain] as
+					| ModelScore
+					| undefined;
+				const scores =
+					criterionScores ||
+					fullLiveScores ||
+					convergenceScores ||
+					computeFallbackScores(result, part.toolName);
+				const hasReal = !!(criterionScores || fullLiveScores || convergenceScores);
 
 				return {
 					toolName: part.toolName,
@@ -1061,7 +1090,7 @@ export const SpotlightArenaLayout: FC = () => {
 						part.toolName,
 					rank: 0,
 					scores,
-					hasRealScores: !!realScores,
+					hasRealScores: hasReal,
 					totalScore: totalScore(scores),
 					meta: extractMeta(result, responseText, queryText),
 					summary: String(result?.summary || ""),
@@ -1087,7 +1116,7 @@ export const SpotlightArenaLayout: FC = () => {
 		});
 
 		return parsed;
-	}, [messageContent, externalModelScores]);
+	}, [messageContent, externalModelScores, liveCriterionScores]);
 
 	// Track completed count for determining new arrivals
 	const completedCount = rankedModels.filter(

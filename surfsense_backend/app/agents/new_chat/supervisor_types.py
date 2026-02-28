@@ -176,3 +176,7 @@ class SupervisorState(TypedDict, total=False):
     # P4: adaptive thresholds per domain from adaptive_guard.
     # {"force_synthesis": bool, "adjusted_confidence_threshold": float, ...}
     adaptive_thresholds: Annotated[dict[str, Any] | None, _replace]
+    # Compare: criterion evaluation events for SSE streaming to frontend.
+    criterion_events: Annotated[list[dict[str, Any]], _replace]
+    # Compare: structured arena data from synthesizer.
+    compare_arena_data: Annotated[dict[str, Any] | None, _replace]

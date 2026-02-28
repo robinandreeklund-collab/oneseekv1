@@ -133,6 +133,7 @@ def build_compare_subagent_spawner_node(
 
     Each domain gets:
     - Unique subagent_id
+    - 4 parallel criterion evaluations (relevans, djup, klarhet, korrekthet)
     - Mini-critic evaluation
     - Adaptive retry (max 1 for external models)
     - Proper handoff contract
@@ -194,6 +195,34 @@ def build_compare_subagent_spawner_node(
         response_text = result.get("response", "")
         confidence = 0.8 if status == "complete" else 0.0
 
+        # Run 4 parallel criterion evaluations if model returned successfully
+        criterion_scores: dict[str, int] = {}
+        criterion_reasonings: dict[str, str] = {}
+        if status == "complete" and response_text:
+            try:
+                from app.agents.new_chat.compare_criterion_evaluator import (
+                    evaluate_model_response,
+                )
+
+                eval_result = await evaluate_model_response(
+                    domain=domain,
+                    model_response=response_text,
+                    model_display_name=spec_data.get("display", domain),
+                    user_query=user_query,
+                    research_context=None,
+                    llm=llm,
+                    extract_json_fn=extract_first_json_object_fn,
+                    timeout_seconds=25,
+                    on_criterion_complete=_on_criterion_complete,
+                )
+                criterion_scores = eval_result.get("scores", {})
+                criterion_reasonings = eval_result.get("reasonings", {})
+                # Derive confidence from scores
+                avg_score = eval_result.get("total", 200) / 4
+                confidence = round(avg_score / 100, 2)
+            except Exception as exc:
+                logger.warning("compare_executor[%s]: criterion eval failed: %s", domain, exc)
+
         return {
             "domain": domain,
             "subagent_id": subagent_id,
@@ -205,6 +234,8 @@ def build_compare_subagent_spawner_node(
                 "summary": (response_text[:500] if response_text else error_text[:200]),
                 "findings": [],
                 "used_tools": plan_data.get("tools", []),
+                "criterion_scores": criterion_scores,
+                "criterion_reasonings": criterion_reasonings,
             },
             "raw_result": result,
             "micro_plan": [{"action": "call_model", "tool_id": plan_data.get("tools", [None])[0]}],
@@ -280,6 +311,11 @@ def build_compare_subagent_spawner_node(
 
         Reads domain_plans and dispatches each domain to its specialized
         executor with proper isolation and handoff contracts.
+
+        Each external model domain:
+        1. Calls the external model API
+        2. Runs 4 parallel criterion evaluators (relevans, djup, klarhet, korrekthet)
+        3. Includes criterion scores in handoff + ToolMessage for frontend
         """
         domain_plans = state.get("domain_plans") or {}
         if not domain_plans:
@@ -293,6 +329,20 @@ def build_compare_subagent_spawner_node(
 
         messages = state.get("messages", [])
         user_query = latest_user_query_fn(messages)
+
+        # Collect criterion-complete events for SSE streaming
+        criterion_events: list[dict[str, Any]] = []
+
+        async def _on_criterion_complete(
+            domain: str, criterion: str, score: int, reasoning: str
+        ) -> None:
+            criterion_events.append({
+                "domain": domain,
+                "criterion": criterion,
+                "score": score,
+                "reasoning": reasoning,
+                "timestamp": time.time(),
+            })
 
         # Generate subagent IDs
         domain_subagent_ids: dict[str, str] = {}
@@ -371,6 +421,8 @@ def build_compare_subagent_spawner_node(
                 "status": handoff.get("status", "partial"),
                 "confidence": handoff.get("confidence", 0.0),
                 "used_tools": handoff.get("used_tools", []),
+                "criterion_scores": handoff.get("criterion_scores", {}),
+                "criterion_reasonings": handoff.get("criterion_reasonings", {}),
             })
             micro_plans[domain_name] = domain_result.get("micro_plan", [])
 
@@ -380,24 +432,31 @@ def build_compare_subagent_spawner_node(
             tool_name = tools[0] if tools else f"call_{domain}"
             tc_id = f"tc-{domain_subagent_ids[domain]}"
 
+            # Inject criterion_scores into raw result so frontend gets them
+            raw_with_scores = {**raw}
+            if handoff.get("criterion_scores"):
+                raw_with_scores["criterion_scores"] = handoff["criterion_scores"]
+                raw_with_scores["criterion_reasonings"] = handoff.get("criterion_reasonings", {})
+
             compare_outputs.append({
                 "tool_name": tool_name,
                 "tool_call_id": tc_id,
-                "result": raw,
+                "result": raw_with_scores,
                 "timestamp": time.time(),
             })
 
-            # Build ToolMessage for frontend rendering
+            # Build ToolMessage for frontend rendering (includes scores)
             tool_messages.append(ToolMessage(
                 name=tool_name,
-                content=json.dumps(raw, ensure_ascii=False),
+                content=json.dumps(raw_with_scores, ensure_ascii=False),
                 tool_call_id=tc_id,
             ))
 
         logger.info(
-            "compare_subagent_spawner: %d/%d domains completed",
+            "compare_subagent_spawner: %d/%d domains completed, %d criterion events",
             len(spawned_domains),
             len(domain_plans),
+            len(criterion_events),
         )
 
         return {
@@ -406,6 +465,7 @@ def build_compare_subagent_spawner_node(
             "subagent_summaries": subagent_summaries,
             "micro_plans": micro_plans,
             "compare_outputs": compare_outputs,
+            "criterion_events": criterion_events,
             "total_steps": (state.get("total_steps") or 0) + 1,
         }
 
@@ -435,10 +495,16 @@ def _build_synthesis_from_convergence(
             blocks.append(f"  - {c}")
         blocks.append("")
 
-    # Model scores from convergence
+    # Model scores: prefer criterion_scores from handoffs over convergence
     model_scores = convergence.get("model_scores", {})
+    # Also collect scores from subagent summaries (criterion evaluator)
+    for s in summaries:
+        domain = s.get("domain", "unknown")
+        cs = s.get("criterion_scores", {})
+        if cs and domain not in model_scores:
+            model_scores[domain] = cs
     if model_scores:
-        blocks.append("PER-MODELL POÄNG (från convergence):")
+        blocks.append("PER-MODELL POÄNG (från kriterie-bedömning):")
         for domain, scores in model_scores.items():
             if isinstance(scores, dict):
                 blocks.append(

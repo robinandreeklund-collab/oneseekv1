@@ -62,6 +62,7 @@ import {
 	QwenToolUI,
 	OneseekToolUI,
 } from "@/components/tool-ui/compare-model";
+import { LiveCriterionContext } from "@/components/tool-ui/spotlight-arena";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
@@ -347,6 +348,11 @@ export default function NewChatPage() {
 	const traceLayoutRef = useRef<HTMLDivElement | null>(null);
 	const [traceMaxWidth, setTraceMaxWidth] = useState<number>(720);
 	const abortControllerRef = useRef<AbortController | null>(null);
+
+	// Live criterion scores from SSE events (domain → partial scores)
+	const [liveCriterionScores, setLiveCriterionScores] = useState<
+		Record<string, Partial<{ relevans: number; djup: number; klarhet: number; korrekthet: number }>>
+	>({});
 
 	// Get mentioned document IDs from the composer
 	const mentionedDocumentIds = useAtomValue(mentionedDocumentIdsAtom);
@@ -1095,6 +1101,7 @@ export default function NewChatPage() {
 
 			// Start streaming response
 			setIsRunning(true);
+			setLiveCriterionScores({});
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -1495,6 +1502,21 @@ export default function NewChatPage() {
 										}
 										case "data-compare-summary": {
 											compareSummary = parsed.data ?? null;
+											break;
+										}
+										case "data-criterion-complete": {
+											const ceDomain = String(parsed.data?.domain ?? "");
+											const ceCriterion = String(parsed.data?.criterion ?? "");
+											const ceScore = Number(parsed.data?.score ?? 0);
+											if (ceDomain && ceCriterion) {
+												setLiveCriterionScores((prev) => ({
+													...prev,
+													[ceDomain]: {
+														...(prev[ceDomain] || {}),
+														[ceCriterion]: ceScore,
+													},
+												}));
+											}
 											break;
 										}
 
@@ -1925,6 +1947,7 @@ export default function NewChatPage() {
 
 			// Start streaming
 			setIsRunning(true);
+			setLiveCriterionScores({});
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -2266,6 +2289,21 @@ export default function NewChatPage() {
 											compareSummary = parsed.data ?? null;
 											break;
 										}
+										case "data-criterion-complete": {
+											const ceDomain2 = String(parsed.data?.domain ?? "");
+											const ceCriterion2 = String(parsed.data?.criterion ?? "");
+											const ceScore2 = Number(parsed.data?.score ?? 0);
+											if (ceDomain2 && ceCriterion2) {
+												setLiveCriterionScores((prev) => ({
+													...prev,
+													[ceDomain2]: {
+														...(prev[ceDomain2] || {}),
+														[ceCriterion2]: ceScore2,
+													},
+												}));
+											}
+											break;
+										}
 
 										// P1-Extra.5: structured field decisions from pipeline nodes
 										case "structured-field": {
@@ -2605,6 +2643,7 @@ export default function NewChatPage() {
 	}
 	return (
 		<AssistantRuntimeProvider runtime={runtime}>
+		<LiveCriterionContext.Provider value={liveCriterionScores}>
 			{!isPublicChat && <GeneratePodcastToolUI />}
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
@@ -2684,6 +2723,7 @@ export default function NewChatPage() {
 					/>
 				)}
 			</TracePanelContext.Provider>
+		</LiveCriterionContext.Provider>
 		</AssistantRuntimeProvider>
 	);
 }

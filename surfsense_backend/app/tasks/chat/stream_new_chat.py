@@ -3188,6 +3188,16 @@ async def stream_new_chat(
                         for tool_event in tool_call_events:
                             yield tool_event
 
+                        # Stream criterion-complete events for Spotlight Arena
+                        _criterion_events = (
+                            chain_output.get("criterion_events")
+                            if isinstance(chain_output, dict) else None
+                        ) or []
+                        for ce in _criterion_events:
+                            yield streaming_service.format_data(
+                                "criterion-complete", ce
+                            )
+
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
                     )
