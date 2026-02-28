@@ -302,7 +302,7 @@ def build_compare_subagent_spawner_node(
                     research_context=None,
                     llm=llm,
                     extract_json_fn=extract_first_json_object_fn,
-                    timeout_seconds=25,
+                    timeout_seconds=90,
                     on_criterion_complete=on_criterion_complete,
                     prompt_overrides=criterion_prompt_overrides,
                 )

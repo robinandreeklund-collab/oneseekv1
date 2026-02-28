@@ -6753,8 +6753,11 @@ async def create_supervisor_agent(
             extract_first_json_object_fn=_extract_first_json_object,
             tavily_search_fn=_compare_tavily_search_fn,
             execution_timeout_seconds=90,
-            sandbox_enabled=sandbox_enabled,
-            sandbox_isolation_enabled=compare_sandbox_isolation,
+            # Sandbox disabled for compare mode: external model API calls
+            # don't need code execution isolation, and the file-based lock
+            # causes severe contention with 8 parallel domains.
+            sandbox_enabled=False,
+            sandbox_isolation_enabled=False,
             runtime_hitl_cfg=runtime_hitl_cfg,
             criterion_prompt_overrides=_criterion_prompt_overrides or None,
         )

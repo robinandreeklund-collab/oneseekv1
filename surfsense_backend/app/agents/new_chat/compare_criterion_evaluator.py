@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 
 CRITERIA = ("relevans", "djup", "klarhet", "korrekthet")
 
+# Global semaphore to limit concurrent criterion LLM calls.
+# Without this, 7 models × 4 criteria = 28 simultaneous requests
+# overwhelm local LLM servers (LM Studio, Ollama, etc.).
+_CRITERION_CONCURRENCY = asyncio.Semaphore(6)
+
 # ── Criterion-specific prompts ──────────────────────────────────────
 
 _CRITERION_PROMPTS: dict[str, str] = {
@@ -123,7 +128,7 @@ async def evaluate_criterion(
     research_context: str | None,
     llm: Any,
     extract_json_fn: Any,
-    timeout_seconds: float = 30,
+    timeout_seconds: float = 90,
     prompt_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Evaluate a single criterion for a single model response.
@@ -160,10 +165,12 @@ async def evaluate_criterion(
             _invoke_kwargs["response_format"] = pydantic_to_response_format(
                 CriterionEvalResult, f"criterion_{criterion}"
             )
-        raw = await asyncio.wait_for(
-            llm.ainvoke(messages, **_invoke_kwargs),
-            timeout=timeout_seconds,
-        )
+        # Limit concurrency to avoid overwhelming local LLM servers
+        async with _CRITERION_CONCURRENCY:
+            raw = await asyncio.wait_for(
+                llm.ainvoke(messages, **_invoke_kwargs),
+                timeout=timeout_seconds,
+            )
         raw_text = str(getattr(raw, "content", "") or "")
 
         # Try structured Pydantic parse first, fall back to regex
