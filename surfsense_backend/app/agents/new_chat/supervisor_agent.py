@@ -6812,6 +6812,19 @@ async def create_supervisor_agent(
         # file-based lock contention that occurs with 8 parallel domains.
         _compare_hitl = dict(runtime_hitl_cfg or {})
         _compare_hitl["sandbox_state_store"] = "redis"
+        # Ensure Redis URL is available for sandbox state store.
+        # sandbox_runtime checks: sandbox_state_redis_url → redis_url → REDIS_URL env.
+        # Fall back to CELERY_BROKER_URL / REDIS_APP_URL if REDIS_URL is not set.
+        if not _compare_hitl.get("sandbox_state_redis_url") and not _compare_hitl.get("redis_url"):
+            import os as _os
+
+            _redis_url = (
+                _os.getenv("REDIS_URL")
+                or _os.getenv("REDIS_APP_URL")
+                or _os.getenv("CELERY_BROKER_URL")
+            )
+            if _redis_url:
+                _compare_hitl["redis_url"] = _redis_url
         compare_spawner_node = build_compare_subagent_spawner_node(
             llm=llm,
             compare_mini_critic_prompt=compare_mini_critic_prompt,
