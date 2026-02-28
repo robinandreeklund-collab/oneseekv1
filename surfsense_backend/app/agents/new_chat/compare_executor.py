@@ -292,6 +292,7 @@ def build_compare_subagent_spawner_node(
         subagent_id: str,
         on_criterion_complete: Any | None = None,
         thread_id: str = "",
+        config: Any = None,
     ) -> dict[str, Any]:
         """Execute a single external model as a subagent."""
         spec_data = plan_data.get("spec", {})
@@ -347,8 +348,10 @@ def build_compare_subagent_spawner_node(
         # the card before criterion evaluation starts.
         tools = plan_data.get("tools", [])
         tool_name = tools[0] if tools else f"call_{domain}"
-        tc_id = f"tc-{domain_subagent_ids[domain]}"
+        tc_id = f"tc-{subagent_id}"
         try:
+            from langchain_core.callbacks import adispatch_custom_event
+
             await adispatch_custom_event(
                 "model_response_ready",
                 {
@@ -366,10 +369,13 @@ def build_compare_subagent_spawner_node(
         # Run 4 parallel criterion evaluations if model returned successfully
         criterion_scores: dict[str, int] = {}
         criterion_reasonings: dict[str, str] = {}
+        criterion_pod_info: dict[str, Any] = {}
         if status == "complete" and response_text:
             # Notify frontend that criterion evaluation is starting for this domain
             try:
-                await adispatch_custom_event(
+                from langchain_core.callbacks import adispatch_custom_event as _dispatch
+
+                await _dispatch(
                     "criterion_evaluation_started",
                     {"domain": domain, "timestamp": time.time()},
                     config=config,
@@ -445,6 +451,7 @@ def build_compare_subagent_spawner_node(
         user_query: str,
         subagent_id: str,
         thread_id: str = "",
+        config: Any = None,
     ) -> dict[str, Any]:
         """Execute the research agent as a subagent."""
         from app.agents.new_chat.compare_research_worker import run_research_executor
@@ -487,6 +494,8 @@ def build_compare_subagent_spawner_node(
 
         # Emit model_response_ready so the research card appears immediately
         try:
+            from langchain_core.callbacks import adispatch_custom_event
+
             await adispatch_custom_event(
                 "model_response_ready",
                 {
@@ -656,12 +665,14 @@ def build_compare_subagent_spawner_node(
                 if domain == "research":
                     domain_result = await _run_research_domain(
                         user_query, subagent_id, thread_id=_thread_id,
+                        config=config,
                     )
                 else:
                     domain_result = await _run_external_model_domain(
                         domain, plan_data, user_query, subagent_id,
                         on_criterion_complete=_on_criterion_complete,
                         thread_id=_thread_id,
+                        config=config,
                     )
 
                 # Fire model-complete event immediately (while other models still run)
