@@ -387,53 +387,6 @@ function extractModelScores(
 	return null;
 }
 
-/** Heuristic fallback scores when convergence hasn't run yet */
-function computeFallbackScores(
-	result: Record<string, unknown> | null,
-	toolName: string,
-): ModelScore {
-	if (!result || result.status === "error") {
-		return { relevans: 0, djup: 0, klarhet: 0, korrekthet: 0 };
-	}
-	const response = String(result.response || result.summary || "");
-	const len = response.length;
-	const hasSummary =
-		typeof result.summary === "string" &&
-		(result.summary as string).length > 20;
-	const latency =
-		typeof result.latency_ms === "number" ? result.latency_ms : 5000;
-
-	// Simple deterministic variation per model
-	let h = 0;
-	for (let i = 0; i < toolName.length; i++) {
-		h = ((h << 5) - h + toolName.charCodeAt(i)) | 0;
-	}
-	const v = (n: number) => (((h * n) % 20) + 20) % 20 - 10;
-
-	return {
-		relevans: Math.round(
-			Math.max(45, Math.min(97, 72 + (len > 300 ? 12 : 0) + v(1) * 0.8)),
-		),
-		djup: Math.round(
-			Math.max(
-				30,
-				Math.min(97, Math.log2(Math.max(1, len)) * 7.5 + v(7) * 0.5),
-			),
-		),
-		klarhet: Math.round(
-			Math.max(
-				40,
-				Math.min(97, hasSummary ? 75 + v(13) * 0.7 : 52 + v(13) * 0.4),
-			),
-		),
-		korrekthet: Math.round(
-			Math.max(
-				40,
-				Math.min(97, 68 + (latency < 3000 ? 8 : 0) + v(19) * 0.6),
-			),
-		),
-	};
-}
 
 // ============================================================================
 // Sub-components
@@ -806,7 +759,7 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 	// "Criteria finalized" = tool result has criterion_scores (model_complete arrived)
 	// or all 4 live criterion scores have arrived.
 	const hasFinalScoresFromResult = Object.keys(model.criterionPodInfo).length === 4
-		|| (model.scores.relevans > 0 && model.scores.djup > 0 && model.scores.klarhet > 0 && model.scores.korrekthet > 0 && !domainLive);
+		|| (model.hasRealScores && !domainLive);
 	const allLiveDone = domainLive
 		? (domainLive.relevans != null && domainLive.djup != null && domainLive.klarhet != null && domainLive.korrekthet != null)
 		: false;
@@ -985,7 +938,7 @@ const RunnerUpCard: FC<{
 	const domainLive = liveScores[model.domain];
 	const domainPods = livePods[model.domain] || model.criterionPodInfo;
 	const hasFinalScoresFromResult2 = Object.keys(model.criterionPodInfo).length === 4
-		|| (model.scores.relevans > 0 && model.scores.djup > 0 && model.scores.klarhet > 0 && model.scores.korrekthet > 0 && !domainLive);
+		|| (model.hasRealScores && !domainLive);
 	const allLiveDone2 = domainLive
 		? (domainLive.relevans != null && domainLive.djup != null && domainLive.klarhet != null && domainLive.korrekthet != null)
 		: false;
@@ -1321,11 +1274,14 @@ export const SpotlightArenaLayout: FC = () => {
 				const convergenceScores = externalModelScores?.[domain] as
 					| ModelScore
 					| undefined;
+				// When no real scores are available yet (evaluation pending), show zeros
+				// instead of heuristic fallback – avoids fake scores that jump on update.
+				const ZERO_SCORES: ModelScore = { relevans: 0, djup: 0, klarhet: 0, korrekthet: 0 };
 				const scores =
 					criterionScores ||
 					partialLiveScores ||
 					convergenceScores ||
-					computeFallbackScores(result, part.toolName);
+					ZERO_SCORES;
 				const hasReal = !!(criterionScores || hasAnyLive || convergenceScores);
 
 				// Extract criterion reasonings (motivations for each score)
