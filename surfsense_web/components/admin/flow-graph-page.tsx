@@ -374,9 +374,14 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		"node:compare_domain_planner": { x: 240, y: 1400 },
 		"node:compare_subagent_spawner": { x: 520, y: 1400 },
 		"node:compare_mini_critic": { x: 520, y: 1550 },
-		"node:compare_criterion_evaluator": { x: 800, y: 1550 },
-		"node:compare_convergence": { x: 1080, y: 1400 },
-		"node:compare_synthesizer": { x: 1360, y: 1400 },
+		"node:compare_research": { x: 240, y: 1550 },
+		// Per-criterion evaluators (parallel)
+		"node:compare_eval_relevans": { x: 520, y: 1700 },
+		"node:compare_eval_djup": { x: 800, y: 1700 },
+		"node:compare_eval_klarhet": { x: 1080, y: 1700 },
+		"node:compare_eval_korrekthet": { x: 1360, y: 1700 },
+		"node:compare_convergence": { x: 1080, y: 1850 },
+		"node:compare_synthesizer": { x: 1360, y: 1850 },
 	};
 
 	return pipelineNodes.map((node) => ({

@@ -2965,6 +2965,46 @@ async def stream_new_chat(
             event_type = event.get("event", "")
             run_id = str(event.get("run_id") or "")
             trace_parent = trace_parent_id(event)
+
+            # ── Real-time custom events from compare mode ──
+            # dispatch_custom_event("model_complete", ...) and
+            # dispatch_custom_event("criterion_complete", ...) fire
+            # during node execution, so they arrive here immediately
+            # (not batched at on_chain_end).
+            if event_type == "on_custom_event":
+                custom_name = event.get("name", "")
+                custom_data = event.get("data")
+                if custom_name == "model_complete" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data(
+                        "model-complete", custom_data
+                    )
+                    # Also emit as tool call events so the frontend
+                    # renders model cards via the standard pipeline.
+                    _tc_id = str(custom_data.get("tool_call_id", ""))
+                    _tc_name = str(custom_data.get("tool_name", ""))
+                    _tc_result = custom_data.get("result")
+                    if _tc_id and _tc_id not in streamed_tool_call_ids:
+                        streamed_tool_call_ids.add(_tc_id)
+                        yield streaming_service.format_tool_input_start(
+                            _tc_id, _tc_name
+                        )
+                        yield streaming_service.format_tool_input_available(
+                            _tc_id, _tc_name,
+                            {"query": str(
+                                (_tc_result or {}).get("query", "") if isinstance(_tc_result, dict) else ""
+                            )},
+                        )
+                        if _tc_result:
+                            yield streaming_service.format_tool_output_available(
+                                _tc_id, _tc_result
+                            )
+                    continue
+                if custom_name == "criterion_complete" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data(
+                        "criterion-complete", custom_data
+                    )
+                    continue
+
             if event_type == "on_chain_start" and run_id:
                 chain_name_by_run_id.setdefault(
                     run_id, str(event.get("name") or "chain")

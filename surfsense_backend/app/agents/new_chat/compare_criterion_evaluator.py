@@ -106,13 +106,22 @@ async def evaluate_criterion(
     llm: Any,
     extract_json_fn: Any,
     timeout_seconds: float = 30,
+    prompt_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Evaluate a single criterion for a single model response.
+
+    Args:
+        prompt_overrides: Optional dict mapping criterion name to custom prompt.
+            If provided and contains the criterion, that prompt is used instead
+            of the hardcoded default.  This enables admin-editable prompts.
 
     Returns:
         {"criterion": "relevans", "score": 85, "reasoning": "..."}
     """
-    prompt = _CRITERION_PROMPTS.get(criterion, _CRITERION_PROMPTS["relevans"])
+    if prompt_overrides and criterion in prompt_overrides:
+        prompt = prompt_overrides[criterion]
+    else:
+        prompt = _CRITERION_PROMPTS.get(criterion, _CRITERION_PROMPTS["relevans"])
 
     user_content = (
         f"Användarfråga: {user_query}\n\n"
@@ -169,12 +178,14 @@ async def evaluate_model_response(
     extract_json_fn: Any,
     timeout_seconds: float = 30,
     on_criterion_complete: Any | None = None,
+    prompt_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Evaluate all 4 criteria for a model response in parallel.
 
     Args:
         on_criterion_complete: Optional async callback(domain, criterion, score, reasoning)
             called as each criterion completes (for SSE streaming).
+        prompt_overrides: Optional dict mapping criterion name to custom prompt.
 
     Returns:
         {
@@ -197,6 +208,7 @@ async def evaluate_model_response(
             llm=llm,
             extract_json_fn=extract_json_fn,
             timeout_seconds=timeout_seconds,
+            prompt_overrides=prompt_overrides,
         )
         if on_criterion_complete:
             try:

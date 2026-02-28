@@ -1996,6 +1996,10 @@ async def create_supervisor_agent(
     # Compare Supervisor v2: P4-style prompts
     from app.agents.new_chat.compare_prompts import (
         DEFAULT_COMPARE_CONVERGENCE_PROMPT,
+        DEFAULT_COMPARE_CRITERION_DJUP_PROMPT,
+        DEFAULT_COMPARE_CRITERION_KLARHET_PROMPT,
+        DEFAULT_COMPARE_CRITERION_KORREKTHET_PROMPT,
+        DEFAULT_COMPARE_CRITERION_RELEVANS_PROMPT,
         DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
         DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
         DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
@@ -2023,6 +2027,22 @@ async def create_supervisor_agent(
             DEFAULT_COMPARE_CONVERGENCE_PROMPT,
         ),
     )
+    # Per-criterion evaluator prompts (admin-editable)
+    _criterion_prompt_overrides: dict[str, str] = {}
+    for _crit, _default in [
+        ("relevans", DEFAULT_COMPARE_CRITERION_RELEVANS_PROMPT),
+        ("djup", DEFAULT_COMPARE_CRITERION_DJUP_PROMPT),
+        ("klarhet", DEFAULT_COMPARE_CRITERION_KLARHET_PROMPT),
+        ("korrekthet", DEFAULT_COMPARE_CRITERION_KORREKTHET_PROMPT),
+    ]:
+        _resolved = resolve_prompt(
+            prompt_overrides,
+            f"compare.criterion.{_crit}",
+            _default,
+        )
+        if _resolved != _default:
+            _criterion_prompt_overrides[_crit] = _resolved
+
     hitl_planner_message_template = resolve_prompt(
         prompt_overrides,
         "supervisor.hitl.planner.message",
@@ -6701,6 +6721,7 @@ async def create_supervisor_agent(
             sandbox_enabled=sandbox_enabled,
             sandbox_isolation_enabled=compare_sandbox_isolation,
             runtime_hitl_cfg=runtime_hitl_cfg,
+            criterion_prompt_overrides=_criterion_prompt_overrides or None,
         )
 
         # Build compare convergence node (reuses P4 convergence)

@@ -127,6 +127,7 @@ def build_compare_subagent_spawner_node(
     sandbox_enabled: bool = False,
     sandbox_isolation_enabled: bool = False,
     runtime_hitl_cfg: dict[str, Any] | None = None,
+    criterion_prompt_overrides: dict[str, str] | None = None,
 ):
     """Build the compare-specific subagent spawner.
 
@@ -140,21 +141,30 @@ def build_compare_subagent_spawner_node(
     - Mini-critic evaluation
     - Adaptive retry (max 1 for external models)
     - Proper handoff contract
-    - Sandbox scope isolation (when sandbox_isolation_enabled=True):
-      Each domain receives sandbox_scope_mode="subagent" and a unique
+    - Sandbox scope isolation (when sandbox_enabled=True):
+      Each domain receives sandbox_scope="subagent" and a unique
       sandbox_scope_id, enabling per-model isolated execution environments
       (Docker containers, K8s pods, or local workspaces).
+      Note: sandbox_isolation_enabled is respected as an additional gate
+      but sandbox_enabled alone is sufficient for lease acquisition.
     """
     _call_external = call_external_model_fn or call_external_model
     _max_retries_external = 1
     _max_retries_research = 2
     _runtime_hitl = dict(runtime_hitl_cfg or {})
+    # Sandbox is active if sandbox_enabled=True.  The separate
+    # compare_sandbox_isolation flag is an ADDITIONAL opt-in but
+    # sandbox_enabled alone is enough to acquire leases.
+    _sandbox_active = bool(sandbox_enabled)
 
     def _build_sandbox_hitl(subagent_id: str) -> dict[str, Any]:
         """Build per-domain runtime_hitl with sandbox scope set to subagent."""
         hitl = dict(_runtime_hitl)
         hitl["sandbox_scope"] = "subagent"
         hitl["sandbox_scope_id"] = subagent_id
+        # Ensure sandbox_enabled is explicitly True in the hitl payload
+        # so that sandbox_config_from_runtime_flags picks it up.
+        hitl["sandbox_enabled"] = True
         return hitl
 
     async def _acquire_sandbox_for_domain(
@@ -165,7 +175,7 @@ def build_compare_subagent_spawner_node(
 
         Returns the lease object, or None if sandbox is disabled or fails.
         """
-        if not (sandbox_isolation_enabled and sandbox_enabled):
+        if not _sandbox_active:
             return None
         try:
             from app.agents.new_chat.sandbox_runtime import acquire_sandbox_lease
@@ -198,7 +208,7 @@ def build_compare_subagent_spawner_node(
         thread_id: str,
     ) -> None:
         """Release sandbox lease when domain completes."""
-        if not (sandbox_isolation_enabled and sandbox_enabled):
+        if not _sandbox_active:
             return
         try:
             from app.agents.new_chat.sandbox_runtime import release_sandbox_lease
@@ -294,6 +304,7 @@ def build_compare_subagent_spawner_node(
                     extract_json_fn=extract_first_json_object_fn,
                     timeout_seconds=25,
                     on_criterion_complete=on_criterion_complete,
+                    prompt_overrides=criterion_prompt_overrides,
                 )
                 criterion_scores = eval_result.get("scores", {})
                 criterion_reasonings = eval_result.get("reasonings", {})
@@ -305,7 +316,7 @@ def build_compare_subagent_spawner_node(
 
         # Sandbox scope for this domain
         scope_info: dict[str, Any] = {}
-        if sandbox_isolation_enabled and sandbox_enabled:
+        if _sandbox_active:
             scope_info = {
                 "sandbox_scope_mode": "subagent",
                 "sandbox_scope_id": subagent_id,
@@ -381,7 +392,7 @@ def build_compare_subagent_spawner_node(
         confidence = min(0.9, 0.3 + 0.1 * len(web_sources)) if status == "complete" else 0.0
 
         scope_info_r: dict[str, Any] = {}
-        if sandbox_isolation_enabled and sandbox_enabled:
+        if _sandbox_active:
             scope_info_r = {
                 "sandbox_scope_mode": "subagent",
                 "sandbox_scope_id": subagent_id,
@@ -448,38 +459,49 @@ def build_compare_subagent_spawner_node(
         )
         _thread_id = str(_configurable.get("thread_id", "compare"))
 
-        # Collect criterion-complete events for SSE streaming
+        # Dispatch real-time events via LangGraph custom events so that
+        # astream_events(v2) emits them immediately (not batched at node end).
+        from langchain_core.callbacks import adispatch_custom_event
+
+        # Also collect locally for state return (backward compat).
         criterion_events: list[dict[str, Any]] = []
 
         async def _on_criterion_complete(
             domain: str, criterion: str, score: int, reasoning: str
         ) -> None:
-            criterion_events.append({
+            event_data = {
                 "domain": domain,
                 "criterion": criterion,
                 "score": score,
                 "reasoning": reasoning,
                 "timestamp": time.time(),
-            })
+            }
+            criterion_events.append(event_data)
+            # Dispatch immediately — picked up by on_custom_event in SSE stream
+            try:
+                await adispatch_custom_event(
+                    "criterion_complete", event_data, config=config,
+                )
+            except Exception:
+                pass  # non-critical: fallback to batched emission
 
         # Generate subagent IDs with sandbox scope info
         domain_subagent_ids: dict[str, str] = {}
         for domain in domain_plans:
             domain_subagent_ids[domain] = f"sa-compare_{domain}-{uuid.uuid4().hex[:8]}"
 
-        if sandbox_isolation_enabled and sandbox_enabled:
+        if _sandbox_active:
             logger.info(
-                "compare_subagent_spawner: sandbox isolation ENABLED "
+                "compare_subagent_spawner: sandbox ENABLED "
                 "(mode=%s, scope=subagent, %d domains)",
                 _runtime_hitl.get("sandbox_mode", "docker"),
                 len(domain_plans),
             )
         else:
             logger.debug(
-                "compare_subagent_spawner: sandbox isolation disabled "
-                "(sandbox_enabled=%s, isolation=%s)",
+                "compare_subagent_spawner: sandbox disabled "
+                "(sandbox_enabled=%s)",
                 sandbox_enabled,
-                sandbox_isolation_enabled,
             )
 
         # Build AI message with tool_calls for frontend model cards
@@ -533,13 +555,21 @@ def build_compare_subagent_spawner_node(
                     raw_with_scores["sandbox_scope"] = handoff["sandbox_scope_mode"]
                     raw_with_scores["sandbox_scope_id"] = handoff.get("sandbox_scope_id", "")
 
-                model_complete_events.append({
+                mc_event = {
                     "domain": domain,
                     "tool_call_id": tc_id,
                     "tool_name": tool_name,
                     "result": raw_with_scores,
                     "timestamp": time.time(),
-                })
+                }
+                model_complete_events.append(mc_event)
+                # Dispatch immediately — frontend gets this model card in real-time
+                try:
+                    await adispatch_custom_event(
+                        "model_complete", mc_event, config=config,
+                    )
+                except Exception:
+                    pass  # non-critical: fallback to batched emission
 
                 return domain_result
 

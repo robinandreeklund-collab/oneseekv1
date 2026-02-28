@@ -20,13 +20,18 @@ import { cn } from "@/lib/utils";
 const CITATION_REGEX = /[[【]\u200B?citation:(doc-)?(\d+)\u200B?[\]】]/g;
 const POSSIBLE_NEXT_STEPS_COMMENT_REGEX = /<!--\s*possible_next_steps:[\s\S]*?-->/gi;
 const SPOTLIGHT_ARENA_DATA_REGEX = /```spotlight-arena-data\s*\n[\s\S]*?```\s*/g;
+// Catch leaked criterion evaluator JSON: {"score": 85, "reasoning": "..."}
+const CRITERION_JSON_LEAK_REGEX =
+	/\{\s*"score"\s*:\s*\d+\s*,\s*"reasoning"\s*:\s*"[^"]*"\s*\}/g;
 
 function stripPossibleNextStepsComment(text: string): string {
 	return text.replace(POSSIBLE_NEXT_STEPS_COMMENT_REGEX, "");
 }
 
 function stripSpotlightArenaData(text: string): string {
-	return text.replace(SPOTLIGHT_ARENA_DATA_REGEX, "");
+	return text
+		.replace(SPOTLIGHT_ARENA_DATA_REGEX, "")
+		.replace(CRITERION_JSON_LEAK_REGEX, "");
 }
 
 // Track chunk IDs to citation numbers mapping for consistent numbering

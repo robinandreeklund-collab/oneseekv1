@@ -9,10 +9,14 @@ from app.agents.new_chat.compare_prompts import (
     COMPARE_SUPERVISOR_INSTRUCTIONS,
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
     DEFAULT_COMPARE_CONVERGENCE_PROMPT,
-    DEFAULT_COMPARE_CRITERION_EVALUATOR_PROMPT,
+    DEFAULT_COMPARE_CRITERION_DJUP_PROMPT,
+    DEFAULT_COMPARE_CRITERION_KLARHET_PROMPT,
+    DEFAULT_COMPARE_CRITERION_KORREKTHET_PROMPT,
+    DEFAULT_COMPARE_CRITERION_RELEVANS_PROMPT,
     DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
     DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
     DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
+    DEFAULT_COMPARE_RESEARCH_PROMPT,
 )
 from app.agents.new_chat.dispatcher import DEFAULT_ROUTE_SYSTEM_PROMPT
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
@@ -185,7 +189,11 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "compare.mini_planner.system",
     "compare.mini_critic.system",
     "compare.convergence.system",
-    "compare.criterion_evaluator.system",
+    "compare.criterion.relevans",
+    "compare.criterion.djup",
+    "compare.criterion.klarhet",
+    "compare.criterion.korrekthet",
+    "compare.research.system",
 )
 
 
@@ -573,11 +581,35 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         description="Prompt for convergence_node i compare-grafen — mergar resultat från alla modeller + research med overlap/conflict.",
         default_prompt=DEFAULT_COMPARE_CONVERGENCE_PROMPT,
     ),
-    "compare.criterion_evaluator.system": PromptDefinition(
-        key="compare.criterion_evaluator.system",
-        label="Compare Criterion Evaluator prompt",
-        description="Systemprompt för isolerade per-kriterium bedömare (relevans, djup, klarhet, korrekthet). Körs 4 gånger per modell.",
-        default_prompt=DEFAULT_COMPARE_CRITERION_EVALUATOR_PROMPT,
+    "compare.criterion.relevans": PromptDefinition(
+        key="compare.criterion.relevans",
+        label="Bedömare: Relevans",
+        description="Isolerad LLM-bedömare som utvärderar RELEVANS (0-100). Besvarar svaret kärnfrågan?",
+        default_prompt=DEFAULT_COMPARE_CRITERION_RELEVANS_PROMPT,
+    ),
+    "compare.criterion.djup": PromptDefinition(
+        key="compare.criterion.djup",
+        label="Bedömare: Djup",
+        description="Isolerad LLM-bedömare som utvärderar DJUP (0-100). Hur detaljerat och nyanserat är svaret?",
+        default_prompt=DEFAULT_COMPARE_CRITERION_DJUP_PROMPT,
+    ),
+    "compare.criterion.klarhet": PromptDefinition(
+        key="compare.criterion.klarhet",
+        label="Bedömare: Klarhet",
+        description="Isolerad LLM-bedömare som utvärderar KLARHET (0-100). Hur tydligt och välstrukturerat?",
+        default_prompt=DEFAULT_COMPARE_CRITERION_KLARHET_PROMPT,
+    ),
+    "compare.criterion.korrekthet": PromptDefinition(
+        key="compare.criterion.korrekthet",
+        label="Bedömare: Korrekthet",
+        description="Isolerad LLM-bedömare som utvärderar KORREKTHET (0-100). Stämmer fakta? Använder research-data.",
+        default_prompt=DEFAULT_COMPARE_CRITERION_KORREKTHET_PROMPT,
+    ),
+    "compare.research.system": PromptDefinition(
+        key="compare.research.system",
+        label="Compare Research Agent",
+        description="Webb-research agent i compare-läge. Samlar verifierad data som referens för faktagranskning.",
+        default_prompt=DEFAULT_COMPARE_RESEARCH_PROMPT,
     ),
 }
 
