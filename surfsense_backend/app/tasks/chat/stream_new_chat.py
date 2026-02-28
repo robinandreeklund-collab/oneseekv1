@@ -869,6 +869,27 @@ _OUTPUT_PIPELINE_CHAIN_TOKENS = (
     "compare_synthesizer",
 )
 
+# Compare-mode intermediate nodes whose LLM reasoning should NOT be
+# streamed to the think-box.  Their output is structured JSON that gets
+# parsed separately by the convergence/synthesizer pipeline — streaming
+# their raw content (often garbled thinking from small local models)
+# would pollute the FadeLayer with unreadable noise.
+_COMPARE_SILENT_CHAIN_TOKENS = (
+    "compare_convergence",
+    "compare_subagent_spawner",
+    "compare_domain_planner",
+)
+
+
+def _is_compare_silent_chain(chain_name: str) -> bool:
+    """Return True if *chain_name* is a compare-mode node whose reasoning
+    should NOT be streamed to the think-box."""
+    normalized = str(chain_name or "").strip().lower()
+    if not normalized:
+        return False
+    return any(token in normalized for token in _COMPARE_SILENT_CHAIN_TOKENS)
+
+
 # Generic intermediate chain names inserted by LangGraph/LangChain between
 # the actual graph node and the model call.  When walking parent_ids to find
 # the graph node that owns a model, these must be skipped so the real node
@@ -3152,15 +3173,19 @@ async def stream_new_chat(
                     # prevent any internal reasoning from leaking into the
                     # visible response.  Only output pipeline nodes
                     # (synthesizer, response_layer) should emit text-delta.
+                    _is_silent = _is_compare_silent_chain(parent_chain_name)
                     model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
                     internal_model_buffers.setdefault(run_id, "")
-                    if _structured_mode:
-                        _structured_parsers[run_id] = IncrementalSchemaParser()
-                    else:
-                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                            assume_think=_think_filter._assume_think,
-                        )
-                    if not _structured_mode and _think_filter._assume_think:
+                    # Compare-silent nodes: absorb content but don't create
+                    # think filters / parsers so nothing reaches the think-box.
+                    if not _is_silent:
+                        if _structured_mode:
+                            _structured_parsers[run_id] = IncrementalSchemaParser()
+                        else:
+                            internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                                assume_think=_think_filter._assume_think,
+                            )
+                    if not _is_silent and not _structured_mode and _think_filter._assume_think:
                         flush_r, flush_t = _think_filter.reset_think_mode()
                         if flush_r or flush_t:
                             if active_reasoning_id is None:
@@ -3445,14 +3470,14 @@ async def stream_new_chat(
                         except (json.JSONDecodeError, ValueError):
                             pass
 
-                    if internal_chain_name:
+                    if internal_chain_name and not _is_compare_silent_chain(internal_chain_name):
                         internal_text = internal_buffer or candidate_text
                         for step_event in emit_pipeline_steps_from_text(
                             internal_text,
                             source_chain=internal_chain_name,
                         ):
                             yield step_event
-                    elif candidate_text:
+                    elif candidate_text and not _is_compare_silent_chain(internal_chain_name):
                         for step_event in emit_pipeline_steps_from_text(candidate_text):
                             yield step_event
                         # Do NOT store as fallback text — this came from an
