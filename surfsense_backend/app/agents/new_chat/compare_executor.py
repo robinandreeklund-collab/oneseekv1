@@ -155,6 +155,7 @@ def build_compare_subagent_spawner_node(
         plan_data: dict[str, Any],
         user_query: str,
         subagent_id: str,
+        on_criterion_complete: Any | None = None,
     ) -> dict[str, Any]:
         """Execute a single external model as a subagent."""
         spec_data = plan_data.get("spec", {})
@@ -221,7 +222,7 @@ def build_compare_subagent_spawner_node(
                     llm=llm,
                     extract_json_fn=extract_first_json_object_fn,
                     timeout_seconds=25,
-                    on_criterion_complete=_on_criterion_complete,
+                    on_criterion_complete=on_criterion_complete,
                 )
                 criterion_scores = eval_result.get("scores", {})
                 criterion_reasonings = eval_result.get("reasonings", {})
@@ -414,7 +415,8 @@ def build_compare_subagent_spawner_node(
                     return await _run_research_domain(user_query, subagent_id)
                 else:
                     return await _run_external_model_domain(
-                        domain, plan_data, user_query, subagent_id
+                        domain, plan_data, user_query, subagent_id,
+                        on_criterion_complete=_on_criterion_complete,
                     )
 
         completed = await asyncio.gather(
