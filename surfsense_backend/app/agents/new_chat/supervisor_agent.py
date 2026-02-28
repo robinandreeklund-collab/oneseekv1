@@ -6715,6 +6715,10 @@ async def create_supervisor_agent(
         # Pre-fetch the API key NOW (while the DB session is fresh) and
         # cache it in the closure.  This avoids expired-session errors
         # when the function is called minutes later from the research worker.
+        #
+        # Resolution order:
+        # 1. Per-search-space connector (TAVILY_API in DB)
+        # 2. Global PUBLIC_TAVILY_API_KEY environment variable
         _compare_tavily_search_fn = None
         _tavily_api_key: str | None = None
         if connector_service and search_space_id is not None:
@@ -6727,7 +6731,18 @@ async def create_supervisor_agent(
                 if tavily_connector:
                     _tavily_api_key = tavily_connector.config.get("TAVILY_API_KEY")
             except Exception as exc:
-                logger.warning("compare mode: failed to fetch Tavily API key: %s", exc)
+                logger.warning("compare mode: failed to fetch Tavily API key from DB: %s", exc)
+
+        # Fallback: use global PUBLIC_TAVILY_API_KEY from environment
+        if not _tavily_api_key:
+            from app.config import Config as _AppConfig
+
+            _tavily_api_key = getattr(_AppConfig, "PUBLIC_TAVILY_API_KEY", None)
+            if _tavily_api_key:
+                logger.info(
+                    "compare mode: using PUBLIC_TAVILY_API_KEY from env "
+                    "(no per-space connector found)"
+                )
 
         if _tavily_api_key:
             _cached_key = _tavily_api_key  # capture in closure
@@ -6793,6 +6808,10 @@ async def create_supervisor_agent(
             )
 
         # Build compare subagent spawner (P4 pattern with specialized workers)
+        # Compare mode uses sandbox with Redis state store to avoid the
+        # file-based lock contention that occurs with 8 parallel domains.
+        _compare_hitl = dict(runtime_hitl_cfg or {})
+        _compare_hitl["sandbox_state_store"] = "redis"
         compare_spawner_node = build_compare_subagent_spawner_node(
             llm=llm,
             compare_mini_critic_prompt=compare_mini_critic_prompt,
@@ -6800,12 +6819,9 @@ async def create_supervisor_agent(
             extract_first_json_object_fn=_extract_first_json_object,
             tavily_search_fn=_compare_tavily_search_fn,
             execution_timeout_seconds=90,
-            # Sandbox disabled for compare mode: external model API calls
-            # don't need code execution isolation, and the file-based lock
-            # causes severe contention with 8 parallel domains.
-            sandbox_enabled=False,
-            sandbox_isolation_enabled=False,
-            runtime_hitl_cfg=runtime_hitl_cfg,
+            sandbox_enabled=True,
+            sandbox_isolation_enabled=True,
+            runtime_hitl_cfg=_compare_hitl,
             criterion_prompt_overrides=_criterion_prompt_overrides or None,
         )
 
