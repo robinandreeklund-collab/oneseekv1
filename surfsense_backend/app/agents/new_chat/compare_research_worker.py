@@ -92,6 +92,9 @@ async def run_research_executor(
             seen_urls.add(url)
             unique_sources.append(src)
 
+    # Step 3: LLM synthesis — analyse sources and formulate an answer
+    synthesized = await _synthesize_research(query, unique_sources, llm)
+
     latency_ms = int((time.monotonic() - start_time) * 1000)
 
     return {
@@ -101,7 +104,7 @@ async def run_research_executor(
         "provider": "oneseek",
         "queries_used": sub_queries,
         "web_sources": unique_sources[:12],
-        "response": _format_research_response(query, unique_sources),
+        "response": synthesized,
         "latency_ms": latency_ms,
     }
 
@@ -168,11 +171,74 @@ async def _safe_tavily_search(
         return []
 
 
+_RESEARCH_SYNTHESIS_TIMEOUT = 30
+
+
+async def _synthesize_research(
+    query: str,
+    sources: list[dict[str, Any]],
+    llm: Any,
+) -> str:
+    """Use LLM to synthesize search results into a coherent answer."""
+    if not sources:
+        return f"Webbsökning för '{query}' gav inga resultat."
+
+    # Build source context for the LLM
+    source_lines: list[str] = []
+    for i, src in enumerate(sources[:12], 1):
+        title = src.get("title", "Okänd källa")
+        url = src.get("url", "")
+        snippet = src.get("content", src.get("snippet", ""))[:600]
+        source_lines.append(f"[{i}] {title}\n    {url}\n    {snippet}")
+
+    source_context = "\n\n".join(source_lines)
+
+    system_msg = SystemMessage(
+        content=(
+            "Du är OneSeek Research — en forskningsagent som analyserar "
+            "webbkällor och formulerar välgrundade svar.\n\n"
+            "INSTRUKTIONER:\n"
+            "- Läs igenom alla källor noggrant.\n"
+            "- Formulera ett sammanhängande, informativt svar på användarens fråga.\n"
+            "- Citera källor med [1], [2] osv. inline i texten.\n"
+            "- Om källorna ger motstridiga uppgifter, notera det.\n"
+            "- Svara på samma språk som frågan.\n"
+            "- Avsluta med en kort källförteckning.\n"
+            "- Var saklig och koncis men grundlig."
+        )
+    )
+    human_msg = HumanMessage(
+        content=(
+            f"Fråga: {query}\n\n"
+            f"Webbkällor ({len(sources)} st):\n\n{source_context}"
+        )
+    )
+
+    try:
+        raw = await asyncio.wait_for(
+            llm.ainvoke(
+                [system_msg, human_msg],
+                **{"max_tokens": 1500},
+            ),
+            timeout=_RESEARCH_SYNTHESIS_TIMEOUT,
+        )
+        content = str(getattr(raw, "content", "") or "").strip()
+        if content:
+            return content
+    except TimeoutError:
+        logger.warning("research_executor: synthesis LLM timed out, falling back to source list")
+    except Exception:
+        logger.warning("research_executor: synthesis LLM failed, falling back to source list", exc_info=True)
+
+    # Fallback: formatted source list (previous behaviour)
+    return _format_research_response(query, sources)
+
+
 def _format_research_response(
     query: str,
     sources: list[dict[str, Any]],
 ) -> str:
-    """Format research results into a readable response for synthesis."""
+    """Format research results into a readable source list (fallback)."""
     if not sources:
         return f"Webbsökning för '{query}' gav inga resultat."
 
