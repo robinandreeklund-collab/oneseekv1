@@ -6712,42 +6712,36 @@ async def create_supervisor_agent(
         )
 
         # Build tavily_search_fn for compare research agent.
-        # We call Tavily API directly (not via ConnectorService) to avoid
-        # the complex DB ingestion pipeline that can silently return empty results.
+        # Pre-fetch the API key NOW (while the DB session is fresh) and
+        # cache it in the closure.  This avoids expired-session errors
+        # when the function is called minutes later from the research worker.
         _compare_tavily_search_fn = None
+        _tavily_api_key: str | None = None
         if connector_service and search_space_id is not None:
-            _cs = connector_service
-            _ssid = search_space_id
+            try:
+                from app.db import SearchSourceConnectorType
+
+                tavily_connector = await connector_service.get_connector_by_type(
+                    SearchSourceConnectorType.TAVILY_API, search_space_id
+                )
+                if tavily_connector:
+                    _tavily_api_key = tavily_connector.config.get("TAVILY_API_KEY")
+            except Exception as exc:
+                logger.warning("compare mode: failed to fetch Tavily API key: %s", exc)
+
+        if _tavily_api_key:
+            _cached_key = _tavily_api_key  # capture in closure
 
             async def _compare_tavily_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
-                """Call Tavily API directly for compare research."""
+                """Call Tavily API directly with pre-fetched API key."""
                 logger.info(
                     "compare_tavily_search_fn: searching query=%r, max_results=%d",
                     query[:80], max_results,
                 )
                 try:
-                    from app.db import SearchSourceConnectorType
-
-                    # Look up Tavily API key from the connector config in DB
-                    tavily_connector = await _cs.get_connector_by_type(
-                        SearchSourceConnectorType.TAVILY_API, _ssid
-                    )
-                    if not tavily_connector:
-                        logger.warning(
-                            "compare_tavily_search_fn: no Tavily connector for space %s",
-                            _ssid,
-                        )
-                        return []
-
-                    tavily_api_key = tavily_connector.config.get("TAVILY_API_KEY")
-                    if not tavily_api_key:
-                        logger.warning("compare_tavily_search_fn: TAVILY_API_KEY is empty")
-                        return []
-
-                    # Call Tavily SDK directly — no DB ingestion needed for compare
                     from tavily import TavilyClient
 
-                    client = TavilyClient(api_key=tavily_api_key)
+                    client = TavilyClient(api_key=_cached_key)
                     response = await asyncio.to_thread(
                         client.search,
                         query=query,
@@ -6788,16 +6782,14 @@ async def create_supervisor_agent(
                     return []
 
             logger.info(
-                "compare mode: tavily_search_fn CREATED "
-                "(connector_service=%s, search_space_id=%s)",
-                type(_cs).__name__, _ssid,
+                "compare mode: tavily_search_fn CREATED with pre-fetched API key",
             )
         else:
             logger.warning(
                 "compare mode: tavily_search_fn is None! "
-                "(connector_service=%s, search_space_id=%s) "
+                "(connector_service=%s, search_space_id=%s, key_found=%s) "
                 "— research agent will NOT perform web searches",
-                connector_service, search_space_id,
+                connector_service, search_space_id, bool(_tavily_api_key),
             )
 
         # Build compare subagent spawner (P4 pattern with specialized workers)

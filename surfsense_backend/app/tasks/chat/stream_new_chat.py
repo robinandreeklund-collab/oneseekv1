@@ -870,12 +870,11 @@ _OUTPUT_PIPELINE_CHAIN_TOKENS = (
 )
 
 # Compare-mode intermediate nodes whose LLM reasoning should NOT be
-# streamed to the think-box.  Their output is structured JSON that gets
-# parsed separately by the convergence/synthesizer pipeline — streaming
-# their raw content (often garbled thinking from small local models)
-# would pollute the FadeLayer with unreadable noise.
+# streamed to the think-box.  These nodes don't make meaningful LLM calls
+# (domain_planner is deterministic, spawner fans out to external APIs).
+# compare_convergence IS intentionally excluded — its reasoning IS useful
+# and should appear in the think-box.
 _COMPARE_SILENT_CHAIN_TOKENS = (
-    "compare_convergence",
     "compare_subagent_spawner",
     "compare_domain_planner",
 )
@@ -3124,12 +3123,16 @@ async def stream_new_chat(
                         yield streaming_service.format_reasoning_delta(
                             active_reasoning_id, header
                         )
-                    if _structured_mode:
+                    # compare_synthesizer generates free-form markdown,
+                    # NOT structured JSON.  Do NOT create a parser for it —
+                    # feed_all() would silently swallow all text.
+                    _is_compare_synth = "compare_synthesizer" in pcn_lower
+                    if _structured_mode and not _is_compare_synth:
                         # P1 Extra: structured JSON mode — create an
                         # IncrementalSchemaParser for this output model run
                         # so on_chat_model_stream can split thinking/response.
                         _structured_parsers[run_id] = IncrementalSchemaParser()
-                    elif _think_filter._assume_think:
+                    if not _is_compare_synth and _think_filter._assume_think:
                         flush_r, flush_t = _think_filter.reset_think_mode()
                         if flush_r:
                             if active_reasoning_id is None:
@@ -3155,24 +3158,20 @@ async def stream_new_chat(
                             yield streaming_service.format_reasoning_delta(
                                 active_reasoning_id, flush_t
                             )
-                        # Output nodes that produce the final user-facing text
-                        # need _in_think forced to False.  reset_think_mode()
-                        # puts the filter back in think mode, which would cause
-                        # ALL output to be classified as reasoning instead of
-                        # text-delta.  Force out of think mode for:
-                        # - response_layer (normal mode formatting LLM)
-                        # - compare_synthesizer (compare mode final synthesis)
-                        # The normal synthesizer keeps assume_think behaviour
-                        # for Qwen3-style models that pre-fill <think>.
-                        _force_text = (
-                            (
-                                "response_layer" in pcn_lower
-                                and "response_layer_router" not in pcn_lower
-                            )
-                            or "compare_synthesizer" in pcn_lower
+                    # Force text mode for output nodes that produce final
+                    # user-facing text.  Must run OUTSIDE the structured-mode
+                    # branches so it always applies.
+                    # - response_layer (normal mode formatting LLM)
+                    # - compare_synthesizer (compare mode final synthesis)
+                    _force_text = (
+                        (
+                            "response_layer" in pcn_lower
+                            and "response_layer_router" not in pcn_lower
                         )
-                        if _force_text:
-                            _think_filter._in_think = False
+                        or _is_compare_synth
+                    )
+                    if _force_text:
+                        _think_filter._in_think = False
                 else:
                     # Unknown / unclassified model: treat as INTERNAL to
                     # prevent any internal reasoning from leaking into the
@@ -3359,12 +3358,16 @@ async def stream_new_chat(
                         if not is_output:
                             model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
                             internal_model_buffers.setdefault(run_id, "")
-                            if _structured_mode:
-                                _structured_parsers.setdefault(run_id, IncrementalSchemaParser())
-                            else:
-                                internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                                    assume_think=_think_filter._assume_think,
-                                )
+                            # Compare-silent chains: absorb content but don't
+                            # create parsers/filters (same as primary handler).
+                            _silent_trace = _is_compare_silent_chain(parent_chain_name)
+                            if not _silent_trace:
+                                if _structured_mode:
+                                    _structured_parsers.setdefault(run_id, IncrementalSchemaParser())
+                                else:
+                                    internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                                        assume_think=_think_filter._assume_think,
+                                    )
                     model_input = (
                         model_data.get("input")
                         or model_data.get("messages")
