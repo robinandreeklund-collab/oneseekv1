@@ -6720,30 +6720,77 @@ async def create_supervisor_agent(
 
             async def _compare_tavily_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
                 """Wrap ConnectorService.search_tavily for compare research."""
-                sources_info, documents = await _cs.search_tavily(
-                    user_query=query,
-                    search_space_id=_ssid,
-                    top_k=max_results,
-                    user_id=_uid,
+                logger.info(
+                    "compare_tavily_search_fn: searching query=%r, max_results=%d",
+                    query[:80], max_results,
                 )
+                try:
+                    sources_info, documents = await _cs.search_tavily(
+                        user_query=query,
+                        search_space_id=_ssid,
+                        top_k=max_results,
+                        user_id=_uid,
+                    )
+                except Exception as tavily_exc:
+                    logger.warning(
+                        "compare_tavily_search_fn: search_tavily raised: %s", tavily_exc
+                    )
+                    return []
+
                 results: list[dict[str, Any]] = []
+
+                # sources_info["sources"] are chunk-level objects:
+                #   {"id": chunk_id, "title": "...", "description": "...", "url": "..."}
                 if isinstance(sources_info, dict):
                     for src in sources_info.get("sources", []):
                         results.append({
                             "url": src.get("url", ""),
                             "title": src.get("title", ""),
-                            "content": src.get("content", src.get("snippet", "")),
+                            "content": src.get("description", ""),
                         })
-                # Fallback: extract from documents if sources_info had nothing
+
+                # Fallback: extract from serialized documents
+                # Each doc has structure: {"document": {"title", "metadata": {"url"}},
+                #                          "chunks": [{"content": "..."}]}
                 if not results and documents:
                     for doc in documents[:max_results]:
-                        meta = getattr(doc, "metadata", {}) or {}
-                        results.append({
-                            "url": meta.get("url", meta.get("source_url", "")),
-                            "title": meta.get("title", ""),
-                            "content": getattr(doc, "page_content", "")[:400],
-                        })
+                        if isinstance(doc, dict):
+                            doc_info = doc.get("document", {}) or {}
+                            meta = doc_info.get("metadata", {}) or {}
+                            chunks = doc.get("chunks", []) or []
+                            content = chunks[0].get("content", "")[:400] if chunks else ""
+                            results.append({
+                                "url": meta.get("url", ""),
+                                "title": doc_info.get("title", ""),
+                                "content": content,
+                            })
+                        else:
+                            # Langchain Document-like object
+                            meta = getattr(doc, "metadata", {}) or {}
+                            results.append({
+                                "url": meta.get("url", meta.get("source_url", "")),
+                                "title": meta.get("title", ""),
+                                "content": getattr(doc, "page_content", "")[:400],
+                            })
+
+                logger.info(
+                    "compare_tavily_search_fn: got %d results for query=%r",
+                    len(results), query[:80],
+                )
                 return results
+
+            logger.info(
+                "compare mode: tavily_search_fn CREATED "
+                "(connector_service=%s, search_space_id=%s)",
+                type(_cs).__name__, _ssid,
+            )
+        else:
+            logger.warning(
+                "compare mode: tavily_search_fn is None! "
+                "(connector_service=%s, search_space_id=%s) "
+                "— research agent will NOT perform web searches",
+                connector_service, search_space_id,
+            )
 
         # Build compare subagent spawner (P4 pattern with specialized workers)
         compare_spawner_node = build_compare_subagent_spawner_node(

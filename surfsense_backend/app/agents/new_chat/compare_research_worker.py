@@ -57,8 +57,15 @@ async def run_research_executor(
     """
     start_time = time.monotonic()
 
+    logger.info(
+        "research_executor: starting (tavily_search_fn=%s, query=%r)",
+        "SET" if tavily_search_fn is not None else "NONE",
+        query[:80],
+    )
+
     # Step 1: Decompose query into sub-queries
     sub_queries = await _decompose_query(query, llm)
+    logger.info("research_executor: decomposed into %d sub-queries: %s", len(sub_queries), sub_queries)
 
     # Step 2: Parallel Tavily searches
     web_sources: list[dict[str, Any]] = []
@@ -73,6 +80,8 @@ async def run_research_executor(
                 logger.warning("research_executor: Tavily search failed: %s", r)
                 continue
             web_sources.extend(r)
+
+    logger.info("research_executor: collected %d raw web_sources", len(web_sources))
 
     # Deduplicate by URL
     seen_urls: set[str] = set()
