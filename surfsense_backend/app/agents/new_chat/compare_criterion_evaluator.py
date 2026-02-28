@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 CRITERIA = ("relevans", "djup", "klarhet", "korrekthet")
 
 # Global semaphore to limit concurrent criterion LLM calls.
-# Without this, 7 models × 4 criteria = 28 simultaneous requests
-# overwhelm local LLM servers (LM Studio, Ollama, etc.).
-_CRITERION_CONCURRENCY = asyncio.Semaphore(6)
+# 7 models × 4 criteria = 28 simultaneous requests — allow full parallelism
+# so all criterion evaluations can run concurrently without serialization.
+_CRITERION_CONCURRENCY = asyncio.Semaphore(28)
 
 # ── Criterion-specific prompts ──────────────────────────────────────
 

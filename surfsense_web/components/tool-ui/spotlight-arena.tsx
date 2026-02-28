@@ -692,7 +692,8 @@ const PodDebugPanel: FC<{
 			<CollapsibleContent>
 				<div className="mt-1 rounded-md border border-border/40 bg-muted/20 p-2 space-y-1">
 					{entries.map((key) => {
-						const meta = podInfo[key]!;
+						const meta = podInfo[key];
+						if (!meta) return null;
 						const latencyStr = meta.latency_ms >= 1000
 							? `${(meta.latency_ms / 1000).toFixed(1)}s`
 							: `${meta.latency_ms}ms`;
@@ -802,8 +803,16 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 	// Determine per-criterion evaluation state from live SSE data
 	const domainLive = liveScores[model.domain];
 	const domainPods = livePods[model.domain] || model.criterionPodInfo;
-	// Model is "evaluating" when the domain has appeared in SSE but not all criteria are done
-	const isEvaluating = !!domainLive && model.status !== "error";
+	// "Criteria finalized" = tool result has criterion_scores (model_complete arrived)
+	// or all 4 live criterion scores have arrived.
+	const hasFinalScoresFromResult = Object.keys(model.criterionPodInfo).length === 4
+		|| (model.scores.relevans > 0 && model.scores.djup > 0 && model.scores.klarhet > 0 && model.scores.korrekthet > 0 && !domainLive);
+	const allLiveDone = domainLive
+		? (domainLive.relevans != null && domainLive.djup != null && domainLive.klarhet != null && domainLive.korrekthet != null)
+		: false;
+	const criteriaFinalized = hasFinalScoresFromResult || allLiveDone;
+	// Show spinners when model has a response but criteria aren't all done yet
+	const isEvaluating = model.status === "complete" && !criteriaFinalized;
 
 	if (model.status === "running") {
 		return (
@@ -897,24 +906,39 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 								rationale={model.reasonings[key]}
 								animate={model.hasRealScores}
 								isEvaluating={isEvaluating}
-								isComplete={domainLive?.[key] != null || model.hasRealScores}
+								isComplete={domainLive?.[key] != null || criteriaFinalized}
 							/>
 						))}
 					</div>
 
+					{/* Evaluating status */}
+					{isEvaluating && (
+						<div className="mt-2 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+							<LoaderCircleIcon className="size-3 animate-spin" />
+							<span>
+								Utvärderar{" "}
+								{SCORE_KEYS.filter((k) => domainLive?.[k] == null).map((k) => k).join(", ") || "..."}
+							</span>
+						</div>
+					)}
+
 					{/* Weighted score + raw total */}
-					<div className="mt-2 flex items-center justify-between text-xs">
-						<span className="text-muted-foreground">Viktat</span>
-						<span className="font-bold tabular-nums text-primary">
-							{model.weightedScore}/100
-						</span>
-					</div>
-					<div className="flex items-center justify-between text-[10px]">
-						<span className="text-muted-foreground">Totalpoäng</span>
-						<span className="tabular-nums text-muted-foreground">
-							{model.totalScore}/400
-						</span>
-					</div>
+					{!isEvaluating && (
+						<>
+							<div className="mt-2 flex items-center justify-between text-xs">
+								<span className="text-muted-foreground">Viktat</span>
+								<span className="font-bold tabular-nums text-primary">
+									{model.weightedScore}/100
+								</span>
+							</div>
+							<div className="flex items-center justify-between text-[10px]">
+								<span className="text-muted-foreground">Totalpoäng</span>
+								<span className="tabular-nums text-muted-foreground">
+									{model.totalScore}/400
+								</span>
+							</div>
+						</>
+					)}
 
 					{/* Pod debug panel */}
 					<PodDebugPanel podInfo={domainPods} />
@@ -960,7 +984,13 @@ const RunnerUpCard: FC<{
 
 	const domainLive = liveScores[model.domain];
 	const domainPods = livePods[model.domain] || model.criterionPodInfo;
-	const isEvaluating = !!domainLive && model.status !== "error";
+	const hasFinalScoresFromResult2 = Object.keys(model.criterionPodInfo).length === 4
+		|| (model.scores.relevans > 0 && model.scores.djup > 0 && model.scores.klarhet > 0 && model.scores.korrekthet > 0 && !domainLive);
+	const allLiveDone2 = domainLive
+		? (domainLive.relevans != null && domainLive.djup != null && domainLive.klarhet != null && domainLive.korrekthet != null)
+		: false;
+	const criteriaFinalized2 = hasFinalScoresFromResult2 || allLiveDone2;
+	const isEvaluating = model.status === "complete" && !criteriaFinalized2;
 
 	if (model.status === "running") {
 		return (
@@ -1036,16 +1066,23 @@ const RunnerUpCard: FC<{
 								compact
 								animate={model.hasRealScores}
 								isEvaluating={isEvaluating}
-								isComplete={domainLive?.[key] != null || model.hasRealScores}
+								isComplete={domainLive?.[key] != null || criteriaFinalized2}
 							/>
 						))}
 					</div>
-					<div className="mt-1.5 flex items-center justify-between text-[10px]">
-						<span className="text-muted-foreground">Viktat</span>
-						<span className="font-bold tabular-nums text-primary">
-							{model.weightedScore}/100
-						</span>
-					</div>
+					{isEvaluating ? (
+						<div className="mt-1 flex items-center gap-1 text-[9px] text-muted-foreground">
+							<LoaderCircleIcon className="size-2.5 animate-spin" />
+							<span>Utvärderar...</span>
+						</div>
+					) : (
+						<div className="mt-1.5 flex items-center justify-between text-[10px]">
+							<span className="text-muted-foreground">Viktat</span>
+							<span className="font-bold tabular-nums text-primary">
+								{model.weightedScore}/100
+							</span>
+						</div>
+					)}
 					<PodDebugPanel podInfo={domainPods} compact />
 					<ExpandableResponse model={model} compact />
 				</CardContent>
@@ -1262,32 +1299,34 @@ export const SpotlightArenaLayout: FC = () => {
 				const queryText = String(part.args?.query || "");
 
 				// Score priority:
-				// 1. criterion_scores from tool result (real LLM evaluation per dimension)
-				// 2. live SSE criterion scores (partial, streamed before tool completion)
+				// 1. criterion_scores from tool result (final real LLM evaluation)
+				// 2. live SSE criterion scores — partial OK, missing criteria show as 0
 				// 3. model_scores from convergence (LLM merge evaluation)
-				// 4. Heuristic fallback
+				// 4. Heuristic fallback (only when no live data at all)
 				const domain = TOOL_TO_DOMAIN[part.toolName] || part.toolName;
 				const criterionScores = result?.criterion_scores as
 					| ModelScore
 					| undefined;
 				const liveScores = liveCriterionScores[domain];
-				const fullLiveScores =
-					liveScores &&
-					liveScores.relevans != null &&
-					liveScores.djup != null &&
-					liveScores.klarhet != null &&
-					liveScores.korrekthet != null
-						? (liveScores as ModelScore)
-						: undefined;
+				const hasAnyLive = !!liveScores && Object.keys(liveScores).length > 0;
+				// Merge partial live scores with 0 for missing criteria (progressive rendering)
+				const partialLiveScores: ModelScore | undefined = hasAnyLive
+					? {
+						relevans: liveScores.relevans ?? 0,
+						djup: liveScores.djup ?? 0,
+						klarhet: liveScores.klarhet ?? 0,
+						korrekthet: liveScores.korrekthet ?? 0,
+					}
+					: undefined;
 				const convergenceScores = externalModelScores?.[domain] as
 					| ModelScore
 					| undefined;
 				const scores =
 					criterionScores ||
-					fullLiveScores ||
+					partialLiveScores ||
 					convergenceScores ||
 					computeFallbackScores(result, part.toolName);
-				const hasReal = !!(criterionScores || fullLiveScores || convergenceScores);
+				const hasReal = !!(criterionScores || hasAnyLive || convergenceScores);
 
 				// Extract criterion reasonings (motivations for each score)
 				const reasonings: ModelReasonings =

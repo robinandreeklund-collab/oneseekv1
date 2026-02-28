@@ -1509,6 +1509,35 @@ export default function NewChatPage() {
 											compareSummary = parsed.data ?? null;
 											break;
 										}
+										case "data-model-response-ready": {
+											// Model responded — add card immediately (before criterion eval)
+											const mrId = String(parsed.data?.tool_call_id ?? "");
+											const mrName = String(parsed.data?.tool_name ?? "");
+											const mrResult = parsed.data?.result;
+											if (mrId && mrName && mrResult) {
+												if (!toolCallIndices.has(mrId)) {
+													addToolCall(mrId, mrName, { query: String(mrResult?.query || "") });
+												}
+												updateToolCall(mrId, { result: mrResult });
+												setMessages((prev) =>
+													prev.map((m) =>
+														m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+													)
+												);
+											}
+											break;
+										}
+										case "data-criterion-evaluation-started": {
+											// Mark domain as evaluating so spinners appear
+											const cesDomain = String(parsed.data?.domain ?? "");
+											if (cesDomain) {
+												setLiveCriterionScores((prev) => ({
+													...prev,
+													[cesDomain]: prev[cesDomain] || {},
+												}));
+											}
+											break;
+										}
 										case "data-criterion-complete": {
 											const ceDomain = String(parsed.data?.domain ?? "");
 											const ceCriterion = String(parsed.data?.criterion ?? "");
@@ -2327,6 +2356,35 @@ export default function NewChatPage() {
 										}
 										case "data-compare-summary": {
 											compareSummary = parsed.data ?? null;
+											break;
+										}
+										case "data-model-response-ready": {
+											// Model responded — add card immediately (before criterion eval)
+											const mrId2 = String(parsed.data?.tool_call_id ?? "");
+											const mrName2 = String(parsed.data?.tool_name ?? "");
+											const mrResult2 = parsed.data?.result;
+											if (mrId2 && mrName2 && mrResult2) {
+												if (!toolCallIndices.has(mrId2)) {
+													addToolCall(mrId2, mrName2, { query: String(mrResult2?.query || "") });
+												}
+												updateToolCall(mrId2, { result: mrResult2 });
+												setMessages((prev) =>
+													prev.map((m) =>
+														m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+													)
+												);
+											}
+											break;
+										}
+										case "data-criterion-evaluation-started": {
+											// Mark domain as evaluating so spinners appear
+											const cesDomain2 = String(parsed.data?.domain ?? "");
+											if (cesDomain2) {
+												setLiveCriterionScores((prev) => ({
+													...prev,
+													[cesDomain2]: prev[cesDomain2] || {},
+												}));
+											}
 											break;
 										}
 										case "data-criterion-complete": {

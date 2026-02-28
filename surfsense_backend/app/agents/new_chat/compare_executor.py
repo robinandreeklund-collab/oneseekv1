@@ -343,10 +343,40 @@ def build_compare_subagent_spawner_node(
         response_text = result.get("response", "")
         confidence = 0.8 if status == "complete" else 0.0
 
+        # Emit model_response_ready immediately so frontend can render
+        # the card before criterion evaluation starts.
+        tools = plan_data.get("tools", [])
+        tool_name = tools[0] if tools else f"call_{domain}"
+        tc_id = f"tc-{domain_subagent_ids[domain]}"
+        try:
+            await adispatch_custom_event(
+                "model_response_ready",
+                {
+                    "domain": domain,
+                    "tool_call_id": tc_id,
+                    "tool_name": tool_name,
+                    "result": {**result, "latency_ms": latency_ms},
+                    "timestamp": time.time(),
+                },
+                config=config,
+            )
+        except Exception:
+            pass  # non-critical
+
         # Run 4 parallel criterion evaluations if model returned successfully
         criterion_scores: dict[str, int] = {}
         criterion_reasonings: dict[str, str] = {}
         if status == "complete" and response_text:
+            # Notify frontend that criterion evaluation is starting for this domain
+            try:
+                await adispatch_custom_event(
+                    "criterion_evaluation_started",
+                    {"domain": domain, "timestamp": time.time()},
+                    config=config,
+                )
+            except Exception:
+                pass
+
             try:
                 from app.agents.new_chat.compare_criterion_evaluator import (
                     evaluate_model_response,
@@ -454,6 +484,22 @@ def build_compare_subagent_spawner_node(
         response_text = result.get("response", "")
         web_sources = result.get("web_sources", [])
         confidence = min(0.9, 0.3 + 0.1 * len(web_sources)) if status == "complete" else 0.0
+
+        # Emit model_response_ready so the research card appears immediately
+        try:
+            await adispatch_custom_event(
+                "model_response_ready",
+                {
+                    "domain": "research",
+                    "tool_call_id": f"tc-{subagent_id}",
+                    "tool_name": "call_oneseek",
+                    "result": {**result, "latency_ms": latency_ms},
+                    "timestamp": time.time(),
+                },
+                config=config,
+            )
+        except Exception:
+            pass  # non-critical
 
         scope_info_r: dict[str, Any] = {}
         if _sandbox_active:
