@@ -24,6 +24,12 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from .structured_schemas import (
+    ResearchDecomposeResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 logger = logging.getLogger(__name__)
 
 # Hard limits
@@ -98,16 +104,32 @@ async def _decompose_query(query: str, llm: Any) -> list[str]:
             "Du är en sökfråge-decomposerare. "
             "Givet en användarfråga, generera 1-3 korta, specifika sökfrågor "
             "som täcker frågans kärnaspekter. Inkludera Sverige-bias om relevant.\n\n"
+            "INSTRUKTIONER FÖR OUTPUT:\n"
+            "- All intern resonering ska skrivas i \"thinking\"-fältet.\n"
+            "- Använd INTE <think>-taggar.\n\n"
             "Returnera strikt JSON:\n"
-            '{"queries": ["sökfråga 1", "sökfråga 2"]}'
+            '{"thinking": "din resonering om hur frågan bäst delas upp", '
+            '"queries": ["sökfråga 1", "sökfråga 2"]}'
         )
     )
     human_msg = HumanMessage(content=f"Fråga: {query}")
 
     try:
-        raw = await llm.ainvoke([system_msg, human_msg], max_tokens=200)
+        _invoke_kwargs: dict[str, Any] = {"max_tokens": 300}
+        if structured_output_enabled():
+            _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                ResearchDecomposeResult, "research_decompose"
+            )
+        raw = await llm.ainvoke([system_msg, human_msg], **_invoke_kwargs)
         raw_content = str(getattr(raw, "content", "") or "")
-        # Try to parse JSON
+
+        # Try structured Pydantic parse first, fall back to regex
+        try:
+            _structured = ResearchDecomposeResult.model_validate_json(raw_content)
+            return [str(q) for q in _structured.queries[:_MAX_RESEARCH_QUERIES]]
+        except Exception:
+            pass
+
         import re
 
         json_match = re.search(r"\{[^{}]*\}", raw_content)

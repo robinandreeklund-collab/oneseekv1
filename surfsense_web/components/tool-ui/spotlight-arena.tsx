@@ -72,6 +72,7 @@ interface RankedModel {
 	scores: ModelScore;
 	hasRealScores: boolean;
 	totalScore: number;
+	weightedScore: number;
 	meta: ModelMeta;
 	summary: string;
 	fullResponse: string;
@@ -248,6 +249,23 @@ function extractMeta(
 		tokens: { prompt, completion, total, isEstimated },
 		truncated: result.truncated === true,
 	};
+}
+
+/** Confidence-weighted scoring matching backend weights */
+const CRITERION_WEIGHTS: Record<keyof ModelScore, number> = {
+	korrekthet: 0.35,
+	relevans: 0.25,
+	djup: 0.20,
+	klarhet: 0.20,
+};
+
+function weightedScore(s: ModelScore): number {
+	return Math.round(
+		s.korrekthet * CRITERION_WEIGHTS.korrekthet +
+		s.relevans * CRITERION_WEIGHTS.relevans +
+		s.djup * CRITERION_WEIGHTS.djup +
+		s.klarhet * CRITERION_WEIGHTS.klarhet
+	);
 }
 
 function totalScore(s: ModelScore): number {
@@ -723,10 +741,16 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 						))}
 					</div>
 
-					{/* Total score */}
+					{/* Weighted score + raw total */}
 					<div className="mt-2 flex items-center justify-between text-xs">
-						<span className="text-muted-foreground">Totalpoäng</span>
+						<span className="text-muted-foreground">Viktat</span>
 						<span className="font-bold tabular-nums text-primary">
+							{model.weightedScore}/100
+						</span>
+					</div>
+					<div className="flex items-center justify-between text-[10px]">
+						<span className="text-muted-foreground">Totalpoäng</span>
+						<span className="tabular-nums text-muted-foreground">
 							{model.totalScore}/400
 						</span>
 					</div>
@@ -843,9 +867,9 @@ const RunnerUpCard: FC<{
 						))}
 					</div>
 					<div className="mt-1.5 flex items-center justify-between text-[10px]">
-						<span className="text-muted-foreground">Total</span>
+						<span className="text-muted-foreground">Viktat</span>
 						<span className="font-bold tabular-nums text-primary">
-							{model.totalScore}/400
+							{model.weightedScore}/100
 						</span>
 					</div>
 					<ExpandableResponse model={model} compact />
@@ -980,11 +1004,12 @@ const ConvergenceSummary: FC<{
 							<strong className="text-foreground">
 								{completed[0].displayName}
 							</strong>{" "}
-							och{" "}
+							(viktat: {completed[0].weightedScore}/100) och{" "}
 							<strong className="text-foreground">
 								{completed[1].displayName}
 							</strong>{" "}
-							levererar de mest kompletta svaren. Klicka{" "}
+							(viktat: {completed[1].weightedScore}/100){" "}
+							toppar rankingen. Klicka{" "}
 							<em>Visa svar</em> på varje modell för att se fullständiga svar
 							och jämföra själv.
 						</p>
@@ -1092,6 +1117,7 @@ export const SpotlightArenaLayout: FC = () => {
 					scores,
 					hasRealScores: hasReal,
 					totalScore: totalScore(scores),
+					weightedScore: weightedScore(scores),
 					meta: extractMeta(result, responseText, queryText),
 					summary: String(result?.summary || ""),
 					fullResponse: responseText,
@@ -1104,11 +1130,13 @@ export const SpotlightArenaLayout: FC = () => {
 			},
 		);
 
-		// Sort: complete first, then by total score descending
+		// Sort: complete first, then by weighted score descending
+		// Weighted score uses confidence-weighted convergence:
+		// korrekthet=35%, relevans=25%, djup=20%, klarhet=20%
 		parsed.sort((a, b) => {
 			if (a.status === "complete" && b.status !== "complete") return -1;
 			if (a.status !== "complete" && b.status === "complete") return 1;
-			return b.totalScore - a.totalScore;
+			return b.weightedScore - a.weightedScore;
 		});
 
 		parsed.forEach((m, i) => {

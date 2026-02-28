@@ -6711,12 +6711,47 @@ async def create_supervisor_agent(
             include_research=True,
         )
 
+        # Build tavily_search_fn for compare research agent
+        _compare_tavily_search_fn = None
+        if connector_service and search_space_id is not None:
+            _cs = connector_service
+            _ssid = search_space_id
+            _uid = user_id
+
+            async def _compare_tavily_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
+                """Wrap ConnectorService.search_tavily for compare research."""
+                sources_info, documents = await _cs.search_tavily(
+                    user_query=query,
+                    search_space_id=_ssid,
+                    top_k=max_results,
+                    user_id=_uid,
+                )
+                results: list[dict[str, Any]] = []
+                if isinstance(sources_info, dict):
+                    for src in sources_info.get("sources", []):
+                        results.append({
+                            "url": src.get("url", ""),
+                            "title": src.get("title", ""),
+                            "content": src.get("content", src.get("snippet", "")),
+                        })
+                # Fallback: extract from documents if sources_info had nothing
+                if not results and documents:
+                    for doc in documents[:max_results]:
+                        meta = getattr(doc, "metadata", {}) or {}
+                        results.append({
+                            "url": meta.get("url", meta.get("source_url", "")),
+                            "title": meta.get("title", ""),
+                            "content": getattr(doc, "page_content", "")[:400],
+                        })
+                return results
+
         # Build compare subagent spawner (P4 pattern with specialized workers)
         compare_spawner_node = build_compare_subagent_spawner_node(
             llm=llm,
             compare_mini_critic_prompt=compare_mini_critic_prompt,
             latest_user_query_fn=_latest_user_query,
             extract_first_json_object_fn=_extract_first_json_object,
+            tavily_search_fn=_compare_tavily_search_fn,
             execution_timeout_seconds=90,
             sandbox_enabled=sandbox_enabled,
             sandbox_isolation_enabled=compare_sandbox_isolation,

@@ -672,6 +672,65 @@ def build_compare_subagent_spawner_node(
     return compare_subagent_spawner_node
 
 
+# ─── Confidence-Weighted Scoring ─────────────────────────────────────
+
+# Weights: korrekthet (accuracy) is most important, then relevans, then
+# djup and klarhet equally.  These can be tuned dynamically in the future.
+CRITERION_WEIGHTS: dict[str, float] = {
+    "korrekthet": 0.35,
+    "relevans": 0.25,
+    "djup": 0.20,
+    "klarhet": 0.20,
+}
+
+
+def compute_weighted_score(scores: dict[str, int | float]) -> float:
+    """Compute confidence-weighted final score from per-criterion scores.
+
+    Returns a score 0-100 (weighted average).
+    """
+    total_weight = 0.0
+    weighted_sum = 0.0
+    for criterion, weight in CRITERION_WEIGHTS.items():
+        value = scores.get(criterion, 0)
+        if isinstance(value, (int, float)):
+            weighted_sum += weight * float(value)
+            total_weight += weight
+    if total_weight == 0.0:
+        return 0.0
+    return round(weighted_sum / total_weight, 1)
+
+
+def rank_models_by_weighted_score(
+    model_scores: dict[str, dict[str, int | float]],
+) -> list[dict[str, Any]]:
+    """Rank models by weighted score. Returns sorted list of dicts.
+
+    Each entry: {"domain": "grok", "weighted_score": 82.5, "rank": 1,
+                 "scores": {...}, "raw_total": 316}
+    """
+    ranked: list[dict[str, Any]] = []
+    for domain, scores in model_scores.items():
+        if domain == "research":
+            continue  # Skip research agent from ranking
+        if not isinstance(scores, dict):
+            continue
+        weighted = compute_weighted_score(scores)
+        raw_total = sum(
+            int(v) for v in scores.values() if isinstance(v, (int, float))
+        )
+        ranked.append({
+            "domain": domain,
+            "weighted_score": weighted,
+            "raw_total": raw_total,
+            "scores": scores,
+        })
+    ranked.sort(key=lambda x: x["weighted_score"], reverse=True)
+    for i, entry in enumerate(ranked):
+        entry["rank"] = i + 1
+    return ranked
+
+
 # ─── Compare Synthesis Context ───────────────────────────────────────
 
 
@@ -714,6 +773,22 @@ def _build_synthesis_from_convergence(
                     f"korrekthet={scores.get('korrekthet', 0)}"
                 )
         blocks.append("")
+
+        # Confidence-weighted ranking — this is the DEFINITIVE ranking
+        ranked = rank_models_by_weighted_score(model_scores)
+        if ranked:
+            blocks.append(
+                "VIKTAD SLUTRANKING (confidence-weighted convergence):\n"
+                "Vikter: korrekthet=35%, relevans=25%, djup=20%, klarhet=20%\n"
+                "DENNA RANKING ÄR DEFINITIV — din winner_rationale MÅSTE matcha denna.\n"
+            )
+            for entry in ranked:
+                blocks.append(
+                    f"  #{entry['rank']} {entry['domain']}: "
+                    f"viktat={entry['weighted_score']}/100, "
+                    f"rå_total={entry['raw_total']}/400"
+                )
+            blocks.append("")
 
     # Agreements and disagreements
     agreements = convergence.get("agreements", [])
@@ -864,12 +939,24 @@ def build_compare_synthesizer_node(
             synthesis_text = response.content if hasattr(response, "content") else str(response)
             synthesis_message = AIMessage(content=synthesis_text)
 
+            # Compute confidence-weighted ranking for arena data
+            all_model_scores = convergence.get("model_scores", {})
+            # Also collect scores from subagent summaries
+            for s in subagent_summaries:
+                domain = s.get("domain", "unknown")
+                cs = s.get("criterion_scores", {})
+                if cs and domain not in all_model_scores:
+                    all_model_scores[domain] = cs
+            weighted_ranking = rank_models_by_weighted_score(all_model_scores)
+
             return {
                 "messages": [synthesis_message],
                 "final_response": synthesis_text,
                 "orchestration_phase": "compare_synthesis_complete",
                 "compare_arena_data": {
-                    "model_scores": convergence.get("model_scores", {}),
+                    "model_scores": all_model_scores,
+                    "weighted_ranking": weighted_ranking,
+                    "criterion_weights": CRITERION_WEIGHTS,
                     "agreements": convergence.get("agreements", []),
                     "disagreements": convergence.get("disagreements", []),
                     "unique_insights": convergence.get("unique_insights", {}),

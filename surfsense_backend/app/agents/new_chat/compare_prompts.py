@@ -9,6 +9,8 @@ DEFAULT_COMPARE_ANALYSIS_PROMPT = (
     "- Användarfråga: Den ursprungliga frågan.\n"
     "- Convergence sammanfattning: Unified resultat med overlap_score, konflikter, "
     "per-modell poäng, konsensus och meningsskiljaktigheter.\n"
+    "- VIKTAD SLUTRANKING: Definitiv ranking baserad på confidence-weighted convergence.\n"
+    "  Vikter: korrekthet=35%, relevans=25%, djup=20%, klarhet=20%.\n"
     "- Per-domän handoffs: Varje modell/research-agents resultat med confidence och findings.\n"
     "- ONESEEK_RESEARCH: Verifierad webb-data från research-agenten.\n"
     "- MODEL_ANSWER: Svar från externa modeller (märkta med modellnamn).\n\n"
@@ -21,6 +23,12 @@ DEFAULT_COMPARE_ANALYSIS_PROMPT = (
     "det är allmän kunskap.\n"
     "4. Skapa ett djupt jämförande svar: Lyft fram vad som skiljer modellerna åt, "
     "vilka som håller med varandra, och vilka unika bidrag varje modell ger.\n\n"
+    "**KRITISK REGEL — Sammanfattande bedömning / winner_rationale**:\n"
+    "Din \"winner_rationale\" MÅSTE stämma med den VIKTADE SLUTRANKINGEN som anges i indata.\n"
+    "- Modellen med rank #1 ska nämnas som vinnare.\n"
+    "- Motivera med KVALITATIVA insikter (varför den fick högst poäng) — inte bara siffror.\n"
+    "- Om #1 och #2 är väldigt nära (< 3 poängs skillnad) kan du nämna att det är jämnt.\n"
+    "- Du får INTE säga att en modell med lägre viktad poäng är bäst.\n\n"
     "**Svarets struktur (MYCKET VIKTIGT)**:\n"
     "Ditt svar MÅSTE börja med en JSON-block som innehåller strukturerad analys "
     "för Spotlight Arena. Omslut den med ```spotlight-arena-data och ```. "
@@ -37,7 +45,7 @@ DEFAULT_COMPARE_ANALYSIS_PROMPT = (
     '      {"model": "Claude", "insight": "Enda modellen som nämner X och ger djup analys av Y"},\n'
     '      {"model": "Perplexity", "insight": "Inkluderar aktuella datum och källhänvisningar"}\n'
     "    ],\n"
-    '    "winner_rationale": "Claude levererar det mest kompletta svaret tack vare X och Y. Perplexity kommer nära med sina aktuella källor.",\n'
+    '    "winner_rationale": "[#1-modellen] levererar det mest kompletta svaret tack vare X och Y. [#2-modellen] kommer nära med ...",\n'
     '    "reliability_notes": "Research-agenten bekräftar påstående Z. Grok saknar källa för W."\n'
     "  }\n"
     "}\n"
@@ -226,8 +234,12 @@ Regler:
 - 30-49 = Svag relevans, mest off-topic.
 - 0-29 = Irrelevant eller besvarar fel fråga.
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
 Returnera strikt JSON:
-{"score": 85, "reasoning": "En mening som motiverar poängen."}
+{"thinking": "din interna resonering", "score": 85, "reasoning": "En mening som motiverar poängen."}
 """.strip()
 
 DEFAULT_COMPARE_CRITERION_DJUP_PROMPT = """
@@ -247,8 +259,12 @@ Regler:
 - 30-49 = Ytligt, bara en eller två meningar.
 - 0-29 = Extremt ytligt, ingen substans.
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
 Returnera strikt JSON:
-{"score": 85, "reasoning": "En mening som motiverar poängen."}
+{"thinking": "din interna resonering", "score": 85, "reasoning": "En mening som motiverar poängen."}
 """.strip()
 
 DEFAULT_COMPARE_CRITERION_KLARHET_PROMPT = """
@@ -268,8 +284,12 @@ Regler:
 - 30-49 = Svår att följa, ostrukturerad.
 - 0-29 = Obegriplig, osammanhängande.
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
 Returnera strikt JSON:
-{"score": 85, "reasoning": "En mening som motiverar poängen."}
+{"thinking": "din interna resonering", "score": 85, "reasoning": "En mening som motiverar poängen."}
 """.strip()
 
 DEFAULT_COMPARE_CRITERION_KORREKTHET_PROMPT = """
@@ -292,8 +312,12 @@ Regler:
 - 30-49 = Flera felaktigheter, opålitligt.
 - 0-29 = Helt felaktigt eller fabricerade fakta.
 
+INSTRUKTIONER FÖR OUTPUT:
+- All intern resonering ska skrivas i "thinking"-fältet.
+- Använd INTE <think>-taggar.
+
 Returnera strikt JSON:
-{"score": 85, "reasoning": "En mening som motiverar poängen."}
+{"thinking": "din interna resonering", "score": 85, "reasoning": "En mening som motiverar poängen."}
 """.strip()
 
 DEFAULT_COMPARE_RESEARCH_PROMPT = """

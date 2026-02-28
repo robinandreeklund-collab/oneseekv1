@@ -18,6 +18,12 @@ import logging
 import time
 from typing import Any
 
+from .structured_schemas import (
+    CriterionEvalResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
+
 logger = logging.getLogger(__name__)
 
 CRITERIA = ("relevans", "djup", "klarhet", "korrekthet")
@@ -37,8 +43,11 @@ _CRITERION_PROMPTS: dict[str, str] = {
         "- 50-69 = Delvis relevant, tangerar frågan men missar kärnan.\n"
         "- 30-49 = Svag relevans, mest off-topic.\n"
         "- 0-29 = Irrelevant eller besvarar fel fråga.\n\n"
+        "INSTRUKTIONER FÖR OUTPUT:\n"
+        "- All intern resonering ska skrivas i \"thinking\"-fältet.\n"
+        "- Använd INTE <think>-taggar.\n\n"
         "Returnera strikt JSON:\n"
-        '{"score": 85, "reasoning": "En mening som motiverar poängen."}'
+        '{"thinking": "din interna resonering", "score": 85, "reasoning": "En mening som motiverar poängen."}'
     ),
     "djup": (
         "Du är en expert-bedömare som ENBART utvärderar DJUP.\n\n"
@@ -53,8 +62,11 @@ _CRITERION_PROMPTS: dict[str, str] = {
         "- 50-69 = Medeldjupt, grundläggande fakta utan analys.\n"
         "- 30-49 = Ytligt, bara en eller två meningar.\n"
         "- 0-29 = Extremt ytligt, ingen substans.\n\n"
+        "INSTRUKTIONER FÖR OUTPUT:\n"
+        "- All intern resonering ska skrivas i \"thinking\"-fältet.\n"
+        "- Använd INTE <think>-taggar.\n\n"
         "Returnera strikt JSON:\n"
-        '{"score": 85, "reasoning": "En mening som motiverar poängen."}'
+        '{"thinking": "din interna resonering", "score": 85, "reasoning": "En mening som motiverar poängen."}'
     ),
     "klarhet": (
         "Du är en expert-bedömare som ENBART utvärderar KLARHET.\n\n"
@@ -69,8 +81,11 @@ _CRITERION_PROMPTS: dict[str, str] = {
         "- 50-69 = Okej struktur, men kan vara rörig ibland.\n"
         "- 30-49 = Svår att följa, ostrukturerad.\n"
         "- 0-29 = Obegriplig, osammanhängande.\n\n"
+        "INSTRUKTIONER FÖR OUTPUT:\n"
+        "- All intern resonering ska skrivas i \"thinking\"-fältet.\n"
+        "- Använd INTE <think>-taggar.\n\n"
         "Returnera strikt JSON:\n"
-        '{"score": 85, "reasoning": "En mening som motiverar poängen."}'
+        '{"thinking": "din interna resonering", "score": 85, "reasoning": "En mening som motiverar poängen."}'
     ),
     "korrekthet": (
         "Du är en expert-bedömare som ENBART utvärderar KORREKTHET.\n\n"
@@ -87,8 +102,11 @@ _CRITERION_PROMPTS: dict[str, str] = {
         "- 50-69 = Blandat, vissa fakta stämmer men andra är osäkra.\n"
         "- 30-49 = Flera felaktigheter, opålitligt.\n"
         "- 0-29 = Helt felaktigt eller fabricerade fakta.\n\n"
+        "INSTRUKTIONER FÖR OUTPUT:\n"
+        "- All intern resonering ska skrivas i \"thinking\"-fältet.\n"
+        "- Använd INTE <think>-taggar.\n\n"
         "Returnera strikt JSON:\n"
-        '{"score": 85, "reasoning": "En mening som motiverar poängen."}'
+        '{"thinking": "din interna resonering", "score": 85, "reasoning": "En mening som motiverar poängen."}'
     ),
 }
 
@@ -137,16 +155,27 @@ async def evaluate_criterion(
     ]
 
     try:
+        _invoke_kwargs: dict[str, Any] = {"max_tokens": 300}
+        if structured_output_enabled():
+            _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                CriterionEvalResult, f"criterion_{criterion}"
+            )
         raw = await asyncio.wait_for(
-            llm.ainvoke(messages, max_tokens=150),
+            llm.ainvoke(messages, **_invoke_kwargs),
             timeout=timeout_seconds,
         )
         raw_text = str(getattr(raw, "content", "") or "")
-        parsed = extract_json_fn(raw_text)
 
-        score = int(parsed.get("score", 50))
-        score = max(0, min(100, score))
-        reasoning = str(parsed.get("reasoning", ""))
+        # Try structured Pydantic parse first, fall back to regex
+        try:
+            _structured = CriterionEvalResult.model_validate_json(raw_text)
+            score = max(0, min(100, _structured.score))
+            reasoning = _structured.reasoning
+        except Exception:
+            parsed = extract_json_fn(raw_text)
+            score = int(parsed.get("score", 50))
+            score = max(0, min(100, score))
+            reasoning = str(parsed.get("reasoning", ""))
 
         return {
             "criterion": criterion,

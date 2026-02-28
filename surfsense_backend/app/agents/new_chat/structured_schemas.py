@@ -486,6 +486,102 @@ class ModelDimensionScores(BaseModel):
     korrekthet: int = Field(..., ge=0, le=100, description="Korrekthet 0-100")
 
 
+# ────────────────────────────────────────────────────────────────
+# Compare: Criterion Evaluator
+# ────────────────────────────────────────────────────────────────
+
+
+class CriterionEvalResult(BaseModel):
+    """Output schema for a single criterion evaluator in compare mode."""
+
+    thinking: str = Field(
+        ...,
+        description="Intern resonering om bedömningen av detta kriterium.",
+    )
+    score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Poäng 0-100 för detta kriterium.",
+    )
+    reasoning: str = Field(
+        ...,
+        description="En mening som motiverar poängen.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
+# Compare: Research Query Decomposer
+# ────────────────────────────────────────────────────────────────
+
+
+class ResearchDecomposeResult(BaseModel):
+    """Output schema for compare research query decomposition."""
+
+    thinking: str = Field(
+        ...,
+        description="Resonering om hur frågan bäst delas upp i sökfrågor.",
+    )
+    queries: list[str] = Field(
+        ...,
+        description="1-3 korta, specifika sökfrågor.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
+# Compare: Arena Analysis (Synthesizer output)
+# ────────────────────────────────────────────────────────────────
+
+
+class ArenaDisagreement(BaseModel):
+    """A single disagreement between models."""
+
+    topic: str = Field(..., description="Kort ämne för meningsskiljaktigheten.")
+    sides: dict[str, str] = Field(
+        ..., description="Modellnamn → deras ståndpunkt."
+    )
+    verdict: str = Field(..., description="Research/faktabaserad bedömning.")
+
+
+class ArenaUniqueContribution(BaseModel):
+    """A unique insight from one model."""
+
+    model: str = Field(..., description="Modellens namn.")
+    insight: str = Field(..., description="Unik insikt från modellen.")
+
+
+class ArenaAnalysisResult(BaseModel):
+    """Output schema for compare synthesizer arena analysis."""
+
+    thinking: str = Field(
+        ...,
+        description="Intern resonering om jämförelsen på svenska.",
+    )
+    consensus: list[str] = Field(
+        default_factory=list,
+        description="Saker alla/de flesta modeller håller med om.",
+    )
+    disagreements: list[ArenaDisagreement] = Field(
+        default_factory=list,
+        description="Meningsskiljaktigheter mellan modeller.",
+    )
+    unique_contributions: list[ArenaUniqueContribution] = Field(
+        default_factory=list,
+        description="Unika bidrag per modell.",
+    )
+    winner_rationale: str = Field(
+        ...,
+        description=(
+            "Motivering av vinnaren — MÅSTE matcha den faktiska rankingen "
+            "baserat på viktade poäng. Nämn #1 modellen först."
+        ),
+    )
+    reliability_notes: str = Field(
+        default="",
+        description="Noteringar om tillförlitlighet och research-verifiering.",
+    )
+
+
 class ConvergenceResult(BaseModel):
     """Output schema for the convergence node (P4)."""
 
