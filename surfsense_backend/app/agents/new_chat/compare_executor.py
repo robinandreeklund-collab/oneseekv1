@@ -399,8 +399,11 @@ def build_compare_subagent_spawner_node(
                     timeout_seconds=90,
                     on_criterion_complete=on_criterion_complete,
                     prompt_overrides=criterion_prompt_overrides,
-                    acquire_criterion_pod_fn=_acquire_criterion_pod,
-                    release_criterion_pod_fn=_release_criterion_pod,
+                    # Criterion evaluators are LLM API calls — they run
+                    # inside the parent domain pod and do NOT need their
+                    # own K8s pods.  Passing None skips pod creation.
+                    acquire_criterion_pod_fn=None,
+                    release_criterion_pod_fn=None,
                     parent_subagent_id=subagent_id,
                     thread_id=thread_id,
                 )

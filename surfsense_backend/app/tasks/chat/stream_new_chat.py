@@ -2996,6 +2996,24 @@ async def stream_new_chat(
             if event_type == "on_custom_event":
                 custom_name = event.get("name", "")
                 custom_data = event.get("data")
+                # model_response_ready: card appears immediately (before
+                # criterion evaluation), so the frontend can show the
+                # model card with a spinner while scores stream in.
+                if custom_name == "model_response_ready" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data(
+                        "model-response-ready", custom_data
+                    )
+                    # Mark tool_call_id so on_chain_end won't duplicate it
+                    _tc_id = str(custom_data.get("tool_call_id", ""))
+                    if _tc_id:
+                        streamed_tool_call_ids.add(_tc_id)
+                    continue
+                # criterion_evaluation_started: frontend shows "Utvärderar..."
+                if custom_name == "criterion_evaluation_started" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data(
+                        "criterion-evaluation-started", custom_data
+                    )
+                    continue
                 if custom_name == "model_complete" and isinstance(custom_data, dict):
                     _mc_domain = str(custom_data.get("domain", ""))
                     if _mc_domain and _mc_domain not in streamed_model_complete_domains:
