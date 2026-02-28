@@ -3,11 +3,13 @@
 import { useAssistantState } from "@assistant-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import {
+	CheckCircle2Icon,
 	ChevronDownIcon,
 	ClockIcon,
 	CoinsIcon,
 	InfoIcon,
 	LeafIcon,
+	LoaderCircleIcon,
 	ZapIcon,
 } from "lucide-react";
 import {
@@ -41,6 +43,15 @@ export const SpotlightArenaActiveContext = createContext(false);
 export type LiveCriterionMap = Record<string, Partial<ModelScore>>;
 export const LiveCriterionContext = createContext<LiveCriterionMap>({});
 
+// Pod metadata per criterion from SSE events (domain → criterion → info)
+export interface CriterionPodMeta {
+	pod_id: string;
+	parent_pod_id: string;
+	latency_ms: number;
+}
+export type LiveCriterionPodMap = Record<string, Partial<Record<keyof ModelScore, CriterionPodMeta>>>;
+export const LiveCriterionPodContext = createContext<LiveCriterionPodMap>({});
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -72,9 +83,11 @@ interface ModelMeta {
 interface RankedModel {
 	toolName: string;
 	displayName: string;
+	domain: string;
 	rank: number;
 	scores: ModelScore;
 	reasonings: ModelReasonings;
+	criterionPodInfo: Partial<Record<keyof ModelScore, CriterionPodMeta>>;
 	hasRealScores: boolean;
 	totalScore: number;
 	weightedScore: number;
@@ -433,7 +446,9 @@ const ScoreBar: FC<{
 	rationale?: string;
 	compact?: boolean;
 	animate?: boolean;
-}> = ({ label, value, colorClass, rationale, compact = false, animate = true }) => {
+	isEvaluating?: boolean;
+	isComplete?: boolean;
+}> = ({ label, value, colorClass, rationale, compact = false, animate = true, isEvaluating = false, isComplete = false }) => {
 	const barRef = useRef<HTMLDivElement>(null);
 	const [width, setWidth] = useState(animate ? 0 : value);
 
@@ -496,6 +511,23 @@ const ScoreBar: FC<{
 			>
 				{value}%
 			</span>
+			{/* Spinner while evaluating, checkmark when complete */}
+			{isEvaluating && !isComplete && (
+				<LoaderCircleIcon
+					className={cn(
+						"shrink-0 animate-spin text-muted-foreground/60",
+						compact ? "size-2.5" : "size-3",
+					)}
+				/>
+			)}
+			{isComplete && (
+				<CheckCircle2Icon
+					className={cn(
+						"shrink-0 text-emerald-500",
+						compact ? "size-2.5" : "size-3",
+					)}
+				/>
+			)}
 		</div>
 	);
 };
@@ -618,6 +650,73 @@ const MetaBadges: FC<{ meta: ModelMeta; compact?: boolean }> = ({
 	);
 };
 
+// ── Pod debug panel (power-user toggle) ─────────────────────────────────────
+
+const CRITERION_LABELS: Record<keyof ModelScore, string> = {
+	relevans: "Relevans",
+	djup: "Djup",
+	klarhet: "Klarhet",
+	korrekthet: "Korrekthet",
+};
+
+const PodDebugPanel: FC<{
+	podInfo: Partial<Record<keyof ModelScore, CriterionPodMeta>>;
+	compact?: boolean;
+}> = ({ podInfo, compact = false }) => {
+	const [open, setOpen] = useState(false);
+	const entries = SCORE_KEYS.filter((k) => podInfo[k]);
+
+	if (entries.length === 0) return null;
+
+	return (
+		<Collapsible open={open} onOpenChange={setOpen}>
+			<CollapsibleTrigger asChild>
+				<Button
+					variant="ghost"
+					size="sm"
+					className={cn(
+						"w-full justify-center text-muted-foreground/50 hover:text-muted-foreground",
+						compact ? "mt-0.5 text-[9px] h-5" : "mt-1 text-[10px] h-6",
+					)}
+				>
+					<span>{open ? "Dölj pod-info" : "Pod-info"}</span>
+					<ChevronDownIcon
+						className={cn(
+							"ml-1 transition-transform duration-200",
+							compact ? "size-2.5" : "size-3",
+							open && "rotate-180",
+						)}
+					/>
+				</Button>
+			</CollapsibleTrigger>
+			<CollapsibleContent>
+				<div className="mt-1 rounded-md border border-border/40 bg-muted/20 p-2 space-y-1">
+					{entries.map((key) => {
+						const meta = podInfo[key]!;
+						const latencyStr = meta.latency_ms >= 1000
+							? `${(meta.latency_ms / 1000).toFixed(1)}s`
+							: `${meta.latency_ms}ms`;
+						return (
+							<div
+								key={key}
+								className="flex items-center justify-between text-[10px] text-muted-foreground font-mono"
+							>
+								<span>
+									<CheckCircle2Icon className="inline size-2.5 text-emerald-500 mr-1" />
+									{CRITERION_LABELS[key]} klar
+								</span>
+								<span className="tabular-nums">
+									{meta.pod_id.replace("pod-crit-", "")} ({latencyStr})
+								</span>
+							</div>
+						);
+					})}
+				</div>
+			</CollapsibleContent>
+		</Collapsible>
+	);
+};
+
 // ── Expandable response view ────────────────────────────────────────────────
 
 const ExpandableResponse: FC<{
@@ -697,6 +796,15 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 	model,
 	delay = 0,
 }) => {
+	const liveScores = useContext(LiveCriterionContext);
+	const livePods = useContext(LiveCriterionPodContext);
+
+	// Determine per-criterion evaluation state from live SSE data
+	const domainLive = liveScores[model.domain];
+	const domainPods = livePods[model.domain] || model.criterionPodInfo;
+	// Model is "evaluating" when the domain has appeared in SSE but not all criteria are done
+	const isEvaluating = !!domainLive && model.status !== "error";
+
 	if (model.status === "running") {
 		return (
 			<Card className="flex-1 animate-pulse">
@@ -788,6 +896,8 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 								colorClass={SCORE_COLORS[key]}
 								rationale={model.reasonings[key]}
 								animate={model.hasRealScores}
+								isEvaluating={isEvaluating}
+								isComplete={domainLive?.[key] != null || model.hasRealScores}
 							/>
 						))}
 					</div>
@@ -805,6 +915,9 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 							{model.totalScore}/400
 						</span>
 					</div>
+
+					{/* Pod debug panel */}
+					<PodDebugPanel podInfo={domainPods} />
 
 					{/* Expandable full response */}
 					<ExpandableResponse model={model} />
@@ -842,6 +955,13 @@ const RunnerUpCard: FC<{
 	model: RankedModel;
 	delay?: number;
 }> = ({ model, delay = 0 }) => {
+	const liveScores = useContext(LiveCriterionContext);
+	const livePods = useContext(LiveCriterionPodContext);
+
+	const domainLive = liveScores[model.domain];
+	const domainPods = livePods[model.domain] || model.criterionPodInfo;
+	const isEvaluating = !!domainLive && model.status !== "error";
+
 	if (model.status === "running") {
 		return (
 			<Card className="animate-pulse">
@@ -915,6 +1035,8 @@ const RunnerUpCard: FC<{
 								rationale={model.reasonings[key]}
 								compact
 								animate={model.hasRealScores}
+								isEvaluating={isEvaluating}
+								isComplete={domainLive?.[key] != null || model.hasRealScores}
 							/>
 						))}
 					</div>
@@ -924,6 +1046,7 @@ const RunnerUpCard: FC<{
 							{model.weightedScore}/100
 						</span>
 					</div>
+					<PodDebugPanel podInfo={domainPods} compact />
 					<ExpandableResponse model={model} compact />
 				</CardContent>
 			</Card>
@@ -1170,15 +1293,21 @@ export const SpotlightArenaLayout: FC = () => {
 				const reasonings: ModelReasonings =
 					(result?.criterion_reasonings as ModelReasonings) || {};
 
+				// Extract per-criterion pod info from tool result
+				const criterionPodInfo: Partial<Record<keyof ModelScore, CriterionPodMeta>> =
+					(result?.criterion_pod_info as Partial<Record<keyof ModelScore, CriterionPodMeta>>) || {};
+
 				return {
 					toolName: part.toolName,
 					displayName:
 						(result?.model_display_name as string) ||
 						MODEL_DISPLAY[part.toolName] ||
 						part.toolName,
+					domain,
 					rank: 0,
 					scores,
 					reasonings,
+					criterionPodInfo,
 					hasRealScores: hasReal,
 					totalScore: totalScore(scores),
 					weightedScore: weightedScore(scores),

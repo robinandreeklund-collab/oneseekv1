@@ -215,19 +215,31 @@ async def evaluate_model_response(
     timeout_seconds: float = 30,
     on_criterion_complete: Any | None = None,
     prompt_overrides: dict[str, str] | None = None,
+    acquire_criterion_pod_fn: Any | None = None,
+    release_criterion_pod_fn: Any | None = None,
+    parent_subagent_id: str = "",
+    thread_id: str = "",
 ) -> dict[str, Any]:
     """Evaluate all 4 criteria for a model response in parallel.
 
     Args:
-        on_criterion_complete: Optional async callback(domain, criterion, score, reasoning)
-            called as each criterion completes (for SSE streaming).
+        on_criterion_complete: Optional async callback(domain, criterion, score,
+            reasoning, *, pod_id, parent_pod_id, latency_ms) called as each
+            criterion completes (for SSE streaming).
         prompt_overrides: Optional dict mapping criterion name to custom prompt.
+        acquire_criterion_pod_fn: Optional async fn(domain, criterion, parent_id,
+            thread_id) -> (pod_id, lease) for per-criterion sandbox isolation.
+        release_criterion_pod_fn: Optional async fn(domain, criterion, scope_id,
+            thread_id) for releasing criterion pods.
+        parent_subagent_id: Parent domain subagent_id for pod lineage.
+        thread_id: Thread ID for sandbox lease management.
 
     Returns:
         {
             "domain": "grok",
             "scores": {"relevans": 85, "djup": 72, "klarhet": 91, "korrekthet": 68},
             "reasonings": {"relevans": "...", "djup": "...", ...},
+            "pod_info": {"relevans": {"pod_id": "...", ...}, ...},
             "total": 316,
             "evaluated_at_ms": 1234
         }
@@ -235,6 +247,19 @@ async def evaluate_model_response(
     start = time.monotonic()
 
     async def _eval_and_notify(criterion: str) -> dict[str, Any]:
+        crit_start = time.monotonic()
+        pod_id = ""
+        lease = None
+
+        # Acquire isolated criterion pod
+        if acquire_criterion_pod_fn:
+            try:
+                pod_id, lease = await acquire_criterion_pod_fn(
+                    domain, criterion, parent_subagent_id, thread_id,
+                )
+            except Exception as exc:
+                logger.debug("criterion pod acquire failed: %s", exc)
+
         result = await evaluate_criterion(
             criterion=criterion,
             model_response=model_response,
@@ -246,10 +271,34 @@ async def evaluate_model_response(
             timeout_seconds=timeout_seconds,
             prompt_overrides=prompt_overrides,
         )
+
+        crit_latency_ms = int((time.monotonic() - crit_start) * 1000)
+
+        # Release criterion pod
+        if release_criterion_pod_fn and lease:
+            scope_id = getattr(lease, "scope_id", "") or ""
+            try:
+                await release_criterion_pod_fn(
+                    domain, criterion, scope_id, thread_id,
+                )
+            except Exception:
+                pass
+
+        # Store pod metadata in result
+        result["pod_id"] = pod_id
+        result["parent_pod_id"] = parent_subagent_id
+        result["latency_ms"] = crit_latency_ms
+
         if on_criterion_complete:
             try:
                 await on_criterion_complete(
-                    domain, criterion, result["score"], result["reasoning"]
+                    domain,
+                    criterion,
+                    result["score"],
+                    result["reasoning"],
+                    pod_id=pod_id,
+                    parent_pod_id=parent_subagent_id,
+                    latency_ms=crit_latency_ms,
                 )
             except Exception as exc:
                 logger.debug("on_criterion_complete callback error: %s", exc)
@@ -262,6 +311,7 @@ async def evaluate_model_response(
 
     scores: dict[str, int] = {}
     reasonings: dict[str, str] = {}
+    pod_info: dict[str, dict[str, Any]] = {}
 
     for i, criterion in enumerate(CRITERIA):
         r = results[i]
@@ -271,6 +321,12 @@ async def evaluate_model_response(
         else:
             scores[criterion] = r["score"]
             reasonings[criterion] = r["reasoning"]
+            if r.get("pod_id"):
+                pod_info[criterion] = {
+                    "pod_id": r["pod_id"],
+                    "parent_pod_id": r.get("parent_pod_id", ""),
+                    "latency_ms": r.get("latency_ms", 0),
+                }
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -278,6 +334,7 @@ async def evaluate_model_response(
         "domain": domain,
         "scores": scores,
         "reasonings": reasonings,
+        "pod_info": pod_info,
         "total": sum(scores.values()),
         "evaluated_at_ms": elapsed_ms,
     }

@@ -62,7 +62,8 @@ import {
 	QwenToolUI,
 	OneseekToolUI,
 } from "@/components/tool-ui/compare-model";
-import { LiveCriterionContext } from "@/components/tool-ui/spotlight-arena";
+import { LiveCriterionContext, LiveCriterionPodContext } from "@/components/tool-ui/spotlight-arena";
+import type { LiveCriterionPodMap, CriterionPodMeta } from "@/components/tool-ui/spotlight-arena";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
@@ -353,6 +354,9 @@ export default function NewChatPage() {
 	const [liveCriterionScores, setLiveCriterionScores] = useState<
 		Record<string, Partial<{ relevans: number; djup: number; klarhet: number; korrekthet: number }>>
 	>({});
+
+	// Live criterion pod metadata from SSE events (domain → criterion → pod info)
+	const [liveCriterionPodInfo, setLiveCriterionPodInfo] = useState<LiveCriterionPodMap>({});
 
 	// Get mentioned document IDs from the composer
 	const mentionedDocumentIds = useAtomValue(mentionedDocumentIdsAtom);
@@ -1102,6 +1106,7 @@ export default function NewChatPage() {
 			// Start streaming response
 			setIsRunning(true);
 			setLiveCriterionScores({});
+			setLiveCriterionPodInfo({});
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -1516,6 +1521,21 @@ export default function NewChatPage() {
 														[ceCriterion]: ceScore,
 													},
 												}));
+												// Extract pod metadata if present
+												const cePodId = String(parsed.data?.pod_id ?? "");
+												if (cePodId) {
+													setLiveCriterionPodInfo((prev) => ({
+														...prev,
+														[ceDomain]: {
+															...(prev[ceDomain] || {}),
+															[ceCriterion]: {
+																pod_id: cePodId,
+																parent_pod_id: String(parsed.data?.parent_pod_id ?? ""),
+																latency_ms: Number(parsed.data?.latency_ms ?? 0),
+															} as CriterionPodMeta,
+														},
+													}));
+												}
 											}
 											break;
 										}
@@ -1967,6 +1987,7 @@ export default function NewChatPage() {
 			// Start streaming
 			setIsRunning(true);
 			setLiveCriterionScores({});
+			setLiveCriterionPodInfo({});
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -2320,6 +2341,21 @@ export default function NewChatPage() {
 														[ceCriterion2]: ceScore2,
 													},
 												}));
+												// Extract pod metadata if present
+												const cePodId2 = String(parsed.data?.pod_id ?? "");
+												if (cePodId2) {
+													setLiveCriterionPodInfo((prev) => ({
+														...prev,
+														[ceDomain2]: {
+															...(prev[ceDomain2] || {}),
+															[ceCriterion2]: {
+																pod_id: cePodId2,
+																parent_pod_id: String(parsed.data?.parent_pod_id ?? ""),
+																latency_ms: Number(parsed.data?.latency_ms ?? 0),
+															} as CriterionPodMeta,
+														},
+													}));
+												}
 											}
 											break;
 										}
@@ -2680,6 +2716,7 @@ export default function NewChatPage() {
 	return (
 		<AssistantRuntimeProvider runtime={runtime}>
 		<LiveCriterionContext.Provider value={liveCriterionScores}>
+		<LiveCriterionPodContext.Provider value={liveCriterionPodInfo}>
 			{!isPublicChat && <GeneratePodcastToolUI />}
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
@@ -2759,6 +2796,7 @@ export default function NewChatPage() {
 					/>
 				)}
 			</TracePanelContext.Provider>
+		</LiveCriterionPodContext.Provider>
 		</LiveCriterionContext.Provider>
 		</AssistantRuntimeProvider>
 	);

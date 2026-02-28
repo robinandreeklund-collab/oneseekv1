@@ -158,13 +158,11 @@ def build_compare_subagent_spawner_node(
     # sandbox_enabled alone is enough to acquire leases.
     _sandbox_active = bool(sandbox_enabled)
 
-    def _build_sandbox_hitl(subagent_id: str) -> dict[str, Any]:
-        """Build per-domain runtime_hitl with sandbox scope set to subagent."""
+    def _build_sandbox_hitl(subagent_id: str, scope: str = "subagent") -> dict[str, Any]:
+        """Build per-domain/criterion runtime_hitl with sandbox scope."""
         hitl = dict(_runtime_hitl)
-        hitl["sandbox_scope"] = "subagent"
+        hitl["sandbox_scope"] = scope
         hitl["sandbox_scope_id"] = subagent_id
-        # Ensure sandbox_enabled is explicitly True in the hitl payload
-        # so that sandbox_config_from_runtime_flags picks it up.
         hitl["sandbox_enabled"] = True
         return hitl
 
@@ -227,6 +225,65 @@ def build_compare_subagent_spawner_node(
                 subagent_id,
                 exc,
             )
+
+    async def _acquire_criterion_pod(
+        domain: str,
+        criterion: str,
+        parent_subagent_id: str,
+        thread_id: str,
+    ) -> tuple[str, Any]:
+        """Acquire an isolated sandbox pod for a single criterion evaluator.
+
+        Returns (pod_id, lease_or_None).  The pod_id is always generated
+        even when sandbox is disabled so the frontend can display it.
+        """
+        pod_id = f"pod-crit-{domain}-{criterion}-{uuid.uuid4().hex[:6]}"
+        if not _sandbox_active:
+            return pod_id, None
+        try:
+            from app.agents.new_chat.sandbox_runtime import acquire_sandbox_lease
+
+            scope_id = f"sa-criterion_{domain}_{criterion}_{uuid.uuid4().hex[:8]}"
+            hitl = _build_sandbox_hitl(scope_id, scope="criterion")
+            lease = await asyncio.to_thread(
+                acquire_sandbox_lease,
+                thread_id=thread_id,
+                runtime_hitl=hitl,
+            )
+            logger.debug(
+                "compare_executor[%s/%s]: criterion pod acquired "
+                "(pod_id=%s, sandbox_id=%s, parent=%s)",
+                domain, criterion, pod_id, lease.sandbox_id, parent_subagent_id,
+            )
+            return pod_id, lease
+        except Exception as exc:
+            logger.debug(
+                "compare_executor[%s/%s]: criterion pod failed (non-critical): %s",
+                domain, criterion, exc,
+            )
+            return pod_id, None
+
+    async def _release_criterion_pod(
+        domain: str,
+        criterion: str,
+        scope_id: str,
+        thread_id: str,
+    ) -> None:
+        """Release criterion pod lease."""
+        if not _sandbox_active:
+            return
+        try:
+            from app.agents.new_chat.sandbox_runtime import release_sandbox_lease
+
+            hitl = _build_sandbox_hitl(scope_id, scope="criterion")
+            await asyncio.to_thread(
+                release_sandbox_lease,
+                thread_id=thread_id,
+                runtime_hitl=hitl,
+                reason="criterion-complete",
+            )
+        except Exception:
+            pass  # non-critical
 
     async def _run_external_model_domain(
         domain: str,
@@ -306,9 +363,14 @@ def build_compare_subagent_spawner_node(
                     timeout_seconds=90,
                     on_criterion_complete=on_criterion_complete,
                     prompt_overrides=criterion_prompt_overrides,
+                    acquire_criterion_pod_fn=_acquire_criterion_pod,
+                    release_criterion_pod_fn=_release_criterion_pod,
+                    parent_subagent_id=subagent_id,
+                    thread_id=thread_id,
                 )
                 criterion_scores = eval_result.get("scores", {})
                 criterion_reasonings = eval_result.get("reasonings", {})
+                criterion_pod_info = eval_result.get("pod_info", {})
                 # Derive confidence from scores
                 avg_score = eval_result.get("total", 200) / 4
                 confidence = round(avg_score / 100, 2)
@@ -342,6 +404,7 @@ def build_compare_subagent_spawner_node(
                 "used_tools": plan_data.get("tools", []),
                 "criterion_scores": criterion_scores,
                 "criterion_reasonings": criterion_reasonings,
+                "criterion_pod_info": criterion_pod_info,
                 **scope_info,
             },
             "raw_result": result,
@@ -468,15 +531,28 @@ def build_compare_subagent_spawner_node(
         criterion_events: list[dict[str, Any]] = []
 
         async def _on_criterion_complete(
-            domain: str, criterion: str, score: int, reasoning: str
+            domain: str,
+            criterion: str,
+            score: int,
+            reasoning: str,
+            *,
+            pod_id: str = "",
+            parent_pod_id: str = "",
+            latency_ms: int = 0,
         ) -> None:
-            event_data = {
+            event_data: dict[str, Any] = {
                 "domain": domain,
                 "criterion": criterion,
                 "score": score,
                 "reasoning": reasoning,
                 "timestamp": time.time(),
             }
+            if pod_id:
+                event_data["pod_id"] = pod_id
+            if parent_pod_id:
+                event_data["parent_pod_id"] = parent_pod_id
+            if latency_ms:
+                event_data["latency_ms"] = latency_ms
             criterion_events.append(event_data)
             # Dispatch immediately — picked up by on_custom_event in SSE stream
             try:
@@ -552,6 +628,8 @@ def build_compare_subagent_spawner_node(
                 if handoff.get("criterion_scores"):
                     raw_with_scores["criterion_scores"] = handoff["criterion_scores"]
                     raw_with_scores["criterion_reasonings"] = handoff.get("criterion_reasonings", {})
+                if handoff.get("criterion_pod_info"):
+                    raw_with_scores["criterion_pod_info"] = handoff["criterion_pod_info"]
                 if handoff.get("sandbox_scope_mode"):
                     raw_with_scores["sandbox_scope"] = handoff["sandbox_scope_mode"]
                     raw_with_scores["sandbox_scope_id"] = handoff.get("sandbox_scope_id", "")
@@ -620,6 +698,7 @@ def build_compare_subagent_spawner_node(
                 "used_tools": handoff.get("used_tools", []),
                 "criterion_scores": handoff.get("criterion_scores", {}),
                 "criterion_reasonings": handoff.get("criterion_reasonings", {}),
+                "criterion_pod_info": handoff.get("criterion_pod_info", {}),
             })
             micro_plans[domain_name] = domain_result.get("micro_plan", [])
 
@@ -634,6 +713,8 @@ def build_compare_subagent_spawner_node(
             if handoff.get("criterion_scores"):
                 raw_with_scores["criterion_scores"] = handoff["criterion_scores"]
                 raw_with_scores["criterion_reasonings"] = handoff.get("criterion_reasonings", {})
+            if handoff.get("criterion_pod_info"):
+                raw_with_scores["criterion_pod_info"] = handoff["criterion_pod_info"]
             if handoff.get("sandbox_scope_mode"):
                 raw_with_scores["sandbox_scope"] = handoff["sandbox_scope_mode"]
                 raw_with_scores["sandbox_scope_id"] = handoff.get("sandbox_scope_id", "")
