@@ -6711,73 +6711,82 @@ async def create_supervisor_agent(
             include_research=True,
         )
 
-        # Build tavily_search_fn for compare research agent
+        # Build tavily_search_fn for compare research agent.
+        # We call Tavily API directly (not via ConnectorService) to avoid
+        # the complex DB ingestion pipeline that can silently return empty results.
         _compare_tavily_search_fn = None
         if connector_service and search_space_id is not None:
             _cs = connector_service
             _ssid = search_space_id
-            _uid = user_id
 
             async def _compare_tavily_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
-                """Wrap ConnectorService.search_tavily for compare research."""
+                """Call Tavily API directly for compare research."""
                 logger.info(
                     "compare_tavily_search_fn: searching query=%r, max_results=%d",
                     query[:80], max_results,
                 )
                 try:
-                    sources_info, documents = await _cs.search_tavily(
-                        user_query=query,
-                        search_space_id=_ssid,
-                        top_k=max_results,
-                        user_id=_uid,
-                    )
-                except Exception as tavily_exc:
-                    logger.warning(
-                        "compare_tavily_search_fn: search_tavily raised: %s", tavily_exc
-                    )
-                    return []
+                    from app.db import SearchSourceConnector
+                    from app.schemas.connector import SearchSourceConnectorType
 
-                results: list[dict[str, Any]] = []
+                    # Look up Tavily API key from the connector config in DB
+                    tavily_connector = await _cs.get_connector_by_type(
+                        SearchSourceConnectorType.TAVILY_API, _ssid
+                    )
+                    if not tavily_connector:
+                        logger.warning(
+                            "compare_tavily_search_fn: no Tavily connector for space %s",
+                            _ssid,
+                        )
+                        return []
 
-                # sources_info["sources"] are chunk-level objects:
-                #   {"id": chunk_id, "title": "...", "description": "...", "url": "..."}
-                if isinstance(sources_info, dict):
-                    for src in sources_info.get("sources", []):
+                    tavily_api_key = tavily_connector.config.get("TAVILY_API_KEY")
+                    if not tavily_api_key:
+                        logger.warning("compare_tavily_search_fn: TAVILY_API_KEY is empty")
+                        return []
+
+                    # Call Tavily SDK directly — no DB ingestion needed for compare
+                    from tavily import TavilyClient
+
+                    client = TavilyClient(api_key=tavily_api_key)
+                    response = await asyncio.to_thread(
+                        client.search,
+                        query=query,
+                        max_results=max_results,
+                        search_depth="basic",
+                        include_answer=True,
+                        include_raw_content=False,
+                        include_images=False,
+                    )
+
+                    results: list[dict[str, Any]] = []
+                    for item in response.get("results", []):
                         results.append({
-                            "url": src.get("url", ""),
-                            "title": src.get("title", ""),
-                            "content": src.get("description", ""),
+                            "url": item.get("url", ""),
+                            "title": item.get("title", ""),
+                            "content": item.get("content", "")[:500],
                         })
 
-                # Fallback: extract from serialized documents
-                # Each doc has structure: {"document": {"title", "metadata": {"url"}},
-                #                          "chunks": [{"content": "..."}]}
-                if not results and documents:
-                    for doc in documents[:max_results]:
-                        if isinstance(doc, dict):
-                            doc_info = doc.get("document", {}) or {}
-                            meta = doc_info.get("metadata", {}) or {}
-                            chunks = doc.get("chunks", []) or []
-                            content = chunks[0].get("content", "")[:400] if chunks else ""
-                            results.append({
-                                "url": meta.get("url", ""),
-                                "title": doc_info.get("title", ""),
-                                "content": content,
-                            })
-                        else:
-                            # Langchain Document-like object
-                            meta = getattr(doc, "metadata", {}) or {}
-                            results.append({
-                                "url": meta.get("url", meta.get("source_url", "")),
-                                "title": meta.get("title", ""),
-                                "content": getattr(doc, "page_content", "")[:400],
-                            })
+                    # Include Tavily's own answer if available
+                    tavily_answer = response.get("answer", "")
+                    if tavily_answer and not results:
+                        results.append({
+                            "url": "",
+                            "title": "Tavily AI Answer",
+                            "content": str(tavily_answer)[:500],
+                        })
 
-                logger.info(
-                    "compare_tavily_search_fn: got %d results for query=%r",
-                    len(results), query[:80],
-                )
-                return results
+                    logger.info(
+                        "compare_tavily_search_fn: got %d results for query=%r",
+                        len(results), query[:80],
+                    )
+                    return results
+
+                except Exception as exc:
+                    logger.warning(
+                        "compare_tavily_search_fn: error: %s", exc, exc_info=True,
+                    )
+                    return []
 
             logger.info(
                 "compare mode: tavily_search_fn CREATED "
