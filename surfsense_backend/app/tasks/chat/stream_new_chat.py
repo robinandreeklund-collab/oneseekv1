@@ -3198,6 +3198,16 @@ async def stream_new_chat(
                                 "criterion-complete", ce
                             )
 
+                        # Stream model-complete events for progressive Spotlight Arena
+                        _model_events = (
+                            chain_output.get("model_complete_events")
+                            if isinstance(chain_output, dict) else None
+                        ) or []
+                        for me in _model_events:
+                            yield streaming_service.format_data(
+                                "model-complete", me
+                            )
+
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
                     )

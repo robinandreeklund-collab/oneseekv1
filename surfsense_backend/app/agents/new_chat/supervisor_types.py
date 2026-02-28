@@ -178,5 +178,7 @@ class SupervisorState(TypedDict, total=False):
     adaptive_thresholds: Annotated[dict[str, Any] | None, _replace]
     # Compare: criterion evaluation events for SSE streaming to frontend.
     criterion_events: Annotated[list[dict[str, Any]], _replace]
+    # Compare: per-model completion events for progressive SSE streaming.
+    model_complete_events: Annotated[list[dict[str, Any]], _replace]
     # Compare: structured arena data from synthesizer.
     compare_arena_data: Annotated[dict[str, Any] | None, _replace]

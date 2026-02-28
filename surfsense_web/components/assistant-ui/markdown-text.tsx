@@ -19,9 +19,14 @@ import { cn } from "@/lib/utils";
 // Also matches Chinese brackets 【】 and handles zero-width spaces that LLM sometimes inserts
 const CITATION_REGEX = /[[【]\u200B?citation:(doc-)?(\d+)\u200B?[\]】]/g;
 const POSSIBLE_NEXT_STEPS_COMMENT_REGEX = /<!--\s*possible_next_steps:[\s\S]*?-->/gi;
+const SPOTLIGHT_ARENA_DATA_REGEX = /```spotlight-arena-data\s*\n[\s\S]*?```\s*/g;
 
 function stripPossibleNextStepsComment(text: string): string {
 	return text.replace(POSSIBLE_NEXT_STEPS_COMMENT_REGEX, "");
+}
+
+function stripSpotlightArenaData(text: string): string {
+	return text.replace(SPOTLIGHT_ARENA_DATA_REGEX, "");
 }
 
 // Track chunk IDs to citation numbers mapping for consistent numbering
@@ -56,7 +61,7 @@ function getCitationNumber(chunkId: number, isDocsChunk: boolean): number {
  * Supports both regular chunks [citation:123] and docs chunks [citation:doc-123]
  */
 function parseTextWithCitations(text: string): ReactNode[] {
-	const cleanedText = stripPossibleNextStepsComment(text);
+	const cleanedText = stripSpotlightArenaData(stripPossibleNextStepsComment(text));
 	const parts: ReactNode[] = [];
 	let lastIndex = 0;
 	let match: RegExpExecArray | null;
@@ -96,10 +101,19 @@ function parseTextWithCitations(text: string): ReactNode[] {
 	return parts.length > 0 ? parts : [text];
 }
 
+/** Remark plugin: remove ```spotlight-arena-data code blocks from the AST */
+function remarkStripArenaData() {
+	return (tree: { children: Array<{ type: string; lang?: string }> }) => {
+		tree.children = tree.children.filter(
+			(node) => !(node.type === "code" && node.lang === "spotlight-arena-data"),
+		);
+	};
+}
+
 const MarkdownTextImpl = () => {
 	return (
 		<MarkdownTextPrimitive
-			remarkPlugins={[remarkGfm]}
+			remarkPlugins={[remarkGfm, remarkStripArenaData]}
 			className="aui-md"
 			components={defaultComponents}
 		/>

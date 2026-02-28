@@ -1192,7 +1192,7 @@ class TestCompareModePipelineNodes:
         routes_path = _PROJECT_ROOT / "app/routes/admin_flow_graph_routes.py"
         content = routes_path.read_text()
         compare_count = content.count('"stage": "compare"')
-        assert compare_count == 5, f"Expected 5 compare-stage nodes, got {compare_count}"
+        assert compare_count == 6, f"Expected 6 compare-stage nodes, got {compare_count}"
 
 
 class TestFrontendPipelineNodePositions:
@@ -1222,6 +1222,7 @@ class TestFrontendPipelineNodePositions:
             "node:compare_domain_planner",
             "node:compare_subagent_spawner",
             "node:compare_mini_critic",
+            "node:compare_criterion_evaluator",
             "node:compare_convergence",
             "node:compare_synthesizer",
         ]

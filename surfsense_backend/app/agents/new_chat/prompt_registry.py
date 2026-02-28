@@ -9,6 +9,7 @@ from app.agents.new_chat.compare_prompts import (
     COMPARE_SUPERVISOR_INSTRUCTIONS,
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
     DEFAULT_COMPARE_CONVERGENCE_PROMPT,
+    DEFAULT_COMPARE_CRITERION_EVALUATOR_PROMPT,
     DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
     DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
     DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
@@ -184,6 +185,7 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "compare.mini_planner.system",
     "compare.mini_critic.system",
     "compare.convergence.system",
+    "compare.criterion_evaluator.system",
 )
 
 
@@ -570,6 +572,12 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Compare Convergence prompt",
         description="Prompt for convergence_node i compare-grafen — mergar resultat från alla modeller + research med overlap/conflict.",
         default_prompt=DEFAULT_COMPARE_CONVERGENCE_PROMPT,
+    ),
+    "compare.criterion_evaluator.system": PromptDefinition(
+        key="compare.criterion_evaluator.system",
+        label="Compare Criterion Evaluator prompt",
+        description="Systemprompt för isolerade per-kriterium bedömare (relevans, djup, klarhet, korrekthet). Körs 4 gånger per modell.",
+        default_prompt=DEFAULT_COMPARE_CRITERION_EVALUATOR_PROMPT,
     ),
 }
 

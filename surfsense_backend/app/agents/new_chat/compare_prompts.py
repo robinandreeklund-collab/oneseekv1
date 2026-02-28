@@ -164,21 +164,20 @@ Regler:
 - Skapa en unified artefakt med tydlig källattribution.
 - Beräkna overlap_score (0.0-1.0) baserat på hur mycket modellerna överensstämmer.
 
-**Per-modell bedömning (VIKTIGT)**:
-Bedöm varje modells svar på 4 dimensioner (0-100):
-- relevans: Hur relevant är svaret för frågan? Besvarar det kärnfrågan?
-- djup: Hur djupt och detaljerat? Inkluderas nyanser, kontext, bakgrund?
-- klarhet: Hur tydligt och välstrukturerat? Är det lätt att förstå?
-- korrekthet: Hur korrekt? Överensstämmer fakta med research och andra modeller?
+**Per-modell poäng (KRITISKT)**:
+Varje domäns handoff innehåller redan fältet "criterion_scores" med poäng
+från 4 isolerade LLM-bedömare (relevans, djup, klarhet, korrekthet, 0-100).
+Du MÅSTE använda exakt dessa poäng i "model_scores" — hitta INTE på nya poäng.
+Kopiera varje modells "criterion_scores" direkt till "model_scores".
+Om "criterion_scores" saknas eller är tomt (t.ex. vid error), sätt alla dimensioner till 0.
 
-Poäng ska VARIERA rejält mellan modeller — inte alla 70-80. En dålig modell kan få 30, en bra 95.
-Basera poäng på faktisk analys av svarsinnehåll, inte gissningar.
-
-**Jämförande analys**:
+**Jämförande analys (VIKTIGT)**:
+Din huvuduppgift är den kvalitativa analysen, inte poängsättning:
 - Identifiera vilka modeller som håller med varandra och vilka som avviker
 - Notera vilka specifika påståenden som skiljer sig
 - Beskriv vilka unika insikter varje modell bidrar med
 - Lyft fram om någon modell ger felaktig information
+- Förklara varför vissa modeller får höga/låga poäng baserat på svarsinnehållet
 
 INSTRUKTIONER FÖR OUTPUT:
 - All intern resonering ska skrivas i "thinking"-fältet.
@@ -202,6 +201,28 @@ Returnera strikt JSON:
   "unique_insights": {"claude": "Enda modellen som nämner X", "perplexity": "Inkluderar aktuella datum och källor"},
   "comparative_summary": "Djup jämförande analys av modellernas svar med konkreta exempel på vad som skiljer dem åt och varför."
 }
+""".strip()
+
+
+DEFAULT_COMPARE_CRITERION_EVALUATOR_PROMPT = """
+Du är en isolerad expert-bedömare i Spotlight Arena.
+Du utvärderar EN ENDA dimension av ett modellsvar åt gången.
+
+Det finns 4 dimensioner (du tilldelas en per anrop):
+- **relevans**: Besvarar svaret kärnfrågan? Är informationen on-topic?
+- **djup**: Hur detaljerat och nyanserat är svaret? Inkluderar det kontext och nyanser?
+- **klarhet**: Hur tydligt och välstrukturerat är svaret? Är det lätt att förstå?
+- **korrekthet**: Hur faktamässigt korrekt är svaret? Stämmer fakta?
+
+Poäng 0-100:
+- 90+: Exceptionellt
+- 70-89: Bra
+- 50-69: Medel
+- 30-49: Svagt
+- 0-29: Mycket svagt
+
+Returnera strikt JSON:
+{"score": 85, "reasoning": "En mening som motiverar poängen."}
 """.strip()
 
 

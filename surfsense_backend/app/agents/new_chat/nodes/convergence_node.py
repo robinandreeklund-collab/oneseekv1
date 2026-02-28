@@ -140,6 +140,18 @@ def build_convergence_node(
             except Exception:
                 parsed = extract_first_json_object_fn(raw_content)
 
+            # Build model_scores: prefer criterion_scores from handoffs (ground truth
+            # from isolated LLM evaluators) over LLM-generated scores from convergence.
+            llm_model_scores = parsed.get("model_scores", {})
+            criterion_model_scores: dict[str, Any] = {}
+            for s in summaries:
+                domain = s.get("domain", s.get("agent", "unknown"))
+                cs = s.get("criterion_scores")
+                if cs and isinstance(cs, dict) and any(v for v in cs.values()):
+                    criterion_model_scores[domain] = cs
+            # Criterion scores override LLM scores per domain
+            final_model_scores = {**llm_model_scores, **criterion_model_scores}
+
             convergence_status = {
                 "merged_fields": parsed.get("merged_fields", []),
                 "overlap_score": float(parsed.get("overlap_score", 0.0)),
@@ -148,7 +160,7 @@ def build_convergence_node(
                 "merged_summary": parsed.get("merged_summary", ""),
                 "subagent_ids": subagent_ids,
                 "domain_statuses": domain_statuses,
-                "model_scores": parsed.get("model_scores", {}),
+                "model_scores": final_model_scores,
                 "agreements": parsed.get("agreements", []),
                 "disagreements": parsed.get("disagreements", []),
                 "unique_insights": parsed.get("unique_insights", {}),

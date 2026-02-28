@@ -1519,6 +1519,25 @@ export default function NewChatPage() {
 											}
 											break;
 										}
+										case "data-model-complete": {
+											// Progressive model card rendering: add/update tool-call
+											// as each model completes (before the batch arrives)
+											const mcId = String(parsed.data?.tool_call_id ?? "");
+											const mcName = String(parsed.data?.tool_name ?? "");
+											const mcResult = parsed.data?.result;
+											if (mcId && mcName && mcResult) {
+												if (!toolCallIndices.has(mcId)) {
+													addToolCall(mcId, mcName, { query: String(mcResult?.query || "") });
+												}
+												updateToolCall(mcId, { result: mcResult });
+												setMessages((prev) =>
+													prev.map((m) =>
+														m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+													)
+												);
+											}
+											break;
+										}
 
 										// P1-Extra.5: structured field decisions from pipeline nodes
 										case "structured-field": {
@@ -2301,6 +2320,23 @@ export default function NewChatPage() {
 														[ceCriterion2]: ceScore2,
 													},
 												}));
+											}
+											break;
+										}
+										case "data-model-complete": {
+											const mcId2 = String(parsed.data?.tool_call_id ?? "");
+											const mcName2 = String(parsed.data?.tool_name ?? "");
+											const mcResult2 = parsed.data?.result;
+											if (mcId2 && mcName2 && mcResult2) {
+												if (!toolCallIndices.has(mcId2)) {
+													addToolCall(mcId2, mcName2, { query: String(mcResult2?.query || "") });
+												}
+												updateToolCall(mcId2, { result: mcResult2 });
+												setMessages((prev) =>
+													prev.map((m) =>
+														m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+													)
+												);
 											}
 											break;
 										}

@@ -261,6 +261,13 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "prompt_key": "compare.mini_critic.system",
     },
     {
+        "id": "node:compare_criterion_evaluator",
+        "label": "Criterion Evaluator",
+        "stage": "compare",
+        "description": "Per-kriterium LLM-bedömare: 4 isolerade dimensioner (relevans, djup, klarhet, korrekthet) per modell. Körs parallellt efter varje modellsvar.",
+        "prompt_key": "compare.criterion_evaluator.system",
+    },
+    {
         "id": "node:compare_convergence",
         "label": "Compare Convergence",
         "stage": "compare",
@@ -402,7 +409,8 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:compare_subagent_spawner", "target": "node:compare_mini_critic", "type": "normal"},
     {"source": "node:compare_mini_critic", "target": "node:compare_subagent_spawner", "type": "conditional", "label": "retry"},
     {"source": "node:compare_mini_critic", "target": "node:compare_convergence", "type": "conditional", "label": "ok"},
-    {"source": "node:compare_subagent_spawner", "target": "node:compare_convergence", "type": "normal"},
+    {"source": "node:compare_subagent_spawner", "target": "node:compare_criterion_evaluator", "type": "normal"},
+    {"source": "node:compare_criterion_evaluator", "target": "node:compare_convergence", "type": "normal"},
     {"source": "node:compare_convergence", "target": "node:compare_synthesizer", "type": "normal"},
     # ── Critic decisions ──
     {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},

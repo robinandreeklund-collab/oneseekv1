@@ -150,18 +150,89 @@ def build_compare_subagent_spawner_node(
     _max_retries_research = 2
     _runtime_hitl = dict(runtime_hitl_cfg or {})
 
+    def _build_sandbox_hitl(subagent_id: str) -> dict[str, Any]:
+        """Build per-domain runtime_hitl with sandbox scope set to subagent."""
+        hitl = dict(_runtime_hitl)
+        hitl["sandbox_scope"] = "subagent"
+        hitl["sandbox_scope_id"] = subagent_id
+        return hitl
+
+    async def _acquire_sandbox_for_domain(
+        subagent_id: str,
+        thread_id: str,
+    ) -> Any:
+        """Acquire a sandbox lease for a compare domain (K8s pod / Docker / local).
+
+        Returns the lease object, or None if sandbox is disabled or fails.
+        """
+        if not (sandbox_isolation_enabled and sandbox_enabled):
+            return None
+        try:
+            from app.agents.new_chat.sandbox_runtime import acquire_sandbox_lease
+
+            hitl = _build_sandbox_hitl(subagent_id)
+            lease = await asyncio.to_thread(
+                acquire_sandbox_lease,
+                thread_id=thread_id,
+                runtime_hitl=hitl,
+            )
+            logger.info(
+                "compare_executor[%s]: sandbox lease acquired "
+                "(mode=%s, scope=%s, sandbox_id=%s)",
+                subagent_id,
+                lease.mode,
+                lease.scope,
+                lease.sandbox_id,
+            )
+            return lease
+        except Exception as exc:
+            logger.warning(
+                "compare_executor[%s]: sandbox lease failed: %s",
+                subagent_id,
+                exc,
+            )
+            return None
+
+    async def _release_sandbox_for_domain(
+        subagent_id: str,
+        thread_id: str,
+    ) -> None:
+        """Release sandbox lease when domain completes."""
+        if not (sandbox_isolation_enabled and sandbox_enabled):
+            return
+        try:
+            from app.agents.new_chat.sandbox_runtime import release_sandbox_lease
+
+            hitl = _build_sandbox_hitl(subagent_id)
+            await asyncio.to_thread(
+                release_sandbox_lease,
+                thread_id=thread_id,
+                runtime_hitl=hitl,
+                reason="compare-domain-complete",
+            )
+        except Exception as exc:
+            logger.debug(
+                "compare_executor[%s]: sandbox release failed (non-critical): %s",
+                subagent_id,
+                exc,
+            )
+
     async def _run_external_model_domain(
         domain: str,
         plan_data: dict[str, Any],
         user_query: str,
         subagent_id: str,
         on_criterion_complete: Any | None = None,
+        thread_id: str = "",
     ) -> dict[str, Any]:
         """Execute a single external model as a subagent."""
         spec_data = plan_data.get("spec", {})
         start_time = time.monotonic()
         result: dict[str, Any] = {}
         error_text = ""
+
+        # Acquire sandbox lease (K8s pod / Docker container) for this domain
+        lease = await _acquire_sandbox_for_domain(subagent_id, thread_id)
 
         for attempt in range(_max_retries_external + 1):
             try:
@@ -239,6 +310,12 @@ def build_compare_subagent_spawner_node(
                 "sandbox_scope_mode": "subagent",
                 "sandbox_scope_id": subagent_id,
             }
+            if lease:
+                scope_info["sandbox_id"] = lease.sandbox_id
+                scope_info["sandbox_mode"] = lease.mode
+
+        # Release sandbox lease (non-blocking, fire-and-forget)
+        await _release_sandbox_for_domain(subagent_id, thread_id)
 
         return {
             "domain": domain,
@@ -262,10 +339,12 @@ def build_compare_subagent_spawner_node(
     async def _run_research_domain(
         user_query: str,
         subagent_id: str,
+        thread_id: str = "",
     ) -> dict[str, Any]:
         """Execute the research agent as a subagent."""
         from app.agents.new_chat.compare_research_worker import run_research_executor
 
+        lease = await _acquire_sandbox_for_domain(subagent_id, thread_id)
         start_time = time.monotonic()
         result: dict[str, Any] = {}
         error_text = ""
@@ -307,6 +386,11 @@ def build_compare_subagent_spawner_node(
                 "sandbox_scope_mode": "subagent",
                 "sandbox_scope_id": subagent_id,
             }
+            if lease:
+                scope_info_r["sandbox_id"] = lease.sandbox_id
+                scope_info_r["sandbox_mode"] = lease.mode
+
+        await _release_sandbox_for_domain(subagent_id, thread_id)
 
         return {
             "domain": "research",
@@ -355,6 +439,14 @@ def build_compare_subagent_spawner_node(
 
         messages = state.get("messages", [])
         user_query = latest_user_query_fn(messages)
+
+        # Extract thread_id from config for sandbox lease management
+        _configurable = (
+            config.get("configurable", {})
+            if isinstance(config, dict)
+            else getattr(config, "configurable", {}) or {}
+        )
+        _thread_id = str(_configurable.get("thread_id", "compare"))
 
         # Collect criterion-complete events for SSE streaming
         criterion_events: list[dict[str, Any]] = []
@@ -405,6 +497,11 @@ def build_compare_subagent_spawner_node(
 
         ai_message = AIMessage(content="", tool_calls=tool_calls)
 
+        # Collect per-model completion events for progressive SSE streaming.
+        # Each event carries the full tool_result so the frontend can render
+        # model cards as they arrive (not all at once after gather).
+        model_complete_events: list[dict[str, Any]] = []
+
         # Execute all domains in parallel
         semaphore = asyncio.Semaphore(10)
 
@@ -412,12 +509,39 @@ def build_compare_subagent_spawner_node(
             async with semaphore:
                 subagent_id = domain_subagent_ids[domain]
                 if domain == "research":
-                    return await _run_research_domain(user_query, subagent_id)
+                    domain_result = await _run_research_domain(
+                        user_query, subagent_id, thread_id=_thread_id,
+                    )
                 else:
-                    return await _run_external_model_domain(
+                    domain_result = await _run_external_model_domain(
                         domain, plan_data, user_query, subagent_id,
                         on_criterion_complete=_on_criterion_complete,
+                        thread_id=_thread_id,
                     )
+
+                # Fire model-complete event immediately (while other models still run)
+                tools = plan_data.get("tools", [])
+                tool_name = tools[0] if tools else f"call_{domain}"
+                tc_id = f"tc-{domain_subagent_ids[domain]}"
+                raw = domain_result.get("raw_result", {})
+                handoff = domain_result.get("handoff", {})
+                raw_with_scores = {**raw}
+                if handoff.get("criterion_scores"):
+                    raw_with_scores["criterion_scores"] = handoff["criterion_scores"]
+                    raw_with_scores["criterion_reasonings"] = handoff.get("criterion_reasonings", {})
+                if handoff.get("sandbox_scope_mode"):
+                    raw_with_scores["sandbox_scope"] = handoff["sandbox_scope_mode"]
+                    raw_with_scores["sandbox_scope_id"] = handoff.get("sandbox_scope_id", "")
+
+                model_complete_events.append({
+                    "domain": domain,
+                    "tool_call_id": tc_id,
+                    "tool_name": tool_name,
+                    "result": raw_with_scores,
+                    "timestamp": time.time(),
+                })
+
+                return domain_result
 
         completed = await asyncio.gather(
             *[_run_domain(d, p) for d, p in domain_plans.items()],
@@ -511,6 +635,7 @@ def build_compare_subagent_spawner_node(
             "micro_plans": micro_plans,
             "compare_outputs": compare_outputs,
             "criterion_events": criterion_events,
+            "model_complete_events": model_complete_events,
             "total_steps": (state.get("total_steps") or 0) + 1,
         }
 
