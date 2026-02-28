@@ -2543,6 +2543,8 @@ async def stream_new_chat(
         streamed_tool_call_ids: set[str] = (
             set()
         )  # Track tool calls already streamed to prevent duplicates
+        streamed_model_complete_domains: set[str] = set()  # Dedup model-complete events
+        streamed_criterion_keys: set[str] = set()  # Dedup criterion-complete events
         stream_pipeline_prefix_buffer: str = ""
         # Think-tag streaming state
         _think_filter = _ThinkStreamFilter(assume_think=think_enabled)
@@ -2975,34 +2977,29 @@ async def stream_new_chat(
                 custom_name = event.get("name", "")
                 custom_data = event.get("data")
                 if custom_name == "model_complete" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data(
-                        "model-complete", custom_data
-                    )
-                    # Also emit as tool call events so the frontend
-                    # renders model cards via the standard pipeline.
-                    _tc_id = str(custom_data.get("tool_call_id", ""))
-                    _tc_name = str(custom_data.get("tool_name", ""))
-                    _tc_result = custom_data.get("result")
-                    if _tc_id and _tc_id not in streamed_tool_call_ids:
-                        streamed_tool_call_ids.add(_tc_id)
-                        yield streaming_service.format_tool_input_start(
-                            _tc_id, _tc_name
+                    _mc_domain = str(custom_data.get("domain", ""))
+                    if _mc_domain and _mc_domain not in streamed_model_complete_domains:
+                        streamed_model_complete_domains.add(_mc_domain)
+                        yield streaming_service.format_data(
+                            "model-complete", custom_data
                         )
-                        yield streaming_service.format_tool_input_available(
-                            _tc_id, _tc_name,
-                            {"query": str(
-                                (_tc_result or {}).get("query", "") if isinstance(_tc_result, dict) else ""
-                            )},
-                        )
-                        if _tc_result:
-                            yield streaming_service.format_tool_output_available(
-                                _tc_id, _tc_result
-                            )
+                        # Mark tool_call_id as streamed so on_chain_end
+                        # doesn't re-emit via _extract_and_stream_tool_calls.
+                        # NOTE: We do NOT emit tool-input-start/available here
+                        # because data-model-complete already adds the tool card
+                        # in the frontend — emitting both would create duplicate
+                        # content parts with the same toolCallId.
+                        _tc_id = str(custom_data.get("tool_call_id", ""))
+                        if _tc_id:
+                            streamed_tool_call_ids.add(_tc_id)
                     continue
                 if custom_name == "criterion_complete" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data(
-                        "criterion-complete", custom_data
-                    )
+                    _crit_key = f"{custom_data.get('domain', '')}:{custom_data.get('criterion', '')}"
+                    if _crit_key not in streamed_criterion_keys:
+                        streamed_criterion_keys.add(_crit_key)
+                        yield streaming_service.format_data(
+                            "criterion-complete", custom_data
+                        )
                     continue
 
             if event_type == "on_chain_start" and run_id:
@@ -3229,24 +3226,32 @@ async def stream_new_chat(
                             yield tool_event
 
                         # Stream criterion-complete events for Spotlight Arena
+                        # (only if not already emitted via on_custom_event)
                         _criterion_events = (
                             chain_output.get("criterion_events")
                             if isinstance(chain_output, dict) else None
                         ) or []
                         for ce in _criterion_events:
-                            yield streaming_service.format_data(
-                                "criterion-complete", ce
-                            )
+                            _crit_key = f"{ce.get('domain', '')}:{ce.get('criterion', '')}"
+                            if _crit_key not in streamed_criterion_keys:
+                                streamed_criterion_keys.add(_crit_key)
+                                yield streaming_service.format_data(
+                                    "criterion-complete", ce
+                                )
 
                         # Stream model-complete events for progressive Spotlight Arena
+                        # (only if not already emitted via on_custom_event)
                         _model_events = (
                             chain_output.get("model_complete_events")
                             if isinstance(chain_output, dict) else None
                         ) or []
                         for me in _model_events:
-                            yield streaming_service.format_data(
-                                "model-complete", me
-                            )
+                            _mc_domain = str(me.get("domain", ""))
+                            if _mc_domain and _mc_domain not in streamed_model_complete_domains:
+                                streamed_model_complete_domains.add(_mc_domain)
+                                yield streaming_service.format_data(
+                                    "model-complete", me
+                                )
 
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
