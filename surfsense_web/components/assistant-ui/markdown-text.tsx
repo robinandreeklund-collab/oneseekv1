@@ -23,6 +23,9 @@ const SPOTLIGHT_ARENA_DATA_REGEX = /```spotlight-arena-data\s*\n[\s\S]*?```\s*/g
 // Catch leaked criterion evaluator JSON: {"score": 85, "reasoning": "..."}
 const CRITERION_JSON_LEAK_REGEX =
 	/\{\s*"score"\s*:\s*\d+\s*,\s*"reasoning"\s*:\s*"[^"]*"\s*\}/g;
+// Catch leaked arena analysis JSON blobs (winner_rationale, search_queries, etc.)
+const ARENA_JSON_LEAK_REGEX =
+	/\{\s*"(?:search_queries|search_results|winner_answer|winner_rationale|reasoning|thinking|arena_analysis|consensus|disagreements|unique_contributions|reliability_notes)"[\s\S]*?\}(?:\s*\})*\s*/g;
 
 function stripPossibleNextStepsComment(text: string): string {
 	return text.replace(POSSIBLE_NEXT_STEPS_COMMENT_REGEX, "");
@@ -31,7 +34,8 @@ function stripPossibleNextStepsComment(text: string): string {
 function stripSpotlightArenaData(text: string): string {
 	return text
 		.replace(SPOTLIGHT_ARENA_DATA_REGEX, "")
-		.replace(CRITERION_JSON_LEAK_REGEX, "");
+		.replace(CRITERION_JSON_LEAK_REGEX, "")
+		.replace(ARENA_JSON_LEAK_REGEX, "");
 }
 
 // Track chunk IDs to citation numbers mapping for consistent numbering

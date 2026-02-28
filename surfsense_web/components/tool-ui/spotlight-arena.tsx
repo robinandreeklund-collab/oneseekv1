@@ -301,13 +301,29 @@ function formatNum(n: number): string {
 	return n.toFixed(1);
 }
 
+/** All JSON field names that smaller LLMs tend to dump as raw JSON */
+const LEAKED_JSON_FIELDS = [
+	"search_queries", "search_results", "winner_answer", "winner_rationale",
+	"reasoning", "thinking", "arena_analysis", "consensus", "disagreements",
+	"unique_contributions", "reliability_notes", "score",
+] as const;
+
+const FIELD_ALT = LEAKED_JSON_FIELDS.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+
 /** Strip arena-data code blocks and leaked JSON from visible synthesis text */
 function sanitizeSynthesisText(text: string): string {
-	// Remove ```spotlight-arena-data ... ``` blocks
+	// 1. Remove ```spotlight-arena-data ... ``` blocks
 	let cleaned = text.replace(/```spotlight-arena-data\s*\n[\s\S]*?```\s*\n?/g, "");
-	// Remove trailing raw JSON objects (common with smaller LLMs)
+	// 2. Remove ```json ... ``` fenced blocks with leaked fields
+	cleaned = cleaned.replace(/```json\s*\n[\s\S]*?```\s*\n?/g, "");
+	// 3. Remove trailing JSON blob (greedy to end of text)
 	cleaned = cleaned.replace(
-		/\n?\s*\{\s*"(?:reasoning|thinking|search_queries|search_results|winner_answer|winner_rationale)":\s*[\s\S]*$/,
+		new RegExp(`\\n?\\s*\\{\\s*"(?:${FIELD_ALT})"[\\s\\S]*$`),
+		"",
+	);
+	// 4. Remove inline/multi-line naked JSON blobs with known field names
+	cleaned = cleaned.replace(
+		new RegExp(`\\{\\s*"(?:${FIELD_ALT})"[\\s\\S]*?\\}(?:\\s*\\})*`, "g"),
 		"",
 	);
 	return cleaned.trim();

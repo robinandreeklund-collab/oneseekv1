@@ -870,19 +870,29 @@ def _build_synthesis_context(
 
 # ─── Synthesis Text Sanitizer ─────────────────────────────────────────
 
-# Pattern: a JSON object at the end of the text (after the markdown content),
-# often produced by smaller LLMs that dump structured data as raw JSON.
-_TRAILING_JSON_RE = re.compile(
-    r',\s*"(?:search_queries|search_results|winner_answer|winner_rationale|'
-    r'reasoning|thinking|arena_analysis)":\s*[\[\{"].*$',
-    re.DOTALL,
+# All JSON field names that smaller LLMs tend to dump as raw JSON outside
+# of the intended ```spotlight-arena-data code fence.
+_LEAKED_JSON_FIELDS = (
+    "search_queries", "search_results", "winner_answer", "winner_rationale",
+    "reasoning", "thinking", "arena_analysis", "consensus", "disagreements",
+    "unique_contributions", "reliability_notes", "score",
 )
 
-# Pattern: standalone JSON blob not inside a code fence
-_NAKED_JSON_BLOCK_RE = re.compile(
-    r'(?<!\n```)(?:^|\n)\s*\{[^{}]*?"(?:search_queries|search_results|'
-    r'winner_answer|winner_rationale|reasoning|thinking)".*?\}\s*$',
-    re.DOTALL | re.MULTILINE,
+# Regex alternation for the field names above
+_FIELD_ALT = "|".join(re.escape(f) for f in _LEAKED_JSON_FIELDS)
+
+# Pattern: a JSON object (possibly multi-line) whose first key is one of
+# the known leaked fields.  Handles both compact `{ "key": ... }` and
+# pretty-printed multi-line variants.
+_NAKED_JSON_RE = re.compile(
+    r'\{\s*"(?:' + _FIELD_ALT + r')"[\s\S]*?\}(?:\s*\})*',
+)
+
+# Pattern: a trailing JSON blob at the end of the text, starting with
+# any of the known field names.  Catches cases where the JSON is appended
+# after the markdown body without a blank-line separator.
+_TRAILING_JSON_RE = re.compile(
+    r'\n?\s*\{\s*"(?:' + _FIELD_ALT + r')"[\s\S]*$',
 )
 
 
@@ -893,8 +903,8 @@ def _sanitize_synthesis_text(text: str) -> str:
     search_results, winner_rationale, etc.) as raw JSON in the response
     instead of properly placing it inside ```spotlight-arena-data fences.
 
-    This function strips those artifacts while preserving the legitimate
-    ```spotlight-arena-data block and all markdown content.
+    This function applies multiple overlapping strategies to strip leaked
+    JSON robustly — even when the JSON is multi-line or malformed.
     """
     if not text:
         return text
@@ -906,40 +916,50 @@ def _sanitize_synthesis_text(text: str) -> str:
         text,
     )
 
-    # 2. Strip trailing JSON object that starts with { "reasoning": or { "thinking":
-    #    These are raw structured outputs that leaked past the code fence.
-    stripped = re.sub(
-        r'\n?\s*\{\s*"(?:reasoning|thinking)":\s*"[\s\S]*$',
+    # 2. Remove any ```json ... ``` fenced blocks that contain leaked fields
+    cleaned = re.sub(
+        r"```json\s*\n[\s\S]*?```\s*\n?",
         "",
         cleaned,
     )
 
-    # 3. Remove leftover lines that look like JSON field leakage
-    lines = stripped.split("\n")
-    result_lines = []
+    # 3. Strip trailing JSON blob (greedy match to end of text)
+    cleaned = _TRAILING_JSON_RE.sub("", cleaned)
+
+    # 4. Strip inline / multi-line naked JSON blobs with known field names
+    cleaned = _NAKED_JSON_RE.sub("", cleaned)
+
+    # 5. Line-by-line pass: catch any remaining JSON fragments that the
+    #    regex missed (e.g. brace-only lines, partial JSON).
+    lines = cleaned.split("\n")
+    result_lines: list[str] = []
+    brace_depth = 0
     in_json_leak = False
     for line in lines:
         stripped_line = line.strip()
-        # Detect start of a naked JSON blob
-        if (
-            not in_json_leak
-            and stripped_line.startswith("{")
-            and any(
-                k in stripped_line
-                for k in (
-                    '"search_queries"', '"search_results"',
-                    '"winner_answer"', '"winner_rationale"',
-                    '"reasoning":', '"thinking":',
-                )
+
+        # Detect start of a naked JSON blob: line starts with { and
+        # EITHER contains a known field name OR is just a lone brace
+        # (multi-line JSON where fields appear on subsequent lines).
+        if not in_json_leak and stripped_line.startswith("{"):
+            has_field = any(
+                f'"{f}"' in stripped_line for f in _LEAKED_JSON_FIELDS
             )
-        ):
-            in_json_leak = True
-            continue
+            is_lone_brace = stripped_line == "{"
+            if has_field or is_lone_brace:
+                # Peek: count braces to track depth
+                brace_depth = stripped_line.count("{") - stripped_line.count("}")
+                if brace_depth > 0:
+                    in_json_leak = True
+                # Even if braces balance on one line, skip it if it has a field
+                continue
+
         if in_json_leak:
-            # End of JSON blob
-            if stripped_line.endswith("}") or stripped_line == "":
+            brace_depth += stripped_line.count("{") - stripped_line.count("}")
+            if brace_depth <= 0:
                 in_json_leak = False
             continue
+
         result_lines.append(line)
 
     return "\n".join(result_lines).strip()

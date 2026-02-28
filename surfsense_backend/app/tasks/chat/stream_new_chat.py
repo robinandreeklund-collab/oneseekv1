@@ -3155,18 +3155,23 @@ async def stream_new_chat(
                             yield streaming_service.format_reasoning_delta(
                                 active_reasoning_id, flush_t
                             )
-                        # The response_layer formatting LLM produces the
-                        # final user-facing text.  reset_think_mode() puts
-                        # the filter back in think mode, which would cause
-                        # ALL its output to be classified as reasoning
-                        # instead of text-delta.  Force out of think mode
-                        # for response_layer so text streams correctly.
-                        # (The synthesizer keeps assume_think behaviour
-                        # for Qwen3-style models that pre-fill <think>.)
-                        if (
-                            "response_layer" in pcn_lower
-                            and "response_layer_router" not in pcn_lower
-                        ):
+                        # Output nodes that produce the final user-facing text
+                        # need _in_think forced to False.  reset_think_mode()
+                        # puts the filter back in think mode, which would cause
+                        # ALL output to be classified as reasoning instead of
+                        # text-delta.  Force out of think mode for:
+                        # - response_layer (normal mode formatting LLM)
+                        # - compare_synthesizer (compare mode final synthesis)
+                        # The normal synthesizer keeps assume_think behaviour
+                        # for Qwen3-style models that pre-fill <think>.
+                        _force_text = (
+                            (
+                                "response_layer" in pcn_lower
+                                and "response_layer_router" not in pcn_lower
+                            )
+                            or "compare_synthesizer" in pcn_lower
+                        )
+                        if _force_text:
                             _think_filter._in_think = False
                 else:
                     # Unknown / unclassified model: treat as INTERNAL to

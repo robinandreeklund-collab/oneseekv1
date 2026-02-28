@@ -6726,8 +6726,7 @@ async def create_supervisor_agent(
                     query[:80], max_results,
                 )
                 try:
-                    from app.db import SearchSourceConnector
-                    from app.schemas.connector import SearchSourceConnectorType
+                    from app.db import SearchSourceConnectorType
 
                     # Look up Tavily API key from the connector config in DB
                     tavily_connector = await _cs.get_connector_by_type(
