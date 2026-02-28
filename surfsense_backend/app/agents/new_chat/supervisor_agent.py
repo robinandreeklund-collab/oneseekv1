@@ -2003,6 +2003,7 @@ async def create_supervisor_agent(
         DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
         DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
         DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
+        DEFAULT_COMPARE_RESEARCH_PROMPT,
     )
     compare_domain_planner_prompt = resolve_prompt(
         prompt_overrides,
@@ -2042,6 +2043,18 @@ async def create_supervisor_agent(
         )
         if _resolved != _default:
             _criterion_prompt_overrides[_crit] = _resolved
+
+    # Research synthesis prompt (admin-editable via compare.research.system)
+    _research_synthesis_prompt_resolved = resolve_prompt(
+        prompt_overrides,
+        "compare.research.system",
+        DEFAULT_COMPARE_RESEARCH_PROMPT,
+    )
+    _research_synthesis_prompt: str | None = (
+        _research_synthesis_prompt_resolved
+        if _research_synthesis_prompt_resolved != DEFAULT_COMPARE_RESEARCH_PROMPT
+        else None
+    )
 
     hitl_planner_message_template = resolve_prompt(
         prompt_overrides,
@@ -6836,6 +6849,7 @@ async def create_supervisor_agent(
             sandbox_isolation_enabled=True,
             runtime_hitl_cfg=_compare_hitl,
             criterion_prompt_overrides=_criterion_prompt_overrides or None,
+            research_synthesis_prompt=_research_synthesis_prompt,
         )
 
         # Build compare convergence node (reuses P4 convergence)

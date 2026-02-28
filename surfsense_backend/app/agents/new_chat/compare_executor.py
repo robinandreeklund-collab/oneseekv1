@@ -129,6 +129,7 @@ def build_compare_subagent_spawner_node(
     sandbox_isolation_enabled: bool = False,
     runtime_hitl_cfg: dict[str, Any] | None = None,
     criterion_prompt_overrides: dict[str, str] | None = None,
+    research_synthesis_prompt: str | None = None,
 ):
     """Build the compare-specific subagent spawner.
 
@@ -455,6 +456,7 @@ def build_compare_subagent_spawner_node(
         subagent_id: str,
         thread_id: str = "",
         config: Any = None,
+        on_criterion_complete: Any = None,
     ) -> dict[str, Any]:
         """Execute the research agent as a subagent."""
         from app.agents.new_chat.compare_research_worker import run_research_executor
@@ -470,6 +472,7 @@ def build_compare_subagent_spawner_node(
                     query=user_query,
                     llm=llm,
                     tavily_search_fn=tavily_search_fn,
+                    synthesis_prompt=research_synthesis_prompt,
                 ),
                 timeout=execution_timeout_seconds,
             )
@@ -513,6 +516,51 @@ def build_compare_subagent_spawner_node(
         except Exception:
             pass  # non-critical
 
+        # Run 4 parallel criterion evaluations (same as external models)
+        criterion_scores: dict[str, int] = {}
+        criterion_reasonings: dict[str, str] = {}
+        criterion_pod_info: dict[str, Any] = {}
+        if status == "complete" and response_text:
+            try:
+                from langchain_core.callbacks import adispatch_custom_event as _dispatch
+
+                await _dispatch(
+                    "criterion_evaluation_started",
+                    {"domain": "research", "timestamp": time.time()},
+                    config=config,
+                )
+            except Exception:
+                pass
+
+            try:
+                from app.agents.new_chat.compare_criterion_evaluator import (
+                    evaluate_model_response,
+                )
+
+                eval_result = await evaluate_model_response(
+                    domain="research",
+                    model_response=response_text,
+                    model_display_name="OneSeek Research",
+                    user_query=user_query,
+                    research_context=None,
+                    llm=llm,
+                    extract_json_fn=extract_first_json_object_fn,
+                    timeout_seconds=90,
+                    on_criterion_complete=on_criterion_complete,
+                    prompt_overrides=criterion_prompt_overrides,
+                    acquire_criterion_pod_fn=None,
+                    release_criterion_pod_fn=None,
+                    parent_subagent_id=subagent_id,
+                    thread_id=thread_id,
+                )
+                criterion_scores = eval_result.get("scores", {})
+                criterion_reasonings = eval_result.get("reasonings", {})
+                criterion_pod_info = eval_result.get("pod_info", {})
+                avg_score = eval_result.get("total", 200) / 4
+                confidence = round(avg_score / 100, 2)
+            except Exception as exc:
+                logger.warning("compare_executor[research]: criterion eval failed: %s", exc)
+
         scope_info_r: dict[str, Any] = {}
         if _sandbox_active:
             scope_info_r = {
@@ -539,6 +587,9 @@ def build_compare_subagent_spawner_node(
                     for src in web_sources[:5]
                 ],
                 "used_tools": ["call_oneseek"],
+                "criterion_scores": criterion_scores,
+                "criterion_reasonings": criterion_reasonings,
+                "criterion_pod_info": criterion_pod_info,
                 **scope_info_r,
             },
             "raw_result": result,
@@ -669,6 +720,7 @@ def build_compare_subagent_spawner_node(
                     domain_result = await _run_research_domain(
                         user_query, subagent_id, thread_id=_thread_id,
                         config=config,
+                        on_criterion_complete=_on_criterion_complete,
                     )
                 else:
                     domain_result = await _run_external_model_domain(

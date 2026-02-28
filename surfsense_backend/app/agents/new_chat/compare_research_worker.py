@@ -43,6 +43,7 @@ async def run_research_executor(
     query: str,
     llm: Any,
     tavily_search_fn: Any | None = None,
+    synthesis_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Execute the research agent pipeline: decompose → search → structure.
 
@@ -93,7 +94,7 @@ async def run_research_executor(
             unique_sources.append(src)
 
     # Step 3: LLM synthesis — analyse sources and formulate an answer
-    synthesized = await _synthesize_research(query, unique_sources, llm)
+    synthesized = await _synthesize_research(query, unique_sources, llm, synthesis_prompt=synthesis_prompt)
 
     latency_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -174,10 +175,26 @@ async def _safe_tavily_search(
 _RESEARCH_SYNTHESIS_TIMEOUT = 30
 
 
+_DEFAULT_SYNTHESIS_PROMPT = (
+    "Du är OneSeek Research — en forskningsagent som analyserar "
+    "webbkällor och formulerar välgrundade svar.\n\n"
+    "INSTRUKTIONER:\n"
+    "- Läs igenom alla källor noggrant.\n"
+    "- Formulera ett sammanhängande, informativt svar på användarens fråga.\n"
+    "- Citera källor med [1], [2] osv. inline i texten.\n"
+    "- Om källorna ger motstridiga uppgifter, notera det.\n"
+    "- Svara på samma språk som frågan.\n"
+    "- Avsluta med en kort källförteckning.\n"
+    "- Var saklig och koncis men grundlig."
+)
+
+
 async def _synthesize_research(
     query: str,
     sources: list[dict[str, Any]],
     llm: Any,
+    *,
+    synthesis_prompt: str | None = None,
 ) -> str:
     """Use LLM to synthesize search results into a coherent answer."""
     if not sources:
@@ -194,18 +211,7 @@ async def _synthesize_research(
     source_context = "\n\n".join(source_lines)
 
     system_msg = SystemMessage(
-        content=(
-            "Du är OneSeek Research — en forskningsagent som analyserar "
-            "webbkällor och formulerar välgrundade svar.\n\n"
-            "INSTRUKTIONER:\n"
-            "- Läs igenom alla källor noggrant.\n"
-            "- Formulera ett sammanhängande, informativt svar på användarens fråga.\n"
-            "- Citera källor med [1], [2] osv. inline i texten.\n"
-            "- Om källorna ger motstridiga uppgifter, notera det.\n"
-            "- Svara på samma språk som frågan.\n"
-            "- Avsluta med en kort källförteckning.\n"
-            "- Var saklig och koncis men grundlig."
-        )
+        content=synthesis_prompt or _DEFAULT_SYNTHESIS_PROMPT,
     )
     human_msg = HumanMessage(
         content=(
@@ -340,9 +346,10 @@ def build_compare_external_model_worker(
 class ResearchWorker:
     """Minimal worker interface for the research agent in compare mode."""
 
-    def __init__(self, llm: Any, tavily_search_fn: Any | None = None):
+    def __init__(self, llm: Any, tavily_search_fn: Any | None = None, synthesis_prompt: str | None = None):
         self._llm = llm
         self._tavily_search_fn = tavily_search_fn
+        self._synthesis_prompt = synthesis_prompt
 
     async def ainvoke(
         self,
@@ -364,6 +371,7 @@ class ResearchWorker:
             query=query,
             llm=self._llm,
             tavily_search_fn=self._tavily_search_fn,
+            synthesis_prompt=self._synthesis_prompt,
         )
 
         result_json = json.dumps(result, ensure_ascii=False)
