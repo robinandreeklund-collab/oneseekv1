@@ -301,6 +301,18 @@ function formatNum(n: number): string {
 	return n.toFixed(1);
 }
 
+/** Strip arena-data code blocks and leaked JSON from visible synthesis text */
+function sanitizeSynthesisText(text: string): string {
+	// Remove ```spotlight-arena-data ... ``` blocks
+	let cleaned = text.replace(/```spotlight-arena-data\s*\n[\s\S]*?```\s*\n?/g, "");
+	// Remove trailing raw JSON objects (common with smaller LLMs)
+	cleaned = cleaned.replace(
+		/\n?\s*\{\s*"(?:reasoning|thinking|search_queries|search_results|winner_answer|winner_rationale)":\s*[\s\S]*$/,
+		"",
+	);
+	return cleaned.trim();
+}
+
 /** Extract ```spotlight-arena-data JSON block from synthesis text */
 function extractArenaAnalysis(
 	textParts: string[],
@@ -1046,6 +1058,13 @@ export const SpotlightArenaLayout: FC = () => {
 			)
 			.map((part: { text: string }) => part.text);
 	}, [messageContent]);
+
+	// Sanitized text parts: strip arena-data blocks and leaked JSON
+	// so they don't appear in the rendered markdown
+	const cleanTextParts = useMemo(
+		() => textParts.map(sanitizeSynthesisText).filter(Boolean),
+		[textParts],
+	);
 
 	const arenaAnalysis = useMemo(
 		() => extractArenaAnalysis(textParts),

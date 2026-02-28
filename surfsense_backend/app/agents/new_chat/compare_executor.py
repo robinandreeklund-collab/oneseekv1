@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import time
+import re
 import uuid
 from typing import Any
 
@@ -867,6 +868,83 @@ def _build_synthesis_context(
     return "\n".join(blocks)
 
 
+# ─── Synthesis Text Sanitizer ─────────────────────────────────────────
+
+# Pattern: a JSON object at the end of the text (after the markdown content),
+# often produced by smaller LLMs that dump structured data as raw JSON.
+_TRAILING_JSON_RE = re.compile(
+    r',\s*"(?:search_queries|search_results|winner_answer|winner_rationale|'
+    r'reasoning|thinking|arena_analysis)":\s*[\[\{"].*$',
+    re.DOTALL,
+)
+
+# Pattern: standalone JSON blob not inside a code fence
+_NAKED_JSON_BLOCK_RE = re.compile(
+    r'(?<!\n```)(?:^|\n)\s*\{[^{}]*?"(?:search_queries|search_results|'
+    r'winner_answer|winner_rationale|reasoning|thinking)".*?\}\s*$',
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def _sanitize_synthesis_text(text: str) -> str:
+    """Remove raw JSON blobs that leak into the visible synthesis text.
+
+    Some smaller LLMs dump structured analysis data (search_queries,
+    search_results, winner_rationale, etc.) as raw JSON in the response
+    instead of properly placing it inside ```spotlight-arena-data fences.
+
+    This function strips those artifacts while preserving the legitimate
+    ```spotlight-arena-data block and all markdown content.
+    """
+    if not text:
+        return text
+
+    # 1. Remove the ```spotlight-arena-data block (frontend extracts it separately)
+    cleaned = re.sub(
+        r"```spotlight-arena-data\s*\n[\s\S]*?```\s*\n?",
+        "",
+        text,
+    )
+
+    # 2. Strip trailing JSON object that starts with { "reasoning": or { "thinking":
+    #    These are raw structured outputs that leaked past the code fence.
+    stripped = re.sub(
+        r'\n?\s*\{\s*"(?:reasoning|thinking)":\s*"[\s\S]*$',
+        "",
+        cleaned,
+    )
+
+    # 3. Remove leftover lines that look like JSON field leakage
+    lines = stripped.split("\n")
+    result_lines = []
+    in_json_leak = False
+    for line in lines:
+        stripped_line = line.strip()
+        # Detect start of a naked JSON blob
+        if (
+            not in_json_leak
+            and stripped_line.startswith("{")
+            and any(
+                k in stripped_line
+                for k in (
+                    '"search_queries"', '"search_results"',
+                    '"winner_answer"', '"winner_rationale"',
+                    '"reasoning":', '"thinking":',
+                )
+            )
+        ):
+            in_json_leak = True
+            continue
+        if in_json_leak:
+            # End of JSON blob
+            if stripped_line.endswith("}") or stripped_line == "":
+                in_json_leak = False
+            continue
+        result_lines.append(line)
+
+    return "\n".join(result_lines).strip()
+
+
 # ─── Compare Synthesizer ─────────────────────────────────────────────
 
 
@@ -936,7 +1014,21 @@ def build_compare_synthesizer_node(
 
         try:
             response = await llm.ainvoke(synthesis_messages)
-            synthesis_text = response.content if hasattr(response, "content") else str(response)
+            raw_synthesis = response.content if hasattr(response, "content") else str(response)
+
+            # Extract arena analysis JSON before sanitizing (frontend also does this)
+            _arena_match = re.search(
+                r"```spotlight-arena-data\s*\n([\s\S]*?)```", raw_synthesis,
+            )
+            _parsed_arena: dict[str, Any] | None = None
+            if _arena_match:
+                try:
+                    _parsed_arena = json.loads(_arena_match.group(1))
+                except Exception:
+                    pass
+
+            # Sanitize: remove raw JSON leakage from visible text
+            synthesis_text = _sanitize_synthesis_text(raw_synthesis)
             synthesis_message = AIMessage(content=synthesis_text)
 
             # Compute confidence-weighted ranking for arena data
@@ -949,21 +1041,32 @@ def build_compare_synthesizer_node(
                     all_model_scores[domain] = cs
             weighted_ranking = rank_models_by_weighted_score(all_model_scores)
 
+            # Build arena_data: merge backend scores with LLM-generated analysis
+            arena_data: dict[str, Any] = {
+                "model_scores": all_model_scores,
+                "weighted_ranking": weighted_ranking,
+                "criterion_weights": CRITERION_WEIGHTS,
+                "agreements": convergence.get("agreements", []),
+                "disagreements": convergence.get("disagreements", []),
+                "unique_insights": convergence.get("unique_insights", {}),
+                "comparative_summary": convergence.get("comparative_summary", ""),
+                "overlap_score": convergence.get("overlap_score", 0.0),
+                "conflicts": convergence.get("conflicts", []),
+            }
+            # Merge LLM-generated arena_analysis if extracted
+            if _parsed_arena and isinstance(_parsed_arena, dict):
+                aa = _parsed_arena.get("arena_analysis", _parsed_arena)
+                if isinstance(aa, dict):
+                    for key in ("consensus", "disagreements", "unique_contributions",
+                                "winner_rationale", "reliability_notes"):
+                        if key in aa and aa[key]:
+                            arena_data[key] = aa[key]
+
             return {
                 "messages": [synthesis_message],
                 "final_response": synthesis_text,
                 "orchestration_phase": "compare_synthesis_complete",
-                "compare_arena_data": {
-                    "model_scores": all_model_scores,
-                    "weighted_ranking": weighted_ranking,
-                    "criterion_weights": CRITERION_WEIGHTS,
-                    "agreements": convergence.get("agreements", []),
-                    "disagreements": convergence.get("disagreements", []),
-                    "unique_insights": convergence.get("unique_insights", {}),
-                    "comparative_summary": convergence.get("comparative_summary", ""),
-                    "overlap_score": convergence.get("overlap_score", 0.0),
-                    "conflicts": convergence.get("conflicts", []),
-                },
+                "compare_arena_data": arena_data,
             }
         except Exception as e:
             error_msg = f"Error during synthesis: {e}"
