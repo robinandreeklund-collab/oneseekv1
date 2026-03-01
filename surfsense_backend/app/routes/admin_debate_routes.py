@@ -54,13 +54,18 @@ class DebateVoiceSettingsResponse(BaseModel):
 
 async def _require_admin(session: AsyncSession, user: User) -> None:
     result = await session.execute(
-        select(SearchSpaceMembership).filter(
+        select(SearchSpaceMembership)
+        .filter(
             SearchSpaceMembership.user_id == user.id,
-            SearchSpaceMembership.role.in_(["owner", "admin"]),
+            SearchSpaceMembership.is_owner.is_(True),
         )
+        .limit(1)
     )
-    if not result.scalars().first():
-        raise HTTPException(status_code=403, detail="Admin access required")
+    if result.scalars().first() is None:
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to manage debate settings",
+        )
 
 
 def _get_redis():
