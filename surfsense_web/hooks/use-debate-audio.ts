@@ -16,7 +16,11 @@ const PCM_CHANNELS = 1;
  * 2. This hook decodes chunks into Float32 audio samples.
  * 3. Chunks are queued per-speaker and played sequentially via AudioContext.
  * 4. An AnalyserNode feeds waveform data for visualization.
- * 5. All raw PCM is collected for optional full-debate MP3 export.
+ * 5. All raw PCM is collected for optional full-debate WAV export.
+ *
+ * IMPORTANT: Browsers require a user gesture to start AudioContext.
+ * We call ctx.resume() aggressively and expose an `unlock` function
+ * that should be called from a click handler (e.g. the play button).
  */
 export function useDebateAudio(enabled: boolean) {
 	const [voiceState, setVoiceState] = useState<DebateVoiceState>({
@@ -38,6 +42,11 @@ export function useDebateAudio(enabled: boolean) {
 	const chunkQueueRef = useRef<{ speaker: string; buffer: AudioBuffer }[]>([]);
 	const isPlayingRef = useRef(false);
 	const isPausedRef = useRef(false);
+
+	// Track total chunks received for diagnostics
+	const totalChunksRef = useRef(0);
+	// Track voice errors from backend
+	const lastErrorRef = useRef<string | null>(null);
 
 	// Collected raw PCM for export (speaker → ArrayBuffer[])
 	const collectedRef = useRef<Record<string, ArrayBuffer[]>>({});
@@ -61,8 +70,74 @@ export function useDebateAudio(enabled: boolean) {
 		analyserRef.current = analyser;
 		gainRef.current = gain;
 
+		// Attempt to resume immediately — browsers may allow this if
+		// a recent user gesture occurred (e.g. clicking the send button).
+		ctx.resume().catch(() => {
+			console.warn("[useDebateAudio] AudioContext suspended — click play to unlock");
+		});
+
+		console.log("[useDebateAudio] AudioContext created, state:", ctx.state);
 		return ctx;
 	}, [voiceState.volume]);
+
+	// ── Resume / unlock the AudioContext (call from user gesture) ──
+	const resumeAudioContext = useCallback(async () => {
+		const ctx = ensureAudioContext();
+		if (ctx.state === "suspended") {
+			await ctx.resume();
+			console.log("[useDebateAudio] AudioContext resumed via user gesture, state:", ctx.state);
+		}
+	}, [ensureAudioContext]);
+
+	// ── Play next chunk from queue ─────────────────────────────────
+	const playNextRef = useRef<() => void>(() => {});
+	playNextRef.current = () => {
+		const ctx = audioCtxRef.current;
+		const gain = gainRef.current;
+		if (!ctx || !gain || isPausedRef.current) {
+			isPlayingRef.current = false;
+			return;
+		}
+
+		const next = chunkQueueRef.current.shift();
+		if (!next) {
+			isPlayingRef.current = false;
+			setVoiceState((prev) => ({
+				...prev,
+				playbackStatus: chunkQueueRef.current.length > 0 ? "playing" : "idle",
+				currentSpeaker: null,
+			}));
+			return;
+		}
+
+		isPlayingRef.current = true;
+		setVoiceState((prev) => ({
+			...prev,
+			playbackStatus: "playing",
+			currentSpeaker: next.speaker,
+		}));
+
+		// Ensure AudioContext is running before playing
+		if (ctx.state === "suspended") {
+			ctx.resume().then(() => {
+				const source = ctx.createBufferSource();
+				source.buffer = next.buffer;
+				source.connect(gain);
+				source.onended = () => playNextRef.current();
+				source.start(0);
+			});
+		} else {
+			const source = ctx.createBufferSource();
+			source.buffer = next.buffer;
+			source.connect(gain);
+			source.onended = () => playNextRef.current();
+			source.start(0);
+		}
+	};
+
+	const playNext = useCallback(() => {
+		playNextRef.current();
+	}, []);
 
 	// ── Decode PCM base64 → AudioBuffer ────────────────────────────
 	const decodePcmChunk = useCallback(
@@ -102,16 +177,27 @@ export function useDebateAudio(enabled: boolean) {
 		(speaker: string, b64: string) => {
 			if (!enabled) return;
 
+			totalChunksRef.current += 1;
+			if (totalChunksRef.current <= 3) {
+				console.log(
+					`[useDebateAudio] chunk #${totalChunksRef.current} from ${speaker}, b64 length=${b64.length}`,
+				);
+			}
+
 			// Store raw PCM for export
-			const binaryStr = atob(b64);
-			const raw = new Uint8Array(binaryStr.length);
-			for (let i = 0; i < binaryStr.length; i++) {
-				raw[i] = binaryStr.charCodeAt(i);
+			try {
+				const binaryStr = atob(b64);
+				const raw = new Uint8Array(binaryStr.length);
+				for (let i = 0; i < binaryStr.length; i++) {
+					raw[i] = binaryStr.charCodeAt(i);
+				}
+				if (!collectedRef.current[speaker]) {
+					collectedRef.current[speaker] = [];
+				}
+				collectedRef.current[speaker].push(raw.buffer);
+			} catch {
+				// export collection is best-effort
 			}
-			if (!collectedRef.current[speaker]) {
-				collectedRef.current[speaker] = [];
-			}
-			collectedRef.current[speaker].push(raw.buffer);
 
 			const audioBuffer = decodePcmChunk(b64);
 			if (!audioBuffer) return;
@@ -123,43 +209,17 @@ export function useDebateAudio(enabled: boolean) {
 				playNext();
 			}
 		},
-		[enabled, decodePcmChunk],
+		[enabled, decodePcmChunk, playNext],
 	);
 
-	// ── Play next chunk from queue ─────────────────────────────────
-	const playNext = useCallback(() => {
-		const ctx = audioCtxRef.current;
-		const gain = gainRef.current;
-		if (!ctx || !gain || isPausedRef.current) {
-			isPlayingRef.current = false;
-			return;
-		}
-
-		const next = chunkQueueRef.current.shift();
-		if (!next) {
-			isPlayingRef.current = false;
-			setVoiceState((prev) => ({
-				...prev,
-				playbackStatus: "idle",
-				currentSpeaker: null,
-			}));
-			return;
-		}
-
-		isPlayingRef.current = true;
+	// ── Voice error handler ───────────────────────────────────────
+	const onVoiceError = useCallback((errorMsg: string) => {
+		console.warn("[useDebateAudio] voice error:", errorMsg);
+		lastErrorRef.current = errorMsg;
 		setVoiceState((prev) => ({
 			...prev,
-			playbackStatus: "playing",
-			currentSpeaker: next.speaker,
+			playbackStatus: "error" as DebateVoiceState["playbackStatus"],
 		}));
-
-		const source = ctx.createBufferSource();
-		source.buffer = next.buffer;
-		source.connect(gain);
-		source.onended = () => {
-			playNext();
-		};
-		source.start(0);
 	}, []);
 
 	// ── Waveform animation loop ────────────────────────────────────
@@ -187,6 +247,7 @@ export function useDebateAudio(enabled: boolean) {
 	// ── Speaker change handler ─────────────────────────────────────
 	const onSpeakerChange = useCallback(
 		(speaker: string) => {
+			console.log("[useDebateAudio] speaker change:", speaker);
 			setVoiceState((prev) => ({ ...prev, currentSpeaker: speaker }));
 		},
 		[],
@@ -194,22 +255,36 @@ export function useDebateAudio(enabled: boolean) {
 
 	// ── Playback controls ──────────────────────────────────────────
 	const togglePlayPause = useCallback(() => {
-		const ctx = audioCtxRef.current;
-		if (!ctx) return;
+		const ctx = audioCtxRef.current ?? ensureAudioContext();
+
+		if (ctx.state === "suspended") {
+			// First click — unlock the AudioContext
+			isPausedRef.current = false;
+			ctx.resume().then(() => {
+				console.log("[useDebateAudio] AudioContext unlocked via play button");
+				setVoiceState((prev) => ({ ...prev, playbackStatus: "playing" }));
+				if (!isPlayingRef.current && chunkQueueRef.current.length > 0) {
+					playNext();
+				}
+			});
+			return;
+		}
 
 		if (isPausedRef.current) {
-			// Resume
+			// Resume from pause
 			isPausedRef.current = false;
 			ctx.resume();
 			setVoiceState((prev) => ({ ...prev, playbackStatus: "playing" }));
-			playNext();
+			if (!isPlayingRef.current) {
+				playNext();
+			}
 		} else {
 			// Pause
 			isPausedRef.current = true;
 			ctx.suspend();
 			setVoiceState((prev) => ({ ...prev, playbackStatus: "paused" }));
 		}
-	}, [playNext]);
+	}, [ensureAudioContext, playNext]);
 
 	const setVolume = useCallback((vol: number) => {
 		const clamped = Math.max(0, Math.min(1, vol));
@@ -266,9 +341,12 @@ export function useDebateAudio(enabled: boolean) {
 		voiceState,
 		enqueueChunk,
 		onSpeakerChange,
+		onVoiceError,
 		togglePlayPause,
 		setVolume,
 		exportAudioBlob,
+		resumeAudioContext,
+		lastError: lastErrorRef.current,
 	};
 }
 

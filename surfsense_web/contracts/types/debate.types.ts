@@ -182,7 +182,7 @@ export interface DebateVoiceState {
 	/** Currently playing participant (null if idle) */
 	currentSpeaker: string | null;
 	/** Playback status */
-	playbackStatus: "idle" | "playing" | "paused" | "buffering";
+	playbackStatus: "idle" | "playing" | "paused" | "buffering" | "error";
 	/** Volume level 0-1 */
 	volume: number;
 	/** Waveform data for visualization (frequency bins) */

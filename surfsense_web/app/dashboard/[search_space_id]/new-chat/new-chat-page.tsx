@@ -1779,6 +1779,7 @@ export default function NewChatPage() {
 										// ─── Voice debate SSE events ─────────
 										case "data-debate-voice-speaker": {
 											const dvs = parsed.data as Record<string, unknown>;
+											console.log("[SSE] debate-voice-speaker:", dvs?.model);
 											debateAudio.onSpeakerChange(String(dvs?.model ?? ""));
 											break;
 										}
@@ -1791,12 +1792,15 @@ export default function NewChatPage() {
 											break;
 										}
 										case "data-debate-voice-done": {
+											console.log("[SSE] debate-voice-done:", (parsed.data as Record<string, unknown>)?.model);
 											// Speaker finished — playback continues from queue
 											break;
 										}
 										case "data-debate-voice-error": {
 											const dve = parsed.data as Record<string, unknown>;
-											console.warn("[debate-voice] TTS error:", dve?.error);
+											const errMsg = String(dve?.error ?? "Unknown voice error");
+											console.warn("[debate-voice] TTS error:", errMsg);
+											debateAudio.onVoiceError(errMsg);
 											break;
 										}
 
@@ -2752,7 +2756,10 @@ export default function NewChatPage() {
 											break;
 										}
 										case "data-debate-voice-error": {
-											console.warn("[debate-voice] TTS error:", (parsed.data as Record<string, unknown>)?.error);
+											const dveR = parsed.data as Record<string, unknown>;
+											const errMsgR = String(dveR?.error ?? "Unknown voice error");
+											console.warn("[debate-voice] TTS error:", errMsgR);
+											debateAudio.onVoiceError(errMsgR);
 											break;
 										}
 
@@ -3102,6 +3109,8 @@ export default function NewChatPage() {
 			togglePlayPause: debateAudio.togglePlayPause,
 			setVolume: debateAudio.setVolume,
 			exportAudioBlob: debateAudio.exportAudioBlob,
+			resumeAudioContext: debateAudio.resumeAudioContext,
+			lastError: debateAudio.lastError,
 		} : null}>
 			{!isPublicChat && <GeneratePodcastToolUI />}
 			<LinkPreviewToolUI />

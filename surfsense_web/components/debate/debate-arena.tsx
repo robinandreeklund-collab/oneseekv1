@@ -66,6 +66,8 @@ export const DebateVoiceContext = createContext<{
 	togglePlayPause: () => void;
 	setVolume: (v: number) => void;
 	exportAudioBlob: () => Blob | null;
+	resumeAudioContext: () => Promise<void>;
+	lastError: string | null;
 } | null>(null);
 
 // ============================================================================
@@ -566,12 +568,14 @@ interface VoiceControlBarProps {
 		togglePlayPause: () => void;
 		setVolume: (v: number) => void;
 		exportAudioBlob: () => Blob | null;
+		resumeAudioContext: () => Promise<void>;
+		lastError: string | null;
 	};
 	isComplete: boolean;
 }
 
 const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => {
-	const { voiceState, togglePlayPause, setVolume, exportAudioBlob } = voiceCtx;
+	const { voiceState, togglePlayPause, setVolume, exportAudioBlob, resumeAudioContext, lastError } = voiceCtx;
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 
 	// Waveform visualization
@@ -638,13 +642,19 @@ const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => 
 			{/* Speaker indicator */}
 			<div className="flex min-w-0 flex-1 flex-col gap-1">
 				<div className="flex items-center gap-2">
-					{voiceState.currentSpeaker ? (
+					{lastError ? (
+						<span className="truncate text-xs font-medium text-red-400">
+							{lastError}
+						</span>
+					) : voiceState.currentSpeaker ? (
 						<span className="truncate text-xs font-medium text-foreground">
 							{voiceState.currentSpeaker}
 						</span>
 					) : (
 						<span className="text-xs text-muted-foreground">
-							{voiceState.playbackStatus === "idle" ? "Väntar på röst…" : "Buffrar…"}
+							{voiceState.playbackStatus === "idle"
+								? "Klicka ▶ för att aktivera ljud"
+								: "Buffrar…"}
 						</span>
 					)}
 					{voiceState.playbackStatus === "playing" && (

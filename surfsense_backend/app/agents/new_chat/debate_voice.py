@@ -156,6 +156,11 @@ async def _emit_voice_events(
     if lang_instructions:
         tts_text = f"[{lang_instructions}]\n\n{text}"
 
+    logger.info(
+        "debate_voice: starting TTS for %s (voice=%s, model=%s, text_len=%d)",
+        participant_display, voice, voice_settings["model"], len(tts_text),
+    )
+
     # Emit speaker-changed event
     await adispatch_custom_event(
         "debate_voice_speaker",
@@ -225,6 +230,11 @@ async def _emit_voice_events(
             },
             config=config,
         )
+
+    logger.info(
+        "debate_voice: finished TTS for %s — %d bytes, %d chunks",
+        participant_display, total_bytes, chunk_index,
+    )
 
     # Emit playback-ready (marks end of audio for this participant)
     await adispatch_custom_event(
