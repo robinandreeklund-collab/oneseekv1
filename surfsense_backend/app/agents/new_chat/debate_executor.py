@@ -451,12 +451,11 @@ def build_debate_round_executor_node(
                 round_responses[model_display] = response_text
 
                 # ─── Voice mode: stream text word-by-word FIRST ─────────
-                # Emit words in small groups (~3 words per chunk) with tiny
-                # delays for a smooth typewriter effect.  Text appears in
-                # ~2-3 seconds regardless of how long TTS takes afterwards.
+                # Emit 2 words per chunk at ~200ms intervals ≈ 10 words/sec.
+                # A 150-word response takes ~15s — close to speaking pace.
                 if voice_mode and response_text and not response_text.startswith("["):
                     _words = response_text.split()
-                    _chunk_size = 3
+                    _chunk_size = 2
                     for _wi in range(0, len(_words), _chunk_size):
                         _word_group = " ".join(_words[_wi:_wi + _chunk_size])
                         _delta = (" " + _word_group) if _wi > 0 else _word_group
@@ -473,7 +472,7 @@ def build_debate_round_executor_node(
                             )
                         except Exception:
                             pass
-                        await asyncio.sleep(0.03)
+                        await asyncio.sleep(0.20)
 
                 # Emit participant_end (confirms full text)
                 try:
