@@ -1,7 +1,7 @@
 # Debatt v1 — Komplett Teknisk Dokumentation
 
 > Live Debate Mode + Voice Debate Mode for OneSeek
-> Senast uppdaterad: 2026-03-01
+> Senast uppdaterad: 2026-03-01 (v1.1 — autoplay, typning-synk, rundkontroll, MP3-export)
 
 ---
 
@@ -623,10 +623,10 @@ interface DebateVoiceErrorEvent { model, round, error, timestamp }
 interface DebateVoiceState {
     enabled: boolean;
     currentSpeaker: string | null;
-    playbackStatus: "idle" | "playing" | "paused" | "buffering";
+    currentRound: number;           // Round of currently playing chunk (0 if idle)
+    playbackStatus: "idle" | "playing" | "paused" | "buffering" | "error";
     volume: number;
     waveformData: Uint8Array | null;
-    collectedChunks: Record<string, ArrayBuffer[]>;
 }
 ```
 
@@ -656,29 +656,49 @@ ROUND_LABELS = { 1: "Introduktion", 2: "Argument", 3: "Fordjupning", 4: "Rostnin
 
 **Skvag**: `surfsense_web/hooks/use-debate-audio.ts`
 
-Web Audio API-hook for live rostuppspelning.
+Web Audio API-hook for live rostuppspelning och MP3-export.
 
 #### Returnerar
 
 ```typescript
 {
     voiceState: DebateVoiceState;
-    enqueueChunk: (speaker: string, b64: string) => void;
+    enqueueChunk: (speaker: string, b64: string, round?: number) => void;
     onSpeakerChange: (speaker: string) => void;
+    onVoiceError: (speaker: string, error: string) => void;
     togglePlayPause: () => void;
     setVolume: (vol: number) => void;
-    exportAudioBlob: () => Blob | null;
+    exportAudioBlob: () => Promise<Blob | null>;  // async — MP3 med WAV-fallback
+    resumeAudioContext: () => Promise<void>;
+    lastError: string | null;
 }
 ```
 
 #### Intern arkitektur
 
-1. **AudioContext** (24kHz sample rate)
+1. **AudioContext** (24kHz sample rate) — upplast via `resumeAudioContext()` under användargest
 2. **GainNode** for volymkontroll
 3. **AnalyserNode** (fftSize=256) for waveform-visualisering
-4. **Chunk-ko** (`chunkQueueRef`) — chunks spelas sekventiellt
+4. **Chunk-ko** (`chunkQueueRef`) — varje chunk lagrar `{ speaker, round, buffer }` — spelas sekventiellt
 5. **PCM-avkodning**: base64 -> Uint8Array -> Int16Array -> Float32Array -> AudioBuffer
-6. **WAV-export**: Bygger WAV-header + samlar all PCM for nedladdning
+6. **`playNext()`** ar enda kallor for `currentSpeaker` och `currentRound` — satter state nar en chunk faktiskt borjar spela
+7. **`collectedRef`** (`ArrayBuffer[]`) — samlar all PCM i ankomstordning for export
+8. **MP3-export**: Kodar PCM → MP3 med `lamejs` (dynamisk `import()` for Next.js-kompatibilitet), WAV-fallback vid fel
+
+#### AudioContext auto-play
+
+Webblasare blockerar `AudioContext.resume()` om det inte sker under en användargest. Losning: `resumeAudioContext()` anropas i `onNew` och `handleRegenerate` handlers i `new-chat-page.tsx` — knapptrycket pa "Skicka" racker som gest.
+
+### 4.2b `use-smooth-typing.ts`
+
+**Skvag**: `surfsense_web/hooks/use-smooth-typing.ts`
+
+Tecken-for-tecken typningsanimation med `requestAnimationFrame`.
+
+- **Input**: `text` (full text), `delayPerWord` (sekunder/ord fran backend TTS-duration), `active` (boolean)
+- **Output**: progressivt visad text som matchar TTS-talets tempo
+- Konverterar `delayPerWord` till per-tecken-kadens med liten random jitter
+- Anvands i `ParticipantCard` for att synka textvisning med rostuppspelning
 
 ---
 
@@ -695,7 +715,9 @@ export const DebateVoiceContext = createContext<{
     voiceState: DebateVoiceState;
     togglePlayPause: () => void;
     setVolume: (v: number) => void;
-    exportAudioBlob: () => Blob | null;
+    exportAudioBlob: () => Promise<Blob | null>;
+    resumeAudioContext: () => Promise<void>;
+    lastError: string | null;
 } | null>(null);
 ```
 
@@ -704,17 +726,25 @@ export const DebateVoiceContext = createContext<{
 | Komponent | Beskrivning |
 |-----------|-------------|
 | `DebateArenaLayout` | Huvudkomponent — header, rundtabbar, progressbar, deltagarkort, rostresultat, vinnarbanner |
-| `ParticipantCard` | Enskilt deltagarkort med auto-expand/collapse, voice-glow |
+| `ParticipantCard` | Enskilt deltagarkort med `voiceStarted`-latch, typningsanimation synkad med ljud |
 | `VotingSection` | Rostresultat med staplars och individuella rostmotiveringar |
 | `WinnerBanner` | Vinnarbanner med krona och rostantal |
-| `VoiceControlBar` | Play/pause, waveform-canvas, volymslider, LIVE-badge, nedladdning |
+| `VoiceControlBar` | Play/pause, waveform-canvas, volymslider, LIVE-badge, MP3-nedladdning |
 
 #### Progressiv kortvisning
 
-- `visibleParticipants`: Filtrerar deltagare som har svar i aktiv runda
-- `currentSpeaker`: Detekterar "speaking" status
+- `visibleParticipants`: Visar ALLA deltagare som har svar i aktiv runda (inte bara nuvarande talare)
+- `currentSpeaker`: Detekteras av `voiceState.currentSpeaker` (satt av `playNext()`)
 - `autoExpanded`: Talande kort ar alltid expanderat; senaste klara kortet expanderas om ingen talar
 - `manualToggle` med auto-reset nar autoExpanded andras
+- **`voiceStarted` latch** (per kort): Latchar till `true` nar `voiceActive && fullText.length > 0` — forhindrar att text visas innan ljud borjar spela
+- **Typningsanimation**: Anvander `useSmoothTyping` med `delayPerWord` fran backend — text avslöjas i takt med TTS-ljud
+
+#### Rost-synkad rundkontroll
+
+- `voicePlaybackRound`: Foljer `voiceState.currentRound` (satt av `playNext()`)
+- `activeRound`: I rostlage = `voicePlaybackRound`; annars `debateState.currentRound`
+- Forhindrar att UI byter till nasta runda medan ljud fortfarande spelas i forra rundan
 
 #### Voice UI
 
@@ -722,6 +752,7 @@ export const DebateVoiceContext = createContext<{
 - LIVE-badge (rod, pulserande) nar ljud spelas
 - VoiceControlBar med waveform-canvas (64 bars, rod nar aktiv)
 - Rod glow-effekt pa deltagarkort med aktiv rostuppspelning: `border-red-500/40 ring-1 ring-red-500/20`
+- **MP3-nedladdning**: Knapp i VoiceControlBar — exporterar hela debatten i korrekt ordning som MP3 (WAV-fallback)
 
 ---
 
@@ -752,6 +783,23 @@ case "data-{event-name}": {
 ```
 
 **8 debatt-events** + **4 voice-events** per block = 24 case-satser totalt.
+
+#### AudioContext auto-play unlock
+
+`resumeAudioContext()` anropas langst upp i bade `onNew` och `handleRegenerate` — anvandaren klickar pa "Skicka" vilket racker som webbläsargest for att lasa upp AudioContext. Rost borjar spela automatiskt utan separat play-knapp.
+
+#### Voice-chunk round-tracking
+
+`enqueueChunk` skickar med `round`-nummer fran SSE-eventet:
+```typescript
+debateAudio.enqueueChunk(
+    String(dvc?.model ?? ""),
+    String(dvc?.pcm_b64 ?? ""),
+    Number(dvc?.round ?? 0),
+);
+```
+
+`onSpeakerChange()` anropas **inte** fran SSE-hanteraren — `playNext()` i hooken ar enda kallor for att satta `currentSpeaker` och `currentRound`, for att undvika att UI springer fore ljuduppspelningen.
 
 #### Context Providers (renderingstruk)
 
@@ -828,9 +876,9 @@ debate_init              -->  debate-init                  -->  setDebateState({
   |- debate_participant   -->  debate-participant-end       -->  update response to "complete"
   |    _end
   |
-  |- [voice] debate_voice -->  debate-voice-speaker         -->  debateAudio.onSpeakerChange
+  |- [voice] debate_voice -->  debate-voice-speaker         -->  (ej anvand — playNext styr)
   |            _speaker
-  |- [voice] debate_voice -->  debate-voice-chunk (xN)      -->  debateAudio.enqueueChunk
+  |- [voice] debate_voice -->  debate-voice-chunk (xN)      -->  debateAudio.enqueueChunk(model, b64, round)
   |            _chunk
   |- [voice] debate_voice -->  debate-voice-done            -->  (auto-continues from queue)
   |            _done
@@ -865,6 +913,7 @@ debate_init              -->  debate-init                  -->  setDebateState({
 4. Chunks gar via SSE-bridge till frontend
 5. Frontend dekodar base64 -> PCM -> AudioBuffer
 6. Uppspelning sker sekventiellt genom chunk-kon
+7. Varje chunk taggas med `round`-nummer for rost-synkad rundkontroll
 
 ### PCM-format
 
@@ -893,6 +942,37 @@ SSE chunk (base64)
     -> AudioBuffer (24kHz, 1ch)
     -> BufferSource -> GainNode -> AnalyserNode -> destination
 ```
+
+### Auto-play (ingen separat play-knapp)
+
+Webblasare kraver en användargest for att starta AudioContext. Losning:
+- `resumeAudioContext()` anropas i `onNew`/`handleRegenerate` click-handlers
+- Knapptrycket pa "Skicka" racker som gest
+- Ljud borjar spela automatiskt nar forsta chunken ankommer
+
+### Text-ljud-synkronisering
+
+Backend skickar `debate_participant_text` med `delay_per_word` (TTS-duration / ordantal). Frontend:
+1. `ParticipantCard` anvander `voiceStarted` latch — text visas forst nar ljud borjar spela
+2. `useSmoothTyping` avslöjar text tecken-for-tecken i takt med `delayPerWord`
+3. `playNext()` ar enda kallor for `currentSpeaker` — forhindrar att UI springer fore
+
+### Rost-synkad rundkontroll
+
+Backend emitterar alla events snabbt (sekventiellt utan att vanta pa uppspelning), men frontend kan ha sekunder av ljudko kvar. For att forhindra att UI byter till nasta runda for tidigt:
+1. `enqueueChunk()` taggar varje chunk med `round`-nummer
+2. `playNext()` satter `voiceState.currentRound` nar en chunk borjar spela
+3. `debate-arena` foljer `voiceState.currentRound` istallet for `debateState.currentRound` i rostlage
+
+### MP3-export
+
+Hela debatten kan laddas ner som MP3 efter avslutad debatt:
+1. Alla PCM-chunks samlas i **ankomstordning** i `collectedRef` (`ArrayBuffer[]`)
+2. Vid nedladdning: Chunks sammanfogas → kodas till MP3 med `lamejs` (128 kbps)
+3. `lamejs` laddas via dynamisk `import()` for Next.js-kompatibilitet
+4. Paket tillagt i `next.config.ts` `transpilePackages`
+5. Vid lamejs-fel: automatisk fallback till WAV-format
+6. Nedladdningsknapp i `VoiceControlBar` → fil: `debatt-{timestamp}.mp3`
 
 ---
 
@@ -1090,12 +1170,17 @@ Inga frontend-tester konfigurerade (se CLAUDE.md).
 
 ## 14. Framtida arbete
 
+### Klart (v1.1)
+
+- [x] MP3-export av hel debatt (lamejs MP3-kodning av samlade PCM-chunks i ankomstordning)
+- [x] Streaming text under debatt (tecken-for-tecken typningsanimation synkad med TTS-ljud via `useSmoothTyping`)
+- [x] Auto-play rost (AudioContext upplast via Send-knappens gest, ingen separat play-knapp)
+- [x] Rost-synkad rundkontroll (UI foljer `voiceState.currentRound` istallet for SSE-round)
+
 ### Planerat
 
-- [ ] MP3-export av hel debatt (FFmpeg-merge av samlade PCM-chunks)
 - [ ] STT-input (tal → debattamne)
 - [ ] Turtagning med live audio-feedback (Kokoro local TTS som fallback)
-- [ ] Streaming text under debatt (token-for-token istallet for hela svar pa en gang)
 - [ ] Debattmallar (forslagda amnen)
 
 ### Potentiella forbattringar
@@ -1131,15 +1216,18 @@ Inga frontend-tester konfigurerade (se CLAUDE.md).
 | Fil | Beskrivning |
 |-----|-------------|
 | `contracts/types/debate.types.ts` | Alla TypeScript-interfaces och konstanter |
-| `hooks/use-debate-audio.ts` | Web Audio API hook |
-| `components/debate/debate-arena.tsx` | Huvudkomponent + VoiceControlBar |
+| `hooks/use-debate-audio.ts` | Web Audio API hook + MP3-export (lamejs) |
+| `hooks/use-smooth-typing.ts` | Tecken-for-tecken typningsanimation synkad med TTS |
+| `components/debate/debate-arena.tsx` | Huvudkomponent + VoiceControlBar + MP3-nedladdning |
 | `components/admin/debate-settings-page.tsx` | Admin Debatt-sida |
 | `components/admin/admin-layout.tsx` | Admin navigation (Debatt-tab) |
 | `components/assistant-ui/assistant-message.tsx` | Mutual exclusion guard |
 | `app/admin/debate/page.tsx` | Admin route-sida |
-| `app/dashboard/[search_space_id]/new-chat/new-chat-page.tsx` | SSE-hanterare, state, context providers |
+| `app/dashboard/[search_space_id]/new-chat/new-chat-page.tsx` | SSE-hanterare, state, context providers, autoplay-unlock |
 | `lib/apis/admin-debate-api.service.ts` | API-service for admin-installningar |
 | `components/admin/flow-graph-page.tsx` | Pipeline-nodpositioner |
+| `types/lamejs.d.ts` | TypeScript-deklarationer for lamejs MP3-kodningsbibliotek |
+| `next.config.ts` | Lagt till `lamejs` i `transpilePackages` |
 
 ### Mockups
 
