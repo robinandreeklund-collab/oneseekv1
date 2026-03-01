@@ -73,6 +73,7 @@ export function DebateSettingsPage() {
 			Qwen: "fable",
 			OneSeek: "nova",
 		},
+		language_instructions: "",
 	});
 
 	const [isLoading, setIsLoading] = useState(true);
@@ -256,6 +257,36 @@ export function DebateSettingsPage() {
 							</div>
 						))}
 					</div>
+				</CardContent>
+			</Card>
+
+			{/* Language / Accent Instructions */}
+			<Card>
+				<CardHeader>
+					<CardTitle>Spr&aring;k &amp; accent</CardTitle>
+					<CardDescription>
+						Instruktioner som l&auml;ggs till i varje TTS-anrop f&ouml;r att styra spr&aring;k, accent och ton.
+						L&auml;mna tomt f&ouml;r standardbeteende (engelska).
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-2">
+					<Label htmlFor="lang-instructions">Instruktioner</Label>
+					<textarea
+						id="lang-instructions"
+						rows={3}
+						className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						placeholder="T.ex. 'Tala svenska med tydlig artikulation' eller 'Speak with a calm British accent'"
+						value={settings.language_instructions ?? ""}
+						onChange={(e) =>
+							setSettings((prev) => ({
+								...prev,
+								language_instructions: e.target.value,
+							}))
+						}
+					/>
+					<p className="text-xs text-muted-foreground">
+						Denna text l&auml;ggs till som en direktivrad f&ouml;re varje deltagares svar i TTS-anropet.
+					</p>
 				</CardContent>
 			</Card>
 

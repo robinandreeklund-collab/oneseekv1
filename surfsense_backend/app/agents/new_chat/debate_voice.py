@@ -1,15 +1,18 @@
-"""Live Voice Debate — TTS pipeline using OpenAI SDK directly.
+"""Live Voice Debate — TTS pipeline using OpenAI API directly.
 
 Uses OpenAI's TTS API with ``response_format="pcm"`` + streaming to produce
 24 kHz 16-bit mono PCM chunks that are base64-encoded and dispatched as SSE
 events.  The frontend decodes chunks via Web Audio API for near-instant
 playback.
 
-Architecture (Strategy B — pipelined asyncio):
+Architecture (inline await — same call stack):
   1. As each participant's text response arrives in debate_executor,
-     ``schedule_voice_generation`` fires an asyncio.Task.
-  2. The task streams PCM chunks via ``generate_voice_stream`` and emits
-     ``debate_voice_chunk`` custom events through the LangGraph callback.
+     ``schedule_voice_generation`` is awaited **directly** (not via
+     ``asyncio.create_task``).  This keeps ``adispatch_custom_event``
+     on the LangGraph callback call stack so SSE events reach the
+     stream bridge.
+  2. PCM chunks are streamed via ``generate_voice_stream`` and emitted
+     as ``debate_voice_chunk`` custom events.
   3. The frontend ``useDebateAudio`` hook queues chunks and plays them
      sequentially through an AudioContext.
 
@@ -19,7 +22,6 @@ state key (populated by the admin Debatt settings tab or env fallback).
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 import time
@@ -66,6 +68,7 @@ def _resolve_voice_settings(state: dict[str, Any]) -> dict[str, Any]:
         "model": settings.get("model") or DEFAULT_TTS_MODEL,
         "voice_map": settings.get("voice_map") or dict(DEFAULT_DEBATE_VOICE_MAP),
         "speed": float(settings.get("speed", 1.0)),
+        "language_instructions": settings.get("language_instructions", ""),
     }
 
 
@@ -146,6 +149,13 @@ async def _emit_voice_events(
     total_bytes = 0
     chunk_index = 0
 
+    # Apply language/accent instructions if configured.
+    # OpenAI TTS respects natural-language directives prepended to the input.
+    tts_text = text
+    lang_instructions = voice_settings.get("language_instructions", "").strip()
+    if lang_instructions:
+        tts_text = f"[{lang_instructions}]\n\n{text}"
+
     # Emit speaker-changed event
     await adispatch_custom_event(
         "debate_voice_speaker",
@@ -161,7 +171,7 @@ async def _emit_voice_events(
 
     try:
         async for pcm_chunk in generate_voice_stream(
-            text=text,
+            text=tts_text,
             voice=voice,
             api_key=voice_settings["api_key"],
             api_base=voice_settings["api_base"],
@@ -241,29 +251,44 @@ async def schedule_voice_generation(
     round_num: int,
     state: dict[str, Any],
     config: Any,
-) -> asyncio.Task | None:
-    """Schedule TTS generation as an asyncio task (pipelined).
+) -> int:
+    """Run TTS for a single participant and stream PCM chunks as SSE events.
 
-    Returns the Task so the caller can optionally await it for sequencing.
-    Returns ``None`` if voice mode is disabled or the API key is missing.
+    Returns total bytes dispatched (0 if skipped).
+
+    Called inline (awaited directly) from the debate round executor —
+    **not** via ``asyncio.create_task`` — because LangGraph's callback
+    context must be on the same call stack for ``adispatch_custom_event``
+    to reach the SSE bridge.
     """
     voice_settings = _resolve_voice_settings(state)
     if not voice_settings["api_key"]:
-        logger.debug("debate_voice: no API key, skipping TTS for %s", participant_display)
-        return None
+        logger.warning("debate_voice: no API key configured, skipping TTS for %s", participant_display)
+        # Emit a warning event so the frontend knows voice is unavailable
+        try:
+            from langchain_core.callbacks import adispatch_custom_event
+            await adispatch_custom_event(
+                "debate_voice_error",
+                {
+                    "model": participant_display,
+                    "round": round_num,
+                    "error": "Ingen TTS API-nyckel konfigurerad. Gå till Admin → Debatt och spara din OpenAI API-nyckel.",
+                    "timestamp": time.time(),
+                },
+                config=config,
+            )
+        except Exception:
+            pass
+        return 0
 
-    task = asyncio.create_task(
-        _emit_voice_events(
-            text=text,
-            participant_display=participant_display,
-            participant_key=participant_key,
-            round_num=round_num,
-            voice_settings=voice_settings,
-            config=config,
-        ),
-        name=f"tts-{participant_key}-r{round_num}",
+    return await _emit_voice_events(
+        text=text,
+        participant_display=participant_display,
+        participant_key=participant_key,
+        round_num=round_num,
+        voice_settings=voice_settings,
+        config=config,
     )
-    return task
 
 
 async def collect_all_audio_for_export(

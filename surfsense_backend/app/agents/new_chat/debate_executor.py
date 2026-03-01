@@ -464,33 +464,42 @@ def build_debate_round_executor_node(
                 except Exception:
                     pass
 
-                # ─── Voice TTS pipeline (Strategy B: pipelined asyncio) ──
+                # ─── Voice TTS pipeline (inline await) ──────────────────
+                # Called directly (not via asyncio.create_task) so that
+                # adispatch_custom_event stays on the LangGraph callback
+                # call stack and SSE events reach the stream bridge.
+                #
+                # Pipelining v1: TTS runs *after* each LLM response, with
+                # the frontend chunk queue providing seamless playback.
+                # The first audio chunk arrives ~300-700ms after LLM finishes.
+                #
+                # Future optimization (v2): run TTS as asyncio.Task and
+                # overlap with the next LLM call.  Requires confirming
+                # that adispatch_custom_event propagates from child tasks.
                 if voice_mode and response_text and not response_text.startswith("["):
                     try:
                         from app.agents.new_chat.debate_voice import (
                             schedule_voice_generation,
                         )
-                        _voice_task = await schedule_voice_generation(
-                            text=response_text,
-                            participant_display=model_display,
-                            participant_key=model_key,
-                            round_num=round_num,
-                            state=state,
-                            config=config,
+                        await asyncio.wait_for(
+                            schedule_voice_generation(
+                                text=response_text,
+                                participant_display=model_display,
+                                participant_key=model_key,
+                                round_num=round_num,
+                                state=state,
+                                config=config,
+                            ),
+                            timeout=120,
                         )
-                        if _voice_task is not None:
-                            # Await inline — we want voice to play sequentially
-                            # between participants for a natural debate feel.
-                            try:
-                                await asyncio.wait_for(_voice_task, timeout=120)
-                            except asyncio.TimeoutError:
-                                logger.warning(
-                                    "debate_voice: TTS timeout for %s round %d",
-                                    model_display, round_num,
-                                )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "debate_voice: TTS timeout for %s round %d",
+                            model_display, round_num,
+                        )
                     except Exception as voice_exc:
                         logger.warning(
-                            "debate_voice: scheduling error for %s: %s",
+                            "debate_voice: error for %s: %s",
                             model_display, voice_exc,
                         )
 

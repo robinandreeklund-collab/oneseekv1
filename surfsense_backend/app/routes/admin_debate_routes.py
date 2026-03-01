@@ -43,6 +43,10 @@ class DebateVoiceSettings(BaseModel):
     model: str = Field(default="tts-1", description="TTS model ID")
     speed: float = Field(default=1.0, ge=0.25, le=4.0, description="TTS speed multiplier")
     voice_map: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_VOICE_MAP))
+    language_instructions: str = Field(
+        default="",
+        description="Språk/accent-instruktioner som läggs till i varje TTS-anrop, t.ex. 'Tala svenska med tydlig artikulation'",
+    )
 
 
 class DebateVoiceSettingsResponse(BaseModel):

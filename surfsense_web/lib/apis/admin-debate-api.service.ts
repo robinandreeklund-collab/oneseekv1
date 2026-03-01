@@ -9,6 +9,7 @@ const debateVoiceSettingsSchema = z.object({
 	model: z.string(),
 	speed: z.number(),
 	voice_map: z.record(z.string(), z.string()),
+	language_instructions: z.string().optional().default(""),
 });
 
 const debateVoiceSettingsResponseSchema = z.object({
