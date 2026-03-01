@@ -1789,7 +1789,6 @@ export default function NewChatPage() {
 																		status: "complete",
 																		...(isVoice ? { textRevealIndex: 0 } : {}),
 																	},
-																	},
 																},
 															}
 															: p
