@@ -136,26 +136,17 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 	const voiceSpeaker = voiceCtx?.voiceState.currentSpeaker ?? null;
 
 	// Only show participants that have a response for the active round.
-	// In voice mode during live debate: show ONLY the current speaker so cards
-	// appear one-at-a-time. Once the round finishes, show all completed cards.
-	// In completed/voting state or non-voice mode: show all with responses.
+	// In voice mode: keep ALL participants visible once they've started —
+	// expansion/collapse handles which card is prominent.  Previously we
+	// hid non-speaking cards, but the backend emits all events in a tight
+	// loop (audio chunks are queued, not played in real-time), so cards
+	// disappeared before the user could see them.
 	const visibleParticipants = useMemo(() => {
 		return debateState.participants.filter((p) => {
 			const resp = p.responses[activeRound];
-			if (resp === undefined) return false;
-
-			if (isVoiceMode && !isComplete && !isVoting) {
-				// While someone is actively speaking, show only that participant
-				if (currentSpeaker) {
-					return p.key === currentSpeaker;
-				}
-				// Between speakers (no one "speaking"), show completed ones
-				return resp.status === "complete";
-			}
-
-			return true;
+			return resp !== undefined;
 		});
-	}, [debateState.participants, activeRound, isVoiceMode, isComplete, isVoting, currentSpeaker]);
+	}, [debateState.participants, activeRound]);
 
 	return (
 		<div className="mx-auto w-full max-w-4xl space-y-4 py-4">
@@ -365,31 +356,44 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 		}
 	}, [autoExpanded]);
 
-	const isExpanded = manualToggle ?? autoExpanded;
-
 	const color = getModelColor(participant.key);
 	const initials = getModelInitials(participant.display);
 	const isSpeaking = roundResponse?.status === "speaking";
 	const isDone = roundResponse?.status === "complete";
+
+	// Voice playback ground-truth: true when playNext() is actively
+	// playing a chunk for THIS participant (set by the audio hook, not
+	// by the SSE debate_voice_speaker event which fires too early).
 	const voiceActive = voiceCtx?.voiceState.currentSpeaker === participant.display
 		&& voiceCtx?.voiceState.playbackStatus === "playing";
 
-	// Text display — in voice mode, smooth character-by-character reveal.
-	// Animation stays active even after status flips to "complete" so the
-	// typing effect finishes naturally (the hook stops on its own).
+	// Latch: once audio has started playing for this participant, keep
+	// the typing animation running even if voiceActive flickers briefly.
+	const [voiceStarted, setVoiceStarted] = useState(false);
 	const fullText = roundResponse?.text ?? "";
 	const delayPerWord = roundResponse?.delayPerWord;
-	const hasTypingData = isVoiceMode && delayPerWord !== undefined && delayPerWord > 0 && fullText.length > 0;
-	const displayText = useSmoothTyping(fullText, delayPerWord, hasTypingData);
-	const isTextStreaming = hasTypingData && displayText.length < fullText.length;
 
-	// In voice mode: expand cards that have text or are being voiced/animated
+	useEffect(() => {
+		if (voiceActive && fullText.length > 0) {
+			setVoiceStarted(true);
+		}
+	}, [voiceActive, fullText]);
+
+	// Text display — in voice mode, defer animation until audio starts.
+	// Before voice plays: hide text.  When voice plays: type it out in
+	// sync with audio using delayPerWord from the backend.
+	const hasTimingData = delayPerWord !== undefined && delayPerWord > 0;
+	const typingActive = isVoiceMode && voiceStarted && hasTimingData && fullText.length > 0;
+	const textForDisplay = isVoiceMode ? (voiceStarted ? fullText : "") : fullText;
+	const displayText = useSmoothTyping(textForDisplay, delayPerWord, typingActive);
+	const isTextStreaming = typingActive && displayText.length < fullText.length;
+
+	// In voice mode: expand when audio is playing or text is still typing.
+	// "Genererar..." shown while LLM generates text (before voice starts).
+	const isGeneratingText = isVoiceMode && isSpeaking && !voiceStarted;
 	const effectiveExpanded = isVoiceMode
-		? (isBeingVoiced || isTextStreaming || (isSpeaking && fullText.length > 0) || (isDone && !voiceTextDone))
+		? (voiceActive || isTextStreaming || isGeneratingText)
 		: (manualToggle ?? autoExpanded);
-
-	// Voice mode: generating text (before any chunks arrive)
-	const isGeneratingText = isVoiceMode && isSpeaking && fullText.length === 0;
 
 	return (
 		<motion.div

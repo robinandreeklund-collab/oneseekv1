@@ -1942,11 +1942,16 @@ export default function NewChatPage() {
 											console.log("[SSE] debate-voice-speaker:", dvs?.model);
 											// Auto-resume AudioContext (close to user gesture window)
 											debateAudioRef.current.resumeAudioContext();
-											debateAudioRef.current.onSpeakerChange(String(dvs?.model ?? ""));
+											// NOTE: We intentionally do NOT call onSpeakerChange() here.
+											// The debate_voice_speaker event fires before audio chunks
+											// arrive, so setting currentSpeaker now would prematurely
+											// expand the card.  Instead, playNext() in useDebateAudio
+											// sets currentSpeaker when it actually plays a chunk — that
+											// triggers the card expansion and typing animation in sync.
 											break;
 										}
 										case "data-debate-voice-sentence": {
-											// Text is already visible via debate_participant_chunk events.
+											// Text arrives via debate_participant_text in voice mode.
 											// This event is kept for TTS progress tracking only.
 											break;
 										}
@@ -2952,13 +2957,13 @@ export default function NewChatPage() {
 
 										// ─── Voice debate SSE events (regen) ──
 										case "data-debate-voice-speaker": {
-											const dvs2 = parsed.data as Record<string, unknown>;
+											// Resume audio context but don't set currentSpeaker —
+											// playNext() does that when actually playing chunks.
 											debateAudioRef.current.resumeAudioContext();
-											debateAudioRef.current.onSpeakerChange(String(dvs2?.model ?? ""));
 											break;
 										}
 										case "data-debate-voice-sentence": {
-											// Text visible via chunks; kept for TTS tracking only.
+											// Text arrives via debate_participant_text; kept for TTS tracking.
 											break;
 										}
 										case "data-debate-voice-chunk": {
