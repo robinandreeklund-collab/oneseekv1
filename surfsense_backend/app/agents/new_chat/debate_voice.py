@@ -510,6 +510,305 @@ async def _emit_voice_events(
     return total_bytes
 
 
+# ── Synced text + voice streaming ─────────────────────────────────────
+
+# PCM bytes per second: 24 000 Hz × 2 bytes × 1 channel = 48 000 B/s
+_BYTES_PER_SECOND = PCM_SAMPLE_RATE * (PCM_BIT_DEPTH // 8) * PCM_CHANNELS
+
+
+async def _generate_full_audio(
+    *,
+    text: str,
+    voice: str,
+    voice_settings: dict[str, Any],
+    instructions: str = "",
+) -> tuple[bytes, float]:
+    """Generate TTS audio for the **full text** in one call.
+
+    Returns ``(pcm_data, audio_duration_seconds)``.  The duration is
+    computed from the raw PCM byte count:
+    ``pcm_bytes / (sample_rate × bytes_per_sample × channels)``.
+    """
+    chunks: list[bytes] = []
+    async for chunk in _get_tts_generator(
+        sentence=text,          # full text, not a sentence
+        voice=voice,
+        voice_settings=voice_settings,
+        instructions=instructions,
+    ):
+        chunks.append(chunk)
+
+    pcm_data = b"".join(chunks)
+    audio_duration = len(pcm_data) / _BYTES_PER_SECOND if pcm_data else 0.0
+    return pcm_data, audio_duration
+
+
+async def stream_text_and_voice_synced(
+    *,
+    text: str,
+    participant_display: str,
+    participant_key: str,
+    round_num: int,
+    state: dict[str, Any],
+    config: Any,
+) -> int:
+    """Stream text word-by-word **synced** to TTS audio for one participant.
+
+    Pipeline:
+
+    1. Send the **full text** to TTS in one call — no sentence splitting.
+    2. Compute ``audio_duration = pcm_bytes / 48 000``.
+    3. Derive ``delay_per_word = audio_duration / word_count``.
+    4. Interleave ``debate_participant_chunk`` (text, 2 words at a time)
+       and ``debate_voice_chunk`` (audio) events at that exact pace.
+
+    Text appearance and audio playback are therefore perfectly synced to
+    the natural speaking speed of the synthesised voice.
+
+    Returns total audio bytes dispatched.
+    """
+    import asyncio
+
+    from langchain_core.callbacks import adispatch_custom_event
+
+    voice_settings = _resolve_voice_settings(state)
+    provider = voice_settings.get("tts_provider", "cartesia")
+    has_api_key = bool(voice_settings["api_key"])
+
+    if not has_api_key:
+        provider_label = "Cartesia" if provider == "cartesia" else "OpenAI"
+        key_name = "CARTESIA_API_KEY" if provider == "cartesia" else "DEBATE_VOICE_API_KEY"
+        logger.warning(
+            "debate_voice: no %s API key — streaming text at fallback pace for %s",
+            provider_label, participant_display,
+        )
+        try:
+            await adispatch_custom_event(
+                "debate_voice_error",
+                {
+                    "model": participant_display,
+                    "round": round_num,
+                    "error": (
+                        f"Ingen {provider_label} TTS API-nyckel konfigurerad. "
+                        f"Sätt {key_name} eller gå till Admin → Debatt."
+                    ),
+                    "timestamp": time.time(),
+                },
+                config=config,
+            )
+        except Exception:
+            pass
+        # Fall through — text will still stream at estimated pace (no audio).
+
+    voice = get_voice_for_participant(
+        participant_display, voice_settings["voice_map"],
+    )
+
+    # Resolve per-model language/accent instructions (OpenAI only)
+    lang_instructions = voice_settings.get("language_instructions") or {}
+    if isinstance(lang_instructions, str):
+        instr = lang_instructions.strip()
+    else:
+        instr = (
+            lang_instructions.get(participant_display, "").strip()
+            or lang_instructions.get("__default__", "").strip()
+        )
+
+    words = text.split()
+    word_count = len(words)
+
+    tts_model = voice_settings.get("model") or (
+        DEFAULT_CARTESIA_MODEL if provider == "cartesia" else DEFAULT_TTS_MODEL
+    )
+
+    logger.info(
+        "debate_voice: synced stream for %s (provider=%s, voice=%s, "
+        "model=%s, words=%d, has_key=%s)",
+        participant_display, provider, voice, tts_model,
+        word_count, has_api_key,
+    )
+
+    # ── Emit speaker-changed event ──────────────────────────────────
+    await adispatch_custom_event(
+        "debate_voice_speaker",
+        {
+            "model": participant_display,
+            "model_key": participant_key,
+            "round": round_num,
+            "voice": voice,
+            "text_length": len(text),
+            "provider": provider,
+            "timestamp": time.time(),
+        },
+        config=config,
+    )
+
+    # ── 1. Generate TTS for the full text ───────────────────────────
+    pcm_data = b""
+    audio_duration = 0.0
+
+    if has_api_key:
+        try:
+            pcm_data, audio_duration = await _generate_full_audio(
+                text=text,
+                voice=voice,
+                voice_settings=voice_settings,
+                instructions=instr,
+            )
+        except Exception as exc:
+            logger.error(
+                "debate_voice: TTS error for %s: %s",
+                participant_display, exc,
+            )
+            try:
+                await adispatch_custom_event(
+                    "debate_voice_error",
+                    {
+                        "model": participant_display,
+                        "round": round_num,
+                        "error": (
+                            f"TTS error: {type(exc).__name__}: "
+                            f"{str(exc)[:200]}"
+                        ),
+                        "timestamp": time.time(),
+                    },
+                    config=config,
+                )
+            except Exception:
+                pass
+
+    # ── 2. Calculate per-word delay from audio duration ─────────────
+    # Formula: delay_per_word = audio_duration / word_count
+    # Fallback: conversational Swedish ≈ 6.5 words/sec ≈ 150 ms/word.
+    if audio_duration > 0 and word_count > 0:
+        delay_per_word = audio_duration / word_count
+    else:
+        delay_per_word = 0.15
+
+    logger.info(
+        "debate_voice: %s — %d words, %.2fs audio, %.0fms/word, %d PCM bytes",
+        participant_display, word_count, audio_duration,
+        delay_per_word * 1000, len(pcm_data),
+    )
+
+    # ── 3. Prepare audio chunks ─────────────────────────────────────
+    audio_chunks: list[bytes] = []
+    if pcm_data:
+        for i in range(0, len(pcm_data), DEFAULT_CHUNK_BYTES):
+            audio_chunks.append(pcm_data[i : i + DEFAULT_CHUNK_BYTES])
+
+    # ── 4. Prepare text events (2 words per chunk) ──────────────────
+    text_chunk_size = 2
+    text_events: list[str] = []
+    text_word_counts: list[int] = []  # actual words per event
+
+    for wi in range(0, word_count, text_chunk_size):
+        word_group = " ".join(words[wi : wi + text_chunk_size])
+        delta = word_group if wi == 0 else (" " + word_group)
+        text_events.append(delta)
+        text_word_counts.append(min(text_chunk_size, word_count - wi))
+
+    # ── 5. Interleave text + audio ──────────────────────────────────
+    num_text = len(text_events)
+    num_audio = len(audio_chunks)
+    audio_per_text = num_audio / max(num_text, 1) if num_audio > 0 else 0
+    audio_emit_idx = 0
+    total_audio_bytes = 0
+    chunk_index = 0
+
+    for te_idx, delta in enumerate(text_events):
+        # Emit text chunk
+        try:
+            await adispatch_custom_event(
+                "debate_participant_chunk",
+                {
+                    "model": participant_display,
+                    "model_key": participant_key,
+                    "round": round_num,
+                    "delta": delta,
+                },
+                config=config,
+            )
+        except Exception:
+            pass
+
+        # Emit proportional share of audio chunks
+        if audio_chunks:
+            target_audio_idx = int((te_idx + 1) * audio_per_text)
+            while (
+                audio_emit_idx < target_audio_idx
+                and audio_emit_idx < num_audio
+            ):
+                b64 = base64.b64encode(
+                    audio_chunks[audio_emit_idx],
+                ).decode("ascii")
+                chunk_index += 1
+                total_audio_bytes += len(audio_chunks[audio_emit_idx])
+                try:
+                    await adispatch_custom_event(
+                        "debate_voice_chunk",
+                        {
+                            "model": participant_display,
+                            "round": round_num,
+                            "ci": chunk_index,
+                            "pcm_b64": b64,
+                        },
+                        config=config,
+                    )
+                except Exception:
+                    pass
+                audio_emit_idx += 1
+
+        # Wait at calculated pace (exact speech rate)
+        await asyncio.sleep(delay_per_word * text_word_counts[te_idx])
+
+    # Flush remaining audio chunks (rounding leftovers)
+    while audio_emit_idx < num_audio:
+        b64 = base64.b64encode(
+            audio_chunks[audio_emit_idx],
+        ).decode("ascii")
+        chunk_index += 1
+        total_audio_bytes += len(audio_chunks[audio_emit_idx])
+        try:
+            await adispatch_custom_event(
+                "debate_voice_chunk",
+                {
+                    "model": participant_display,
+                    "round": round_num,
+                    "ci": chunk_index,
+                    "pcm_b64": b64,
+                },
+                config=config,
+            )
+        except Exception:
+            pass
+        audio_emit_idx += 1
+
+    # ── Emit playback-ready (end of audio for this participant) ─────
+    await adispatch_custom_event(
+        "debate_voice_done",
+        {
+            "model": participant_display,
+            "model_key": participant_key,
+            "round": round_num,
+            "total_bytes": total_audio_bytes,
+            "total_chunks": chunk_index,
+            "audio_duration": round(audio_duration, 2),
+            "timestamp": time.time(),
+        },
+        config=config,
+    )
+
+    logger.info(
+        "debate_voice: synced stream done for %s — "
+        "%d audio bytes, %d chunks, %.1fs audio (provider=%s)",
+        participant_display, total_audio_bytes, chunk_index,
+        audio_duration, provider,
+    )
+
+    return total_audio_bytes
+
+
 async def schedule_voice_generation(
     *,
     text: str,

@@ -450,29 +450,36 @@ def build_debate_round_executor_node(
                 all_word_counts[model_display] = all_word_counts.get(model_display, 0) + word_count
                 round_responses[model_display] = response_text
 
-                # ─── Voice mode: stream text word-by-word FIRST ─────────
-                # Emit 2 words per chunk at ~200ms intervals ≈ 10 words/sec.
-                # A 150-word response takes ~15s — close to speaking pace.
+                # ─── Voice mode: synced text + audio streaming ──────────
+                # Full text → TTS → calculate audio_duration from PCM
+                # byte count → delay_per_word = duration / word_count →
+                # interleave text + audio chunks at natural speech pace.
                 if voice_mode and response_text and not response_text.startswith("["):
-                    _words = response_text.split()
-                    _chunk_size = 2
-                    for _wi in range(0, len(_words), _chunk_size):
-                        _word_group = " ".join(_words[_wi:_wi + _chunk_size])
-                        _delta = (" " + _word_group) if _wi > 0 else _word_group
-                        try:
-                            await adispatch_custom_event(
-                                "debate_participant_chunk",
-                                {
-                                    "model": model_display,
-                                    "model_key": model_key,
-                                    "round": round_num,
-                                    "delta": _delta,
-                                },
+                    try:
+                        from app.agents.new_chat.debate_voice import (
+                            stream_text_and_voice_synced,
+                        )
+                        await asyncio.wait_for(
+                            stream_text_and_voice_synced(
+                                text=response_text,
+                                participant_display=model_display,
+                                participant_key=model_key,
+                                round_num=round_num,
+                                state=state,
                                 config=config,
-                            )
-                        except Exception:
-                            pass
-                        await asyncio.sleep(0.20)
+                            ),
+                            timeout=180,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "debate_voice: synced stream timeout for %s round %d",
+                            model_display, round_num,
+                        )
+                    except Exception as voice_exc:
+                        logger.warning(
+                            "debate_voice: synced stream error for %s: %s",
+                            model_display, voice_exc,
+                        )
 
                 # Emit participant_end (confirms full text)
                 try:
@@ -518,37 +525,6 @@ def build_debate_round_executor_node(
                     )
                 except Exception:
                     pass
-
-                # ─── Voice TTS pipeline (after text has streamed) ────────
-                # Text is already visible via debate_participant_chunk
-                # events above.  TTS now runs without blocking the text
-                # display — audio starts playing as chunks arrive.
-                if voice_mode and response_text and not response_text.startswith("["):
-                    try:
-                        from app.agents.new_chat.debate_voice import (
-                            schedule_voice_generation,
-                        )
-                        await asyncio.wait_for(
-                            schedule_voice_generation(
-                                text=response_text,
-                                participant_display=model_display,
-                                participant_key=model_key,
-                                round_num=round_num,
-                                state=state,
-                                config=config,
-                            ),
-                            timeout=120,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "debate_voice: TTS timeout for %s round %d",
-                            model_display, round_num,
-                        )
-                    except Exception as voice_exc:
-                        logger.warning(
-                            "debate_voice: error for %s: %s",
-                            model_display, voice_exc,
-                        )
 
             all_round_responses[round_num] = round_responses
 
