@@ -114,7 +114,14 @@ async def generate_voice_stream(
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
         async with client.stream("POST", url, json=payload, headers=headers) as resp:
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                # Must read the body before accessing .text on a streaming response
+                await resp.aread()
+                raise httpx.HTTPStatusError(
+                    f"TTS API error {resp.status_code}",
+                    request=resp.request,
+                    response=resp,
+                )
             buffer = bytearray()
             async for raw_chunk in resp.aiter_bytes(chunk_size=chunk_bytes):
                 buffer.extend(raw_chunk)
@@ -221,16 +228,22 @@ async def _emit_voice_events(
             )
 
     except httpx.HTTPStatusError as exc:
+        # Response body was read before raising (see generate_voice_stream)
+        body_preview = ""
+        try:
+            body_preview = exc.response.text[:300]
+        except Exception:
+            body_preview = "(could not read response body)"
         logger.error(
-            "debate_voice: TTS API error for %s: %s %s",
-            participant_display, exc.response.status_code, exc.response.text[:200],
+            "debate_voice: TTS API error for %s: status=%s body=%s",
+            participant_display, exc.response.status_code, body_preview,
         )
         await adispatch_custom_event(
             "debate_voice_error",
             {
                 "model": participant_display,
                 "round": round_num,
-                "error": f"TTS API error: {exc.response.status_code}",
+                "error": f"TTS API error {exc.response.status_code}: {body_preview[:100]}",
                 "timestamp": time.time(),
             },
             config=config,
