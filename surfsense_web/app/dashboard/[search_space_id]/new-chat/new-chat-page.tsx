@@ -1903,14 +1903,8 @@ export default function NewChatPage() {
 										}
 										case "data-debate-voice-chunk": {
 											const dvc = parsed.data as Record<string, unknown>;
-											const chunkModel = String(dvc?.model ?? "");
-											const chunkCi = Number(dvc?.ci ?? 0);
-											const chunkB64Len = String(dvc?.pcm_b64 ?? "").length;
-											if (chunkCi <= 3 || chunkCi % 100 === 0) {
-												console.log(`[SSE] debate-voice-chunk ci=${chunkCi} model=${chunkModel} b64=${chunkB64Len}`);
-											}
 											debateAudio.enqueueChunk(
-												chunkModel,
+												String(dvc?.model ?? ""),
 												String(dvc?.pcm_b64 ?? ""),
 											);
 											break;
@@ -2899,14 +2893,8 @@ export default function NewChatPage() {
 										}
 										case "data-debate-voice-chunk": {
 											const dvc2 = parsed.data as Record<string, unknown>;
-											const chunkModel2 = String(dvc2?.model ?? "");
-											const chunkCi2 = Number(dvc2?.ci ?? 0);
-											const chunkB64Len2 = String(dvc2?.pcm_b64 ?? "").length;
-											if (chunkCi2 <= 3 || chunkCi2 % 100 === 0) {
-												console.log(`[SSE] debate-voice-chunk ci=${chunkCi2} model=${chunkModel2} b64=${chunkB64Len2}`);
-											}
 											debateAudio.enqueueChunk(
-												chunkModel2,
+												String(dvc2?.model ?? ""),
 												String(dvc2?.pcm_b64 ?? ""),
 											);
 											break;

@@ -701,7 +701,8 @@ async def stream_text_and_voice_synced(
     pcm_data = b""
     audio_duration = 0.0
 
-    if prepared_audio is not None:
+    if prepared_audio is not None and prepared_audio[0]:
+        # Use prefetched audio only if it actually contains PCM data.
         pcm_data, audio_duration = prepared_audio
         logger.info(
             "debate_voice: using prefetched audio for %s — %.2fs, %d bytes",
