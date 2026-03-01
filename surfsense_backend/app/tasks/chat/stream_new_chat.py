@@ -1696,6 +1696,7 @@ async def stream_new_chat(
 
     # Track the current text block for streaming (defined early for exception handling)
     current_text_id: str | None = None
+    active_reasoning_id: str | None = None
     trace_recorder: TraceRecorder | None = None
     trace_db_session: AsyncSession | None = None
 
