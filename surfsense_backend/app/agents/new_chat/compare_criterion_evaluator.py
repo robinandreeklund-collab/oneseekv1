@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 CRITERIA = ("relevans", "djup", "klarhet", "korrekthet")
 
 # Global semaphore to limit concurrent criterion LLM calls.
-# 7 models × 4 criteria = 28 simultaneous requests — allow full parallelism
+# 8 models × 4 criteria = 32 simultaneous requests — allow full parallelism
 # so all criterion evaluations can run concurrently without serialization.
-_CRITERION_CONCURRENCY = asyncio.Semaphore(28)
+_CRITERION_CONCURRENCY = asyncio.Semaphore(32)
 
 # ── Criterion-specific prompts ──────────────────────────────────────
 
@@ -159,45 +159,75 @@ async def evaluate_criterion(
         {"role": "user", "content": user_content},
     ]
 
-    try:
-        _invoke_kwargs: dict[str, Any] = {"max_tokens": 300}
-        if structured_output_enabled():
-            _invoke_kwargs["response_format"] = pydantic_to_response_format(
-                CriterionEvalResult, f"criterion_{criterion}"
-            )
-        # Limit concurrency to avoid overwhelming local LLM servers
-        async with _CRITERION_CONCURRENCY:
-            raw = await asyncio.wait_for(
-                llm.ainvoke(messages, **_invoke_kwargs),
-                timeout=timeout_seconds,
-            )
-        raw_text = str(getattr(raw, "content", "") or "")
+    _max_attempts = 2
 
-        # Try structured Pydantic parse first, fall back to regex
+    for attempt in range(_max_attempts):
         try:
-            _structured = CriterionEvalResult.model_validate_json(raw_text)
-            score = max(0, min(100, _structured.score))
-            reasoning = _structured.reasoning
-        except Exception:
-            parsed = extract_json_fn(raw_text)
-            score = int(parsed.get("score", 50))
-            score = max(0, min(100, score))
-            reasoning = str(parsed.get("reasoning", ""))
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 300}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    CriterionEvalResult, f"criterion_{criterion}"
+                )
+            # Limit concurrency to avoid overwhelming local LLM servers
+            async with _CRITERION_CONCURRENCY:
+                raw = await asyncio.wait_for(
+                    llm.ainvoke(messages, **_invoke_kwargs),
+                    timeout=timeout_seconds,
+                )
+            raw_text = str(getattr(raw, "content", "") or "")
 
-        return {
-            "criterion": criterion,
-            "score": score,
-            "reasoning": reasoning,
-        }
-    except TimeoutError:
-        logger.warning("criterion_evaluator[%s/%s]: timeout", model_display_name, criterion)
-        return {"criterion": criterion, "score": 50, "reasoning": "Timeout vid bedömning."}
-    except Exception as exc:
-        logger.warning(
-            "criterion_evaluator[%s/%s]: error: %s",
-            model_display_name, criterion, exc,
-        )
-        return {"criterion": criterion, "score": 50, "reasoning": f"Bedömningsfel: {exc}"}
+            # Try structured Pydantic parse first, fall back to regex
+            try:
+                _structured = CriterionEvalResult.model_validate_json(raw_text)
+                score = max(0, min(100, _structured.score))
+                reasoning = _structured.reasoning
+            except Exception:
+                parsed = extract_json_fn(raw_text)
+                score = int(parsed.get("score", 50))
+                score = max(0, min(100, score))
+                reasoning = str(parsed.get("reasoning", ""))
+
+            # If both parsing paths failed to extract a real score/reasoning,
+            # retry once before accepting the fallback.
+            if not reasoning and score == 50 and attempt < _max_attempts - 1:
+                logger.info(
+                    "criterion_evaluator[%s/%s]: empty reasoning on attempt %d, retrying",
+                    model_display_name, criterion, attempt + 1,
+                )
+                continue
+
+            if not reasoning:
+                reasoning = f"Bedömningen returnerade poäng {score} utan motivering."
+
+            return {
+                "criterion": criterion,
+                "score": score,
+                "reasoning": reasoning,
+            }
+        except TimeoutError:
+            if attempt < _max_attempts - 1:
+                logger.info(
+                    "criterion_evaluator[%s/%s]: timeout on attempt %d, retrying",
+                    model_display_name, criterion, attempt + 1,
+                )
+                continue
+            logger.warning("criterion_evaluator[%s/%s]: timeout", model_display_name, criterion)
+            return {"criterion": criterion, "score": 50, "reasoning": "Timeout vid bedömning."}
+        except Exception as exc:
+            if attempt < _max_attempts - 1:
+                logger.info(
+                    "criterion_evaluator[%s/%s]: error on attempt %d (%s), retrying",
+                    model_display_name, criterion, attempt + 1, exc,
+                )
+                continue
+            logger.warning(
+                "criterion_evaluator[%s/%s]: error: %s",
+                model_display_name, criterion, exc,
+            )
+            return {"criterion": criterion, "score": 50, "reasoning": f"Bedömningsfel: {exc}"}
+
+    # Should not reach here, but safety fallback
+    return {"criterion": criterion, "score": 50, "reasoning": "Bedömningen misslyckades efter flera försök."}
 
 
 # ── Parallel evaluation of all 4 criteria ───────────────────────────
@@ -317,7 +347,16 @@ async def evaluate_model_response(
         r = results[i]
         if isinstance(r, Exception):
             scores[criterion] = 50
-            reasonings[criterion] = f"Error: {r}"
+            reasonings[criterion] = f"Bedömningsfel: {r}"
+            # Fire callback for failed criterion so frontend can finalize
+            if on_criterion_complete:
+                try:
+                    await on_criterion_complete(
+                        domain, criterion, 50, reasonings[criterion],
+                        pod_id="", parent_pod_id=parent_subagent_id, latency_ms=0,
+                    )
+                except Exception:
+                    pass
         else:
             scores[criterion] = r["score"]
             reasonings[criterion] = r["reasoning"]
