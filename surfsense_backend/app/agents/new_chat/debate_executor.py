@@ -412,7 +412,22 @@ def build_debate_round_executor_node(
                     logger.warning("debate: %s timed out in round %d", model_display, round_num)
                 except Exception as exc:
                     response_text = f"[{model_display} fel: {str(exc)[:100]}]"
-                    logger.warning("debate: %s error in round %d: %s", model_display, round_num, exc)
+                    # Detailed debug logging for model errors (Issue #1)
+                    import traceback
+                    logger.error(
+                        "debate: %s error in round %d:\n"
+                        "  model_key=%s, is_oneseek=%s, config_id=%s\n"
+                        "  spec_data=%s\n"
+                        "  error_type=%s\n"
+                        "  error=%s\n"
+                        "  traceback:\n%s",
+                        model_display, round_num,
+                        model_key, is_oneseek, participant.get("config_id"),
+                        {k: (v[:50] if isinstance(v, str) and len(v) > 50 else v) for k, v in (spec_data or {}).items()} if spec_data else "None",
+                        type(exc).__name__,
+                        str(exc)[:500],
+                        traceback.format_exc(),
+                    )
 
                 latency_ms = int((time.monotonic() - start_time) * 1000)
                 word_count = _count_words(response_text)
@@ -430,7 +445,7 @@ def build_debate_round_executor_node(
                             "position": position + 1,
                             "word_count": word_count,
                             "latency_ms": latency_ms,
-                            "response_preview": response_text[:300],
+                            "response_preview": response_text,
                             "timestamp": time.time(),
                         },
                         config=config,
@@ -1003,6 +1018,45 @@ def build_debate_synthesizer_node(
             )
         except Exception:
             pass
+
+        # Emit debate_summary for frontend persistence (Issue #3)
+        try:
+            from langchain_core.callbacks import adispatch_custom_event
+            debate_summary = {
+                "topic": topic,
+                "participants": [
+                    {
+                        "key": p.get("key", ""),
+                        "display": p.get("display", ""),
+                        "tool_name": p.get("tool_name", ""),
+                        "config_id": p.get("config_id"),
+                        "is_oneseek": p.get("is_oneseek", False),
+                    }
+                    for p in participants
+                ],
+                "round_responses": {
+                    str(rn): {model: text for model, text in rdata.items()}
+                    for rn, rdata in round_responses.items()
+                },
+                "votes": convergence.get("filtered_votes", []),
+                "results": {
+                    "winner": convergence.get("winner", ""),
+                    "vote_counts": convergence.get("vote_results", {}),
+                    "tiebreaker_used": convergence.get("tiebreaker_used", False),
+                    "word_counts": convergence.get("word_counts", {}),
+                    "total_votes": convergence.get("total_votes_cast", 0),
+                    "self_votes_filtered": convergence.get("self_votes_filtered", 0),
+                },
+                "total_rounds": 3,
+                "timestamp": time.time(),
+            }
+            await adispatch_custom_event(
+                "debate_summary",
+                debate_summary,
+                config=config,
+            )
+        except Exception as exc:
+            logger.warning("debate_synthesizer: failed to emit debate_summary: %s", exc)
 
         return {
             "messages": [AIMessage(content=final_response)],

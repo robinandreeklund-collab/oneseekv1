@@ -103,6 +103,28 @@ export function extractStructuredFields(
 	return null;
 }
 
+/**
+ * Extract persisted debate summary from message content.
+ * Returns the summary object or null if not a debate message.
+ */
+export function extractDebateSummary(content: unknown): Record<string, unknown> | null {
+	if (!Array.isArray(content)) return null;
+
+	for (const part of content) {
+		if (
+			typeof part === "object" &&
+			part !== null &&
+			"type" in part &&
+			(part as { type: string }).type === "debate-summary" &&
+			"summary" in part
+		) {
+			return (part as { summary: Record<string, unknown> }).summary;
+		}
+	}
+
+	return null;
+}
+
 // Strips <think>...</think> blocks (including their content) from text.
 // Used to clean up messages that were persisted before the backend streaming
 // filter was introduced, or as a safety net for any that slip through.
@@ -136,6 +158,7 @@ export function convertToThreadMessage(msg: MessageRecord): ThreadMessageLike {
 					partType !== "mentioned-documents" &&
 					partType !== "attachments" &&
 					partType !== "compare-summary" &&
+					partType !== "debate-summary" &&
 					partType !== "structured-fields"
 				);
 			})

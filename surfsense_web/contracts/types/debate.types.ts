@@ -28,6 +28,8 @@ export interface DebateParticipantResponse {
 	wordCount: number;
 	latencyMs: number;
 	status: "waiting" | "speaking" | "complete" | "error";
+	/** Progressive text reveal index during voice playback (0 = hidden, text.length = fully revealed). */
+	textRevealIndex?: number;
 }
 
 export interface DebateVote {
@@ -142,20 +144,20 @@ export interface DebateVoiceSpeakerEvent {
 	model_key: string;
 	round: number;
 	voice: string;
+	text_length: number;
+	estimated_total_chunks: number;
 	timestamp: number;
 }
 
 export interface DebateVoiceChunkEvent {
 	model: string;
-	model_key: string;
 	round: number;
-	chunk_index: number;
+	/** Chunk index (1-based) */
+	ci: number;
 	/** Base64-encoded raw PCM (24 kHz, 16-bit, mono) */
 	pcm_b64: string;
-	sample_rate: number;
-	bit_depth: number;
-	channels: number;
-	timestamp: number;
+	/** Text reveal index — how many chars of the response text to show */
+	tri: number;
 }
 
 export interface DebateVoiceDoneEvent {

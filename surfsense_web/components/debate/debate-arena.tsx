@@ -89,6 +89,17 @@ function getRoundTypeLabel(round: number): string {
 	return ROUND_LABELS[round] ?? `Runda ${round}`;
 }
 
+/** Model logos from /public/model-logos/ */
+const MODEL_LOGOS: Record<string, string> = {
+	grok: "/model-logos/grok.png",
+	claude: "/model-logos/claude.png",
+	chatgpt: "/model-logos/chatgpt.png",
+	gemini: "/model-logos/gemini.png",
+	deepseek: "/model-logos/deepseek.png",
+	perplexity: "/model-logos/perplexity.png",
+	qwen: "/model-logos/qwen.png",
+};
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -329,6 +340,12 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	const voiceActive = voiceCtx?.voiceState.currentSpeaker === participant.display
 		&& voiceCtx?.voiceState.playbackStatus === "playing";
 
+	// Progressive text reveal during voice playback
+	const tri = roundResponse?.textRevealIndex;
+	const fullText = roundResponse?.text ?? "";
+	const isVoiceRevealing = tri !== undefined && tri < fullText.length;
+	const displayText = isVoiceRevealing ? fullText.substring(0, tri) : fullText;
+
 	return (
 		<motion.div
 			initial={{ opacity: 0, y: 16 }}
@@ -347,12 +364,20 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 				<Collapsible open={isExpanded} onOpenChange={(open) => setManualToggle(open)}>
 					<div className="flex items-center justify-between px-4 py-3">
 						<div className="flex items-center gap-3">
-							<div
-								className="flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold text-white"
-								style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}
-							>
-								{initials}
-							</div>
+							{MODEL_LOGOS[participant.key] ? (
+								<img
+									src={MODEL_LOGOS[participant.key]}
+									alt={participant.display}
+									className="h-9 w-9 rounded-lg object-contain"
+								/>
+							) : (
+								<div
+									className="flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold text-white"
+									style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}
+								>
+									{initials}
+								</div>
+							)}
 							<div>
 								<div className="flex items-center gap-2">
 									<span className="text-sm font-semibold">{participant.display}</span>
@@ -407,20 +432,22 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 					</div>
 
 					{/* Preview text (collapsed view) — 2-line clamp */}
-					{roundResponse?.text && !isExpanded && (
+					{displayText && !isExpanded && (
 						<div className="px-4 pb-3">
 							<p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-								{roundResponse.text}
+								{displayText}
+								{isVoiceRevealing && <span className="animate-pulse">▍</span>}
 							</p>
 						</div>
 					)}
 
-					{/* Full text (expanded view) — shows full response with typing feel */}
+					{/* Full text (expanded view) — progressive reveal during voice, full otherwise */}
 					<CollapsibleContent>
-						{roundResponse?.text && (
+						{displayText && (
 							<CardContent className="border-t border-border px-4 py-3">
 								<p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-									{roundResponse.text}
+									{displayText}
+									{isVoiceRevealing && <span className="animate-pulse text-primary">▍</span>}
 								</p>
 							</CardContent>
 						)}

@@ -31,6 +31,7 @@ import {
 	adminDebateApiService,
 	type DebateVoiceSettings,
 } from "@/lib/apis/admin-debate-api.service";
+import Image from "next/image";
 
 const OPENAI_VOICES = [
 	"alloy",
@@ -51,6 +52,16 @@ const PARTICIPANTS = [
 	"Qwen",
 	"OneSeek",
 ] as const;
+
+const PARTICIPANT_LOGOS: Record<string, string> = {
+	Grok: "/model-logos/grok.png",
+	Claude: "/model-logos/claude.png",
+	ChatGPT: "/model-logos/chatgpt.png",
+	Gemini: "/model-logos/gemini.png",
+	DeepSeek: "/model-logos/deepseek.png",
+	Perplexity: "/model-logos/perplexity.png",
+	Qwen: "/model-logos/qwen.png",
+};
 
 const TTS_MODELS = [
 	{ value: "tts-1", label: "TTS-1 (Standard)" },
@@ -73,7 +84,7 @@ export function DebateSettingsPage() {
 			Qwen: "fable",
 			OneSeek: "nova",
 		},
-		language_instructions: "",
+		language_instructions: {},
 	});
 
 	const [isLoading, setIsLoading] = useState(true);
@@ -86,6 +97,11 @@ export function DebateSettingsPage() {
 		(async () => {
 			try {
 				const resp = await adminDebateApiService.getVoiceSettings();
+				// Handle backwards compat: old string → migrate to dict
+				const rawLang = resp.settings.language_instructions;
+				if (typeof rawLang === "string") {
+					resp.settings.language_instructions = rawLang ? { __default__: rawLang } : {};
+				}
 				setSettings(resp.settings);
 			} catch {
 				// Defaults are fine
@@ -120,6 +136,21 @@ export function DebateSettingsPage() {
 		[],
 	);
 
+	const updateLangInstruction = useCallback(
+		(participant: string, value: string) => {
+			setSettings((prev) => {
+				const instructions = { ...(prev.language_instructions ?? {}) };
+				if (value.trim()) {
+					instructions[participant] = value;
+				} else {
+					delete instructions[participant];
+				}
+				return { ...prev, language_instructions: instructions };
+			});
+		},
+		[],
+	);
+
 	if (isLoading) {
 		return (
 			<div className="flex items-center justify-center p-12">
@@ -127,6 +158,8 @@ export function DebateSettingsPage() {
 			</div>
 		);
 	}
+
+	const langInstructions = settings.language_instructions ?? {};
 
 	return (
 		<div className="space-y-6">
@@ -218,31 +251,58 @@ export function DebateSettingsPage() {
 				</CardContent>
 			</Card>
 
-			{/* Voice Map */}
+			{/* Voice Map + Per-Model Language Instructions */}
 			<Card>
 				<CardHeader>
 					<CardTitle className="flex items-center gap-2">
 						<Mic className="h-5 w-5" />
-						R&ouml;stkarta (DEBATE_VOICE_MAP)
+						R&ouml;st &amp; spr&aring;k per deltagare
 					</CardTitle>
 					<CardDescription>
-						Tilldela en unik r&ouml;st till varje debattdeltagare
+						V&auml;lj r&ouml;st och ange spr&aring;k/accent-instruktioner f&ouml;r varje modell.
+						L&auml;mna instruktionen tom f&ouml;r att anv&auml;nda standardinst&auml;llningarna.
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
-					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+					{/* Default instruction */}
+					<div className="mb-4 space-y-2 rounded-lg border border-dashed border-border p-3">
+						<Label className="text-xs text-muted-foreground">
+							Standard-instruktion (g&auml;ller alla utan egen)
+						</Label>
+						<Input
+							placeholder="T.ex. 'Speak clearly in Swedish' eller 'Tala svenska'"
+							value={langInstructions.__default__ ?? ""}
+							onChange={(e) => updateLangInstruction("__default__", e.target.value)}
+						/>
+					</div>
+
+					<div className="grid gap-3 sm:grid-cols-2">
 						{PARTICIPANTS.map((name) => (
 							<div
 								key={name}
-								className="flex items-center gap-3 rounded-lg border border-border p-3"
+								className="flex gap-3 rounded-lg border border-border p-3"
 							>
-								<div className="min-w-0 flex-1">
+								{/* Logo */}
+								<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+									{PARTICIPANT_LOGOS[name] ? (
+										<Image
+											src={PARTICIPANT_LOGOS[name]}
+											alt={name}
+											width={28}
+											height={28}
+											className="rounded"
+										/>
+									) : (
+										<span className="text-xs font-bold">{name.slice(0, 2)}</span>
+									)}
+								</div>
+								<div className="min-w-0 flex-1 space-y-1.5">
 									<div className="text-sm font-medium">{name}</div>
 									<Select
 										value={settings.voice_map[name] ?? "alloy"}
 										onValueChange={(v) => updateVoice(name, v)}
 									>
-										<SelectTrigger className="mt-1 h-8 text-xs">
+										<SelectTrigger className="h-8 text-xs">
 											<SelectValue />
 										</SelectTrigger>
 										<SelectContent>
@@ -253,40 +313,16 @@ export function DebateSettingsPage() {
 											))}
 										</SelectContent>
 									</Select>
+									<Input
+										className="h-7 text-xs"
+										placeholder="Spr&aring;k/accent-instruktion..."
+										value={langInstructions[name] ?? ""}
+										onChange={(e) => updateLangInstruction(name, e.target.value)}
+									/>
 								</div>
 							</div>
 						))}
 					</div>
-				</CardContent>
-			</Card>
-
-			{/* Language / Accent Instructions */}
-			<Card>
-				<CardHeader>
-					<CardTitle>Spr&aring;k &amp; accent</CardTitle>
-					<CardDescription>
-						Instruktioner som l&auml;ggs till i varje TTS-anrop f&ouml;r att styra spr&aring;k, accent och ton.
-						L&auml;mna tomt f&ouml;r standardbeteende (engelska).
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-2">
-					<Label htmlFor="lang-instructions">Instruktioner</Label>
-					<textarea
-						id="lang-instructions"
-						rows={3}
-						className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-						placeholder="T.ex. 'Tala svenska med tydlig artikulation' eller 'Speak with a calm British accent'"
-						value={settings.language_instructions ?? ""}
-						onChange={(e) =>
-							setSettings((prev) => ({
-								...prev,
-								language_instructions: e.target.value,
-							}))
-						}
-					/>
-					<p className="text-xs text-muted-foreground">
-						Denna text l&auml;ggs till som en direktivrad f&ouml;re varje deltagares svar i TTS-anropet.
-					</p>
 				</CardContent>
 			</Card>
 

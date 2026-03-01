@@ -3129,6 +3129,9 @@ async def stream_new_chat(
                 if custom_name == "debate_synthesis_complete" and isinstance(custom_data, dict):
                     yield streaming_service.format_data("debate-synthesis-complete", custom_data)
                     continue
+                if custom_name == "debate_summary" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-summary", custom_data)
+                    continue
 
                 # ─── Voice debate SSE events ──────────────────────
                 if custom_name == "debate_voice_speaker" and isinstance(custom_data, dict):

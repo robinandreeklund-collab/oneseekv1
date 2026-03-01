@@ -32,9 +32,6 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # ── Voice map — 8 distinct voices for 8 participants ────────────────────
-# Keys are the debate participant display names (case-insensitive lookup).
-# Values are OpenAI TTS voice IDs.
-# This default can be overridden from admin settings (``debate_voice_settings``).
 DEFAULT_DEBATE_VOICE_MAP: dict[str, str] = {
     "Grok": "fable",
     "Claude": "nova",
@@ -58,6 +55,10 @@ DEFAULT_CHUNK_BYTES = 4800
 # Default TTS model
 DEFAULT_TTS_MODEL = "tts-1"
 
+# Estimated speaking rate: ~2.5 words/second at 1.0x → ~10 chunks/second
+# This is used to estimate text reveal position per audio chunk.
+_ESTIMATED_CHUNKS_PER_WORD = 4
+
 
 def _resolve_voice_settings(state: dict[str, Any]) -> dict[str, Any]:
     """Extract voice settings from graph state or fall back to env/defaults."""
@@ -68,7 +69,7 @@ def _resolve_voice_settings(state: dict[str, Any]) -> dict[str, Any]:
         "model": settings.get("model") or DEFAULT_TTS_MODEL,
         "voice_map": settings.get("voice_map") or dict(DEFAULT_DEBATE_VOICE_MAP),
         "speed": float(settings.get("speed", 1.0)),
-        "language_instructions": settings.get("language_instructions", ""),
+        "language_instructions": settings.get("language_instructions") or {},
     }
 
 
@@ -93,13 +94,10 @@ async def generate_voice_stream(
     speed: float = 1.0,
     chunk_bytes: int = DEFAULT_CHUNK_BYTES,
 ):
-    """Async generator yielding base64-encoded PCM chunks from OpenAI TTS.
+    """Async generator yielding raw PCM chunks from OpenAI TTS.
 
     Uses httpx streaming POST to ``/audio/speech`` with
     ``response_format="pcm"``.
-
-    Yields:
-        ``bytes`` — raw PCM data (caller base64-encodes for SSE).
     """
     url = f"{api_base.rstrip('/')}/audio/speech"
     headers = {
@@ -137,9 +135,12 @@ async def _emit_voice_events(
     voice_settings: dict[str, Any],
     config: Any,
 ) -> int:
-    """Stream TTS for one participant and emit SSE events.
+    """Stream TTS for one participant and emit SSE events with text sync.
 
-    Returns the total number of bytes dispatched (for tracking).
+    Each chunk event includes ``text_reveal_index`` so the frontend can
+    progressively reveal the response text in sync with the audio.
+
+    Returns the total number of bytes dispatched.
     """
     from langchain_core.callbacks import adispatch_custom_event
 
@@ -149,19 +150,32 @@ async def _emit_voice_events(
     total_bytes = 0
     chunk_index = 0
 
-    # Apply language/accent instructions if configured.
-    # OpenAI TTS respects natural-language directives prepended to the input.
+    # Apply per-model language/accent instructions if configured.
     tts_text = text
-    lang_instructions = voice_settings.get("language_instructions", "").strip()
-    if lang_instructions:
-        tts_text = f"[{lang_instructions}]\n\n{text}"
+    lang_instructions = voice_settings.get("language_instructions") or {}
+    if isinstance(lang_instructions, str):
+        # Backwards compat: global string (deprecated)
+        instr = lang_instructions.strip()
+    else:
+        # Per-model dict: look up participant, fall back to global "__default__"
+        instr = (
+            lang_instructions.get(participant_display, "").strip()
+            or lang_instructions.get("__default__", "").strip()
+        )
+    if instr:
+        tts_text = f"[{instr}]\n\n{text}"
+
+    # Estimate total chunks for proportional text reveal
+    word_count = max(1, len(text.split()))
+    estimated_total_chunks = max(1, word_count * _ESTIMATED_CHUNKS_PER_WORD)
+    text_len = len(text)
 
     logger.info(
-        "debate_voice: starting TTS for %s (voice=%s, model=%s, text_len=%d)",
-        participant_display, voice, voice_settings["model"], len(tts_text),
+        "debate_voice: starting TTS for %s (voice=%s, model=%s, text_len=%d, est_chunks=%d)",
+        participant_display, voice, voice_settings["model"], len(tts_text), estimated_total_chunks,
     )
 
-    # Emit speaker-changed event
+    # Emit speaker-changed event with text length for frontend sync
     await adispatch_custom_event(
         "debate_voice_speaker",
         {
@@ -169,6 +183,8 @@ async def _emit_voice_events(
             "model_key": participant_key,
             "round": round_num,
             "voice": voice,
+            "text_length": text_len,
+            "estimated_total_chunks": estimated_total_chunks,
             "timestamp": time.time(),
         },
         config=config,
@@ -187,18 +203,19 @@ async def _emit_voice_events(
             total_bytes += len(pcm_chunk)
             chunk_index += 1
 
+            # Calculate proportional text reveal position
+            reveal_frac = min(1.0, chunk_index / estimated_total_chunks)
+            text_reveal_index = min(text_len, int(text_len * reveal_frac))
+
+            # Slim payload — constant PCM format fields sent once in speaker event
             await adispatch_custom_event(
                 "debate_voice_chunk",
                 {
                     "model": participant_display,
-                    "model_key": participant_key,
                     "round": round_num,
-                    "chunk_index": chunk_index,
+                    "ci": chunk_index,
                     "pcm_b64": b64,
-                    "sample_rate": PCM_SAMPLE_RATE,
-                    "bit_depth": PCM_BIT_DEPTH,
-                    "channels": PCM_CHANNELS,
-                    "timestamp": time.time(),
+                    "tri": text_reveal_index,
                 },
                 config=config,
             )
@@ -265,16 +282,10 @@ async def schedule_voice_generation(
     """Run TTS for a single participant and stream PCM chunks as SSE events.
 
     Returns total bytes dispatched (0 if skipped).
-
-    Called inline (awaited directly) from the debate round executor —
-    **not** via ``asyncio.create_task`` — because LangGraph's callback
-    context must be on the same call stack for ``adispatch_custom_event``
-    to reach the SSE bridge.
     """
     voice_settings = _resolve_voice_settings(state)
     if not voice_settings["api_key"]:
         logger.warning("debate_voice: no API key configured, skipping TTS for %s", participant_display)
-        # Emit a warning event so the frontend knows voice is unavailable
         try:
             from langchain_core.callbacks import adispatch_custom_event
             await adispatch_custom_event(
@@ -307,11 +318,7 @@ async def collect_all_audio_for_export(
     participant_order: list[dict[str, Any]],
     state: dict[str, Any],
 ) -> list[tuple[str, int, bytes]]:
-    """Generate full audio for all rounds (for MP3 export).
-
-    Returns a list of ``(participant_display, round_num, pcm_bytes)`` tuples
-    in presentation order.
-    """
+    """Generate full audio for all rounds (for MP3 export)."""
     voice_settings = _resolve_voice_settings(state)
     if not voice_settings["api_key"]:
         return []

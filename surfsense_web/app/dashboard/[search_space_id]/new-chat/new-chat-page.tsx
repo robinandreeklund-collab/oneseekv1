@@ -80,6 +80,7 @@ import { getBearerToken } from "@/lib/auth-utils";
 import { createAttachmentAdapter, extractAttachmentContent } from "@/lib/chat/attachment-adapter";
 import {
 	convertToThreadMessage,
+	extractDebateSummary,
 	extractReasoningText as extractReasoningTextZod,
 	extractStructuredFields,
 } from "@/lib/chat/message-utils";
@@ -600,6 +601,7 @@ export default function NewChatPage() {
 					const restoredThinkingSteps = new Map<string, ThinkingStep[]>();
 					const restoredReasoningMap = new Map<string, string>();
 					const restoredStructuredFields = new Map<string, Map<string, { node: string; field: string; value: unknown }[]>>();
+					let restoredDebateSummary: Record<string, unknown> | null = null;
 					// Extract and restore mentioned documents from persisted messages
 					const restoredDocsMap: Record<string, MentionedDocumentInfo[]> = {};
 
@@ -618,6 +620,11 @@ export default function NewChatPage() {
 							const structFields = extractStructuredFields(msg.content);
 							if (structFields) {
 								restoredStructuredFields.set(`msg-${msg.id}`, structFields);
+							}
+							// Restore debate summary (Issue #3)
+							const dSummary = extractDebateSummary(msg.content);
+							if (dSummary) {
+								restoredDebateSummary = dSummary;
 							}
 						}
 						if (msg.role === "user") {
@@ -676,6 +683,73 @@ export default function NewChatPage() {
 					}
 					if (Object.keys(restoredDocsMap).length > 0) {
 						setMessageDocumentsMap(restoredDocsMap);
+					}
+
+					// Restore debate state from persisted debate-summary (Issue #3)
+					if (restoredDebateSummary) {
+						const ds = restoredDebateSummary;
+						const restoredParticipants = (ds.participants as Array<Record<string, unknown>> ?? []).map((p) => {
+							const pDisplay = String(p.display ?? "");
+							const pKey = String(p.key ?? "");
+							const roundResponses = ds.round_responses as Record<string, Record<string, string>> ?? {};
+							const responses: Record<number, import("@/contracts/types/debate.types").DebateParticipantResponse> = {};
+							let totalWc = 0;
+							for (const [rn, rdata] of Object.entries(roundResponses)) {
+								const roundNum = Number(rn);
+								const text = rdata[pDisplay] ?? "";
+								const wc = text.split(/\s+/).filter(Boolean).length;
+								totalWc += wc;
+								responses[roundNum] = {
+									round: roundNum,
+									position: 0,
+									text,
+									wordCount: wc,
+									latencyMs: 0,
+									status: "complete",
+								};
+							}
+							return {
+								key: pKey,
+								display: pDisplay,
+								toolName: String(p.tool_name ?? ""),
+								configId: Number(p.config_id ?? 0),
+								isOneseek: Boolean(p.is_oneseek),
+								totalWordCount: totalWc,
+								responses,
+							} satisfies import("@/contracts/types/debate.types").DebateParticipant;
+						});
+
+						const results = ds.results as Record<string, unknown> | undefined;
+						const restoredVotes = ((ds.votes as Array<Record<string, unknown>>) ?? []).map((v) => ({
+							voter: String(v.voter ?? ""),
+							voterKey: String(v.voter_key ?? ""),
+							votedFor: String(v.voted_for ?? ""),
+							shortMotivation: String(v.motivation ?? ""),
+							threeBullets: (v.bullets as string[]) ?? [],
+						}));
+
+						setDebateState({
+							topic: String(ds.topic ?? ""),
+							participants: restoredParticipants,
+							rounds: [
+								{ round: 1, type: "introduction", order: [], status: "complete" },
+								{ round: 2, type: "argument", order: [], status: "complete" },
+								{ round: 3, type: "deepening", order: [], status: "complete" },
+								{ round: 4, type: "voting", order: [], status: "complete" },
+							],
+							currentRound: Number(ds.total_rounds ?? 3),
+							totalRounds: Number(ds.total_rounds ?? 3),
+							status: "complete",
+							results: results ? {
+								winner: String(results.winner ?? ""),
+								voteCounts: (results.vote_counts as Record<string, number>) ?? {},
+								wordCounts: (results.word_counts as Record<string, number>) ?? {},
+								tiebreakerUsed: Boolean(results.tiebreaker_used),
+								totalVotes: Number(results.total_votes ?? 0),
+								selfVotesFiltered: Number(results.self_votes_filtered ?? 0),
+							} : undefined,
+							votes: restoredVotes,
+						});
 					}
 				}
 			}
@@ -1141,6 +1215,7 @@ export default function NewChatPage() {
 			const currentStructuredFields = new Map<string, { node: string; field: string; value: unknown }[]>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
+			let debateSummary: unknown | null = null;
 
 			// Ordered content parts to preserve inline tool call positions
 			// Each part is either a text segment or a tool call
@@ -1240,6 +1315,9 @@ export default function NewChatPage() {
 				}
 				if (compareSummary) {
 					parts.push({ type: "compare-summary", summary: compareSummary });
+				}
+				if (debateSummary) {
+					parts.push({ type: "debate-summary", summary: debateSummary });
 				}
 				// P1-Extra.6: persist structured field decisions
 				if (currentStructuredFields.size > 0) {
@@ -1775,6 +1853,10 @@ export default function NewChatPage() {
 											);
 											break;
 										}
+										case "data-debate-summary": {
+											debateSummary = parsed.data ?? null;
+											break;
+										}
 
 										// ─── Voice debate SSE events ─────────
 										case "data-debate-voice-speaker": {
@@ -1785,15 +1867,65 @@ export default function NewChatPage() {
 										}
 										case "data-debate-voice-chunk": {
 											const dvc = parsed.data as Record<string, unknown>;
+											const chunkModel = String(dvc?.model ?? "");
+											const chunkRound = Number(dvc?.round ?? 0);
+											const chunkTri = Number(dvc?.tri ?? 0);
 											debateAudio.enqueueChunk(
-												String(dvc?.model ?? ""),
+												chunkModel,
 												String(dvc?.pcm_b64 ?? ""),
 											);
+											// Update text reveal index for progressive display
+											if (chunkTri > 0) {
+												setDebateState((prev) => {
+													if (!prev) return prev;
+													return {
+														...prev,
+														participants: prev.participants.map((p) =>
+															p.display === chunkModel
+																? {
+																	...p,
+																	responses: {
+																		...p.responses,
+																		[chunkRound]: {
+																			...(p.responses[chunkRound] ?? { round: chunkRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "complete" }),
+																			textRevealIndex: chunkTri,
+																		},
+																	},
+																}
+																: p,
+														),
+													};
+												});
+											}
 											break;
 										}
 										case "data-debate-voice-done": {
-											console.log("[SSE] debate-voice-done:", (parsed.data as Record<string, unknown>)?.model);
-											// Speaker finished — playback continues from queue
+											const dvdData = parsed.data as Record<string, unknown>;
+											const dvdModel = String(dvdData?.model ?? "");
+											const dvdRound = Number(dvdData?.round ?? 0);
+											console.log("[SSE] debate-voice-done:", dvdModel);
+											// Reveal full text when voice is done
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													participants: prev.participants.map((p) => {
+														if (p.display !== dvdModel) return p;
+														const resp = p.responses[dvdRound];
+														if (!resp) return p;
+														return {
+															...p,
+															responses: {
+																...p.responses,
+																[dvdRound]: {
+																	...resp,
+																	textRevealIndex: resp.text.length,
+																},
+															},
+														};
+													}),
+												};
+											});
 											break;
 										}
 										case "data-debate-voice-error": {
@@ -2247,6 +2379,7 @@ export default function NewChatPage() {
 			const currentStructuredFields = new Map<string, { node: string; field: string; value: unknown }[]>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
+			let debateSummary: unknown | null = null;
 
 			// Content parts tracking (same as onNew)
 			type ContentPart =
@@ -2323,6 +2456,9 @@ export default function NewChatPage() {
 				}
 				if (compareSummary) {
 					parts.push({ type: "compare-summary", summary: compareSummary });
+				}
+				if (debateSummary) {
+					parts.push({ type: "debate-summary", summary: debateSummary });
 				}
 				// P1-Extra.6: persist structured field decisions
 				if (currentStructuredFields.size > 0) {
@@ -2737,6 +2873,10 @@ export default function NewChatPage() {
 											setDebateState((prev) => prev ? { ...prev, status: "complete" } : prev);
 											break;
 										}
+										case "data-debate-summary": {
+											debateSummary = parsed.data ?? null;
+											break;
+										}
 
 										// ─── Voice debate SSE events (regen) ──
 										case "data-debate-voice-speaker": {
@@ -2746,13 +2886,62 @@ export default function NewChatPage() {
 										}
 										case "data-debate-voice-chunk": {
 											const dvc2 = parsed.data as Record<string, unknown>;
+											const chunkModel2 = String(dvc2?.model ?? "");
+											const chunkRound2 = Number(dvc2?.round ?? 0);
+											const chunkTri2 = Number(dvc2?.tri ?? 0);
 											debateAudio.enqueueChunk(
-												String(dvc2?.model ?? ""),
+												chunkModel2,
 												String(dvc2?.pcm_b64 ?? ""),
 											);
+											if (chunkTri2 > 0) {
+												setDebateState((prev) => {
+													if (!prev) return prev;
+													return {
+														...prev,
+														participants: prev.participants.map((p) =>
+															p.display === chunkModel2
+																? {
+																	...p,
+																	responses: {
+																		...p.responses,
+																		[chunkRound2]: {
+																			...(p.responses[chunkRound2] ?? { round: chunkRound2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "complete" }),
+																			textRevealIndex: chunkTri2,
+																		},
+																	},
+																}
+																: p,
+														),
+													};
+												});
+											}
 											break;
 										}
 										case "data-debate-voice-done": {
+											const dvdData2 = parsed.data as Record<string, unknown>;
+											const dvdModel2 = String(dvdData2?.model ?? "");
+											const dvdRound2 = Number(dvdData2?.round ?? 0);
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													participants: prev.participants.map((p) => {
+														if (p.display !== dvdModel2) return p;
+														const resp2 = p.responses[dvdRound2];
+														if (!resp2) return p;
+														return {
+															...p,
+															responses: {
+																...p.responses,
+																[dvdRound2]: {
+																	...resp2,
+																	textRevealIndex: resp2.text.length,
+																},
+															},
+														};
+													}),
+												};
+											});
 											break;
 										}
 										case "data-debate-voice-error": {
