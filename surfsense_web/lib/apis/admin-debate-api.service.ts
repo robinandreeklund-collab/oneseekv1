@@ -4,11 +4,14 @@ import { baseApiService } from "@/lib/apis/base-api.service";
 // ── Zod schemas ─────────────────────────────────────────────────────
 
 const debateVoiceSettingsSchema = z.object({
+	tts_provider: z.string().optional().default("cartesia"),
 	api_key: z.string(),
+	cartesia_api_key: z.string().optional().default(""),
 	api_base: z.string(),
 	model: z.string(),
 	speed: z.number(),
 	voice_map: z.record(z.string(), z.string()),
+	language: z.string().optional().default("sv"),
 	language_instructions: z.record(z.string(), z.string()).optional().default({}),
 	max_tokens: z.number().optional().default(500),
 	max_tokens_map: z.record(z.string(), z.number()).optional().default({}),

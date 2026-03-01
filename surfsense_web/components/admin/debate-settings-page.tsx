@@ -84,6 +84,22 @@ const DEFAULT_VOICE_MAP: Record<string, string> = {
 	OneSeek: "nova",
 };
 
+const DEFAULT_CARTESIA_VOICE_MAP: Record<string, string> = {
+	Grok: "c961b81c-a935-4c17-bfb3-ba2239de8c2f",
+	Claude: "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+	ChatGPT: "a167e0f3-df7e-4d52-a9c3-f949145efdab",
+	Gemini: "e07c00bc-4134-4eae-9ea4-1a55fb45746b",
+	DeepSeek: "694f9389-aac1-45b6-b726-9d9369183238",
+	Perplexity: "a0e99841-438c-4a64-b679-ae501e7d6091",
+	Qwen: "f786b574-daa5-4673-aa0c-cbe3e8534c02",
+	OneSeek: "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+};
+
+const TTS_PROVIDERS = [
+	{ value: "cartesia", label: "Cartesia Sonic-3 (Recommended)" },
+	{ value: "openai", label: "OpenAI TTS" },
+] as const;
+
 const TTS_MODELS = [
 	{ value: "gpt-4o-mini-tts", label: "gpt-4o-mini-tts (Recommended)" },
 	{ value: "tts-1", label: "TTS-1 (Standard)" },
@@ -109,11 +125,14 @@ Kombinera fritt, t.ex:
 
 export function DebateSettingsPage() {
 	const [settings, setSettings] = useState<DebateVoiceSettings>({
+		tts_provider: "cartesia",
 		api_key: "",
+		cartesia_api_key: "",
 		api_base: "https://api.openai.com/v1",
-		model: "gpt-4o-mini-tts",
+		model: "",
 		speed: 1.0,
-		voice_map: { ...DEFAULT_VOICE_MAP },
+		voice_map: { ...DEFAULT_CARTESIA_VOICE_MAP },
+		language: "sv",
 		language_instructions: {},
 		max_tokens: DEFAULT_MAX_TOKENS,
 		max_tokens_map: {},
@@ -219,7 +238,7 @@ export function DebateSettingsPage() {
 				</p>
 			</div>
 
-			{/* TTS API Configuration */}
+			{/* TTS Provider & API Configuration */}
 			<Card>
 				<CardHeader>
 					<CardTitle className="flex items-center gap-2">
@@ -227,75 +246,158 @@ export function DebateSettingsPage() {
 						TTS-konfiguration
 					</CardTitle>
 					<CardDescription>
-						OpenAI TTS API-inst&auml;llningar f&ouml;r r&ouml;stdebatt (/dvoice)
+						V&auml;lj TTS-leverant&ouml;r och konfigurera API-nycklar f&ouml;r r&ouml;stdebatt (/dvoice)
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
-					<div className="grid gap-4 sm:grid-cols-2">
-						<div className="space-y-2">
-							<Label htmlFor="api-key">API-nyckel</Label>
-							<Input
-								id="api-key"
-								type="password"
-								placeholder="sk-..."
-								value={settings.api_key}
-								onChange={(e) =>
-									setSettings((prev) => ({
-										...prev,
-										api_key: e.target.value,
-									}))
-								}
-							/>
-						</div>
-						<div className="space-y-2">
-							<Label htmlFor="api-base">API Base URL</Label>
-							<Input
-								id="api-base"
-								placeholder="https://api.openai.com/v1"
-								value={settings.api_base}
-								onChange={(e) =>
-									setSettings((prev) => ({
-										...prev,
-										api_base: e.target.value,
-									}))
-								}
-							/>
-						</div>
+					{/* Provider selector */}
+					<div className="space-y-2">
+						<Label htmlFor="tts-provider">TTS-leverant&ouml;r</Label>
+						<Select
+							value={settings.tts_provider ?? "cartesia"}
+							onValueChange={(value) => {
+								const newVoiceMap = value === "cartesia"
+									? { ...DEFAULT_CARTESIA_VOICE_MAP }
+									: { ...DEFAULT_VOICE_MAP };
+								setSettings((prev) => ({
+									...prev,
+									tts_provider: value,
+									voice_map: newVoiceMap,
+								}));
+							}}
+						>
+							<SelectTrigger id="tts-provider">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{TTS_PROVIDERS.map((p) => (
+									<SelectItem key={p.value} value={p.value}>
+										{p.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
 
-					<div className="grid gap-4 sm:grid-cols-2">
-						<div className="space-y-2">
-							<Label htmlFor="tts-model">TTS-modell</Label>
-							<Select
-								value={settings.model}
-								onValueChange={(value) =>
-									setSettings((prev) => ({ ...prev, model: value }))
-								}
-							>
-								<SelectTrigger id="tts-model">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{TTS_MODELS.map((m) => (
-										<SelectItem key={m.value} value={m.value}>
-											{m.label}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+					{/* Cartesia-specific settings */}
+					{(settings.tts_provider ?? "cartesia") === "cartesia" && (
+						<div className="grid gap-4 sm:grid-cols-2">
+							<div className="space-y-2">
+								<Label htmlFor="cartesia-api-key">Cartesia API-nyckel</Label>
+								<Input
+									id="cartesia-api-key"
+									type="password"
+									placeholder="sk_cart_..."
+									value={settings.cartesia_api_key ?? ""}
+									onChange={(e) =>
+										setSettings((prev) => ({
+											...prev,
+											cartesia_api_key: e.target.value,
+										}))
+									}
+								/>
+								<p className="text-[10px] text-muted-foreground">
+									Fr&aring;n{" "}
+									<a href="https://play.cartesia.ai/" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+										play.cartesia.ai
+									</a>
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="cartesia-language">Spr&aring;k</Label>
+								<Input
+									id="cartesia-language"
+									placeholder="sv"
+									value={settings.language ?? "sv"}
+									onChange={(e) =>
+										setSettings((prev) => ({
+											...prev,
+											language: e.target.value,
+										}))
+									}
+								/>
+								<p className="text-[10px] text-muted-foreground">
+									Spr&aring;kkod: sv (svenska), en (engelska), de (tyska), etc.
+								</p>
+							</div>
 						</div>
-						<div className="space-y-2">
-							<Label>Hastighet: {settings.speed.toFixed(2)}x</Label>
-							<Slider
-								min={0.25}
-								max={4.0}
-								step={0.05}
-								value={[settings.speed]}
-								onValueChange={([v]) =>
-									setSettings((prev) => ({ ...prev, speed: v }))
-								}
-							/>
-						</div>
+					)}
+
+					{/* OpenAI-specific settings */}
+					{(settings.tts_provider ?? "cartesia") === "openai" && (
+						<>
+							<div className="grid gap-4 sm:grid-cols-2">
+								<div className="space-y-2">
+									<Label htmlFor="api-key">OpenAI API-nyckel</Label>
+									<Input
+										id="api-key"
+										type="password"
+										placeholder="sk-..."
+										value={settings.api_key}
+										onChange={(e) =>
+											setSettings((prev) => ({
+												...prev,
+												api_key: e.target.value,
+											}))
+										}
+									/>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="api-base">API Base URL</Label>
+									<Input
+										id="api-base"
+										placeholder="https://api.openai.com/v1"
+										value={settings.api_base}
+										onChange={(e) =>
+											setSettings((prev) => ({
+												...prev,
+												api_base: e.target.value,
+											}))
+										}
+									/>
+								</div>
+							</div>
+
+							<div className="space-y-2">
+								<Label htmlFor="tts-model">TTS-modell</Label>
+								<Select
+									value={settings.model || "gpt-4o-mini-tts"}
+									onValueChange={(value) =>
+										setSettings((prev) => ({ ...prev, model: value }))
+									}
+								>
+									<SelectTrigger id="tts-model">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{TTS_MODELS.map((m) => (
+											<SelectItem key={m.value} value={m.value}>
+												{m.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+						</>
+					)}
+
+					{/* Speed (both providers) */}
+					<div className="space-y-2">
+						<Label>Hastighet: {settings.speed.toFixed(2)}x</Label>
+						<Slider
+							min={0.25}
+							max={(settings.tts_provider ?? "cartesia") === "cartesia" ? 1.5 : 4.0}
+							step={0.05}
+							value={[settings.speed]}
+							onValueChange={([v]) =>
+								setSettings((prev) => ({ ...prev, speed: v }))
+							}
+						/>
+						{(settings.tts_provider ?? "cartesia") === "cartesia" && (
+							<p className="text-[10px] text-muted-foreground">
+								Cartesia st&ouml;der 0.6x &ndash; 1.5x
+							</p>
+						)}
 					</div>
 				</CardContent>
 			</Card>
@@ -405,8 +507,10 @@ export function DebateSettingsPage() {
 						R&ouml;st &amp; instruktioner per deltagare
 					</CardTitle>
 					<CardDescription>
-						V&auml;lj r&ouml;st (13 tillg&auml;ngliga) och ange instruktioner f&ouml;r accent, ton, k&auml;nsla m.m.
-						Klicka p&aring; en deltagare f&ouml;r att expandera instruktionsf&auml;ltet.
+						{(settings.tts_provider ?? "cartesia") === "cartesia"
+							? "Ange Cartesia voice-ID (UUID) per deltagare. Bläddra röster på play.cartesia.ai"
+							: "Välj röst (13 tillgängliga) och ange instruktioner för accent, ton, känsla m.m."}
+						{" "}Klicka p&aring; en deltagare f&ouml;r att expandera instruktionsf&auml;ltet.
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
@@ -463,21 +567,30 @@ export function DebateSettingsPage() {
 													</Badge>
 												)}
 											</button>
-											<Select
-												value={settings.voice_map[name] ?? "alloy"}
-												onValueChange={(v) => updateVoice(name, v)}
-											>
-												<SelectTrigger className="h-8 text-xs">
-													<SelectValue />
-												</SelectTrigger>
-												<SelectContent>
-													{OPENAI_VOICES.map((v) => (
-														<SelectItem key={v} value={v}>
-															{v}
-														</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
+											{(settings.tts_provider ?? "cartesia") === "cartesia" ? (
+												<Input
+													className="h-8 text-xs font-mono"
+													placeholder="voice-uuid..."
+													value={settings.voice_map[name] ?? ""}
+													onChange={(e) => updateVoice(name, e.target.value)}
+												/>
+											) : (
+												<Select
+													value={settings.voice_map[name] ?? "alloy"}
+													onValueChange={(v) => updateVoice(name, v)}
+												>
+													<SelectTrigger className="h-8 text-xs">
+														<SelectValue />
+													</SelectTrigger>
+													<SelectContent>
+														{OPENAI_VOICES.map((v) => (
+															<SelectItem key={v} value={v}>
+																{v}
+															</SelectItem>
+														))}
+													</SelectContent>
+												</Select>
+											)}
 										</div>
 									</div>
 

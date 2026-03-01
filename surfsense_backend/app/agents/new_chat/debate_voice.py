@@ -1,23 +1,21 @@
-"""Live Voice Debate — TTS pipeline using OpenAI API directly.
+"""Live Voice Debate — TTS pipeline with Cartesia Sonic-3 and OpenAI fallback.
 
-Uses OpenAI's TTS API with ``response_format="pcm"`` + streaming to produce
-24 kHz 16-bit mono PCM chunks that are base64-encoded and dispatched as SSE
-events.  The frontend decodes chunks via Web Audio API for near-instant
-playback.
+Supports two TTS providers:
+  - **Cartesia** (default): Sonic-3 model, 40ms time-to-first-audio.
+    Uses ``/tts/bytes`` endpoint returning raw PCM (pcm_s16le, 24 kHz).
+    All voices are multilingual and speak Swedish with ``language: "sv"``.
+  - **OpenAI**: gpt-4o-mini-tts / tts-1 models.  Streaming PCM via
+    ``/audio/speech`` with ``response_format="pcm"``.
 
 Architecture (sentence-level TTS):
   1. When a participant's full text response arrives, it is split into
      sentences (~8-20 words each).
   2. For each sentence:
-     a) A ``debate_voice_sentence`` event reveals the text up to that point.
-     b) TTS generates audio for that sentence only (~1-3s of audio).
+     a) A ``debate_voice_sentence`` event marks TTS progress.
+     b) TTS generates audio for that sentence only (~0.3-3s of audio).
      c) PCM chunks are emitted as ``debate_voice_chunk`` events.
   3. The frontend queues chunks and plays them sequentially through an
-     AudioContext, with text revealed sentence-by-sentence in sync.
-
-This approach avoids the previous problem where TTS for a full response
-(~90-120s of audio) blocked the pipeline and caused all text to appear
-in a batch.
+     AudioContext.
 
 The voice map and API key are loaded from the ``debate_voice_settings``
 state key (populated by the admin Debatt settings tab or env fallback).
@@ -35,10 +33,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# ── Voice map — 8 distinct voices for 8 participants ────────────────────
-# Uses the 13 built-in voices from gpt-4o-mini-tts:
-# alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse, marin, cedar
-DEFAULT_DEBATE_VOICE_MAP: dict[str, str] = {
+# ── Default voice maps ────────────────────────────────────────────────
+
+# OpenAI voices (13 built-in): alloy, ash, ballad, coral, echo, fable,
+# nova, onyx, sage, shimmer, verse, marin, cedar
+DEFAULT_OPENAI_VOICE_MAP: dict[str, str] = {
     "Grok": "ash",
     "Claude": "ballad",
     "ChatGPT": "coral",
@@ -49,7 +48,24 @@ DEFAULT_DEBATE_VOICE_MAP: dict[str, str] = {
     "OneSeek": "nova",
 }
 
-# PCM format constants (OpenAI TTS with response_format=pcm)
+# Cartesia voice IDs — any voice speaks Swedish with language="sv".
+# These are example IDs from Cartesia's public docs / SDK examples.
+# Configure specific voices via Admin → Debatt or CARTESIA_VOICE_MAP env.
+DEFAULT_CARTESIA_VOICE_MAP: dict[str, str] = {
+    "Grok": "c961b81c-a935-4c17-bfb3-ba2239de8c2f",       # Kyle
+    "Claude": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",      # Tessa
+    "ChatGPT": "a167e0f3-df7e-4d52-a9c3-f949145efdab",     # Customer Support Man
+    "Gemini": "e07c00bc-4134-4eae-9ea4-1a55fb45746b",      # SDK example
+    "DeepSeek": "694f9389-aac1-45b6-b726-9d9369183238",    # docs example
+    "Perplexity": "a0e99841-438c-4a64-b679-ae501e7d6091",  # WebSocket ref
+    "Qwen": "f786b574-daa5-4673-aa0c-cbe3e8534c02",       # LiveKit default
+    "OneSeek": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",     # Tessa (shared)
+}
+
+# Keep backward-compat alias for imports
+DEFAULT_DEBATE_VOICE_MAP = DEFAULT_OPENAI_VOICE_MAP
+
+# PCM format constants (same for both OpenAI and Cartesia)
 PCM_SAMPLE_RATE = 24000   # 24 kHz
 PCM_BIT_DEPTH = 16        # 16-bit signed little-endian
 PCM_CHANNELS = 1          # mono
@@ -58,8 +74,12 @@ PCM_CHANNELS = 1          # mono
 # ~100 ms of audio at 24 kHz/16-bit/mono = 4800 bytes.
 DEFAULT_CHUNK_BYTES = 4800
 
-# Default TTS model — gpt-4o-mini-tts supports instructions for accent/tone/etc.
+# Default models
 DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
+DEFAULT_CARTESIA_MODEL = "sonic-2024-10-19"
+
+# Cartesia API version
+CARTESIA_API_VERSION = "2025-04-16"
 
 
 # ── Sentence splitting ──────────────────────────────────────────────────
@@ -105,25 +125,118 @@ def _find_sentence_end(full_text: str, sentence: str, search_from: int) -> int:
 def _resolve_voice_settings(state: dict[str, Any]) -> dict[str, Any]:
     """Extract voice settings from graph state or fall back to env/defaults."""
     settings = state.get("debate_voice_settings") or {}
+    provider = settings.get("tts_provider") or _env_tts_provider()
+
+    if provider == "cartesia":
+        api_key = settings.get("cartesia_api_key") or _env_cartesia_api_key()
+        default_map = DEFAULT_CARTESIA_VOICE_MAP
+        default_model = DEFAULT_CARTESIA_MODEL
+    else:
+        api_key = settings.get("api_key") or _env_api_key()
+        default_map = DEFAULT_OPENAI_VOICE_MAP
+        default_model = DEFAULT_TTS_MODEL
+
     return {
-        "api_key": settings.get("api_key") or _env_api_key(),
+        "tts_provider": provider,
+        "api_key": api_key,
         "api_base": settings.get("api_base") or "https://api.openai.com/v1",
-        "model": settings.get("model") or DEFAULT_TTS_MODEL,
-        "voice_map": settings.get("voice_map") or dict(DEFAULT_DEBATE_VOICE_MAP),
+        "model": settings.get("model") or default_model,
+        "voice_map": settings.get("voice_map") or dict(default_map),
         "speed": float(settings.get("speed", 1.0)),
         "language_instructions": settings.get("language_instructions") or {},
+        "language": settings.get("language") or "sv",
     }
 
 
 def _env_api_key() -> str:
-    """Fall back to env-var for the TTS API key."""
+    """Fall back to env-var for the OpenAI TTS API key."""
     import os
     return os.getenv("DEBATE_VOICE_API_KEY", "") or os.getenv("TTS_SERVICE_API_KEY", "")
+
+
+def _env_cartesia_api_key() -> str:
+    """Fall back to env-var for the Cartesia API key."""
+    import os
+    return os.getenv("CARTESIA_API_KEY", "")
+
+
+def _env_tts_provider() -> str:
+    """Fall back to env-var for the TTS provider."""
+    import os
+    return os.getenv("DEBATE_TTS_PROVIDER", "cartesia")
 
 
 def get_voice_for_participant(display_name: str, voice_map: dict[str, str]) -> str:
     """Look up the TTS voice for a given participant display name."""
     return voice_map.get(display_name, "alloy")
+
+
+# ── Cartesia TTS ───────────────────────────────────────────────────────
+
+
+async def generate_voice_stream_cartesia(
+    *,
+    text: str,
+    voice_id: str,
+    api_key: str,
+    model: str = DEFAULT_CARTESIA_MODEL,
+    speed: float = 1.0,
+    language: str = "sv",
+    chunk_bytes: int = DEFAULT_CHUNK_BYTES,
+):
+    """Async generator yielding raw PCM chunks from Cartesia TTS.
+
+    Uses ``POST /tts/bytes`` with ``pcm_s16le`` at 24 kHz — same format
+    as OpenAI, so the frontend audio pipeline needs no changes.
+
+    Cartesia Sonic-3 has ~40ms time-to-first-audio, making per-sentence
+    TTS extremely fast (~100-500ms per sentence vs ~2-5s with OpenAI).
+    """
+    url = "https://api.cartesia.ai/tts/bytes"
+    headers = {
+        "Cartesia-Version": CARTESIA_API_VERSION,
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    payload: dict[str, Any] = {
+        "model_id": model,
+        "transcript": text,
+        "voice": {"mode": "id", "id": voice_id},
+        "output_format": {
+            "container": "raw",
+            "encoding": "pcm_s16le",
+            "sample_rate": PCM_SAMPLE_RATE,
+        },
+        "language": language,
+    }
+
+    # Speed control via generation_config (Sonic-3 supports 0.6-1.5x)
+    if speed != 1.0:
+        clamped = max(0.6, min(1.5, speed))
+        payload["generation_config"] = {"speed": clamped}
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+        response = await client.post(url, json=payload, headers=headers)
+
+        if response.status_code >= 400:
+            logger.error(
+                "debate_voice: Cartesia TTS error %d: %s",
+                response.status_code, response.text[:300],
+            )
+            raise httpx.HTTPStatusError(
+                f"Cartesia TTS API error {response.status_code}",
+                request=response.request,
+                response=response,
+            )
+
+        # Response is raw PCM binary — split into chunks
+        pcm_data = response.content
+        for i in range(0, len(pcm_data), chunk_bytes):
+            yield pcm_data[i:i + chunk_bytes]
+
+
+# ── OpenAI TTS ─────────────────────────────────────────────────────────
 
 
 async def generate_voice_stream(
@@ -141,10 +254,6 @@ async def generate_voice_stream(
 
     Uses httpx streaming POST to ``/audio/speech`` with
     ``response_format="pcm"``.
-
-    For ``gpt-4o-mini-tts``, voice instructions (accent, tone, etc.) are
-    passed via the ``instructions`` API parameter.  The ``speed`` parameter
-    is only supported by ``tts-1`` / ``tts-1-hd``.
     """
     url = f"{api_base.rstrip('/')}/audio/speech"
     headers = {
@@ -162,17 +271,14 @@ async def generate_voice_stream(
     }
 
     if is_mini_tts:
-        # gpt-4o-mini-tts: uses 'instructions' field, does NOT support 'speed'
         if instructions:
             payload["instructions"] = instructions
     else:
-        # tts-1 / tts-1-hd: uses 'speed', no 'instructions' field
         payload["speed"] = speed
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
         async with client.stream("POST", url, json=payload, headers=headers) as resp:
             if resp.status_code >= 400:
-                # Must read the body before accessing .text on a streaming response
                 await resp.aread()
                 logger.error(
                     "debate_voice: TTS %s error %d: %s",
@@ -189,9 +295,52 @@ async def generate_voice_stream(
                 while len(buffer) >= chunk_bytes:
                     yield bytes(buffer[:chunk_bytes])
                     buffer = buffer[chunk_bytes:]
-            # flush remainder
             if buffer:
                 yield bytes(buffer)
+
+
+# ── TTS dispatch ───────────────────────────────────────────────────────
+
+
+def _get_tts_generator(
+    *,
+    sentence: str,
+    voice: str,
+    voice_settings: dict[str, Any],
+    instructions: str,
+):
+    """Return the appropriate TTS async generator based on provider."""
+    provider = voice_settings.get("tts_provider", "cartesia")
+
+    if provider == "cartesia":
+        return generate_voice_stream_cartesia(
+            text=sentence,
+            voice_id=voice,
+            api_key=voice_settings["api_key"],
+            model=voice_settings.get("model") or DEFAULT_CARTESIA_MODEL,
+            speed=voice_settings.get("speed", 1.0),
+            language=voice_settings.get("language", "sv"),
+        )
+    else:
+        tts_model = voice_settings.get("model") or DEFAULT_TTS_MODEL
+        is_mini_tts = "mini-tts" in tts_model.lower()
+        if is_mini_tts:
+            sent_text = sentence
+        else:
+            sent_text = f"[{instructions}]\n\n{sentence}" if instructions else sentence
+
+        return generate_voice_stream(
+            text=sent_text,
+            voice=voice,
+            api_key=voice_settings["api_key"],
+            api_base=voice_settings["api_base"],
+            model=tts_model,
+            speed=voice_settings.get("speed", 1.0),
+            instructions=instructions if is_mini_tts else "",
+        )
+
+
+# ── Voice event emission ──────────────────────────────────────────────
 
 
 async def _emit_voice_events(
@@ -205,13 +354,6 @@ async def _emit_voice_events(
 ) -> int:
     """Stream TTS for one participant, sentence-by-sentence.
 
-    For each sentence:
-      1. Emit ``debate_voice_sentence`` — frontend reveals text to that point.
-      2. Generate TTS for that sentence only (fast: ~1-3s per sentence).
-      3. Emit ``debate_voice_chunk`` events with PCM audio.
-
-    This avoids the old approach of TTS-ing the entire response (~90s block).
-
     Returns the total number of bytes dispatched.
     """
     from langchain_core.callbacks import adispatch_custom_event
@@ -221,8 +363,9 @@ async def _emit_voice_events(
     )
     total_bytes = 0
     chunk_index = 0
+    provider = voice_settings.get("tts_provider", "cartesia")
 
-    # Resolve per-model language/accent instructions.
+    # Resolve per-model language/accent instructions (OpenAI only).
     lang_instructions = voice_settings.get("language_instructions") or {}
     if isinstance(lang_instructions, str):
         instr = lang_instructions.strip()
@@ -232,17 +375,15 @@ async def _emit_voice_events(
             or lang_instructions.get("__default__", "").strip()
         )
 
-    tts_model = voice_settings["model"]
-    is_mini_tts = "mini-tts" in tts_model.lower()
-    tts_instructions = instr if is_mini_tts else ""
+    tts_model = voice_settings.get("model") or (DEFAULT_CARTESIA_MODEL if provider == "cartesia" else DEFAULT_TTS_MODEL)
 
     # Split into sentences for per-sentence TTS
     sentences = _split_into_sentences(text)
     text_len = len(text)
 
     logger.info(
-        "debate_voice: starting TTS for %s (voice=%s, model=%s, sentences=%d, text_len=%d)",
-        participant_display, voice, tts_model, len(sentences), text_len,
+        "debate_voice: starting TTS for %s (provider=%s, voice=%s, model=%s, sentences=%d, text_len=%d)",
+        participant_display, provider, voice, tts_model, len(sentences), text_len,
     )
 
     # Emit speaker-changed event
@@ -255,19 +396,19 @@ async def _emit_voice_events(
             "voice": voice,
             "text_length": text_len,
             "total_sentences": len(sentences),
+            "provider": provider,
             "timestamp": time.time(),
         },
         config=config,
     )
 
-    # Process each sentence: reveal text → generate TTS → emit audio
+    # Process each sentence: emit TTS audio
     reveal_cursor = 0
 
     for sent_idx, sentence in enumerate(sentences):
-        # Find where this sentence ends in the original text
         reveal_cursor = _find_sentence_end(text, sentence, reveal_cursor)
 
-        # Emit sentence event → frontend reveals text up to this point
+        # Emit sentence event (TTS progress tracking)
         await adispatch_custom_event(
             "debate_voice_sentence",
             {
@@ -282,22 +423,13 @@ async def _emit_voice_events(
             config=config,
         )
 
-        # Prepare TTS input for this sentence
-        if is_mini_tts:
-            sent_tts_text = sentence
-        else:
-            sent_tts_text = f"[{instr}]\n\n{sentence}" if instr else sentence
-
-        # Generate TTS for this sentence
+        # Generate TTS for this sentence via the configured provider
         try:
-            async for pcm_chunk in generate_voice_stream(
-                text=sent_tts_text,
+            async for pcm_chunk in _get_tts_generator(
+                sentence=sentence,
                 voice=voice,
-                api_key=voice_settings["api_key"],
-                api_base=voice_settings["api_base"],
-                model=tts_model,
-                speed=voice_settings.get("speed", 1.0),
-                instructions=tts_instructions,
+                voice_settings=voice_settings,
+                instructions=instr,
             ):
                 b64 = base64.b64encode(pcm_chunk).decode("ascii")
                 total_bytes += len(pcm_chunk)
@@ -322,44 +454,42 @@ async def _emit_voice_events(
             except Exception:
                 body_preview = "(could not read response body)"
             logger.error(
-                "debate_voice: TTS API error for %s sentence %d: status=%s body=%s",
-                participant_display, sent_idx, exc.response.status_code, body_preview,
+                "debate_voice: %s TTS API error for %s sentence %d: status=%s body=%s",
+                provider, participant_display, sent_idx, exc.response.status_code, body_preview,
             )
             await adispatch_custom_event(
                 "debate_voice_error",
                 {
                     "model": participant_display,
                     "round": round_num,
-                    "error": f"TTS error sentence {sent_idx}: {exc.response.status_code}",
+                    "error": f"{provider} TTS error sentence {sent_idx}: {exc.response.status_code} — {body_preview[:100]}",
                     "timestamp": time.time(),
                 },
                 config=config,
             )
         except Exception as exc:
             logger.error(
-                "debate_voice: TTS error for %s sentence %d: %s",
-                participant_display, sent_idx, exc,
+                "debate_voice: %s TTS error for %s sentence %d: %s",
+                provider, participant_display, sent_idx, exc,
             )
-            # Emit error to frontend so it's visible in console
             try:
                 await adispatch_custom_event(
                     "debate_voice_error",
                     {
                         "model": participant_display,
                         "round": round_num,
-                        "error": f"TTS error sentence {sent_idx}: {type(exc).__name__}: {str(exc)[:200]}",
+                        "error": f"{provider} TTS error sentence {sent_idx}: {type(exc).__name__}: {str(exc)[:200]}",
                         "timestamp": time.time(),
                     },
                     config=config,
                 )
             except Exception:
                 pass
-            # Continue to next sentence — don't fail the whole participant
             continue
 
     logger.info(
-        "debate_voice: finished TTS for %s — %d bytes, %d chunks, %d sentences",
-        participant_display, total_bytes, chunk_index, len(sentences),
+        "debate_voice: finished TTS for %s — %d bytes, %d chunks, %d sentences (provider=%s)",
+        participant_display, total_bytes, chunk_index, len(sentences), provider,
     )
 
     # Emit playback-ready (marks end of audio for this participant)
@@ -394,8 +524,12 @@ async def schedule_voice_generation(
     Returns total bytes dispatched (0 if skipped).
     """
     voice_settings = _resolve_voice_settings(state)
+    provider = voice_settings.get("tts_provider", "cartesia")
+
     if not voice_settings["api_key"]:
-        logger.warning("debate_voice: no API key configured, skipping TTS for %s", participant_display)
+        provider_label = "Cartesia" if provider == "cartesia" else "OpenAI"
+        key_name = "CARTESIA_API_KEY" if provider == "cartesia" else "DEBATE_VOICE_API_KEY"
+        logger.warning("debate_voice: no %s API key configured, skipping TTS for %s", provider_label, participant_display)
         try:
             from langchain_core.callbacks import adispatch_custom_event
             await adispatch_custom_event(
@@ -403,7 +537,7 @@ async def schedule_voice_generation(
                 {
                     "model": participant_display,
                     "round": round_num,
-                    "error": "Ingen TTS API-nyckel konfigurerad. Gå till Admin → Debatt och spara din OpenAI API-nyckel.",
+                    "error": f"Ingen {provider_label} TTS API-nyckel konfigurerad. Sätt {key_name} eller gå till Admin → Debatt.",
                     "timestamp": time.time(),
                 },
                 config=config,
@@ -428,18 +562,14 @@ async def collect_all_audio_for_export(
     participant_order: list[dict[str, Any]],
     state: dict[str, Any],
 ) -> list[tuple[str, int, bytes]]:
-    """Generate full audio for all rounds (for MP3 export).
-
-    Uses sentence-level TTS for consistency with live playback.
-    """
+    """Generate full audio for all rounds (for MP3 export)."""
     voice_settings = _resolve_voice_settings(state)
     if not voice_settings["api_key"]:
         return []
 
-    tts_model = voice_settings["model"]
-    is_mini = "mini-tts" in tts_model.lower()
+    provider = voice_settings.get("tts_provider", "cartesia")
 
-    # Resolve instructions once
+    # Resolve instructions once (OpenAI only)
     lang_instr = voice_settings.get("language_instructions") or {}
 
     results: list[tuple[str, int, bytes]] = []
@@ -460,26 +590,15 @@ async def collect_all_audio_for_export(
                     or lang_instr.get("__default__", "").strip()
                 )
 
-            tts_instructions = instr if is_mini else ""
-
-            # Generate TTS sentence-by-sentence for export too
             sentences = _split_into_sentences(text)
             pcm_parts: list[bytes] = []
 
             for sentence in sentences:
-                if is_mini:
-                    sent_text = sentence
-                else:
-                    sent_text = f"[{instr}]\n\n{sentence}" if instr else sentence
-
-                async for chunk in generate_voice_stream(
-                    text=sent_text,
+                async for chunk in _get_tts_generator(
+                    sentence=sentence,
                     voice=voice,
-                    api_key=voice_settings["api_key"],
-                    api_base=voice_settings["api_base"],
-                    model=tts_model,
-                    speed=voice_settings.get("speed", 1.0),
-                    instructions=tts_instructions,
+                    voice_settings=voice_settings,
+                    instructions=instr,
                 ):
                     pcm_parts.append(chunk)
 

@@ -41,11 +41,14 @@ DEFAULT_MAX_TOKENS = 500
 # ── Pydantic schemas ────────────────────────────────────────────────
 
 class DebateVoiceSettings(BaseModel):
+    tts_provider: str = Field(default="cartesia", description="TTS provider: 'cartesia' or 'openai'")
     api_key: str = Field(default="", description="OpenAI TTS API key")
-    api_base: str = Field(default="https://api.openai.com/v1", description="TTS API base URL")
-    model: str = Field(default="gpt-4o-mini-tts", description="TTS model ID")
+    cartesia_api_key: str = Field(default="", description="Cartesia API key")
+    api_base: str = Field(default="https://api.openai.com/v1", description="OpenAI TTS API base URL")
+    model: str = Field(default="", description="TTS model ID (leave empty for provider default)")
     speed: float = Field(default=1.0, ge=0.25, le=4.0, description="TTS speed multiplier")
     voice_map: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_VOICE_MAP))
+    language: str = Field(default="sv", description="Cartesia language code (e.g. 'sv' for Swedish)")
     language_instructions: dict[str, str] = Field(
         default_factory=dict,
         description="Per-modell språk/accent-instruktioner. Nyckel = modellnamn (t.ex. 'Grok'), värde = instruktion. '__default__' gäller alla utan egen.",
