@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OneSeek Debattarena — Mockup 1</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141f;
+    --surface-2: #1c1c2e;
+    --surface-3: #252540;
+    --border: #2a2a45;
+    --text: #e8e8f0;
+    --text-muted: #8888a0;
+    --accent: #6366f1;
+    --accent-glow: rgba(99, 102, 241, 0.15);
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --cyan: #06b6d4;
+    --purple: #a855f7;
+    --pink: #ec4899;
+    --radius: 12px;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ─── Header ─── */
+  .arena-header {
+    background: linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 32px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+  }
+
+  .arena-header-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .arena-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .arena-title h1 {
+    font-size: 20px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .arena-badge {
+    background: var(--accent-glow);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .arena-meta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .arena-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .arena-meta-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse-dot 2s infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ─── Topic Bar ─── */
+  .topic-bar {
+    max-width: 1200px;
+    margin: 24px auto 0;
+    padding: 0 32px;
+  }
+
+  .topic-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .topic-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--accent-glow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 20px;
+  }
+
+  .topic-text h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .topic-text p {
+    font-size: 14px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  /* ─── Round Navigation ─── */
+  .round-nav {
+    max-width: 1200px;
+    margin: 24px auto 0;
+    padding: 0 32px;
+  }
+
+  .round-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 4px;
+    border: 1px solid var(--border);
+  }
+
+  .round-tab {
+    flex: 1;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-family: var(--font);
+  }
+
+  .round-tab:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .round-tab.active {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+  }
+
+  .round-tab.completed {
+    color: var(--green);
+  }
+
+  .round-tab .tab-icon {
+    font-size: 14px;
+  }
+
+  .round-tab .tab-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ─── Progress Timeline ─── */
+  .progress-bar {
+    max-width: 1200px;
+    margin: 16px auto 0;
+    padding: 0 32px;
+  }
+
+  .progress-track {
+    height: 3px;
+    background: var(--surface-2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--cyan));
+    border-radius: 2px;
+    transition: width 0.5s ease;
+    width: 50%;
+  }
+
+  /* ─── Participants Grid ─── */
+  .participants-section {
+    max-width: 1200px;
+    margin: 24px auto 0;
+    padding: 0 32px 48px;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .participant-order {
+    font-size: 12px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .participant-order svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .participants-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ─── Participant Card ─── */
+  .participant-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: all 0.3s;
+  }
+
+  .participant-card:hover {
+    border-color: rgba(99, 102, 241, 0.3);
+    box-shadow: 0 0 20px var(--accent-glow);
+  }
+
+  .participant-card.speaking {
+    border-color: var(--accent);
+    box-shadow: 0 0 30px var(--accent-glow);
+  }
+
+  .participant-card.speaking .card-header {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), transparent);
+  }
+
+  .card-header {
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .card-identity {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .model-logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .logo-grok { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; border: 1px solid #333; }
+  .logo-claude { background: linear-gradient(135deg, #d4a574, #cc8b65); color: #fff; }
+  .logo-gpt { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: #fff; }
+  .logo-gemini { background: linear-gradient(135deg, #4285f4, #6366f1); color: #fff; }
+  .logo-deepseek { background: linear-gradient(135deg, #0066ff, #0044cc); color: #fff; }
+  .logo-perplexity { background: linear-gradient(135deg, #20b2aa, #1a9a92); color: #fff; }
+  .logo-qwen { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; }
+  .logo-oneseek { background: linear-gradient(135deg, #6366f1, #06b6d4); color: #fff; }
+
+  .model-info h3 {
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .model-info .model-subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .card-badges {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .badge {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-weight: 500;
+  }
+
+  .badge-order {
+    background: var(--surface-3);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .badge-speaking {
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--accent);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    animation: pulse-badge 1.5s infinite;
+  }
+
+  .badge-done {
+    background: rgba(34, 197, 94, 0.1);
+    color: var(--green);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+  }
+
+  .badge-waiting {
+    background: var(--surface-3);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  @keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  .badge-words {
+    background: var(--surface-3);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .badge-latency {
+    background: var(--surface-3);
+    color: var(--cyan);
+    border: 1px solid rgba(6, 182, 212, 0.2);
+  }
+
+  /* ─── Response Area ─── */
+  .card-response {
+    padding: 0 20px 16px;
+  }
+
+  .response-text {
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text);
+    white-space: pre-wrap;
+  }
+
+  .response-text.streaming::after {
+    content: '|';
+    animation: blink 0.8s infinite;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .response-placeholder {
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-style: italic;
+  }
+
+  .response-placeholder .dots {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 8px;
+  }
+
+  .response-placeholder .dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    animation: dot-bounce 1.4s infinite ease-in-out;
+  }
+
+  .response-placeholder .dot:nth-child(2) { animation-delay: 0.2s; }
+  .response-placeholder .dot:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes dot-bounce {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
+    40% { transform: scale(1); opacity: 1; }
+  }
+
+  /* ─── Card Footer ─── */
+  .card-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .card-footer-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .card-footer-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .expand-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: all 0.2s;
+  }
+
+  .expand-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* ─── Typing Indicator ─── */
+  .typing-wave {
+    display: flex;
+    gap: 3px;
+    align-items: flex-end;
+    height: 16px;
+  }
+
+  .typing-wave span {
+    width: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    animation: wave 1.2s infinite ease-in-out;
+  }
+
+  .typing-wave span:nth-child(1) { height: 8px; animation-delay: 0s; }
+  .typing-wave span:nth-child(2) { height: 12px; animation-delay: 0.15s; }
+  .typing-wave span:nth-child(3) { height: 16px; animation-delay: 0.3s; }
+  .typing-wave span:nth-child(4) { height: 12px; animation-delay: 0.45s; }
+  .typing-wave span:nth-child(5) { height: 8px; animation-delay: 0.6s; }
+
+  @keyframes wave {
+    0%, 100% { transform: scaleY(0.5); }
+    50% { transform: scaleY(1); }
+  }
+
+  /* ─── Connection lines ─── */
+  .connection-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 0;
+  }
+
+  .connection-arrow {
+    width: 2px;
+    height: 20px;
+    background: linear-gradient(180deg, var(--accent), transparent);
+    position: relative;
+  }
+
+  .connection-arrow::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid var(--accent);
+  }
+</style>
+</head>
+<body>
+
+<!-- ─── Arena Header ─── -->
+<header class="arena-header">
+  <div class="arena-header-inner">
+    <div class="arena-title">
+      <h1>Debattarena</h1>
+      <span class="arena-badge">Live</span>
+    </div>
+    <div class="arena-meta">
+      <div class="arena-meta-item">
+        <div class="arena-meta-dot"></div>
+        <span>8 deltagare</span>
+      </div>
+      <div class="arena-meta-item">
+        <span>Runda 2 av 4</span>
+      </div>
+      <div class="arena-meta-item">
+        <span>3:42 forlopp</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ─── Topic ─── -->
+<div class="topic-bar">
+  <div class="topic-card">
+    <div class="topic-icon">💬</div>
+    <div class="topic-text">
+      <h2>Borde Sverige satsa mer pa karnkraft eller fornybar energi?</h2>
+      <p>8 AI-modeller debatterar. Varje deltagare bygger pa foregaende argument i slumpmassig ordning.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Round Navigation ─── -->
+<div class="round-nav">
+  <div class="round-tabs">
+    <button class="round-tab completed" onclick="switchRound(1)">
+      <span class="tab-icon">&#10003;</span>
+      <span class="tab-label">Runda 1 — Intro</span>
+    </button>
+    <button class="round-tab active" onclick="switchRound(2)">
+      <span class="tab-icon">&#9654;</span>
+      <span class="tab-label">Runda 2 — Argument</span>
+    </button>
+    <button class="round-tab" onclick="switchRound(3)">
+      <span class="tab-icon">&#9679;</span>
+      <span class="tab-label">Runda 3 — Fordjupning</span>
+    </button>
+    <button class="round-tab" onclick="switchRound(4)">
+      <span class="tab-icon">&#9733;</span>
+      <span class="tab-label">Runda 4 — Rostning</span>
+    </button>
+  </div>
+</div>
+
+<!-- ─── Progress ─── -->
+<div class="progress-bar">
+  <div class="progress-track">
+    <div class="progress-fill" id="progressFill"></div>
+  </div>
+</div>
+
+<!-- ─── Participants ─── -->
+<section class="participants-section">
+  <div class="section-header">
+    <span class="section-title">Runda 2 — Deltagare i slumpmassig ordning</span>
+    <span class="participant-order">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+      Ny ordning varje runda
+    </span>
+  </div>
+
+  <div class="participants-grid">
+
+    <!-- Participant 1: Claude (done) -->
+    <div class="participant-card">
+      <div class="card-header">
+        <div class="card-identity">
+          <div class="model-logo logo-claude">C</div>
+          <div class="model-info">
+            <h3>Claude</h3>
+            <div class="model-subtitle">Anthropic</div>
+          </div>
+        </div>
+        <div class="card-badges">
+          <span class="badge badge-order">#1</span>
+          <span class="badge badge-done">&#10003; Klar</span>
+          <span class="badge badge-words">487 ord</span>
+          <span class="badge badge-latency">2.3s</span>
+        </div>
+      </div>
+      <div class="card-response">
+        <div class="response-text">Jag vill bygga vidare pa Groks poang om energisakerhet. Karnkraft erbjuder en unik fordel som ingen fornybar kalla kan matcha: planerbar basenergi dygnet runt, oberoende av vader. Sveriges befintliga karnkraftverk levererar cirka 30% av landets el, och den senaste forskningen fran KTH visar att SMR-teknologi (Small Modular Reactors) kan minska byggtider med 40%.
+
+Dock maste vi vara arliga med utmaningarna: slutforvarsfragor, hogt kapitalbelopp och den politiska ossakerheten som gort att investerare tvekar. Min slutsats ar att bada behoves — men i olika roller.</div>
+      </div>
+      <div class="card-footer">
+        <div class="card-footer-left">
+          <span>Svarstid: 2.3s</span>
+          <span>~1,200 tokens</span>
+        </div>
+        <div class="card-footer-right">
+          <button class="expand-btn">Visa hela svaret</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="connection-line">
+      <div class="connection-arrow"></div>
+    </div>
+
+    <!-- Participant 2: Grok (done) -->
+    <div class="participant-card">
+      <div class="card-header">
+        <div class="card-identity">
+          <div class="model-logo logo-grok">G</div>
+          <div class="model-info">
+            <h3>Grok</h3>
+            <div class="model-subtitle">xAI</div>
+          </div>
+        </div>
+        <div class="card-badges">
+          <span class="badge badge-order">#2</span>
+          <span class="badge badge-done">&#10003; Klar</span>
+          <span class="badge badge-words">412 ord</span>
+          <span class="badge badge-latency">1.8s</span>
+        </div>
+      </div>
+      <div class="card-response">
+        <div class="response-text">Bra poanger fran Claude, men jag vill utmana pastaendet att karnkraft ar den enda losningen for basenergi. Batteriteknologin gor enorma framsteg — Teslas Megapack och liknande losningar kan redan idag lagra sol- och vindenergi for att leverera under natten. I Australien har vi sett hur batterier ersatter gaskraftverk.
+
+Det verkliga problemet ar tid: att bygga ny karnkraft tar 10-15 ar. Klimatkrisen kraver snabbare losningar. Vindkraft till havs kan byggas pa 3-5 ar och leverera gigawatt av kapacitet.</div>
+      </div>
+      <div class="card-footer">
+        <div class="card-footer-left">
+          <span>Svarstid: 1.8s</span>
+          <span>~980 tokens</span>
+        </div>
+        <div class="card-footer-right">
+          <button class="expand-btn">Visa hela svaret</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="connection-line">
+      <div class="connection-arrow"></div>
+    </div>
+
+    <!-- Participant 3: Gemini (done) -->
+    <div class="participant-card">
+      <div class="card-header">
+        <div class="card-identity">
+          <div class="model-logo logo-gemini">Ge</div>
+          <div class="model-info">
+            <h3>Gemini</h3>
+            <div class="model-subtitle">Google</div>
+          </div>
+        </div>
+        <div class="card-badges">
+          <span class="badge badge-order">#3</span>
+          <span class="badge badge-done">&#10003; Klar</span>
+          <span class="badge badge-words">523 ord</span>
+          <span class="badge badge-latency">2.7s</span>
+        </div>
+      </div>
+      <div class="card-response">
+        <div class="response-text">Jag ser att Claude och Grok presenterar en falsk dikotomi. Fragan ar inte "karnkraft ELLER fornybart" — det ar "hur optimerar vi energimixen?" Googles DeepMind har visat att AI-optimerade energinat kan minska behovet av reservkapacitet med 30%.
+
+Min data visar att Sverige har unika forutsattningar: vattenkraft som redan ger flexibel basenergi, vindpotential i Ostersjon, och geologiskt stabil berggrund for karnkraft. Alla tre behovs i symbios.</div>
+      </div>
+      <div class="card-footer">
+        <div class="card-footer-left">
+          <span>Svarstid: 2.7s</span>
+          <span>~1,350 tokens</span>
+        </div>
+        <div class="card-footer-right">
+          <button class="expand-btn">Visa hela svaret</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="connection-line">
+      <div class="connection-arrow"></div>
+    </div>
+
+    <!-- Participant 4: OneSeek (speaking) -->
+    <div class="participant-card speaking">
+      <div class="card-header">
+        <div class="card-identity">
+          <div class="model-logo logo-oneseek">OS</div>
+          <div class="model-info">
+            <h3>OneSeek</h3>
+            <div class="model-subtitle">Grundad svensk AI-agent med realtidsverktyg</div>
+          </div>
+        </div>
+        <div class="card-badges">
+          <span class="badge badge-order">#4</span>
+          <span class="badge badge-speaking">&#9679; Talar...</span>
+          <div class="typing-wave">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+      <div class="card-response">
+        <div class="response-text streaming">Jag har just sokt igenom aktuella kallor via Tavily och kan bekrafta flera pastaenden men ocksa korrigera nagra. Enligt Energimyndighetens rapport fran januari 2026 star karnkraft for 29.8% av Sveriges elproduktion, inte 30% som Claude namner — en liten men viktig skillnad.
+
+Grok har ratt om byggtider: Hinkley Point C i Storbritannien ar nu 7 ar forsenat. Men SMR-projekt i Kanada visar lovande tidslinjer pa 5-6 ar.
+
+Mitt unika bidrag: Tavily-sokning visar att Vattenfall just annonserade en ny</div>
+      </div>
+      <div class="card-footer">
+        <div class="card-footer-left">
+          <span>Stroemmar live...</span>
+          <span>~650 tokens hittills</span>
+        </div>
+        <div class="card-footer-right">
+          <span style="color: var(--cyan); font-size: 11px;">P4 subagent aktiv: 4/6 mini-agenter klara</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="connection-line">
+      <div class="connection-arrow"></div>
+    </div>
+
+    <!-- Participant 5: DeepSeek (waiting) -->
+    <div class="participant-card">
+      <div class="card-header">
+        <div class="card-identity">
+          <div class="model-logo logo-deepseek">DS</div>
+          <div class="model-info">
+            <h3>DeepSeek</h3>
+            <div class="model-subtitle">DeepSeek</div>
+          </div>
+        </div>
+        <div class="card-badges">
+          <span class="badge badge-order">#5</span>
+          <span class="badge badge-waiting">Vantar...</span>
+        </div>
+      </div>
+      <div class="card-response">
+        <div class="response-placeholder">
+          Vantar pa sin tur
+          <div class="dots">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="connection-line">
+      <div class="connection-arrow"></div>
+    </div>
+
+    <!-- Participant 6: Perplexity (waiting) -->
+    <div class="participant-card">
+      <div class="card-header">
+        <div class="card-identity">
+          <div class="model-logo logo-perplexity">Px</div>
+          <div class="model-info">
+            <h3>Perplexity</h3>
+            <div class="model-subtitle">Perplexity AI</div>
+          </div>
+        </div>
+        <div class="card-badges">
+          <span class="badge badge-order">#6</span>
+          <span class="badge badge-waiting">Vantar...</span>
+        </div>
+      </div>
+      <div class="card-response">
+        <div class="response-placeholder">
+          Vantar pa sin tur
+          <div class="dots">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="connection-line">
+      <div class="connection-arrow"></div>
+    </div>
+
+    <!-- Participant 7: ChatGPT (waiting) -->
+    <div class="participant-card">
+      <div class="card-header">
+        <div class="card-identity">
+          <div class="model-logo logo-gpt">GP</div>
+          <div class="model-info">
+            <h3>ChatGPT</h3>
+            <div class="model-subtitle">OpenAI</div>
+          </div>
+        </div>
+        <div class="card-badges">
+          <span class="badge badge-order">#7</span>
+          <span class="badge badge-waiting">Vantar...</span>
+        </div>
+      </div>
+      <div class="card-response">
+        <div class="response-placeholder">
+          Vantar pa sin tur
+          <div class="dots">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="connection-line">
+      <div class="connection-arrow"></div>
+    </div>
+
+    <!-- Participant 8: Qwen (waiting) -->
+    <div class="participant-card">
+      <div class="card-header">
+        <div class="card-identity">
+          <div class="model-logo logo-qwen">Qw</div>
+          <div class="model-info">
+            <h3>Qwen</h3>
+            <div class="model-subtitle">Alibaba / Qwen</div>
+          </div>
+        </div>
+        <div class="card-badges">
+          <span class="badge badge-order">#8</span>
+          <span class="badge badge-waiting">Vantar...</span>
+        </div>
+      </div>
+      <div class="card-response">
+        <div class="response-placeholder">
+          Vantar pa sin tur
+          <div class="dots">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<script>
+function switchRound(round) {
+  document.querySelectorAll('.round-tab').forEach((tab, i) => {
+    tab.classList.remove('active');
+    if (i + 1 < round) tab.classList.add('completed');
+    if (i + 1 === round) tab.classList.add('active');
+  });
+  document.getElementById('progressFill').style.width = ((round - 1) / 3 * 100) + '%';
+}
+</script>
+</body>
+</html>

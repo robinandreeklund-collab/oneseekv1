@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OneSeek Debatt — Rostning & Resultat — Mockup 2</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141f;
+    --surface-2: #1c1c2e;
+    --surface-3: #252540;
+    --border: #2a2a45;
+    --text: #e8e8f0;
+    --text-muted: #8888a0;
+    --accent: #6366f1;
+    --accent-glow: rgba(99, 102, 241, 0.15);
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --cyan: #06b6d4;
+    --purple: #a855f7;
+    --pink: #ec4899;
+    --gold: #fbbf24;
+    --silver: #94a3b8;
+    --bronze: #cd7f32;
+    --radius: 12px;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 32px;
+    text-align: center;
+  }
+
+  .header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--gold), var(--amber));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .header p {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 32px;
+  }
+
+  /* ─── Winner Podium ─── */
+  .winner-section {
+    margin-bottom: 40px;
+  }
+
+  .podium {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 24px;
+  }
+
+  .podium-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .podium-card {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    text-align: center;
+    width: 200px;
+    position: relative;
+    transition: all 0.3s;
+  }
+
+  .podium-card.first {
+    border-color: var(--gold);
+    box-shadow: 0 0 40px rgba(251, 191, 36, 0.15);
+    transform: scale(1.05);
+  }
+
+  .podium-card.second {
+    border-color: var(--silver);
+    box-shadow: 0 0 20px rgba(148, 163, 184, 0.1);
+  }
+
+  .podium-card.third {
+    border-color: var(--bronze);
+    box-shadow: 0 0 20px rgba(205, 127, 50, 0.1);
+  }
+
+  .crown {
+    position: absolute;
+    top: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 28px;
+    filter: drop-shadow(0 2px 8px rgba(251, 191, 36, 0.4));
+  }
+
+  .podium-logo {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 20px;
+    margin: 0 auto 8px;
+  }
+
+  .podium-name {
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .podium-votes {
+    font-size: 28px;
+    font-weight: 800;
+    margin: 8px 0 4px;
+  }
+
+  .podium-votes-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .podium-bar {
+    height: 6px;
+    background: var(--surface-3);
+    border-radius: 3px;
+    margin-top: 12px;
+    overflow: hidden;
+  }
+
+  .podium-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 1s ease;
+  }
+
+  .podium-bar-fill.gold { background: linear-gradient(90deg, var(--gold), var(--amber)); }
+  .podium-bar-fill.silver { background: linear-gradient(90deg, var(--silver), #64748b); }
+  .podium-bar-fill.bronze { background: linear-gradient(90deg, var(--bronze), #a0522d); }
+
+  .podium-base {
+    width: 100%;
+    border-radius: 8px 8px 0 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 24px;
+    color: rgba(255,255,255,0.9);
+  }
+
+  .base-first { background: linear-gradient(180deg, var(--gold), #b8860b); height: 80px; }
+  .base-second { background: linear-gradient(180deg, var(--silver), #475569); height: 56px; }
+  .base-third { background: linear-gradient(180deg, var(--bronze), #8b4513); height: 40px; }
+
+  /* ─── Vote Bubbles ─── */
+  .votes-section {
+    margin-bottom: 40px;
+  }
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-title span { font-size: 20px; }
+
+  .vote-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+  }
+
+  .vote-bubble {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    transition: all 0.2s;
+  }
+
+  .vote-bubble:hover {
+    border-color: rgba(99, 102, 241, 0.3);
+  }
+
+  .vote-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .vote-from {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .vote-logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 12px;
+  }
+
+  .vote-from-name {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .vote-arrow {
+    color: var(--text-muted);
+    font-size: 18px;
+  }
+
+  .vote-to {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .vote-to-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .vote-motivation {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+
+  .vote-bullets {
+    list-style: none;
+    padding: 0;
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .vote-bullets li {
+    padding: 4px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .vote-bullets li::before {
+    content: '';
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-top: 6px;
+    flex-shrink: 0;
+  }
+
+  /* ─── Results Table ─── */
+  .results-section {
+    margin-bottom: 40px;
+  }
+
+  .results-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 4px;
+  }
+
+  .results-table th {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    text-align: left;
+    padding: 8px 16px;
+  }
+
+  .results-table td {
+    background: var(--surface);
+    padding: 12px 16px;
+    font-size: 13px;
+  }
+
+  .results-table tr td:first-child { border-radius: 8px 0 0 8px; }
+  .results-table tr td:last-child { border-radius: 0 8px 8px 0; }
+
+  .results-table .rank-cell {
+    font-weight: 800;
+    font-size: 16px;
+    width: 50px;
+    text-align: center;
+  }
+
+  .rank-1 { color: var(--gold); }
+  .rank-2 { color: var(--silver); }
+  .rank-3 { color: var(--bronze); }
+
+  .model-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .table-logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  .model-cell-name {
+    font-weight: 600;
+  }
+
+  .votes-cell {
+    font-weight: 700;
+    font-size: 16px;
+  }
+
+  .words-cell {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tiebreaker-cell {
+    font-size: 11px;
+    color: var(--amber);
+  }
+
+  .winner-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(251, 191, 36, 0.1);
+    color: var(--gold);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(251, 191, 36, 0.2);
+  }
+
+  /* ─── Stats Summary ─── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 40px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 28px;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .stat-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Logo colors */
+  .logo-grok { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; border: 1px solid #333; }
+  .logo-claude { background: linear-gradient(135deg, #d4a574, #cc8b65); color: #fff; }
+  .logo-gpt { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: #fff; }
+  .logo-gemini { background: linear-gradient(135deg, #4285f4, #6366f1); color: #fff; }
+  .logo-deepseek { background: linear-gradient(135deg, #0066ff, #0044cc); color: #fff; }
+  .logo-perplexity { background: linear-gradient(135deg, #20b2aa, #1a9a92); color: #fff; }
+  .logo-qwen { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; }
+  .logo-oneseek { background: linear-gradient(135deg, #6366f1, #06b6d4); color: #fff; }
+
+  /* Confetti animation */
+  @keyframes fall {
+    0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+  }
+
+  .confetti {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1000;
+    overflow: hidden;
+  }
+
+  .confetti-piece {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    animation: fall linear forwards;
+    opacity: 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- Confetti -->
+<div class="confetti" id="confetti"></div>
+
+<header class="header">
+  <h1>Runda 4 — Rostning & Resultat</h1>
+  <p>Alla 8 deltagare har rostat. Sjalvroster filtrerade automatiskt.</p>
+</header>
+
+<div class="main">
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">4</div>
+      <div class="stat-label">Rundor genomforda</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">8</div>
+      <div class="stat-label">Deltagare</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">3,847</div>
+      <div class="stat-label">Totalt antal ord</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">12.4s</div>
+      <div class="stat-label">Total svarstid</div>
+    </div>
+  </div>
+
+  <!-- Winner Podium -->
+  <div class="winner-section">
+    <div class="section-title">
+      <span>&#127942;</span> Resultat
+    </div>
+    <div class="podium">
+      <!-- 2nd Place -->
+      <div class="podium-slot">
+        <div class="podium-card second">
+          <div class="podium-logo logo-claude">C</div>
+          <div class="podium-name">Claude</div>
+          <div class="podium-votes">3</div>
+          <div class="podium-votes-label">roster</div>
+          <div class="podium-bar"><div class="podium-bar-fill silver" style="width: 75%"></div></div>
+        </div>
+        <div class="podium-base base-second">2</div>
+      </div>
+      <!-- 1st Place -->
+      <div class="podium-slot">
+        <div class="podium-card first">
+          <div class="crown">&#128081;</div>
+          <div class="podium-logo logo-oneseek" style="margin-top: 8px;">OS</div>
+          <div class="podium-name">OneSeek</div>
+          <div class="podium-votes">4</div>
+          <div class="podium-votes-label">roster</div>
+          <div class="podium-bar"><div class="podium-bar-fill gold" style="width: 100%"></div></div>
+        </div>
+        <div class="podium-base base-first">1</div>
+      </div>
+      <!-- 3rd Place -->
+      <div class="podium-slot">
+        <div class="podium-card third">
+          <div class="podium-logo logo-gemini">Ge</div>
+          <div class="podium-name">Gemini</div>
+          <div class="podium-votes">2</div>
+          <div class="podium-votes-label">roster</div>
+          <div class="podium-bar"><div class="podium-bar-fill bronze" style="width: 50%"></div></div>
+        </div>
+        <div class="podium-base base-third">3</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vote Bubbles -->
+  <div class="votes-section">
+    <div class="section-title">
+      <span>&#128499;</span> Individuella roster
+    </div>
+    <div class="vote-grid">
+
+      <div class="vote-bubble">
+        <div class="vote-header">
+          <div class="vote-from">
+            <div class="vote-logo logo-grok">G</div>
+            <span class="vote-from-name">Grok</span>
+          </div>
+          <span class="vote-arrow">&#10141;</span>
+          <div class="vote-to">
+            <div class="vote-logo logo-oneseek">OS</div>
+            <span class="vote-to-name">OneSeek</span>
+          </div>
+        </div>
+        <div class="vote-motivation">"Mest faktabaserat och grundat i verifierade kallor"</div>
+        <ul class="vote-bullets">
+          <li>Enda deltagaren med realtidssokning via Tavily</li>
+          <li>Korrigerade felaktiga pastaenden med kallhanvisningar</li>
+          <li>Balanserad argumentation med svensk kontext</li>
+        </ul>
+      </div>
+
+      <div class="vote-bubble">
+        <div class="vote-header">
+          <div class="vote-from">
+            <div class="vote-logo logo-claude">C</div>
+            <span class="vote-from-name">Claude</span>
+          </div>
+          <span class="vote-arrow">&#10141;</span>
+          <div class="vote-to">
+            <div class="vote-logo logo-oneseek">OS</div>
+            <span class="vote-to-name">OneSeek</span>
+          </div>
+        </div>
+        <div class="vote-motivation">"Starkast koppling mellan data och slutsatser"</div>
+        <ul class="vote-bullets">
+          <li>Anvande aktuella kallor fran 2026</li>
+          <li>Integrerade och utmanade andra deltagares argument</li>
+          <li>Tydlig struktur med faktagrundade pastaenden</li>
+        </ul>
+      </div>
+
+      <div class="vote-bubble">
+        <div class="vote-header">
+          <div class="vote-from">
+            <div class="vote-logo logo-gemini">Ge</div>
+            <span class="vote-from-name">Gemini</span>
+          </div>
+          <span class="vote-arrow">&#10141;</span>
+          <div class="vote-to">
+            <div class="vote-logo logo-claude">C</div>
+            <span class="vote-to-name">Claude</span>
+          </div>
+        </div>
+        <div class="vote-motivation">"Mest nyanserad analys med bada perspektiv"</div>
+        <ul class="vote-bullets">
+          <li>Erkande bade styrkor och svagheter med karnkraft</li>
+          <li>Logisk progression fran problem till losning</li>
+          <li>Inga overdrivan eller ogrundade pastaenden</li>
+        </ul>
+      </div>
+
+      <div class="vote-bubble">
+        <div class="vote-header">
+          <div class="vote-from">
+            <div class="vote-logo logo-gpt">GP</div>
+            <span class="vote-from-name">ChatGPT</span>
+          </div>
+          <span class="vote-arrow">&#10141;</span>
+          <div class="vote-to">
+            <div class="vote-logo logo-claude">C</div>
+            <span class="vote-to-name">Claude</span>
+          </div>
+        </div>
+        <div class="vote-motivation">"Bast pa att syntetisera och bygga vidare"</div>
+        <ul class="vote-bullets">
+          <li>Refererade till specifika studier och rapporter</li>
+          <li>Balanserade tekniska och politiska aspekter</li>
+          <li>Tydlig slutsats med handlingsbara forslag</li>
+        </ul>
+      </div>
+
+      <div class="vote-bubble">
+        <div class="vote-header">
+          <div class="vote-from">
+            <div class="vote-logo logo-deepseek">DS</div>
+            <span class="vote-from-name">DeepSeek</span>
+          </div>
+          <span class="vote-arrow">&#10141;</span>
+          <div class="vote-to">
+            <div class="vote-logo logo-oneseek">OS</div>
+            <span class="vote-to-name">OneSeek</span>
+          </div>
+        </div>
+        <div class="vote-motivation">"Unik fordel med realtidsfaktakontroll"</div>
+        <ul class="vote-bullets">
+          <li>Verifierade och korrigerade andra deltagares data</li>
+          <li>Anvande P4-subagent for djupare analys</li>
+          <li>Svensk kontext som var direkt relevant</li>
+        </ul>
+      </div>
+
+      <div class="vote-bubble">
+        <div class="vote-header">
+          <div class="vote-from">
+            <div class="vote-logo logo-perplexity">Px</div>
+            <span class="vote-from-name">Perplexity</span>
+          </div>
+          <span class="vote-arrow">&#10141;</span>
+          <div class="vote-to">
+            <div class="vote-logo logo-gemini">Ge</div>
+            <span class="vote-to-name">Gemini</span>
+          </div>
+        </div>
+        <div class="vote-motivation">"Bast systemtankande — sag hela bilden"</div>
+        <ul class="vote-bullets">
+          <li>Undvek falsk dikotomi mellan energikallor</li>
+          <li>Integrerade AI-optimering av energinat</li>
+          <li>Praktisk och genomforbar slutsats</li>
+        </ul>
+      </div>
+
+      <div class="vote-bubble">
+        <div class="vote-header">
+          <div class="vote-from">
+            <div class="vote-logo logo-qwen">Qw</div>
+            <span class="vote-from-name">Qwen</span>
+          </div>
+          <span class="vote-arrow">&#10141;</span>
+          <div class="vote-to">
+            <div class="vote-logo logo-oneseek">OS</div>
+            <span class="vote-to-name">OneSeek</span>
+          </div>
+        </div>
+        <div class="vote-motivation">"Mest transparent och verifierbar argumentation"</div>
+        <ul class="vote-bullets">
+          <li>Alla pastaenden backades av sokresultat</li>
+          <li>Oppen med ossakerheter och begransningar</li>
+          <li>Starkast svenska perspektivet</li>
+        </ul>
+      </div>
+
+      <div class="vote-bubble">
+        <div class="vote-header">
+          <div class="vote-from">
+            <div class="vote-logo logo-oneseek">OS</div>
+            <span class="vote-from-name">OneSeek</span>
+          </div>
+          <span class="vote-arrow">&#10141;</span>
+          <div class="vote-to">
+            <div class="vote-logo logo-claude">C</div>
+            <span class="vote-to-name">Claude</span>
+          </div>
+        </div>
+        <div class="vote-motivation">"Mest nyanserad och valbalanserad argumentation"</div>
+        <ul class="vote-bullets">
+          <li>SMR-analysen var valkalibrerad mot aktuell data</li>
+          <li>Erkande utmaningar utan att forlora fokus</li>
+          <li>Kompletterande perspektiv till min realtidsdata</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Full Results Table -->
+  <div class="results-section">
+    <div class="section-title">
+      <span>&#128202;</span> Fullstandig ranking
+    </div>
+    <table class="results-table">
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Deltagare</th>
+          <th>Roster</th>
+          <th>Totalt ord</th>
+          <th>Tiebreaker</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rank-cell rank-1">1</td>
+          <td><div class="model-cell"><div class="table-logo logo-oneseek">OS</div><span class="model-cell-name">OneSeek</span></div></td>
+          <td class="votes-cell">4</td>
+          <td class="words-cell">1,247</td>
+          <td class="tiebreaker-cell">—</td>
+          <td><span class="winner-badge">&#128081; Vinnare</span></td>
+        </tr>
+        <tr>
+          <td class="rank-cell rank-2">2</td>
+          <td><div class="model-cell"><div class="table-logo logo-claude">C</div><span class="model-cell-name">Claude</span></div></td>
+          <td class="votes-cell">3</td>
+          <td class="words-cell">1,098</td>
+          <td class="tiebreaker-cell">—</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="rank-cell rank-3">3</td>
+          <td><div class="model-cell"><div class="table-logo logo-gemini">Ge</div><span class="model-cell-name">Gemini</span></div></td>
+          <td class="votes-cell">2</td>
+          <td class="words-cell">987</td>
+          <td class="tiebreaker-cell">—</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="rank-cell">4</td>
+          <td><div class="model-cell"><div class="table-logo logo-grok">G</div><span class="model-cell-name">Grok</span></div></td>
+          <td class="votes-cell">0</td>
+          <td class="words-cell">856</td>
+          <td class="tiebreaker-cell">—</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="rank-cell">4</td>
+          <td><div class="model-cell"><div class="table-logo logo-gpt">GP</div><span class="model-cell-name">ChatGPT</span></div></td>
+          <td class="votes-cell">0</td>
+          <td class="words-cell">742</td>
+          <td class="tiebreaker-cell" style="color: var(--amber);">856 &gt; 742 ord</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="rank-cell">6</td>
+          <td><div class="model-cell"><div class="table-logo logo-deepseek">DS</div><span class="model-cell-name">DeepSeek</span></div></td>
+          <td class="votes-cell">0</td>
+          <td class="words-cell">634</td>
+          <td class="tiebreaker-cell">—</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="rank-cell">7</td>
+          <td><div class="model-cell"><div class="table-logo logo-perplexity">Px</div><span class="model-cell-name">Perplexity</span></div></td>
+          <td class="votes-cell">0</td>
+          <td class="words-cell">521</td>
+          <td class="tiebreaker-cell">—</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="rank-cell">8</td>
+          <td><div class="model-cell"><div class="table-logo logo-qwen">Qw</div><span class="model-cell-name">Qwen</span></div></td>
+          <td class="votes-cell">0</td>
+          <td class="words-cell">462</td>
+          <td class="tiebreaker-cell">—</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+// Confetti animation
+function createConfetti() {
+  const container = document.getElementById('confetti');
+  const colors = ['#fbbf24', '#6366f1', '#22c55e', '#06b6d4', '#ec4899', '#a855f7'];
+
+  for (let i = 0; i < 80; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.style.left = Math.random() * 100 + '%';
+    piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.width = (Math.random() * 8 + 4) + 'px';
+    piece.style.height = (Math.random() * 8 + 4) + 'px';
+    piece.style.borderRadius = Math.random() > 0.5 ? '50%' : '0';
+    piece.style.animationDuration = (Math.random() * 3 + 2) + 's';
+    piece.style.animationDelay = (Math.random() * 2) + 's';
+    piece.style.opacity = '1';
+    container.appendChild(piece);
+  }
+
+  setTimeout(() => container.innerHTML = '', 6000);
+}
+
+window.addEventListener('load', () => {
+  setTimeout(createConfetti, 500);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>OneSeek Debatt — Mobilvy — Mockup 5</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141f;
+    --surface-2: #1c1c2e;
+    --surface-3: #252540;
+    --border: #2a2a45;
+    --text: #e8e8f0;
+    --text-muted: #8888a0;
+    --accent: #6366f1;
+    --accent-glow: rgba(99, 102, 241, 0.15);
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --cyan: #06b6d4;
+    --purple: #a855f7;
+    --pink: #ec4899;
+    --gold: #fbbf24;
+    --radius: 16px;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    max-width: 430px;
+    margin: 0 auto;
+    overflow-x: hidden;
+    position: relative;
+  }
+
+  /* ─── Mobile Status Bar (mock) ─── */
+  .status-bar {
+    height: 44px;
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .status-bar .time { color: var(--text); }
+  .status-bar .icons { display: flex; gap: 4px; color: var(--text); font-size: 11px; }
+
+  /* ─── App Header ─── */
+  .app-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .header-back {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--surface-3);
+    border: none;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+  }
+
+  .header-title-group {
+    text-align: center;
+    flex: 1;
+  }
+
+  .header-title-group h1 {
+    font-size: 16px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .header-subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .header-menu {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--surface-3);
+    border: none;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  /* ─── Round Pill Navigation ─── */
+  .round-pills {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding: 0 2px;
+  }
+
+  .round-pills::-webkit-scrollbar { display: none; }
+
+  .round-pill {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .round-pill.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+
+  .round-pill.done {
+    color: var(--green);
+    border-color: rgba(34, 197, 94, 0.3);
+  }
+
+  .round-pill .pill-icon { font-size: 10px; }
+
+  /* ─── Progress ─── */
+  .mobile-progress {
+    height: 2px;
+    background: var(--surface-3);
+    position: relative;
+    margin-top: 12px;
+    border-radius: 1px;
+    overflow: hidden;
+  }
+
+  .mobile-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--cyan));
+    width: 62%;
+    transition: width 0.5s;
+  }
+
+  /* ─── Swipe Container ─── */
+  .swipe-container {
+    position: relative;
+    overflow: hidden;
+    touch-action: pan-y;
+  }
+
+  .swipe-wrapper {
+    display: flex;
+    transition: transform 0.3s ease;
+  }
+
+  .swipe-slide {
+    min-width: 100%;
+    padding: 16px;
+  }
+
+  /* ─── Participant Avatars Strip ─── */
+  .avatars-strip {
+    display: flex;
+    gap: 6px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .avatars-strip::-webkit-scrollbar { display: none; }
+
+  .avatar-chip {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 48px;
+    cursor: pointer;
+    transition: transform 0.2s;
+  }
+
+  .avatar-chip:active { transform: scale(0.95); }
+
+  .avatar-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    border: 2px solid transparent;
+    transition: all 0.2s;
+  }
+
+  .avatar-chip.active .avatar-circle {
+    border-color: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+
+  .avatar-chip.speaking .avatar-circle {
+    border-color: var(--green);
+    box-shadow: 0 0 12px rgba(34, 197, 94, 0.2);
+  }
+
+  .avatar-chip .avatar-name {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-align: center;
+    max-width: 48px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .avatar-chip.active .avatar-name { color: var(--accent); font-weight: 600; }
+  .avatar-chip.speaking .avatar-name { color: var(--green); font-weight: 600; }
+
+  .avatar-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    position: absolute;
+    bottom: 14px;
+    right: -2px;
+    border: 2px solid var(--bg);
+  }
+
+  .dot-done { background: var(--green); }
+  .dot-speaking { background: var(--green); animation: pulse-glow 1.5s infinite; }
+  .dot-waiting { background: var(--surface-3); }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 4px rgba(34, 197, 94, 0.4); }
+    50% { box-shadow: 0 0 8px rgba(34, 197, 94, 0.8); }
+  }
+
+  /* ─── Chat Bubble Style ─── */
+  .debate-chat {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: calc(100vh - 260px);
+    padding-bottom: 120px;
+  }
+
+  .chat-bubble {
+    max-width: 88%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px 16px 16px 4px;
+    padding: 12px 16px;
+    position: relative;
+    animation: slide-up 0.3s ease;
+  }
+
+  .chat-bubble.self {
+    margin-left: auto;
+    border-radius: 16px 16px 4px 16px;
+    background: rgba(99, 102, 241, 0.1);
+    border-color: rgba(99, 102, 241, 0.2);
+  }
+
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .bubble-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .bubble-logo {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+
+  .bubble-name {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .bubble-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: auto;
+  }
+
+  .bubble-text {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .bubble-text.streaming::after {
+    content: '|';
+    animation: blink-cursor 0.8s infinite;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  @keyframes blink-cursor {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .bubble-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .bubble-footer .ref-link {
+    color: var(--cyan);
+    font-size: 10px;
+  }
+
+  /* ─── Typing Indicator ─── */
+  .typing-bubble {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px 16px 16px 4px;
+    padding: 12px 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 160px;
+  }
+
+  .typing-dots {
+    display: flex;
+    gap: 4px;
+  }
+
+  .typing-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    animation: typing-bounce 1.4s infinite;
+  }
+
+  .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes typing-bounce {
+    0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+    40% { transform: scale(1); opacity: 1; }
+  }
+
+  /* ─── Bottom Action Bar ─── */
+  .bottom-bar {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 430px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 12px 16px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    z-index: 100;
+    backdrop-filter: blur(12px);
+  }
+
+  .bottom-bar-inner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .live-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--green);
+    font-weight: 600;
+  }
+
+  .live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: live-pulse 1.5s infinite;
+  }
+
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--green); }
+    50% { opacity: 0.5; box-shadow: none; }
+  }
+
+  .bottom-info {
+    flex: 1;
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .bottom-action {
+    background: var(--accent);
+    border: none;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+  }
+
+  /* ─── Vote Overlay ─── */
+  .vote-overlay {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 430px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    padding: 24px 16px;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+    z-index: 200;
+    animation: slide-overlay 0.3s ease;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  .vote-overlay.show { display: block; }
+
+  @keyframes slide-overlay {
+    from { transform: translateX(-50%) translateY(100%); }
+    to { transform: translateX(-50%) translateY(0); }
+  }
+
+  .overlay-handle {
+    width: 36px;
+    height: 4px;
+    background: var(--surface-3);
+    border-radius: 2px;
+    margin: 0 auto 16px;
+  }
+
+  .overlay-title {
+    font-size: 18px;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 4px;
+  }
+
+  .overlay-subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+    text-align: center;
+    margin-bottom: 20px;
+  }
+
+  .vote-result-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: var(--surface-2);
+    border-radius: 12px;
+    margin-bottom: 8px;
+  }
+
+  .vote-rank {
+    font-size: 20px;
+    font-weight: 800;
+    min-width: 32px;
+    text-align: center;
+  }
+
+  .rank-gold { color: var(--gold); }
+  .rank-silver { color: var(--silver, #94a3b8); }
+  .rank-bronze { color: var(--bronze, #cd7f32); }
+
+  .vote-model-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .vote-model-info {
+    flex: 1;
+  }
+
+  .vote-model-name {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .vote-model-count {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .vote-bar-bg {
+    height: 6px;
+    background: var(--surface-3);
+    border-radius: 3px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+
+  .vote-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 1s ease;
+  }
+
+  .bar-gold { background: linear-gradient(90deg, var(--gold), var(--amber)); }
+  .bar-accent { background: linear-gradient(90deg, var(--accent), var(--cyan)); }
+
+  .winner-tag {
+    font-size: 10px;
+    background: rgba(251, 191, 36, 0.15);
+    color: var(--gold);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  /* ─── Swipe Hint ─── */
+  .swipe-hint {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    opacity: 0.6;
+  }
+
+  .swipe-hint .arrow { animation: swipe-arrow 2s infinite; }
+
+  @keyframes swipe-arrow {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(5px); }
+  }
+
+  /* Logo colors */
+  .logo-grok { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; border: 1px solid #333; }
+  .logo-claude { background: linear-gradient(135deg, #d4a574, #cc8b65); color: #fff; }
+  .logo-gpt { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: #fff; }
+  .logo-gemini { background: linear-gradient(135deg, #4285f4, #6366f1); color: #fff; }
+  .logo-deepseek { background: linear-gradient(135deg, #0066ff, #0044cc); color: #fff; }
+  .logo-perplexity { background: linear-gradient(135deg, #20b2aa, #1a9a92); color: #fff; }
+  .logo-qwen { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; }
+  .logo-oneseek { background: linear-gradient(135deg, #6366f1, #06b6d4); color: #fff; }
+</style>
+</head>
+<body>
+
+<!-- Status Bar -->
+<div class="status-bar">
+  <span class="time">14:32</span>
+  <span class="icons">&#9679;&#9679;&#9679; &#128267; 87%</span>
+</div>
+
+<!-- App Header -->
+<div class="app-header">
+  <div class="header-top">
+    <button class="header-back">&#8592;</button>
+    <div class="header-title-group">
+      <h1>Debattarena</h1>
+      <div class="header-subtitle">Karnkraft vs Fornybar Energi</div>
+    </div>
+    <button class="header-menu">&#8942;</button>
+  </div>
+
+  <div class="round-pills">
+    <div class="round-pill done" onclick="switchView('r1')">
+      <span class="pill-icon">&#10003;</span> Intro
+    </div>
+    <div class="round-pill active" onclick="switchView('r2')">
+      <span class="pill-icon">&#9654;</span> Argument
+    </div>
+    <div class="round-pill" onclick="switchView('r3')">
+      Fordjupning
+    </div>
+    <div class="round-pill" onclick="switchView('r4')">
+      Rostning
+    </div>
+    <div class="round-pill" onclick="toggleVoteOverlay()">
+      &#128202; Resultat
+    </div>
+  </div>
+
+  <div class="mobile-progress">
+    <div class="mobile-progress-fill"></div>
+  </div>
+</div>
+
+<!-- Participant Avatars -->
+<div class="avatars-strip">
+  <div class="avatar-chip" style="position: relative;">
+    <div class="avatar-circle logo-claude">C</div>
+    <div class="avatar-status-dot dot-done"></div>
+    <span class="avatar-name">Claude</span>
+  </div>
+  <div class="avatar-chip" style="position: relative;">
+    <div class="avatar-circle logo-grok">G</div>
+    <div class="avatar-status-dot dot-done"></div>
+    <span class="avatar-name">Grok</span>
+  </div>
+  <div class="avatar-chip" style="position: relative;">
+    <div class="avatar-circle logo-gemini">Ge</div>
+    <div class="avatar-status-dot dot-done"></div>
+    <span class="avatar-name">Gemini</span>
+  </div>
+  <div class="avatar-chip speaking" style="position: relative;">
+    <div class="avatar-circle logo-oneseek">OS</div>
+    <div class="avatar-status-dot dot-speaking"></div>
+    <span class="avatar-name">OneSeek</span>
+  </div>
+  <div class="avatar-chip" style="position: relative;">
+    <div class="avatar-circle logo-deepseek">DS</div>
+    <div class="avatar-status-dot dot-waiting"></div>
+    <span class="avatar-name">DeepSeek</span>
+  </div>
+  <div class="avatar-chip" style="position: relative;">
+    <div class="avatar-circle logo-perplexity">Px</div>
+    <div class="avatar-status-dot dot-waiting"></div>
+    <span class="avatar-name">Perplexity</span>
+  </div>
+  <div class="avatar-chip" style="position: relative;">
+    <div class="avatar-circle logo-gpt">GP</div>
+    <div class="avatar-status-dot dot-waiting"></div>
+    <span class="avatar-name">ChatGPT</span>
+  </div>
+  <div class="avatar-chip" style="position: relative;">
+    <div class="avatar-circle logo-qwen">Qw</div>
+    <div class="avatar-status-dot dot-waiting"></div>
+    <span class="avatar-name">Qwen</span>
+  </div>
+</div>
+
+<!-- Swipe Hint -->
+<div class="swipe-hint">
+  <span class="arrow">&#8592;</span> Svep for att byta runda <span class="arrow">&#8594;</span>
+</div>
+
+<!-- Chat View -->
+<div class="debate-chat">
+
+  <!-- Claude's argument -->
+  <div class="chat-bubble">
+    <div class="bubble-header">
+      <div class="bubble-logo logo-claude">C</div>
+      <span class="bubble-name">Claude</span>
+      <span class="bubble-meta">#1 i ordningen</span>
+    </div>
+    <div class="bubble-text">Jag vill bygga vidare pa Groks poang om energisakerhet. Karnkraft erbjuder en unik fordel: planerbar basenergi dygnet runt, oberoende av vader.
+
+Sveriges befintliga karnkraftverk levererar cirka 30% av landets el, och SMR-teknologi kan minska byggtider med 40%.
+
+Dock maste vi vara arliga med utmaningarna: slutforvarsfragor och hogt kapitalbelopp.</div>
+    <div class="bubble-footer">
+      <span>487 ord | 2.3s</span>
+      <span class="ref-link">Bygger pa: Grok (R1)</span>
+    </div>
+  </div>
+
+  <!-- Grok's response -->
+  <div class="chat-bubble">
+    <div class="bubble-header">
+      <div class="bubble-logo logo-grok">G</div>
+      <span class="bubble-name">Grok</span>
+      <span class="bubble-meta">#2</span>
+    </div>
+    <div class="bubble-text">Bra poanger, Claude! Men jag utmanar pastaendet att karnkraft ar enda losningen for basenergi.
+
+Batteriteknologin gor enorma framsteg — Teslas Megapack lagrar sol- och vindenergi for leverans under natten.
+
+Det verkliga problemet ar TID: karnkraft tar 10-15 ar. Klimatkrisen vanter inte. Havsvindkraft bygger pa 3-5 ar.</div>
+    <div class="bubble-footer">
+      <span>412 ord | 1.8s</span>
+      <span class="ref-link">Utmanar: Claude (R2 #1)</span>
+    </div>
+  </div>
+
+  <!-- Gemini's synthesis -->
+  <div class="chat-bubble">
+    <div class="bubble-header">
+      <div class="bubble-logo logo-gemini">Ge</div>
+      <span class="bubble-name">Gemini</span>
+      <span class="bubble-meta">#3</span>
+    </div>
+    <div class="bubble-text">Claude och Grok — ni presenterar en falsk dikotomi! Fragan ar inte "karnkraft ELLER fornybart" utan "hur optimerar vi mixen?"
+
+DeepMinds forskning visar att AI-optimerade energinat minskar reservkapacitet med 30%.
+
+Sverige har unika forutsattningar: vattenkraft, Osterjso-vind OCH stabil berggrund. Alla tre i symbios!</div>
+    <div class="bubble-footer">
+      <span>523 ord | 2.7s</span>
+      <span class="ref-link">Syntes: Claude + Grok</span>
+    </div>
+  </div>
+
+  <!-- OneSeek streaming -->
+  <div class="chat-bubble self">
+    <div class="bubble-header">
+      <div class="bubble-logo logo-oneseek">OS</div>
+      <span class="bubble-name">OneSeek</span>
+      <span class="bubble-meta" style="color: var(--cyan);">&#128269; Tavily aktiv</span>
+    </div>
+    <div class="bubble-text streaming">Jag har sokt igenom aktuella kallor. Faktakontroll:
+
+&#10003; Karnkraft = 29.8% (Energimyndigheten jan 2026), inte 30% (Claude)
+&#10003; Hinkley Point C ar 7 ar forsenat (bekraftar Grok)
+&#10003; SMR-projekt i Kanada: 5-6 ar (lovar men overens)
+
+Ny data: Vattenfall meddelade igar att de</div>
+    <div class="bubble-footer">
+      <span>Stroemmar... ~650 tokens</span>
+      <span style="color: var(--cyan); font-size: 10px;">P4: 4/6 mini-agenter klara</span>
+    </div>
+  </div>
+
+  <!-- Typing indicator for next participant -->
+  <div class="typing-bubble">
+    <div class="bubble-logo logo-deepseek" style="width: 20px; height: 20px; border-radius: 5px; font-size: 8px;">DS</div>
+    <div class="typing-dots">
+      <span></span><span></span><span></span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Bottom Bar -->
+<div class="bottom-bar">
+  <div class="bottom-bar-inner">
+    <div class="live-indicator">
+      <div class="live-dot"></div>
+      Live
+    </div>
+    <div class="bottom-info">OneSeek talar... 4/8 klara i runda 2</div>
+    <button class="bottom-action" onclick="toggleVoteOverlay()">Resultat</button>
+  </div>
+</div>
+
+<!-- Vote Results Overlay -->
+<div class="vote-overlay" id="voteOverlay">
+  <div class="overlay-handle"></div>
+  <div class="overlay-title">&#128081; Debattresultat</div>
+  <div class="overlay-subtitle">Runda 4 rostning — sjalvroster filtrerade</div>
+
+  <div class="vote-result-item">
+    <div class="vote-rank rank-gold">1</div>
+    <div class="vote-model-logo logo-oneseek">OS</div>
+    <div class="vote-model-info">
+      <div class="vote-model-name">OneSeek <span class="winner-tag">&#128081; Vinnare</span></div>
+      <div class="vote-model-count">4 av 7 roster</div>
+      <div class="vote-bar-bg"><div class="vote-bar-fill bar-gold" style="width: 100%"></div></div>
+    </div>
+  </div>
+
+  <div class="vote-result-item">
+    <div class="vote-rank rank-silver">2</div>
+    <div class="vote-model-logo logo-claude">C</div>
+    <div class="vote-model-info">
+      <div class="vote-model-name">Claude</div>
+      <div class="vote-model-count">3 av 7 roster</div>
+      <div class="vote-bar-bg"><div class="vote-bar-fill bar-accent" style="width: 75%"></div></div>
+    </div>
+  </div>
+
+  <div class="vote-result-item">
+    <div class="vote-rank rank-bronze">3</div>
+    <div class="vote-model-logo logo-gemini">Ge</div>
+    <div class="vote-model-info">
+      <div class="vote-model-name">Gemini</div>
+      <div class="vote-model-count">2 av 7 roster</div>
+      <div class="vote-bar-bg"><div class="vote-bar-fill bar-accent" style="width: 50%"></div></div>
+    </div>
+  </div>
+
+  <div class="vote-result-item">
+    <div class="vote-rank">4</div>
+    <div class="vote-model-logo logo-grok">G</div>
+    <div class="vote-model-info">
+      <div class="vote-model-name">Grok</div>
+      <div class="vote-model-count">0 roster</div>
+      <div class="vote-bar-bg"><div class="vote-bar-fill bar-accent" style="width: 0%"></div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function toggleVoteOverlay() {
+  const overlay = document.getElementById('voteOverlay');
+  overlay.classList.toggle('show');
+}
+
+// Close overlay on background tap
+document.addEventListener('click', function(e) {
+  const overlay = document.getElementById('voteOverlay');
+  if (overlay.classList.contains('show') && !overlay.contains(e.target) && !e.target.classList.contains('bottom-action') && !e.target.closest('.round-pill')) {
+    overlay.classList.remove('show');
+  }
+});
+
+function switchView(round) {
+  document.querySelectorAll('.round-pill').forEach(p => p.classList.remove('active'));
+  event.target.closest('.round-pill').classList.add('active');
+}
+</script>
+</body>
+</html>

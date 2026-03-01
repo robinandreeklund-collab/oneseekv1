@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OneSeek Debatt — Runda-for-runda Tidslinje — Mockup 4</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141f;
+    --surface-2: #1c1c2e;
+    --surface-3: #252540;
+    --border: #2a2a45;
+    --text: #e8e8f0;
+    --text-muted: #8888a0;
+    --accent: #6366f1;
+    --accent-glow: rgba(99, 102, 241, 0.15);
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --cyan: #06b6d4;
+    --purple: #a855f7;
+    --pink: #ec4899;
+    --gold: #fbbf24;
+    --radius: 12px;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  .container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 32px;
+  }
+
+  /* Header */
+  .page-header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .page-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+  }
+
+  .page-header p {
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+
+  /* ─── Timeline ─── */
+  .timeline {
+    position: relative;
+    padding-left: 60px;
+  }
+
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 28px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg,
+      var(--accent) 0%,
+      var(--cyan) 25%,
+      var(--purple) 50%,
+      var(--pink) 75%,
+      var(--gold) 100%
+    );
+  }
+
+  /* ─── Round Section ─── */
+  .round-section {
+    margin-bottom: 48px;
+    position: relative;
+  }
+
+  .round-marker {
+    position: absolute;
+    left: -60px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 20px;
+    z-index: 2;
+    border: 3px solid var(--bg);
+  }
+
+  .round-marker.r1 { background: linear-gradient(135deg, var(--accent), #4f46e5); color: #fff; }
+  .round-marker.r2 { background: linear-gradient(135deg, var(--cyan), #0891b2); color: #fff; }
+  .round-marker.r3 { background: linear-gradient(135deg, var(--purple), #7c3aed); color: #fff; }
+  .round-marker.r4 { background: linear-gradient(135deg, var(--pink), #db2777); color: #fff; }
+  .round-marker.results { background: linear-gradient(135deg, var(--gold), var(--amber)); color: #1a1a2e; }
+
+  .round-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+    padding-left: 8px;
+  }
+
+  .round-header h2 {
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .round-type-badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .type-intro { background: rgba(99, 102, 241, 0.1); color: var(--accent); border: 1px solid rgba(99, 102, 241, 0.2); }
+  .type-argument { background: rgba(6, 182, 212, 0.1); color: var(--cyan); border: 1px solid rgba(6, 182, 212, 0.2); }
+  .type-deep { background: rgba(168, 85, 247, 0.1); color: var(--purple); border: 1px solid rgba(168, 85, 247, 0.2); }
+  .type-vote { background: rgba(236, 72, 153, 0.1); color: var(--pink); border: 1px solid rgba(236, 72, 153, 0.2); }
+  .type-results { background: rgba(251, 191, 36, 0.1); color: var(--gold); border: 1px solid rgba(251, 191, 36, 0.2); }
+
+  .round-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding-left: 8px;
+    margin-bottom: 12px;
+  }
+
+  /* ─── Argument Chain ─── */
+  .argument-chain {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .argument-node {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    display: flex;
+    gap: 14px;
+    transition: all 0.3s;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .argument-node:hover {
+    border-color: rgba(99, 102, 241, 0.3);
+    background: var(--surface-2);
+  }
+
+  .argument-node.expanded {
+    border-color: var(--accent);
+  }
+
+  .node-position {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--surface-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .node-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .node-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .node-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  .node-name {
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .node-stats {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .node-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .node-preview {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .node-full-text {
+    display: none;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.7;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .argument-node.expanded .node-preview { display: none; }
+  .argument-node.expanded .node-full-text { display: block; }
+
+  /* ─── Reference arrows ─── */
+  .reference-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(6, 182, 212, 0.1);
+    color: var(--cyan);
+    border: 1px solid rgba(6, 182, 212, 0.2);
+    margin-top: 8px;
+  }
+
+  .reference-tag .ref-arrow {
+    font-size: 10px;
+  }
+
+  /* ─── Chain connector ─── */
+  .chain-connector {
+    display: flex;
+    align-items: center;
+    padding-left: 50px;
+    height: 20px;
+    position: relative;
+  }
+
+  .chain-connector::before {
+    content: '';
+    width: 1px;
+    height: 100%;
+    background: var(--border);
+    position: absolute;
+    left: 63px;
+  }
+
+  .chain-connector .chain-arrow {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: 8px;
+  }
+
+  /* ─── Vote Node ─── */
+  .vote-node {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .vote-node .node-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    font-size: 11px;
+  }
+
+  .vote-node .vote-info {
+    flex: 1;
+    font-size: 13px;
+  }
+
+  .vote-node .vote-target {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .vote-node .vote-reason {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* ─── Results Card ─── */
+  .results-card {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.05), rgba(251, 191, 36, 0.02));
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    border-radius: var(--radius);
+    padding: 24px;
+    text-align: center;
+  }
+
+  .results-card h3 {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--gold);
+    margin-bottom: 12px;
+  }
+
+  .results-podium-mini {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin-top: 16px;
+  }
+
+  .mini-podium-item {
+    text-align: center;
+  }
+
+  .mini-podium-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 18px;
+    margin: 0 auto 8px;
+  }
+
+  .mini-podium-item.first .mini-podium-avatar {
+    border: 2px solid var(--gold);
+    box-shadow: 0 0 16px rgba(251, 191, 36, 0.2);
+  }
+
+  .mini-podium-name {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .mini-podium-votes {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ─── Aggregate Stats Bar ─── */
+  .stats-bar {
+    display: flex;
+    gap: 16px;
+    margin-top: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .stat-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 12px;
+  }
+
+  .stat-pill .stat-icon {
+    font-size: 14px;
+  }
+
+  .stat-pill .stat-value {
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .stat-pill .stat-label {
+    color: var(--text-muted);
+  }
+
+  /* Logos */
+  .logo-grok { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; border: 1px solid #333; }
+  .logo-claude { background: linear-gradient(135deg, #d4a574, #cc8b65); color: #fff; }
+  .logo-gpt { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: #fff; }
+  .logo-gemini { background: linear-gradient(135deg, #4285f4, #6366f1); color: #fff; }
+  .logo-deepseek { background: linear-gradient(135deg, #0066ff, #0044cc); color: #fff; }
+  .logo-perplexity { background: linear-gradient(135deg, #20b2aa, #1a9a92); color: #fff; }
+  .logo-qwen { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; }
+  .logo-oneseek { background: linear-gradient(135deg, #6366f1, #06b6d4); color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <div class="page-header">
+    <h1>Debattidslinje</h1>
+    <p>Karnkraft vs Fornybar Energi — Full argumentkedja med referenser</p>
+  </div>
+
+  <!-- Aggregate Stats -->
+  <div class="stats-bar" style="margin-bottom: 32px;">
+    <div class="stat-pill">
+      <span class="stat-icon">&#128101;</span>
+      <span class="stat-value">8</span>
+      <span class="stat-label">deltagare</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-icon">&#128260;</span>
+      <span class="stat-value">4</span>
+      <span class="stat-label">rundor</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-icon">&#128221;</span>
+      <span class="stat-value">3,847</span>
+      <span class="stat-label">ord totalt</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-icon">&#9201;</span>
+      <span class="stat-value">10:28</span>
+      <span class="stat-label">total tid</span>
+    </div>
+  </div>
+
+  <div class="timeline">
+
+    <!-- ═══ ROUND 1 ═══ -->
+    <div class="round-section">
+      <div class="round-marker r1">1</div>
+      <div class="round-header">
+        <h2>Runda 1</h2>
+        <span class="round-type-badge type-intro">Introduktion</span>
+      </div>
+      <div class="round-meta">Slumpmassig ordning — varje deltagare presenterar sig och sin position</div>
+      <div class="argument-chain">
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">1</div>
+          <div class="node-avatar logo-grok">G</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">Grok</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 198 ord</div>
+                <div class="node-stat">&#9201; 1.2s</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag ar Grok, byggd av xAI. Karnkraft ar den enda bevisade kallam for storskalig basenergi utan koldioxidutslapp. Lat oss vara modiga.</div>
+            <div class="node-full-text">Jag ar Grok, byggd av xAI. Jag brinner for att utmana konventionellt tankande och tror att energifragan kraver modiga beslut. Karnkraft ar inte perfekt, men det ar den enda bevisade kallam som kan leverera basenergi i stor skala utan koldioxidutslapp. Lat mig forklara varfor...</div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">2</div>
+          <div class="node-avatar logo-claude">C</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">Claude</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 210 ord</div>
+                <div class="node-stat">&#9201; 1.5s</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag ar Claude fran Anthropic. Min approach ar att analysera bada sidor med nyans. Losningen ar en kombination — men proportionerna ar det intressanta.</div>
+            <div class="node-full-text">Jag ar Claude fran Anthropic. Min approach ar att analysera bada sidor med nyans och intellektuell artlighet. Jag tror att fragor om energi kraver att vi ser bortom binara val och forstar att losningen ar en kombination — men proportionerna ar det verkligt intressanta.</div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">3</div>
+          <div class="node-avatar logo-gemini">Ge</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">Gemini</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 225 ord</div>
+                <div class="node-stat">&#9201; 1.8s</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag ar Gemini fran Google. Jag tror pa systemtankande — energiomstallningen ar inte ett val mellan teknologier utan en optimeringsfraga.</div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">4</div>
+          <div class="node-avatar logo-oneseek">OS</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">OneSeek</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 245 ord</div>
+                <div class="node-stat">&#9201; 3.1s</div>
+                <div class="node-stat" style="color: var(--cyan);">&#128269; Tavily</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag ar OneSeek — svensk AI-agent med realtidsverktyg och Tavily-sokning. Jag verifierar pastaenden mot aktuella kallor med sarskilt fokus pa svensk kontext.</div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">5</div>
+          <div class="node-avatar logo-deepseek">DS</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">DeepSeek</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 180 ord</div>
+                <div class="node-stat">&#9201; 1.1s</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag ar DeepSeek. Mitt perspektiv fokuserar pa ekonomiska realiteter. Siffror ljuger inte — lat oss titta pa vad investeringskalkylerna verkligen sager.</div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">6</div>
+          <div class="node-avatar logo-perplexity">Px</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">Perplexity</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 165 ord</div>
+                <div class="node-stat">&#9201; 0.9s</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag ar Perplexity. Jag gar rakt pa kallorna. Lat oss granska vad den senaste forskningen faktiskt visar om energiomstallningen.</div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">7</div>
+          <div class="node-avatar logo-gpt">GP</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">ChatGPT</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 192 ord</div>
+                <div class="node-stat">&#9201; 1.3s</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag ar ChatGPT fran OpenAI. Jag fokuserar pa att syntetisera — hitta de gemensamma namnarna och bygga broar mellan motstridiga argument.</div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">8</div>
+          <div class="node-avatar logo-qwen">Qw</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">Qwen</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 155 ord</div>
+                <div class="node-stat">&#9201; 1.0s</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag ar Qwen fran Alibaba. Med erfarenhet fran Kinas massiva energiomstallning ger jag ett globalt perspektiv pa Sveriges utmaningar.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ ROUND 2 ═══ -->
+    <div class="round-section">
+      <div class="round-marker r2">2</div>
+      <div class="round-header">
+        <h2>Runda 2</h2>
+        <span class="round-type-badge type-argument">Argument</span>
+      </div>
+      <div class="round-meta">Ny slumpmassig ordning — varje deltagare bygger pa tidigare argument</div>
+      <div class="argument-chain">
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">1</div>
+          <div class="node-avatar logo-claude">C</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">Claude</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 487 ord</div>
+                <div class="node-stat">&#9201; 2.3s</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag vill bygga vidare pa Groks poang om energisakerhet. Karnkraft erbjuder planerbar basenergi dygnet runt. SMR-teknologi kan minska byggtider med 40%.</div>
+            <div class="reference-tag">
+              <span class="ref-arrow">&#8592;</span> Bygger pa: Grok (R1 #1)
+            </div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">2</div>
+          <div class="node-avatar logo-grok">G</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">Grok</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 412 ord</div>
+                <div class="node-stat">&#9201; 1.8s</div>
+              </div>
+            </div>
+            <div class="node-preview">Jag utmanar Claudes basenergi-argument. Batteriteknologin gor enorma framsteg. Teslas Megapack kan redan lagra energi. Klimatkrisen kraver snabbhet.</div>
+            <div class="reference-tag">
+              <span class="ref-arrow">&#8592;</span> Utmanar: Claude (R2 #1)
+            </div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">3</div>
+          <div class="node-avatar logo-gemini">Ge</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">Gemini</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 523 ord</div>
+                <div class="node-stat">&#9201; 2.7s</div>
+              </div>
+            </div>
+            <div class="node-preview">Claude och Grok presenterar en falsk dikotomi. Fragan ar "hur optimerar vi energimixen?" AI-optimerade energinat kan minska reservkapacitet med 30%.</div>
+            <div class="reference-tag">
+              <span class="ref-arrow">&#8592;</span> Syntes: Claude + Grok (R2)
+            </div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">4</div>
+          <div class="node-avatar logo-oneseek">OS</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">OneSeek</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 498 ord</div>
+                <div class="node-stat">&#9201; 4.2s</div>
+                <div class="node-stat" style="color: var(--cyan);">&#128269; 3 Tavily-sokningar</div>
+              </div>
+            </div>
+            <div class="node-preview">Faktakontroll: karnkraft star for 29.8% (inte 30%). Hinkley Point C ar 7 ar forsenat. SMR-projekt i Kanada visar lovande 5-6 ar. Ny data fran Vattenfall.</div>
+            <div class="reference-tag">
+              <span class="ref-arrow">&#8592;</span> Verifierar: Claude + Grok (R1-R2)
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ ROUND 3 ═══ -->
+    <div class="round-section">
+      <div class="round-marker r3">3</div>
+      <div class="round-header">
+        <h2>Runda 3</h2>
+        <span class="round-type-badge type-deep">Fordjupning</span>
+      </div>
+      <div class="round-meta">Ny slumpmassig ordning — fordjupad analys och motargument</div>
+      <div class="argument-chain">
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">1</div>
+          <div class="node-avatar logo-deepseek">DS</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">DeepSeek</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 456 ord</div>
+                <div class="node-stat">&#9201; 2.1s</div>
+              </div>
+            </div>
+            <div class="node-preview">Ekonomisk djupdykning: solenergi sjunkit 89% sedan 2010, ny karnkraft har 60% overkostnader. Investeringskalkylen talar tydligt for fornybart.</div>
+            <div class="reference-tag">
+              <span class="ref-arrow">&#8592;</span> Ekonomiskt perspektiv pa: Alla (R1-R2)
+            </div>
+          </div>
+        </div>
+
+        <div class="chain-connector"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="argument-node" onclick="this.classList.toggle('expanded')">
+          <div class="node-position">2</div>
+          <div class="node-avatar logo-oneseek">OS</div>
+          <div class="node-content">
+            <div class="node-header">
+              <span class="node-name">OneSeek</span>
+              <div class="node-stats">
+                <div class="node-stat">&#128221; 512 ord</div>
+                <div class="node-stat">&#9201; 4.8s</div>
+                <div class="node-stat" style="color: var(--cyan);">&#128269; 4 Tavily-sokningar</div>
+              </div>
+            </div>
+            <div class="node-preview">DeepSeeks ekonomiska analys bekraftas delvis. Men: SCBs senaste data visar att svenska elkostnader faktiskt gynnar karnkraft pa grund av bassystemet.</div>
+            <div class="reference-tag">
+              <span class="ref-arrow">&#8592;</span> Faktagranskar: DeepSeek (R3 #1)
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ ROUND 4 ═══ -->
+    <div class="round-section">
+      <div class="round-marker r4">4</div>
+      <div class="round-header">
+        <h2>Runda 4</h2>
+        <span class="round-type-badge type-vote">Rostning</span>
+      </div>
+      <div class="round-meta">Parallell exekvering — alla rostar samtidigt med JSON schema</div>
+      <div class="argument-chain">
+        <div class="vote-node">
+          <div class="node-avatar logo-grok" style="width:28px;height:28px;border-radius:7px;font-size:11px;">G</div>
+          <div class="vote-info">
+            Grok rostar pa <span class="vote-target">OneSeek</span>
+            <div class="vote-reason">"Mest faktabaserat och grundat i verifierade kallor"</div>
+          </div>
+        </div>
+        <div class="vote-node">
+          <div class="node-avatar logo-claude" style="width:28px;height:28px;border-radius:7px;font-size:11px;">C</div>
+          <div class="vote-info">
+            Claude rostar pa <span class="vote-target">OneSeek</span>
+            <div class="vote-reason">"Starkast koppling mellan data och slutsatser"</div>
+          </div>
+        </div>
+        <div class="vote-node">
+          <div class="node-avatar logo-gemini" style="width:28px;height:28px;border-radius:7px;font-size:11px;">Ge</div>
+          <div class="vote-info">
+            Gemini rostar pa <span class="vote-target">Claude</span>
+            <div class="vote-reason">"Mest nyanserad analys med bada perspektiv"</div>
+          </div>
+        </div>
+        <div class="vote-node">
+          <div class="node-avatar logo-gpt" style="width:28px;height:28px;border-radius:7px;font-size:11px;">GP</div>
+          <div class="vote-info">
+            ChatGPT rostar pa <span class="vote-target">Claude</span>
+            <div class="vote-reason">"Bast pa att syntetisera och bygga vidare"</div>
+          </div>
+        </div>
+        <div class="vote-node">
+          <div class="node-avatar logo-deepseek" style="width:28px;height:28px;border-radius:7px;font-size:11px;">DS</div>
+          <div class="vote-info">
+            DeepSeek rostar pa <span class="vote-target">OneSeek</span>
+            <div class="vote-reason">"Unik fordel med realtidsfaktakontroll"</div>
+          </div>
+        </div>
+        <div class="vote-node">
+          <div class="node-avatar logo-perplexity" style="width:28px;height:28px;border-radius:7px;font-size:11px;">Px</div>
+          <div class="vote-info">
+            Perplexity rostar pa <span class="vote-target">Gemini</span>
+            <div class="vote-reason">"Bast systemtankande — sag hela bilden"</div>
+          </div>
+        </div>
+        <div class="vote-node">
+          <div class="node-avatar logo-qwen" style="width:28px;height:28px;border-radius:7px;font-size:11px;">Qw</div>
+          <div class="vote-info">
+            Qwen rostar pa <span class="vote-target">OneSeek</span>
+            <div class="vote-reason">"Mest transparent och verifierbar argumentation"</div>
+          </div>
+        </div>
+        <div class="vote-node">
+          <div class="node-avatar logo-oneseek" style="width:28px;height:28px;border-radius:7px;font-size:11px;">OS</div>
+          <div class="vote-info">
+            OneSeek rostar pa <span class="vote-target">Claude</span>
+            <div class="vote-reason">"Mest nyanserad och valbalanserad argumentation"</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ RESULTS ═══ -->
+    <div class="round-section">
+      <div class="round-marker results">&#9733;</div>
+      <div class="round-header">
+        <h2>Resultat</h2>
+        <span class="round-type-badge type-results">Vinnare</span>
+      </div>
+      <div class="results-card">
+        <h3>&#128081; OneSeek vinner debatten!</h3>
+        <p style="color: var(--text-muted); font-size: 14px;">4 av 7 roster (sjalvroster filtrerade)</p>
+        <div class="results-podium-mini">
+          <div class="mini-podium-item">
+            <div class="mini-podium-avatar logo-claude">C</div>
+            <div class="mini-podium-name">Claude</div>
+            <div class="mini-podium-votes">3 roster — #2</div>
+          </div>
+          <div class="mini-podium-item first">
+            <div class="mini-podium-avatar logo-oneseek">OS</div>
+            <div class="mini-podium-name">OneSeek</div>
+            <div class="mini-podium-votes" style="color: var(--gold);">4 roster — #1</div>
+          </div>
+          <div class="mini-podium-item">
+            <div class="mini-podium-avatar logo-gemini">Ge</div>
+            <div class="mini-podium-name">Gemini</div>
+            <div class="mini-podium-votes">2 roster — #3</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>
