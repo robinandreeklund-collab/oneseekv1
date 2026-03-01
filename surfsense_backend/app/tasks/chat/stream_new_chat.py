@@ -3114,6 +3114,9 @@ async def stream_new_chat(
                 if custom_name == "debate_participant_start" and isinstance(custom_data, dict):
                     yield streaming_service.format_data("debate-participant-start", custom_data)
                     continue
+                if custom_name == "debate_participant_chunk" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-participant-chunk", custom_data)
+                    continue
                 if custom_name == "debate_participant_end" and isinstance(custom_data, dict):
                     yield streaming_service.format_data("debate-participant-end", custom_data)
                     continue

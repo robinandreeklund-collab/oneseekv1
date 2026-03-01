@@ -135,7 +135,7 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 	const voiceSpeaker = voiceCtx?.voiceState.currentSpeaker ?? null;
 
 	// Only show participants that have a response for the active round.
-	// In voice mode: only show participants whose voice has started (textRevealIndex defined)
+	// In voice mode: only show participants with text (streaming via chunks) or speaking
 	// or who is currently being text-generated (speaking status).
 	// In completed state: show all regardless of voice mode.
 	const visibleParticipants = useMemo(() => {
@@ -143,11 +143,10 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 			const resp = p.responses[activeRound];
 			if (resp === undefined) return false;
 
-			// In voice mode during live debate: only show if voice has started for this participant
-			// (textRevealIndex is defined = voice chunks have arrived or text was hidden for voice)
-			// or the participant is currently generating text (speaking status)
+			// In voice mode during live debate: show if participant has text
+			// (streaming via chunks) or is currently generating
 			if (isVoiceMode && !isComplete && !isVoting) {
-				return resp.status === "speaking" || resp.textRevealIndex !== undefined;
+				return resp.status === "speaking" || resp.status === "complete" || (resp.text?.length ?? 0) > 0;
 			}
 
 			return true;
@@ -274,9 +273,7 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 						// In voice mode: only expand the card that is currently being voiced.
 						// Completed-voice cards collapse. Text-generating cards show a "generating" state.
 						const isBeingVoiced = isVoiceMode && voiceSpeaker === participant.display;
-						const voiceTextDone = isVoiceMode
-							&& roundResponse?.textRevealIndex !== undefined
-							&& roundResponse.textRevealIndex >= (roundResponse?.text?.length ?? 1);
+						const voiceTextDone = isVoiceMode && roundResponse?.status === "complete";
 
 						const autoExpanded = isVoiceMode
 							? (isBeingVoiced || (isSpeaking && !voiceSpeaker))
@@ -373,22 +370,18 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	const voiceActive = voiceCtx?.voiceState.currentSpeaker === participant.display
 		&& voiceCtx?.voiceState.playbackStatus === "playing";
 
-	// Progressive text reveal during voice playback
-	const tri = roundResponse?.textRevealIndex;
+	// Text display — in voice mode, text grows via debate_participant_chunk events
 	const fullText = roundResponse?.text ?? "";
-	const isVoiceRevealing = tri !== undefined && tri < fullText.length;
-	// In voice mode: show nothing until tri > 0, then reveal progressively
-	const displayText = isVoiceMode
-		? (tri !== undefined && tri > 0 ? fullText.substring(0, tri) : (voiceTextDone ? fullText : ""))
-		: fullText;
+	const isTextStreaming = isVoiceMode && isSpeaking && fullText.length > 0;
+	const displayText = fullText;
 
-	// In voice mode: the active voice card is always expanded and cannot be collapsed
+	// In voice mode: expand cards that have text or are being voiced
 	const effectiveExpanded = isVoiceMode
-		? (isBeingVoiced || (isVoiceRevealing && !voiceTextDone))
+		? (isBeingVoiced || isTextStreaming || (isSpeaking && fullText.length > 0) || (isDone && !voiceTextDone))
 		: (manualToggle ?? autoExpanded);
 
-	// Voice mode: generating text (before voice starts)
-	const isGeneratingText = isVoiceMode && isSpeaking && tri === undefined;
+	// Voice mode: generating text (before any chunks arrive)
+	const isGeneratingText = isVoiceMode && isSpeaking && fullText.length === 0;
 
 	return (
 		<motion.div
@@ -403,7 +396,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 					"transition-all duration-300",
 					!isVoiceMode && isSpeaking && "border-primary/50 shadow-lg shadow-primary/5",
 					isBeingVoiced && "border-red-500/50 shadow-xl shadow-red-500/10 ring-2 ring-red-500/30",
-					isVoiceMode && isVoiceRevealing && !isBeingVoiced && "border-primary/40 shadow-lg shadow-primary/5",
+					isVoiceMode && isTextStreaming && !isBeingVoiced && "border-primary/40 shadow-lg shadow-primary/5",
 					isVoiceMode && voiceTextDone && !isBeingVoiced && "border-border opacity-80",
 				)}
 			>
@@ -516,7 +509,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 							<CardContent className="border-t border-border px-4 py-3">
 								<p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
 									{displayText}
-									{isVoiceRevealing && <span className="animate-pulse text-red-500 text-base">▍</span>}
+									{isTextStreaming && <span className="animate-pulse text-primary text-base">▍</span>}
 								</p>
 							</CardContent>
 						) : isGeneratingText ? (

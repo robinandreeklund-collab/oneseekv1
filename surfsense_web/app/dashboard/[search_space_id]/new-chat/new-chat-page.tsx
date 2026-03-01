@@ -1761,6 +1761,35 @@ export default function NewChatPage() {
 											});
 											break;
 										}
+										case "data-debate-participant-chunk": {
+											const dpcData = parsed.data as Record<string, unknown>;
+											const dpcModel = String(dpcData?.model ?? "");
+											const dpcRound = Number(dpcData?.round ?? 0);
+											const dpcDelta = String(dpcData?.delta ?? "");
+											if (dpcDelta) {
+												setDebateState((prev) => {
+													if (!prev) return prev;
+													return {
+														...prev,
+														participants: prev.participants.map((p) =>
+															p.display === dpcModel
+																? {
+																	...p,
+																	responses: {
+																		...p.responses,
+																		[dpcRound]: {
+																			...(p.responses[dpcRound] ?? { round: dpcRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }),
+																			text: (p.responses[dpcRound]?.text ?? "") + dpcDelta,
+																		},
+																	},
+																}
+																: p,
+														),
+													};
+												});
+											}
+											break;
+										}
 										case "data-debate-participant-end": {
 											const dpeData = parsed.data as Record<string, unknown>;
 											const dpeModel = String(dpeData?.model ?? "");
@@ -1770,8 +1799,6 @@ export default function NewChatPage() {
 											const dpePreview = String(dpeData?.response_preview ?? "");
 											setDebateState((prev) => {
 												if (!prev) return prev;
-												// In voice mode: hide text (textRevealIndex=0) until voice chunks arrive
-												const isVoice = prev.voiceMode === true;
 												return {
 													...prev,
 													participants: prev.participants.map((p) =>
@@ -1787,7 +1814,6 @@ export default function NewChatPage() {
 																		wordCount: dpeWordCount,
 																		latencyMs: dpeLatency,
 																		status: "complete",
-																		...(isVoice ? { textRevealIndex: 0 } : {}),
 																	},
 																},
 															}
@@ -1871,33 +1897,8 @@ export default function NewChatPage() {
 											break;
 										}
 										case "data-debate-voice-sentence": {
-											const dvSent = parsed.data as Record<string, unknown>;
-											const sentModel = String(dvSent?.model ?? "");
-											const sentRound = Number(dvSent?.round ?? 0);
-											const sentTri = Number(dvSent?.tri ?? 0);
-											// Reveal text up to current sentence boundary
-											if (sentTri > 0) {
-												setDebateState((prev) => {
-													if (!prev) return prev;
-													return {
-														...prev,
-														participants: prev.participants.map((p) =>
-															p.display === sentModel
-																? {
-																	...p,
-																	responses: {
-																		...p.responses,
-																		[sentRound]: {
-																			...(p.responses[sentRound] ?? { round: sentRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "complete" }),
-																			textRevealIndex: sentTri,
-																		},
-																	},
-																}
-																: p,
-														),
-													};
-												});
-											}
+											// Text is already visible via debate_participant_chunk events.
+											// This event is kept for TTS progress tracking only.
 											break;
 										}
 										case "data-debate-voice-chunk": {
@@ -1912,30 +1913,9 @@ export default function NewChatPage() {
 										case "data-debate-voice-done": {
 											const dvdData = parsed.data as Record<string, unknown>;
 											const dvdModel = String(dvdData?.model ?? "");
-											const dvdRound = Number(dvdData?.round ?? 0);
 											console.log("[SSE] debate-voice-done:", dvdModel);
-											// Reveal full text when voice is done
-											setDebateState((prev) => {
-												if (!prev) return prev;
-												return {
-													...prev,
-													participants: prev.participants.map((p) => {
-														if (p.display !== dvdModel) return p;
-														const resp = p.responses[dvdRound];
-														if (!resp) return p;
-														return {
-															...p,
-															responses: {
-																...p.responses,
-																[dvdRound]: {
-																	...resp,
-																	textRevealIndex: resp.text.length,
-																},
-															},
-														};
-													}),
-												};
-											});
+											// Text is already visible via chunks. Audio playback
+											// continues via the chunk queue in useDebateAudio.
 											break;
 										}
 										case "data-debate-voice-error": {
@@ -2850,6 +2830,19 @@ export default function NewChatPage() {
 											});
 											break;
 										}
+										case "data-debate-participant-chunk": {
+											const dpc2 = parsed.data as Record<string, unknown>;
+											const dpcM2 = String(dpc2?.model ?? "");
+											const dpcR2 = Number(dpc2?.round ?? 0);
+											const dpcD2 = String(dpc2?.delta ?? "");
+											if (dpcD2) {
+												setDebateState((prev) => {
+													if (!prev) return prev;
+													return { ...prev, participants: prev.participants.map((p) => p.display === dpcM2 ? { ...p, responses: { ...p.responses, [dpcR2]: { ...(p.responses[dpcR2] ?? { round: dpcR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }), text: (p.responses[dpcR2]?.text ?? "") + dpcD2 } } } : p) };
+												});
+											}
+											break;
+										}
 										case "data-debate-participant-end": {
 											const dpe2 = parsed.data as Record<string, unknown>;
 											const dpeM2 = String(dpe2?.model ?? "");
@@ -2859,8 +2852,7 @@ export default function NewChatPage() {
 											const dpePrev2 = String(dpe2?.response_preview ?? "");
 											setDebateState((prev) => {
 												if (!prev) return prev;
-												const isV2 = prev.voiceMode === true;
-												return { ...prev, participants: prev.participants.map((p) => p.display === dpeM2 ? { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(p.responses[dpeR2] ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete", ...(isV2 ? { textRevealIndex: 0 } : {}) } } } : p) };
+												return { ...prev, participants: prev.participants.map((p) => p.display === dpeM2 ? { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(p.responses[dpeR2] ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete" } } } : p) };
 											});
 											break;
 										}
@@ -2897,32 +2889,7 @@ export default function NewChatPage() {
 											break;
 										}
 										case "data-debate-voice-sentence": {
-											const dvSent2 = parsed.data as Record<string, unknown>;
-											const sentModel2 = String(dvSent2?.model ?? "");
-											const sentRound2 = Number(dvSent2?.round ?? 0);
-											const sentTri2 = Number(dvSent2?.tri ?? 0);
-											if (sentTri2 > 0) {
-												setDebateState((prev) => {
-													if (!prev) return prev;
-													return {
-														...prev,
-														participants: prev.participants.map((p) =>
-															p.display === sentModel2
-																? {
-																	...p,
-																	responses: {
-																		...p.responses,
-																		[sentRound2]: {
-																			...(p.responses[sentRound2] ?? { round: sentRound2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "complete" }),
-																			textRevealIndex: sentTri2,
-																		},
-																	},
-																}
-																: p,
-														),
-													};
-												});
-											}
+											// Text visible via chunks; kept for TTS tracking only.
 											break;
 										}
 										case "data-debate-voice-chunk": {
@@ -2936,29 +2903,7 @@ export default function NewChatPage() {
 										}
 										case "data-debate-voice-done": {
 											const dvdData2 = parsed.data as Record<string, unknown>;
-											const dvdModel2 = String(dvdData2?.model ?? "");
-											const dvdRound2 = Number(dvdData2?.round ?? 0);
-											setDebateState((prev) => {
-												if (!prev) return prev;
-												return {
-													...prev,
-													participants: prev.participants.map((p) => {
-														if (p.display !== dvdModel2) return p;
-														const resp2 = p.responses[dvdRound2];
-														if (!resp2) return p;
-														return {
-															...p,
-															responses: {
-																...p.responses,
-																[dvdRound2]: {
-																	...resp2,
-																	textRevealIndex: resp2.text.length,
-																},
-															},
-														};
-													}),
-												};
-											});
+											console.log("[SSE] debate-voice-done:", dvdData2?.model);
 											break;
 										}
 										case "data-debate-voice-error": {

@@ -340,6 +340,20 @@ async def _emit_voice_events(
                 "debate_voice: TTS error for %s sentence %d: %s",
                 participant_display, sent_idx, exc,
             )
+            # Emit error to frontend so it's visible in console
+            try:
+                await adispatch_custom_event(
+                    "debate_voice_error",
+                    {
+                        "model": participant_display,
+                        "round": round_num,
+                        "error": f"TTS error sentence {sent_idx}: {type(exc).__name__}: {str(exc)[:200]}",
+                        "timestamp": time.time(),
+                    },
+                    config=config,
+                )
+            except Exception:
+                pass
             # Continue to next sentence — don't fail the whole participant
             continue
 

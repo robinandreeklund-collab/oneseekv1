@@ -450,7 +450,32 @@ def build_debate_round_executor_node(
                 all_word_counts[model_display] = all_word_counts.get(model_display, 0) + word_count
                 round_responses[model_display] = response_text
 
-                # Emit participant_end
+                # ─── Voice mode: stream text word-by-word FIRST ─────────
+                # Emit words in small groups (~3 words per chunk) with tiny
+                # delays for a smooth typewriter effect.  Text appears in
+                # ~2-3 seconds regardless of how long TTS takes afterwards.
+                if voice_mode and response_text and not response_text.startswith("["):
+                    _words = response_text.split()
+                    _chunk_size = 3
+                    for _wi in range(0, len(_words), _chunk_size):
+                        _word_group = " ".join(_words[_wi:_wi + _chunk_size])
+                        _delta = (" " + _word_group) if _wi > 0 else _word_group
+                        try:
+                            await adispatch_custom_event(
+                                "debate_participant_chunk",
+                                {
+                                    "model": model_display,
+                                    "model_key": model_key,
+                                    "round": round_num,
+                                    "delta": _delta,
+                                },
+                                config=config,
+                            )
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.03)
+
+                # Emit participant_end (confirms full text)
                 try:
                     await adispatch_custom_event(
                         "debate_participant_end",
@@ -495,18 +520,10 @@ def build_debate_round_executor_node(
                 except Exception:
                     pass
 
-                # ─── Voice TTS pipeline (inline await) ──────────────────
-                # Called directly (not via asyncio.create_task) so that
-                # adispatch_custom_event stays on the LangGraph callback
-                # call stack and SSE events reach the stream bridge.
-                #
-                # Pipelining v1: TTS runs *after* each LLM response, with
-                # the frontend chunk queue providing seamless playback.
-                # The first audio chunk arrives ~300-700ms after LLM finishes.
-                #
-                # Future optimization (v2): run TTS as asyncio.Task and
-                # overlap with the next LLM call.  Requires confirming
-                # that adispatch_custom_event propagates from child tasks.
+                # ─── Voice TTS pipeline (after text has streamed) ────────
+                # Text is already visible via debate_participant_chunk
+                # events above.  TTS now runs without blocking the text
+                # display — audio starts playing as chunks arrive.
                 if voice_mode and response_text and not response_text.startswith("["):
                     try:
                         from app.agents.new_chat.debate_voice import (
