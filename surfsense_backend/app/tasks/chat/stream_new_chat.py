@@ -3147,7 +3147,7 @@ async def stream_new_chat(
                     _ci = custom_data.get("ci", "?")
                     _b64_len = len(str(custom_data.get("pcm_b64", "")))
                     if int(str(_ci)) <= 3 or int(str(_ci)) % 100 == 0:
-                        logger.info("SSE bridge: yielding debate-voice-chunk ci=%s b64_len=%s", _ci, _b64_len)
+                        print(f"[stream_new_chat] debate-voice-chunk ci={_ci} b64_len={_b64_len}")
                     yield streaming_service.format_data("debate-voice-chunk", custom_data)
                     continue
                 if custom_name == "debate_voice_done" and isinstance(custom_data, dict):
