@@ -370,14 +370,21 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	const voiceActive = voiceCtx?.voiceState.currentSpeaker === participant.display
 		&& voiceCtx?.voiceState.playbackStatus === "playing";
 
-	// Text display — in voice mode, text grows via debate_participant_chunk events
+	// Text display — in voice mode with animation, reveal word-by-word
 	const fullText = roundResponse?.text ?? "";
-	const isTextStreaming = isVoiceMode && isSpeaking && fullText.length > 0;
-	const displayText = fullText;
+	const revealIndex = roundResponse?.textRevealIndex;
+	const hasAnimation = revealIndex !== undefined;
+	const isAnimating = hasAnimation && revealIndex < (roundResponse?.wordCount ?? fullText.split(/\s+/).length);
+	const isTextStreaming = isVoiceMode && (isSpeaking || isAnimating) && fullText.length > 0;
+
+	// Show revealed words only during animation, full text when done
+	const displayText = hasAnimation && isAnimating
+		? fullText.split(/\s+/).slice(0, revealIndex).join(" ")
+		: fullText;
 
 	// In voice mode: expand cards that have text or are being voiced
 	const effectiveExpanded = isVoiceMode
-		? (isBeingVoiced || isTextStreaming || (isSpeaking && fullText.length > 0) || (isDone && !voiceTextDone))
+		? (isBeingVoiced || isTextStreaming || isAnimating || (isSpeaking && fullText.length > 0) || (isDone && !voiceTextDone))
 		: (manualToggle ?? autoExpanded);
 
 	// Voice mode: generating text (before any chunks arrive)

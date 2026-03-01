@@ -605,24 +605,22 @@ async def stream_text_and_voice_synced(
     config: Any,
     prepared_audio: tuple[bytes, float] | None = None,
 ) -> int:
-    """Stream text word-by-word **synced** to TTS audio for one participant.
+    """Send full text + all audio at once for one participant.
+
+    The **frontend** handles word-by-word text animation using
+    ``delay_per_word`` — no backend-side sleeping required.
 
     Pipeline:
 
-    1. Send the **full text** to TTS in one call — no sentence splitting.
-       (Skipped if ``prepared_audio`` is supplied by the prefetch pipeline.)
+    1. Generate TTS for the full text (or use prefetched audio).
     2. Compute ``audio_duration = pcm_bytes / 48 000``.
     3. Derive ``delay_per_word = audio_duration / word_count``.
-    4. Interleave ``debate_participant_chunk`` (text, 2 words at a time)
-       and ``debate_voice_chunk`` (audio) events at that exact pace.
-
-    Text appearance and audio playback are therefore perfectly synced to
-    the natural speaking speed of the synthesised voice.
+    4. Emit ``debate_participant_text`` — full text + timing metadata.
+    5. Emit all ``debate_voice_chunk`` events immediately.
+    6. Emit ``debate_voice_done``.
 
     Returns total audio bytes dispatched.
     """
-    import asyncio
-
     from langchain_core.callbacks import adispatch_custom_event
 
     voice_settings = _resolve_voice_settings(state)
@@ -633,7 +631,7 @@ async def stream_text_and_voice_synced(
         provider_label = "Cartesia" if provider == "cartesia" else "OpenAI"
         key_name = "CARTESIA_API_KEY" if provider == "cartesia" else "DEBATE_VOICE_API_KEY"
         logger.warning(
-            "debate_voice: no %s API key — streaming text at fallback pace for %s",
+            "debate_voice: no %s API key — sending text at fallback pace for %s",
             provider_label, participant_display,
         )
         try:
@@ -652,7 +650,6 @@ async def stream_text_and_voice_synced(
             )
         except Exception:
             pass
-        # Fall through — text will still stream at estimated pace (no audio).
 
     voice = get_voice_for_participant(
         participant_display, voice_settings["voice_map"],
@@ -702,7 +699,6 @@ async def stream_text_and_voice_synced(
     audio_duration = 0.0
 
     if prepared_audio is not None and prepared_audio[0]:
-        # Use prefetched audio only if it actually contains PCM data.
         pcm_data, audio_duration = prepared_audio
         logger.info(
             "debate_voice: using prefetched audio for %s — %.2fs, %d bytes",
@@ -752,84 +748,39 @@ async def stream_text_and_voice_synced(
         delay_per_word * 1000, len(pcm_data),
     )
 
-    # ── 3. Prepare audio chunks ─────────────────────────────────────
+    # ── 3. Emit full text + timing metadata (frontend animates) ────
+    # The frontend uses delay_per_word to reveal text word-by-word
+    # in sync with audio playback — no backend sleeping needed.
+    try:
+        await adispatch_custom_event(
+            "debate_participant_text",
+            {
+                "model": participant_display,
+                "model_key": participant_key,
+                "round": round_num,
+                "text": text,
+                "audio_duration": round(audio_duration, 3),
+                "delay_per_word": round(delay_per_word, 4),
+                "word_count": word_count,
+            },
+            config=config,
+        )
+    except Exception:
+        pass
+
+    # ── 4. Emit ALL audio chunks immediately ───────────────────────
     audio_chunks: list[bytes] = []
     if pcm_data:
         for i in range(0, len(pcm_data), DEFAULT_CHUNK_BYTES):
             audio_chunks.append(pcm_data[i : i + DEFAULT_CHUNK_BYTES])
 
-    # ── 4. Prepare text events (2 words per chunk) ──────────────────
-    text_chunk_size = 2
-    text_events: list[str] = []
-    text_word_counts: list[int] = []  # actual words per event
-
-    for wi in range(0, word_count, text_chunk_size):
-        word_group = " ".join(words[wi : wi + text_chunk_size])
-        delta = word_group if wi == 0 else (" " + word_group)
-        text_events.append(delta)
-        text_word_counts.append(min(text_chunk_size, word_count - wi))
-
-    # ── 5. Interleave text + audio ──────────────────────────────────
-    num_text = len(text_events)
-    num_audio = len(audio_chunks)
-    audio_per_text = num_audio / max(num_text, 1) if num_audio > 0 else 0
-    audio_emit_idx = 0
     total_audio_bytes = 0
     chunk_index = 0
 
-    for te_idx, delta in enumerate(text_events):
-        # Emit text chunk
-        try:
-            await adispatch_custom_event(
-                "debate_participant_chunk",
-                {
-                    "model": participant_display,
-                    "model_key": participant_key,
-                    "round": round_num,
-                    "delta": delta,
-                },
-                config=config,
-            )
-        except Exception:
-            pass
-
-        # Emit proportional share of audio chunks
-        if audio_chunks:
-            target_audio_idx = int((te_idx + 1) * audio_per_text)
-            while (
-                audio_emit_idx < target_audio_idx
-                and audio_emit_idx < num_audio
-            ):
-                b64 = base64.b64encode(
-                    audio_chunks[audio_emit_idx],
-                ).decode("ascii")
-                chunk_index += 1
-                total_audio_bytes += len(audio_chunks[audio_emit_idx])
-                try:
-                    await adispatch_custom_event(
-                        "debate_voice_chunk",
-                        {
-                            "model": participant_display,
-                            "round": round_num,
-                            "ci": chunk_index,
-                            "pcm_b64": b64,
-                        },
-                        config=config,
-                    )
-                except Exception:
-                    pass
-                audio_emit_idx += 1
-
-        # Wait at calculated pace (exact speech rate)
-        await asyncio.sleep(delay_per_word * text_word_counts[te_idx])
-
-    # Flush remaining audio chunks (rounding leftovers)
-    while audio_emit_idx < num_audio:
-        b64 = base64.b64encode(
-            audio_chunks[audio_emit_idx],
-        ).decode("ascii")
+    for chunk in audio_chunks:
+        b64 = base64.b64encode(chunk).decode("ascii")
         chunk_index += 1
-        total_audio_bytes += len(audio_chunks[audio_emit_idx])
+        total_audio_bytes += len(chunk)
         try:
             await adispatch_custom_event(
                 "debate_voice_chunk",
@@ -843,9 +794,8 @@ async def stream_text_and_voice_synced(
             )
         except Exception:
             pass
-        audio_emit_idx += 1
 
-    # ── Emit playback-ready (end of audio for this participant) ─────
+    # ── 5. Emit playback-ready (end of audio for this participant) ─
     await adispatch_custom_event(
         "debate_voice_done",
         {

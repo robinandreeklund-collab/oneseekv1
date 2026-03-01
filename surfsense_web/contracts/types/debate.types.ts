@@ -28,8 +28,12 @@ export interface DebateParticipantResponse {
 	wordCount: number;
 	latencyMs: number;
 	status: "waiting" | "speaking" | "complete" | "error";
-	/** Progressive text reveal index during voice playback (0 = hidden, text.length = fully revealed). */
+	/** Progressive text reveal — number of words shown (0 = hidden, wordCount = fully revealed). */
 	textRevealIndex?: number;
+	/** TTS audio duration in seconds (used for client-side text animation pacing). */
+	audioDuration?: number;
+	/** Delay per word in seconds — ``audio_duration / word_count``. */
+	delayPerWord?: number;
 }
 
 export interface DebateVote {
@@ -101,6 +105,19 @@ export interface DebateParticipantStartEvent {
 	round: number;
 	position: number;
 	timestamp: number;
+}
+
+export interface DebateParticipantTextEvent {
+	model: string;
+	model_key: string;
+	round: number;
+	/** Full response text (frontend animates word-by-word reveal). */
+	text: string;
+	/** TTS audio duration in seconds. */
+	audio_duration: number;
+	/** Seconds per word — ``audio_duration / word_count``. */
+	delay_per_word: number;
+	word_count: number;
 }
 
 export interface DebateParticipantEndEvent {
