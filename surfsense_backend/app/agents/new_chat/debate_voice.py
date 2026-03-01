@@ -5,16 +5,19 @@ Uses OpenAI's TTS API with ``response_format="pcm"`` + streaming to produce
 events.  The frontend decodes chunks via Web Audio API for near-instant
 playback.
 
-Architecture (inline await — same call stack):
-  1. As each participant's text response arrives in debate_executor,
-     ``schedule_voice_generation`` is awaited **directly** (not via
-     ``asyncio.create_task``).  This keeps ``adispatch_custom_event``
-     on the LangGraph callback call stack so SSE events reach the
-     stream bridge.
-  2. PCM chunks are streamed via ``generate_voice_stream`` and emitted
-     as ``debate_voice_chunk`` custom events.
-  3. The frontend ``useDebateAudio`` hook queues chunks and plays them
-     sequentially through an AudioContext.
+Architecture (sentence-level TTS):
+  1. When a participant's full text response arrives, it is split into
+     sentences (~8-20 words each).
+  2. For each sentence:
+     a) A ``debate_voice_sentence`` event reveals the text up to that point.
+     b) TTS generates audio for that sentence only (~1-3s of audio).
+     c) PCM chunks are emitted as ``debate_voice_chunk`` events.
+  3. The frontend queues chunks and plays them sequentially through an
+     AudioContext, with text revealed sentence-by-sentence in sync.
+
+This approach avoids the previous problem where TTS for a full response
+(~90-120s of audio) blocked the pipeline and caused all text to appear
+in a batch.
 
 The voice map and API key are loaded from the ``debate_voice_settings``
 state key (populated by the admin Debatt settings tab or env fallback).
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 import time
 from typing import Any
 
@@ -57,9 +61,45 @@ DEFAULT_CHUNK_BYTES = 4800
 # Default TTS model — gpt-4o-mini-tts supports instructions for accent/tone/etc.
 DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 
-# Estimated speaking rate: ~2.5 words/second at 1.0x → ~10 chunks/second
-# This is used to estimate text reveal position per audio chunk.
-_ESTIMATED_CHUNKS_PER_WORD = 4
+
+# ── Sentence splitting ──────────────────────────────────────────────────
+
+# Split after sentence-ending punctuation followed by whitespace.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…;:–])\s+")
+
+# Minimum words for a standalone sentence — shorter fragments merge backward.
+_MIN_SENTENCE_WORDS = 5
+
+
+def _split_into_sentences(text: str) -> list[str]:
+    """Split text into sentences suitable for per-sentence TTS.
+
+    Sentences shorter than ``_MIN_SENTENCE_WORDS`` are merged with the
+    previous sentence to avoid tiny TTS calls with choppy output.
+    """
+    raw = _SENTENCE_SPLIT_RE.split(text.strip())
+    merged: list[str] = []
+    for fragment in raw:
+        fragment = fragment.strip()
+        if not fragment:
+            continue
+        if merged and len(fragment.split()) < _MIN_SENTENCE_WORDS:
+            merged[-1] = merged[-1] + " " + fragment
+        else:
+            merged.append(fragment)
+    return merged if merged else [text.strip()]
+
+
+def _find_sentence_end(full_text: str, sentence: str, search_from: int) -> int:
+    """Find the end position of a sentence within the full text."""
+    idx = full_text.find(sentence, search_from)
+    if idx >= 0:
+        return idx + len(sentence)
+    # Fuzzy fallback: advance by sentence length
+    return min(len(full_text), search_from + len(sentence))
+
+
+# ── Core functions ──────────────────────────────────────────────────────
 
 
 def _resolve_voice_settings(state: dict[str, Any]) -> dict[str, Any]:
@@ -163,10 +203,14 @@ async def _emit_voice_events(
     voice_settings: dict[str, Any],
     config: Any,
 ) -> int:
-    """Stream TTS for one participant and emit SSE events with text sync.
+    """Stream TTS for one participant, sentence-by-sentence.
 
-    Each chunk event includes ``text_reveal_index`` so the frontend can
-    progressively reveal the response text in sync with the audio.
+    For each sentence:
+      1. Emit ``debate_voice_sentence`` — frontend reveals text to that point.
+      2. Generate TTS for that sentence only (fast: ~1-3s per sentence).
+      3. Emit ``debate_voice_chunk`` events with PCM audio.
+
+    This avoids the old approach of TTS-ing the entire response (~90s block).
 
     Returns the total number of bytes dispatched.
     """
@@ -181,10 +225,8 @@ async def _emit_voice_events(
     # Resolve per-model language/accent instructions.
     lang_instructions = voice_settings.get("language_instructions") or {}
     if isinstance(lang_instructions, str):
-        # Backwards compat: global string (deprecated)
         instr = lang_instructions.strip()
     else:
-        # Per-model dict: look up participant, fall back to global "__default__"
         instr = (
             lang_instructions.get(participant_display, "").strip()
             or lang_instructions.get("__default__", "").strip()
@@ -192,27 +234,18 @@ async def _emit_voice_events(
 
     tts_model = voice_settings["model"]
     is_mini_tts = "mini-tts" in tts_model.lower()
+    tts_instructions = instr if is_mini_tts else ""
 
-    # For gpt-4o-mini-tts: pass instructions via API parameter (not in input).
-    # For tts-1/tts-1-hd: prepend instructions to input text (legacy approach).
-    if is_mini_tts:
-        tts_text = text
-        tts_instructions = instr
-    else:
-        tts_text = f"[{instr}]\n\n{text}" if instr else text
-        tts_instructions = ""
-
-    # Estimate total chunks for proportional text reveal
-    word_count = max(1, len(text.split()))
-    estimated_total_chunks = max(1, word_count * _ESTIMATED_CHUNKS_PER_WORD)
+    # Split into sentences for per-sentence TTS
+    sentences = _split_into_sentences(text)
     text_len = len(text)
 
     logger.info(
-        "debate_voice: starting TTS for %s (voice=%s, model=%s, text_len=%d, est_chunks=%d, has_instructions=%s)",
-        participant_display, voice, tts_model, len(tts_text), estimated_total_chunks, bool(tts_instructions),
+        "debate_voice: starting TTS for %s (voice=%s, model=%s, sentences=%d, text_len=%d)",
+        participant_display, voice, tts_model, len(sentences), text_len,
     )
 
-    # Emit speaker-changed event with text length for frontend sync
+    # Emit speaker-changed event
     await adispatch_custom_event(
         "debate_voice_speaker",
         {
@@ -221,80 +254,98 @@ async def _emit_voice_events(
             "round": round_num,
             "voice": voice,
             "text_length": text_len,
-            "estimated_total_chunks": estimated_total_chunks,
+            "total_sentences": len(sentences),
             "timestamp": time.time(),
         },
         config=config,
     )
 
-    try:
-        async for pcm_chunk in generate_voice_stream(
-            text=tts_text,
-            voice=voice,
-            api_key=voice_settings["api_key"],
-            api_base=voice_settings["api_base"],
-            model=tts_model,
-            speed=voice_settings.get("speed", 1.0),
-            instructions=tts_instructions,
-        ):
-            b64 = base64.b64encode(pcm_chunk).decode("ascii")
-            total_bytes += len(pcm_chunk)
-            chunk_index += 1
+    # Process each sentence: reveal text → generate TTS → emit audio
+    reveal_cursor = 0
 
-            # Calculate proportional text reveal position
-            reveal_frac = min(1.0, chunk_index / estimated_total_chunks)
-            text_reveal_index = min(text_len, int(text_len * reveal_frac))
+    for sent_idx, sentence in enumerate(sentences):
+        # Find where this sentence ends in the original text
+        reveal_cursor = _find_sentence_end(text, sentence, reveal_cursor)
 
-            # Slim payload — constant PCM format fields sent once in speaker event
+        # Emit sentence event → frontend reveals text up to this point
+        await adispatch_custom_event(
+            "debate_voice_sentence",
+            {
+                "model": participant_display,
+                "round": round_num,
+                "si": sent_idx,
+                "ts": len(sentences),
+                "tri": reveal_cursor,
+                "sentence": sentence,
+                "timestamp": time.time(),
+            },
+            config=config,
+        )
+
+        # Prepare TTS input for this sentence
+        if is_mini_tts:
+            sent_tts_text = sentence
+        else:
+            sent_tts_text = f"[{instr}]\n\n{sentence}" if instr else sentence
+
+        # Generate TTS for this sentence
+        try:
+            async for pcm_chunk in generate_voice_stream(
+                text=sent_tts_text,
+                voice=voice,
+                api_key=voice_settings["api_key"],
+                api_base=voice_settings["api_base"],
+                model=tts_model,
+                speed=voice_settings.get("speed", 1.0),
+                instructions=tts_instructions,
+            ):
+                b64 = base64.b64encode(pcm_chunk).decode("ascii")
+                total_bytes += len(pcm_chunk)
+                chunk_index += 1
+
+                await adispatch_custom_event(
+                    "debate_voice_chunk",
+                    {
+                        "model": participant_display,
+                        "round": round_num,
+                        "ci": chunk_index,
+                        "pcm_b64": b64,
+                        "tri": reveal_cursor,
+                    },
+                    config=config,
+                )
+
+        except httpx.HTTPStatusError as exc:
+            body_preview = ""
+            try:
+                body_preview = exc.response.text[:300]
+            except Exception:
+                body_preview = "(could not read response body)"
+            logger.error(
+                "debate_voice: TTS API error for %s sentence %d: status=%s body=%s",
+                participant_display, sent_idx, exc.response.status_code, body_preview,
+            )
             await adispatch_custom_event(
-                "debate_voice_chunk",
+                "debate_voice_error",
                 {
                     "model": participant_display,
                     "round": round_num,
-                    "ci": chunk_index,
-                    "pcm_b64": b64,
-                    "tri": text_reveal_index,
+                    "error": f"TTS error sentence {sent_idx}: {exc.response.status_code}",
+                    "timestamp": time.time(),
                 },
                 config=config,
             )
-
-    except httpx.HTTPStatusError as exc:
-        # Response body was read before raising (see generate_voice_stream)
-        body_preview = ""
-        try:
-            body_preview = exc.response.text[:300]
-        except Exception:
-            body_preview = "(could not read response body)"
-        logger.error(
-            "debate_voice: TTS API error for %s: status=%s body=%s",
-            participant_display, exc.response.status_code, body_preview,
-        )
-        await adispatch_custom_event(
-            "debate_voice_error",
-            {
-                "model": participant_display,
-                "round": round_num,
-                "error": f"TTS API error {exc.response.status_code}: {body_preview[:100]}",
-                "timestamp": time.time(),
-            },
-            config=config,
-        )
-    except Exception as exc:
-        logger.error("debate_voice: TTS error for %s: %s", participant_display, exc)
-        await adispatch_custom_event(
-            "debate_voice_error",
-            {
-                "model": participant_display,
-                "round": round_num,
-                "error": str(exc)[:200],
-                "timestamp": time.time(),
-            },
-            config=config,
-        )
+        except Exception as exc:
+            logger.error(
+                "debate_voice: TTS error for %s sentence %d: %s",
+                participant_display, sent_idx, exc,
+            )
+            # Continue to next sentence — don't fail the whole participant
+            continue
 
     logger.info(
-        "debate_voice: finished TTS for %s — %d bytes, %d chunks",
-        participant_display, total_bytes, chunk_index,
+        "debate_voice: finished TTS for %s — %d bytes, %d chunks, %d sentences",
+        participant_display, total_bytes, chunk_index, len(sentences),
     )
 
     # Emit playback-ready (marks end of audio for this participant)
@@ -306,6 +357,7 @@ async def _emit_voice_events(
             "round": round_num,
             "total_bytes": total_bytes,
             "total_chunks": chunk_index,
+            "total_sentences": len(sentences),
             "timestamp": time.time(),
         },
         config=config,
@@ -362,10 +414,19 @@ async def collect_all_audio_for_export(
     participant_order: list[dict[str, Any]],
     state: dict[str, Any],
 ) -> list[tuple[str, int, bytes]]:
-    """Generate full audio for all rounds (for MP3 export)."""
+    """Generate full audio for all rounds (for MP3 export).
+
+    Uses sentence-level TTS for consistency with live playback.
+    """
     voice_settings = _resolve_voice_settings(state)
     if not voice_settings["api_key"]:
         return []
+
+    tts_model = voice_settings["model"]
+    is_mini = "mini-tts" in tts_model.lower()
+
+    # Resolve instructions once
+    lang_instr = voice_settings.get("language_instructions") or {}
 
     results: list[tuple[str, int, bytes]] = []
     for round_num in sorted(round_responses.keys()):
@@ -376,10 +437,7 @@ async def collect_all_audio_for_export(
             if not text:
                 continue
             voice = get_voice_for_participant(display, voice_settings["voice_map"])
-            tts_model = voice_settings["model"]
 
-            # Resolve instructions for export
-            lang_instr = voice_settings.get("language_instructions") or {}
             if isinstance(lang_instr, str):
                 instr = lang_instr.strip()
             else:
@@ -388,21 +446,29 @@ async def collect_all_audio_for_export(
                     or lang_instr.get("__default__", "").strip()
                 )
 
-            is_mini = "mini-tts" in tts_model.lower()
-            export_text = text if is_mini else (f"[{instr}]\n\n{text}" if instr else text)
-            export_instructions = instr if is_mini else ""
+            tts_instructions = instr if is_mini else ""
 
+            # Generate TTS sentence-by-sentence for export too
+            sentences = _split_into_sentences(text)
             pcm_parts: list[bytes] = []
-            async for chunk in generate_voice_stream(
-                text=export_text,
-                voice=voice,
-                api_key=voice_settings["api_key"],
-                api_base=voice_settings["api_base"],
-                model=tts_model,
-                speed=voice_settings.get("speed", 1.0),
-                instructions=export_instructions,
-            ):
-                pcm_parts.append(chunk)
+
+            for sentence in sentences:
+                if is_mini:
+                    sent_text = sentence
+                else:
+                    sent_text = f"[{instr}]\n\n{sentence}" if instr else sentence
+
+                async for chunk in generate_voice_stream(
+                    text=sent_text,
+                    voice=voice,
+                    api_key=voice_settings["api_key"],
+                    api_base=voice_settings["api_base"],
+                    model=tts_model,
+                    speed=voice_settings.get("speed", 1.0),
+                    instructions=tts_instructions,
+                ):
+                    pcm_parts.append(chunk)
+
             results.append((display, round_num, b"".join(pcm_parts)))
 
     return results

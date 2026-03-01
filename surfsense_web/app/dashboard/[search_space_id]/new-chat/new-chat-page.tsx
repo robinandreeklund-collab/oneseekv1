@@ -1865,33 +1865,31 @@ export default function NewChatPage() {
 										case "data-debate-voice-speaker": {
 											const dvs = parsed.data as Record<string, unknown>;
 											console.log("[SSE] debate-voice-speaker:", dvs?.model);
+											// Auto-resume AudioContext (close to user gesture window)
+											debateAudio.resumeAudioContext();
 											debateAudio.onSpeakerChange(String(dvs?.model ?? ""));
 											break;
 										}
-										case "data-debate-voice-chunk": {
-											const dvc = parsed.data as Record<string, unknown>;
-											const chunkModel = String(dvc?.model ?? "");
-											const chunkRound = Number(dvc?.round ?? 0);
-											const chunkTri = Number(dvc?.tri ?? 0);
-											debateAudio.enqueueChunk(
-												chunkModel,
-												String(dvc?.pcm_b64 ?? ""),
-											);
-											// Update text reveal index for progressive display
-											if (chunkTri > 0) {
+										case "data-debate-voice-sentence": {
+											const dvSent = parsed.data as Record<string, unknown>;
+											const sentModel = String(dvSent?.model ?? "");
+											const sentRound = Number(dvSent?.round ?? 0);
+											const sentTri = Number(dvSent?.tri ?? 0);
+											// Reveal text up to current sentence boundary
+											if (sentTri > 0) {
 												setDebateState((prev) => {
 													if (!prev) return prev;
 													return {
 														...prev,
 														participants: prev.participants.map((p) =>
-															p.display === chunkModel
+															p.display === sentModel
 																? {
 																	...p,
 																	responses: {
 																		...p.responses,
-																		[chunkRound]: {
-																			...(p.responses[chunkRound] ?? { round: chunkRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "complete" }),
-																			textRevealIndex: chunkTri,
+																		[sentRound]: {
+																			...(p.responses[sentRound] ?? { round: sentRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "complete" }),
+																			textRevealIndex: sentTri,
 																		},
 																	},
 																}
@@ -1900,6 +1898,15 @@ export default function NewChatPage() {
 													};
 												});
 											}
+											break;
+										}
+										case "data-debate-voice-chunk": {
+											const dvc = parsed.data as Record<string, unknown>;
+											const chunkModel = String(dvc?.model ?? "");
+											debateAudio.enqueueChunk(
+												chunkModel,
+												String(dvc?.pcm_b64 ?? ""),
+											);
 											break;
 										}
 										case "data-debate-voice-done": {
@@ -2885,32 +2892,29 @@ export default function NewChatPage() {
 										// ─── Voice debate SSE events (regen) ──
 										case "data-debate-voice-speaker": {
 											const dvs2 = parsed.data as Record<string, unknown>;
+											debateAudio.resumeAudioContext();
 											debateAudio.onSpeakerChange(String(dvs2?.model ?? ""));
 											break;
 										}
-										case "data-debate-voice-chunk": {
-											const dvc2 = parsed.data as Record<string, unknown>;
-											const chunkModel2 = String(dvc2?.model ?? "");
-											const chunkRound2 = Number(dvc2?.round ?? 0);
-											const chunkTri2 = Number(dvc2?.tri ?? 0);
-											debateAudio.enqueueChunk(
-												chunkModel2,
-												String(dvc2?.pcm_b64 ?? ""),
-											);
-											if (chunkTri2 > 0) {
+										case "data-debate-voice-sentence": {
+											const dvSent2 = parsed.data as Record<string, unknown>;
+											const sentModel2 = String(dvSent2?.model ?? "");
+											const sentRound2 = Number(dvSent2?.round ?? 0);
+											const sentTri2 = Number(dvSent2?.tri ?? 0);
+											if (sentTri2 > 0) {
 												setDebateState((prev) => {
 													if (!prev) return prev;
 													return {
 														...prev,
 														participants: prev.participants.map((p) =>
-															p.display === chunkModel2
+															p.display === sentModel2
 																? {
 																	...p,
 																	responses: {
 																		...p.responses,
-																		[chunkRound2]: {
-																			...(p.responses[chunkRound2] ?? { round: chunkRound2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "complete" }),
-																			textRevealIndex: chunkTri2,
+																		[sentRound2]: {
+																			...(p.responses[sentRound2] ?? { round: sentRound2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "complete" }),
+																			textRevealIndex: sentTri2,
 																		},
 																	},
 																}
@@ -2919,6 +2923,15 @@ export default function NewChatPage() {
 													};
 												});
 											}
+											break;
+										}
+										case "data-debate-voice-chunk": {
+											const dvc2 = parsed.data as Record<string, unknown>;
+											const chunkModel2 = String(dvc2?.model ?? "");
+											debateAudio.enqueueChunk(
+												chunkModel2,
+												String(dvc2?.pcm_b64 ?? ""),
+											);
 											break;
 										}
 										case "data-debate-voice-done": {
