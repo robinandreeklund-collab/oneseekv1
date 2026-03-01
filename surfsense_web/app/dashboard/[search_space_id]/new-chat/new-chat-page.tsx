@@ -1797,7 +1797,9 @@ export default function NewChatPage() {
 										}
 										case "data-debate-participant-text": {
 											// Full text + timing metadata from voice mode.
-											// Frontend animates word-by-word reveal using delay_per_word.
+											// Store full text + timing metadata.
+											// The useSmoothTyping hook in debate-arena handles
+											// character-by-character reveal using delayPerWord.
 											const dptData = parsed.data as Record<string, unknown>;
 											const dptModel = String(dptData?.model ?? "");
 											const dptRound = Number(dptData?.round ?? 0);
@@ -1806,7 +1808,6 @@ export default function NewChatPage() {
 											const dptAudioDur = Number(dptData?.audio_duration ?? 0);
 											const dptDelay = Number(dptData?.delay_per_word ?? 0.15);
 
-											// Store full text with textRevealIndex = 0 (hidden)
 											setDebateState((prev) => {
 												if (!prev) return prev;
 												return {
@@ -1822,7 +1823,6 @@ export default function NewChatPage() {
 																		text: dptText,
 																		wordCount: dptWordCount,
 																		status: "speaking" as const,
-																		textRevealIndex: 0,
 																		audioDuration: dptAudioDur,
 																		delayPerWord: dptDelay,
 																	},
@@ -1832,42 +1832,6 @@ export default function NewChatPage() {
 													),
 												};
 											});
-
-											// Animate word-by-word reveal on the client
-											const WORDS_PER_TICK = 2;
-											const tickMs = dptDelay * WORDS_PER_TICK * 1000;
-											let revealIdx = 0;
-											const revealNext = () => {
-												revealIdx += WORDS_PER_TICK;
-												const done = revealIdx >= dptWordCount;
-												if (done) revealIdx = dptWordCount;
-												setDebateState((prev) => {
-													if (!prev) return prev;
-													return {
-														...prev,
-														participants: prev.participants.map((p) =>
-															p.display === dptModel
-																? {
-																	...p,
-																	responses: {
-																		...p.responses,
-																		[dptRound]: {
-																			...(p.responses[dptRound] ?? { round: dptRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }),
-																			textRevealIndex: revealIdx,
-																			...(done ? { status: "complete" as const } : {}),
-																		},
-																	},
-																}
-																: p,
-														),
-													};
-												});
-												if (!done) {
-													setTimeout(revealNext, tickMs);
-												}
-											};
-											// Start after first tick delay
-											setTimeout(revealNext, tickMs);
 											break;
 										}
 										case "data-debate-participant-end": {
@@ -1884,9 +1848,6 @@ export default function NewChatPage() {
 													participants: prev.participants.map((p) => {
 														if (p.display !== dpeModel) return p;
 														const existing = p.responses[dpeRound];
-														// If animation is still running (textRevealIndex set),
-														// keep text and let animation complete naturally.
-														const hasAnimation = existing?.textRevealIndex !== undefined;
 														return {
 															...p,
 															totalWordCount: p.totalWordCount + dpeWordCount,
@@ -1894,11 +1855,10 @@ export default function NewChatPage() {
 																...p.responses,
 																[dpeRound]: {
 																	...(existing ?? { round: dpeRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }),
-																	text: hasAnimation ? (existing?.text ?? dpePreview) : dpePreview,
+																	text: existing?.text ?? dpePreview,
 																	wordCount: dpeWordCount,
 																	latencyMs: dpeLatency,
-																	// Keep "speaking" while animation runs
-																	status: hasAnimation && (existing?.textRevealIndex ?? 0) < dpeWordCount ? "speaking" : "complete",
+																	status: "complete",
 																},
 															},
 														};
@@ -2936,22 +2896,8 @@ export default function NewChatPage() {
 											const dptDel2 = Number(dpt2?.delay_per_word ?? 0.15);
 											setDebateState((prev) => {
 												if (!prev) return prev;
-												return { ...prev, participants: prev.participants.map((p) => p.display === dptM2 ? { ...p, responses: { ...p.responses, [dptR2]: { ...(p.responses[dptR2] ?? { round: dptR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }), text: dptTxt2, wordCount: dptWc2, status: "speaking" as const, textRevealIndex: 0, audioDuration: dptDur2, delayPerWord: dptDel2 } } } : p) };
+												return { ...prev, participants: prev.participants.map((p) => p.display === dptM2 ? { ...p, responses: { ...p.responses, [dptR2]: { ...(p.responses[dptR2] ?? { round: dptR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }), text: dptTxt2, wordCount: dptWc2, status: "speaking" as const, audioDuration: dptDur2, delayPerWord: dptDel2 } } } : p) };
 											});
-											const TICKS2 = 2;
-											const tickMs2 = dptDel2 * TICKS2 * 1000;
-											let ri2 = 0;
-											const revealNext2 = () => {
-												ri2 += TICKS2;
-												const done2 = ri2 >= dptWc2;
-												if (done2) ri2 = dptWc2;
-												setDebateState((prev) => {
-													if (!prev) return prev;
-													return { ...prev, participants: prev.participants.map((p) => p.display === dptM2 ? { ...p, responses: { ...p.responses, [dptR2]: { ...(p.responses[dptR2] ?? { round: dptR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }), textRevealIndex: ri2, ...(done2 ? { status: "complete" as const } : {}) } } } : p) };
-												});
-												if (!done2) setTimeout(revealNext2, tickMs2);
-											};
-											setTimeout(revealNext2, tickMs2);
 											break;
 										}
 										case "data-debate-participant-end": {
@@ -2966,8 +2912,7 @@ export default function NewChatPage() {
 												return { ...prev, participants: prev.participants.map((p) => {
 													if (p.display !== dpeM2) return p;
 													const ex = p.responses[dpeR2];
-													const hasAnim = ex?.textRevealIndex !== undefined;
-													return { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(ex ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: hasAnim ? (ex?.text ?? dpePrev2) : dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: hasAnim && (ex?.textRevealIndex ?? 0) < dpeWc2 ? "speaking" : "complete" } } };
+													return { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(ex ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: ex?.text ?? dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete" } } };
 												}) };
 											});
 											break;

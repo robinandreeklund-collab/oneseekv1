@@ -136,6 +136,7 @@ export function DebateSettingsPage() {
 		language_instructions: {},
 		max_tokens: DEFAULT_MAX_TOKENS,
 		max_tokens_map: {},
+		typing_speed_multiplier: 1.0,
 	});
 
 	const [isLoading, setIsLoading] = useState(true);
@@ -398,6 +399,26 @@ export function DebateSettingsPage() {
 								Cartesia st&ouml;der 0.6x &ndash; 1.5x
 							</p>
 						)}
+					</div>
+
+					{/* Typing speed multiplier */}
+					<div className="space-y-2">
+						<Label>
+							Text-reveal hastighet: {(settings.typing_speed_multiplier ?? 1.0).toFixed(2)}x
+						</Label>
+						<Slider
+							min={0.3}
+							max={3.0}
+							step={0.05}
+							value={[settings.typing_speed_multiplier ?? 1.0]}
+							onValueChange={([v]) =>
+								setSettings((prev) => ({ ...prev, typing_speed_multiplier: v }))
+							}
+						/>
+						<p className="text-[10px] text-muted-foreground">
+							Justerar hur snabbt text visas i f&ouml;rh&aring;llande till ljud.
+							1.0 = synkad med TTS-l&auml;ngd. &lt;1 = text snabbare &auml;n ljud. &gt;1 = text l&aring;ngsammare.
+						</p>
 					</div>
 				</CardContent>
 			</Card>

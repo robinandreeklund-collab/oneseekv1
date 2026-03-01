@@ -737,10 +737,14 @@ async def stream_text_and_voice_synced(
     # ── 2. Calculate per-word delay from audio duration ─────────────
     # Formula: delay_per_word = audio_duration / word_count
     # Fallback: conversational Swedish ≈ 6.5 words/sec ≈ 150 ms/word.
+    # The admin-configurable typing_speed_multiplier scales the result:
+    # <1 = text reveals faster than audio, >1 = slower.
     if audio_duration > 0 and word_count > 0:
         delay_per_word = audio_duration / word_count
     else:
         delay_per_word = 0.15
+    typing_multiplier = voice_settings.get("typing_speed_multiplier", 1.0)
+    delay_per_word *= typing_multiplier
 
     logger.info(
         "debate_voice: %s — %d words, %.2fs audio, %.0fms/word, %d PCM bytes",

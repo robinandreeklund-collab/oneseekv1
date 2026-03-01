@@ -50,6 +50,7 @@ import {
 	ROUND_LABELS,
 } from "@/contracts/types/debate.types";
 import { Slider } from "@/components/ui/slider";
+import { useSmoothTyping } from "@/hooks/use-smooth-typing";
 
 // ============================================================================
 // Context — other tool UIs check this to hide when debate arena is active
@@ -373,21 +374,18 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	const voiceActive = voiceCtx?.voiceState.currentSpeaker === participant.display
 		&& voiceCtx?.voiceState.playbackStatus === "playing";
 
-	// Text display — in voice mode with animation, reveal word-by-word
+	// Text display — in voice mode, smooth character-by-character reveal.
+	// Animation stays active even after status flips to "complete" so the
+	// typing effect finishes naturally (the hook stops on its own).
 	const fullText = roundResponse?.text ?? "";
-	const revealIndex = roundResponse?.textRevealIndex;
-	const hasAnimation = revealIndex !== undefined;
-	const isAnimating = hasAnimation && revealIndex < (roundResponse?.wordCount ?? fullText.split(/\s+/).length);
-	const isTextStreaming = isVoiceMode && (isSpeaking || isAnimating) && fullText.length > 0;
+	const delayPerWord = roundResponse?.delayPerWord;
+	const hasTypingData = isVoiceMode && delayPerWord !== undefined && delayPerWord > 0 && fullText.length > 0;
+	const displayText = useSmoothTyping(fullText, delayPerWord, hasTypingData);
+	const isTextStreaming = hasTypingData && displayText.length < fullText.length;
 
-	// Show revealed words only during animation, full text when done
-	const displayText = hasAnimation && isAnimating
-		? fullText.split(/\s+/).slice(0, revealIndex).join(" ")
-		: fullText;
-
-	// In voice mode: expand cards that have text or are being voiced
+	// In voice mode: expand cards that have text or are being voiced/animated
 	const effectiveExpanded = isVoiceMode
-		? (isBeingVoiced || isTextStreaming || isAnimating || (isSpeaking && fullText.length > 0) || (isDone && !voiceTextDone))
+		? (isBeingVoiced || isTextStreaming || (isSpeaking && fullText.length > 0) || (isDone && !voiceTextDone))
 		: (manualToggle ?? autoExpanded);
 
 	// Voice mode: generating text (before any chunks arrive)

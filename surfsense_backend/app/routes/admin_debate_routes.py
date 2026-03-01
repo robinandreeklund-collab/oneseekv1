@@ -63,6 +63,12 @@ class DebateVoiceSettings(BaseModel):
         default_factory=dict,
         description="Per-modell max tokens. Nyckel = modellnamn, värde = max tokens. Åsidosätter standard max_tokens.",
     )
+    typing_speed_multiplier: float = Field(
+        default=1.0,
+        ge=0.3,
+        le=3.0,
+        description="Multiplier för text-reveal-hastighet. <1 = snabbare text, >1 = långsammare. Justerar delay_per_word som skickas till frontend.",
+    )
 
 
 class DebateVoiceSettingsResponse(BaseModel):
