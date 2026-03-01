@@ -8,6 +8,9 @@ const PCM_SAMPLE_RATE = 24000;
 const PCM_BIT_DEPTH = 16;
 const PCM_CHANNELS = 1;
 
+// ── MP3 encoding bitrate ────────────────────────────────────────────
+const MP3_KBPS = 128;
+
 /**
  * Hook that manages Web Audio API playback for Live Voice Debate Mode.
  *
@@ -49,8 +52,10 @@ export function useDebateAudio(enabled: boolean) {
 	// Track voice errors from backend
 	const lastErrorRef = useRef<string | null>(null);
 
-	// Collected raw PCM for export (speaker → ArrayBuffer[])
-	const collectedRef = useRef<Record<string, ArrayBuffer[]>>({});
+	// Collected raw PCM for export — stored in arrival order so the
+	// exported file matches the actual debate sequence (round by round,
+	// speaker by speaker) rather than grouping per-speaker.
+	const collectedRef = useRef<ArrayBuffer[]>([]);
 
 	// ── Initialize AudioContext lazily ──────────────────────────────
 	const ensureAudioContext = useCallback(() => {
@@ -186,17 +191,14 @@ export function useDebateAudio(enabled: boolean) {
 				);
 			}
 
-			// Store raw PCM for export
+			// Store raw PCM for export (arrival order = debate order)
 			try {
 				const binaryStr = atob(b64);
 				const raw = new Uint8Array(binaryStr.length);
 				for (let i = 0; i < binaryStr.length; i++) {
 					raw[i] = binaryStr.charCodeAt(i);
 				}
-				if (!collectedRef.current[speaker]) {
-					collectedRef.current[speaker] = [];
-				}
-				collectedRef.current[speaker].push(raw.buffer);
+				collectedRef.current.push(raw.buffer);
 			} catch {
 				// export collection is best-effort
 			}
@@ -296,31 +298,58 @@ export function useDebateAudio(enabled: boolean) {
 		setVoiceState((prev) => ({ ...prev, volume: clamped }));
 	}, []);
 
-	// ── Export collected audio as WAV blob ──────────────────────────
+	// ── Export collected audio as MP3 blob ───────────────────────────
 	const exportAudioBlob = useCallback((): Blob | null => {
-		const all = collectedRef.current;
-		const keys = Object.keys(all);
-		if (keys.length === 0) return null;
+		const chunks = collectedRef.current;
+		if (chunks.length === 0) return null;
 
-		// Merge all speakers' PCM in order
-		const allChunks: ArrayBuffer[] = [];
-		for (const speaker of keys) {
-			for (const chunk of all[speaker]) {
-				allChunks.push(chunk);
-			}
-		}
-
-		const totalLength = allChunks.reduce((sum, c) => sum + c.byteLength, 0);
+		// Merge all PCM chunks (already in debate order)
+		const totalLength = chunks.reduce((sum, c) => sum + c.byteLength, 0);
 		const merged = new Uint8Array(totalLength);
 		let offset = 0;
-		for (const chunk of allChunks) {
+		for (const chunk of chunks) {
 			merged.set(new Uint8Array(chunk), offset);
 			offset += chunk.byteLength;
 		}
 
-		// Build WAV header
-		const wavHeader = buildWavHeader(merged.length, PCM_SAMPLE_RATE, PCM_BIT_DEPTH, PCM_CHANNELS);
-		return new Blob([wavHeader, merged], { type: "audio/wav" });
+		// Convert PCM 16-bit LE → Int16Array for the encoder
+		const int16 = new Int16Array(merged.buffer, merged.byteOffset, merged.byteLength / 2);
+
+		try {
+			// Dynamic import to avoid SSR issues — lamejs is CJS
+			// eslint-disable-next-line @typescript-eslint/no-require-imports
+			const lamejs = require("lamejs");
+			const encoder = new lamejs.Mp3Encoder(PCM_CHANNELS, PCM_SAMPLE_RATE, MP3_KBPS);
+
+			const mp3Parts: Uint8Array[] = [];
+			const SAMPLES_PER_FRAME = 1152;
+
+			for (let i = 0; i < int16.length; i += SAMPLES_PER_FRAME) {
+				const chunk = int16.subarray(i, i + SAMPLES_PER_FRAME);
+				const mp3buf = encoder.encodeBuffer(chunk);
+				if (mp3buf.length > 0) {
+					mp3Parts.push(new Uint8Array(mp3buf));
+				}
+			}
+
+			const tail = encoder.flush();
+			if (tail.length > 0) {
+				mp3Parts.push(new Uint8Array(tail));
+			}
+
+			console.log(
+				"[useDebateAudio] MP3 export: %d PCM bytes → %d MP3 parts",
+				totalLength,
+				mp3Parts.length,
+			);
+
+			return new Blob(mp3Parts, { type: "audio/mpeg" });
+		} catch (err) {
+			console.warn("[useDebateAudio] MP3 encoding failed, falling back to WAV:", err);
+			// Fallback to WAV if lamejs is unavailable
+			const wavHeader = buildWavHeader(merged.length, PCM_SAMPLE_RATE, PCM_BIT_DEPTH, PCM_CHANNELS);
+			return new Blob([wavHeader, merged], { type: "audio/wav" });
+		}
 	}, []);
 
 	// ── Cleanup on unmount ─────────────────────────────────────────

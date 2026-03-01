@@ -729,10 +729,11 @@ const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => 
 	const handleDownload = useCallback(() => {
 		const blob = exportAudioBlob();
 		if (!blob) return;
+		const ext = blob.type === "audio/mpeg" ? "mp3" : "wav";
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement("a");
 		a.href = url;
-		a.download = `debatt-${Date.now()}.wav`;
+		a.download = `debatt-${Date.now()}.${ext}`;
 		a.click();
 		URL.revokeObjectURL(url);
 	}, [exportAudioBlob]);
@@ -819,7 +820,7 @@ const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => 
 					size="sm"
 					className="h-8 w-8 p-0"
 					onClick={handleDownload}
-					title="Ladda ner debatt-ljud (WAV)"
+					title="Ladda ner hela debatten som MP3"
 				>
 					<DownloadIcon className="h-4 w-4" />
 				</Button>
