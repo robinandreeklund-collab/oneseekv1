@@ -370,11 +370,19 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		"node:pev_verify": { x: 2160, y: 950 },
 		"node:mini_synthesizer": { x: 2400, y: 1100 },
 		"node:convergence_node": { x: 2400, y: 1250 },
-		// ── Compare mode (separate branch from resolve_intent) ──
-		"node:compare_fan_out": { x: 240, y: 1400 },
-		"node:compare_collect": { x: 480, y: 1400 },
-		"node:compare_tavily": { x: 720, y: 1400 },
-		"node:compare_synthesizer": { x: 960, y: 1400 },
+		// ── Compare Supervisor v2 (unified P4 architecture with pod isolation) ──
+		"node:compare_domain_planner": { x: 240, y: 1400 },
+		"node:compare_subagent_spawner": { x: 520, y: 1400 },
+		"node:compare_domain_pod": { x: 800, y: 1400 },
+		"node:compare_mini_critic": { x: 520, y: 1560 },
+		"node:compare_research": { x: 240, y: 1560 },
+		// Per-criterion evaluator pods (parallel, 4 per domain × 7 domains = 28 concurrent)
+		"node:compare_eval_relevans": { x: 520, y: 1720 },
+		"node:compare_eval_djup": { x: 800, y: 1720 },
+		"node:compare_eval_klarhet": { x: 1080, y: 1720 },
+		"node:compare_eval_korrekthet": { x: 1360, y: 1720 },
+		"node:compare_convergence": { x: 1080, y: 1880 },
+		"node:compare_synthesizer": { x: 1360, y: 1880 },
 	};
 
 	return pipelineNodes.map((node) => ({

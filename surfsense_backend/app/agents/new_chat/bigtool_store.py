@@ -96,6 +96,7 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "call_deepseek": ("tools", "compare", "external"),
     "call_perplexity": ("tools", "compare", "external"),
     "call_qwen": ("tools", "compare", "external"),
+    "call_oneseek": ("tools", "compare", "research"),
     # Riksdagen tools - all under tools/politik
     "riksdag_dokument": ("tools", "politik", "dokument"),
     "riksdag_ledamoter": ("tools", "politik", "ledamoter"),

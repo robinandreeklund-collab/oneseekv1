@@ -52,8 +52,8 @@ def _extract_resolve_prompt_keys(path: Path) -> set[str]:
 def test_prompt_definitions_match_oneseek_template_exactly() -> None:
     template_keys = _extract_template_keys_from_registry()
     definition_map_keys = _extract_definition_map_keys_from_registry()
-    assert len(template_keys) == 40
-    assert len(set(template_keys)) == 40
+    assert len(template_keys) == 65
+    assert len(set(template_keys)) == 65
     assert definition_map_keys == set(template_keys)
 
 

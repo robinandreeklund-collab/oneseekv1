@@ -1993,6 +1993,69 @@ async def create_supervisor_agent(
             DEFAULT_COMPARE_ANALYSIS_PROMPT,
         ),
     )
+    # Compare Supervisor v2: P4-style prompts
+    from app.agents.new_chat.compare_prompts import (
+        DEFAULT_COMPARE_CONVERGENCE_PROMPT,
+        DEFAULT_COMPARE_CRITERION_DJUP_PROMPT,
+        DEFAULT_COMPARE_CRITERION_KLARHET_PROMPT,
+        DEFAULT_COMPARE_CRITERION_KORREKTHET_PROMPT,
+        DEFAULT_COMPARE_CRITERION_RELEVANS_PROMPT,
+        DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
+        DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
+        DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
+        DEFAULT_COMPARE_RESEARCH_PROMPT,
+    )
+    compare_domain_planner_prompt = resolve_prompt(
+        prompt_overrides,
+        "compare.domain_planner.system",
+        DEFAULT_COMPARE_DOMAIN_PLANNER_PROMPT,
+    )
+    compare_mini_planner_prompt = resolve_prompt(
+        prompt_overrides,
+        "compare.mini_planner.system",
+        DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
+    )
+    compare_mini_critic_prompt = resolve_prompt(
+        prompt_overrides,
+        "compare.mini_critic.system",
+        DEFAULT_COMPARE_MINI_CRITIC_PROMPT,
+    )
+    compare_convergence_prompt = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "compare.convergence.system",
+            DEFAULT_COMPARE_CONVERGENCE_PROMPT,
+        ),
+    )
+    # Per-criterion evaluator prompts (admin-editable)
+    _criterion_prompt_overrides: dict[str, str] = {}
+    for _crit, _default in [
+        ("relevans", DEFAULT_COMPARE_CRITERION_RELEVANS_PROMPT),
+        ("djup", DEFAULT_COMPARE_CRITERION_DJUP_PROMPT),
+        ("klarhet", DEFAULT_COMPARE_CRITERION_KLARHET_PROMPT),
+        ("korrekthet", DEFAULT_COMPARE_CRITERION_KORREKTHET_PROMPT),
+    ]:
+        _resolved = resolve_prompt(
+            prompt_overrides,
+            f"compare.criterion.{_crit}",
+            _default,
+        )
+        if _resolved != _default:
+            _criterion_prompt_overrides[_crit] = _resolved
+
+    # Research synthesis prompt (admin-editable via compare.research.system)
+    _research_synthesis_prompt_resolved = resolve_prompt(
+        prompt_overrides,
+        "compare.research.system",
+        DEFAULT_COMPARE_RESEARCH_PROMPT,
+    )
+    _research_synthesis_prompt: str | None = (
+        _research_synthesis_prompt_resolved
+        if _research_synthesis_prompt_resolved != DEFAULT_COMPARE_RESEARCH_PROMPT
+        else None
+    )
+
     hitl_planner_message_template = resolve_prompt(
         prompt_overrides,
         "supervisor.hitl.planner.message",
@@ -2614,6 +2677,10 @@ async def create_supervisor_agent(
     )
     sandbox_enabled = _coerce_bool(
         runtime_hitl_cfg.get("sandbox_enabled"),
+        default=False,
+    )
+    compare_sandbox_isolation = _coerce_bool(
+        runtime_hitl_cfg.get("compare_sandbox_isolation"),
         default=False,
     )
     artifact_offload_enabled = _coerce_bool(
@@ -6639,32 +6706,177 @@ async def create_supervisor_agent(
     
     # Conditional graph structure based on compare_mode
     if compare_mode:
-        # Compare mode: use deterministic compare subgraph
-        from functools import partial
+        # Compare Supervisor v2: unified P4 architecture
+        # Same infrastructure as normal mode: subagent mini-graphs,
+        # convergence node, proper handoff contracts.
         from app.agents.new_chat.compare_executor import (
-            compare_fan_out,
-            compare_collect,
-            compare_tavily,
-            compare_synthesizer,
+            build_compare_domain_planner_node,
+            build_compare_subagent_spawner_node,
+            build_compare_synthesizer_node,
         )
-        
-        # Create compare_synthesizer with resolved prompt override
-        compare_synthesizer_with_prompt = partial(
-            compare_synthesizer,
-            prompt_override=compare_synthesizer_prompt_template
+        from app.agents.new_chat.nodes.convergence_node import (
+            build_convergence_node,
         )
-        
-        graph_builder.add_node("compare_fan_out", RunnableCallable(None, compare_fan_out))
-        graph_builder.add_node("compare_collect", RunnableCallable(None, compare_collect))
-        graph_builder.add_node("compare_tavily", RunnableCallable(None, compare_tavily))
-        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synthesizer_with_prompt))
-        
-        # Direct routing: resolve_intent -> compare_fan_out -> ... -> END
+
+        # Build compare domain planner (deterministic — 8 domains always)
+        compare_domain_planner_node = build_compare_domain_planner_node(
+            external_model_specs=list(EXTERNAL_MODEL_SPECS),
+            include_research=True,
+        )
+
+        # Build tavily_search_fn for compare research agent.
+        # Pre-fetch the API key NOW (while the DB session is fresh) and
+        # cache it in the closure.  This avoids expired-session errors
+        # when the function is called minutes later from the research worker.
+        #
+        # Resolution order:
+        # 1. Per-search-space connector (TAVILY_API in DB)
+        # 2. Global PUBLIC_TAVILY_API_KEY environment variable
+        _compare_tavily_search_fn = None
+        _tavily_api_key: str | None = None
+        if connector_service and search_space_id is not None:
+            try:
+                from app.db import SearchSourceConnectorType
+
+                tavily_connector = await connector_service.get_connector_by_type(
+                    SearchSourceConnectorType.TAVILY_API, search_space_id
+                )
+                if tavily_connector:
+                    _tavily_api_key = tavily_connector.config.get("TAVILY_API_KEY")
+            except Exception as exc:
+                logger.warning("compare mode: failed to fetch Tavily API key from DB: %s", exc)
+
+        # Fallback: use global PUBLIC_TAVILY_API_KEY from environment
+        if not _tavily_api_key:
+            from app.config import Config as _AppConfig
+
+            _tavily_api_key = getattr(_AppConfig, "PUBLIC_TAVILY_API_KEY", None)
+            if _tavily_api_key:
+                logger.info(
+                    "compare mode: using PUBLIC_TAVILY_API_KEY from env "
+                    "(no per-space connector found)"
+                )
+
+        if _tavily_api_key:
+            _cached_key = _tavily_api_key  # capture in closure
+
+            async def _compare_tavily_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
+                """Call Tavily API directly with pre-fetched API key."""
+                logger.info(
+                    "compare_tavily_search_fn: searching query=%r, max_results=%d",
+                    query[:80], max_results,
+                )
+                try:
+                    from tavily import TavilyClient
+
+                    client = TavilyClient(api_key=_cached_key)
+                    response = await asyncio.to_thread(
+                        client.search,
+                        query=query,
+                        max_results=max_results,
+                        search_depth="basic",
+                        include_answer=True,
+                        include_raw_content=False,
+                        include_images=False,
+                    )
+
+                    results: list[dict[str, Any]] = []
+                    for item in response.get("results", []):
+                        results.append({
+                            "url": item.get("url", ""),
+                            "title": item.get("title", ""),
+                            "content": item.get("content", "")[:500],
+                        })
+
+                    # Include Tavily's own answer if available
+                    tavily_answer = response.get("answer", "")
+                    if tavily_answer and not results:
+                        results.append({
+                            "url": "",
+                            "title": "Tavily AI Answer",
+                            "content": str(tavily_answer)[:500],
+                        })
+
+                    logger.info(
+                        "compare_tavily_search_fn: got %d results for query=%r",
+                        len(results), query[:80],
+                    )
+                    return results
+
+                except Exception as exc:
+                    logger.warning(
+                        "compare_tavily_search_fn: error: %s", exc, exc_info=True,
+                    )
+                    return []
+
+            logger.info(
+                "compare mode: tavily_search_fn CREATED with pre-fetched API key",
+            )
+        else:
+            logger.warning(
+                "compare mode: tavily_search_fn is None! "
+                "(connector_service=%s, search_space_id=%s, key_found=%s) "
+                "— research agent will NOT perform web searches",
+                connector_service, search_space_id, bool(_tavily_api_key),
+            )
+
+        # Build compare subagent spawner (P4 pattern with specialized workers)
+        # Compare mode uses sandbox with Redis state store to avoid the
+        # file-based lock contention that occurs with 8 parallel domains.
+        _compare_hitl = dict(runtime_hitl_cfg or {})
+        _compare_hitl["sandbox_state_store"] = "redis"
+        # Ensure Redis URL is available for sandbox state store.
+        # sandbox_runtime checks: sandbox_state_redis_url → redis_url → REDIS_URL env.
+        # Fall back to CELERY_BROKER_URL / REDIS_APP_URL if REDIS_URL is not set.
+        if not _compare_hitl.get("sandbox_state_redis_url") and not _compare_hitl.get("redis_url"):
+            import os as _os
+
+            _redis_url = (
+                _os.getenv("REDIS_URL")
+                or _os.getenv("REDIS_APP_URL")
+                or _os.getenv("CELERY_BROKER_URL")
+            )
+            if _redis_url:
+                _compare_hitl["redis_url"] = _redis_url
+        compare_spawner_node = build_compare_subagent_spawner_node(
+            llm=llm,
+            compare_mini_critic_prompt=compare_mini_critic_prompt,
+            latest_user_query_fn=_latest_user_query,
+            extract_first_json_object_fn=_extract_first_json_object,
+            tavily_search_fn=_compare_tavily_search_fn,
+            execution_timeout_seconds=90,
+            sandbox_enabled=True,
+            sandbox_isolation_enabled=True,
+            runtime_hitl_cfg=_compare_hitl,
+            criterion_prompt_overrides=_criterion_prompt_overrides or None,
+            research_synthesis_prompt=_research_synthesis_prompt,
+        )
+
+        # Build compare convergence node (reuses P4 convergence)
+        compare_convergence_node_fn = build_convergence_node(
+            llm=llm,
+            convergence_prompt_template=compare_convergence_prompt,
+            latest_user_query_fn=_latest_user_query,
+            extract_first_json_object_fn=_extract_first_json_object,
+        )
+
+        # Build compare synthesizer
+        compare_synth_node = build_compare_synthesizer_node(
+            prompt_override=compare_synthesizer_prompt_template,
+        )
+
+        # Add nodes
+        graph_builder.add_node("compare_domain_planner", RunnableCallable(None, compare_domain_planner_node))
+        graph_builder.add_node("compare_subagent_spawner", RunnableCallable(None, compare_spawner_node))
+        graph_builder.add_node("compare_convergence", RunnableCallable(None, compare_convergence_node_fn))
+        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synth_node))
+
+        # Graph routing: resolve_intent → domain_planner → spawner → convergence → synthesizer → END
         graph_builder.set_entry_point("resolve_intent")
-        graph_builder.add_edge("resolve_intent", "compare_fan_out")
-        graph_builder.add_edge("compare_fan_out", "compare_collect")
-        graph_builder.add_edge("compare_collect", "compare_tavily")
-        graph_builder.add_edge("compare_tavily", "compare_synthesizer")
+        graph_builder.add_edge("resolve_intent", "compare_domain_planner")
+        graph_builder.add_edge("compare_domain_planner", "compare_subagent_spawner")
+        graph_builder.add_edge("compare_subagent_spawner", "compare_convergence")
+        graph_builder.add_edge("compare_convergence", "compare_synthesizer")
         graph_builder.add_edge("compare_synthesizer", END)
     else:
         # Normal mode: use standard supervisor pipeline

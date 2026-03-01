@@ -27,6 +27,10 @@ import {
 } from "@/components/assistant-ui/thinking-steps";
 import { TracePanelContext } from "@/components/assistant-ui/trace-context";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
+import {
+	SpotlightArenaActiveContext,
+	SpotlightArenaLayout,
+} from "@/components/tool-ui/spotlight-arena";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { CommentPanelContainer } from "@/components/chat-comments/comment-panel-container/comment-panel-container";
 import { CommentSheet } from "@/components/chat-comments/comment-sheet/comment-sheet";
@@ -207,11 +211,39 @@ const FollowUpSuggestions: FC = () => {
 	);
 };
 
+// ---------------------------------------------------------------------------
+// Compare-mode detection
+// ---------------------------------------------------------------------------
+
+const COMPARE_TOOL_NAMES = new Set([
+	"call_grok",
+	"call_claude",
+	"call_gpt",
+	"call_gemini",
+	"call_deepseek",
+	"call_perplexity",
+	"call_qwen",
+	"call_oneseek",
+]);
+
 const AssistantMessageInner: FC = () => {
+	const isCompare = useAssistantState(({ message }) => {
+		if (!message || message.role !== "assistant") return false;
+		const content = message.content;
+		if (!Array.isArray(content)) return false;
+		return content.some(
+			(part: { type: string; toolName?: string }) =>
+				part.type === "tool-call" && COMPARE_TOOL_NAMES.has(part.toolName ?? ""),
+		);
+	});
+
 	return (
-		<>
+		<SpotlightArenaActiveContext.Provider value={isCompare}>
 			{/* Unified fade layer: reasoning stream + thinking steps */}
 			<FadeLayerPart />
+
+			{/* Spotlight Arena layout for compare mode */}
+			{isCompare && <SpotlightArenaLayout />}
 
 			<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
 				<MessagePrimitive.Parts
@@ -228,7 +260,7 @@ const AssistantMessageInner: FC = () => {
 				<BranchPicker />
 				<AssistantActionBar />
 			</div>
-		</>
+		</SpotlightArenaActiveContext.Provider>
 	);
 };
 

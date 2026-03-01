@@ -108,13 +108,45 @@ def build_convergence_node(
                 "total_steps": (state.get("total_steps") or 0) + 1,
             }
 
-        # Multiple domains: use LLM to merge
+        # Multiple domains: use LLM to merge.
+        # Strip verbose fields (criterion_reasonings, raw response text)
+        # to keep the LLM context lean and prevent JSON echo-back.
+        lean_summaries = []
+        for s in summaries:
+            lean = {k: v for k, v in s.items()
+                    if k not in ("criterion_reasonings",)}
+            # Truncate summary to avoid overwhelming the convergence LLM
+            if isinstance(lean.get("summary"), str) and len(lean["summary"]) > 600:
+                lean["summary"] = lean["summary"][:600] + "..."
+            lean_summaries.append(lean)
+
         system_msg = SystemMessage(content=convergence_prompt_template)
-        summaries_text = json.dumps(summaries, ensure_ascii=False, default=str)
+        summaries_text = json.dumps(lean_summaries, ensure_ascii=False, default=str)
+
+        # Build explicit score table so the LLM cannot invent scores.
+        _score_lines: list[str] = []
+        for s in summaries:
+            domain = s.get("domain", s.get("agent", "unknown"))
+            cs = s.get("criterion_scores")
+            if cs and isinstance(cs, dict):
+                _score_lines.append(
+                    f"  {domain}: relevans={cs.get('relevans', 0)}, "
+                    f"djup={cs.get('djup', 0)}, klarhet={cs.get('klarhet', 0)}, "
+                    f"korrekthet={cs.get('korrekthet', 0)}"
+                )
+        _score_block = ""
+        if _score_lines:
+            _score_block = (
+                "\n\nFASTSLAGNA POÄNG (från isolerade bedömare — kopiera EXAKT till model_scores):\n"
+                + "\n".join(_score_lines)
+                + "\n"
+            )
+
         human_msg = HumanMessage(
             content=(
                 f"Användarens fråga: {user_query}\n\n"
                 f"Subagent-resultat ({len(summaries)} domäner):\n{summaries_text}"
+                f"{_score_block}"
             )
         )
 
@@ -140,6 +172,18 @@ def build_convergence_node(
             except Exception:
                 parsed = extract_first_json_object_fn(raw_content)
 
+            # Build model_scores: prefer criterion_scores from handoffs (ground truth
+            # from isolated LLM evaluators) over LLM-generated scores from convergence.
+            llm_model_scores = parsed.get("model_scores", {})
+            criterion_model_scores: dict[str, Any] = {}
+            for s in summaries:
+                domain = s.get("domain", s.get("agent", "unknown"))
+                cs = s.get("criterion_scores")
+                if cs and isinstance(cs, dict) and any(v for v in cs.values()):
+                    criterion_model_scores[domain] = cs
+            # Criterion scores override LLM scores per domain
+            final_model_scores = {**llm_model_scores, **criterion_model_scores}
+
             convergence_status = {
                 "merged_fields": parsed.get("merged_fields", []),
                 "overlap_score": float(parsed.get("overlap_score", 0.0)),
@@ -148,6 +192,11 @@ def build_convergence_node(
                 "merged_summary": parsed.get("merged_summary", ""),
                 "subagent_ids": subagent_ids,
                 "domain_statuses": domain_statuses,
+                "model_scores": final_model_scores,
+                "agreements": parsed.get("agreements", []),
+                "disagreements": parsed.get("disagreements", []),
+                "unique_insights": parsed.get("unique_insights", {}),
+                "comparative_summary": parsed.get("comparative_summary", ""),
             }
 
             logger.info(

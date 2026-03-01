@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Intelligence Prism - OneSeek Compare</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3a;
+    --text: #e8e8f0;
+    --text-dim: #8888a0;
+    --accent: #7c5cfc;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+  }
+
+  .bg-prism {
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 40% at 30% 20%, #f8717108 0%, transparent 50%),
+      radial-gradient(ellipse 60% 40% at 70% 20%, #60a5fa08 0%, transparent 50%),
+      radial-gradient(ellipse 80% 50% at 50% 80%, #7c5cfc08 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #f87171, #fbbf24, #4ade80, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+
+  .header .subtitle {
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  .query-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .query-bar .cmd {
+    background: var(--accent);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  /* Prism concept: Query splits into facets */
+  .prism-section {
+    text-align: center;
+    margin-bottom: 32px;
+    position: relative;
+  }
+
+  .prism-input {
+    display: inline-block;
+    padding: 8px 20px;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 0;
+    transition: all 0.5s ease;
+  }
+
+  .prism-input.visible { opacity: 1; }
+
+  .prism-arrow {
+    width: 2px;
+    height: 0px;
+    background: linear-gradient(180deg, var(--accent), transparent);
+    margin: 0 auto;
+    transition: height 0.6s ease;
+  }
+
+  .prism-diamond {
+    width: 50px;
+    height: 50px;
+    margin: 12px auto;
+    position: relative;
+    opacity: 0;
+    transform: scale(0) rotate(45deg);
+    transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .prism-diamond.visible {
+    opacity: 1;
+    transform: scale(1) rotate(45deg);
+  }
+
+  .prism-diamond::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, #f87171, #fbbf24, #4ade80, #60a5fa, #a78bfa);
+    border-radius: 6px;
+    animation: prism-rotate 4s linear infinite;
+  }
+
+  @keyframes prism-rotate {
+    0% { filter: hue-rotate(0deg); }
+    100% { filter: hue-rotate(360deg); }
+  }
+
+  .prism-diamond::after {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    background: var(--bg);
+    border-radius: 4px;
+  }
+
+  /* Facet beams */
+  .facet-beams {
+    display: flex;
+    justify-content: center;
+    gap: 0;
+    margin-bottom: 24px;
+    height: 40px;
+    position: relative;
+  }
+
+  .beam {
+    width: 2px;
+    height: 0;
+    transition: height 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    position: relative;
+  }
+
+  /* Facet tabs */
+  .facet-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .facet-tab {
+    padding: 8px 16px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--surface);
+    border: 2px solid var(--border);
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .facet-tab.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .facet-tab.active {
+    border-color: var(--tab-color, var(--accent));
+    background: color-mix(in srgb, var(--tab-color, var(--accent)) 10%, transparent);
+    color: var(--tab-color, var(--accent));
+  }
+
+  .facet-tab::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--tab-color, var(--accent));
+    transform: scaleX(0);
+    transition: transform 0.3s ease;
+  }
+
+  .facet-tab.active::before {
+    transform: scaleX(1);
+  }
+
+  /* Model response columns */
+  .facet-content {
+    display: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  .facet-content.active {
+    display: block;
+    opacity: 1;
+  }
+
+  .model-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .model-column {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(15px);
+    transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .model-column.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .col-header {
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .col-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  .col-name {
+    font-size: 12px;
+    font-weight: 700;
+    flex: 1;
+  }
+
+  .col-score {
+    font-size: 14px;
+    font-weight: 800;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--surface2);
+  }
+
+  .col-body {
+    padding: 12px 14px;
+  }
+
+  .col-text {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text-dim);
+  }
+
+  .highlight-tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    margin: 4px 2px 0;
+  }
+
+  /* Consensus meter */
+  .consensus-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    opacity: 0;
+    transition: all 0.5s ease;
+  }
+
+  .consensus-section.visible { opacity: 1; }
+
+  .consensus-title {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+
+  .consensus-bar-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
+  .consensus-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    width: 100px;
+    text-align: right;
+  }
+
+  .consensus-track {
+    flex: 1;
+    height: 24px;
+    background: var(--surface2);
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex;
+  }
+
+  .consensus-segment {
+    height: 100%;
+    transition: width 1s cubic-bezier(0.22, 1, 0.36, 1);
+    width: 0%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: white;
+  }
+
+  /* Synthesis card */
+  .synthesis-card {
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    padding: 16px 20px;
+    opacity: 0;
+    transform: translateY(15px);
+    transition: all 0.6s ease;
+    box-shadow: 0 0 30px #7c5cfc11;
+  }
+
+  .synthesis-card.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .synthesis-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    background: linear-gradient(135deg, #a78bfa, #c4b5fd);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .synthesis-text {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+
+  .synthesis-text strong {
+    color: #a78bfa;
+  }
+
+  @media (max-width: 768px) {
+    .model-columns { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-prism"></div>
+
+<div class="container">
+  <div class="header">
+    <h1>Intelligence Prism</h1>
+    <p class="subtitle">En fråga bryts ner i aspekter - varje modell belyser varje facett</p>
+  </div>
+
+  <div class="query-bar">
+    <span class="cmd">/compare</span>
+    <span>Vilka är de viktigaste principerna för att bygga skalbara system?</span>
+  </div>
+
+  <!-- Prism visualization -->
+  <div class="prism-section">
+    <div class="prism-input" id="prismInput">Frågan matas in</div>
+    <div class="prism-arrow" id="prismArrow"></div>
+    <div class="prism-diamond" id="prismDiamond"></div>
+  </div>
+
+  <!-- Facet tabs -->
+  <div class="facet-tabs" id="facetTabs">
+    <div class="facet-tab" data-facet="horisontell" style="--tab-color: #f87171;" onclick="switchFacet('horisontell')">Horisontell skalning</div>
+    <div class="facet-tab" data-facet="caching" style="--tab-color: #fbbf24;" onclick="switchFacet('caching')">Caching-strategier</div>
+    <div class="facet-tab" data-facet="databas" style="--tab-color: #4ade80;" onclick="switchFacet('databas')">Databasdesign</div>
+    <div class="facet-tab" data-facet="async" style="--tab-color: #60a5fa;" onclick="switchFacet('async')">Asynkron bearbetning</div>
+    <div class="facet-tab" data-facet="observerbarhet" style="--tab-color: #a78bfa;" onclick="switchFacet('observerbarhet')">Observerbarhet</div>
+  </div>
+
+  <!-- Facet contents -->
+  <div class="facet-content" id="facet-horisontell">
+    <div class="model-columns">
+      <div class="model-column">
+        <div class="col-header">
+          <div class="col-dot" style="background: #10a37f;"></div>
+          <span class="col-name">GPT-4o</span>
+          <span class="col-score" style="color: #4ade80;">9.2</span>
+        </div>
+        <div class="col-body">
+          <div class="col-text">Betonar stateless services och auto-scaling groups. Rekommenderar container orchestration med Kubernetes. Nämner service mesh för inter-service kommunikation.</div>
+          <div><span class="highlight-tag" style="background: #10a37f22; color: #10a37f;">Kubernetes</span><span class="highlight-tag" style="background: #10a37f22; color: #10a37f;">Auto-scaling</span></div>
+        </div>
+      </div>
+      <div class="model-column">
+        <div class="col-header">
+          <div class="col-dot" style="background: #d97706;"></div>
+          <span class="col-name">Claude 4</span>
+          <span class="col-score" style="color: #4ade80;">9.4</span>
+        </div>
+        <div class="col-body">
+          <div class="col-text">Djupgående analys av "shared-nothing"-arkitektur. Diskuterar trade-offs mellan konsistens och tillgänglighet (CAP-teoremet). Ger konkreta exempel med partitioneringstrategier.</div>
+          <div><span class="highlight-tag" style="background: #d9770622; color: #d97706;">CAP-teoremet</span><span class="highlight-tag" style="background: #d9770622; color: #d97706;">Shared-nothing</span></div>
+        </div>
+      </div>
+      <div class="model-column">
+        <div class="col-header">
+          <div class="col-dot" style="background: #4285f4;"></div>
+          <span class="col-name">Gemini</span>
+          <span class="col-score" style="color: #fbbf24;">8.5</span>
+        </div>
+        <div class="col-body">
+          <div class="col-text">Fokuserar på Google Cloud-specifika lösningar med GKE och Cloud Run. Bra praktiska exempel men mindre leverantörsoberoende perspektiv.</div>
+          <div><span class="highlight-tag" style="background: #4285f422; color: #4285f4;">GKE</span><span class="highlight-tag" style="background: #4285f422; color: #4285f4;">Cloud Run</span></div>
+        </div>
+      </div>
+      <div class="model-column">
+        <div class="col-header">
+          <div class="col-dot" style="background: #1d9bf0;"></div>
+          <span class="col-name">Grok-3</span>
+          <span class="col-score" style="color: #fbbf24;">8.0</span>
+        </div>
+        <div class="col-body">
+          <div class="col-text">Koncist svar med fokus på load balancing och DNS-baserad routing. Nämner edge computing som framtidsstrategi.</div>
+          <div><span class="highlight-tag" style="background: #1d9bf022; color: #1d9bf0;">Load balancing</span></div>
+        </div>
+      </div>
+      <div class="model-column">
+        <div class="col-header">
+          <div class="col-dot" style="background: #6366f1;"></div>
+          <span class="col-name">DeepSeek</span>
+          <span class="col-score" style="color: #4ade80;">9.0</span>
+        </div>
+        <div class="col-body">
+          <div class="col-text">Matematiskt grundad analys av skalningsteori. Presenterar Amdahls lag och Gustafsons lag som ramverk. Tekniskt djup men kan vara svårtillgänglig.</div>
+          <div><span class="highlight-tag" style="background: #6366f122; color: #6366f1;">Amdahls lag</span><span class="highlight-tag" style="background: #6366f122; color: #6366f1;">Formell analys</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="facet-content" id="facet-caching">
+    <div class="model-columns">
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #10a37f;"></div><span class="col-name">GPT-4o</span><span class="col-score" style="color: #4ade80;">9.0</span></div>
+        <div class="col-body"><div class="col-text">Detaljerad genomgång av cache-hierarki: L1 (in-process), L2 (Redis/Memcached), CDN. Cache invalidation-strategier med TTL och event-driven.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #d97706;"></div><span class="col-name">Claude 4</span><span class="col-score" style="color: #fbbf24;">8.7</span></div>
+        <div class="col-body"><div class="col-text">Filosofisk approach till "cache is a lie" - diskuterar konsistensproblem och thundering herd. Pragmatiska lösningar med circuit breakers.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #4285f4;"></div><span class="col-name">Gemini</span><span class="col-score" style="color: #4ade80;">9.3</span></div>
+        <div class="col-body"><div class="col-text">Utmärkt täckning av moderna caching-mönster. Nämner Edge Caching, Stale-While-Revalidate och intelligenta prefetch-strategier.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #1d9bf0;"></div><span class="col-name">Grok-3</span><span class="col-score" style="color: #fbbf24;">8.2</span></div>
+        <div class="col-body"><div class="col-text">Grundläggande men korrekt genomgång. Fokuserar på Redis-kluster och cache-aside-mönstret.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #6366f1;"></div><span class="col-name">DeepSeek</span><span class="col-score" style="color: #fbbf24;">8.6</span></div>
+        <div class="col-body"><div class="col-text">Analyserar cache hit ratio-optimering med matematiska modeller. Diskuterar Zipf-distribution för access patterns.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="facet-content" id="facet-databas">
+    <div class="model-columns">
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #10a37f;"></div><span class="col-name">GPT-4o</span><span class="col-score" style="color: #fbbf24;">8.8</span></div>
+        <div class="col-body"><div class="col-text">Bra genomgång av sharding-strategier, read replicas och CQRS-mönstret. Rekommenderar PostgreSQL med Citus för horisontell skalning.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #d97706;"></div><span class="col-name">Claude 4</span><span class="col-score" style="color: #4ade80;">9.5</span></div>
+        <div class="col-body"><div class="col-text">Exceptionellt djup analys av datamodellering för skalbarhet. Diskuterar polyglot persistence, event sourcing och temporal data patterns.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #4285f4;"></div><span class="col-name">Gemini</span><span class="col-score" style="color: #fbbf24;">8.4</span></div>
+        <div class="col-body"><div class="col-text">Fokuserar på Spanner och Bigtable. Bra för Google-ekosystemet men begränsad bredd.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #1d9bf0;"></div><span class="col-name">Grok-3</span><span class="col-score" style="color: #fbbf24;">8.0</span></div>
+        <div class="col-body"><div class="col-text">Grundläggande men korrekt om indexering, query-optimering och connection pooling.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #6366f1;"></div><span class="col-name">DeepSeek</span><span class="col-score" style="color: #4ade80;">9.2</span></div>
+        <div class="col-body"><div class="col-text">Imponerande analys av konsistensmodeller (strong, eventual, causal). Jämför CockroachDB, TiDB och YugabyteDB.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="facet-content" id="facet-async">
+    <div class="model-columns">
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #10a37f;"></div><span class="col-name">GPT-4o</span><span class="col-score" style="color: #4ade80;">9.1</span></div>
+        <div class="col-body"><div class="col-text">Utmärkt om message queues (RabbitMQ, Kafka), event-driven architecture och saga-mönstret för distribuerade transaktioner.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #d97706;"></div><span class="col-name">Claude 4</span><span class="col-score" style="color: #4ade80;">9.0</span></div>
+        <div class="col-body"><div class="col-text">Bra balans mellan teori och praktik. Diskuterar backpressure, dead letter queues och idempotens som grundprinciper.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #4285f4;"></div><span class="col-name">Gemini</span><span class="col-score" style="color: #fbbf24;">8.6</span></div>
+        <div class="col-body"><div class="col-text">Fokuserar på Pub/Sub och Cloud Tasks. Bra om retry-strategier med exponential backoff.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #1d9bf0;"></div><span class="col-name">Grok-3</span><span class="col-score" style="color: #fbbf24;">8.3</span></div>
+        <div class="col-body"><div class="col-text">Koncist om workers, job queues och cron-baserad batch processing.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #6366f1;"></div><span class="col-name">DeepSeek</span><span class="col-score" style="color: #fbbf24;">8.5</span></div>
+        <div class="col-body"><div class="col-text">Fokuserar på Kafka internals och partitionering. Djup men smal täckning.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="facet-content" id="facet-observerbarhet">
+    <div class="model-columns">
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #10a37f;"></div><span class="col-name">GPT-4o</span><span class="col-score" style="color: #fbbf24;">8.5</span></div>
+        <div class="col-body"><div class="col-text">Bra om "three pillars": logs, metrics, traces. Rekommenderar OpenTelemetry som standard.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #d97706;"></div><span class="col-name">Claude 4</span><span class="col-score" style="color: #4ade80;">9.1</span></div>
+        <div class="col-body"><div class="col-text">Utmärkt om observability som kulturfråga, inte bara verktyg. Diskuterar SLIs, SLOs och error budgets som ramverk.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #4285f4;"></div><span class="col-name">Gemini</span><span class="col-score" style="color: #fbbf24;">8.7</span></div>
+        <div class="col-body"><div class="col-text">Bra genomgång av Cloud Monitoring, Trace och Logging i GCP-kontext.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #1d9bf0;"></div><span class="col-name">Grok-3</span><span class="col-score" style="color: #60a5fa;">7.8</span></div>
+        <div class="col-body"><div class="col-text">Grundläggande om Prometheus + Grafana-stacken. Korrekt men ytligt.</div></div>
+      </div>
+      <div class="model-column">
+        <div class="col-header"><div class="col-dot" style="background: #6366f1;"></div><span class="col-name">DeepSeek</span><span class="col-score" style="color: #fbbf24;">8.3</span></div>
+        <div class="col-body"><div class="col-text">Intressant om kaostestning (chaos engineering) som observerbarhetsverktyg.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Consensus -->
+  <div class="consensus-section" id="consensus">
+    <div class="consensus-title">Konsensus-analys per facett</div>
+
+    <div class="consensus-bar-wrapper">
+      <span class="consensus-label">Horisontell</span>
+      <div class="consensus-track">
+        <div class="consensus-segment" style="background: #4ade80;" data-w="80">80% eniga</div>
+        <div class="consensus-segment" style="background: #fbbf24;" data-w="20">20%</div>
+      </div>
+    </div>
+
+    <div class="consensus-bar-wrapper">
+      <span class="consensus-label">Caching</span>
+      <div class="consensus-track">
+        <div class="consensus-segment" style="background: #4ade80;" data-w="65">65% eniga</div>
+        <div class="consensus-segment" style="background: #fbbf24;" data-w="25">25%</div>
+        <div class="consensus-segment" style="background: #f87171;" data-w="10">10%</div>
+      </div>
+    </div>
+
+    <div class="consensus-bar-wrapper">
+      <span class="consensus-label">Databas</span>
+      <div class="consensus-track">
+        <div class="consensus-segment" style="background: #4ade80;" data-w="55">55% eniga</div>
+        <div class="consensus-segment" style="background: #fbbf24;" data-w="30">30%</div>
+        <div class="consensus-segment" style="background: #f87171;" data-w="15">15%</div>
+      </div>
+    </div>
+
+    <div class="consensus-bar-wrapper">
+      <span class="consensus-label">Asynkron</span>
+      <div class="consensus-track">
+        <div class="consensus-segment" style="background: #4ade80;" data-w="85">85% eniga</div>
+        <div class="consensus-segment" style="background: #fbbf24;" data-w="15">15%</div>
+      </div>
+    </div>
+
+    <div class="consensus-bar-wrapper">
+      <span class="consensus-label">Observerbarhet</span>
+      <div class="consensus-track">
+        <div class="consensus-segment" style="background: #4ade80;" data-w="70">70% eniga</div>
+        <div class="consensus-segment" style="background: #fbbf24;" data-w="20">20%</div>
+        <div class="consensus-segment" style="background: #f87171;" data-w="10">10%</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Synthesis -->
+  <div class="synthesis-card" id="synthesis">
+    <div class="synthesis-title">Prismatisk Syntes</div>
+    <div class="synthesis-text" id="synthesisText"></div>
+  </div>
+</div>
+
+<script>
+const synthesisContent = 'Genom att bryta ner frågan i 5 aspekter syns tydliga mönster: <strong>Claude 4 Opus</strong> dominerar i databas- och observerbarhetsaspekterna med djupast analys. <strong>GPT-4o</strong> ger mest konsekvent höga betyg över alla facetter. <strong>Gemini</strong> överraskar som bäst på caching. <strong>DeepSeek R1</strong> erbjuder unik matematisk grundning men varierar mest i kvalitet. Alla modeller är eniga om att <strong>asynkron bearbetning</strong> (85% konsensus) är den viktigaste principen, medan <strong>databasdesign</strong> har störst meningsskiljaktighet (45% oeniga).';
+
+let activeFacet = null;
+
+function switchFacet(name) {
+  // Deactivate all
+  document.querySelectorAll('.facet-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.facet-content').forEach(c => c.classList.remove('active'));
+
+  // Activate selected
+  document.querySelector(`[data-facet="${name}"]`).classList.add('active');
+  const content = document.getElementById(`facet-${name}`);
+  content.classList.add('active');
+
+  // Animate columns
+  const cols = content.querySelectorAll('.model-column');
+  cols.forEach((c, i) => {
+    c.classList.remove('visible');
+    setTimeout(() => c.classList.add('visible'), i * 100);
+  });
+
+  activeFacet = name;
+}
+
+async function animate() {
+  // Show prism input
+  await new Promise(r => setTimeout(r, 300));
+  document.getElementById('prismInput').classList.add('visible');
+
+  // Arrow
+  await new Promise(r => setTimeout(r, 400));
+  document.getElementById('prismArrow').style.height = '30px';
+
+  // Diamond
+  await new Promise(r => setTimeout(r, 400));
+  document.getElementById('prismDiamond').classList.add('visible');
+
+  // Tabs appear
+  const tabs = document.querySelectorAll('.facet-tab');
+  for (let i = 0; i < tabs.length; i++) {
+    await new Promise(r => setTimeout(r, 150));
+    tabs[i].classList.add('visible');
+  }
+
+  // Auto-select first facet
+  await new Promise(r => setTimeout(r, 300));
+  switchFacet('horisontell');
+
+  // Auto-cycle through facets
+  const facets = ['caching', 'databas', 'async', 'observerbarhet'];
+  for (const f of facets) {
+    await new Promise(r => setTimeout(r, 2000));
+    switchFacet(f);
+  }
+
+  // Show consensus
+  await new Promise(r => setTimeout(r, 1500));
+  const cons = document.getElementById('consensus');
+  cons.classList.add('visible');
+
+  // Animate consensus bars
+  await new Promise(r => setTimeout(r, 200));
+  document.querySelectorAll('.consensus-segment').forEach(s => {
+    s.style.width = s.dataset.w + '%';
+  });
+
+  // Synthesis
+  await new Promise(r => setTimeout(r, 1200));
+  document.getElementById('synthesis').classList.add('visible');
+  await new Promise(r => setTimeout(r, 200));
+  document.getElementById('synthesisText').innerHTML = synthesisContent;
+
+  // Go back to first facet for user to explore
+  await new Promise(r => setTimeout(r, 1000));
+  switchFacet('horisontell');
+}
+
+setTimeout(animate, 500);
+</script>
+</body>
+</html>

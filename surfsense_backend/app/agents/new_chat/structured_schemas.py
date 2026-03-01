@@ -477,6 +477,164 @@ class SubSpawnCheckResult(BaseModel):
 # ────────────────────────────────────────────────────────────────
 
 
+class ModelDimensionScores(BaseModel):
+    """Per-dimension scores for a single model."""
+
+    relevans: int = Field(..., ge=0, le=100, description="Relevans 0-100")
+    djup: int = Field(..., ge=0, le=100, description="Djup 0-100")
+    klarhet: int = Field(..., ge=0, le=100, description="Klarhet 0-100")
+    korrekthet: int = Field(..., ge=0, le=100, description="Korrekthet 0-100")
+
+
+# ────────────────────────────────────────────────────────────────
+# Compare: Criterion Evaluator
+# ────────────────────────────────────────────────────────────────
+
+
+class CriterionEvalResult(BaseModel):
+    """Output schema for a single criterion evaluator in compare mode."""
+
+    thinking: str = Field(
+        ...,
+        description="Intern resonering om bedömningen av detta kriterium.",
+    )
+    score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Poäng 0-100 för detta kriterium.",
+    )
+    reasoning: str = Field(
+        ...,
+        description="En mening som motiverar poängen.",
+    )
+
+
+class CombinedCriterionEvalResult(BaseModel):
+    """Output schema for evaluating all 4 criteria in a single LLM call.
+
+    This reduces compare mode from 32 LLM calls (8 domains × 4 criteria)
+    to 8 calls (1 per domain), improving speed and reliability.
+    """
+
+    thinking: str = Field(
+        ...,
+        description="Intern resonering om bedömningen av alla fyra kriterier.",
+    )
+    relevans_score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Relevans-poäng 0-100.",
+    )
+    relevans_reasoning: str = Field(
+        ...,
+        description="En mening som motiverar relevans-poängen.",
+    )
+    djup_score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Djup-poäng 0-100.",
+    )
+    djup_reasoning: str = Field(
+        ...,
+        description="En mening som motiverar djup-poängen.",
+    )
+    klarhet_score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Klarhet-poäng 0-100.",
+    )
+    klarhet_reasoning: str = Field(
+        ...,
+        description="En mening som motiverar klarhet-poängen.",
+    )
+    korrekthet_score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Korrekthet-poäng 0-100.",
+    )
+    korrekthet_reasoning: str = Field(
+        ...,
+        description="En mening som motiverar korrekthet-poängen.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
+# Compare: Research Query Decomposer
+# ────────────────────────────────────────────────────────────────
+
+
+class ResearchDecomposeResult(BaseModel):
+    """Output schema for compare research query decomposition."""
+
+    thinking: str = Field(
+        ...,
+        description="Resonering om hur frågan bäst delas upp i sökfrågor.",
+    )
+    queries: list[str] = Field(
+        ...,
+        description="1-3 korta, specifika sökfrågor.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
+# Compare: Arena Analysis (Synthesizer output)
+# ────────────────────────────────────────────────────────────────
+
+
+class ArenaDisagreement(BaseModel):
+    """A single disagreement between models."""
+
+    topic: str = Field(..., description="Kort ämne för meningsskiljaktigheten.")
+    sides: dict[str, str] = Field(
+        ..., description="Modellnamn → deras ståndpunkt."
+    )
+    verdict: str = Field(..., description="Research/faktabaserad bedömning.")
+
+
+class ArenaUniqueContribution(BaseModel):
+    """A unique insight from one model."""
+
+    model: str = Field(..., description="Modellens namn.")
+    insight: str = Field(..., description="Unik insikt från modellen.")
+
+
+class ArenaAnalysisResult(BaseModel):
+    """Output schema for compare synthesizer arena analysis."""
+
+    thinking: str = Field(
+        ...,
+        description="Intern resonering om jämförelsen på svenska.",
+    )
+    consensus: list[str] = Field(
+        default_factory=list,
+        description="Saker alla/de flesta modeller håller med om.",
+    )
+    disagreements: list[ArenaDisagreement] = Field(
+        default_factory=list,
+        description="Meningsskiljaktigheter mellan modeller.",
+    )
+    unique_contributions: list[ArenaUniqueContribution] = Field(
+        default_factory=list,
+        description="Unika bidrag per modell.",
+    )
+    winner_rationale: str = Field(
+        ...,
+        description=(
+            "Motivering av vinnaren — MÅSTE matcha den faktiska rankingen "
+            "baserat på viktade poäng. Nämn #1 modellen först."
+        ),
+    )
+    reliability_notes: str = Field(
+        default="",
+        description="Noteringar om tillförlitlighet och research-verifiering.",
+    )
+
+
 class ConvergenceResult(BaseModel):
     """Output schema for the convergence node (P4)."""
 
@@ -505,4 +663,52 @@ class ConvergenceResult(BaseModel):
     reason: str = Field(
         ...,
         description="Kort motivering på svenska.",
+    )
+    model_scores: dict[str, ModelDimensionScores] = Field(
+        default_factory=dict,
+        description="Per-modell poäng: {domain: {relevans, djup, klarhet, korrekthet}}",
+    )
+    agreements: list[str] = Field(
+        default_factory=list,
+        description="Saker modellerna håller med om.",
+    )
+    disagreements: list[str] = Field(
+        default_factory=list,
+        description="Saker modellerna inte håller med om.",
+    )
+    unique_insights: dict[str, str] = Field(
+        default_factory=dict,
+        description="Unika insikter per modell: {domain: insikt}",
+    )
+    comparative_summary: str = Field(
+        default="",
+        description="Djup jämförande analys med konkreta exempel.",
+    )
+
+
+class CompareSynthesisResult(BaseModel):
+    """Output schema for the compare synthesizer node.
+
+    The ``thinking`` field captures internal reasoning (streamed to
+    the think-box as reasoning-delta).  The ``response`` field is the
+    final user-facing markdown text (streamed as text-delta).
+    """
+
+    thinking: str = Field(
+        ...,
+        description=(
+            "Din interna resonemang på svenska.  Analysera konvergens-"
+            "resultaten, identifiera huvudsakliga slutsatser, och "
+            "planera hur du ska formulera det slutgiltiga svaret."
+        ),
+    )
+    response: str = Field(
+        ...,
+        description=(
+            "Det slutgiltiga svaret till användaren i markdown.  "
+            "Innehåller en sammanfattande analys med fokus på "
+            "faktasvar, modellernas styrkor/svagheter, och en "
+            "tydlig slutsats.  Inkludera INTE spotlight-arena-data "
+            "eller rå JSON — bara ren markdown-text."
+        ),
     )

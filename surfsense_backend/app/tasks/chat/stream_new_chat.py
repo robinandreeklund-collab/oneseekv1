@@ -869,6 +869,26 @@ _OUTPUT_PIPELINE_CHAIN_TOKENS = (
     "compare_synthesizer",
 )
 
+# Compare-mode intermediate nodes whose LLM reasoning should NOT be
+# streamed to the think-box.  These nodes don't make meaningful LLM calls
+# (domain_planner is deterministic, spawner fans out to external APIs).
+# compare_convergence IS intentionally excluded — its reasoning IS useful
+# and should appear in the think-box.
+_COMPARE_SILENT_CHAIN_TOKENS = (
+    "compare_subagent_spawner",
+    "compare_domain_planner",
+)
+
+
+def _is_compare_silent_chain(chain_name: str) -> bool:
+    """Return True if *chain_name* is a compare-mode node whose reasoning
+    should NOT be streamed to the think-box."""
+    normalized = str(chain_name or "").strip().lower()
+    if not normalized:
+        return False
+    return any(token in normalized for token in _COMPARE_SILENT_CHAIN_TOKENS)
+
+
 # Generic intermediate chain names inserted by LangGraph/LangChain between
 # the actual graph node and the model call.  When walking parent_ids to find
 # the graph node that owns a model, these must be skipped so the real node
@@ -944,6 +964,10 @@ _PIPELINE_NODE_TITLES: dict[str, str] = {
     "speculative_merge": "Sammanfogar spekulativa resultat",
     "smalltalk": "Svarar direkt",
     "compare_synthesizer": "Sammanställer jämförelse",
+    # Compare Supervisor v2 nodes
+    "compare_domain_planner": "Planerar jämförelsedomäner",
+    "compare_subagent_spawner": "Startar modell-agenter",
+    "compare_convergence": "Sammanfogar modellresultat",
 }
 
 
@@ -2539,6 +2563,8 @@ async def stream_new_chat(
         streamed_tool_call_ids: set[str] = (
             set()
         )  # Track tool calls already streamed to prevent duplicates
+        streamed_model_complete_domains: set[str] = set()  # Dedup model-complete events
+        streamed_criterion_keys: set[str] = set()  # Dedup criterion-complete events
         stream_pipeline_prefix_buffer: str = ""
         # Think-tag streaming state
         _think_filter = _ThinkStreamFilter(assume_think=think_enabled)
@@ -2961,6 +2987,59 @@ async def stream_new_chat(
             event_type = event.get("event", "")
             run_id = str(event.get("run_id") or "")
             trace_parent = trace_parent_id(event)
+
+            # ── Real-time custom events from compare mode ──
+            # dispatch_custom_event("model_complete", ...) and
+            # dispatch_custom_event("criterion_complete", ...) fire
+            # during node execution, so they arrive here immediately
+            # (not batched at on_chain_end).
+            if event_type == "on_custom_event":
+                custom_name = event.get("name", "")
+                custom_data = event.get("data")
+                # model_response_ready: card appears immediately (before
+                # criterion evaluation), so the frontend can show the
+                # model card with a spinner while scores stream in.
+                if custom_name == "model_response_ready" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data(
+                        "model-response-ready", custom_data
+                    )
+                    # Mark tool_call_id so on_chain_end won't duplicate it
+                    _tc_id = str(custom_data.get("tool_call_id", ""))
+                    if _tc_id:
+                        streamed_tool_call_ids.add(_tc_id)
+                    continue
+                # criterion_evaluation_started: frontend shows "Utvärderar..."
+                if custom_name == "criterion_evaluation_started" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data(
+                        "criterion-evaluation-started", custom_data
+                    )
+                    continue
+                if custom_name == "model_complete" and isinstance(custom_data, dict):
+                    _mc_domain = str(custom_data.get("domain", ""))
+                    if _mc_domain and _mc_domain not in streamed_model_complete_domains:
+                        streamed_model_complete_domains.add(_mc_domain)
+                        yield streaming_service.format_data(
+                            "model-complete", custom_data
+                        )
+                        # Mark tool_call_id as streamed so on_chain_end
+                        # doesn't re-emit via _extract_and_stream_tool_calls.
+                        # NOTE: We do NOT emit tool-input-start/available here
+                        # because data-model-complete already adds the tool card
+                        # in the frontend — emitting both would create duplicate
+                        # content parts with the same toolCallId.
+                        _tc_id = str(custom_data.get("tool_call_id", ""))
+                        if _tc_id:
+                            streamed_tool_call_ids.add(_tc_id)
+                    continue
+                if custom_name == "criterion_complete" and isinstance(custom_data, dict):
+                    _crit_key = f"{custom_data.get('domain', '')}:{custom_data.get('criterion', '')}"
+                    if _crit_key not in streamed_criterion_keys:
+                        streamed_criterion_keys.add(_crit_key)
+                        yield streaming_service.format_data(
+                            "criterion-complete", custom_data
+                        )
+                    continue
+
             if event_type == "on_chain_start" and run_id:
                 chain_name_by_run_id.setdefault(
                     run_id, str(event.get("name") or "chain")
@@ -3063,9 +3142,11 @@ async def stream_new_chat(
                             active_reasoning_id, header
                         )
                     if _structured_mode:
-                        # P1 Extra: structured JSON mode — create an
-                        # IncrementalSchemaParser for this output model run
-                        # so on_chat_model_stream can split thinking/response.
+                        # Structured JSON mode: create an IncrementalSchemaParser
+                        # so on_chat_model_stream splits thinking → reasoning-delta
+                        # and response → text-delta.  All output nodes now use
+                        # structured output (including compare_synthesizer via
+                        # CompareSynthesisResult schema).
                         _structured_parsers[run_id] = IncrementalSchemaParser()
                     elif _think_filter._assume_think:
                         flush_r, flush_t = _think_filter.reset_think_mode()
@@ -3093,33 +3174,35 @@ async def stream_new_chat(
                             yield streaming_service.format_reasoning_delta(
                                 active_reasoning_id, flush_t
                             )
-                        # The response_layer formatting LLM produces the
-                        # final user-facing text.  reset_think_mode() puts
-                        # the filter back in think mode, which would cause
-                        # ALL its output to be classified as reasoning
-                        # instead of text-delta.  Force out of think mode
-                        # for response_layer so text streams correctly.
-                        # (The synthesizer keeps assume_think behaviour
-                        # for Qwen3-style models that pre-fill <think>.)
-                        if (
-                            "response_layer" in pcn_lower
-                            and "response_layer_router" not in pcn_lower
-                        ):
+                        # Force text mode for output nodes that produce final
+                        # user-facing text (response_layer, compare_synthesizer).
+                        _force_text = (
+                            (
+                                "response_layer" in pcn_lower
+                                and "response_layer_router" not in pcn_lower
+                            )
+                            or "compare_synthesizer" in pcn_lower
+                        )
+                        if _force_text:
                             _think_filter._in_think = False
                 else:
                     # Unknown / unclassified model: treat as INTERNAL to
                     # prevent any internal reasoning from leaking into the
                     # visible response.  Only output pipeline nodes
                     # (synthesizer, response_layer) should emit text-delta.
+                    _is_silent = _is_compare_silent_chain(parent_chain_name)
                     model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
                     internal_model_buffers.setdefault(run_id, "")
-                    if _structured_mode:
-                        _structured_parsers[run_id] = IncrementalSchemaParser()
-                    else:
-                        internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                            assume_think=_think_filter._assume_think,
-                        )
-                    if not _structured_mode and _think_filter._assume_think:
+                    # Compare-silent nodes: absorb content but don't create
+                    # think filters / parsers so nothing reaches the think-box.
+                    if not _is_silent:
+                        if _structured_mode:
+                            _structured_parsers[run_id] = IncrementalSchemaParser()
+                        else:
+                            internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                                assume_think=_think_filter._assume_think,
+                            )
+                    if not _is_silent and not _structured_mode and _think_filter._assume_think:
                         flush_r, flush_t = _think_filter.reset_think_mode()
                         if flush_r or flush_t:
                             if active_reasoning_id is None:
@@ -3183,6 +3266,34 @@ async def stream_new_chat(
                         )
                         for tool_event in tool_call_events:
                             yield tool_event
+
+                        # Stream criterion-complete events for Spotlight Arena
+                        # (only if not already emitted via on_custom_event)
+                        _criterion_events = (
+                            chain_output.get("criterion_events")
+                            if isinstance(chain_output, dict) else None
+                        ) or []
+                        for ce in _criterion_events:
+                            _crit_key = f"{ce.get('domain', '')}:{ce.get('criterion', '')}"
+                            if _crit_key not in streamed_criterion_keys:
+                                streamed_criterion_keys.add(_crit_key)
+                                yield streaming_service.format_data(
+                                    "criterion-complete", ce
+                                )
+
+                        # Stream model-complete events for progressive Spotlight Arena
+                        # (only if not already emitted via on_custom_event)
+                        _model_events = (
+                            chain_output.get("model_complete_events")
+                            if isinstance(chain_output, dict) else None
+                        ) or []
+                        for me in _model_events:
+                            _mc_domain = str(me.get("domain", ""))
+                            if _mc_domain and _mc_domain not in streamed_model_complete_domains:
+                                streamed_model_complete_domains.add(_mc_domain)
+                                yield streaming_service.format_data(
+                                    "model-complete", me
+                                )
 
                     candidate_text = _extract_assistant_text_from_event_output(
                         chain_output
@@ -3260,12 +3371,16 @@ async def stream_new_chat(
                         if not is_output:
                             model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
                             internal_model_buffers.setdefault(run_id, "")
-                            if _structured_mode:
-                                _structured_parsers.setdefault(run_id, IncrementalSchemaParser())
-                            else:
-                                internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                                    assume_think=_think_filter._assume_think,
-                                )
+                            # Compare-silent chains: absorb content but don't
+                            # create parsers/filters (same as primary handler).
+                            _silent_trace = _is_compare_silent_chain(parent_chain_name)
+                            if not _silent_trace:
+                                if _structured_mode:
+                                    _structured_parsers.setdefault(run_id, IncrementalSchemaParser())
+                                else:
+                                    internal_node_think_filters[run_id] = _ThinkStreamFilter(
+                                        assume_think=_think_filter._assume_think,
+                                    )
                     model_input = (
                         model_data.get("input")
                         or model_data.get("messages")
@@ -3376,14 +3491,14 @@ async def stream_new_chat(
                         except (json.JSONDecodeError, ValueError):
                             pass
 
-                    if internal_chain_name:
+                    if internal_chain_name and not _is_compare_silent_chain(internal_chain_name):
                         internal_text = internal_buffer or candidate_text
                         for step_event in emit_pipeline_steps_from_text(
                             internal_text,
                             source_chain=internal_chain_name,
                         ):
                             yield step_event
-                    elif candidate_text:
+                    elif candidate_text and not _is_compare_silent_chain(internal_chain_name):
                         for step_event in emit_pipeline_steps_from_text(candidate_text):
                             yield step_event
                         # Do NOT store as fallback text — this came from an

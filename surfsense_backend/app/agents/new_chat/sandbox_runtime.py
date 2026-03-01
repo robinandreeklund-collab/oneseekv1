@@ -44,6 +44,7 @@ DEFAULT_SANDBOX_STATE_REDIS_PREFIX = "oneseek:sandbox"
 DEFAULT_SANDBOX_SCOPE = "thread"
 SANDBOX_SCOPE_THREAD = "thread"
 SANDBOX_SCOPE_SUBAGENT = "subagent"
+SANDBOX_SCOPE_CRITERION = "criterion"
 SANDBOX_VIRTUAL_WORKSPACE_PREFIX = "/workspace"
 
 _LONG_LIVED_PATTERNS = (
@@ -207,7 +208,7 @@ def sandbox_config_from_runtime_flags(
     ).strip().lower()
     scope = (
         requested_scope
-        if requested_scope in {SANDBOX_SCOPE_THREAD, SANDBOX_SCOPE_SUBAGENT}
+        if requested_scope in {SANDBOX_SCOPE_THREAD, SANDBOX_SCOPE_SUBAGENT, SANDBOX_SCOPE_CRITERION}
         else DEFAULT_SANDBOX_SCOPE
     )
     scope_id = str(
@@ -215,7 +216,7 @@ def sandbox_config_from_runtime_flags(
         or payload.get("subagent_scope_id")
         or ""
     ).strip() or None
-    if scope == SANDBOX_SCOPE_SUBAGENT and not scope_id:
+    if scope in {SANDBOX_SCOPE_SUBAGENT, SANDBOX_SCOPE_CRITERION} and not scope_id:
         scope = SANDBOX_SCOPE_THREAD
     timeout_seconds = _coerce_int(
         payload.get("sandbox_timeout_seconds"),
@@ -391,14 +392,16 @@ def _effective_thread_identity(
     config: SandboxRuntimeConfig,
 ) -> str:
     base_id = str(thread_id or "thread-default").strip() or "thread-default"
-    if str(config.scope or DEFAULT_SANDBOX_SCOPE).strip().lower() != SANDBOX_SCOPE_SUBAGENT:
+    effective_scope = str(config.scope or DEFAULT_SANDBOX_SCOPE).strip().lower()
+    if effective_scope not in {SANDBOX_SCOPE_SUBAGENT, SANDBOX_SCOPE_CRITERION}:
         return base_id
     scope_id = str(config.scope_id or "").strip()
     if not scope_id:
         return base_id
     safe_scope = _sanitize_segment(scope_id, fallback="subagent").lower()[:36]
     scope_hash = hashlib.sha1(scope_id.encode("utf-8")).hexdigest()[:10]
-    return f"{base_id}::subagent::{safe_scope}-{scope_hash}"
+    scope_label = "criterion" if effective_scope == SANDBOX_SCOPE_CRITERION else "subagent"
+    return f"{base_id}::{scope_label}::{safe_scope}-{scope_hash}"
 
 
 def _default_state_file_path(config: SandboxRuntimeConfig) -> Path:

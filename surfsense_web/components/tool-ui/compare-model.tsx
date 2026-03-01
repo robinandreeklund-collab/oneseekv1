@@ -2,8 +2,9 @@
 
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import { AlertCircleIcon, ChevronDownIcon } from "lucide-react";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { z } from "zod";
+import { SpotlightArenaActiveContext } from "@/components/tool-ui/spotlight-arena";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -385,6 +386,9 @@ function createExternalModelToolUI(toolName: string, label: string) {
 	return makeAssistantToolUI<ExternalModelArgs, ExternalModelResult>({
 		toolName,
 		render: function ExternalModelUI({ args, result, status }) {
+			const isInArena = useContext(SpotlightArenaActiveContext);
+			if (isInArena) return null;
+
 			return (
 				<ModelCard
 					label={label}

@@ -238,33 +238,87 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "prompt_key": None,
     },
     # ── Compare mode ──
+    # ── Compare Supervisor v2 (unified P4 architecture) ──
+    # Architecture: Domain Planner → Subagent Spawner → [Domain Pod per model]
+    #   → [Criterion Pod × 4 per domain] → Convergence → Synthesizer → END
+    # Each domain and each criterion evaluator runs in its own isolated K8s pod
+    # (sandbox_scope=subagent for domains, sandbox_scope=criterion for evaluators).
     {
-        "id": "node:compare_fan_out",
-        "label": "Compare Fan-Out",
+        "id": "node:compare_domain_planner",
+        "label": "Compare Domain Planner",
         "stage": "compare",
-        "description": "Fördela jämförelse-frågan parallellt till externa modeller (compare-subgraph).",
-        "prompt_key": None,
+        "description": "Deterministisk domänplanering — genererar domain_plans för 7 externa modeller + 1 research-agent. Inga LLM-anrop, alla 8 domäner inkluderas alltid.",
+        "prompt_key": "compare.domain_planner.system",
     },
     {
-        "id": "node:compare_collect",
-        "label": "Compare Collect",
+        "id": "node:compare_subagent_spawner",
+        "label": "Compare Subagent Spawner",
         "stage": "compare",
-        "description": "Samla in svar från alla externa modeller (timeout-guard).",
-        "prompt_key": None,
+        "description": "Startar 8 isolerade K8s-poddar parallellt (asyncio.gather). Varje domän-pod (sandbox_scope=subagent) kör modell-API-anrop → emittar model_response_ready → spawnar 4 criterion-poddar → emittar criterion_complete per bedömare.",
+        "prompt_key": "compare.mini_planner.system",
     },
     {
-        "id": "node:compare_tavily",
-        "label": "Compare Tavily",
+        "id": "node:compare_domain_pod",
+        "label": "Domän-pod (K8s)",
         "stage": "compare",
-        "description": "Valfri Tavily-sökning för att berika jämförelse med extern källa.",
-        "prompt_key": None,
+        "description": "Isolerad K8s-pod per domän (t.ex. Grok, Claude, GPT). sandbox_scope=subagent med unik scope_id. Kör modell-API-anropet, emittar model_response_ready till frontend, och spawnar sedan 4 criterion-poddar som ärver från denna domän-pod.",
+        "prompt_key": "",
+    },
+    {
+        "id": "node:compare_mini_critic",
+        "label": "Compare Mini Critic",
+        "stage": "compare",
+        "description": "Per-modell critic som utvärderar svarskvalitet. Retry med adaptive guard vid behov.",
+        "prompt_key": "compare.mini_critic.system",
+    },
+    {
+        "id": "node:compare_eval_relevans",
+        "label": "Bedömare: Relevans [Pod]",
+        "stage": "compare",
+        "description": "Isolerad K8s criterion-pod (sandbox_scope=criterion). Utvärderar RELEVANS (0-100) per modellsvar. Besvarar svaret kärnfrågan? Emittar criterion_complete med pod_id och latency_ms.",
+        "prompt_key": "compare.criterion.relevans",
+    },
+    {
+        "id": "node:compare_eval_djup",
+        "label": "Bedömare: Djup [Pod]",
+        "stage": "compare",
+        "description": "Isolerad K8s criterion-pod (sandbox_scope=criterion). Utvärderar DJUP (0-100) per modellsvar. Hur detaljerat och nyanserat är svaret? Ärver från parent domän-pod.",
+        "prompt_key": "compare.criterion.djup",
+    },
+    {
+        "id": "node:compare_eval_klarhet",
+        "label": "Bedömare: Klarhet [Pod]",
+        "stage": "compare",
+        "description": "Isolerad K8s criterion-pod (sandbox_scope=criterion). Utvärderar KLARHET (0-100) per modellsvar. Hur tydligt och välstrukturerat är svaret? Full parallellism (semaphore=28).",
+        "prompt_key": "compare.criterion.klarhet",
+    },
+    {
+        "id": "node:compare_eval_korrekthet",
+        "label": "Bedömare: Korrekthet [Pod]",
+        "stage": "compare",
+        "description": "Isolerad K8s criterion-pod (sandbox_scope=criterion). Utvärderar KORREKTHET (0-100) per modellsvar. Stämmer fakta? Research-data används som referens. Viktas 35%.",
+        "prompt_key": "compare.criterion.korrekthet",
+    },
+    {
+        "id": "node:compare_research",
+        "label": "Research Agent [Pod]",
+        "stage": "compare",
+        "description": "Isolerad K8s-pod (sandbox_scope=subagent). Webb-research agent: query-dekomposition → parallell Tavily-sökning → LLM-syntes med inline-citeringar. Samlar verifierad data som referens.",
+        "prompt_key": "compare.research.system",
+    },
+    {
+        "id": "node:compare_convergence",
+        "label": "Compare Convergence",
+        "stage": "compare",
+        "description": "LLM-driven merge av alla domänresultat (criterion_scores + reasonings). Identifierar overlap, konflikter, konsensus. Skapar unified arena_data med model_scores och model_reasonings.",
+        "prompt_key": "compare.convergence.system",
     },
     {
         "id": "node:compare_synthesizer",
         "label": "Compare Synthesizer",
         "stage": "compare",
-        "description": "Sammanställ jämförelse-svar från alla modeller till strukturerat resultat. → END",
-        "prompt_key": None,
+        "description": "Slutgiltig syntes från convergence-data + per-domän handoffs. Producerar spotlight-arena-data JSON-block med arena_analysis, model_scores, winner_rationale. → END",
+        "prompt_key": "compare.analysis.system",
     },
     # ── Evaluation ──
     {
@@ -388,11 +442,28 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:pev_verify", "target": "node:mini_executor", "type": "conditional", "label": "deviation"},
     {"source": "node:mini_synthesizer", "target": "node:convergence_node", "type": "normal"},
     {"source": "node:convergence_node", "target": "node:critic", "type": "normal"},
-    # ── Compare mode edges ──
-    {"source": "node:resolve_intent", "target": "node:compare_fan_out", "type": "conditional", "label": "jämförelse"},
-    {"source": "node:compare_fan_out", "target": "node:compare_collect", "type": "normal"},
-    {"source": "node:compare_collect", "target": "node:compare_tavily", "type": "normal"},
-    {"source": "node:compare_tavily", "target": "node:compare_synthesizer", "type": "normal"},
+    # ── Compare Supervisor v2 edges ──
+    # Flow: Intent → Planner → Spawner → [Domain Pods × 8 parallel] → [Criterion Pods × 4 per domain] → Convergence → Synthesizer
+    {"source": "node:resolve_intent", "target": "node:compare_domain_planner", "type": "conditional", "label": "jämförelse"},
+    {"source": "node:compare_domain_planner", "target": "node:compare_subagent_spawner", "type": "normal"},
+    # Spawner creates 8 domain pods in parallel (asyncio.gather)
+    {"source": "node:compare_subagent_spawner", "target": "node:compare_domain_pod", "type": "normal", "label": "×8 parallel"},
+    {"source": "node:compare_subagent_spawner", "target": "node:compare_research", "type": "normal", "label": "parallel"},
+    {"source": "node:compare_subagent_spawner", "target": "node:compare_mini_critic", "type": "normal"},
+    {"source": "node:compare_mini_critic", "target": "node:compare_subagent_spawner", "type": "conditional", "label": "retry"},
+    {"source": "node:compare_mini_critic", "target": "node:compare_convergence", "type": "conditional", "label": "ok"},
+    # Domain pod → model_response_ready → 4 criterion pods (parallel)
+    {"source": "node:compare_domain_pod", "target": "node:compare_eval_relevans", "type": "normal", "label": "spawn pod"},
+    {"source": "node:compare_domain_pod", "target": "node:compare_eval_djup", "type": "normal", "label": "spawn pod"},
+    {"source": "node:compare_domain_pod", "target": "node:compare_eval_klarhet", "type": "normal", "label": "spawn pod"},
+    {"source": "node:compare_domain_pod", "target": "node:compare_eval_korrekthet", "type": "normal", "label": "spawn pod"},
+    # Criterion pods complete → convergence
+    {"source": "node:compare_eval_relevans", "target": "node:compare_convergence", "type": "normal"},
+    {"source": "node:compare_eval_djup", "target": "node:compare_convergence", "type": "normal"},
+    {"source": "node:compare_eval_klarhet", "target": "node:compare_convergence", "type": "normal"},
+    {"source": "node:compare_eval_korrekthet", "target": "node:compare_convergence", "type": "normal"},
+    {"source": "node:compare_research", "target": "node:compare_convergence", "type": "normal"},
+    {"source": "node:compare_convergence", "target": "node:compare_synthesizer", "type": "normal"},
     # ── Critic decisions ──
     {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},
     {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more"},

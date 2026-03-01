@@ -62,6 +62,8 @@ import {
 	QwenToolUI,
 	OneseekToolUI,
 } from "@/components/tool-ui/compare-model";
+import { LiveCriterionContext, LiveCriterionPodContext } from "@/components/tool-ui/spotlight-arena";
+import type { LiveCriterionPodMap, CriterionPodMeta } from "@/components/tool-ui/spotlight-arena";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
@@ -347,6 +349,14 @@ export default function NewChatPage() {
 	const traceLayoutRef = useRef<HTMLDivElement | null>(null);
 	const [traceMaxWidth, setTraceMaxWidth] = useState<number>(720);
 	const abortControllerRef = useRef<AbortController | null>(null);
+
+	// Live criterion scores from SSE events (domain → partial scores)
+	const [liveCriterionScores, setLiveCriterionScores] = useState<
+		Record<string, Partial<{ relevans: number; djup: number; klarhet: number; korrekthet: number }>>
+	>({});
+
+	// Live criterion pod metadata from SSE events (domain → criterion → pod info)
+	const [liveCriterionPodInfo, setLiveCriterionPodInfo] = useState<LiveCriterionPodMap>({});
 
 	// Get mentioned document IDs from the composer
 	const mentionedDocumentIds = useAtomValue(mentionedDocumentIdsAtom);
@@ -1095,6 +1105,8 @@ export default function NewChatPage() {
 
 			// Start streaming response
 			setIsRunning(true);
+			setLiveCriterionScores({});
+			setLiveCriterionPodInfo({});
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -1495,6 +1507,84 @@ export default function NewChatPage() {
 										}
 										case "data-compare-summary": {
 											compareSummary = parsed.data ?? null;
+											break;
+										}
+										case "data-model-response-ready": {
+											// Model responded — add card immediately (before criterion eval)
+											const mrId = String(parsed.data?.tool_call_id ?? "");
+											const mrName = String(parsed.data?.tool_name ?? "");
+											const mrResult = parsed.data?.result;
+											if (mrId && mrName && mrResult) {
+												if (!toolCallIndices.has(mrId)) {
+													addToolCall(mrId, mrName, { query: String(mrResult?.query || "") });
+												}
+												updateToolCall(mrId, { result: mrResult });
+												setMessages((prev) =>
+													prev.map((m) =>
+														m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+													)
+												);
+											}
+											break;
+										}
+										case "data-criterion-evaluation-started": {
+											// Mark domain as evaluating so spinners appear
+											const cesDomain = String(parsed.data?.domain ?? "");
+											if (cesDomain) {
+												setLiveCriterionScores((prev) => ({
+													...prev,
+													[cesDomain]: prev[cesDomain] || {},
+												}));
+											}
+											break;
+										}
+										case "data-criterion-complete": {
+											const ceDomain = String(parsed.data?.domain ?? "");
+											const ceCriterion = String(parsed.data?.criterion ?? "");
+											const ceScore = Number(parsed.data?.score ?? 0);
+											if (ceDomain && ceCriterion) {
+												setLiveCriterionScores((prev) => ({
+													...prev,
+													[ceDomain]: {
+														...(prev[ceDomain] || {}),
+														[ceCriterion]: ceScore,
+													},
+												}));
+												// Extract pod metadata if present
+												const cePodId = String(parsed.data?.pod_id ?? "");
+												if (cePodId) {
+													setLiveCriterionPodInfo((prev) => ({
+														...prev,
+														[ceDomain]: {
+															...(prev[ceDomain] || {}),
+															[ceCriterion]: {
+																pod_id: cePodId,
+																parent_pod_id: String(parsed.data?.parent_pod_id ?? ""),
+																latency_ms: Number(parsed.data?.latency_ms ?? 0),
+															} as CriterionPodMeta,
+														},
+													}));
+												}
+											}
+											break;
+										}
+										case "data-model-complete": {
+											// Progressive model card rendering: add/update tool-call
+											// as each model completes (before the batch arrives)
+											const mcId = String(parsed.data?.tool_call_id ?? "");
+											const mcName = String(parsed.data?.tool_name ?? "");
+											const mcResult = parsed.data?.result;
+											if (mcId && mcName && mcResult) {
+												if (!toolCallIndices.has(mcId)) {
+													addToolCall(mcId, mcName, { query: String(mcResult?.query || "") });
+												}
+												updateToolCall(mcId, { result: mcResult });
+												setMessages((prev) =>
+													prev.map((m) =>
+														m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+													)
+												);
+											}
 											break;
 										}
 
@@ -1925,6 +2015,8 @@ export default function NewChatPage() {
 
 			// Start streaming
 			setIsRunning(true);
+			setLiveCriterionScores({});
+			setLiveCriterionPodInfo({});
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -2266,6 +2358,82 @@ export default function NewChatPage() {
 											compareSummary = parsed.data ?? null;
 											break;
 										}
+										case "data-model-response-ready": {
+											// Model responded — add card immediately (before criterion eval)
+											const mrId2 = String(parsed.data?.tool_call_id ?? "");
+											const mrName2 = String(parsed.data?.tool_name ?? "");
+											const mrResult2 = parsed.data?.result;
+											if (mrId2 && mrName2 && mrResult2) {
+												if (!toolCallIndices.has(mrId2)) {
+													addToolCall(mrId2, mrName2, { query: String(mrResult2?.query || "") });
+												}
+												updateToolCall(mrId2, { result: mrResult2 });
+												setMessages((prev) =>
+													prev.map((m) =>
+														m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+													)
+												);
+											}
+											break;
+										}
+										case "data-criterion-evaluation-started": {
+											// Mark domain as evaluating so spinners appear
+											const cesDomain2 = String(parsed.data?.domain ?? "");
+											if (cesDomain2) {
+												setLiveCriterionScores((prev) => ({
+													...prev,
+													[cesDomain2]: prev[cesDomain2] || {},
+												}));
+											}
+											break;
+										}
+										case "data-criterion-complete": {
+											const ceDomain2 = String(parsed.data?.domain ?? "");
+											const ceCriterion2 = String(parsed.data?.criterion ?? "");
+											const ceScore2 = Number(parsed.data?.score ?? 0);
+											if (ceDomain2 && ceCriterion2) {
+												setLiveCriterionScores((prev) => ({
+													...prev,
+													[ceDomain2]: {
+														...(prev[ceDomain2] || {}),
+														[ceCriterion2]: ceScore2,
+													},
+												}));
+												// Extract pod metadata if present
+												const cePodId2 = String(parsed.data?.pod_id ?? "");
+												if (cePodId2) {
+													setLiveCriterionPodInfo((prev) => ({
+														...prev,
+														[ceDomain2]: {
+															...(prev[ceDomain2] || {}),
+															[ceCriterion2]: {
+																pod_id: cePodId2,
+																parent_pod_id: String(parsed.data?.parent_pod_id ?? ""),
+																latency_ms: Number(parsed.data?.latency_ms ?? 0),
+															} as CriterionPodMeta,
+														},
+													}));
+												}
+											}
+											break;
+										}
+										case "data-model-complete": {
+											const mcId2 = String(parsed.data?.tool_call_id ?? "");
+											const mcName2 = String(parsed.data?.tool_name ?? "");
+											const mcResult2 = parsed.data?.result;
+											if (mcId2 && mcName2 && mcResult2) {
+												if (!toolCallIndices.has(mcId2)) {
+													addToolCall(mcId2, mcName2, { query: String(mcResult2?.query || "") });
+												}
+												updateToolCall(mcId2, { result: mcResult2 });
+												setMessages((prev) =>
+													prev.map((m) =>
+														m.id === assistantMsgId ? { ...m, content: buildContentForUI() } : m
+													)
+												);
+											}
+											break;
+										}
 
 										// P1-Extra.5: structured field decisions from pipeline nodes
 										case "structured-field": {
@@ -2605,6 +2773,8 @@ export default function NewChatPage() {
 	}
 	return (
 		<AssistantRuntimeProvider runtime={runtime}>
+		<LiveCriterionContext.Provider value={liveCriterionScores}>
+		<LiveCriterionPodContext.Provider value={liveCriterionPodInfo}>
 			{!isPublicChat && <GeneratePodcastToolUI />}
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
@@ -2684,6 +2854,8 @@ export default function NewChatPage() {
 					/>
 				)}
 			</TracePanelContext.Provider>
+		</LiveCriterionPodContext.Provider>
+		</LiveCriterionContext.Provider>
 		</AssistantRuntimeProvider>
 	);
 }
