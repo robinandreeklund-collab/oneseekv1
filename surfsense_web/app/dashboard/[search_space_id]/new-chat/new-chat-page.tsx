@@ -851,6 +851,11 @@ export default function NewChatPage() {
 	// Handle new message from user
 	const onNew = useCallback(
 		async (message: AppendMessage) => {
+			// Pre-unlock AudioContext during this user gesture so voice
+			// debate audio can auto-play later without requiring a
+			// separate click on the play button.
+			debateAudioRef.current.resumeAudioContext();
+
 			// Abort any previous streaming request to prevent race conditions
 			// when user sends a second query while the first is still streaming
 			if (abortControllerRef.current) {
@@ -2305,6 +2310,9 @@ export default function NewChatPage() {
 	 */
 	const handleRegenerate = useCallback(
 		async (newUserQuery?: string | null) => {
+			// Pre-unlock AudioContext during user gesture (same as onNew)
+			debateAudioRef.current.resumeAudioContext();
+
 			if (isPublicChat) {
 				toast.info("Sign in to edit or regenerate responses.");
 				return;
