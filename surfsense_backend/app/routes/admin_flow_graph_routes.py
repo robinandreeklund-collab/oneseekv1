@@ -320,6 +320,66 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "description": "Slutgiltig syntes från convergence-data + per-domän handoffs. Producerar spotlight-arena-data JSON-block med arena_analysis, model_scores, winner_rationale. → END",
         "prompt_key": "compare.analysis.system",
     },
+    # ── Debate mode (Debattläge v1) ──
+    # Architecture: Intent → Domain Planner → Round Executor (4 rounds) → Convergence → Synthesizer → END
+    # Rounds 1-3: Sequential per round, random order, chained context
+    # Round 4: Parallel voting with structured JSON output
+    {
+        "id": "node:debate_domain_planner",
+        "label": "Debate Domain Planner",
+        "stage": "debate",
+        "description": "Deterministisk domänplanering — genererar deltagarlista med 7 externa modeller + OneSeek. Inga LLM-anrop, alla 8 deltagare inkluderas alltid.",
+        "prompt_key": "debate.domain_planner.system",
+    },
+    {
+        "id": "node:debate_round_executor",
+        "label": "Debate Round Executor",
+        "stage": "debate",
+        "description": "Kör alla 4 debattrundor. Rundor 1-3 (Introduktion, Argument, Fördjupning) kör sekventiellt med slumpad ordning — varje deltagare ser alla föregående svar (chained context). Runda 4 (Röstning) körs parallellt med strukturerad JSON-output.",
+        "prompt_key": "debate.round_executor.system",
+    },
+    {
+        "id": "node:debate_round_1",
+        "label": "R1: Introduktion",
+        "stage": "debate",
+        "description": "Alla deltagare presenterar sin inledande ståndpunkt sekventiellt. Varje deltagare ser föregående deltagares introduktion.",
+        "prompt_key": "debate.round.1.introduction",
+    },
+    {
+        "id": "node:debate_round_2",
+        "label": "R2: Argument",
+        "stage": "debate",
+        "description": "Deltagarna utvecklar sina argument och bemöter andras ståndpunkter sekventiellt med full kontextkedja.",
+        "prompt_key": "debate.round.2.argument",
+    },
+    {
+        "id": "node:debate_round_3",
+        "label": "R3: Fördjupning",
+        "stage": "debate",
+        "description": "Fördjupad diskussion med möjlighet att nyansera eller stärka argument. Sekventiellt med alla föregående rundors kontext.",
+        "prompt_key": "debate.round.3.deepening",
+    },
+    {
+        "id": "node:debate_round_4_voting",
+        "label": "R4: Röstning",
+        "stage": "debate",
+        "description": "Parallell röstning — varje deltagare röstar (ej på sig själv) med strukturerad JSON: voted_for, short_motivation, three_bullets. Pydantic DebateVoteResult med response_format enforcing.",
+        "prompt_key": "debate.round.4.voting",
+    },
+    {
+        "id": "node:debate_convergence",
+        "label": "Debate Convergence",
+        "stage": "debate",
+        "description": "Aggregerar röster, filtrerar självröster, beräknar vinnare med ordräkning som tiebreaker. LLM-convergence med strukturerad output (DebateConvergenceResult).",
+        "prompt_key": "debate.convergence.system",
+    },
+    {
+        "id": "node:debate_synthesizer",
+        "label": "Debate Synthesizer",
+        "stage": "debate",
+        "description": "Slutgiltig debattanalys — producerar debate-arena-data JSON med topic, vinnare, röstresultat, konsensus, meningsskiljaktigheter och nyckelargument.",
+        "prompt_key": "debate.analysis.system",
+    },
     # ── Evaluation ──
     {
         "id": "node:critic",
@@ -464,6 +524,17 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:compare_eval_korrekthet", "target": "node:compare_convergence", "type": "normal"},
     {"source": "node:compare_research", "target": "node:compare_convergence", "type": "normal"},
     {"source": "node:compare_convergence", "target": "node:compare_synthesizer", "type": "normal"},
+    # ── Debate Supervisor v1 edges ──
+    # Flow: Intent → Domain Planner → Round Executor → Convergence → Synthesizer → END
+    {"source": "node:resolve_intent", "target": "node:debate_domain_planner", "type": "conditional", "label": "debatt"},
+    {"source": "node:debate_domain_planner", "target": "node:debate_round_executor", "type": "normal"},
+    # Round executor runs 4 sequential sub-rounds internally
+    {"source": "node:debate_round_executor", "target": "node:debate_round_1", "type": "normal", "label": "runda 1"},
+    {"source": "node:debate_round_1", "target": "node:debate_round_2", "type": "normal"},
+    {"source": "node:debate_round_2", "target": "node:debate_round_3", "type": "normal"},
+    {"source": "node:debate_round_3", "target": "node:debate_round_4_voting", "type": "normal"},
+    {"source": "node:debate_round_4_voting", "target": "node:debate_convergence", "type": "normal"},
+    {"source": "node:debate_convergence", "target": "node:debate_synthesizer", "type": "normal"},
     # ── Critic decisions ──
     {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},
     {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more"},
@@ -490,6 +561,7 @@ _PIPELINE_STAGES: list[dict[str, str]] = [
     {"id": "tool_resolution", "label": "Verktygsval / Domänplan", "color": "cyan"},
     {"id": "subagent", "label": "Subagent Mini-Graphs", "color": "indigo"},
     {"id": "compare", "label": "Jämförelse", "color": "purple"},
+    {"id": "debate", "label": "Debatt", "color": "amber"},
     {"id": "execution", "label": "Exekvering", "color": "emerald"},
     {"id": "post_processing", "label": "Efterbehandling", "color": "slate"},
     {"id": "evaluation", "label": "Utvärdering", "color": "orange"},

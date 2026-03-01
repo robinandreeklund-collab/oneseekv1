@@ -18,6 +18,20 @@ from app.agents.new_chat.compare_prompts import (
     DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
     DEFAULT_COMPARE_RESEARCH_PROMPT,
 )
+from app.agents.new_chat.debate_prompts import (
+    DEBATE_ROUND1_INTRO_PROMPT,
+    DEBATE_ROUND2_ARGUMENT_PROMPT,
+    DEBATE_ROUND3_DEEPENING_PROMPT,
+    DEBATE_ROUND4_VOTING_PROMPT,
+    DEBATE_SUPERVISOR_INSTRUCTIONS,
+    DEFAULT_DEBATE_ANALYSIS_PROMPT,
+    DEFAULT_DEBATE_CONVERGENCE_PROMPT,
+    DEFAULT_DEBATE_DOMAIN_PLANNER_PROMPT,
+    DEFAULT_DEBATE_MINI_CRITIC_PROMPT,
+    DEFAULT_DEBATE_MINI_PLANNER_PROMPT,
+    DEFAULT_DEBATE_RESEARCH_PROMPT,
+    ONESEEK_DEBATE_SYSTEM_PROMPT,
+)
 from app.agents.new_chat.dispatcher import DEFAULT_ROUTE_SYSTEM_PROMPT
 from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
 from app.agents.new_chat.riksdagen_prompts import DEFAULT_RIKSDAGEN_SYSTEM_PROMPT
@@ -103,6 +117,9 @@ def infer_prompt_node_group(key: str) -> tuple[str, str]:
         return ("compare_mini", "Compare Mini-Graph")
     if normalized_key.startswith("compare."):
         return ("compare", "Compare")
+    # Debate Supervisor v1: debate mode prompts
+    if normalized_key.startswith("debate."):
+        return ("debate", "Debatt")
     # P4: Mini-graph internal nodes → subagent_mini group
     if normalized_key.startswith("supervisor.mini_") or normalized_key.startswith(
         "supervisor.pev_"
@@ -194,6 +211,19 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "compare.criterion.klarhet",
     "compare.criterion.korrekthet",
     "compare.research.system",
+    # Debate Supervisor v1
+    "debate.supervisor.instructions",
+    "debate.domain_planner.system",
+    "debate.mini_planner.system",
+    "debate.mini_critic.system",
+    "debate.convergence.system",
+    "debate.analysis.system",
+    "debate.research.system",
+    "debate.oneseek.system",
+    "debate.round.1.introduction",
+    "debate.round.2.argument",
+    "debate.round.3.deepening",
+    "debate.round.4.voting",
 )
 
 
@@ -610,6 +640,79 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Compare Research Agent",
         description="Webb-research agent i compare-läge. Samlar verifierad data som referens för faktagranskning.",
         default_prompt=DEFAULT_COMPARE_RESEARCH_PROMPT,
+    ),
+    # ── Debate Supervisor v1 ──
+    "debate.supervisor.instructions": PromptDefinition(
+        key="debate.supervisor.instructions",
+        label="Debate Supervisor Instructions",
+        description="Supervisor-instruktioner som injiceras vid debattläge. Styr supervisorns roll under debatten.",
+        default_prompt=DEBATE_SUPERVISOR_INSTRUCTIONS,
+    ),
+    "debate.domain_planner.system": PromptDefinition(
+        key="debate.domain_planner.system",
+        label="Debate Domain Planner",
+        description="Prompt for debate_domain_planner — genererar domänplaner (deterministiskt: alla externa + OneSeek).",
+        default_prompt=DEFAULT_DEBATE_DOMAIN_PLANNER_PROMPT,
+    ),
+    "debate.mini_planner.system": PromptDefinition(
+        key="debate.mini_planner.system",
+        label="Debate Mini Planner",
+        description="Prompt for mini_planner inuti debate subagent mini-graf — skapar mikro-plan per debattdomän.",
+        default_prompt=DEFAULT_DEBATE_MINI_PLANNER_PROMPT,
+    ),
+    "debate.mini_critic.system": PromptDefinition(
+        key="debate.mini_critic.system",
+        label="Debate Mini Critic",
+        description="Prompt for mini_critic inuti debate subagent mini-graf — bedömer debattinläggets kvalitet.",
+        default_prompt=DEFAULT_DEBATE_MINI_CRITIC_PROMPT,
+    ),
+    "debate.convergence.system": PromptDefinition(
+        key="debate.convergence.system",
+        label="Debate Convergence",
+        description="Prompt for convergence_node i debate-grafen — mergar alla rundors resultat, röster, vinnare.",
+        default_prompt=DEFAULT_DEBATE_CONVERGENCE_PROMPT,
+    ),
+    "debate.analysis.system": PromptDefinition(
+        key="debate.analysis.system",
+        label="Debate Analysis / Synthesizer",
+        description="System prompt för debattanalys/syntes. Genererar djup debattanalys med JSON arena-data + markdown.",
+        default_prompt=DEFAULT_DEBATE_ANALYSIS_PROMPT,
+    ),
+    "debate.research.system": PromptDefinition(
+        key="debate.research.system",
+        label="Debate Research Agent",
+        description="Webb-research agent i debattläge. Samlar verifierad data som underlag för OneSeeks argument.",
+        default_prompt=DEFAULT_DEBATE_RESEARCH_PROMPT,
+    ),
+    "debate.oneseek.system": PromptDefinition(
+        key="debate.oneseek.system",
+        label="Debate OneSeek System",
+        description="System prompt för OneSeek som debattdeltagare — realtidsverktyg och Tavily-sökning.",
+        default_prompt=ONESEEK_DEBATE_SYSTEM_PROMPT,
+    ),
+    "debate.round.1.introduction": PromptDefinition(
+        key="debate.round.1.introduction",
+        label="Runda 1: Introduktion",
+        description="Prompt för debattens Runda 1 — deltagare presenterar sig och tar ställning.",
+        default_prompt=DEBATE_ROUND1_INTRO_PROMPT,
+    ),
+    "debate.round.2.argument": PromptDefinition(
+        key="debate.round.2.argument",
+        label="Runda 2: Argument",
+        description="Prompt för debattens Runda 2 — deltagare bygger vidare på och utmanar argument från Runda 1.",
+        default_prompt=DEBATE_ROUND2_ARGUMENT_PROMPT,
+    ),
+    "debate.round.3.deepening": PromptDefinition(
+        key="debate.round.3.deepening",
+        label="Runda 3: Fördjupning",
+        description="Prompt för debattens Runda 3 — fördjupning i meningsskiljaktigheter och slutargumentation.",
+        default_prompt=DEBATE_ROUND3_DEEPENING_PROMPT,
+    ),
+    "debate.round.4.voting": PromptDefinition(
+        key="debate.round.4.voting",
+        label="Runda 4: Röstning",
+        description="Prompt för debattens Runda 4 — deltagare röstar på bästa argument (JSON-format, self-vote förbjudet).",
+        default_prompt=DEBATE_ROUND4_VOTING_PROMPT,
     ),
 }
 

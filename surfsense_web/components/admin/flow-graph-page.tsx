@@ -313,6 +313,7 @@ const STAGE_COLORS: Record<string, string> = {
 	tool_resolution: "hsl(189 94% 43%)",
 	subagent: "hsl(245 58% 51%)",
 	compare: "hsl(280 65% 55%)",
+	debate: "hsl(38 92% 50%)",
 	execution: "hsl(160 84% 39%)",
 	post_processing: "hsl(215 14% 50%)",
 	evaluation: "hsl(25 95% 53%)",
@@ -383,6 +384,15 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		"node:compare_eval_korrekthet": { x: 1360, y: 1720 },
 		"node:compare_convergence": { x: 1080, y: 1880 },
 		"node:compare_synthesizer": { x: 1360, y: 1880 },
+		// ── Debate Supervisor v1 (below compare) ──
+		"node:debate_domain_planner": { x: 240, y: 2080 },
+		"node:debate_round_executor": { x: 520, y: 2080 },
+		"node:debate_round_1": { x: 800, y: 2080 },
+		"node:debate_round_2": { x: 1080, y: 2080 },
+		"node:debate_round_3": { x: 1360, y: 2080 },
+		"node:debate_round_4_voting": { x: 1640, y: 2080 },
+		"node:debate_convergence": { x: 1080, y: 2240 },
+		"node:debate_synthesizer": { x: 1360, y: 2240 },
 	};
 
 	return pipelineNodes.map((node) => ({

@@ -712,3 +712,82 @@ class CompareSynthesisResult(BaseModel):
             "eller rå JSON — bara ren markdown-text."
         ),
     )
+
+
+# ────────────────────────────────────────────────────────────────
+# Debate: Vote Result
+# ────────────────────────────────────────────────────────────────
+
+
+class DebateVoteResult(BaseModel):
+    """Structured output for debate round 4 (voting).
+
+    Each participant votes for the best debater (not themselves).
+    ``thinking`` is internal reasoning, then the actual vote fields.
+    """
+
+    thinking: str = Field(
+        ...,
+        description=(
+            "Ditt interna resonemang på svenska.  Analysera alla "
+            "rundor, identifiera vilken deltagare som hade de starkaste "
+            "argumenten, och motivera ditt val innan du röstar."
+        ),
+    )
+    voted_for: str = Field(
+        ...,
+        description=(
+            "Namnet på den deltagare du röstar på (inte dig själv).  "
+            "Använd exakt samma namn som i debatten."
+        ),
+    )
+    short_motivation: str = Field(
+        ...,
+        description="Kort motivering (max 200 tecken) för ditt val.",
+        max_length=200,
+    )
+    three_bullets: list[str] = Field(
+        ...,
+        description=(
+            "Exakt tre punkter som sammanfattar varför denna deltagare "
+            "var bäst.  Varje punkt är en mening."
+        ),
+        min_length=3,
+        max_length=3,
+    )
+
+
+class DebateConvergenceResult(BaseModel):
+    """Structured output for the debate convergence node.
+
+    Produces a structured summary of the entire debate after voting.
+    """
+
+    thinking: str = Field(
+        ...,
+        description=(
+            "Ditt interna resonemang.  Analysera röstresultaten, "
+            "identifiera konsensus och meningsskiljaktigheter, och "
+            "sammanfatta debattens huvudsakliga slutsatser."
+        ),
+    )
+    merged_summary: str = Field(
+        ...,
+        description=(
+            "En sammanhängande sammanfattning av debattens resultat, "
+            "inklusive vinnaren, starkaste argumenten, och huvudsakliga "
+            "slutsatser.  Skriv på svenska."
+        ),
+    )
+    overlap_score: float = Field(
+        ...,
+        description="Graden av samsyn mellan deltagarna (0.0-1.0).",
+    )
+    conflicts: list[str] = Field(
+        default_factory=list,
+        description="Lista med identifierade meningsskiljaktigheter.",
+    )
+    agreements: list[str] = Field(
+        default_factory=list,
+        description="Lista med punkter där deltagarna var eniga.",
+    )

@@ -38,6 +38,12 @@ from app.agents.new_chat.debate_prompts import (
     DEBATE_ROUND4_VOTING_PROMPT,
     ONESEEK_DEBATE_SYSTEM_PROMPT,
 )
+from app.agents.new_chat.structured_schemas import (
+    DebateConvergenceResult,
+    DebateVoteResult,
+    pydantic_to_response_format,
+    structured_output_enabled,
+)
 from app.agents.new_chat.system_prompt import append_datetime_context
 from app.agents.new_chat.tools.external_models import (
     EXTERNAL_MODEL_SPECS,
@@ -635,13 +641,33 @@ async def _run_oneseek_debate_turn(
 
 
 async def _call_oneseek_vote(llm: Any, vote_prompt: str) -> str:
-    """OneSeek's vote using internal LLM."""
+    """OneSeek's vote using internal LLM with structured output."""
     try:
-        response = await llm.ainvoke([
-            {"role": "system", "content": "Du röstar i en AI-debatt. Svara ENBART med JSON."},
-            {"role": "user", "content": vote_prompt},
-        ])
-        return response.content if hasattr(response, "content") else str(response)
+        _invoke_kwargs: dict[str, Any] = {}
+        if structured_output_enabled():
+            _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                DebateVoteResult, "debate_vote"
+            )
+        response = await llm.ainvoke(
+            [
+                {"role": "system", "content": "Du röstar i en AI-debatt. Svara med strukturerad JSON."},
+                {"role": "user", "content": vote_prompt},
+            ],
+            **_invoke_kwargs,
+        )
+        raw = response.content if hasattr(response, "content") else str(response)
+        # Try structured Pydantic parse first
+        if structured_output_enabled():
+            try:
+                parsed = DebateVoteResult.model_validate_json(raw)
+                return json.dumps({
+                    "voted_for": parsed.voted_for,
+                    "short_motivation": parsed.short_motivation,
+                    "three_bullets": parsed.three_bullets,
+                }, ensure_ascii=False)
+            except Exception:
+                pass
+        return raw
     except Exception as exc:
         return json.dumps({
             "voted_for": "",
@@ -709,14 +735,31 @@ def build_debate_convergence_node(
 
         context = "\n".join(context_parts)
 
-        # LLM convergence analysis
+        # LLM convergence analysis (with structured output)
         try:
-            response = await llm.ainvoke([
-                {"role": "system", "content": convergence_prompt_template},
-                {"role": "user", "content": context},
-            ])
+            _invoke_kwargs: dict[str, Any] = {}
+            if structured_output_enabled():
+                _invoke_kwargs["response_format"] = pydantic_to_response_format(
+                    DebateConvergenceResult, "debate_convergence"
+                )
+            response = await llm.ainvoke(
+                [
+                    {"role": "system", "content": convergence_prompt_template},
+                    {"role": "user", "content": context},
+                ],
+                **_invoke_kwargs,
+            )
             raw_content = response.content if hasattr(response, "content") else str(response)
-            convergence_obj = extract_first_json_object_fn(raw_content)
+
+            # Try structured Pydantic parse first
+            if structured_output_enabled():
+                try:
+                    _structured = DebateConvergenceResult.model_validate_json(raw_content)
+                    convergence_obj = _structured.model_dump(exclude={"thinking"})
+                except Exception:
+                    convergence_obj = extract_first_json_object_fn(raw_content)
+            else:
+                convergence_obj = extract_first_json_object_fn(raw_content)
 
             if not convergence_obj:
                 convergence_obj = {

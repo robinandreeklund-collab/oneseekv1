@@ -182,3 +182,17 @@ class SupervisorState(TypedDict, total=False):
     model_complete_events: Annotated[list[dict[str, Any]], _replace]
     # Compare: structured arena data from synthesizer.
     compare_arena_data: Annotated[dict[str, Any] | None, _replace]
+    # Debate: participant list from domain planner.
+    debate_participants: Annotated[list[dict[str, Any]], _replace]
+    # Debate: topic being debated.
+    debate_topic: Annotated[str | None, _replace]
+    # Debate: current round number (1-4).
+    debate_current_round: Annotated[int | None, _replace]
+    # Debate: all round responses keyed by round number → {model: response_text}.
+    debate_round_responses: Annotated[dict[int, dict[str, str]], _replace]
+    # Debate: collected votes from round 4.
+    debate_votes: Annotated[list[dict[str, Any]], _replace]
+    # Debate: accumulated word counts per participant.
+    debate_word_counts: Annotated[dict[str, int], _replace]
+    # Debate: execution status tracking.
+    debate_status: Annotated[str | None, _replace]
