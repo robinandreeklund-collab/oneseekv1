@@ -32,14 +32,16 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # ── Voice map — 8 distinct voices for 8 participants ────────────────────
+# Uses the 13 built-in voices from gpt-4o-mini-tts:
+# alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse, marin, cedar
 DEFAULT_DEBATE_VOICE_MAP: dict[str, str] = {
-    "Grok": "fable",
-    "Claude": "nova",
-    "ChatGPT": "echo",
-    "Gemini": "shimmer",
-    "DeepSeek": "alloy",
+    "Grok": "ash",
+    "Claude": "ballad",
+    "ChatGPT": "coral",
+    "Gemini": "sage",
+    "DeepSeek": "verse",
     "Perplexity": "onyx",
-    "Qwen": "fable",
+    "Qwen": "marin",
     "OneSeek": "nova",
 }
 
@@ -52,8 +54,8 @@ PCM_CHANNELS = 1          # mono
 # ~100 ms of audio at 24 kHz/16-bit/mono = 4800 bytes.
 DEFAULT_CHUNK_BYTES = 4800
 
-# Default TTS model
-DEFAULT_TTS_MODEL = "tts-1"
+# Default TTS model — gpt-4o-mini-tts supports instructions for accent/tone/etc.
+DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 
 # Estimated speaking rate: ~2.5 words/second at 1.0x → ~10 chunks/second
 # This is used to estimate text reveal position per audio chunk.

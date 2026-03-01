@@ -20,6 +20,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
 import {
 	CheckCircle2,
 	Loader2,
@@ -33,13 +34,21 @@ import {
 } from "@/lib/apis/admin-debate-api.service";
 import Image from "next/image";
 
+// All 13 built-in voices for gpt-4o-mini-tts
 const OPENAI_VOICES = [
 	"alloy",
+	"ash",
+	"ballad",
+	"coral",
 	"echo",
 	"fable",
 	"nova",
 	"onyx",
+	"sage",
 	"shimmer",
+	"verse",
+	"marin",
+	"cedar",
 ] as const;
 
 const PARTICIPANTS = [
@@ -63,27 +72,43 @@ const PARTICIPANT_LOGOS: Record<string, string> = {
 	Qwen: "/model-logos/qwen.png",
 };
 
+const DEFAULT_VOICE_MAP: Record<string, string> = {
+	Grok: "ash",
+	Claude: "ballad",
+	ChatGPT: "coral",
+	Gemini: "sage",
+	DeepSeek: "verse",
+	Perplexity: "onyx",
+	Qwen: "marin",
+	OneSeek: "nova",
+};
+
 const TTS_MODELS = [
+	{ value: "gpt-4o-mini-tts", label: "gpt-4o-mini-tts (Recommended)" },
 	{ value: "tts-1", label: "TTS-1 (Standard)" },
 	{ value: "tts-1-hd", label: "TTS-1-HD (High Quality)" },
 ] as const;
+
+const INSTRUCTION_HINT = `Instruktionerna styr hur rösten låter. Du kan ange:
+
+• Accent — "Speak with a slight British accent"
+• Emotional range — "Sound enthusiastic and passionate"
+• Intonation — "Vary pitch to emphasize key points"
+• Impressions — "Sound like a confident news anchor"
+• Speed of speech — "Speak at a measured, deliberate pace"
+• Tone — "Warm and friendly"
+• Whispering — "Whisper softly"
+
+Kombinera fritt, t.ex:
+"Speak Swedish with a warm, confident tone. Vary pitch for emphasis. Sound like a knowledgeable professor."`;
 
 export function DebateSettingsPage() {
 	const [settings, setSettings] = useState<DebateVoiceSettings>({
 		api_key: "",
 		api_base: "https://api.openai.com/v1",
-		model: "tts-1",
+		model: "gpt-4o-mini-tts",
 		speed: 1.0,
-		voice_map: {
-			Grok: "fable",
-			Claude: "nova",
-			ChatGPT: "echo",
-			Gemini: "shimmer",
-			DeepSeek: "alloy",
-			Perplexity: "onyx",
-			Qwen: "fable",
-			OneSeek: "nova",
-		},
+		voice_map: { ...DEFAULT_VOICE_MAP },
 		language_instructions: {},
 	});
 
@@ -91,6 +116,7 @@ export function DebateSettingsPage() {
 	const [isSaving, setIsSaving] = useState(false);
 	const [saved, setSaved] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [expandedParticipant, setExpandedParticipant] = useState<string | null>(null);
 
 	// Load settings on mount
 	useEffect(() => {
@@ -251,16 +277,16 @@ export function DebateSettingsPage() {
 				</CardContent>
 			</Card>
 
-			{/* Voice Map + Per-Model Language Instructions */}
+			{/* Voice Map + Per-Model Instructions */}
 			<Card>
 				<CardHeader>
 					<CardTitle className="flex items-center gap-2">
 						<Mic className="h-5 w-5" />
-						R&ouml;st &amp; spr&aring;k per deltagare
+						R&ouml;st &amp; instruktioner per deltagare
 					</CardTitle>
 					<CardDescription>
-						V&auml;lj r&ouml;st och ange spr&aring;k/accent-instruktioner f&ouml;r varje modell.
-						L&auml;mna instruktionen tom f&ouml;r att anv&auml;nda standardinst&auml;llningarna.
+						V&auml;lj r&ouml;st (13 tillg&auml;ngliga) och ange instruktioner f&ouml;r accent, ton, k&auml;nsla m.m.
+						Klicka p&aring; en deltagare f&ouml;r att expandera instruktionsf&auml;ltet.
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
@@ -269,60 +295,106 @@ export function DebateSettingsPage() {
 						<Label className="text-xs text-muted-foreground">
 							Standard-instruktion (g&auml;ller alla utan egen)
 						</Label>
-						<Input
-							placeholder="T.ex. 'Speak clearly in Swedish' eller 'Tala svenska'"
+						<Textarea
+							placeholder="T.ex. 'Speak Swedish clearly with a warm, professional tone.'"
 							value={langInstructions.__default__ ?? ""}
 							onChange={(e) => updateLangInstruction("__default__", e.target.value)}
+							rows={2}
+							className="text-sm"
 						/>
 					</div>
 
 					<div className="grid gap-3 sm:grid-cols-2">
-						{PARTICIPANTS.map((name) => (
-							<div
-								key={name}
-								className="flex gap-3 rounded-lg border border-border p-3"
-							>
-								{/* Logo */}
-								<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-									{PARTICIPANT_LOGOS[name] ? (
-										<Image
-											src={PARTICIPANT_LOGOS[name]}
-											alt={name}
-											width={28}
-											height={28}
-											className="rounded"
-										/>
-									) : (
-										<span className="text-xs font-bold">{name.slice(0, 2)}</span>
+						{PARTICIPANTS.map((name) => {
+							const isExpanded = expandedParticipant === name;
+							const hasInstruction = Boolean(langInstructions[name]?.trim());
+
+							return (
+								<div
+									key={name}
+									className="rounded-lg border border-border transition-all duration-200 hover:border-primary/30"
+								>
+									{/* Header row: logo + name + voice picker */}
+									<div className="flex items-center gap-3 p-3">
+										{/* Logo */}
+										<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+											{PARTICIPANT_LOGOS[name] ? (
+												<Image
+													src={PARTICIPANT_LOGOS[name]}
+													alt={name}
+													width={28}
+													height={28}
+													className="rounded"
+												/>
+											) : (
+												<span className="text-xs font-bold">{name.slice(0, 2)}</span>
+											)}
+										</div>
+										<div className="min-w-0 flex-1 space-y-1">
+											<button
+												type="button"
+												className="flex w-full items-center gap-2 text-left"
+												onClick={() => setExpandedParticipant(isExpanded ? null : name)}
+											>
+												<span className="text-sm font-medium">{name}</span>
+												{hasInstruction && (
+													<Badge variant="outline" className="border-primary/30 text-primary text-[9px] px-1.5 py-0">
+														instruktion
+													</Badge>
+												)}
+											</button>
+											<Select
+												value={settings.voice_map[name] ?? "alloy"}
+												onValueChange={(v) => updateVoice(name, v)}
+											>
+												<SelectTrigger className="h-8 text-xs">
+													<SelectValue />
+												</SelectTrigger>
+												<SelectContent>
+													{OPENAI_VOICES.map((v) => (
+														<SelectItem key={v} value={v}>
+															{v}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
+									</div>
+
+									{/* Expanded: instruction textarea */}
+									{isExpanded && (
+										<div className="border-t border-border px-3 pb-3 pt-2 space-y-1.5">
+											<Label className="text-[11px] text-muted-foreground">
+												R&ouml;stinstruktion f&ouml;r {name}
+											</Label>
+											<Textarea
+												placeholder={`Accent, ton, känsla, tempo...\nT.ex. "Speak with confidence and a slight Nordic accent. Sound enthusiastic about technology."`}
+												value={langInstructions[name] ?? ""}
+												onChange={(e) => updateLangInstruction(name, e.target.value)}
+												rows={3}
+												className="text-xs"
+											/>
+											<p className="text-[10px] text-muted-foreground leading-relaxed">
+												Styr: accent, emotional range, intonation, impressions, speed, tone, whispering
+											</p>
+										</div>
 									)}
 								</div>
-								<div className="min-w-0 flex-1 space-y-1.5">
-									<div className="text-sm font-medium">{name}</div>
-									<Select
-										value={settings.voice_map[name] ?? "alloy"}
-										onValueChange={(v) => updateVoice(name, v)}
-									>
-										<SelectTrigger className="h-8 text-xs">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											{OPENAI_VOICES.map((v) => (
-												<SelectItem key={v} value={v}>
-													{v}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-									<Input
-										className="h-7 text-xs"
-										placeholder="Spr&aring;k/accent-instruktion..."
-										value={langInstructions[name] ?? ""}
-										onChange={(e) => updateLangInstruction(name, e.target.value)}
-									/>
-								</div>
-							</div>
-						))}
+							);
+						})}
 					</div>
+				</CardContent>
+			</Card>
+
+			{/* Instructions help */}
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-sm">Instruktionsguide</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<pre className="whitespace-pre-wrap text-xs text-muted-foreground leading-relaxed">
+						{INSTRUCTION_HINT}
+					</pre>
 				</CardContent>
 			</Card>
 
