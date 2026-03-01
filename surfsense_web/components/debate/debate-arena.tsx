@@ -135,23 +135,26 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 	const voiceSpeaker = voiceCtx?.voiceState.currentSpeaker ?? null;
 
 	// Only show participants that have a response for the active round.
-	// In voice mode: only show participants with text (streaming via chunks) or speaking
-	// or who is currently being text-generated (speaking status).
-	// In completed state: show all regardless of voice mode.
+	// In voice mode during live debate: show ONLY the current speaker so cards
+	// appear one-at-a-time. Once the round finishes, show all completed cards.
+	// In completed/voting state or non-voice mode: show all with responses.
 	const visibleParticipants = useMemo(() => {
 		return debateState.participants.filter((p) => {
 			const resp = p.responses[activeRound];
 			if (resp === undefined) return false;
 
-			// In voice mode during live debate: show if participant has text
-			// (streaming via chunks) or is currently generating
 			if (isVoiceMode && !isComplete && !isVoting) {
-				return resp.status === "speaking" || resp.status === "complete" || (resp.text?.length ?? 0) > 0;
+				// While someone is actively speaking, show only that participant
+				if (currentSpeaker) {
+					return p.key === currentSpeaker;
+				}
+				// Between speakers (no one "speaking"), show completed ones
+				return resp.status === "complete";
 			}
 
 			return true;
 		});
-	}, [debateState.participants, activeRound, isVoiceMode, isComplete, isVoting]);
+	}, [debateState.participants, activeRound, isVoiceMode, isComplete, isVoting, currentSpeaker]);
 
 	return (
 		<div className="mx-auto w-full max-w-4xl space-y-4 py-4">

@@ -377,8 +377,12 @@ export default function NewChatPage() {
 	const [debateState, setDebateState] = useState<DebateState | null>(null);
 
 	// Voice debate audio hook
+	// NOTE: We keep a ref so the SSE handler (captured in handleSubmit closure)
+	// always calls the *latest* callbacks even after `enabled` flips to true.
 	const isVoiceDebate = debateState?.voiceMode === true;
 	const debateAudio = useDebateAudio(isVoiceDebate);
+	const debateAudioRef = useRef(debateAudio);
+	useEffect(() => { debateAudioRef.current = debateAudio; }, [debateAudio]);
 
 	// Get mentioned document IDs from the composer
 	const mentionedDocumentIds = useAtomValue(mentionedDocumentIdsAtom);
@@ -1972,8 +1976,8 @@ export default function NewChatPage() {
 											const dvs = parsed.data as Record<string, unknown>;
 											console.log("[SSE] debate-voice-speaker:", dvs?.model);
 											// Auto-resume AudioContext (close to user gesture window)
-											debateAudio.resumeAudioContext();
-											debateAudio.onSpeakerChange(String(dvs?.model ?? ""));
+											debateAudioRef.current.resumeAudioContext();
+											debateAudioRef.current.onSpeakerChange(String(dvs?.model ?? ""));
 											break;
 										}
 										case "data-debate-voice-sentence": {
@@ -1983,7 +1987,7 @@ export default function NewChatPage() {
 										}
 										case "data-debate-voice-chunk": {
 											const dvc = parsed.data as Record<string, unknown>;
-											debateAudio.enqueueChunk(
+											debateAudioRef.current.enqueueChunk(
 												String(dvc?.model ?? ""),
 												String(dvc?.pcm_b64 ?? ""),
 											);
@@ -2001,7 +2005,7 @@ export default function NewChatPage() {
 											const dve = parsed.data as Record<string, unknown>;
 											const errMsg = String(dve?.error ?? "Unknown voice error");
 											console.warn("[debate-voice] TTS error:", errMsg);
-											debateAudio.onVoiceError(errMsg);
+											debateAudioRef.current.onVoiceError(errMsg);
 											break;
 										}
 
@@ -2996,8 +3000,8 @@ export default function NewChatPage() {
 										// ─── Voice debate SSE events (regen) ──
 										case "data-debate-voice-speaker": {
 											const dvs2 = parsed.data as Record<string, unknown>;
-											debateAudio.resumeAudioContext();
-											debateAudio.onSpeakerChange(String(dvs2?.model ?? ""));
+											debateAudioRef.current.resumeAudioContext();
+											debateAudioRef.current.onSpeakerChange(String(dvs2?.model ?? ""));
 											break;
 										}
 										case "data-debate-voice-sentence": {
@@ -3006,7 +3010,7 @@ export default function NewChatPage() {
 										}
 										case "data-debate-voice-chunk": {
 											const dvc2 = parsed.data as Record<string, unknown>;
-											debateAudio.enqueueChunk(
+											debateAudioRef.current.enqueueChunk(
 												String(dvc2?.model ?? ""),
 												String(dvc2?.pcm_b64 ?? ""),
 											);
@@ -3021,7 +3025,7 @@ export default function NewChatPage() {
 											const dveR = parsed.data as Record<string, unknown>;
 											const errMsgR = String(dveR?.error ?? "Unknown voice error");
 											console.warn("[debate-voice] TTS error:", errMsgR);
-											debateAudio.onVoiceError(errMsgR);
+											debateAudioRef.current.onVoiceError(errMsgR);
 											break;
 										}
 
