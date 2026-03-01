@@ -510,6 +510,59 @@ class CriterionEvalResult(BaseModel):
     )
 
 
+class CombinedCriterionEvalResult(BaseModel):
+    """Output schema for evaluating all 4 criteria in a single LLM call.
+
+    This reduces compare mode from 32 LLM calls (8 domains × 4 criteria)
+    to 8 calls (1 per domain), improving speed and reliability.
+    """
+
+    thinking: str = Field(
+        ...,
+        description="Intern resonering om bedömningen av alla fyra kriterier.",
+    )
+    relevans_score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Relevans-poäng 0-100.",
+    )
+    relevans_reasoning: str = Field(
+        ...,
+        description="En mening som motiverar relevans-poängen.",
+    )
+    djup_score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Djup-poäng 0-100.",
+    )
+    djup_reasoning: str = Field(
+        ...,
+        description="En mening som motiverar djup-poängen.",
+    )
+    klarhet_score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Klarhet-poäng 0-100.",
+    )
+    klarhet_reasoning: str = Field(
+        ...,
+        description="En mening som motiverar klarhet-poängen.",
+    )
+    korrekthet_score: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Korrekthet-poäng 0-100.",
+    )
+    korrekthet_reasoning: str = Field(
+        ...,
+        description="En mening som motiverar korrekthet-poängen.",
+    )
+
+
 # ────────────────────────────────────────────────────────────────
 # Compare: Research Query Decomposer
 # ────────────────────────────────────────────────────────────────
