@@ -36,6 +36,10 @@ from app.agents.new_chat.debate_prompts import (
     DEBATE_ROUND2_ARGUMENT_PROMPT,
     DEBATE_ROUND3_DEEPENING_PROMPT,
     DEBATE_ROUND4_VOTING_PROMPT,
+    ONESEEK_DEBATE_ROUND1_PROMPT,
+    ONESEEK_DEBATE_ROUND2_PROMPT,
+    ONESEEK_DEBATE_ROUND3_PROMPT,
+    ONESEEK_DEBATE_ROUND4_PROMPT,
     ONESEEK_DEBATE_SYSTEM_PROMPT,
 )
 from app.agents.new_chat.structured_schemas import (
@@ -59,6 +63,14 @@ ROUND_PROMPTS = {
     2: DEBATE_ROUND2_ARGUMENT_PROMPT,
     3: DEBATE_ROUND3_DEEPENING_PROMPT,
     4: DEBATE_ROUND4_VOTING_PROMPT,
+}
+
+# OneSeek-specific per-round prompts (layered on top of system prompt)
+ONESEEK_ROUND_PROMPTS = {
+    1: ONESEEK_DEBATE_ROUND1_PROMPT,
+    2: ONESEEK_DEBATE_ROUND2_PROMPT,
+    3: ONESEEK_DEBATE_ROUND3_PROMPT,
+    4: ONESEEK_DEBATE_ROUND4_PROMPT,
 }
 
 # Maximum token budget per participant response
@@ -237,6 +249,7 @@ def build_debate_round_executor_node(
     call_external_model_fn: Any | None = None,
     tavily_search_fn: Any | None = None,
     execution_timeout_seconds: float = RESPONSE_TIMEOUT_SECONDS,
+    prompt_overrides: dict[str, str] | None = None,
 ):
     """Build the debate round executor.
 
@@ -348,6 +361,16 @@ def build_debate_round_executor_node(
 
                 try:
                     if is_oneseek:
+                        # Resolve OneSeek per-round prompt from overrides or defaults
+                        _os_round_key = f"debate.oneseek.round.{round_num}"
+                        _os_round_prompt = (
+                            (prompt_overrides or {}).get(_os_round_key)
+                            or ONESEEK_ROUND_PROMPTS.get(round_num, "")
+                        )
+                        _os_system = (
+                            (prompt_overrides or {}).get("debate.oneseek.system")
+                            or ONESEEK_DEBATE_SYSTEM_PROMPT
+                        )
                         # OneSeek uses internal LLM + optional Tavily
                         response_text = await _run_oneseek_debate_turn(
                             llm=llm,
@@ -356,6 +379,8 @@ def build_debate_round_executor_node(
                             topic=topic,
                             round_num=round_num,
                             timeout=execution_timeout_seconds,
+                            system_prompt=_os_system,
+                            round_prompt=_os_round_prompt,
                         )
                     else:
                         # External model
@@ -494,8 +519,12 @@ def build_debate_round_executor_node(
 
             try:
                 if is_oneseek:
+                    _os_vote_prompt = (
+                        (prompt_overrides or {}).get("debate.oneseek.round.4")
+                        or ONESEEK_ROUND_PROMPTS.get(4, "")
+                    )
                     raw = await asyncio.wait_for(
-                        _call_oneseek_vote(llm, vote_prompt),
+                        _call_oneseek_vote(llm, vote_prompt, system_hint=_os_vote_prompt),
                         timeout=VOTE_TIMEOUT_SECONDS,
                     )
                 else:
@@ -598,10 +627,13 @@ async def _run_oneseek_debate_turn(
     topic: str = "",
     round_num: int = 1,
     timeout: float = RESPONSE_TIMEOUT_SECONDS,
+    system_prompt: str | None = None,
+    round_prompt: str | None = None,
 ) -> str:
     """Run OneSeek's debate turn with optional Tavily search.
 
     Simplified P4 pattern: search → synthesize.
+    Uses per-round prompt (from admin) layered on top of system prompt.
     """
     search_context = ""
 
@@ -623,13 +655,18 @@ async def _run_oneseek_debate_turn(
         except Exception as exc:
             logger.warning("debate: OneSeek Tavily search failed: %s", exc)
 
-    system_prompt = append_datetime_context(ONESEEK_DEBATE_SYSTEM_PROMPT)
+    # Build system prompt: base system + per-round strategy
+    base_system = system_prompt or ONESEEK_DEBATE_SYSTEM_PROMPT
+    combined_system = append_datetime_context(base_system)
+    if round_prompt:
+        combined_system = combined_system + "\n\n" + round_prompt
+
     full_query = query + search_context
 
     try:
         response = await asyncio.wait_for(
             llm.ainvoke([
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": combined_system},
                 {"role": "user", "content": full_query},
             ]),
             timeout=timeout,
@@ -640,7 +677,11 @@ async def _run_oneseek_debate_turn(
         return f"[OneSeek: fel vid generering — {str(exc)[:80]}]"
 
 
-async def _call_oneseek_vote(llm: Any, vote_prompt: str) -> str:
+async def _call_oneseek_vote(
+    llm: Any,
+    vote_prompt: str,
+    system_hint: str = "",
+) -> str:
     """OneSeek's vote using internal LLM with structured output."""
     try:
         _invoke_kwargs: dict[str, Any] = {}
@@ -648,9 +689,10 @@ async def _call_oneseek_vote(llm: Any, vote_prompt: str) -> str:
             _invoke_kwargs["response_format"] = pydantic_to_response_format(
                 DebateVoteResult, "debate_vote"
             )
+        _sys = system_hint or "Du röstar i en AI-debatt. Svara med strukturerad JSON."
         response = await llm.ainvoke(
             [
-                {"role": "system", "content": "Du röstar i en AI-debatt. Svara med strukturerad JSON."},
+                {"role": "system", "content": _sys},
                 {"role": "user", "content": vote_prompt},
             ],
             **_invoke_kwargs,

@@ -27,6 +27,10 @@ from app.agents.new_chat.debate_prompts import (
     DEFAULT_DEBATE_ANALYSIS_PROMPT,
     DEFAULT_DEBATE_CONVERGENCE_PROMPT,
     DEFAULT_DEBATE_DOMAIN_PLANNER_PROMPT,
+    ONESEEK_DEBATE_ROUND1_PROMPT,
+    ONESEEK_DEBATE_ROUND2_PROMPT,
+    ONESEEK_DEBATE_ROUND3_PROMPT,
+    ONESEEK_DEBATE_ROUND4_PROMPT,
     DEFAULT_DEBATE_MINI_CRITIC_PROMPT,
     DEFAULT_DEBATE_MINI_PLANNER_PROMPT,
     DEFAULT_DEBATE_RESEARCH_PROMPT,
@@ -224,6 +228,11 @@ ONESEEK_LANGSMITH_PROMPT_TEMPLATE_KEYS: tuple[str, ...] = (
     "debate.round.2.argument",
     "debate.round.3.deepening",
     "debate.round.4.voting",
+    # OneSeek per-round debate prompts
+    "debate.oneseek.round.1",
+    "debate.oneseek.round.2",
+    "debate.oneseek.round.3",
+    "debate.oneseek.round.4",
 )
 
 
@@ -713,6 +722,31 @@ _PROMPT_DEFINITIONS_BY_KEY: dict[str, PromptDefinition] = {
         label="Runda 4: Röstning",
         description="Prompt för debattens Runda 4 — deltagare röstar på bästa argument (JSON-format, self-vote förbjudet).",
         default_prompt=DEBATE_ROUND4_VOTING_PROMPT,
+    ),
+    # ── OneSeek per-round debate prompts ──
+    "debate.oneseek.round.1": PromptDefinition(
+        key="debate.oneseek.round.1",
+        label="OneSeek R1: Introduktion",
+        description="OneSeeks strategi i Runda 1 — hur hon presenterar sig, vilken ton, hur Tavily-sökning används.",
+        default_prompt=ONESEEK_DEBATE_ROUND1_PROMPT,
+    ),
+    "debate.oneseek.round.2": PromptDefinition(
+        key="debate.oneseek.round.2",
+        label="OneSeek R2: Argument",
+        description="OneSeeks strategi i Runda 2 — hur hon faktagranskar andra, bygger vidare med data.",
+        default_prompt=ONESEEK_DEBATE_ROUND2_PROMPT,
+    ),
+    "debate.oneseek.round.3": PromptDefinition(
+        key="debate.oneseek.round.3",
+        label="OneSeek R3: Fördjupning",
+        description="OneSeeks strategi i Runda 3 — hur hon bemöter motargument, fördjupar med källor.",
+        default_prompt=ONESEEK_DEBATE_ROUND3_PROMPT,
+    ),
+    "debate.oneseek.round.4": PromptDefinition(
+        key="debate.oneseek.round.4",
+        label="OneSeek R4: Röstning",
+        description="OneSeeks röstningstrategi — hur hon värderar och väljer vinnare.",
+        default_prompt=ONESEEK_DEBATE_ROUND4_PROMPT,
     ),
 }
 

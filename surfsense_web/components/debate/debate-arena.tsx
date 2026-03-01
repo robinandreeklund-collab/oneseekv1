@@ -16,7 +16,9 @@ import {
 	type FC,
 	createContext,
 	useCallback,
+	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -88,6 +90,26 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 
 	const isComplete = debateState.status === "complete" || debateState.status === "synthesis";
 	const isVoting = debateState.status === "voting";
+
+	// Determine which participant is currently speaking in the active round
+	const currentSpeaker = useMemo(() => {
+		for (const p of debateState.participants) {
+			if (p.responses[activeRound]?.status === "speaking") {
+				return p.key;
+			}
+		}
+		return null;
+	}, [debateState.participants, activeRound]);
+
+	// Only show participants that have a response (speaking or complete) for the
+	// active round — cards appear progressively as SSE events arrive.
+	// For historic rounds (user clicked a tab), show all that responded.
+	const visibleParticipants = useMemo(() => {
+		return debateState.participants.filter((p) => {
+			const resp = p.responses[activeRound];
+			return resp !== undefined;
+		});
+	}, [debateState.participants, activeRound]);
 
 	return (
 		<div className="mx-auto w-full max-w-4xl space-y-4 py-4">
@@ -181,12 +203,18 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 				/>
 			</div>
 
-			{/* Participant Cards for Active Round */}
+			{/* Participant Cards — shown progressively as they respond */}
 			<div className="space-y-3">
-				<AnimatePresence mode="wait">
-					{debateState.participants.map((participant, index) => {
+				<AnimatePresence mode="popLayout">
+					{visibleParticipants.map((participant, index) => {
 						const roundResponse = participant.responses[activeRound];
-						if (!roundResponse && activeRound !== debateState.currentRound) return null;
+						const isSpeaking = roundResponse?.status === "speaking";
+						// Auto-expand: the currently speaking card is always expanded.
+						// Completed cards auto-collapse when someone else starts speaking.
+						const autoExpanded = isSpeaking || (
+							roundResponse?.status === "complete" && currentSpeaker === null
+							&& index === visibleParticipants.length - 1
+						);
 
 						return (
 							<ParticipantCard
@@ -195,6 +223,8 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 								roundResponse={roundResponse}
 								round={activeRound}
 								index={index}
+								autoExpanded={autoExpanded}
+								isMostRecent={index === visibleParticipants.length - 1 && currentSpeaker === null}
 							/>
 						);
 					})}
@@ -227,6 +257,10 @@ interface ParticipantCardProps {
 	roundResponse?: DebateParticipant["responses"][number];
 	round: number;
 	index: number;
+	/** Whether this card should be auto-expanded (currently speaking). */
+	autoExpanded: boolean;
+	/** Whether this is the most recently completed card (last in list, no one speaking). */
+	isMostRecent: boolean;
 }
 
 const ParticipantCard: FC<ParticipantCardProps> = ({
@@ -234,8 +268,22 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	roundResponse,
 	round,
 	index,
+	autoExpanded,
+	isMostRecent,
 }) => {
-	const [isExpanded, setIsExpanded] = useState(false);
+	const [manualToggle, setManualToggle] = useState<boolean | null>(null);
+	const prevAutoRef = useRef(autoExpanded);
+
+	// Reset manual override when auto-expanded state changes (new speaker starts)
+	useEffect(() => {
+		if (prevAutoRef.current !== autoExpanded) {
+			setManualToggle(null);
+			prevAutoRef.current = autoExpanded;
+		}
+	}, [autoExpanded]);
+
+	const isExpanded = manualToggle ?? autoExpanded;
+
 	const color = getModelColor(participant.key);
 	const initials = getModelInitials(participant.display);
 	const isSpeaking = roundResponse?.status === "speaking";
@@ -243,18 +291,19 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 
 	return (
 		<motion.div
-			initial={{ opacity: 0, y: 10 }}
+			initial={{ opacity: 0, y: 16 }}
 			animate={{ opacity: 1, y: 0 }}
-			exit={{ opacity: 0 }}
-			transition={{ delay: index * 0.05 }}
+			exit={{ opacity: 0, y: -8 }}
+			transition={{ duration: 0.3, delay: index * 0.05 }}
+			layout
 		>
 			<Card
 				className={cn(
-					"transition-all",
+					"transition-all duration-300",
 					isSpeaking && "border-primary/50 shadow-lg shadow-primary/5",
 				)}
 			>
-				<Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+				<Collapsible open={isExpanded} onOpenChange={(open) => setManualToggle(open)}>
 					<div className="flex items-center justify-between px-4 py-3">
 						<div className="flex items-center gap-3">
 							<div
@@ -301,11 +350,6 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 									Klar
 								</Badge>
 							)}
-							{!roundResponse && (
-								<Badge variant="outline" className="text-muted-foreground text-[10px]">
-									Väntar
-								</Badge>
-							)}
 							{roundResponse?.text && (
 								<CollapsibleTrigger asChild>
 									<Button variant="ghost" size="sm" className="h-7 w-7 p-0">
@@ -321,7 +365,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 						</div>
 					</div>
 
-					{/* Preview text (always visible) */}
+					{/* Preview text (collapsed view) — 2-line clamp */}
 					{roundResponse?.text && !isExpanded && (
 						<div className="px-4 pb-3">
 							<p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
@@ -330,7 +374,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 						</div>
 					)}
 
-					{/* Full text (expanded) */}
+					{/* Full text (expanded view) — shows full response with typing feel */}
 					<CollapsibleContent>
 						{roundResponse?.text && (
 							<CardContent className="border-t border-border px-4 py-3">

@@ -339,6 +339,13 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "prompt_key": "debate.round_executor.system",
     },
     {
+        "id": "node:debate_oneseek_agent",
+        "label": "OneSeek Debattör",
+        "stage": "debate",
+        "description": "OneSeeks debate agent — deltar i varje runda med realtidsverktyg (Tavily-sökning) och har separata per-runda prompts. Använder debate.oneseek.system som bas + debate.oneseek.round.N per runda.",
+        "prompt_key": "debate.oneseek.system",
+    },
+    {
         "id": "node:debate_round_1",
         "label": "R1: Introduktion",
         "stage": "debate",
@@ -528,6 +535,8 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     # Flow: Intent → Domain Planner → Round Executor → Convergence → Synthesizer → END
     {"source": "node:resolve_intent", "target": "node:debate_domain_planner", "type": "conditional", "label": "debatt"},
     {"source": "node:debate_domain_planner", "target": "node:debate_round_executor", "type": "normal"},
+    {"source": "node:debate_domain_planner", "target": "node:debate_oneseek_agent", "type": "normal", "label": "OneSeek"},
+    {"source": "node:debate_oneseek_agent", "target": "node:debate_round_1", "type": "normal", "label": "deltar i rundor"},
     # Round executor runs 4 sequential sub-rounds internally
     {"source": "node:debate_round_executor", "target": "node:debate_round_1", "type": "normal", "label": "runda 1"},
     {"source": "node:debate_round_1", "target": "node:debate_round_2", "type": "normal"},

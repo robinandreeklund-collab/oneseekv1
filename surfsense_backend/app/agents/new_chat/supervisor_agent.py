@@ -6978,6 +6978,7 @@ async def create_supervisor_agent(
             llm=llm,
             tavily_search_fn=_debate_tavily_search_fn,
             execution_timeout_seconds=90,
+            prompt_overrides=prompt_overrides,
         )
 
         # Build debate convergence node

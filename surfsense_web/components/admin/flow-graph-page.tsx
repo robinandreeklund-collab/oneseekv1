@@ -391,8 +391,9 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		"node:debate_round_2": { x: 1080, y: 2080 },
 		"node:debate_round_3": { x: 1360, y: 2080 },
 		"node:debate_round_4_voting": { x: 1640, y: 2080 },
-		"node:debate_convergence": { x: 1080, y: 2240 },
-		"node:debate_synthesizer": { x: 1360, y: 2240 },
+		"node:debate_oneseek_agent": { x: 520, y: 2240 },
+		"node:debate_convergence": { x: 1080, y: 2400 },
+		"node:debate_synthesizer": { x: 1360, y: 2400 },
 	};
 
 	return pipelineNodes.map((node) => ({
