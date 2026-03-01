@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 
 CRITERIA = ("relevans", "djup", "klarhet", "korrekthet")
 
-# Concurrency limit for LLM calls.  Combined mode needs only 8 calls
-# (1 per domain) but we keep headroom for fallback parallel mode.
-_CRITERION_CONCURRENCY = asyncio.Semaphore(16)
+# Concurrency limit for criterion LLM calls.  A low limit avoids
+# rate-limiting from the LLM provider which caused systematic
+# score=50 fallbacks (korrekthet always, djup often).
+_CRITERION_CONCURRENCY = asyncio.Semaphore(12)
 
 # ── Combined 4-in-1 prompt ────────────────────────────────────────
 
