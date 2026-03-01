@@ -1695,7 +1695,8 @@ export default function NewChatPage() {
 											setDebateState({
 												topic: String(diData?.topic ?? ""),
 												participants: diParticipants.map((name) => ({
-													key: Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase(),
+													// Strip "call_" prefix so key matches MODEL_LOGOS/COLORS (e.g. "grok", "gpt")
+													key: (Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase()).replace("call_", ""),
 													display: name,
 													toolName: "",
 													configId: -1,
@@ -2863,7 +2864,7 @@ export default function NewChatPage() {
 											setDebateState({
 												topic: String(diData2?.topic ?? ""),
 												participants: diParts2.map((name) => ({
-													key: Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase(),
+													key: (Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase()).replace("call_", ""),
 													display: name,
 													toolName: "",
 													configId: -1,

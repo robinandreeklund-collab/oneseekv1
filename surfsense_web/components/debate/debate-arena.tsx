@@ -89,11 +89,11 @@ function getRoundTypeLabel(round: number): string {
 	return ROUND_LABELS[round] ?? `Runda ${round}`;
 }
 
-/** Model logos from /public/model-logos/ */
+/** Model logos from /public/model-logos/ — keys match backend spec.key */
 const MODEL_LOGOS: Record<string, string> = {
 	grok: "/model-logos/grok.png",
 	claude: "/model-logos/claude.png",
-	chatgpt: "/model-logos/chatgpt.png",
+	gpt: "/model-logos/chatgpt.png",
 	gemini: "/model-logos/gemini.png",
 	deepseek: "/model-logos/deepseek.png",
 	perplexity: "/model-logos/perplexity.png",

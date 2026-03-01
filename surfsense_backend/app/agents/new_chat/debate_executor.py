@@ -220,11 +220,20 @@ async def _call_debate_participant(
                 from types import SimpleNamespace
                 spec = SimpleNamespace(**spec_data)
                 _mt = _resolve_max_tokens(state, model_display)
+                # Inject model identity so each model knows who it
+                # represents.  Without this, e.g. DeepSeek says "jag
+                # är från OpenAI" because it defaults to its training.
+                identity_prompt = (
+                    f"Du är {model_display}. Du representerar "
+                    f"{model_display}-modellen i denna debatt. "
+                    f"Presentera dig alltid som {model_display}, "
+                    f"aldrig som en annan AI.\n\n{round_prompt}"
+                )
                 result = await asyncio.wait_for(
                     call_external_fn(
                         spec=spec,
                         query=query_with_context,
-                        system_prompt=round_prompt,
+                        system_prompt=identity_prompt,
                         max_tokens=_mt,
                     ),
                     timeout=execution_timeout,
