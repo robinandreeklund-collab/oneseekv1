@@ -10,6 +10,8 @@ const debateVoiceSettingsSchema = z.object({
 	speed: z.number(),
 	voice_map: z.record(z.string(), z.string()),
 	language_instructions: z.record(z.string(), z.string()).optional().default({}),
+	max_tokens: z.number().optional().default(500),
+	max_tokens_map: z.record(z.string(), z.number()).optional().default({}),
 });
 
 const debateVoiceSettingsResponseSchema = z.object({

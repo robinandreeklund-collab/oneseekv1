@@ -27,6 +27,7 @@ import {
 	Mic,
 	Save,
 	Volume2,
+	Hash,
 } from "lucide-react";
 import {
 	adminDebateApiService,
@@ -89,6 +90,10 @@ const TTS_MODELS = [
 	{ value: "tts-1-hd", label: "TTS-1-HD (High Quality)" },
 ] as const;
 
+const DEFAULT_MAX_TOKENS = 500;
+const MIN_TOKENS = 50;
+const MAX_TOKENS = 4096;
+
 const INSTRUCTION_HINT = `Instruktionerna styr hur rösten låter. Du kan ange:
 
 • Accent — "Speak with a slight British accent"
@@ -110,6 +115,8 @@ export function DebateSettingsPage() {
 		speed: 1.0,
 		voice_map: { ...DEFAULT_VOICE_MAP },
 		language_instructions: {},
+		max_tokens: DEFAULT_MAX_TOKENS,
+		max_tokens_map: {},
 	});
 
 	const [isLoading, setIsLoading] = useState(true);
@@ -177,6 +184,21 @@ export function DebateSettingsPage() {
 		[],
 	);
 
+	const updateModelMaxTokens = useCallback(
+		(participant: string, value: number | null) => {
+			setSettings((prev) => {
+				const map = { ...(prev.max_tokens_map ?? {}) };
+				if (value === null) {
+					delete map[participant];
+				} else {
+					map[participant] = value;
+				}
+				return { ...prev, max_tokens_map: map };
+			});
+		},
+		[],
+	);
+
 	if (isLoading) {
 		return (
 			<div className="flex items-center justify-center p-12">
@@ -186,6 +208,7 @@ export function DebateSettingsPage() {
 	}
 
 	const langInstructions = settings.language_instructions ?? {};
+	const maxTokensMap = settings.max_tokens_map ?? {};
 
 	return (
 		<div className="space-y-6">
@@ -273,6 +296,103 @@ export function DebateSettingsPage() {
 								}
 							/>
 						</div>
+					</div>
+				</CardContent>
+			</Card>
+
+			{/* Token Limits */}
+			<Card>
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2">
+						<Hash className="h-5 w-5" />
+						Token-begr&auml;nsning
+					</CardTitle>
+					<CardDescription>
+						Max antal tokens per deltagare per runda. Begr&auml;nsar hur l&aring;nga svar varje modell f&aring;r generera.
+						S&auml;tt per modell eller anv&auml;nd standard f&ouml;r alla.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					{/* Global default */}
+					<div className="rounded-lg border border-dashed border-border p-3 space-y-2">
+						<div className="flex items-center justify-between">
+							<Label className="text-xs text-muted-foreground">
+								Standard max tokens (alla deltagare)
+							</Label>
+							<span className="text-sm font-mono font-medium tabular-nums">
+								{settings.max_tokens}
+							</span>
+						</div>
+						<Slider
+							min={MIN_TOKENS}
+							max={MAX_TOKENS}
+							step={50}
+							value={[settings.max_tokens]}
+							onValueChange={([v]) =>
+								setSettings((prev) => ({ ...prev, max_tokens: v }))
+							}
+						/>
+						<p className="text-[10px] text-muted-foreground">
+							{MIN_TOKENS} &ndash; {MAX_TOKENS} tokens. Ca {Math.round(settings.max_tokens * 0.75)} ord per svar.
+						</p>
+					</div>
+
+					{/* Per-model overrides */}
+					<div className="grid gap-2 sm:grid-cols-2">
+						{PARTICIPANTS.map((name) => {
+							const hasOverride = name in maxTokensMap;
+							const effectiveValue = hasOverride ? maxTokensMap[name] : settings.max_tokens;
+
+							return (
+								<div
+									key={name}
+									className="flex items-center gap-3 rounded-lg border border-border p-2.5"
+								>
+									<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-muted">
+										{PARTICIPANT_LOGOS[name] ? (
+											<Image
+												src={PARTICIPANT_LOGOS[name]}
+												alt={name}
+												width={20}
+												height={20}
+												className="rounded"
+											/>
+										) : (
+											<span className="text-[10px] font-bold">{name.slice(0, 2)}</span>
+										)}
+									</div>
+									<div className="min-w-0 flex-1">
+										<div className="flex items-center justify-between mb-1">
+											<span className="text-xs font-medium">{name}</span>
+											<div className="flex items-center gap-1.5">
+												<span className="text-xs font-mono tabular-nums">
+													{effectiveValue}
+												</span>
+												{hasOverride ? (
+													<button
+														type="button"
+														className="text-[9px] text-muted-foreground hover:text-destructive transition-colors"
+														onClick={() => updateModelMaxTokens(name, null)}
+														title="Återställ till standard"
+													>
+														&times;
+													</button>
+												) : (
+													<span className="text-[9px] text-muted-foreground">std</span>
+												)}
+											</div>
+										</div>
+										<Slider
+											min={MIN_TOKENS}
+											max={MAX_TOKENS}
+											step={50}
+											value={[effectiveValue]}
+											onValueChange={([v]) => updateModelMaxTokens(name, v)}
+										/>
+									</div>
+								</div>
+							);
+						})}
 					</div>
 				</CardContent>
 			</Card>

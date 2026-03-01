@@ -73,12 +73,24 @@ ONESEEK_ROUND_PROMPTS = {
     4: ONESEEK_DEBATE_ROUND4_PROMPT,
 }
 
-# Maximum token budget per participant response
-MAX_RESPONSE_TOKENS = 800
+# Default max token budget per participant response (overridden by admin settings)
+DEFAULT_MAX_RESPONSE_TOKENS = 500
 # Voting timeout per model
 VOTE_TIMEOUT_SECONDS = 60
 # Regular response timeout
 RESPONSE_TIMEOUT_SECONDS = 90
+
+
+def _resolve_max_tokens(state: dict[str, Any], participant_display: str) -> int:
+    """Resolve max_tokens for a debate participant from admin settings.
+
+    Priority: per-model override > global setting > DEFAULT_MAX_RESPONSE_TOKENS.
+    """
+    settings = state.get("debate_voice_settings") or {}
+    per_model = settings.get("max_tokens_map") or {}
+    if participant_display in per_model:
+        return int(per_model[participant_display])
+    return int(settings.get("max_tokens", DEFAULT_MAX_RESPONSE_TOKENS))
 
 
 # ─── Vote Schema ─────────────────────────────────────────────────────
@@ -377,6 +389,7 @@ def build_debate_round_executor_node(
                             or ONESEEK_DEBATE_SYSTEM_PROMPT
                         )
                         # OneSeek uses internal LLM + optional Tavily
+                        _mt = _resolve_max_tokens(state, "OneSeek")
                         response_text = await _run_oneseek_debate_turn(
                             llm=llm,
                             query=query_with_context,
@@ -386,6 +399,7 @@ def build_debate_round_executor_node(
                             timeout=execution_timeout_seconds,
                             system_prompt=_os_system,
                             round_prompt=_os_round_prompt,
+                            max_tokens=_mt,
                         )
                     else:
                         # External model
@@ -398,11 +412,13 @@ def build_debate_round_executor_node(
                         if spec_data:
                             from types import SimpleNamespace
                             spec = SimpleNamespace(**spec_data)
+                            _mt = _resolve_max_tokens(state, model_display)
                             result = await asyncio.wait_for(
                                 _call_external(
                                     spec=spec,
                                     query=query_with_context,
                                     system_prompt=round_prompt,
+                                    max_tokens=_mt,
                                 ),
                                 timeout=execution_timeout_seconds,
                             )
@@ -688,6 +704,7 @@ async def _run_oneseek_debate_turn(
     timeout: float = RESPONSE_TIMEOUT_SECONDS,
     system_prompt: str | None = None,
     round_prompt: str | None = None,
+    max_tokens: int | None = None,
 ) -> str:
     """Run OneSeek's debate turn with optional Tavily search.
 
@@ -722,12 +739,19 @@ async def _run_oneseek_debate_turn(
 
     full_query = query + search_context
 
+    invoke_kwargs: dict[str, Any] = {}
+    if max_tokens is not None:
+        invoke_kwargs["max_tokens"] = max_tokens
+
     try:
         response = await asyncio.wait_for(
-            llm.ainvoke([
-                {"role": "system", "content": combined_system},
-                {"role": "user", "content": full_query},
-            ]),
+            llm.ainvoke(
+                [
+                    {"role": "system", "content": combined_system},
+                    {"role": "user", "content": full_query},
+                ],
+                **invoke_kwargs,
+            ),
             timeout=timeout,
         )
         return response.content if hasattr(response, "content") else str(response)

@@ -24,15 +24,18 @@ REDIS_KEY = "debate:voice_settings"
 
 # ── Default voice map ────────────────────────────────────────────────
 DEFAULT_VOICE_MAP = {
-    "Grok": "fable",
-    "Claude": "nova",
-    "ChatGPT": "echo",
-    "Gemini": "shimmer",
-    "DeepSeek": "alloy",
+    "Grok": "ash",
+    "Claude": "ballad",
+    "ChatGPT": "coral",
+    "Gemini": "sage",
+    "DeepSeek": "verse",
     "Perplexity": "onyx",
-    "Qwen": "fable",
+    "Qwen": "marin",
     "OneSeek": "nova",
 }
+
+# Default max token budget per participant response
+DEFAULT_MAX_TOKENS = 500
 
 
 # ── Pydantic schemas ────────────────────────────────────────────────
@@ -40,12 +43,22 @@ DEFAULT_VOICE_MAP = {
 class DebateVoiceSettings(BaseModel):
     api_key: str = Field(default="", description="OpenAI TTS API key")
     api_base: str = Field(default="https://api.openai.com/v1", description="TTS API base URL")
-    model: str = Field(default="tts-1", description="TTS model ID")
+    model: str = Field(default="gpt-4o-mini-tts", description="TTS model ID")
     speed: float = Field(default=1.0, ge=0.25, le=4.0, description="TTS speed multiplier")
     voice_map: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_VOICE_MAP))
     language_instructions: dict[str, str] = Field(
         default_factory=dict,
         description="Per-modell språk/accent-instruktioner. Nyckel = modellnamn (t.ex. 'Grok'), värde = instruktion. '__default__' gäller alla utan egen.",
+    )
+    max_tokens: int = Field(
+        default=DEFAULT_MAX_TOKENS,
+        ge=50,
+        le=4096,
+        description="Standard max tokens per debattdeltagare per runda.",
+    )
+    max_tokens_map: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-modell max tokens. Nyckel = modellnamn, värde = max tokens. Åsidosätter standard max_tokens.",
     )
 
 
