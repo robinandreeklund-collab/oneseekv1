@@ -1,16 +1,33 @@
 "use client";
-import { useFeatureFlagVariantKey } from "@posthog/react";
-import { AnimatePresence, motion } from "motion/react";
+
+import { AnimatePresence, motion, useInView } from "motion/react";
 import Image from "next/image";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import React, { useEffect, useRef, useState } from "react";
-import Balancer from "react-wrap-balancer";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AUTH_TYPE, BACKEND_URL } from "@/lib/env-config";
 import { trackLoginAttempt } from "@/lib/posthog/events";
 import { cn } from "@/lib/utils";
 
-// Official Google "G" logo with brand colors
+const AI_MODELS = [
+	{ name: "ChatGPT", logo: "/model-logos/chatgpt.png", accent: "text-emerald-400" },
+	{ name: "Claude", logo: "/model-logos/claude.png", accent: "text-orange-400" },
+	{ name: "Gemini", logo: "/model-logos/gemini.png", accent: "text-blue-400" },
+	{ name: "DeepSeek", logo: "/model-logos/deepseek.png", accent: "text-indigo-400" },
+];
+
+const DEMO_QUESTION = "Hur många invånare har Stockholm och hur har det förändrats?";
+
+const DEMO_RESPONSES = [
+	"Stockholm har cirka 984 000 invånare (2024). Sedan 2010 har befolkningen ökat med ungefär 12%, driven av urbanisering och invandring...",
+	"Stockholms befolkning uppgår till 984 748 personer enligt SCB:s senaste statistik. Tillväxten har legat stabilt kring 1.2% per år...",
+	"Enligt aktuella uppgifter bor det runt 985 000 människor i Stockholms kommun. Trenden visar på fortsatt tillväxt drivet av arbetsmarknad...",
+	"Stockholm har 984 748 invånare (SCB, december 2024). Under senaste fem åren har staden vuxit med 3,2% totalt, främst genom inflyttning...",
+];
+
+const SYNTHESIS_TEXT =
+	"Stockholm har 984 748 invånare (SCB, 2024). Befolkningen har ökat 12% sedan 2010, drivet av urbanisering och invandring. Samtliga modeller överens om siffrorna — verifierat mot SCB:s officiella statistik. [1][2]";
+
 const GoogleLogo = ({ className }: { className?: string }) => (
 	<svg className={className} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
 		<path
@@ -32,119 +49,269 @@ const GoogleLogo = ({ className }: { className?: string }) => (
 	</svg>
 );
 
-export function HeroSection() {
-	const containerRef = useRef<HTMLDivElement>(null);
-	const parentRef = useRef<HTMLDivElement>(null);
-	const heroVariant = useFeatureFlagVariantKey("notebooklm_flag");
-	const isNotebookLMVariant = heroVariant === "notebooklm";
-	const t = useTranslations("homepage");
+function TypingText({
+	text,
+	speed = 30,
+	onComplete,
+	className,
+}: {
+	text: string;
+	speed?: number;
+	onComplete?: () => void;
+	className?: string;
+}) {
+	const [displayed, setDisplayed] = useState("");
+	const indexRef = useRef(0);
+
+	useEffect(() => {
+		indexRef.current = 0;
+		setDisplayed("");
+		const interval = setInterval(() => {
+			if (indexRef.current < text.length) {
+				setDisplayed(text.slice(0, indexRef.current + 1));
+				indexRef.current++;
+			} else {
+				clearInterval(interval);
+				onComplete?.();
+			}
+		}, speed);
+		return () => clearInterval(interval);
+	}, [text, speed, onComplete]);
 
 	return (
-		<div
-			ref={parentRef}
-			className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-20 md:px-8 md:py-40"
-		>
-			<BackgroundGrids />
-			<CollisionMechanism
-				beamOptions={{
-					initialX: -400,
-					translateX: 600,
-					duration: 7,
-					repeatDelay: 3,
-				}}
-				containerRef={containerRef}
-				parentRef={parentRef}
-			/>
-			<CollisionMechanism
-				beamOptions={{
-					initialX: -200,
-					translateX: 800,
-					duration: 4,
-					repeatDelay: 3,
-				}}
-				containerRef={containerRef}
-				parentRef={parentRef}
-			/>
-			<CollisionMechanism
-				beamOptions={{
-					initialX: 200,
-					translateX: 1200,
-					duration: 5,
-					repeatDelay: 3,
-				}}
-				containerRef={containerRef}
-				parentRef={parentRef}
-			/>
-			<CollisionMechanism
-				containerRef={containerRef}
-				parentRef={parentRef}
-				beamOptions={{
-					initialX: 400,
-					translateX: 1400,
-					duration: 6,
-					repeatDelay: 3,
-				}}
-			/>
+		<span className={className}>
+			{displayed}
+			<span className="animate-pulse">|</span>
+		</span>
+	);
+}
 
-			<h2 className="relative z-50 mx-auto mb-4 mt-4 max-w-4xl text-balance text-center text-3xl font-semibold tracking-tight text-gray-700 md:text-7xl dark:text-neutral-300">
-				{isNotebookLMVariant ? (
-					<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
-						<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
-							<Balancer>
-								<span>{t("notebooklm_title")}</span>
-							</Balancer>
-						</div>
+function LiveDemo() {
+	const t = useTranslations("homepage");
+	const [phase, setPhase] = useState<"idle" | "typing" | "streaming" | "synthesis">("idle");
+	const [visibleModels, setVisibleModels] = useState<number[]>([]);
+	const [modelTexts, setModelTexts] = useState<string[]>(["", "", "", ""]);
+	const [synthesisText, setSynthesisText] = useState("");
+	const [hasPlayed, setHasPlayed] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	const isInView = useInView(ref, { once: true, amount: 0.3 });
+
+	const streamText = useCallback(
+		(text: string, modelIndex: number, delay: number) => {
+			return new Promise<void>((resolve) => {
+				setTimeout(() => {
+					let charIndex = 0;
+					const interval = setInterval(() => {
+						if (charIndex < text.length) {
+							setModelTexts((prev) => {
+								const next = [...prev];
+								next[modelIndex] = text.slice(0, charIndex + 1);
+								return next;
+							});
+							charIndex++;
+						} else {
+							clearInterval(interval);
+							resolve();
+						}
+					}, 12);
+				}, delay);
+			});
+		},
+		[]
+	);
+
+	useEffect(() => {
+		if (!isInView || hasPlayed) return;
+		setHasPlayed(true);
+
+		const run = async () => {
+			setPhase("typing");
+			await new Promise((r) => setTimeout(r, DEMO_QUESTION.length * 30 + 600));
+			setPhase("streaming");
+
+			setVisibleModels([0]);
+			await new Promise((r) => setTimeout(r, 150));
+			setVisibleModels([0, 1]);
+			await new Promise((r) => setTimeout(r, 150));
+			setVisibleModels([0, 1, 2]);
+			await new Promise((r) => setTimeout(r, 150));
+			setVisibleModels([0, 1, 2, 3]);
+
+			await Promise.all(DEMO_RESPONSES.map((text, i) => streamText(text, i, i * 250)));
+
+			await new Promise((r) => setTimeout(r, 800));
+			setPhase("synthesis");
+
+			let charIndex = 0;
+			await new Promise<void>((resolve) => {
+				const interval = setInterval(() => {
+					if (charIndex < SYNTHESIS_TEXT.length) {
+						setSynthesisText(SYNTHESIS_TEXT.slice(0, charIndex + 1));
+						charIndex++;
+					} else {
+						clearInterval(interval);
+						resolve();
+					}
+				}, 10);
+			});
+		};
+
+		run();
+	}, [isInView, hasPlayed, streamText]);
+
+	return (
+		<div ref={ref} className="w-full max-w-5xl mx-auto mt-12 md:mt-16 min-h-[420px] md:min-h-[480px]">
+			<div className="relative rounded-2xl border border-neutral-200/50 dark:border-white/10 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl shadow-2xl shadow-purple-500/5 overflow-hidden">
+				{/* Window chrome */}
+				<div className="flex items-center gap-2 px-4 py-3 border-b border-neutral-100 dark:border-white/5">
+					<div className="flex gap-1.5">
+						<div className="w-3 h-3 rounded-full bg-red-400/80 dark:bg-red-500/80" />
+						<div className="w-3 h-3 rounded-full bg-yellow-400/80 dark:bg-yellow-500/80" />
+						<div className="w-3 h-3 rounded-full bg-green-400/80 dark:bg-green-500/80" />
 					</div>
-				) : (
-					<div className="relative mx-auto filter-[drop-shadow(0px_1px_3px_rgba(27,37,80,0.14))]">
-						<div className="text-black [text-shadow:0_0_rgba(0,0,0,0.1)] dark:text-white">
-							<Balancer>
-								<span>{t("hero_title_part1")}</span>
-								{t("hero_title_part2") && <span> {t("hero_title_part2")}</span>}
-							</Balancer>
-						</div>
+					<div className="flex-1 text-center">
+						<span className="text-xs text-neutral-400 dark:text-neutral-500 font-mono">
+							oneseek.se
+						</span>
 					</div>
-				)}
-			</h2>
-			{/* // TODO:aCTUAL DESCRITION */}
-			<p className="relative z-50 mx-auto mt-4 max-w-lg px-4 text-center text-base/6 text-gray-600 dark:text-gray-200">
-				{t("hero_description")}
-			</p>
-			<div className="mb-10 mt-8 flex w-full flex-col items-center justify-center gap-4 px-8 sm:flex-row md:mb-20">
-				<GetStartedButton />
-				{/* Contact Sales button hidden per requirements */}
-				{/* <ContactSalesButton /> */}
-			</div>
-			<div
-				ref={containerRef}
-				className="relative mx-auto max-w-7xl rounded-[32px] border border-neutral-200/50 bg-neutral-100 p-2 backdrop-blur-lg md:p-4 dark:border-neutral-700 dark:bg-neutral-800/50"
-			>
-				<div className="rounded-[24px] border border-neutral-200 bg-white p-2 dark:border-neutral-700 dark:bg-black">
-					{/* Light mode image */}
-					<Image
-						src="/homepage/main_demo.webp"
-						alt="header"
-						width={1920}
-						height={1080}
-						className="rounded-[20px] block dark:hidden"
-						unoptimized
-					/>
-					{/* Dark mode image */}
-					<Image
-						src="/homepage/main_demo.webp"
-						alt="header"
-						width={1920}
-						height={1080}
-						className="rounded-[20px] hidden dark:block"
-						unoptimized
-					/>
 				</div>
+
+				{/* Question bar */}
+				<div className="px-4 md:px-6 py-4 border-b border-neutral-100 dark:border-white/5">
+					<div className="flex items-center gap-3 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200/50 dark:border-white/5 px-4 py-3">
+						<svg
+							className="w-5 h-5 text-neutral-400 dark:text-neutral-500 flex-shrink-0"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							strokeWidth={2}
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+							/>
+						</svg>
+						<div className="text-sm text-neutral-700 dark:text-neutral-300 font-mono">
+							{phase === "idle" ? (
+								<span className="text-neutral-400 dark:text-neutral-600">
+									{t("demo_placeholder")}
+								</span>
+							) : (
+								<TypingText text={DEMO_QUESTION} speed={30} />
+							)}
+						</div>
+					</div>
+				</div>
+
+				{/* Model responses grid */}
+				<AnimatePresence>
+					{phase !== "idle" && phase !== "typing" && (
+						<motion.div
+							initial={{ height: 0, opacity: 0 }}
+							animate={{ height: "auto", opacity: 1 }}
+							transition={{ duration: 0.4 }}
+							className="px-4 md:px-6 py-4"
+						>
+							<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+								{AI_MODELS.map((model, i) => (
+									<motion.div
+										key={model.name}
+										initial={{ opacity: 0, y: 10 }}
+										animate={
+											visibleModels.includes(i)
+												? { opacity: 1, y: 0 }
+												: { opacity: 0, y: 10 }
+										}
+										transition={{ duration: 0.3, delay: i * 0.08 }}
+										className="rounded-xl bg-neutral-50 dark:bg-neutral-800/40 border border-neutral-200/30 dark:border-white/5 p-4"
+									>
+										<div className="flex items-center gap-2 mb-2">
+											<Image
+												src={model.logo}
+												alt={model.name}
+												width={18}
+												height={18}
+												className="rounded-sm"
+											/>
+											<span
+												className={cn(
+													"text-xs font-semibold",
+													model.accent
+												)}
+											>
+												{model.name}
+											</span>
+										</div>
+										<p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed min-h-[3rem]">
+											{modelTexts[i] || (
+												<span className="flex gap-1">
+													<span className="w-1.5 h-1.5 rounded-full bg-neutral-300 dark:bg-neutral-600 animate-pulse" />
+													<span
+														className="w-1.5 h-1.5 rounded-full bg-neutral-300 dark:bg-neutral-600 animate-pulse"
+														style={{ animationDelay: "0.2s" }}
+													/>
+													<span
+														className="w-1.5 h-1.5 rounded-full bg-neutral-300 dark:bg-neutral-600 animate-pulse"
+														style={{ animationDelay: "0.4s" }}
+													/>
+												</span>
+											)}
+										</p>
+									</motion.div>
+								))}
+							</div>
+						</motion.div>
+					)}
+				</AnimatePresence>
+
+				{/* OneSeek Synthesis */}
+				<AnimatePresence>
+					{phase === "synthesis" && (
+						<motion.div
+							initial={{ opacity: 0, height: 0 }}
+							animate={{ opacity: 1, height: "auto" }}
+							transition={{ duration: 0.4 }}
+							className="px-4 md:px-6 pb-4"
+						>
+							<div className="rounded-xl bg-gradient-to-br from-purple-50 via-blue-50 to-cyan-50 dark:from-purple-500/10 dark:via-blue-500/10 dark:to-cyan-500/10 border border-purple-200/50 dark:border-purple-500/20 p-4">
+								<div className="flex items-center gap-2 mb-2">
+									<div className="w-5 h-5 rounded-md bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center">
+										<svg
+											className="w-3 h-3 text-white"
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+											strokeWidth={2.5}
+										>
+											<path
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												d="M5 13l4 4L19 7"
+											/>
+										</svg>
+									</div>
+									<span className="text-xs font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-cyan-600 dark:from-purple-400 dark:to-cyan-400">
+										OneSeek Syntes
+									</span>
+									<span className="text-[10px] text-neutral-400 dark:text-neutral-500 ml-auto">
+										{t("demo_verified")}
+									</span>
+								</div>
+								<p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed">
+									{synthesisText}
+								</p>
+							</div>
+						</motion.div>
+					)}
+				</AnimatePresence>
 			</div>
 		</div>
 	);
 }
 
-function GetStartedButton() {
+export function HeroSection() {
+	const t = useTranslations("homepage");
 	const isGoogleAuth = AUTH_TYPE === "GOOGLE";
 	const tAuth = useTranslations("auth");
 	const tPricing = useTranslations("pricing");
@@ -154,274 +321,84 @@ function GetStartedButton() {
 		window.location.href = `${BACKEND_URL}/auth/google/authorize-redirect`;
 	};
 
-	if (isGoogleAuth) {
-		return (
-			<motion.button
-				type="button"
-				onClick={handleGoogleLogin}
-				whileHover="hover"
-				whileTap={{ scale: 0.98 }}
-				initial="idle"
-				className="group relative z-20 flex h-11 w-full cursor-pointer items-center justify-center gap-3 overflow-hidden rounded-xl bg-white px-6 py-2.5 text-sm font-semibold text-neutral-700 shadow-lg ring-1 ring-neutral-200/50 transition-shadow duration-300 hover:shadow-xl sm:w-56 dark:bg-neutral-900 dark:text-neutral-200 dark:ring-neutral-700/50"
-				variants={{
-					idle: { scale: 1, y: 0 },
-					hover: { scale: 1.02, y: -2 },
-				}}
-			>
-				{/* Animated gradient background on hover */}
-				<motion.div
-					className="absolute inset-0 bg-linear-to-r from-blue-50 via-green-50 to-yellow-50 dark:from-blue-950/30 dark:via-green-950/30 dark:to-yellow-950/30"
-					variants={{
-						idle: { opacity: 0 },
-						hover: { opacity: 1 },
-					}}
-					transition={{ duration: 0.3 }}
-				/>
-				{/* Google logo with subtle animation */}
-				<motion.div
-					className="relative"
-					variants={{
-						idle: { rotate: 0 },
-						hover: { rotate: [0, -8, 8, 0] },
-					}}
-					transition={{ duration: 0.4, ease: "easeInOut" }}
-				>
-					<GoogleLogo className="h-5 w-5" />
-				</motion.div>
-				<span className="relative">{tAuth("continue_with_google")}</span>
-			</motion.button>
-		);
-	}
-
 	return (
-		<motion.div whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.98 }}>
-			<Link
-				href="/dashboard/public/new-chat"
-				className="group relative z-20 flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-black px-6 py-2.5 text-sm font-semibold text-white shadow-lg transition-shadow duration-300 hover:shadow-xl sm:w-56 dark:bg-white dark:text-black"
+		<section className="relative overflow-hidden px-4 pt-16 pb-16 md:pt-20 md:pb-24">
+			{/* Background */}
+			<div className="absolute inset-0 -z-10">
+				<div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(120,80,255,0.08),transparent)] dark:bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(120,80,255,0.25),transparent)]" />
+				<div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_40%_at_80%_50%,rgba(56,189,248,0.05),transparent)] dark:bg-[radial-gradient(ellipse_60%_40%_at_80%_50%,rgba(56,189,248,0.12),transparent)]" />
+				<div
+					className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[600px] rounded-full opacity-30 dark:opacity-50 animate-pulse-glow pointer-events-none"
+					style={{
+						background:
+							"radial-gradient(circle, rgba(139,92,246,0.1) 0%, rgba(56,189,248,0.05) 40%, transparent 70%)",
+					}}
+				/>
+			</div>
+
+			{/* Headline — fixed position, never moves */}
+			<motion.div
+				className="relative z-10 text-center max-w-4xl mx-auto"
+				initial={{ opacity: 0, y: 20 }}
+				animate={{ opacity: 1, y: 0 }}
+				transition={{ duration: 0.6 }}
 			>
-				{tPricing("get_started")}
-			</Link>
-		</motion.div>
+				<h1 className="text-4xl md:text-6xl lg:text-7xl font-bold tracking-tight text-neutral-900 dark:text-white leading-[1.1]">
+					{t("hero_headline")}
+				</h1>
+				<p className="mt-6 text-lg md:text-xl text-neutral-500 dark:text-neutral-400 max-w-2xl mx-auto leading-relaxed">
+					{t("hero_subheadline")}
+				</p>
+			</motion.div>
+
+			{/* CTA */}
+			<motion.div
+				className="relative z-10 mt-8 flex flex-col sm:flex-row items-center gap-4 justify-center"
+				initial={{ opacity: 0, y: 10 }}
+				animate={{ opacity: 1, y: 0 }}
+				transition={{ duration: 0.6, delay: 0.2 }}
+			>
+				{isGoogleAuth ? (
+					<button
+						type="button"
+						onClick={handleGoogleLogin}
+						className="group relative flex h-12 items-center justify-center gap-3 rounded-xl bg-white px-6 text-sm font-semibold text-neutral-700 shadow-lg ring-1 ring-neutral-200/50 transition-all duration-300 hover:shadow-xl hover:scale-[1.02] dark:bg-neutral-900 dark:text-neutral-200 dark:ring-neutral-700/50"
+					>
+						<GoogleLogo className="h-5 w-5" />
+						<span>{tAuth("continue_with_google")}</span>
+					</button>
+				) : (
+					<Link
+						href="/dashboard/public/new-chat"
+						className="group relative flex h-12 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 px-8 text-sm font-semibold text-white shadow-lg shadow-purple-500/25 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/30 hover:scale-[1.02]"
+					>
+						{tPricing("get_started")}
+						<svg
+							className="w-4 h-4 transition-transform group-hover:translate-x-0.5"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							strokeWidth={2}
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								d="M13 7l5 5m0 0l-5 5m5-5H6"
+							/>
+						</svg>
+					</Link>
+				)}
+			</motion.div>
+
+			{/* Live Demo — grows downward, heading above stays pinned */}
+			<motion.div
+				className="relative z-10 w-full"
+				initial={{ opacity: 0, y: 30 }}
+				animate={{ opacity: 1, y: 0 }}
+				transition={{ duration: 0.8, delay: 0.4 }}
+			>
+				<LiveDemo />
+			</motion.div>
+		</section>
 	);
 }
-
-function ContactSalesButton() {
-	const tPricing = useTranslations("pricing");
-	return (
-		<motion.div whileHover={{ scale: 1.02, y: -2 }} whileTap={{ scale: 0.98 }}>
-			<Link
-				href="/contact"
-				//target="_blank"
-				rel="noopener noreferrer"
-				className="group relative z-20 flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-6 py-2.5 text-sm font-semibold text-neutral-700 shadow-lg ring-1 ring-neutral-200/50 transition-shadow duration-300 hover:shadow-xl sm:w-56 dark:bg-neutral-900 dark:text-neutral-200 dark:ring-neutral-700/50"
-			>
-				{tPricing("contact_sales")}
-			</Link>
-		</motion.div>
-	);
-}
-
-const BackgroundGrids = () => {
-	return (
-		<div className="pointer-events-none absolute inset-0 z-0 grid h-full w-full -rotate-45 transform select-none grid-cols-2 gap-10 md:grid-cols-4">
-			<div className="relative h-full w-full">
-				<GridLineVertical className="left-0" />
-				<GridLineVertical className="left-auto right-0" />
-			</div>
-			<div className="relative h-full w-full">
-				<GridLineVertical className="left-0" />
-				<GridLineVertical className="left-auto right-0" />
-			</div>
-			<div className="relative h-full w-full bg-linear-to-b from-transparent via-neutral-100 to-transparent dark:via-neutral-800">
-				<GridLineVertical className="left-0" />
-				<GridLineVertical className="left-auto right-0" />
-			</div>
-			<div className="relative h-full w-full">
-				<GridLineVertical className="left-0" />
-				<GridLineVertical className="left-auto right-0" />
-			</div>
-		</div>
-	);
-};
-
-const CollisionMechanism = React.forwardRef<
-	HTMLDivElement,
-	{
-		containerRef: React.RefObject<HTMLDivElement | null>;
-		parentRef: React.RefObject<HTMLDivElement | null>;
-		beamOptions?: {
-			initialX?: number;
-			translateX?: number;
-			initialY?: number;
-			translateY?: number;
-			rotate?: number;
-			className?: string;
-			duration?: number;
-			delay?: number;
-			repeatDelay?: number;
-		};
-	}
->(({ parentRef, containerRef, beamOptions = {} }, ref) => {
-	const beamRef = useRef<HTMLDivElement>(null);
-	const [collision, setCollision] = useState<{
-		detected: boolean;
-		coordinates: { x: number; y: number } | null;
-	}>({ detected: false, coordinates: null });
-	const [beamKey, setBeamKey] = useState(0);
-	const [cycleCollisionDetected, setCycleCollisionDetected] = useState(false);
-
-	useEffect(() => {
-		const checkCollision = () => {
-			if (beamRef.current && containerRef.current && parentRef.current && !cycleCollisionDetected) {
-				const beamRect = beamRef.current.getBoundingClientRect();
-				const containerRect = containerRef.current.getBoundingClientRect();
-				const parentRect = parentRef.current.getBoundingClientRect();
-
-				if (beamRect.bottom >= containerRect.top) {
-					const relativeX = beamRect.left - parentRect.left + beamRect.width / 2;
-					const relativeY = beamRect.bottom - parentRect.top;
-
-					setCollision({
-						detected: true,
-						coordinates: { x: relativeX, y: relativeY },
-					});
-					setCycleCollisionDetected(true);
-					if (beamRef.current) {
-						beamRef.current.style.opacity = "0";
-					}
-				}
-			}
-		};
-
-		const animationInterval = setInterval(checkCollision, 100);
-
-		return () => clearInterval(animationInterval);
-	}, [cycleCollisionDetected, containerRef]);
-
-	useEffect(() => {
-		if (collision.detected && collision.coordinates) {
-			setTimeout(() => {
-				setCollision({ detected: false, coordinates: null });
-				setCycleCollisionDetected(false);
-				// Set beam opacity to 0
-				if (beamRef.current) {
-					beamRef.current.style.opacity = "1";
-				}
-			}, 2000);
-
-			// Reset the beam animation after a delay
-			setTimeout(() => {
-				setBeamKey((prevKey) => prevKey + 1);
-			}, 2000);
-		}
-	}, [collision]);
-
-	return (
-		<>
-			<motion.div
-				key={beamKey}
-				ref={beamRef}
-				animate="animate"
-				initial={{
-					translateY: beamOptions.initialY || "-200px",
-					translateX: beamOptions.initialX || "0px",
-					rotate: beamOptions.rotate || -45,
-				}}
-				variants={{
-					animate: {
-						translateY: beamOptions.translateY || "800px",
-						translateX: beamOptions.translateX || "700px",
-						rotate: beamOptions.rotate || -45,
-					},
-				}}
-				transition={{
-					duration: beamOptions.duration || 8,
-					repeat: Infinity,
-					repeatType: "loop",
-					ease: "linear",
-					delay: beamOptions.delay || 0,
-					repeatDelay: beamOptions.repeatDelay || 0,
-				}}
-				className={cn(
-					"absolute left-96 top-20 m-auto h-14 w-px rounded-full bg-linear-to-t from-orange-500 via-yellow-500 to-transparent will-change-transform",
-					beamOptions.className
-				)}
-			/>
-			<AnimatePresence>
-				{collision.detected && collision.coordinates && (
-					<Explosion
-						key={`${collision.coordinates.x}-${collision.coordinates.y}`}
-						className=""
-						style={{
-							left: `${collision.coordinates.x + 20}px`,
-							top: `${collision.coordinates.y}px`,
-							transform: "translate(-50%, -50%)",
-						}}
-					/>
-				)}
-			</AnimatePresence>
-		</>
-	);
-});
-
-CollisionMechanism.displayName = "CollisionMechanism";
-
-const Explosion = ({ ...props }: React.HTMLProps<HTMLDivElement>) => {
-	const spans = Array.from({ length: 20 }, (_, index) => ({
-		id: index,
-		initialX: 0,
-		initialY: 0,
-		directionX: Math.floor(Math.random() * 80 - 40),
-		directionY: Math.floor(Math.random() * -50 - 10),
-	}));
-
-	return (
-		<div {...props} className={cn("absolute z-50 h-2 w-2", props.className)}>
-			<motion.div
-				initial={{ opacity: 0 }}
-				animate={{ opacity: [0, 1, 0] }}
-				exit={{ opacity: 0 }}
-				transition={{ duration: 1, ease: "easeOut" }}
-				className="absolute -inset-x-10 top-0 m-auto h-[4px] w-10 rounded-full bg-linear-to-r from-transparent via-orange-500 to-transparent blur-sm"
-			></motion.div>
-			{spans.map((span) => (
-				<motion.span
-					key={span.id}
-					initial={{ x: span.initialX, y: span.initialY, opacity: 1 }}
-					animate={{ x: span.directionX, y: span.directionY, opacity: 0 }}
-					transition={{ duration: Math.random() * 1.5 + 0.5, ease: "easeOut" }}
-					className="absolute h-1 w-1 rounded-full bg-linear-to-b from-orange-500 to-yellow-500"
-				/>
-			))}
-		</div>
-	);
-};
-
-const GridLineVertical = ({ className, offset }: { className?: string; offset?: string }) => {
-	return (
-		<div
-			style={
-				{
-					"--background": "#ffffff",
-					"--color": "rgba(0, 0, 0, 0.2)",
-					"--height": "5px",
-					"--width": "1px",
-					"--fade-stop": "90%",
-					"--offset": offset || "150px", //-100px if you want to keep the line inside
-					"--color-dark": "rgba(255, 255, 255, 0.3)",
-					maskComposite: "exclude",
-				} as React.CSSProperties
-			}
-			className={cn(
-				"absolute top-[calc(var(--offset)/2*-1)] h-[calc(100%+var(--offset))] w-(--width)",
-				"bg-[linear-gradient(to_bottom,var(--color),var(--color)_50%,transparent_0,transparent)]",
-				"bg-size-[var(--width)_var(--height)]",
-				"[mask:linear-gradient(to_top,var(--background)_var(--fade-stop),transparent),linear-gradient(to_bottom,var(--background)_var(--fade-stop),transparent),linear-gradient(black,black)]",
-				"mask-exclude",
-				"z-30",
-				"dark:bg-[linear-gradient(to_bottom,var(--color-dark),var(--color-dark)_50%,transparent_0,transparent)]",
-				className
-			)}
-		></div>
-	);
-};

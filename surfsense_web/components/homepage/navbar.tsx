@@ -1,227 +1,281 @@
 "use client";
-import {
-	IconBrandDiscord,
-	IconBrandGithub,
-	IconBrandReddit,
-	IconMenu2,
-	IconX,
-} from "@tabler/icons-react";
+
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
-import { SignInButton } from "@/components/auth/sign-in-button";
-import { Logo } from "@/components/Logo";
+import { useCallback, useEffect, useState } from "react";
+import { OneseekIcon, OneseekWordmark } from "@/components/Logo";
 import { ThemeTogglerComponent } from "@/components/theme/theme-toggle";
-import { useGithubStars } from "@/hooks/use-github-stars";
+import { getBearerToken } from "@/lib/auth-utils";
+import { AUTH_TYPE, BACKEND_URL } from "@/lib/env-config";
+import { trackLoginAttempt } from "@/lib/posthog/events";
 import { cn } from "@/lib/utils";
 
+/* ────────────────────────────────────────────────────────────
+   Sidebar toggle icon (hamburger ↔ X with animation)
+   ──────────────────────────────────────────────────────────── */
+const ToggleIcon = ({ open, className }: { open: boolean; className?: string }) => (
+	<svg
+		className={cn("w-5 h-5", className)}
+		fill="none"
+		viewBox="0 0 24 24"
+		stroke="currentColor"
+		strokeWidth={1.5}
+	>
+		{open ? (
+			<path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+		) : (
+			<>
+				<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5" />
+				<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5" />
+				<path strokeLinecap="round" strokeLinejoin="round" d="M3.75 17.25h16.5" />
+			</>
+		)}
+	</svg>
+);
+
+/* ────────────────────────────────────────────────────────────
+   Sidebar + Top-right login bar
+   Layout: left sidebar (collapsible drawer) + floating top-right auth
+   ──────────────────────────────────────────────────────────── */
 export const Navbar = () => {
-	const [isScrolled, setIsScrolled] = useState(false);
+	const [sidebarOpen, setSidebarOpen] = useState(false);
+	const [isMobile, setIsMobile] = useState(false);
+	const [isAuthenticated, setIsAuthenticated] = useState(false);
 	const t = useTranslations("navigation");
+	const tAuth = useTranslations("auth");
+	const isGoogleAuth = AUTH_TYPE === "GOOGLE";
 
 	const navItems = [
-		// { name: t("pricing"), link: "/pricing" }, // Hidden per requirements
-		{ name: t("contact"), link: "/contact" },
-		{ name: t("changelog"), link: "/changelog" },
-		// { name: t("docs"), link: "/docs" }, // Hidden per requirements
+		{
+			name: t("home"),
+			link: "/",
+			icon: (
+				<svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+					<path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955a1.126 1.126 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
+				</svg>
+			),
+		},
+		{
+			name: t("docs"),
+			link: "/docs",
+			icon: (
+				<svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+					<path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+				</svg>
+			),
+		},
+		{
+			name: t("contact"),
+			link: "/contact",
+			icon: (
+				<svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+					<path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+				</svg>
+			),
+		},
+		{
+			name: t("changelog"),
+			link: "/changelog",
+			icon: (
+				<svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+					<path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+				</svg>
+			),
+		},
 	];
 
+	// Detect mobile
 	useEffect(() => {
-		if (typeof window === "undefined") return;
-
-		const handleScroll = () => {
-			setIsScrolled(window.scrollY > 20);
+		const check = () => {
+			const mobile = window.innerWidth < 768;
+			setIsMobile(mobile);
+			if (mobile) setSidebarOpen(false);
 		};
-
-		handleScroll();
-		window.addEventListener("scroll", handleScroll);
-		return () => window.removeEventListener("scroll", handleScroll);
+		check();
+		window.addEventListener("resize", check);
+		return () => window.removeEventListener("resize", check);
 	}, []);
 
-	return (
-		<div className="fixed top-1 left-0 right-0 z-60 w-full">
-			<DesktopNav navItems={navItems} isScrolled={isScrolled} />
-			<MobileNav navItems={navItems} isScrolled={isScrolled} />
-		</div>
-	);
-};
+	// Auth state
+	useEffect(() => {
+		const update = () => setIsAuthenticated(!!getBearerToken());
+		update();
+		const handler = () => update();
+		window.addEventListener("storage", handler);
+		return () => window.removeEventListener("storage", handler);
+	}, []);
 
-const DesktopNav = ({ navItems, isScrolled }: any) => {
-	const [hovered, setHovered] = useState<number | null>(null);
-	const { compactFormat: githubStars, loading: loadingGithubStars } = useGithubStars();
-	return (
-		<motion.div
-			onMouseLeave={() => {
-				setHovered(null);
-			}}
-			className={cn(
-				"mx-auto hidden w-full max-w-7xl flex-row items-center justify-between self-start rounded-full px-4 py-2 lg:flex transition-all duration-300",
-				isScrolled
-					? "bg-white/80 backdrop-blur-md border border-white/20 shadow-lg dark:bg-neutral-950/80 dark:border-neutral-800/50"
-					: "bg-transparent border border-transparent"
-			)}
-		>
-			<Link
-				href="/"
-				className="flex flex-1 flex-row items-center gap-0.5 hover:opacity-80 transition-opacity"
-			>
-				<Logo className="h-8 w-8 rounded-md" />
-				<span className="dark:text-white/90 text-gray-800 text-lg font-bold">Oneseek</span>
-			</Link>
-			<div className="hidden flex-1 flex-row items-center justify-center space-x-2 text-sm font-medium text-zinc-600 transition duration-200 hover:text-zinc-800 lg:flex lg:space-x-2">
-				{navItems.map((navItem: any, idx: number) => (
-					<Link
-						onMouseEnter={() => setHovered(idx)}
-						onMouseLeave={() => setHovered(null)}
-						className="relative px-4 py-2 text-neutral-600 dark:text-neutral-300"
-						key={`link=${idx}`}
-						href={navItem.link}
-					>
-						{hovered === idx && (
-							<motion.div
-								layoutId="hovered"
-								className="absolute inset-0 h-full w-full rounded-full bg-gray-100 dark:bg-neutral-800"
-							/>
-						)}
-						<span className="relative z-20">{navItem.name}</span>
-					</Link>
-				))}
-			</div>
-			<div className="flex flex-1 items-center justify-end gap-2">
-				{/* Social links hidden per requirements */}
-				{/* <Link
-					href="https://discord.gg/ejRNvftDp9"
-					target="_blank"
-					rel="noopener noreferrer"
-					className="hidden rounded-full p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors md:flex items-center justify-center"
-				>
-					<IconBrandDiscord className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-				</Link>
-				<Link
-					href="https://www.reddit.com/r/SurfSense/"
-					target="_blank"
-					rel="noopener noreferrer"
-					className="hidden rounded-full p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors md:flex items-center justify-center"
-				>
-					<IconBrandReddit className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-				</Link>
-				<Link
-					href="https://github.com/MODSetter/SurfSense"
-					target="_blank"
-					rel="noopener noreferrer"
-					className="hidden rounded-full px-3 py-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors md:flex items-center gap-1.5"
-				>
-					<IconBrandGithub className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-					{loadingGithubStars ? (
-						<div className="w-6 h-5 dark:bg-neutral-800 animate-pulse"></div>
-					) : (
-						<span className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
-							{githubStars}
-						</span>
-					)}
-				</Link> */}
-				<ThemeTogglerComponent />
-				<SignInButton variant="desktop" />
-			</div>
-		</motion.div>
-	);
-};
+	// Lock body scroll when mobile overlay is open
+	useEffect(() => {
+		if (isMobile && sidebarOpen) {
+			document.body.style.overflow = "hidden";
+		} else {
+			document.body.style.overflow = "";
+		}
+		return () => {
+			document.body.style.overflow = "";
+		};
+	}, [isMobile, sidebarOpen]);
 
-const MobileNav = ({ navItems, isScrolled }: any) => {
-	const [open, setOpen] = useState(false);
-	const { compactFormat: githubStars, loading: loadingGithubStars } = useGithubStars();
+	const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+	const toggleSidebar = useCallback(() => setSidebarOpen((p) => !p), []);
+
+	const handleGoogleLogin = () => {
+		trackLoginAttempt("google");
+		window.location.href = `${BACKEND_URL}/auth/google/authorize-redirect`;
+	};
 
 	return (
-		<motion.div
-			animate={{ borderRadius: open ? "4px" : "2rem" }}
-			key={String(open)}
-			className={cn(
-				"relative mx-auto flex w-full max-w-[calc(100vw-2rem)] flex-col items-center justify-between px-4 py-2 lg:hidden transition-all duration-300",
-				isScrolled
-					? "bg-white/80 backdrop-blur-md border border-white/20 shadow-lg dark:bg-neutral-950/80 dark:border-neutral-800/50"
-					: "bg-transparent border border-transparent"
-			)}
-		>
-			<div className="flex w-full flex-row items-center justify-between">
-				<Link
-					href="/"
-					className="flex flex-row items-center gap-2 hover:opacity-80 transition-opacity"
-				>
-					<Logo className="h-8 w-8 rounded-md" />
-					<span className="dark:text-white/90 text-gray-800 text-lg font-bold">Oneseek</span>
-				</Link>
-				<button
-					type="button"
-					onClick={() => setOpen(!open)}
-					className="relative z-50 flex items-center justify-center p-2 -mr-2 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors touch-manipulation"
-					aria-label={open ? "Close menu" : "Open menu"}
-				>
-					{open ? (
-						<IconX className="h-6 w-6 text-black dark:text-white" />
-					) : (
-						<IconMenu2 className="h-6 w-6 text-black dark:text-white" />
-					)}
-				</button>
-			</div>
+		<>
+			{/* ── Left sidebar ── */}
+			{/* Desktop: permanent, collapsible between wide (240px) and narrow (64px) */}
+			{/* Mobile: overlay drawer from left */}
 
+			{/* Mobile backdrop */}
 			<AnimatePresence>
-				{open && (
+				{isMobile && sidebarOpen && (
 					<motion.div
-						initial={{ opacity: 0, y: -10 }}
-						animate={{ opacity: 1, y: 0 }}
-						exit={{ opacity: 0, y: -10 }}
-						transition={{ duration: 0.2, ease: "easeOut" }}
-						className="absolute inset-x-0 top-full mt-1 z-20 flex w-full flex-col items-start justify-start gap-4 rounded-xl bg-white/90 backdrop-blur-xl border border-white/20 shadow-2xl px-4 py-6 dark:bg-neutral-950/90 dark:border-neutral-800/50"
-					>
-						{navItems.map((navItem: any, idx: number) => (
-							<Link
-								key={`link=${idx}`}
-								href={navItem.link}
-								className="relative text-neutral-600 dark:text-neutral-300"
-							>
-								<motion.span className="block">{navItem.name} </motion.span>
-							</Link>
-						))}
-						<div className="flex w-full items-center gap-2 pt-2">
-							{/* Social links hidden per requirements */}
-							{/* <Link
-								href="https://discord.gg/ejRNvftDp9"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="flex items-center justify-center rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors touch-manipulation"
-							>
-								<IconBrandDiscord className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-							</Link>
-							<Link
-								href="https://www.reddit.com/r/SurfSense/"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="flex items-center justify-center rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors touch-manipulation"
-							>
-								<IconBrandReddit className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-							</Link>
-							<Link
-								href="https://github.com/MODSetter/SurfSense"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="flex items-center gap-1.5 rounded-lg px-3 py-2 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors touch-manipulation"
-							>
-								<IconBrandGithub className="h-5 w-5 text-neutral-600 dark:text-neutral-300" />
-								{loadingGithubStars ? (
-									<div className="w-6 h-5 dark:bg-neutral-800 animate-pulse"></div>
-								) : (
-									<span className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
-										{githubStars}
-									</span>
-								)}
-							</Link> */}
-							<ThemeTogglerComponent />
-						</div>
-						<SignInButton variant="mobile" />
-					</motion.div>
+						initial={{ opacity: 0 }}
+						animate={{ opacity: 1 }}
+						exit={{ opacity: 0 }}
+						transition={{ duration: 0.2 }}
+						className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm md:hidden"
+						onClick={closeSidebar}
+						aria-hidden
+					/>
 				)}
 			</AnimatePresence>
-		</motion.div>
+
+			{/* Sidebar */}
+			<motion.aside
+				initial={false}
+				animate={{
+					width: sidebarOpen ? 240 : (isMobile ? 0 : 64),
+					x: isMobile && !sidebarOpen ? -240 : 0,
+				}}
+				transition={{ type: "spring", damping: 28, stiffness: 320 }}
+				className={cn(
+					"fixed top-0 left-0 bottom-0 z-50 flex flex-col",
+					"bg-white dark:bg-neutral-950",
+					"border-r border-neutral-200/50 dark:border-neutral-800/50",
+					isMobile ? "shadow-2xl" : "",
+				)}
+				style={{ overflow: "hidden" }}
+			>
+				{/* Sidebar header: logo + toggle */}
+				<div className="flex items-center h-14 px-3 shrink-0">
+					{sidebarOpen ? (
+						<div className="flex items-center justify-between w-full">
+							<Link href="/" className="flex items-center hover:opacity-80 transition-opacity pl-1">
+								<OneseekWordmark iconSize={24} />
+							</Link>
+							<button
+								type="button"
+								onClick={toggleSidebar}
+								className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors"
+								aria-label="Collapse sidebar"
+							>
+								<svg className="w-[18px] h-[18px] text-neutral-400 dark:text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+									<path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+								</svg>
+							</button>
+						</div>
+					) : (
+						<button
+							type="button"
+							onClick={toggleSidebar}
+							className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors mx-auto"
+							aria-label="Expand sidebar"
+						>
+							<OneseekIcon size={22} />
+						</button>
+					)}
+				</div>
+
+				{/* Navigation links */}
+				<nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto overflow-x-hidden">
+					{navItems.map((item) => (
+						<Link
+							key={item.link}
+							href={item.link}
+							onClick={isMobile ? closeSidebar : undefined}
+							className={cn(
+								"flex items-center gap-3 rounded-lg transition-colors",
+								"text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white",
+								"hover:bg-neutral-200/60 dark:hover:bg-neutral-700/40",
+								sidebarOpen ? "px-3 py-2.5" : "justify-center px-0 py-2.5",
+							)}
+							title={!sidebarOpen ? item.name : undefined}
+						>
+							<span className="shrink-0">{item.icon}</span>
+							{sidebarOpen && (
+								<span className="text-sm font-medium truncate">{item.name}</span>
+							)}
+						</Link>
+					))}
+				</nav>
+
+				{/* Sidebar footer: theme toggle */}
+				<div className={cn(
+					"shrink-0 border-t border-neutral-200/50 dark:border-neutral-800/50 px-2 py-3",
+					sidebarOpen ? "flex items-center justify-between" : "flex justify-center",
+				)}>
+					<ThemeTogglerComponent />
+				</div>
+			</motion.aside>
+
+			{/* ── Top-right floating bar ── */}
+			<div
+				className={cn(
+					"fixed top-0 right-0 z-40 flex items-center gap-3 h-14 px-4 md:px-6 transition-all duration-300",
+				)}
+			>
+				{/* Mobile hamburger toggle */}
+				<button
+					type="button"
+					onClick={toggleSidebar}
+					className="flex items-center justify-center w-9 h-9 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors md:hidden"
+					aria-label="Toggle menu"
+				>
+					<ToggleIcon open={sidebarOpen} className="text-neutral-700 dark:text-neutral-300" />
+				</button>
+
+				{/* Auth buttons */}
+				{isAuthenticated ? (
+					<Link
+						href="/dashboard"
+						className="inline-flex items-center px-4 py-1.5 text-sm font-medium rounded-full bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity"
+					>
+						Dashboard
+					</Link>
+				) : (
+					<>
+						{isGoogleAuth ? (
+							<button
+								type="button"
+								onClick={handleGoogleLogin}
+								className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
+							>
+								{tAuth("sign_in")}
+							</button>
+						) : (
+							<Link
+								href="/login"
+								className="inline-flex items-center px-4 py-1.5 text-sm font-medium rounded-full bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity"
+							>
+								{tAuth("sign_in")}
+							</Link>
+						)}
+					</>
+				)}
+			</div>
+		</>
 	);
 };
+
+/* ────────────────────────────────────────────────────────────
+   Export sidebar width constants for layout offset
+   ──────────────────────────────────────────────────────────── */
+export const SIDEBAR_WIDTH_OPEN = 240;
+export const SIDEBAR_WIDTH_COLLAPSED = 64;
