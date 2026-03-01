@@ -129,6 +129,25 @@ from app.utils.context_metrics import (
     serialize_context_payload,
 )
 
+DEBATE_PREFIX = "/debatt"
+
+
+def _is_debate_request(user_query: str) -> bool:
+    """Check if the user query activates debate mode."""
+    return user_query.strip().lower().startswith(DEBATE_PREFIX)
+
+
+def _extract_debate_query(user_query: str) -> str:
+    """Strip the /debatt prefix and return the actual debate topic."""
+    trimmed = user_query.strip()
+    if not trimmed.lower().startswith(DEBATE_PREFIX):
+        return ""
+    remainder = trimmed[len(DEBATE_PREFIX):].strip()
+    if remainder.startswith(":"):
+        remainder = remainder[1:].strip()
+    return remainder
+
+
 AUTO_MEMORY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (
         re.compile(r"\bmy name is ([A-Z][\w\-]+(?:\s+[A-Z][\w\-]+)*)", re.IGNORECASE),
@@ -1654,6 +1673,12 @@ async def stream_new_chat(
     compare_mode = is_compare_request(user_query)
     compare_query = extract_compare_query(user_query) if compare_mode else ""
 
+    # Debate mode detection
+    debate_mode = _is_debate_request(user_query)
+    debate_query = _extract_debate_query(user_query) if debate_mode else ""
+    if debate_mode and debate_query:
+        user_query = debate_query
+
     # Track the current text block for streaming (defined early for exception handling)
     current_text_id: str | None = None
     trace_recorder: TraceRecorder | None = None
@@ -2292,6 +2317,7 @@ async def stream_new_chat(
                 statistics_prompt=statistics_worker_prompt,
                 synthesis_prompt=compare_synthesis_prompt or synthesis_prompt,
                 compare_mode=compare_mode,
+                debate_mode=debate_mode,
                 hybrid_mode=hybrid_mode,
                 speculative_enabled=speculative_enabled,
                 external_model_prompt=compare_external_prompt,
@@ -3038,6 +3064,32 @@ async def stream_new_chat(
                         yield streaming_service.format_data(
                             "criterion-complete", custom_data
                         )
+                    continue
+
+                # ─── Debate mode SSE events ───────────────────────
+                if custom_name == "debate_init" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-init", custom_data)
+                    continue
+                if custom_name == "debate_round_start" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-round-start", custom_data)
+                    continue
+                if custom_name == "debate_participant_start" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-participant-start", custom_data)
+                    continue
+                if custom_name == "debate_participant_end" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-participant-end", custom_data)
+                    continue
+                if custom_name == "debate_round_end" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-round-end", custom_data)
+                    continue
+                if custom_name == "debate_vote_result" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-vote-result", custom_data)
+                    continue
+                if custom_name == "debate_results" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-results", custom_data)
+                    continue
+                if custom_name == "debate_synthesis_complete" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-synthesis-complete", custom_data)
                     continue
 
             if event_type == "on_chain_start" and run_id:

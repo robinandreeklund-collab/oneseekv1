@@ -31,6 +31,11 @@ import {
 	SpotlightArenaActiveContext,
 	SpotlightArenaLayout,
 } from "@/components/tool-ui/spotlight-arena";
+import {
+	DebateArenaActiveContext,
+	DebateArenaLayout,
+	LiveDebateStateContext,
+} from "@/components/debate/debate-arena";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { CommentPanelContainer } from "@/components/chat-comments/comment-panel-container/comment-panel-container";
 import { CommentSheet } from "@/components/chat-comments/comment-sheet/comment-sheet";
@@ -237,13 +242,21 @@ const AssistantMessageInner: FC = () => {
 		);
 	});
 
+	// Debate mode: read live state from context (provided by new-chat-page)
+	const debateState = useContext(LiveDebateStateContext);
+	const isDebate = debateState !== null;
+
 	return (
 		<SpotlightArenaActiveContext.Provider value={isCompare}>
+		<DebateArenaActiveContext.Provider value={isDebate}>
 			{/* Unified fade layer: reasoning stream + thinking steps */}
 			<FadeLayerPart />
 
 			{/* Spotlight Arena layout for compare mode */}
 			{isCompare && <SpotlightArenaLayout />}
+
+			{/* Debate Arena layout for debate mode */}
+			{isDebate && debateState && <DebateArenaLayout debateState={debateState} />}
 
 			<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
 				<MessagePrimitive.Parts
@@ -260,6 +273,7 @@ const AssistantMessageInner: FC = () => {
 				<BranchPicker />
 				<AssistantActionBar />
 			</div>
+		</DebateArenaActiveContext.Provider>
 		</SpotlightArenaActiveContext.Provider>
 	);
 };

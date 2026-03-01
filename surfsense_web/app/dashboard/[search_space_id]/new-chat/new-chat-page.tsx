@@ -64,6 +64,9 @@ import {
 } from "@/components/tool-ui/compare-model";
 import { LiveCriterionContext, LiveCriterionPodContext } from "@/components/tool-ui/spotlight-arena";
 import type { LiveCriterionPodMap, CriterionPodMeta } from "@/components/tool-ui/spotlight-arena";
+import { LiveDebateStateContext } from "@/components/debate/debate-arena";
+import type { DebateState, DebateParticipant } from "@/contracts/types/debate.types";
+import { DEBATE_MODEL_DISPLAY } from "@/contracts/types/debate.types";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
@@ -357,6 +360,18 @@ export default function NewChatPage() {
 
 	// Live criterion pod metadata from SSE events (domain → criterion → pod info)
 	const [liveCriterionPodInfo, setLiveCriterionPodInfo] = useState<LiveCriterionPodMap>({});
+
+	// Debate mode state from SSE events
+	const INITIAL_DEBATE_STATE: DebateState = {
+		topic: "",
+		participants: [],
+		rounds: [],
+		currentRound: 0,
+		totalRounds: 4,
+		status: "initializing",
+		votes: [],
+	};
+	const [debateState, setDebateState] = useState<DebateState | null>(null);
 
 	// Get mentioned document IDs from the composer
 	const mentionedDocumentIds = useAtomValue(mentionedDocumentIdsAtom);
@@ -1107,6 +1122,7 @@ export default function NewChatPage() {
 			setIsRunning(true);
 			setLiveCriterionScores({});
 			setLiveCriterionPodInfo({});
+			setDebateState(null);
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -1588,6 +1604,171 @@ export default function NewChatPage() {
 											break;
 										}
 
+										// ── Debate mode SSE events ──────────────
+										case "data-debate-init": {
+											const diData = parsed.data as Record<string, unknown>;
+											const diParticipants = (diData?.participants as string[]) ?? [];
+											setDebateState({
+												topic: String(diData?.topic ?? ""),
+												participants: diParticipants.map((name) => ({
+													key: Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase(),
+													display: name,
+													toolName: "",
+													configId: -1,
+													isOneseek: name === "OneSeek",
+													totalWordCount: 0,
+													responses: {},
+												})),
+												rounds: [],
+												currentRound: 0,
+												totalRounds: Number(diData?.total_rounds ?? 4),
+												status: "initializing",
+												votes: [],
+											});
+											break;
+										}
+										case "data-debate-round-start": {
+											const drsData = parsed.data as Record<string, unknown>;
+											const drsRound = Number(drsData?.round ?? 0);
+											const drsType = String(drsData?.type ?? "");
+											const drsOrder = Array.isArray(drsData?.order) ? (drsData.order as string[]) : [];
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												const statusMap: Record<string, DebateState["status"]> = {
+													introduction: "round_1",
+													argument: "round_2",
+													deepening: "round_3",
+													voting: "voting",
+												};
+												return {
+													...prev,
+													currentRound: drsRound,
+													status: statusMap[drsType] ?? prev.status,
+													rounds: [
+														...prev.rounds.filter((r) => r.round !== drsRound),
+														{ round: drsRound, type: drsType as "introduction" | "argument" | "deepening" | "voting", order: drsOrder, status: "active" },
+													],
+												};
+											});
+											break;
+										}
+										case "data-debate-participant-start": {
+											const dpsData = parsed.data as Record<string, unknown>;
+											const dpsModel = String(dpsData?.model ?? "");
+											const dpsRound = Number(dpsData?.round ?? 0);
+											const dpsPosition = Number(dpsData?.position ?? 0);
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													participants: prev.participants.map((p) =>
+														p.display === dpsModel
+															? {
+																...p,
+																responses: {
+																	...p.responses,
+																	[dpsRound]: { round: dpsRound, position: dpsPosition, text: "", wordCount: 0, latencyMs: 0, status: "speaking" },
+																},
+															}
+															: p
+													),
+												};
+											});
+											break;
+										}
+										case "data-debate-participant-end": {
+											const dpeData = parsed.data as Record<string, unknown>;
+											const dpeModel = String(dpeData?.model ?? "");
+											const dpeRound = Number(dpeData?.round ?? 0);
+											const dpeWordCount = Number(dpeData?.word_count ?? 0);
+											const dpeLatency = Number(dpeData?.latency_ms ?? 0);
+											const dpePreview = String(dpeData?.response_preview ?? "");
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													participants: prev.participants.map((p) =>
+														p.display === dpeModel
+															? {
+																...p,
+																totalWordCount: p.totalWordCount + dpeWordCount,
+																responses: {
+																	...p.responses,
+																	[dpeRound]: {
+																		...(p.responses[dpeRound] ?? { round: dpeRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }),
+																		text: dpePreview,
+																		wordCount: dpeWordCount,
+																		latencyMs: dpeLatency,
+																		status: "complete",
+																	},
+																},
+															}
+															: p
+													),
+												};
+											});
+											break;
+										}
+										case "data-debate-round-end": {
+											const dreData = parsed.data as Record<string, unknown>;
+											const dreRound = Number(dreData?.round ?? 0);
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													rounds: prev.rounds.map((r) =>
+														r.round === dreRound ? { ...r, status: "complete" } : r
+													),
+												};
+											});
+											break;
+										}
+										case "data-debate-vote-result": {
+											const dvrData = parsed.data as Record<string, unknown>;
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													votes: [
+														...prev.votes,
+														{
+															voter: String(dvrData?.voter ?? ""),
+															voterKey: "",
+															votedFor: String(dvrData?.voted_for ?? ""),
+															shortMotivation: String(dvrData?.motivation ?? ""),
+															threeBullets: Array.isArray(dvrData?.bullets) ? (dvrData.bullets as string[]) : [],
+														},
+													],
+												};
+											});
+											break;
+										}
+										case "data-debate-results": {
+											const drrData = parsed.data as Record<string, unknown>;
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													status: "results",
+													results: {
+														winner: String(drrData?.winner ?? ""),
+														voteCounts: (drrData?.vote_counts as Record<string, number>) ?? {},
+														wordCounts: (drrData?.word_counts as Record<string, number>) ?? {},
+														tiebreakerUsed: Boolean(drrData?.tiebreaker_used),
+														totalVotes: Number(drrData?.total_votes ?? 0),
+														selfVotesFiltered: 0,
+													},
+												};
+											});
+											break;
+										}
+										case "data-debate-synthesis-complete": {
+											setDebateState((prev) =>
+												prev ? { ...prev, status: "complete" } : prev
+											);
+											break;
+										}
+
 										// P1-Extra.5: structured field decisions from pipeline nodes
 										case "structured-field": {
 											const sfNode = String((parsed as any).node ?? "");
@@ -2017,6 +2198,7 @@ export default function NewChatPage() {
 			setIsRunning(true);
 			setLiveCriterionScores({});
 			setLiveCriterionPodInfo({});
+			setDebateState(null);
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -2435,6 +2617,91 @@ export default function NewChatPage() {
 											break;
 										}
 
+										// ── Debate mode SSE events (regen) ──────
+										case "data-debate-init": {
+											const diData2 = parsed.data as Record<string, unknown>;
+											const diParts2 = (diData2?.participants as string[]) ?? [];
+											setDebateState({
+												topic: String(diData2?.topic ?? ""),
+												participants: diParts2.map((name) => ({
+													key: Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase(),
+													display: name,
+													toolName: "",
+													configId: -1,
+													isOneseek: name === "OneSeek",
+													totalWordCount: 0,
+													responses: {},
+												})),
+												rounds: [],
+												currentRound: 0,
+												totalRounds: Number(diData2?.total_rounds ?? 4),
+												status: "initializing",
+												votes: [],
+											});
+											break;
+										}
+										case "data-debate-round-start": {
+											const drs2 = parsed.data as Record<string, unknown>;
+											const drsRound2 = Number(drs2?.round ?? 0);
+											const drsType2 = String(drs2?.type ?? "");
+											const drsOrder2 = Array.isArray(drs2?.order) ? (drs2.order as string[]) : [];
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												const sMap: Record<string, DebateState["status"]> = { introduction: "round_1", argument: "round_2", deepening: "round_3", voting: "voting" };
+												return {
+													...prev,
+													currentRound: drsRound2,
+													status: sMap[drsType2] ?? prev.status,
+													rounds: [...prev.rounds.filter((r) => r.round !== drsRound2), { round: drsRound2, type: drsType2 as "introduction" | "argument" | "deepening" | "voting", order: drsOrder2, status: "active" }],
+												};
+											});
+											break;
+										}
+										case "data-debate-participant-start": {
+											const dps2 = parsed.data as Record<string, unknown>;
+											const dpsModel2 = String(dps2?.model ?? "");
+											const dpsRound2 = Number(dps2?.round ?? 0);
+											const dpsPos2 = Number(dps2?.position ?? 0);
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return { ...prev, participants: prev.participants.map((p) => p.display === dpsModel2 ? { ...p, responses: { ...p.responses, [dpsRound2]: { round: dpsRound2, position: dpsPos2, text: "", wordCount: 0, latencyMs: 0, status: "speaking" } } } : p) };
+											});
+											break;
+										}
+										case "data-debate-participant-end": {
+											const dpe2 = parsed.data as Record<string, unknown>;
+											const dpeM2 = String(dpe2?.model ?? "");
+											const dpeR2 = Number(dpe2?.round ?? 0);
+											const dpeWc2 = Number(dpe2?.word_count ?? 0);
+											const dpeLat2 = Number(dpe2?.latency_ms ?? 0);
+											const dpePrev2 = String(dpe2?.response_preview ?? "");
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return { ...prev, participants: prev.participants.map((p) => p.display === dpeM2 ? { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(p.responses[dpeR2] ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete" } } } : p) };
+											});
+											break;
+										}
+										case "data-debate-round-end": {
+											const dre2 = parsed.data as Record<string, unknown>;
+											const dreR2 = Number(dre2?.round ?? 0);
+											setDebateState((prev) => prev ? { ...prev, rounds: prev.rounds.map((r) => r.round === dreR2 ? { ...r, status: "complete" } : r) } : prev);
+											break;
+										}
+										case "data-debate-vote-result": {
+											const dvr2 = parsed.data as Record<string, unknown>;
+											setDebateState((prev) => prev ? { ...prev, votes: [...prev.votes, { voter: String(dvr2?.voter ?? ""), voterKey: "", votedFor: String(dvr2?.voted_for ?? ""), shortMotivation: String(dvr2?.motivation ?? ""), threeBullets: Array.isArray(dvr2?.bullets) ? (dvr2.bullets as string[]) : [] }] } : prev);
+											break;
+										}
+										case "data-debate-results": {
+											const drr2 = parsed.data as Record<string, unknown>;
+											setDebateState((prev) => prev ? { ...prev, status: "results", results: { winner: String(drr2?.winner ?? ""), voteCounts: (drr2?.vote_counts as Record<string, number>) ?? {}, wordCounts: (drr2?.word_counts as Record<string, number>) ?? {}, tiebreakerUsed: Boolean(drr2?.tiebreaker_used), totalVotes: Number(drr2?.total_votes ?? 0), selfVotesFiltered: 0 } } : prev);
+											break;
+										}
+										case "data-debate-synthesis-complete": {
+											setDebateState((prev) => prev ? { ...prev, status: "complete" } : prev);
+											break;
+										}
+
 										// P1-Extra.5: structured field decisions from pipeline nodes
 										case "structured-field": {
 											const sfNode2 = String((parsed as any).node ?? "");
@@ -2775,6 +3042,7 @@ export default function NewChatPage() {
 		<AssistantRuntimeProvider runtime={runtime}>
 		<LiveCriterionContext.Provider value={liveCriterionScores}>
 		<LiveCriterionPodContext.Provider value={liveCriterionPodInfo}>
+		<LiveDebateStateContext.Provider value={debateState}>
 			{!isPublicChat && <GeneratePodcastToolUI />}
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
@@ -2854,6 +3122,7 @@ export default function NewChatPage() {
 					/>
 				)}
 			</TracePanelContext.Provider>
+		</LiveDebateStateContext.Provider>
 		</LiveCriterionPodContext.Provider>
 		</LiveCriterionContext.Provider>
 		</AssistantRuntimeProvider>
