@@ -140,6 +140,108 @@ def _count_words(text: str) -> int:
     return len(text.split())
 
 
+def _build_round_context(
+    topic: str,
+    all_round_responses: dict[int, dict[str, str]],
+    current_round_responses: dict[str, str],
+    round_num: int,
+) -> str:
+    """Build the chained context string for a participant.
+
+    Includes all previous rounds and the current round's responses so far.
+    """
+    context_parts = [f"Debattämne: {topic}\n"]
+    for prev_round in range(1, round_num):
+        prev_responses = all_round_responses.get(prev_round, {})
+        if prev_responses:
+            context_parts.append(f"\n--- Runda {prev_round} ---")
+            for name, resp in prev_responses.items():
+                context_parts.append(f"[{name}]: {resp[:600]}")
+    if current_round_responses:
+        context_parts.append(f"\n--- Runda {round_num} (hittills) ---")
+        for name, resp in current_round_responses.items():
+            context_parts.append(f"[{name}]: {resp[:600]}")
+    return "\n".join(context_parts)
+
+
+async def _call_debate_participant(
+    *,
+    participant: dict[str, Any],
+    query_with_context: str,
+    round_prompt: str,
+    round_num: int,
+    domain_plans: dict[str, Any],
+    state: dict[str, Any],
+    llm: Any,
+    call_external_fn: Any,
+    tavily_search_fn: Any = None,
+    prompt_overrides: dict[str, str] | None = None,
+    execution_timeout: float = RESPONSE_TIMEOUT_SECONDS,
+) -> str:
+    """Fetch a debate participant's LLM response.
+
+    Standalone coroutine so it can be used both in the main loop and as
+    a prefetch task via ``asyncio.create_task``.
+    """
+    model_display = participant["display"]
+    model_key = participant["key"]
+    is_oneseek = participant.get("is_oneseek", False)
+
+    try:
+        if is_oneseek:
+            _os_round_key = f"debate.oneseek.round.{round_num}"
+            _os_round_prompt = (
+                (prompt_overrides or {}).get(_os_round_key)
+                or ONESEEK_ROUND_PROMPTS.get(round_num, "")
+            )
+            _os_system = (
+                (prompt_overrides or {}).get("debate.oneseek.system")
+                or ONESEEK_DEBATE_SYSTEM_PROMPT
+            )
+            _mt = _resolve_max_tokens(state, "OneSeek")
+            return await _run_oneseek_debate_turn(
+                llm=llm,
+                query=query_with_context,
+                tavily_search_fn=tavily_search_fn,
+                topic=state.get("debate_topic", ""),
+                round_num=round_num,
+                timeout=execution_timeout,
+                system_prompt=_os_system,
+                round_prompt=_os_round_prompt,
+                max_tokens=_mt,
+            )
+        else:
+            spec_data = None
+            for dp in domain_plans.values():
+                if dp.get("spec", {}).get("key") == model_key:
+                    spec_data = dp["spec"]
+                    break
+            if spec_data:
+                from types import SimpleNamespace
+                spec = SimpleNamespace(**spec_data)
+                _mt = _resolve_max_tokens(state, model_display)
+                result = await asyncio.wait_for(
+                    call_external_fn(
+                        spec=spec,
+                        query=query_with_context,
+                        system_prompt=round_prompt,
+                        max_tokens=_mt,
+                    ),
+                    timeout=execution_timeout,
+                )
+                return result.get("response", "")
+            return f"[{model_display}: ingen spec hittades]"
+    except asyncio.TimeoutError:
+        logger.warning("debate: %s timed out in round %d", model_display, round_num)
+        return f"[{model_display} timeout efter {execution_timeout}s]"
+    except Exception as exc:
+        logger.error(
+            "debate: %s error in round %d: %s: %s",
+            model_display, round_num, type(exc).__name__, str(exc)[:300],
+        )
+        return f"[{model_display} fel: {str(exc)[:100]}]"
+
+
 def _filter_self_votes(votes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Remove votes where a participant voted for themselves."""
     return [v for v in votes if v.get("voter", "").lower() != v.get("voted_for", "").lower()]
@@ -333,27 +435,20 @@ def build_debate_round_executor_node(
             except Exception:
                 pass
 
+            # Prefetch pipeline: stores (response_text, prepared_audio)
+            # keyed by participant display name.  Filled by the look-ahead
+            # that runs the NEXT participant's LLM + TTS while the current
+            # one streams text + audio.
+            _prefetched: dict[str, asyncio.Task] = {}
+
             for position, participant in enumerate(round_order):
                 model_key = participant["key"]
                 model_display = participant["display"]
-                is_oneseek = participant.get("is_oneseek", False)
 
-                # Build context chain: topic + all previous rounds + current round so far
-                context_parts = [f"Debattämne: {topic}\n"]
-
-                for prev_round in range(1, round_num):
-                    prev_responses = all_round_responses.get(prev_round, {})
-                    if prev_responses:
-                        context_parts.append(f"\n--- Runda {prev_round} ---")
-                        for name, resp in prev_responses.items():
-                            context_parts.append(f"[{name}]: {resp[:600]}")
-
-                if round_responses:
-                    context_parts.append(f"\n--- Runda {round_num} (hittills) ---")
-                    for name, resp in round_responses.items():
-                        context_parts.append(f"[{name}]: {resp[:600]}")
-
-                full_context = "\n".join(context_parts)
+                # Build context for this participant
+                full_context = _build_round_context(
+                    topic, all_round_responses, round_responses, round_num,
+                )
                 query_with_context = f"{round_prompt}\n\n{full_context}"
 
                 # Emit participant_start
@@ -372,77 +467,37 @@ def build_debate_round_executor_node(
                 except Exception:
                     pass
 
-                # Call model
+                # ─── Get LLM response (prefetched or call now) ───────
                 start_time = time.monotonic()
                 response_text = ""
+                _prepared_audio: tuple[bytes, float] | None = None
 
-                try:
-                    if is_oneseek:
-                        # Resolve OneSeek per-round prompt from overrides or defaults
-                        _os_round_key = f"debate.oneseek.round.{round_num}"
-                        _os_round_prompt = (
-                            (prompt_overrides or {}).get(_os_round_key)
-                            or ONESEEK_ROUND_PROMPTS.get(round_num, "")
+                if model_display in _prefetched:
+                    _task = _prefetched.pop(model_display)
+                    try:
+                        response_text, _prepared_audio = await _task
+                        logger.info(
+                            "debate: using prefetched response for %s (%d words, audio=%s)",
+                            model_display, _count_words(response_text),
+                            f"{_prepared_audio[1]:.1f}s" if _prepared_audio and _prepared_audio[0] else "none",
                         )
-                        _os_system = (
-                            (prompt_overrides or {}).get("debate.oneseek.system")
-                            or ONESEEK_DEBATE_SYSTEM_PROMPT
-                        )
-                        # OneSeek uses internal LLM + optional Tavily
-                        _mt = _resolve_max_tokens(state, "OneSeek")
-                        response_text = await _run_oneseek_debate_turn(
-                            llm=llm,
-                            query=query_with_context,
-                            tavily_search_fn=tavily_search_fn,
-                            topic=topic,
-                            round_num=round_num,
-                            timeout=execution_timeout_seconds,
-                            system_prompt=_os_system,
-                            round_prompt=_os_round_prompt,
-                            max_tokens=_mt,
-                        )
-                    else:
-                        # External model
-                        spec_data = None
-                        for dp in domain_plans.values():
-                            if dp.get("spec", {}).get("key") == model_key:
-                                spec_data = dp["spec"]
-                                break
+                    except Exception as exc:
+                        logger.warning("debate: prefetch failed for %s: %s", model_display, exc)
+                        response_text = ""
 
-                        if spec_data:
-                            from types import SimpleNamespace
-                            spec = SimpleNamespace(**spec_data)
-                            _mt = _resolve_max_tokens(state, model_display)
-                            result = await asyncio.wait_for(
-                                _call_external(
-                                    spec=spec,
-                                    query=query_with_context,
-                                    system_prompt=round_prompt,
-                                    max_tokens=_mt,
-                                ),
-                                timeout=execution_timeout_seconds,
-                            )
-                            response_text = result.get("response", "")
-                except asyncio.TimeoutError:
-                    response_text = f"[{model_display} timeout efter {execution_timeout_seconds}s]"
-                    logger.warning("debate: %s timed out in round %d", model_display, round_num)
-                except Exception as exc:
-                    response_text = f"[{model_display} fel: {str(exc)[:100]}]"
-                    # Detailed debug logging for model errors (Issue #1)
-                    import traceback
-                    logger.error(
-                        "debate: %s error in round %d:\n"
-                        "  model_key=%s, is_oneseek=%s, config_id=%s\n"
-                        "  spec_data=%s\n"
-                        "  error_type=%s\n"
-                        "  error=%s\n"
-                        "  traceback:\n%s",
-                        model_display, round_num,
-                        model_key, is_oneseek, participant.get("config_id"),
-                        {k: (v[:50] if isinstance(v, str) and len(v) > 50 else v) for k, v in (spec_data or {}).items()} if spec_data else "None",
-                        type(exc).__name__,
-                        str(exc)[:500],
-                        traceback.format_exc(),
+                if not response_text:
+                    response_text = await _call_debate_participant(
+                        participant=participant,
+                        query_with_context=query_with_context,
+                        round_prompt=round_prompt,
+                        round_num=round_num,
+                        domain_plans=domain_plans,
+                        state=state,
+                        llm=llm,
+                        call_external_fn=_call_external,
+                        tavily_search_fn=tavily_search_fn,
+                        prompt_overrides=prompt_overrides,
+                        execution_timeout=execution_timeout_seconds,
                     )
 
                 latency_ms = int((time.monotonic() - start_time) * 1000)
@@ -450,10 +505,54 @@ def build_debate_round_executor_node(
                 all_word_counts[model_display] = all_word_counts.get(model_display, 0) + word_count
                 round_responses[model_display] = response_text
 
-                # ─── Voice mode: synced text + audio streaming ──────────
-                # Full text → TTS → calculate audio_duration from PCM
-                # byte count → delay_per_word = duration / word_count →
-                # interleave text + audio chunks at natural speech pace.
+                # ─── Prefetch next participant (LLM + TTS) ───────────
+                # Start the NEXT participant's LLM call and TTS generation
+                # in the background so it's ready when current streaming
+                # finishes.  Saves ~7-12s between each speaker.
+                if voice_mode and position + 1 < len(round_order):
+                    _next_p = round_order[position + 1]
+                    _next_display = _next_p["display"]
+                    # Context now includes the current participant's response
+                    _next_ctx = _build_round_context(
+                        topic, all_round_responses, round_responses, round_num,
+                    )
+                    _next_query = f"{round_prompt}\n\n{_next_ctx}"
+
+                    async def _prefetch_llm_and_tts(
+                        p=_next_p, q=_next_query,
+                    ) -> tuple[str, tuple[bytes, float] | None]:
+                        text = await _call_debate_participant(
+                            participant=p,
+                            query_with_context=q,
+                            round_prompt=round_prompt,
+                            round_num=round_num,
+                            domain_plans=domain_plans,
+                            state=state,
+                            llm=llm,
+                            call_external_fn=_call_external,
+                            tavily_search_fn=tavily_search_fn,
+                            prompt_overrides=prompt_overrides,
+                            execution_timeout=execution_timeout_seconds,
+                        )
+                        if text and not text.startswith("["):
+                            from app.agents.new_chat.debate_voice import (
+                                prepare_tts_audio,
+                            )
+                            audio = await prepare_tts_audio(
+                                text=text,
+                                participant_display=p["display"],
+                                state=state,
+                            )
+                            return text, audio
+                        return text, None
+
+                    _prefetched[_next_display] = asyncio.create_task(
+                        _prefetch_llm_and_tts()
+                    )
+
+                # ─── Voice mode: synced text + audio streaming ───────
+                # Streams text word-by-word interleaved with audio chunks
+                # at the natural speech pace from TTS audio duration.
                 if voice_mode and response_text and not response_text.startswith("["):
                     try:
                         from app.agents.new_chat.debate_voice import (
@@ -467,6 +566,7 @@ def build_debate_round_executor_node(
                                 round_num=round_num,
                                 state=state,
                                 config=config,
+                                prepared_audio=_prepared_audio,
                             ),
                             timeout=180,
                         )
@@ -525,6 +625,11 @@ def build_debate_round_executor_node(
                     )
                 except Exception:
                     pass
+
+            # Cancel any unused prefetch tasks at end of round
+            for _pf_task in _prefetched.values():
+                _pf_task.cancel()
+            _prefetched.clear()
 
             all_round_responses[round_num] = round_responses
 

@@ -551,6 +551,50 @@ async def _generate_full_audio(
     return pcm_data, audio_duration
 
 
+async def prepare_tts_audio(
+    *,
+    text: str,
+    participant_display: str,
+    state: dict[str, Any],
+) -> tuple[bytes, float]:
+    """Pre-generate TTS audio for a participant (used by prefetch pipeline).
+
+    Returns ``(pcm_data, audio_duration_seconds)``.  Returns ``(b"", 0.0)``
+    if TTS fails or no API key is configured.
+    """
+    voice_settings = _resolve_voice_settings(state)
+    has_api_key = bool(voice_settings["api_key"])
+    if not has_api_key:
+        return b"", 0.0
+
+    voice = get_voice_for_participant(
+        participant_display, voice_settings["voice_map"],
+    )
+
+    lang_instructions = voice_settings.get("language_instructions") or {}
+    if isinstance(lang_instructions, str):
+        instr = lang_instructions.strip()
+    else:
+        instr = (
+            lang_instructions.get(participant_display, "").strip()
+            or lang_instructions.get("__default__", "").strip()
+        )
+
+    try:
+        return await _generate_full_audio(
+            text=text,
+            voice=voice,
+            voice_settings=voice_settings,
+            instructions=instr,
+        )
+    except Exception as exc:
+        logger.error(
+            "debate_voice: prefetch TTS error for %s: %s",
+            participant_display, exc,
+        )
+        return b"", 0.0
+
+
 async def stream_text_and_voice_synced(
     *,
     text: str,
@@ -559,12 +603,14 @@ async def stream_text_and_voice_synced(
     round_num: int,
     state: dict[str, Any],
     config: Any,
+    prepared_audio: tuple[bytes, float] | None = None,
 ) -> int:
     """Stream text word-by-word **synced** to TTS audio for one participant.
 
     Pipeline:
 
     1. Send the **full text** to TTS in one call — no sentence splitting.
+       (Skipped if ``prepared_audio`` is supplied by the prefetch pipeline.)
     2. Compute ``audio_duration = pcm_bytes / 48 000``.
     3. Derive ``delay_per_word = audio_duration / word_count``.
     4. Interleave ``debate_participant_chunk`` (text, 2 words at a time)
@@ -651,11 +697,17 @@ async def stream_text_and_voice_synced(
         config=config,
     )
 
-    # ── 1. Generate TTS for the full text ───────────────────────────
+    # ── 1. Get TTS audio (prefetched or generate now) ──────────────
     pcm_data = b""
     audio_duration = 0.0
 
-    if has_api_key:
+    if prepared_audio is not None:
+        pcm_data, audio_duration = prepared_audio
+        logger.info(
+            "debate_voice: using prefetched audio for %s — %.2fs, %d bytes",
+            participant_display, audio_duration, len(pcm_data),
+        )
+    elif has_api_key:
         try:
             pcm_data, audio_duration = await _generate_full_audio(
                 text=text,
