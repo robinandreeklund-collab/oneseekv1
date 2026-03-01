@@ -94,31 +94,50 @@ async def generate_voice_stream(
     api_base: str = "https://api.openai.com/v1",
     model: str = DEFAULT_TTS_MODEL,
     speed: float = 1.0,
+    instructions: str = "",
     chunk_bytes: int = DEFAULT_CHUNK_BYTES,
 ):
     """Async generator yielding raw PCM chunks from OpenAI TTS.
 
     Uses httpx streaming POST to ``/audio/speech`` with
     ``response_format="pcm"``.
+
+    For ``gpt-4o-mini-tts``, voice instructions (accent, tone, etc.) are
+    passed via the ``instructions`` API parameter.  The ``speed`` parameter
+    is only supported by ``tts-1`` / ``tts-1-hd``.
     """
     url = f"{api_base.rstrip('/')}/audio/speech"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    payload = {
+
+    is_mini_tts = "mini-tts" in model.lower()
+
+    payload: dict[str, Any] = {
         "model": model,
         "input": text,
         "voice": voice,
         "response_format": "pcm",
-        "speed": speed,
     }
+
+    if is_mini_tts:
+        # gpt-4o-mini-tts: uses 'instructions' field, does NOT support 'speed'
+        if instructions:
+            payload["instructions"] = instructions
+    else:
+        # tts-1 / tts-1-hd: uses 'speed', no 'instructions' field
+        payload["speed"] = speed
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
         async with client.stream("POST", url, json=payload, headers=headers) as resp:
             if resp.status_code >= 400:
                 # Must read the body before accessing .text on a streaming response
                 await resp.aread()
+                logger.error(
+                    "debate_voice: TTS %s error %d: %s",
+                    model, resp.status_code, resp.text[:300],
+                )
                 raise httpx.HTTPStatusError(
                     f"TTS API error {resp.status_code}",
                     request=resp.request,
@@ -159,8 +178,7 @@ async def _emit_voice_events(
     total_bytes = 0
     chunk_index = 0
 
-    # Apply per-model language/accent instructions if configured.
-    tts_text = text
+    # Resolve per-model language/accent instructions.
     lang_instructions = voice_settings.get("language_instructions") or {}
     if isinstance(lang_instructions, str):
         # Backwards compat: global string (deprecated)
@@ -171,8 +189,18 @@ async def _emit_voice_events(
             lang_instructions.get(participant_display, "").strip()
             or lang_instructions.get("__default__", "").strip()
         )
-    if instr:
-        tts_text = f"[{instr}]\n\n{text}"
+
+    tts_model = voice_settings["model"]
+    is_mini_tts = "mini-tts" in tts_model.lower()
+
+    # For gpt-4o-mini-tts: pass instructions via API parameter (not in input).
+    # For tts-1/tts-1-hd: prepend instructions to input text (legacy approach).
+    if is_mini_tts:
+        tts_text = text
+        tts_instructions = instr
+    else:
+        tts_text = f"[{instr}]\n\n{text}" if instr else text
+        tts_instructions = ""
 
     # Estimate total chunks for proportional text reveal
     word_count = max(1, len(text.split()))
@@ -180,8 +208,8 @@ async def _emit_voice_events(
     text_len = len(text)
 
     logger.info(
-        "debate_voice: starting TTS for %s (voice=%s, model=%s, text_len=%d, est_chunks=%d)",
-        participant_display, voice, voice_settings["model"], len(tts_text), estimated_total_chunks,
+        "debate_voice: starting TTS for %s (voice=%s, model=%s, text_len=%d, est_chunks=%d, has_instructions=%s)",
+        participant_display, voice, tts_model, len(tts_text), estimated_total_chunks, bool(tts_instructions),
     )
 
     # Emit speaker-changed event with text length for frontend sync
@@ -205,8 +233,9 @@ async def _emit_voice_events(
             voice=voice,
             api_key=voice_settings["api_key"],
             api_base=voice_settings["api_base"],
-            model=voice_settings["model"],
+            model=tts_model,
             speed=voice_settings.get("speed", 1.0),
+            instructions=tts_instructions,
         ):
             b64 = base64.b64encode(pcm_chunk).decode("ascii")
             total_bytes += len(pcm_chunk)
@@ -347,14 +376,31 @@ async def collect_all_audio_for_export(
             if not text:
                 continue
             voice = get_voice_for_participant(display, voice_settings["voice_map"])
+            tts_model = voice_settings["model"]
+
+            # Resolve instructions for export
+            lang_instr = voice_settings.get("language_instructions") or {}
+            if isinstance(lang_instr, str):
+                instr = lang_instr.strip()
+            else:
+                instr = (
+                    lang_instr.get(display, "").strip()
+                    or lang_instr.get("__default__", "").strip()
+                )
+
+            is_mini = "mini-tts" in tts_model.lower()
+            export_text = text if is_mini else (f"[{instr}]\n\n{text}" if instr else text)
+            export_instructions = instr if is_mini else ""
+
             pcm_parts: list[bytes] = []
             async for chunk in generate_voice_stream(
-                text=text,
+                text=export_text,
                 voice=voice,
                 api_key=voice_settings["api_key"],
                 api_base=voice_settings["api_base"],
-                model=voice_settings["model"],
+                model=tts_model,
                 speed=voice_settings.get("speed", 1.0),
+                instructions=export_instructions,
             ):
                 pcm_parts.append(chunk)
             results.append((display, round_num, b"".join(pcm_parts)))
