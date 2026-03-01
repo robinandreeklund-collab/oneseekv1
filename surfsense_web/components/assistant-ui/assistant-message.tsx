@@ -252,8 +252,8 @@ const AssistantMessageInner: FC = () => {
 			{/* Unified fade layer: reasoning stream + thinking steps */}
 			<FadeLayerPart />
 
-			{/* Spotlight Arena layout for compare mode */}
-			{isCompare && <SpotlightArenaLayout />}
+			{/* Spotlight Arena layout for compare mode (mutually exclusive with debate) */}
+			{isCompare && !isDebate && <SpotlightArenaLayout />}
 
 			{/* Debate Arena layout for debate mode */}
 			{isDebate && debateState && <DebateArenaLayout debateState={debateState} />}

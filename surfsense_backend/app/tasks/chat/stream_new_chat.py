@@ -44,6 +44,9 @@ from app.agents.new_chat.compare_prompts import (
     DEFAULT_COMPARE_ANALYSIS_PROMPT,
     build_compare_synthesis_prompt,
 )
+from app.agents.new_chat.debate_prompts import (
+    DEBATE_SUPERVISOR_INSTRUCTIONS,
+)
 from app.agents.new_chat.complete_graph import build_complete_graph
 from app.agents.new_chat.incremental_json_parser import IncrementalSchemaParser
 from app.agents.new_chat.dispatcher import (
@@ -1853,7 +1856,9 @@ async def stream_new_chat(
 
         # Sync compare_mode with route decision
         # Router can identify compare requests even without /compare prefix
-        if route == Route.JAMFORELSE:
+        # BUT never override when debate_mode is already active – debate and
+        # compare are mutually exclusive subgraphs.
+        if route == Route.JAMFORELSE and not debate_mode:
             compare_mode = True
             # Always extract compare query when route is COMPARE, even if initial detection failed
             if not compare_query:
@@ -1899,7 +1904,16 @@ async def stream_new_chat(
             supervisor_prompt,
             citation_instructions=citation_instructions_block,
         )
-        if route == Route.JAMFORELSE:
+        if debate_mode:
+            debate_supervisor_instructions = resolve_prompt(
+                prompt_overrides,
+                "debate.supervisor.instructions",
+                DEBATE_SUPERVISOR_INSTRUCTIONS,
+            )
+            supervisor_system_prompt = (
+                supervisor_system_prompt + "\n\n" + debate_supervisor_instructions
+            )
+        elif route == Route.JAMFORELSE:
             compare_supervisor_instructions = resolve_prompt(
                 prompt_overrides,
                 "compare.supervisor.instructions",
