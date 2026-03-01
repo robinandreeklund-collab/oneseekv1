@@ -136,11 +136,19 @@ def _resolve_voice_settings(state: dict[str, Any]) -> dict[str, Any]:
         default_map = DEFAULT_OPENAI_VOICE_MAP
         default_model = DEFAULT_TTS_MODEL
 
+    # Resolve model: ignore cross-provider model names.
+    # e.g. "gpt-4o-mini-tts" saved in settings must not be sent to Cartesia.
+    model_setting = settings.get("model") or ""
+    if provider == "cartesia":
+        model = model_setting if model_setting.startswith("sonic") else default_model
+    else:
+        model = model_setting or default_model
+
     return {
         "tts_provider": provider,
         "api_key": api_key,
         "api_base": settings.get("api_base") or "https://api.openai.com/v1",
-        "model": settings.get("model") or default_model,
+        "model": model,
         "voice_map": settings.get("voice_map") or dict(default_map),
         "speed": float(settings.get("speed", 1.0)),
         "language_instructions": settings.get("language_instructions") or {},
