@@ -131,15 +131,28 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 		return null;
 	}, [debateState.participants, activeRound]);
 
-	// Only show participants that have a response (speaking or complete) for the
-	// active round — cards appear progressively as SSE events arrive.
-	// For historic rounds (user clicked a tab), show all that responded.
+	// The participant currently being voiced (audio playing or chunks streaming)
+	const voiceSpeaker = voiceCtx?.voiceState.currentSpeaker ?? null;
+
+	// Only show participants that have a response for the active round.
+	// In voice mode: only show participants whose voice has started (textRevealIndex defined)
+	// or who is currently being text-generated (speaking status).
+	// In completed state: show all regardless of voice mode.
 	const visibleParticipants = useMemo(() => {
 		return debateState.participants.filter((p) => {
 			const resp = p.responses[activeRound];
-			return resp !== undefined;
+			if (resp === undefined) return false;
+
+			// In voice mode during live debate: only show if voice has started for this participant
+			// (textRevealIndex is defined = voice chunks have arrived or text was hidden for voice)
+			// or the participant is currently generating text (speaking status)
+			if (isVoiceMode && !isComplete && !isVoting) {
+				return resp.status === "speaking" || resp.textRevealIndex !== undefined;
+			}
+
+			return true;
 		});
-	}, [debateState.participants, activeRound]);
+	}, [debateState.participants, activeRound, isVoiceMode, isComplete, isVoting]);
 
 	return (
 		<div className="mx-auto w-full max-w-4xl space-y-4 py-4">
@@ -257,12 +270,20 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 					{visibleParticipants.map((participant, index) => {
 						const roundResponse = participant.responses[activeRound];
 						const isSpeaking = roundResponse?.status === "speaking";
-						// Auto-expand: the currently speaking card is always expanded.
-						// Completed cards auto-collapse when someone else starts speaking.
-						const autoExpanded = isSpeaking || (
-							roundResponse?.status === "complete" && currentSpeaker === null
-							&& index === visibleParticipants.length - 1
-						);
+
+						// In voice mode: only expand the card that is currently being voiced.
+						// Completed-voice cards collapse. Text-generating cards show a "generating" state.
+						const isBeingVoiced = isVoiceMode && voiceSpeaker === participant.display;
+						const voiceTextDone = isVoiceMode
+							&& roundResponse?.textRevealIndex !== undefined
+							&& roundResponse.textRevealIndex >= (roundResponse?.text?.length ?? 1);
+
+						const autoExpanded = isVoiceMode
+							? (isBeingVoiced || (isSpeaking && !voiceSpeaker))
+							: (isSpeaking || (
+								roundResponse?.status === "complete" && currentSpeaker === null
+								&& index === visibleParticipants.length - 1
+							));
 
 						return (
 							<ParticipantCard
@@ -272,7 +293,10 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 								round={activeRound}
 								index={index}
 								autoExpanded={autoExpanded}
-								isMostRecent={index === visibleParticipants.length - 1 && currentSpeaker === null}
+								isMostRecent={!isVoiceMode && index === visibleParticipants.length - 1 && currentSpeaker === null}
+								isVoiceMode={isVoiceMode}
+								isBeingVoiced={isBeingVoiced}
+								voiceTextDone={voiceTextDone}
 							/>
 						);
 					})}
@@ -309,6 +333,12 @@ interface ParticipantCardProps {
 	autoExpanded: boolean;
 	/** Whether this is the most recently completed card (last in list, no one speaking). */
 	isMostRecent: boolean;
+	/** Whether this card is in voice debate mode. */
+	isVoiceMode?: boolean;
+	/** Whether this participant's voice is currently playing. */
+	isBeingVoiced?: boolean;
+	/** Whether voice text reveal is complete for this participant. */
+	voiceTextDone?: boolean;
 }
 
 const ParticipantCard: FC<ParticipantCardProps> = ({
@@ -318,6 +348,9 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	index,
 	autoExpanded,
 	isMostRecent,
+	isVoiceMode = false,
+	isBeingVoiced = false,
+	voiceTextDone = false,
 }) => {
 	const [manualToggle, setManualToggle] = useState<boolean | null>(null);
 	const prevAutoRef = useRef(autoExpanded);
@@ -344,7 +377,18 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	const tri = roundResponse?.textRevealIndex;
 	const fullText = roundResponse?.text ?? "";
 	const isVoiceRevealing = tri !== undefined && tri < fullText.length;
-	const displayText = isVoiceRevealing ? fullText.substring(0, tri) : fullText;
+	// In voice mode: show nothing until tri > 0, then reveal progressively
+	const displayText = isVoiceMode
+		? (tri !== undefined && tri > 0 ? fullText.substring(0, tri) : (voiceTextDone ? fullText : ""))
+		: fullText;
+
+	// In voice mode: the active voice card is always expanded and cannot be collapsed
+	const effectiveExpanded = isVoiceMode
+		? (isBeingVoiced || (isVoiceRevealing && !voiceTextDone))
+		: (manualToggle ?? autoExpanded);
+
+	// Voice mode: generating text (before voice starts)
+	const isGeneratingText = isVoiceMode && isSpeaking && tri === undefined;
 
 	return (
 		<motion.div
@@ -357,22 +401,30 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 			<Card
 				className={cn(
 					"transition-all duration-300",
-					isSpeaking && "border-primary/50 shadow-lg shadow-primary/5",
-					voiceActive && "border-red-500/40 shadow-lg shadow-red-500/10 ring-1 ring-red-500/20",
+					!isVoiceMode && isSpeaking && "border-primary/50 shadow-lg shadow-primary/5",
+					isBeingVoiced && "border-red-500/50 shadow-xl shadow-red-500/10 ring-2 ring-red-500/30",
+					isVoiceMode && isVoiceRevealing && !isBeingVoiced && "border-primary/40 shadow-lg shadow-primary/5",
+					isVoiceMode && voiceTextDone && !isBeingVoiced && "border-border opacity-80",
 				)}
 			>
-				<Collapsible open={isExpanded} onOpenChange={(open) => setManualToggle(open)}>
+				<Collapsible open={effectiveExpanded} onOpenChange={(open) => !isVoiceMode && setManualToggle(open)}>
 					<div className="flex items-center justify-between px-4 py-3">
 						<div className="flex items-center gap-3">
 							{MODEL_LOGOS[participant.key] ? (
 								<img
 									src={MODEL_LOGOS[participant.key]}
 									alt={participant.display}
-									className="h-9 w-9 rounded-lg object-contain"
+									className={cn(
+										"h-9 w-9 rounded-lg object-contain",
+										isBeingVoiced && "ring-2 ring-red-500/50",
+									)}
 								/>
 							) : (
 								<div
-									className="flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold text-white"
+									className={cn(
+										"flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold text-white",
+										isBeingVoiced && "ring-2 ring-red-500/50",
+									)}
 									style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}
 								>
 									{initials}
@@ -390,10 +442,10 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 								{roundResponse && (
 									<div className="flex items-center gap-2 text-xs text-muted-foreground">
 										<span>#{roundResponse.position}</span>
-										{roundResponse.wordCount > 0 && (
+										{roundResponse.wordCount > 0 && !isVoiceMode && (
 											<span>{roundResponse.wordCount} ord</span>
 										)}
-										{roundResponse.latencyMs > 0 && (
+										{roundResponse.latencyMs > 0 && !isVoiceMode && (
 											<span className="flex items-center gap-1">
 												<ClockIcon className="h-3 w-3" />
 												{(roundResponse.latencyMs / 1000).toFixed(1)}s
@@ -404,25 +456,43 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 							</div>
 						</div>
 						<div className="flex items-center gap-2">
-							{isSpeaking && (
-								<Badge variant="outline" className="animate-pulse border-primary/30 text-primary text-[10px]">
-									<MicIcon className="mr-1 h-3 w-3" />
-									{voiceActive ? "Talar (röst)" : "Talar"}
+							{isGeneratingText && (
+								<Badge variant="outline" className="animate-pulse border-amber-500/30 text-amber-500 text-[10px]">
+									<LoaderCircleIcon className="mr-1 h-3 w-3 animate-spin" />
+									Genererar...
 								</Badge>
 							)}
-							{isDone && (
+							{isBeingVoiced && (
+								<Badge variant="outline" className="animate-pulse border-red-500/40 bg-red-500/5 text-red-500 text-[10px]">
+									<span className="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" />
+									LIVE
+								</Badge>
+							)}
+							{!isVoiceMode && isSpeaking && (
+								<Badge variant="outline" className="animate-pulse border-primary/30 text-primary text-[10px]">
+									<MicIcon className="mr-1 h-3 w-3" />
+									Talar
+								</Badge>
+							)}
+							{isVoiceMode && voiceTextDone && (
 								<Badge variant="outline" className="border-green-500/30 text-green-500 text-[10px]">
 									<CheckCircle2Icon className="mr-1 h-3 w-3" />
 									Klar
 								</Badge>
 							)}
-							{roundResponse?.text && (
+							{!isVoiceMode && isDone && (
+								<Badge variant="outline" className="border-green-500/30 text-green-500 text-[10px]">
+									<CheckCircle2Icon className="mr-1 h-3 w-3" />
+									Klar
+								</Badge>
+							)}
+							{!isVoiceMode && roundResponse?.text && (
 								<CollapsibleTrigger asChild>
 									<Button variant="ghost" size="sm" className="h-7 w-7 p-0">
 										<ChevronDownIcon
 											className={cn(
 												"h-4 w-4 transition-transform",
-												isExpanded && "rotate-180",
+												effectiveExpanded && "rotate-180",
 											)}
 										/>
 									</Button>
@@ -431,26 +501,31 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 						</div>
 					</div>
 
-					{/* Preview text (collapsed view) — 2-line clamp */}
-					{displayText && !isExpanded && (
+					{/* Preview text (collapsed view) — 2-line clamp (non-voice mode only) */}
+					{!isVoiceMode && displayText && !effectiveExpanded && (
 						<div className="px-4 pb-3">
 							<p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
 								{displayText}
-								{isVoiceRevealing && <span className="animate-pulse">▍</span>}
 							</p>
 						</div>
 					)}
 
-					{/* Full text (expanded view) — progressive reveal during voice, full otherwise */}
+					{/* Full text (expanded view) — progressive reveal during voice */}
 					<CollapsibleContent>
-						{displayText && (
+						{displayText ? (
 							<CardContent className="border-t border-border px-4 py-3">
 								<p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
 									{displayText}
-									{isVoiceRevealing && <span className="animate-pulse text-primary">▍</span>}
+									{isVoiceRevealing && <span className="animate-pulse text-red-500 text-base">▍</span>}
 								</p>
 							</CardContent>
-						)}
+						) : isGeneratingText ? (
+							<CardContent className="border-t border-border px-4 py-3">
+								<p className="text-xs text-muted-foreground italic">
+									Hämtar svar...
+								</p>
+							</CardContent>
+						) : null}
 					</CollapsibleContent>
 				</Collapsible>
 			</Card>

@@ -1770,6 +1770,8 @@ export default function NewChatPage() {
 											const dpePreview = String(dpeData?.response_preview ?? "");
 											setDebateState((prev) => {
 												if (!prev) return prev;
+												// In voice mode: hide text (textRevealIndex=0) until voice chunks arrive
+												const isVoice = prev.voiceMode === true;
 												return {
 													...prev,
 													participants: prev.participants.map((p) =>
@@ -1785,6 +1787,8 @@ export default function NewChatPage() {
 																		wordCount: dpeWordCount,
 																		latencyMs: dpeLatency,
 																		status: "complete",
+																		...(isVoice ? { textRevealIndex: 0 } : {}),
+																	},
 																	},
 																},
 															}
@@ -2849,7 +2853,8 @@ export default function NewChatPage() {
 											const dpePrev2 = String(dpe2?.response_preview ?? "");
 											setDebateState((prev) => {
 												if (!prev) return prev;
-												return { ...prev, participants: prev.participants.map((p) => p.display === dpeM2 ? { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(p.responses[dpeR2] ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete" } } } : p) };
+												const isV2 = prev.voiceMode === true;
+												return { ...prev, participants: prev.participants.map((p) => p.display === dpeM2 ? { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(p.responses[dpeR2] ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete", ...(isV2 ? { textRevealIndex: 0 } : {}) } } } : p) };
 											});
 											break;
 										}
