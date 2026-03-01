@@ -212,11 +212,17 @@ async def _call_litellm(
     query: str,
     timeout_seconds: int,
     system_prompt: str,
+    max_tokens: int | None = None,
 ) -> tuple[str, dict[str, int] | None]:
     model_string = _build_model_string(config)
     api_key = str(config.get("api_key") or "").strip()
     api_base = _resolve_api_base(config)
     litellm_params = config.get("litellm_params") or {}
+
+    # Explicit max_tokens takes precedence over litellm_params
+    call_params = {**litellm_params}
+    if max_tokens is not None:
+        call_params["max_tokens"] = max_tokens
 
     async def _run():
         response = await litellm.acompletion(
@@ -227,7 +233,7 @@ async def _call_litellm(
             ],
             api_key=api_key,
             api_base=api_base or None,
-            **litellm_params,
+            **call_params,
         )
         message = response.choices[0].message
         if hasattr(message, "content"):
@@ -249,6 +255,7 @@ async def call_external_model(
     timeout_seconds: int = EXTERNAL_MODEL_TIMEOUT_SECONDS,
     config: dict | None = None,
     system_prompt: str | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     config = config or load_llm_config_from_yaml(spec.config_id)
     if not config:
@@ -282,6 +289,7 @@ async def call_external_model(
             query,
             timeout_seconds,
             system_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT,
+            max_tokens=max_tokens,
         )
     except Exception as exc:
         latency_ms = int((time.monotonic() - start) * 1000)

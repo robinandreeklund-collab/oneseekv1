@@ -1789,6 +1789,8 @@ async def create_supervisor_agent(
     statistics_prompt: str,
     synthesis_prompt: str | None = None,
     compare_mode: bool = False,
+    debate_mode: bool = False,
+    voice_debate_mode: bool = False,
     hybrid_mode: bool = False,
     speculative_enabled: bool = False,
     external_model_prompt: str | None = None,
@@ -2054,6 +2056,34 @@ async def create_supervisor_agent(
         _research_synthesis_prompt_resolved
         if _research_synthesis_prompt_resolved != DEFAULT_COMPARE_RESEARCH_PROMPT
         else None
+    )
+
+    # ─── Debate mode prompts ─────────────────────────────────────────
+    from app.agents.new_chat.debate_prompts import (
+        DEFAULT_DEBATE_ANALYSIS_PROMPT,
+        DEFAULT_DEBATE_CONVERGENCE_PROMPT,
+        DEFAULT_DEBATE_MINI_CRITIC_PROMPT,
+    )
+    debate_synthesizer_prompt_template = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "debate.analysis.system",
+            DEFAULT_DEBATE_ANALYSIS_PROMPT,
+        ),
+    )
+    debate_convergence_prompt = inject_core_prompt(
+        _core,
+        resolve_prompt(
+            prompt_overrides,
+            "debate.convergence.system",
+            DEFAULT_DEBATE_CONVERGENCE_PROMPT,
+        ),
+    )
+    debate_mini_critic_prompt = resolve_prompt(
+        prompt_overrides,
+        "debate.mini_critic.system",
+        DEFAULT_DEBATE_MINI_CRITIC_PROMPT,
     )
 
     hitl_planner_message_template = resolve_prompt(
@@ -6878,6 +6908,107 @@ async def create_supervisor_agent(
         graph_builder.add_edge("compare_subagent_spawner", "compare_convergence")
         graph_builder.add_edge("compare_convergence", "compare_synthesizer")
         graph_builder.add_edge("compare_synthesizer", END)
+    elif debate_mode:
+        # ─── Debate Supervisor v1: 4-round debate architecture ────────
+        from app.agents.new_chat.debate_executor import (
+            build_debate_domain_planner_node,
+            build_debate_round_executor_node,
+            build_debate_convergence_node,
+            build_debate_synthesizer_node,
+        )
+
+        # Build debate domain planner (deterministic — all participants)
+        debate_domain_planner_node = build_debate_domain_planner_node(
+            external_model_specs=list(EXTERNAL_MODEL_SPECS),
+            include_research=True,
+        )
+
+        # Build Tavily search function for OneSeek (reuse compare pattern)
+        _debate_tavily_search_fn = None
+        _debate_tavily_key: str | None = None
+        if connector_service and search_space_id is not None:
+            try:
+                from app.db import SearchSourceConnectorType
+
+                tavily_connector = await connector_service.get_connector_by_type(
+                    SearchSourceConnectorType.TAVILY_API, search_space_id
+                )
+                if tavily_connector:
+                    _debate_tavily_key = tavily_connector.config.get("TAVILY_API_KEY")
+            except Exception as exc:
+                logger.warning("debate mode: failed to fetch Tavily API key: %s", exc)
+
+        if not _debate_tavily_key:
+            from app.config import Config as _AppConfig
+
+            _debate_tavily_key = getattr(_AppConfig, "PUBLIC_TAVILY_API_KEY", None)
+
+        if _debate_tavily_key:
+            _cached_debate_key = _debate_tavily_key
+
+            async def _debate_tavily_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
+                """Call Tavily API for debate mode OneSeek research."""
+                try:
+                    from tavily import TavilyClient
+
+                    client = TavilyClient(api_key=_cached_debate_key)
+                    response = await asyncio.to_thread(
+                        client.search,
+                        query=query,
+                        max_results=max_results,
+                        search_depth="basic",
+                        include_answer=True,
+                        include_raw_content=False,
+                        include_images=False,
+                    )
+
+                    results: list[dict[str, Any]] = []
+                    for item in response.get("results", []):
+                        results.append({
+                            "url": item.get("url", ""),
+                            "title": item.get("title", ""),
+                            "content": item.get("content", "")[:500],
+                        })
+                    return results
+                except Exception as exc:
+                    logger.warning("debate_tavily_search_fn: error: %s", exc)
+                    return []
+
+        # Build debate round executor (runs all 4 rounds)
+        debate_round_executor_node = build_debate_round_executor_node(
+            llm=llm,
+            tavily_search_fn=_debate_tavily_search_fn,
+            execution_timeout_seconds=90,
+            prompt_overrides=prompt_overrides,
+            voice_mode=voice_debate_mode,
+        )
+
+        # Build debate convergence node
+        debate_convergence_node_fn = build_debate_convergence_node(
+            llm=llm,
+            convergence_prompt_template=debate_convergence_prompt,
+            latest_user_query_fn=_latest_user_query,
+            extract_first_json_object_fn=_extract_first_json_object,
+        )
+
+        # Build debate synthesizer
+        debate_synth_node = build_debate_synthesizer_node(
+            prompt_override=debate_synthesizer_prompt_template,
+        )
+
+        # Add nodes
+        graph_builder.add_node("debate_domain_planner", RunnableCallable(None, debate_domain_planner_node))
+        graph_builder.add_node("debate_round_executor", RunnableCallable(None, debate_round_executor_node))
+        graph_builder.add_node("debate_convergence", RunnableCallable(None, debate_convergence_node_fn))
+        graph_builder.add_node("debate_synthesizer", RunnableCallable(None, debate_synth_node))
+
+        # Graph routing: resolve_intent → planner → rounds → convergence → synthesizer → END
+        graph_builder.set_entry_point("resolve_intent")
+        graph_builder.add_edge("resolve_intent", "debate_domain_planner")
+        graph_builder.add_edge("debate_domain_planner", "debate_round_executor")
+        graph_builder.add_edge("debate_round_executor", "debate_convergence")
+        graph_builder.add_edge("debate_convergence", "debate_synthesizer")
+        graph_builder.add_edge("debate_synthesizer", END)
     else:
         # Normal mode: use standard supervisor pipeline
         if hybrid_mode and not compare_mode and speculative_enabled:

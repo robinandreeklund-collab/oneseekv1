@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OneSeek Debatt — Podcastpresentation — Mockup 3</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141f;
+    --surface-2: #1c1c2e;
+    --surface-3: #252540;
+    --border: #2a2a45;
+    --text: #e8e8f0;
+    --text-muted: #8888a0;
+    --accent: #6366f1;
+    --accent-glow: rgba(99, 102, 241, 0.15);
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --cyan: #06b6d4;
+    --purple: #a855f7;
+    --pink: #ec4899;
+    --gold: #fbbf24;
+    --radius: 16px;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* ─── Podcast Container ─── */
+  .podcast-container {
+    max-width: 900px;
+    width: 100%;
+    padding: 32px;
+  }
+
+  /* ─── Podcast Header ─── */
+  .podcast-header {
+    background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px;
+    margin-bottom: 24px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .podcast-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--cyan), var(--purple), var(--pink));
+  }
+
+  .podcast-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent-glow);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
+  }
+
+  .podcast-title {
+    font-size: 24px;
+    font-weight: 800;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, var(--text), var(--text-muted));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .podcast-subtitle {
+    font-size: 14px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  /* ─── Participant Logos Row ─── */
+  .logos-row {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 20px;
+    flex-wrap: wrap;
+  }
+
+  .logo-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    border: 2px solid var(--bg);
+    transition: transform 0.2s;
+    position: relative;
+  }
+
+  .logo-avatar:hover {
+    transform: scale(1.15);
+    z-index: 2;
+  }
+
+  .logo-avatar.winner {
+    border-color: var(--gold);
+    box-shadow: 0 0 12px rgba(251, 191, 36, 0.3);
+  }
+
+  .logo-avatar.winner::after {
+    content: '&#128081;';
+    position: absolute;
+    top: -10px;
+    right: -4px;
+    font-size: 12px;
+  }
+
+  .logo-grok { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; }
+  .logo-claude { background: linear-gradient(135deg, #d4a574, #cc8b65); color: #fff; }
+  .logo-gpt { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: #fff; }
+  .logo-gemini { background: linear-gradient(135deg, #4285f4, #6366f1); color: #fff; }
+  .logo-deepseek { background: linear-gradient(135deg, #0066ff, #0044cc); color: #fff; }
+  .logo-perplexity { background: linear-gradient(135deg, #20b2aa, #1a9a92); color: #fff; }
+  .logo-qwen { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; }
+  .logo-oneseek { background: linear-gradient(135deg, #6366f1, #06b6d4); color: #fff; }
+
+  /* ─── Waveform Player ─── */
+  .player-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+
+  .waveform-container {
+    height: 80px;
+    margin-bottom: 16px;
+    position: relative;
+    cursor: pointer;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .waveform-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .waveform-progress {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 35%;
+    height: 100%;
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.3), rgba(6, 182, 212, 0.2));
+    pointer-events: none;
+    transition: width 0.1s;
+  }
+
+  .waveform-cursor {
+    position: absolute;
+    top: 0;
+    left: 35%;
+    width: 2px;
+    height: 100%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    pointer-events: none;
+    transition: left 0.1s;
+  }
+
+  /* Playback Controls */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .play-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .play-btn:hover {
+    background: #5558e6;
+    transform: scale(1.05);
+  }
+
+  .time-display {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 90px;
+  }
+
+  .seek-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--surface-3);
+    border-radius: 2px;
+    appearance: none;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .seek-bar::-webkit-slider-thumb {
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+  }
+
+  .speed-btn {
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: all 0.2s;
+  }
+
+  .speed-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .volume-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .volume-icon {
+    font-size: 16px;
+    color: var(--text-muted);
+  }
+
+  .volume-slider {
+    width: 60px;
+    height: 3px;
+    background: var(--surface-3);
+    border-radius: 2px;
+    appearance: none;
+    cursor: pointer;
+  }
+
+  .volume-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    cursor: pointer;
+  }
+
+  /* ─── Round Markers on waveform ─── */
+  .round-markers {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0 0;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .round-marker {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .round-marker .marker-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .round-marker.current .marker-dot {
+    background: var(--cyan);
+    box-shadow: 0 0 6px var(--cyan);
+  }
+
+  /* ─── Winner Banner ─── */
+  .winner-banner {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.08), rgba(251, 191, 36, 0.02));
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .winner-crown {
+    font-size: 36px;
+    flex-shrink: 0;
+  }
+
+  .winner-info h3 {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--gold);
+    margin-bottom: 4px;
+  }
+
+  .winner-info p {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .winner-votes-badge {
+    margin-left: auto;
+    background: rgba(251, 191, 36, 0.15);
+    color: var(--gold);
+    font-size: 24px;
+    font-weight: 800;
+    padding: 12px 20px;
+    border-radius: var(--radius);
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .winner-votes-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+  }
+
+  /* ─── Transcript ─── */
+  .transcript-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .transcript-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .transcript-header h3 {
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .transcript-filter {
+    display: flex;
+    gap: 4px;
+  }
+
+  .filter-btn {
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: all 0.2s;
+  }
+
+  .filter-btn:hover, .filter-btn.active {
+    background: var(--accent-glow);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .transcript-body {
+    max-height: 500px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+  }
+
+  .transcript-body::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .transcript-body::-webkit-scrollbar-thumb {
+    background: var(--surface-3);
+    border-radius: 3px;
+  }
+
+  .transcript-entry {
+    padding: 16px 24px;
+    border-bottom: 1px solid rgba(42, 42, 69, 0.5);
+    display: flex;
+    gap: 14px;
+    transition: background 0.2s;
+    cursor: pointer;
+  }
+
+  .transcript-entry:hover {
+    background: var(--surface-2);
+  }
+
+  .transcript-entry.active {
+    background: rgba(99, 102, 241, 0.05);
+    border-left: 3px solid var(--accent);
+    padding-left: 21px;
+  }
+
+  .transcript-entry.highlight {
+    background: rgba(251, 191, 36, 0.04);
+  }
+
+  .entry-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 48px;
+    padding-top: 2px;
+    flex-shrink: 0;
+  }
+
+  .entry-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  .entry-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .entry-name {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .entry-round-badge {
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--surface-3);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .entry-text {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .entry-expand {
+    font-size: 11px;
+    color: var(--accent);
+    margin-top: 6px;
+    cursor: pointer;
+    display: inline-block;
+  }
+
+  /* ─── Voting Summary inline ─── */
+  .vote-summary-inline {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .vote-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--surface-3);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .vote-chip .mini-logo {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+<div class="podcast-container">
+
+  <!-- Header -->
+  <div class="podcast-header">
+    <div class="podcast-badge">&#127897; AI Debatt Podcast</div>
+    <h1 class="podcast-title">Karnkraft vs Fornybar Energi i Sverige</h1>
+    <p class="podcast-subtitle">8 AI-modeller debatterar i 4 rundor. Lyssna pa hela diskussionen med tidsstamplar och rostningsresultat.</p>
+    <div class="logos-row">
+      <div class="logo-avatar logo-oneseek winner" title="OneSeek (Vinnare)">OS</div>
+      <div class="logo-avatar logo-claude" title="Claude">C</div>
+      <div class="logo-avatar logo-gemini" title="Gemini">Ge</div>
+      <div class="logo-avatar logo-grok" title="Grok">G</div>
+      <div class="logo-avatar logo-gpt" title="ChatGPT">GP</div>
+      <div class="logo-avatar logo-deepseek" title="DeepSeek">DS</div>
+      <div class="logo-avatar logo-perplexity" title="Perplexity">Px</div>
+      <div class="logo-avatar logo-qwen" title="Qwen">Qw</div>
+    </div>
+  </div>
+
+  <!-- Winner Banner -->
+  <div class="winner-banner">
+    <div class="winner-crown">&#128081;</div>
+    <div class="winner-info">
+      <h3>OneSeek vann debatten!</h3>
+      <p>Fick flest roster tack vare faktabaserad argumentation med realtidssokning via Tavily och stark svensk kontext.</p>
+    </div>
+    <div class="winner-votes-badge">
+      4/7
+      <div class="winner-votes-label">roster</div>
+    </div>
+  </div>
+
+  <!-- Waveform Player -->
+  <div class="player-card">
+    <div class="waveform-container" id="waveformContainer">
+      <canvas class="waveform-canvas" id="waveformCanvas"></canvas>
+      <div class="waveform-progress" id="waveformProgress"></div>
+      <div class="waveform-cursor" id="waveformCursor"></div>
+    </div>
+    <div class="round-markers">
+      <div class="round-marker"><div class="marker-dot"></div>Runda 1</div>
+      <div class="round-marker current"><div class="marker-dot"></div>Runda 2</div>
+      <div class="round-marker"><div class="marker-dot"></div>Runda 3</div>
+      <div class="round-marker"><div class="marker-dot"></div>Runda 4</div>
+      <div class="round-marker"><div class="marker-dot"></div>Resultat</div>
+    </div>
+    <div style="height: 16px;"></div>
+    <div class="controls">
+      <button class="play-btn" id="playBtn" onclick="togglePlay()">&#9654;</button>
+      <div class="time-display">
+        <span id="currentTime">3:42</span> / <span id="totalTime">10:28</span>
+      </div>
+      <input type="range" class="seek-bar" id="seekBar" min="0" max="628" value="222" oninput="seek(this.value)">
+      <button class="speed-btn" onclick="cycleSpeed(this)">1x</button>
+      <div class="volume-group">
+        <span class="volume-icon">&#128266;</span>
+        <input type="range" class="volume-slider" min="0" max="100" value="80">
+      </div>
+    </div>
+  </div>
+
+  <!-- Transcript -->
+  <div class="transcript-card">
+    <div class="transcript-header">
+      <h3>Transkript</h3>
+      <div class="transcript-filter">
+        <button class="filter-btn active">Alla rundor</button>
+        <button class="filter-btn">Runda 1</button>
+        <button class="filter-btn">Runda 2</button>
+        <button class="filter-btn">Runda 3</button>
+        <button class="filter-btn">Runda 4</button>
+      </div>
+    </div>
+    <div class="transcript-body">
+
+      <!-- Round 1 entries -->
+      <div class="transcript-entry">
+        <div class="entry-time">0:00</div>
+        <div class="entry-avatar logo-grok">G</div>
+        <div class="entry-content">
+          <div class="entry-name">Grok <span class="entry-round-badge">Runda 1 — Intro</span></div>
+          <div class="entry-text">Jag ar Grok, byggd av xAI. Jag brinner for att utmana konventionellt tankande och tror att energifragan kraver modiga beslut. Karnkraft ar inte perfekt, men det ar den enda bevisade kallam som kan leverera basenergi i stor skala utan koldioxidutslapp.</div>
+          <span class="entry-expand">Visa mer</span>
+        </div>
+      </div>
+
+      <div class="transcript-entry">
+        <div class="entry-time">0:22</div>
+        <div class="entry-avatar logo-claude">C</div>
+        <div class="entry-content">
+          <div class="entry-name">Claude <span class="entry-round-badge">Runda 1 — Intro</span></div>
+          <div class="entry-text">Jag ar Claude fran Anthropic. Min approach ar att analysera bada sidor med nyans och intellektuell artlighet. Jag tror att fragor om energi kraver att vi ser bortom binara val och forstari att losningen ar en kombination — men proportionerna ar det verkligt intressanta.</div>
+          <span class="entry-expand">Visa mer</span>
+        </div>
+      </div>
+
+      <div class="transcript-entry">
+        <div class="entry-time">0:48</div>
+        <div class="entry-avatar logo-oneseek">OS</div>
+        <div class="entry-content">
+          <div class="entry-name">OneSeek <span class="entry-round-badge">Runda 1 — Intro</span></div>
+          <div class="entry-text">Jag ar OneSeek — en svensk AI-agent med realtidsverktyg och Tavily-sokning. Till skillnad fran andra deltagare kan jag verifiera pastaenden mot aktuella kallor i realtid. Mitt perspektiv ar grundat i verifierbar data med sarskilt fokus pa svenska forhallanden.</div>
+          <span class="entry-expand">Visa mer</span>
+        </div>
+      </div>
+
+      <!-- Round 2 entries -->
+      <div class="transcript-entry active">
+        <div class="entry-time">3:12</div>
+        <div class="entry-avatar logo-claude">C</div>
+        <div class="entry-content">
+          <div class="entry-name">Claude <span class="entry-round-badge">Runda 2 — Argument</span></div>
+          <div class="entry-text">Jag vill bygga vidare pa Groks poang om energisakerhet. Karnkraft erbjuder en unik fordel som ingen fornybar kalla kan matcha: planerbar basenergi dygnet runt. Sveriges befintliga karnkraftverk levererar cirka 30% av landets el...</div>
+          <span class="entry-expand">Visa mer</span>
+        </div>
+      </div>
+
+      <div class="transcript-entry">
+        <div class="entry-time">3:42</div>
+        <div class="entry-avatar logo-grok">G</div>
+        <div class="entry-content">
+          <div class="entry-name">Grok <span class="entry-round-badge">Runda 2 — Argument</span></div>
+          <div class="entry-text">Bra poanger fran Claude, men jag vill utmana pastaendet att karnkraft ar den enda losningen for basenergi. Batteriteknologin gor enorma framsteg — Teslas Megapack och liknande losningar kan redan idag lagra energi...</div>
+          <span class="entry-expand">Visa mer</span>
+        </div>
+      </div>
+
+      <div class="transcript-entry">
+        <div class="entry-time">4:05</div>
+        <div class="entry-avatar logo-oneseek">OS</div>
+        <div class="entry-content">
+          <div class="entry-name">OneSeek <span class="entry-round-badge">Runda 2 — Argument</span></div>
+          <div class="entry-text">Jag har sokt igenom aktuella kallor via Tavily. Enligt Energimyndighetens rapport fran januari 2026 star karnkraft for 29.8% av Sveriges elproduktion. Grok har ratt om byggtider: Hinkley Point C ar nu 7 ar forsenat...</div>
+          <span class="entry-expand">Visa mer</span>
+        </div>
+      </div>
+
+      <!-- Round 3 entries -->
+      <div class="transcript-entry">
+        <div class="entry-time">5:30</div>
+        <div class="entry-avatar logo-gemini">Ge</div>
+        <div class="entry-content">
+          <div class="entry-name">Gemini <span class="entry-round-badge">Runda 3 — Fordjupning</span></div>
+          <div class="entry-text">Jag vill utmana den falska dikotomi som presenteras. Fragan ar inte "karnkraft ELLER fornybart". Googles DeepMind har visat att AI-optimerade energinat minskar reservkapacitet med 30%. Sverige har unika forutsattningar...</div>
+          <span class="entry-expand">Visa mer</span>
+        </div>
+      </div>
+
+      <div class="transcript-entry">
+        <div class="entry-time">6:15</div>
+        <div class="entry-avatar logo-deepseek">DS</div>
+        <div class="entry-content">
+          <div class="entry-name">DeepSeek <span class="entry-round-badge">Runda 3 — Fordjupning</span></div>
+          <div class="entry-text">Lat oss titta pa den ekonomiska sidan som saknas i diskussionen. Solenergi har sjunkit 89% i kostnad sedan 2010 medan ny karnkraft har overkostnader pa i genomsnitt 60%. Investeringskalkylen talar sitt tydliga sprak...</div>
+          <span class="entry-expand">Visa mer</span>
+        </div>
+      </div>
+
+      <!-- Round 4 votes -->
+      <div class="transcript-entry highlight">
+        <div class="entry-time">8:30</div>
+        <div class="entry-avatar logo-grok">G</div>
+        <div class="entry-content">
+          <div class="entry-name">Grok <span class="entry-round-badge">Runda 4 — Rostning</span></div>
+          <div class="entry-text">Jag rostar pa OneSeek. Mest faktabaserat och grundat i verifierade kallor. Enda deltagaren med realtidssokning, korrigerade felaktiga pastaenden, balanserad argumentation.</div>
+          <div class="vote-summary-inline">
+            <div class="vote-chip">
+              <div class="mini-logo logo-grok">G</div>
+              &#10141;
+              <div class="mini-logo logo-oneseek">OS</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="transcript-entry highlight">
+        <div class="entry-time">8:42</div>
+        <div class="entry-avatar logo-claude">C</div>
+        <div class="entry-content">
+          <div class="entry-name">Claude <span class="entry-round-badge">Runda 4 — Rostning</span></div>
+          <div class="entry-text">Min rost gar till OneSeek. Starkast koppling mellan data och slutsatser, anvande aktuella kallor fran 2026, integrerade och utmanade andra deltagares argument med verifierade fakta.</div>
+          <div class="vote-summary-inline">
+            <div class="vote-chip">
+              <div class="mini-logo logo-claude">C</div>
+              &#10141;
+              <div class="mini-logo logo-oneseek">OS</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="transcript-entry highlight">
+        <div class="entry-time">9:15</div>
+        <div class="entry-avatar logo-gemini">Ge</div>
+        <div class="entry-content">
+          <div class="entry-name">Gemini <span class="entry-round-badge">Runda 4 — Rostning</span></div>
+          <div class="entry-text">Jag rostar pa Claude for den mest nyanserade analysen med bada perspektiv. Erkande bade styrkor och svagheter, logisk progression, inga overdrifter.</div>
+          <div class="vote-summary-inline">
+            <div class="vote-chip">
+              <div class="mini-logo logo-gemini">Ge</div>
+              &#10141;
+              <div class="mini-logo logo-claude">C</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Draw waveform
+const canvas = document.getElementById('waveformCanvas');
+const ctx = canvas.getContext('2d');
+
+function drawWaveform() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+
+  const w = rect.width;
+  const h = rect.height;
+  const bars = 200;
+  const barWidth = w / bars - 1;
+  const mid = h / 2;
+
+  // Generate debate-like waveform with varying intensity per round
+  const roundBreaks = [0, 0.25, 0.5, 0.72, 0.88, 1.0];
+  const roundIntensity = [0.4, 0.7, 0.85, 0.5, 0.3];
+
+  for (let i = 0; i < bars; i++) {
+    const progress = i / bars;
+
+    // Determine current round
+    let roundIdx = 0;
+    for (let r = 0; r < roundBreaks.length - 1; r++) {
+      if (progress >= roundBreaks[r] && progress < roundBreaks[r + 1]) {
+        roundIdx = r;
+        break;
+      }
+    }
+
+    const intensity = roundIntensity[roundIdx];
+    const noise = Math.random() * 0.4 + 0.1;
+    const amplitude = (noise * intensity) * (h * 0.45);
+
+    const x = i * (w / bars);
+
+    // Color based on whether played
+    const playProgress = 0.35;
+    if (progress < playProgress) {
+      ctx.fillStyle = 'rgba(99, 102, 241, 0.8)';
+    } else {
+      ctx.fillStyle = 'rgba(99, 102, 241, 0.2)';
+    }
+
+    ctx.fillRect(x, mid - amplitude, barWidth, amplitude * 2);
+  }
+}
+
+window.addEventListener('resize', drawWaveform);
+drawWaveform();
+
+// Playback controls
+let isPlaying = false;
+
+function togglePlay() {
+  isPlaying = !isPlaying;
+  document.getElementById('playBtn').innerHTML = isPlaying ? '&#10074;&#10074;' : '&#9654;';
+}
+
+function seek(value) {
+  const progress = value / 628;
+  document.getElementById('waveformProgress').style.width = (progress * 100) + '%';
+  document.getElementById('waveformCursor').style.left = (progress * 100) + '%';
+  const minutes = Math.floor(value / 60);
+  const seconds = value % 60;
+  document.getElementById('currentTime').textContent =
+    minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+}
+
+function cycleSpeed(btn) {
+  const speeds = ['1x', '1.25x', '1.5x', '2x'];
+  const current = speeds.indexOf(btn.textContent);
+  btn.textContent = speeds[(current + 1) % speeds.length];
+}
+
+// Click waveform to seek
+document.getElementById('waveformContainer').addEventListener('click', function(e) {
+  const rect = this.getBoundingClientRect();
+  const progress = (e.clientX - rect.left) / rect.width;
+  const value = Math.round(progress * 628);
+  document.getElementById('seekBar').value = value;
+  seek(value);
+});
+
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>

@@ -64,6 +64,10 @@ import {
 } from "@/components/tool-ui/compare-model";
 import { LiveCriterionContext, LiveCriterionPodContext } from "@/components/tool-ui/spotlight-arena";
 import type { LiveCriterionPodMap, CriterionPodMeta } from "@/components/tool-ui/spotlight-arena";
+import { LiveDebateStateContext, DebateVoiceContext } from "@/components/debate/debate-arena";
+import type { DebateState, DebateParticipant } from "@/contracts/types/debate.types";
+import { DEBATE_MODEL_DISPLAY } from "@/contracts/types/debate.types";
+import { useDebateAudio } from "@/hooks/use-debate-audio";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
@@ -76,6 +80,7 @@ import { getBearerToken } from "@/lib/auth-utils";
 import { createAttachmentAdapter, extractAttachmentContent } from "@/lib/chat/attachment-adapter";
 import {
 	convertToThreadMessage,
+	extractDebateSummary,
 	extractReasoningText as extractReasoningTextZod,
 	extractStructuredFields,
 } from "@/lib/chat/message-utils";
@@ -358,6 +363,27 @@ export default function NewChatPage() {
 	// Live criterion pod metadata from SSE events (domain → criterion → pod info)
 	const [liveCriterionPodInfo, setLiveCriterionPodInfo] = useState<LiveCriterionPodMap>({});
 
+	// Debate mode state from SSE events
+	const INITIAL_DEBATE_STATE: DebateState = {
+		topic: "",
+		participants: [],
+		rounds: [],
+		currentRound: 0,
+		totalRounds: 4,
+		status: "initializing",
+		votes: [],
+		voiceMode: false,
+	};
+	const [debateState, setDebateState] = useState<DebateState | null>(null);
+
+	// Voice debate audio hook
+	// NOTE: We keep a ref so the SSE handler (captured in handleSubmit closure)
+	// always calls the *latest* callbacks even after `enabled` flips to true.
+	const isVoiceDebate = debateState?.voiceMode === true;
+	const debateAudio = useDebateAudio(isVoiceDebate);
+	const debateAudioRef = useRef(debateAudio);
+	useEffect(() => { debateAudioRef.current = debateAudio; }, [debateAudio]);
+
 	// Get mentioned document IDs from the composer
 	const mentionedDocumentIds = useAtomValue(mentionedDocumentIdsAtom);
 	const mentionedDocuments = useAtomValue(mentionedDocumentsAtom);
@@ -579,6 +605,7 @@ export default function NewChatPage() {
 					const restoredThinkingSteps = new Map<string, ThinkingStep[]>();
 					const restoredReasoningMap = new Map<string, string>();
 					const restoredStructuredFields = new Map<string, Map<string, { node: string; field: string; value: unknown }[]>>();
+					let restoredDebateSummary: Record<string, unknown> | null = null;
 					// Extract and restore mentioned documents from persisted messages
 					const restoredDocsMap: Record<string, MentionedDocumentInfo[]> = {};
 
@@ -597,6 +624,11 @@ export default function NewChatPage() {
 							const structFields = extractStructuredFields(msg.content);
 							if (structFields) {
 								restoredStructuredFields.set(`msg-${msg.id}`, structFields);
+							}
+							// Restore debate summary (Issue #3)
+							const dSummary = extractDebateSummary(msg.content);
+							if (dSummary) {
+								restoredDebateSummary = dSummary;
 							}
 						}
 						if (msg.role === "user") {
@@ -655,6 +687,73 @@ export default function NewChatPage() {
 					}
 					if (Object.keys(restoredDocsMap).length > 0) {
 						setMessageDocumentsMap(restoredDocsMap);
+					}
+
+					// Restore debate state from persisted debate-summary (Issue #3)
+					if (restoredDebateSummary) {
+						const ds = restoredDebateSummary;
+						const restoredParticipants = (ds.participants as Array<Record<string, unknown>> ?? []).map((p) => {
+							const pDisplay = String(p.display ?? "");
+							const pKey = String(p.key ?? "");
+							const roundResponses = ds.round_responses as Record<string, Record<string, string>> ?? {};
+							const responses: Record<number, import("@/contracts/types/debate.types").DebateParticipantResponse> = {};
+							let totalWc = 0;
+							for (const [rn, rdata] of Object.entries(roundResponses)) {
+								const roundNum = Number(rn);
+								const text = rdata[pDisplay] ?? "";
+								const wc = text.split(/\s+/).filter(Boolean).length;
+								totalWc += wc;
+								responses[roundNum] = {
+									round: roundNum,
+									position: 0,
+									text,
+									wordCount: wc,
+									latencyMs: 0,
+									status: "complete",
+								};
+							}
+							return {
+								key: pKey,
+								display: pDisplay,
+								toolName: String(p.tool_name ?? ""),
+								configId: Number(p.config_id ?? 0),
+								isOneseek: Boolean(p.is_oneseek),
+								totalWordCount: totalWc,
+								responses,
+							} satisfies import("@/contracts/types/debate.types").DebateParticipant;
+						});
+
+						const results = ds.results as Record<string, unknown> | undefined;
+						const restoredVotes = ((ds.votes as Array<Record<string, unknown>>) ?? []).map((v) => ({
+							voter: String(v.voter ?? ""),
+							voterKey: String(v.voter_key ?? ""),
+							votedFor: String(v.voted_for ?? ""),
+							shortMotivation: String(v.motivation ?? ""),
+							threeBullets: (v.bullets as string[]) ?? [],
+						}));
+
+						setDebateState({
+							topic: String(ds.topic ?? ""),
+							participants: restoredParticipants,
+							rounds: [
+								{ round: 1, type: "introduction", order: [], status: "complete" },
+								{ round: 2, type: "argument", order: [], status: "complete" },
+								{ round: 3, type: "deepening", order: [], status: "complete" },
+								{ round: 4, type: "voting", order: [], status: "complete" },
+							],
+							currentRound: Number(ds.total_rounds ?? 3),
+							totalRounds: Number(ds.total_rounds ?? 3),
+							status: "complete",
+							results: results ? {
+								winner: String(results.winner ?? ""),
+								voteCounts: (results.vote_counts as Record<string, number>) ?? {},
+								wordCounts: (results.word_counts as Record<string, number>) ?? {},
+								tiebreakerUsed: Boolean(results.tiebreaker_used),
+								totalVotes: Number(results.total_votes ?? 0),
+								selfVotesFiltered: Number(results.self_votes_filtered ?? 0),
+							} : undefined,
+							votes: restoredVotes,
+						});
 					}
 				}
 			}
@@ -752,6 +851,11 @@ export default function NewChatPage() {
 	// Handle new message from user
 	const onNew = useCallback(
 		async (message: AppendMessage) => {
+			// Pre-unlock AudioContext during this user gesture so voice
+			// debate audio can auto-play later without requiring a
+			// separate click on the play button.
+			debateAudioRef.current.resumeAudioContext();
+
 			// Abort any previous streaming request to prevent race conditions
 			// when user sends a second query while the first is still streaming
 			if (abortControllerRef.current) {
@@ -1107,6 +1211,7 @@ export default function NewChatPage() {
 			setIsRunning(true);
 			setLiveCriterionScores({});
 			setLiveCriterionPodInfo({});
+			setDebateState(null);
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -1119,6 +1224,7 @@ export default function NewChatPage() {
 			const currentStructuredFields = new Map<string, { node: string; field: string; value: unknown }[]>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
+			let debateSummary: unknown | null = null;
 
 			// Ordered content parts to preserve inline tool call positions
 			// Each part is either a text segment or a tool call
@@ -1218,6 +1324,9 @@ export default function NewChatPage() {
 				}
 				if (compareSummary) {
 					parts.push({ type: "compare-summary", summary: compareSummary });
+				}
+				if (debateSummary) {
+					parts.push({ type: "debate-summary", summary: debateSummary });
 				}
 				// P1-Extra.6: persist structured field decisions
 				if (currentStructuredFields.size > 0) {
@@ -1588,6 +1697,288 @@ export default function NewChatPage() {
 											break;
 										}
 
+										// ── Debate mode SSE events ──────────────
+										case "data-debate-init": {
+											const diData = parsed.data as Record<string, unknown>;
+											const diParticipants = (diData?.participants as string[]) ?? [];
+											setDebateState({
+												topic: String(diData?.topic ?? ""),
+												participants: diParticipants.map((name) => ({
+													// Strip "call_" prefix so key matches MODEL_LOGOS/COLORS (e.g. "grok", "gpt")
+													key: (Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase()).replace("call_", ""),
+													display: name,
+													toolName: "",
+													configId: -1,
+													isOneseek: name === "OneSeek",
+													totalWordCount: 0,
+													responses: {},
+												})),
+												rounds: [],
+												currentRound: 0,
+												totalRounds: Number(diData?.total_rounds ?? 4),
+												status: "initializing",
+												votes: [],
+												voiceMode: Boolean(diData?.voice_mode),
+											});
+											break;
+										}
+										case "data-debate-round-start": {
+											const drsData = parsed.data as Record<string, unknown>;
+											const drsRound = Number(drsData?.round ?? 0);
+											const drsType = String(drsData?.type ?? "");
+											const drsOrder = Array.isArray(drsData?.order) ? (drsData.order as string[]) : [];
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												const statusMap: Record<string, DebateState["status"]> = {
+													introduction: "round_1",
+													argument: "round_2",
+													deepening: "round_3",
+													voting: "voting",
+												};
+												return {
+													...prev,
+													currentRound: drsRound,
+													status: statusMap[drsType] ?? prev.status,
+													rounds: [
+														...prev.rounds.filter((r) => r.round !== drsRound),
+														{ round: drsRound, type: drsType as "introduction" | "argument" | "deepening" | "voting", order: drsOrder, status: "active" },
+													],
+												};
+											});
+											break;
+										}
+										case "data-debate-participant-start": {
+											const dpsData = parsed.data as Record<string, unknown>;
+											const dpsModel = String(dpsData?.model ?? "");
+											const dpsRound = Number(dpsData?.round ?? 0);
+											const dpsPosition = Number(dpsData?.position ?? 0);
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													participants: prev.participants.map((p) =>
+														p.display === dpsModel
+															? {
+																...p,
+																responses: {
+																	...p.responses,
+																	[dpsRound]: { round: dpsRound, position: dpsPosition, text: "", wordCount: 0, latencyMs: 0, status: "speaking" },
+																},
+															}
+															: p
+													),
+												};
+											});
+											break;
+										}
+										case "data-debate-participant-chunk": {
+											const dpcData = parsed.data as Record<string, unknown>;
+											const dpcModel = String(dpcData?.model ?? "");
+											const dpcRound = Number(dpcData?.round ?? 0);
+											const dpcDelta = String(dpcData?.delta ?? "");
+											if (dpcDelta) {
+												setDebateState((prev) => {
+													if (!prev) return prev;
+													return {
+														...prev,
+														participants: prev.participants.map((p) =>
+															p.display === dpcModel
+																? {
+																	...p,
+																	responses: {
+																		...p.responses,
+																		[dpcRound]: {
+																			...(p.responses[dpcRound] ?? { round: dpcRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }),
+																			text: (p.responses[dpcRound]?.text ?? "") + dpcDelta,
+																		},
+																	},
+																}
+																: p,
+														),
+													};
+												});
+											}
+											break;
+										}
+										case "data-debate-participant-text": {
+											// Full text + timing metadata from voice mode.
+											// Store full text + timing metadata.
+											// The useSmoothTyping hook in debate-arena handles
+											// character-by-character reveal using delayPerWord.
+											const dptData = parsed.data as Record<string, unknown>;
+											const dptModel = String(dptData?.model ?? "");
+											const dptRound = Number(dptData?.round ?? 0);
+											const dptText = String(dptData?.text ?? "");
+											const dptWordCount = Number(dptData?.word_count ?? 0);
+											const dptAudioDur = Number(dptData?.audio_duration ?? 0);
+											const dptDelay = Number(dptData?.delay_per_word ?? 0.15);
+
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													participants: prev.participants.map((p) =>
+														p.display === dptModel
+															? {
+																...p,
+																responses: {
+																	...p.responses,
+																	[dptRound]: {
+																		...(p.responses[dptRound] ?? { round: dptRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }),
+																		text: dptText,
+																		wordCount: dptWordCount,
+																		status: "speaking" as const,
+																		audioDuration: dptAudioDur,
+																		delayPerWord: dptDelay,
+																	},
+																},
+															}
+															: p,
+													),
+												};
+											});
+											break;
+										}
+										case "data-debate-participant-end": {
+											const dpeData = parsed.data as Record<string, unknown>;
+											const dpeModel = String(dpeData?.model ?? "");
+											const dpeRound = Number(dpeData?.round ?? 0);
+											const dpeWordCount = Number(dpeData?.word_count ?? 0);
+											const dpeLatency = Number(dpeData?.latency_ms ?? 0);
+											const dpePreview = String(dpeData?.response_preview ?? "");
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													participants: prev.participants.map((p) => {
+														if (p.display !== dpeModel) return p;
+														const existing = p.responses[dpeRound];
+														return {
+															...p,
+															totalWordCount: p.totalWordCount + dpeWordCount,
+															responses: {
+																...p.responses,
+																[dpeRound]: {
+																	...(existing ?? { round: dpeRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }),
+																	text: existing?.text ?? dpePreview,
+																	wordCount: dpeWordCount,
+																	latencyMs: dpeLatency,
+																	status: "complete",
+																},
+															},
+														};
+													}),
+												};
+											});
+											break;
+										}
+										case "data-debate-round-end": {
+											const dreData = parsed.data as Record<string, unknown>;
+											const dreRound = Number(dreData?.round ?? 0);
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													rounds: prev.rounds.map((r) =>
+														r.round === dreRound ? { ...r, status: "complete" } : r
+													),
+												};
+											});
+											break;
+										}
+										case "data-debate-vote-result": {
+											const dvrData = parsed.data as Record<string, unknown>;
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													votes: [
+														...prev.votes,
+														{
+															voter: String(dvrData?.voter ?? ""),
+															voterKey: "",
+															votedFor: String(dvrData?.voted_for ?? ""),
+															shortMotivation: String(dvrData?.motivation ?? ""),
+															threeBullets: Array.isArray(dvrData?.bullets) ? (dvrData.bullets as string[]) : [],
+														},
+													],
+												};
+											});
+											break;
+										}
+										case "data-debate-results": {
+											const drrData = parsed.data as Record<string, unknown>;
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													status: "results",
+													results: {
+														winner: String(drrData?.winner ?? ""),
+														voteCounts: (drrData?.vote_counts as Record<string, number>) ?? {},
+														wordCounts: (drrData?.word_counts as Record<string, number>) ?? {},
+														tiebreakerUsed: Boolean(drrData?.tiebreaker_used),
+														totalVotes: Number(drrData?.total_votes ?? 0),
+														selfVotesFiltered: 0,
+													},
+												};
+											});
+											break;
+										}
+										case "data-debate-synthesis-complete": {
+											setDebateState((prev) =>
+												prev ? { ...prev, status: "complete" } : prev
+											);
+											break;
+										}
+										case "data-debate-summary": {
+											debateSummary = parsed.data ?? null;
+											break;
+										}
+
+										// ─── Voice debate SSE events ─────────
+										case "data-debate-voice-speaker": {
+											const dvs = parsed.data as Record<string, unknown>;
+											console.log("[SSE] debate-voice-speaker:", dvs?.model);
+											// Auto-resume AudioContext (close to user gesture window)
+											debateAudioRef.current.resumeAudioContext();
+											// NOTE: We intentionally do NOT call onSpeakerChange() here.
+											// The debate_voice_speaker event fires before audio chunks
+											// arrive, so setting currentSpeaker now would prematurely
+											// expand the card.  Instead, playNext() in useDebateAudio
+											// sets currentSpeaker when it actually plays a chunk — that
+											// triggers the card expansion and typing animation in sync.
+											break;
+										}
+										case "data-debate-voice-sentence": {
+											// Text arrives via debate_participant_text in voice mode.
+											// This event is kept for TTS progress tracking only.
+											break;
+										}
+										case "data-debate-voice-chunk": {
+											const dvc = parsed.data as Record<string, unknown>;
+											debateAudioRef.current.enqueueChunk(
+												String(dvc?.model ?? ""),
+												String(dvc?.pcm_b64 ?? ""),
+												Number(dvc?.round ?? 0),
+											);
+											break;
+										}
+										case "data-debate-voice-done": {
+											const dvdData = parsed.data as Record<string, unknown>;
+											const dvdModel = String(dvdData?.model ?? "");
+											console.log("[SSE] debate-voice-done:", dvdModel);
+											// Audio playback continues via the chunk queue.
+											break;
+										}
+										case "data-debate-voice-error": {
+											const dve = parsed.data as Record<string, unknown>;
+											const errMsg = String(dve?.error ?? "Unknown voice error");
+											console.warn("[debate-voice] TTS error:", errMsg);
+											debateAudioRef.current.onVoiceError(errMsg);
+											break;
+										}
+
 										// P1-Extra.5: structured field decisions from pipeline nodes
 										case "structured-field": {
 											const sfNode = String((parsed as any).node ?? "");
@@ -1924,6 +2315,9 @@ export default function NewChatPage() {
 	 */
 	const handleRegenerate = useCallback(
 		async (newUserQuery?: string | null) => {
+			// Pre-unlock AudioContext during user gesture (same as onNew)
+			debateAudioRef.current.resumeAudioContext();
+
 			if (isPublicChat) {
 				toast.info("Sign in to edit or regenerate responses.");
 				return;
@@ -2017,6 +2411,7 @@ export default function NewChatPage() {
 			setIsRunning(true);
 			setLiveCriterionScores({});
 			setLiveCriterionPodInfo({});
+			setDebateState(null);
 			const controller = new AbortController();
 			abortControllerRef.current = controller;
 
@@ -2030,6 +2425,7 @@ export default function NewChatPage() {
 			const currentStructuredFields = new Map<string, { node: string; field: string; value: unknown }[]>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
+			let debateSummary: unknown | null = null;
 
 			// Content parts tracking (same as onNew)
 			type ContentPart =
@@ -2106,6 +2502,9 @@ export default function NewChatPage() {
 				}
 				if (compareSummary) {
 					parts.push({ type: "compare-summary", summary: compareSummary });
+				}
+				if (debateSummary) {
+					parts.push({ type: "debate-summary", summary: debateSummary });
 				}
 				// P1-Extra.6: persist structured field decisions
 				if (currentStructuredFields.size > 0) {
@@ -2432,6 +2831,160 @@ export default function NewChatPage() {
 													)
 												);
 											}
+											break;
+										}
+
+										// ── Debate mode SSE events (regen) ──────
+										case "data-debate-init": {
+											const diData2 = parsed.data as Record<string, unknown>;
+											const diParts2 = (diData2?.participants as string[]) ?? [];
+											setDebateState({
+												topic: String(diData2?.topic ?? ""),
+												participants: diParts2.map((name) => ({
+													key: (Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase()).replace("call_", ""),
+													display: name,
+													toolName: "",
+													configId: -1,
+													isOneseek: name === "OneSeek",
+													totalWordCount: 0,
+													responses: {},
+												})),
+												rounds: [],
+												currentRound: 0,
+												totalRounds: Number(diData2?.total_rounds ?? 4),
+												status: "initializing",
+												votes: [],
+												voiceMode: Boolean(diData2?.voice_mode),
+											});
+											break;
+										}
+										case "data-debate-round-start": {
+											const drs2 = parsed.data as Record<string, unknown>;
+											const drsRound2 = Number(drs2?.round ?? 0);
+											const drsType2 = String(drs2?.type ?? "");
+											const drsOrder2 = Array.isArray(drs2?.order) ? (drs2.order as string[]) : [];
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												const sMap: Record<string, DebateState["status"]> = { introduction: "round_1", argument: "round_2", deepening: "round_3", voting: "voting" };
+												return {
+													...prev,
+													currentRound: drsRound2,
+													status: sMap[drsType2] ?? prev.status,
+													rounds: [...prev.rounds.filter((r) => r.round !== drsRound2), { round: drsRound2, type: drsType2 as "introduction" | "argument" | "deepening" | "voting", order: drsOrder2, status: "active" }],
+												};
+											});
+											break;
+										}
+										case "data-debate-participant-start": {
+											const dps2 = parsed.data as Record<string, unknown>;
+											const dpsModel2 = String(dps2?.model ?? "");
+											const dpsRound2 = Number(dps2?.round ?? 0);
+											const dpsPos2 = Number(dps2?.position ?? 0);
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return { ...prev, participants: prev.participants.map((p) => p.display === dpsModel2 ? { ...p, responses: { ...p.responses, [dpsRound2]: { round: dpsRound2, position: dpsPos2, text: "", wordCount: 0, latencyMs: 0, status: "speaking" } } } : p) };
+											});
+											break;
+										}
+										case "data-debate-participant-chunk": {
+											const dpc2 = parsed.data as Record<string, unknown>;
+											const dpcM2 = String(dpc2?.model ?? "");
+											const dpcR2 = Number(dpc2?.round ?? 0);
+											const dpcD2 = String(dpc2?.delta ?? "");
+											if (dpcD2) {
+												setDebateState((prev) => {
+													if (!prev) return prev;
+													return { ...prev, participants: prev.participants.map((p) => p.display === dpcM2 ? { ...p, responses: { ...p.responses, [dpcR2]: { ...(p.responses[dpcR2] ?? { round: dpcR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }), text: (p.responses[dpcR2]?.text ?? "") + dpcD2 } } } : p) };
+												});
+											}
+											break;
+										}
+										case "data-debate-participant-text": {
+											const dpt2 = parsed.data as Record<string, unknown>;
+											const dptM2 = String(dpt2?.model ?? "");
+											const dptR2 = Number(dpt2?.round ?? 0);
+											const dptTxt2 = String(dpt2?.text ?? "");
+											const dptWc2 = Number(dpt2?.word_count ?? 0);
+											const dptDur2 = Number(dpt2?.audio_duration ?? 0);
+											const dptDel2 = Number(dpt2?.delay_per_word ?? 0.15);
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return { ...prev, participants: prev.participants.map((p) => p.display === dptM2 ? { ...p, responses: { ...p.responses, [dptR2]: { ...(p.responses[dptR2] ?? { round: dptR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }), text: dptTxt2, wordCount: dptWc2, status: "speaking" as const, audioDuration: dptDur2, delayPerWord: dptDel2 } } } : p) };
+											});
+											break;
+										}
+										case "data-debate-participant-end": {
+											const dpe2 = parsed.data as Record<string, unknown>;
+											const dpeM2 = String(dpe2?.model ?? "");
+											const dpeR2 = Number(dpe2?.round ?? 0);
+											const dpeWc2 = Number(dpe2?.word_count ?? 0);
+											const dpeLat2 = Number(dpe2?.latency_ms ?? 0);
+											const dpePrev2 = String(dpe2?.response_preview ?? "");
+											setDebateState((prev) => {
+												if (!prev) return prev;
+												return { ...prev, participants: prev.participants.map((p) => {
+													if (p.display !== dpeM2) return p;
+													const ex = p.responses[dpeR2];
+													return { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(ex ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: ex?.text ?? dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete" } } };
+												}) };
+											});
+											break;
+										}
+										case "data-debate-round-end": {
+											const dre2 = parsed.data as Record<string, unknown>;
+											const dreR2 = Number(dre2?.round ?? 0);
+											setDebateState((prev) => prev ? { ...prev, rounds: prev.rounds.map((r) => r.round === dreR2 ? { ...r, status: "complete" } : r) } : prev);
+											break;
+										}
+										case "data-debate-vote-result": {
+											const dvr2 = parsed.data as Record<string, unknown>;
+											setDebateState((prev) => prev ? { ...prev, votes: [...prev.votes, { voter: String(dvr2?.voter ?? ""), voterKey: "", votedFor: String(dvr2?.voted_for ?? ""), shortMotivation: String(dvr2?.motivation ?? ""), threeBullets: Array.isArray(dvr2?.bullets) ? (dvr2.bullets as string[]) : [] }] } : prev);
+											break;
+										}
+										case "data-debate-results": {
+											const drr2 = parsed.data as Record<string, unknown>;
+											setDebateState((prev) => prev ? { ...prev, status: "results", results: { winner: String(drr2?.winner ?? ""), voteCounts: (drr2?.vote_counts as Record<string, number>) ?? {}, wordCounts: (drr2?.word_counts as Record<string, number>) ?? {}, tiebreakerUsed: Boolean(drr2?.tiebreaker_used), totalVotes: Number(drr2?.total_votes ?? 0), selfVotesFiltered: 0 } } : prev);
+											break;
+										}
+										case "data-debate-synthesis-complete": {
+											setDebateState((prev) => prev ? { ...prev, status: "complete" } : prev);
+											break;
+										}
+										case "data-debate-summary": {
+											debateSummary = parsed.data ?? null;
+											break;
+										}
+
+										// ─── Voice debate SSE events (regen) ──
+										case "data-debate-voice-speaker": {
+											// Resume audio context but don't set currentSpeaker —
+											// playNext() does that when actually playing chunks.
+											debateAudioRef.current.resumeAudioContext();
+											break;
+										}
+										case "data-debate-voice-sentence": {
+											// Text arrives via debate_participant_text; kept for TTS tracking.
+											break;
+										}
+										case "data-debate-voice-chunk": {
+											const dvc2 = parsed.data as Record<string, unknown>;
+											debateAudioRef.current.enqueueChunk(
+												String(dvc2?.model ?? ""),
+												String(dvc2?.pcm_b64 ?? ""),
+												Number(dvc2?.round ?? 0),
+											);
+											break;
+										}
+										case "data-debate-voice-done": {
+											const dvdData2 = parsed.data as Record<string, unknown>;
+											console.log("[SSE] debate-voice-done:", dvdData2?.model);
+											break;
+										}
+										case "data-debate-voice-error": {
+											const dveR = parsed.data as Record<string, unknown>;
+											const errMsgR = String(dveR?.error ?? "Unknown voice error");
+											console.warn("[debate-voice] TTS error:", errMsgR);
+											debateAudioRef.current.onVoiceError(errMsgR);
 											break;
 										}
 
@@ -2775,6 +3328,15 @@ export default function NewChatPage() {
 		<AssistantRuntimeProvider runtime={runtime}>
 		<LiveCriterionContext.Provider value={liveCriterionScores}>
 		<LiveCriterionPodContext.Provider value={liveCriterionPodInfo}>
+		<LiveDebateStateContext.Provider value={debateState}>
+		<DebateVoiceContext.Provider value={isVoiceDebate ? {
+			voiceState: debateAudio.voiceState,
+			togglePlayPause: debateAudio.togglePlayPause,
+			setVolume: debateAudio.setVolume,
+			exportAudioBlob: debateAudio.exportAudioBlob,
+			resumeAudioContext: debateAudio.resumeAudioContext,
+			lastError: debateAudio.lastError,
+		} : null}>
 			{!isPublicChat && <GeneratePodcastToolUI />}
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
@@ -2854,6 +3416,8 @@ export default function NewChatPage() {
 					/>
 				)}
 			</TracePanelContext.Provider>
+		</DebateVoiceContext.Provider>
+		</LiveDebateStateContext.Provider>
 		</LiveCriterionPodContext.Provider>
 		</LiveCriterionContext.Provider>
 		</AssistantRuntimeProvider>
