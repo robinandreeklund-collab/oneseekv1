@@ -76,7 +76,7 @@ DEFAULT_CHUNK_BYTES = 4800
 
 # Default models
 DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
-DEFAULT_CARTESIA_MODEL = "sonic-2024-10-19"
+DEFAULT_CARTESIA_MODEL = "sonic-3"
 
 # Cartesia API version
 CARTESIA_API_VERSION = "2025-04-16"
