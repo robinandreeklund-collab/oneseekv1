@@ -66,7 +66,7 @@ export const DebateVoiceContext = createContext<{
 	voiceState: DebateVoiceState;
 	togglePlayPause: () => void;
 	setVolume: (v: number) => void;
-	exportAudioBlob: () => Blob | null;
+	exportAudioBlob: () => Promise<Blob | null>;
 	resumeAudioContext: () => Promise<void>;
 	lastError: string | null;
 } | null>(null);
@@ -685,7 +685,7 @@ interface VoiceControlBarProps {
 		voiceState: DebateVoiceState;
 		togglePlayPause: () => void;
 		setVolume: (v: number) => void;
-		exportAudioBlob: () => Blob | null;
+		exportAudioBlob: () => Promise<Blob | null>;
 		resumeAudioContext: () => Promise<void>;
 		lastError: string | null;
 	};
@@ -726,8 +726,8 @@ const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => 
 		}
 	}, [voiceState.waveformData, voiceState.playbackStatus]);
 
-	const handleDownload = useCallback(() => {
-		const blob = exportAudioBlob();
+	const handleDownload = useCallback(async () => {
+		const blob = await exportAudioBlob();
 		if (!blob) return;
 		const ext = blob.type === "audio/mpeg" ? "mp3" : "wav";
 		const url = URL.createObjectURL(blob);

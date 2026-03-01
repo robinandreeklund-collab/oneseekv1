@@ -24,7 +24,7 @@ const nextConfig: NextConfig = {
 	serverExternalPackages: ["@blocknote/server-util"],
 
 	// Ensure Turbopack can resolve @xyflow packages
-	transpilePackages: ["@xyflow/react", "@xyflow/system"],
+	transpilePackages: ["@xyflow/react", "@xyflow/system", "lamejs"],
 
 	// Configure webpack to handle blocknote packages
 	webpack: (config, { isServer }) => {

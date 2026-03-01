@@ -299,7 +299,7 @@ export function useDebateAudio(enabled: boolean) {
 	}, []);
 
 	// ── Export collected audio as MP3 blob ───────────────────────────
-	const exportAudioBlob = useCallback((): Blob | null => {
+	const exportAudioBlob = useCallback(async (): Promise<Blob | null> => {
 		const chunks = collectedRef.current;
 		if (chunks.length === 0) return null;
 
@@ -316,12 +316,11 @@ export function useDebateAudio(enabled: boolean) {
 		const int16 = new Int16Array(merged.buffer, merged.byteOffset, merged.byteLength / 2);
 
 		try {
-			// Dynamic import to avoid SSR issues — lamejs is CJS
-			// eslint-disable-next-line @typescript-eslint/no-require-imports
-			const lamejs = require("lamejs");
+			// Dynamic import to avoid Next.js webpack resolution issues with CJS
+			const lamejs = await import("lamejs");
 			const encoder = new lamejs.Mp3Encoder(PCM_CHANNELS, PCM_SAMPLE_RATE, MP3_KBPS);
 
-			const mp3Parts: Uint8Array[] = [];
+			const mp3Parts: BlobPart[] = [];
 			const SAMPLES_PER_FRAME = 1152;
 
 			for (let i = 0; i < int16.length; i += SAMPLES_PER_FRAME) {
