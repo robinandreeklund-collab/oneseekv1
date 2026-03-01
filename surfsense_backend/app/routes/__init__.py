@@ -5,6 +5,7 @@ from .admin_cache_routes import router as admin_cache_router
 from .admin_intent_routes import router as admin_intent_router
 from .admin_tool_settings_routes import router as admin_tool_settings_router
 from .admin_tool_lifecycle_routes import router as admin_tool_lifecycle_router
+from .admin_debate_routes import router as admin_debate_router
 from .admin_flow_graph_routes import router as admin_flow_graph_router
 from .airtable_add_connector_route import (
     router as airtable_add_connector_router,
@@ -84,4 +85,5 @@ router.include_router(admin_cache_router)  # Admin cache controls
 router.include_router(admin_intent_router)  # Admin intent definitions
 router.include_router(admin_tool_settings_router)  # Admin tool settings
 router.include_router(admin_tool_lifecycle_router)  # Admin tool lifecycle management
+router.include_router(admin_debate_router)  # Admin debate voice settings
 router.include_router(admin_flow_graph_router)  # Admin flow graph visualization

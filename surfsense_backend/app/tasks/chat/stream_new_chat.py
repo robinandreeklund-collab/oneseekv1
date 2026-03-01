@@ -133,19 +133,30 @@ from app.utils.context_metrics import (
 )
 
 DEBATE_PREFIX = "/debatt"
+DVOICE_PREFIX = "/dvoice"
 
 
 def _is_debate_request(user_query: str) -> bool:
-    """Check if the user query activates debate mode."""
-    return user_query.strip().lower().startswith(DEBATE_PREFIX)
+    """Check if the user query activates debate mode (text or voice)."""
+    q = user_query.strip().lower()
+    return q.startswith(DEBATE_PREFIX) or q.startswith(DVOICE_PREFIX)
+
+
+def _is_voice_debate_request(user_query: str) -> bool:
+    """Check if the user query activates *voice* debate mode."""
+    return user_query.strip().lower().startswith(DVOICE_PREFIX)
 
 
 def _extract_debate_query(user_query: str) -> str:
-    """Strip the /debatt prefix and return the actual debate topic."""
+    """Strip the /debatt or /dvoice prefix and return the actual debate topic."""
     trimmed = user_query.strip()
-    if not trimmed.lower().startswith(DEBATE_PREFIX):
+    q_lower = trimmed.lower()
+    if q_lower.startswith(DVOICE_PREFIX):
+        remainder = trimmed[len(DVOICE_PREFIX):].strip()
+    elif q_lower.startswith(DEBATE_PREFIX):
+        remainder = trimmed[len(DEBATE_PREFIX):].strip()
+    else:
         return ""
-    remainder = trimmed[len(DEBATE_PREFIX):].strip()
     if remainder.startswith(":"):
         remainder = remainder[1:].strip()
     return remainder
@@ -1676,8 +1687,9 @@ async def stream_new_chat(
     compare_mode = is_compare_request(user_query)
     compare_query = extract_compare_query(user_query) if compare_mode else ""
 
-    # Debate mode detection
+    # Debate mode detection (/debatt or /dvoice)
     debate_mode = _is_debate_request(user_query)
+    voice_debate_mode = _is_voice_debate_request(user_query) if debate_mode else False
     debate_query = _extract_debate_query(user_query) if debate_mode else ""
     if debate_mode and debate_query:
         user_query = debate_query
@@ -2332,6 +2344,7 @@ async def stream_new_chat(
                 synthesis_prompt=compare_synthesis_prompt or synthesis_prompt,
                 compare_mode=compare_mode,
                 debate_mode=debate_mode,
+                voice_debate_mode=voice_debate_mode,
                 hybrid_mode=hybrid_mode,
                 speculative_enabled=speculative_enabled,
                 external_model_prompt=compare_external_prompt,
@@ -2533,6 +2546,16 @@ async def stream_new_chat(
             input_state["search_space_id"] = search_space_id
         else:
             input_state["route_hint"] = route.value
+
+        # Load voice debate settings from Redis when /dvoice is active
+        if voice_debate_mode:
+            try:
+                from app.routes.admin_debate_routes import load_debate_voice_settings
+                _voice_settings = load_debate_voice_settings()
+                if _voice_settings:
+                    input_state["debate_voice_settings"] = _voice_settings
+            except Exception:
+                pass
 
         # Configure LangGraph with thread_id for memory
         # If checkpoint_id is provided, fork from that checkpoint (for edit/reload)
@@ -3104,6 +3127,20 @@ async def stream_new_chat(
                     continue
                 if custom_name == "debate_synthesis_complete" and isinstance(custom_data, dict):
                     yield streaming_service.format_data("debate-synthesis-complete", custom_data)
+                    continue
+
+                # ─── Voice debate SSE events ──────────────────────
+                if custom_name == "debate_voice_speaker" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-voice-speaker", custom_data)
+                    continue
+                if custom_name == "debate_voice_chunk" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-voice-chunk", custom_data)
+                    continue
+                if custom_name == "debate_voice_done" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-voice-done", custom_data)
+                    continue
+                if custom_name == "debate_voice_error" and isinstance(custom_data, dict):
+                    yield streaming_service.format_data("debate-voice-error", custom_data)
                     continue
 
             if event_type == "on_chain_start" and run_id:

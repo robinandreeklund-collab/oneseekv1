@@ -387,6 +387,12 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
         "description": "Slutgiltig debattanalys — producerar debate-arena-data JSON med topic, vinnare, röstresultat, konsensus, meningsskiljaktigheter och nyckelargument.",
         "prompt_key": "debate.analysis.system",
     },
+    {
+        "id": "node:debate_voice_pipeline",
+        "label": "Voice Pipeline",
+        "stage": "debate",
+        "description": "Live TTS-pipeline — streamar PCM-ljud via OpenAI TTS API (response_format=pcm). Triggas av /dvoice. Konfigureras under Admin → Debatt.",
+    },
     # ── Evaluation ──
     {
         "id": "node:critic",
@@ -544,6 +550,8 @@ _PIPELINE_EDGES: list[dict[str, Any]] = [
     {"source": "node:debate_round_3", "target": "node:debate_round_4_voting", "type": "normal"},
     {"source": "node:debate_round_4_voting", "target": "node:debate_convergence", "type": "normal"},
     {"source": "node:debate_convergence", "target": "node:debate_synthesizer", "type": "normal"},
+    # Voice pipeline runs inline during rounds (Strategy B pipelining)
+    {"source": "node:debate_round_executor", "target": "node:debate_voice_pipeline", "type": "conditional", "label": "/dvoice"},
     # ── Critic decisions ──
     {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},
     {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more"},

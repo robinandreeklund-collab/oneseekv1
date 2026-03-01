@@ -1790,6 +1790,7 @@ async def create_supervisor_agent(
     synthesis_prompt: str | None = None,
     compare_mode: bool = False,
     debate_mode: bool = False,
+    voice_debate_mode: bool = False,
     hybrid_mode: bool = False,
     speculative_enabled: bool = False,
     external_model_prompt: str | None = None,
@@ -6979,6 +6980,7 @@ async def create_supervisor_agent(
             tavily_search_fn=_debate_tavily_search_fn,
             execution_timeout_seconds=90,
             prompt_overrides=prompt_overrides,
+            voice_mode=voice_debate_mode,
         )
 
         # Build debate convergence node

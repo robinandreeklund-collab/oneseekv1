@@ -6,13 +6,18 @@ import {
 	ChevronDownIcon,
 	ClockIcon,
 	CrownIcon,
+	DownloadIcon,
 	LoaderCircleIcon,
 	MessageSquareIcon,
 	MicIcon,
+	PauseIcon,
+	PlayIcon,
 	TrophyIcon,
+	Volume2Icon,
+	VolumeXIcon,
 	VoteIcon,
 } from "lucide-react";
-import {
+import React, {
 	type FC,
 	createContext,
 	useCallback,
@@ -37,12 +42,14 @@ import type {
 	DebateRoundInfo,
 	DebateState,
 	DebateVote,
+	DebateVoiceState,
 } from "@/contracts/types/debate.types";
 import {
 	DEBATE_MODEL_COLORS,
 	DEBATE_MODEL_DISPLAY,
 	ROUND_LABELS,
 } from "@/contracts/types/debate.types";
+import { Slider } from "@/components/ui/slider";
 
 // ============================================================================
 // Context — other tool UIs check this to hide when debate arena is active
@@ -52,6 +59,14 @@ export const DebateArenaActiveContext = createContext(false);
 
 /** Context to pass live debate state from the SSE handler down to the arena. */
 export const LiveDebateStateContext = createContext<DebateState | null>(null);
+
+/** Context to pass voice audio controls down to the arena. */
+export const DebateVoiceContext = createContext<{
+	voiceState: DebateVoiceState;
+	togglePlayPause: () => void;
+	setVolume: (v: number) => void;
+	exportAudioBlob: () => Blob | null;
+} | null>(null);
 
 // ============================================================================
 // Helper functions
@@ -87,6 +102,8 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 }) => {
 	const [selectedRound, setSelectedRound] = useState<number | null>(null);
 	const activeRound = selectedRound ?? debateState.currentRound;
+	const voiceCtx = React.useContext(DebateVoiceContext);
+	const isVoiceMode = debateState.voiceMode === true;
 
 	const isComplete = debateState.status === "complete" || debateState.status === "synthesis";
 	const isVoting = debateState.status === "voting";
@@ -121,16 +138,29 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 			>
 				<div className="flex items-center gap-3">
 					<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-						<MessageSquareIcon className="h-5 w-5 text-primary" />
+						{isVoiceMode ? (
+							<MicIcon className="h-5 w-5 text-primary" />
+						) : (
+							<MessageSquareIcon className="h-5 w-5 text-primary" />
+						)}
 					</div>
 					<div>
-						<h2 className="text-base font-bold text-foreground">Debattarena</h2>
+						<h2 className="text-base font-bold text-foreground">
+							{isVoiceMode ? "Röstdebatt" : "Debattarena"}
+						</h2>
 						<p className="text-xs text-muted-foreground">
 							{debateState.participants.length} deltagare · {debateState.totalRounds} rundor
+							{isVoiceMode && " · Live Voice"}
 						</p>
 					</div>
 				</div>
 				<div className="flex items-center gap-2">
+					{isVoiceMode && voiceCtx?.voiceState.playbackStatus === "playing" && (
+						<Badge variant="outline" className="animate-pulse border-red-500/40 bg-red-500/5 text-red-500 text-[10px]">
+							<span className="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" />
+							LIVE
+						</Badge>
+					)}
 					{isComplete ? (
 						<Badge variant="outline" className="border-green-500/30 text-green-500">
 							<CheckCircle2Icon className="mr-1 h-3 w-3" />
@@ -149,6 +179,11 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 					)}
 				</div>
 			</motion.div>
+
+			{/* Voice Control Bar — only shown in voice mode */}
+			{isVoiceMode && voiceCtx && (
+				<VoiceControlBar voiceCtx={voiceCtx} isComplete={isComplete} />
+			)}
 
 			{/* Topic */}
 			{debateState.topic && (
@@ -273,6 +308,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 }) => {
 	const [manualToggle, setManualToggle] = useState<boolean | null>(null);
 	const prevAutoRef = useRef(autoExpanded);
+	const voiceCtx = React.useContext(DebateVoiceContext);
 
 	// Reset manual override when auto-expanded state changes (new speaker starts)
 	useEffect(() => {
@@ -288,6 +324,8 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	const initials = getModelInitials(participant.display);
 	const isSpeaking = roundResponse?.status === "speaking";
 	const isDone = roundResponse?.status === "complete";
+	const voiceActive = voiceCtx?.voiceState.currentSpeaker === participant.display
+		&& voiceCtx?.voiceState.playbackStatus === "playing";
 
 	return (
 		<motion.div
@@ -301,6 +339,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 				className={cn(
 					"transition-all duration-300",
 					isSpeaking && "border-primary/50 shadow-lg shadow-primary/5",
+					voiceActive && "border-red-500/40 shadow-lg shadow-red-500/10 ring-1 ring-red-500/20",
 				)}
 			>
 				<Collapsible open={isExpanded} onOpenChange={(open) => setManualToggle(open)}>
@@ -341,7 +380,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 							{isSpeaking && (
 								<Badge variant="outline" className="animate-pulse border-primary/30 text-primary text-[10px]">
 									<MicIcon className="mr-1 h-3 w-3" />
-									Talar
+									{voiceActive ? "Talar (röst)" : "Talar"}
 								</Badge>
 							)}
 							{isDone && (
@@ -513,6 +552,150 @@ const WinnerBanner: FC<WinnerBannerProps> = ({ winner, results, votes }) => {
 					</div>
 				</div>
 			</div>
+		</motion.div>
+	);
+};
+
+// ============================================================================
+// Voice Control Bar
+// ============================================================================
+
+interface VoiceControlBarProps {
+	voiceCtx: {
+		voiceState: DebateVoiceState;
+		togglePlayPause: () => void;
+		setVolume: (v: number) => void;
+		exportAudioBlob: () => Blob | null;
+	};
+	isComplete: boolean;
+}
+
+const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => {
+	const { voiceState, togglePlayPause, setVolume, exportAudioBlob } = voiceCtx;
+	const canvasRef = useRef<HTMLCanvasElement>(null);
+
+	// Waveform visualization
+	useEffect(() => {
+		const canvas = canvasRef.current;
+		if (!canvas || !voiceState.waveformData) return;
+
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		const w = canvas.width;
+		const h = canvas.height;
+		const data = voiceState.waveformData;
+		const barCount = Math.min(data.length, 64);
+		const barWidth = w / barCount;
+
+		ctx.clearRect(0, 0, w, h);
+
+		for (let i = 0; i < barCount; i++) {
+			const val = data[i] / 255;
+			const barHeight = val * h * 0.9;
+			const x = i * barWidth;
+			const y = (h - barHeight) / 2;
+
+			const isPlaying = voiceState.playbackStatus === "playing";
+			ctx.fillStyle = isPlaying
+				? `rgba(239, 68, 68, ${0.4 + val * 0.6})`
+				: `rgba(148, 163, 184, ${0.3 + val * 0.3})`;
+			ctx.fillRect(x + 1, y, barWidth - 2, barHeight);
+		}
+	}, [voiceState.waveformData, voiceState.playbackStatus]);
+
+	const handleDownload = useCallback(() => {
+		const blob = exportAudioBlob();
+		if (!blob) return;
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `debatt-${Date.now()}.wav`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}, [exportAudioBlob]);
+
+	return (
+		<motion.div
+			initial={{ opacity: 0, height: 0 }}
+			animate={{ opacity: 1, height: "auto" }}
+			className="flex items-center gap-3 rounded-xl border border-border bg-card/50 px-4 py-3 backdrop-blur-sm"
+		>
+			{/* Play/Pause */}
+			<Button
+				variant="ghost"
+				size="sm"
+				className="h-8 w-8 p-0"
+				onClick={togglePlayPause}
+			>
+				{voiceState.playbackStatus === "playing" ? (
+					<PauseIcon className="h-4 w-4" />
+				) : (
+					<PlayIcon className="h-4 w-4" />
+				)}
+			</Button>
+
+			{/* Speaker indicator */}
+			<div className="flex min-w-0 flex-1 flex-col gap-1">
+				<div className="flex items-center gap-2">
+					{voiceState.currentSpeaker ? (
+						<span className="truncate text-xs font-medium text-foreground">
+							{voiceState.currentSpeaker}
+						</span>
+					) : (
+						<span className="text-xs text-muted-foreground">
+							{voiceState.playbackStatus === "idle" ? "Väntar på röst…" : "Buffrar…"}
+						</span>
+					)}
+					{voiceState.playbackStatus === "playing" && (
+						<span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+					)}
+				</div>
+				{/* Waveform canvas */}
+				<canvas
+					ref={canvasRef}
+					width={320}
+					height={24}
+					className="w-full rounded-sm"
+				/>
+			</div>
+
+			{/* Volume */}
+			<div className="flex items-center gap-2">
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-7 w-7 p-0"
+					onClick={() => setVolume(voiceState.volume > 0 ? 0 : 0.85)}
+				>
+					{voiceState.volume > 0 ? (
+						<Volume2Icon className="h-3.5 w-3.5" />
+					) : (
+						<VolumeXIcon className="h-3.5 w-3.5" />
+					)}
+				</Button>
+				<Slider
+					className="w-20"
+					min={0}
+					max={1}
+					step={0.05}
+					value={[voiceState.volume]}
+					onValueChange={([v]) => setVolume(v)}
+				/>
+			</div>
+
+			{/* Download (only after debate completes) */}
+			{isComplete && (
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-8 w-8 p-0"
+					onClick={handleDownload}
+					title="Ladda ner debatt-ljud (WAV)"
+				>
+					<DownloadIcon className="h-4 w-4" />
+				</Button>
+			)}
 		</motion.div>
 	);
 };

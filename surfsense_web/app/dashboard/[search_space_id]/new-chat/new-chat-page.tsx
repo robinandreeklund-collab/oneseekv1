@@ -64,9 +64,10 @@ import {
 } from "@/components/tool-ui/compare-model";
 import { LiveCriterionContext, LiveCriterionPodContext } from "@/components/tool-ui/spotlight-arena";
 import type { LiveCriterionPodMap, CriterionPodMeta } from "@/components/tool-ui/spotlight-arena";
-import { LiveDebateStateContext } from "@/components/debate/debate-arena";
+import { LiveDebateStateContext, DebateVoiceContext } from "@/components/debate/debate-arena";
 import type { DebateState, DebateParticipant } from "@/contracts/types/debate.types";
 import { DEBATE_MODEL_DISPLAY } from "@/contracts/types/debate.types";
+import { useDebateAudio } from "@/hooks/use-debate-audio";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
@@ -370,8 +371,13 @@ export default function NewChatPage() {
 		totalRounds: 4,
 		status: "initializing",
 		votes: [],
+		voiceMode: false,
 	};
 	const [debateState, setDebateState] = useState<DebateState | null>(null);
+
+	// Voice debate audio hook
+	const isVoiceDebate = debateState?.voiceMode === true;
+	const debateAudio = useDebateAudio(isVoiceDebate);
 
 	// Get mentioned document IDs from the composer
 	const mentionedDocumentIds = useAtomValue(mentionedDocumentIdsAtom);
@@ -1624,6 +1630,7 @@ export default function NewChatPage() {
 												totalRounds: Number(diData?.total_rounds ?? 4),
 												status: "initializing",
 												votes: [],
+												voiceMode: Boolean(diData?.voice_mode),
 											});
 											break;
 										}
@@ -1766,6 +1773,30 @@ export default function NewChatPage() {
 											setDebateState((prev) =>
 												prev ? { ...prev, status: "complete" } : prev
 											);
+											break;
+										}
+
+										// ─── Voice debate SSE events ─────────
+										case "data-debate-voice-speaker": {
+											const dvs = parsed.data as Record<string, unknown>;
+											debateAudio.onSpeakerChange(String(dvs?.model ?? ""));
+											break;
+										}
+										case "data-debate-voice-chunk": {
+											const dvc = parsed.data as Record<string, unknown>;
+											debateAudio.enqueueChunk(
+												String(dvc?.model ?? ""),
+												String(dvc?.pcm_b64 ?? ""),
+											);
+											break;
+										}
+										case "data-debate-voice-done": {
+											// Speaker finished — playback continues from queue
+											break;
+										}
+										case "data-debate-voice-error": {
+											const dve = parsed.data as Record<string, unknown>;
+											console.warn("[debate-voice] TTS error:", dve?.error);
 											break;
 										}
 
@@ -2637,6 +2668,7 @@ export default function NewChatPage() {
 												totalRounds: Number(diData2?.total_rounds ?? 4),
 												status: "initializing",
 												votes: [],
+												voiceMode: Boolean(diData2?.voice_mode),
 											});
 											break;
 										}
@@ -2699,6 +2731,28 @@ export default function NewChatPage() {
 										}
 										case "data-debate-synthesis-complete": {
 											setDebateState((prev) => prev ? { ...prev, status: "complete" } : prev);
+											break;
+										}
+
+										// ─── Voice debate SSE events (regen) ──
+										case "data-debate-voice-speaker": {
+											const dvs2 = parsed.data as Record<string, unknown>;
+											debateAudio.onSpeakerChange(String(dvs2?.model ?? ""));
+											break;
+										}
+										case "data-debate-voice-chunk": {
+											const dvc2 = parsed.data as Record<string, unknown>;
+											debateAudio.enqueueChunk(
+												String(dvc2?.model ?? ""),
+												String(dvc2?.pcm_b64 ?? ""),
+											);
+											break;
+										}
+										case "data-debate-voice-done": {
+											break;
+										}
+										case "data-debate-voice-error": {
+											console.warn("[debate-voice] TTS error:", (parsed.data as Record<string, unknown>)?.error);
 											break;
 										}
 
@@ -3043,6 +3097,12 @@ export default function NewChatPage() {
 		<LiveCriterionContext.Provider value={liveCriterionScores}>
 		<LiveCriterionPodContext.Provider value={liveCriterionPodInfo}>
 		<LiveDebateStateContext.Provider value={debateState}>
+		<DebateVoiceContext.Provider value={isVoiceDebate ? {
+			voiceState: debateAudio.voiceState,
+			togglePlayPause: debateAudio.togglePlayPause,
+			setVolume: debateAudio.setVolume,
+			exportAudioBlob: debateAudio.exportAudioBlob,
+		} : null}>
 			{!isPublicChat && <GeneratePodcastToolUI />}
 			<LinkPreviewToolUI />
 			<DisplayImageToolUI />
@@ -3122,6 +3182,7 @@ export default function NewChatPage() {
 					/>
 				)}
 			</TracePanelContext.Provider>
+		</DebateVoiceContext.Provider>
 		</LiveDebateStateContext.Provider>
 		</LiveCriterionPodContext.Provider>
 		</LiveCriterionContext.Provider>

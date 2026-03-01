@@ -250,12 +250,16 @@ def build_debate_round_executor_node(
     tavily_search_fn: Any | None = None,
     execution_timeout_seconds: float = RESPONSE_TIMEOUT_SECONDS,
     prompt_overrides: dict[str, str] | None = None,
+    voice_mode: bool = False,
 ):
     """Build the debate round executor.
 
     Runs all 4 rounds of the debate:
     - Rounds 1-3: Sequential per round, random order, chained context
     - Round 4: Parallel voting with JSON schema enforcement
+
+    When ``voice_mode=True``, each participant response is pipelined through
+    TTS via ``schedule_voice_generation`` (Strategy B — asyncio tasks).
     """
     _call_external = call_external_model_fn or call_external_model
 
@@ -287,6 +291,7 @@ def build_debate_round_executor_node(
                     "participants": [p["display"] for p in participants],
                     "topic": topic,
                     "total_rounds": 4,
+                    "voice_mode": voice_mode,
                     "timestamp": time.time(),
                 },
                 config=config,
@@ -458,6 +463,36 @@ def build_debate_round_executor_node(
                     )
                 except Exception:
                     pass
+
+                # ─── Voice TTS pipeline (Strategy B: pipelined asyncio) ──
+                if voice_mode and response_text and not response_text.startswith("["):
+                    try:
+                        from app.agents.new_chat.debate_voice import (
+                            schedule_voice_generation,
+                        )
+                        _voice_task = await schedule_voice_generation(
+                            text=response_text,
+                            participant_display=model_display,
+                            participant_key=model_key,
+                            round_num=round_num,
+                            state=state,
+                            config=config,
+                        )
+                        if _voice_task is not None:
+                            # Await inline — we want voice to play sequentially
+                            # between participants for a natural debate feel.
+                            try:
+                                await asyncio.wait_for(_voice_task, timeout=120)
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    "debate_voice: TTS timeout for %s round %d",
+                                    model_display, round_num,
+                                )
+                    except Exception as voice_exc:
+                        logger.warning(
+                            "debate_voice: scheduling error for %s: %s",
+                            model_display, voice_exc,
+                        )
 
             all_round_responses[round_num] = round_responses
 

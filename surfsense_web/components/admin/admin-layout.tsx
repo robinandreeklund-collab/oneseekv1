@@ -11,6 +11,7 @@ import {
 	ToggleLeft,
 	ChevronRight,
 	GitBranch,
+	Mic,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -39,6 +40,12 @@ const ADMIN_NAV_ITEMS = [
 		href: "/admin/lifecycle",
 		icon: ToggleLeft,
 		description: "Hantera tool lifecycle och gating",
+	},
+	{
+		title: "Debatt",
+		href: "/admin/debate",
+		icon: Mic,
+		description: "Debattl\u00e4ge och r\u00f6stdebatt (TTS)",
 	},
 	{
 		title: "Cache Management",

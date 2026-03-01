@@ -196,3 +196,5 @@ class SupervisorState(TypedDict, total=False):
     debate_word_counts: Annotated[dict[str, int], _replace]
     # Debate: execution status tracking.
     debate_status: Annotated[str | None, _replace]
+    # Debate voice settings (API key, voice map, model — from admin or env).
+    debate_voice_settings: Annotated[dict[str, Any] | None, _replace]

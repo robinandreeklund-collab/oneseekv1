@@ -394,6 +394,7 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 		"node:debate_oneseek_agent": { x: 520, y: 2240 },
 		"node:debate_convergence": { x: 1080, y: 2400 },
 		"node:debate_synthesizer": { x: 1360, y: 2400 },
+		"node:debate_voice_pipeline": { x: 240, y: 2400 },
 	};
 
 	return pipelineNodes.map((node) => ({

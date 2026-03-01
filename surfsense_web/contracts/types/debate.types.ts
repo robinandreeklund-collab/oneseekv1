@@ -73,6 +73,8 @@ export interface DebateState {
 		| "complete";
 	results?: DebateResults;
 	votes: DebateVote[];
+	/** True when debate was triggered with /dvoice */
+	voiceMode?: boolean;
 }
 
 // ─── SSE Event Payloads ──────────────────────────────────────────────
@@ -131,6 +133,62 @@ export interface DebateResultsEvent {
 	word_counts: Record<string, number>;
 	total_votes: number;
 	timestamp: number;
+}
+
+// ─── Voice Debate SSE Event Payloads ─────────────────────────────────
+
+export interface DebateVoiceSpeakerEvent {
+	model: string;
+	model_key: string;
+	round: number;
+	voice: string;
+	timestamp: number;
+}
+
+export interface DebateVoiceChunkEvent {
+	model: string;
+	model_key: string;
+	round: number;
+	chunk_index: number;
+	/** Base64-encoded raw PCM (24 kHz, 16-bit, mono) */
+	pcm_b64: string;
+	sample_rate: number;
+	bit_depth: number;
+	channels: number;
+	timestamp: number;
+}
+
+export interface DebateVoiceDoneEvent {
+	model: string;
+	model_key: string;
+	round: number;
+	total_bytes: number;
+	total_chunks: number;
+	timestamp: number;
+}
+
+export interface DebateVoiceErrorEvent {
+	model: string;
+	round: number;
+	error: string;
+	timestamp: number;
+}
+
+// ─── Voice Audio State ──────────────────────────────────────────────
+
+export interface DebateVoiceState {
+	/** Whether voice mode is active (triggered by /dvoice) */
+	enabled: boolean;
+	/** Currently playing participant (null if idle) */
+	currentSpeaker: string | null;
+	/** Playback status */
+	playbackStatus: "idle" | "playing" | "paused" | "buffering";
+	/** Volume level 0-1 */
+	volume: number;
+	/** Waveform data for visualization (frequency bins) */
+	waveformData: Uint8Array | null;
+	/** Per-participant audio collection for export */
+	collectedChunks: Record<string, ArrayBuffer[]>;
 }
 
 // ─── Arena Analysis (from synthesis JSON block) ──────────────────────
