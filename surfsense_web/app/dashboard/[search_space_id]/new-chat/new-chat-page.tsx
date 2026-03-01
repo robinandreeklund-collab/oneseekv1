@@ -1960,6 +1960,7 @@ export default function NewChatPage() {
 											debateAudioRef.current.enqueueChunk(
 												String(dvc?.model ?? ""),
 												String(dvc?.pcm_b64 ?? ""),
+												Number(dvc?.round ?? 0),
 											);
 											break;
 										}
@@ -1967,8 +1968,7 @@ export default function NewChatPage() {
 											const dvdData = parsed.data as Record<string, unknown>;
 											const dvdModel = String(dvdData?.model ?? "");
 											console.log("[SSE] debate-voice-done:", dvdModel);
-											// Text is already visible via chunks. Audio playback
-											// continues via the chunk queue in useDebateAudio.
+											// Audio playback continues via the chunk queue.
 											break;
 										}
 										case "data-debate-voice-error": {
@@ -2971,6 +2971,7 @@ export default function NewChatPage() {
 											debateAudioRef.current.enqueueChunk(
 												String(dvc2?.model ?? ""),
 												String(dvc2?.pcm_b64 ?? ""),
+												Number(dvc2?.round ?? 0),
 											);
 											break;
 										}

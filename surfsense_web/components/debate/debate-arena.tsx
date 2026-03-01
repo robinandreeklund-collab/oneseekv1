@@ -115,12 +115,23 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 	analysis,
 }) => {
 	const [selectedRound, setSelectedRound] = useState<number | null>(null);
-	const activeRound = selectedRound ?? debateState.currentRound;
 	const voiceCtx = React.useContext(DebateVoiceContext);
 	const isVoiceMode = debateState.voiceMode === true;
 
 	const isComplete = debateState.status === "complete" || debateState.status === "synthesis";
 	const isVoting = debateState.status === "voting";
+
+	// In voice mode the backend races ahead — it emits round_start for
+	// round 2 while round 1's audio is still playing.  We use the audio
+	// system's currentRound (set by playNext() from each chunk's round
+	// tag) as the ground truth for what the user is hearing, and only
+	// advance the displayed round when the audio system gets there.
+	// When audio hasn't started yet (currentRound = 0), fall back to
+	// the backend's currentRound so the first round's cards still show.
+	const voicePlaybackRound = voiceCtx?.voiceState.currentRound ?? 0;
+	const voiceRound = voicePlaybackRound > 0 ? voicePlaybackRound : debateState.currentRound;
+
+	const activeRound = selectedRound ?? (isVoiceMode ? voiceRound : debateState.currentRound);
 
 	// Determine which participant is currently speaking in the active round
 	const currentSpeaker = useMemo(() => {
@@ -194,7 +205,7 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 					) : (
 						<Badge variant="outline" className="animate-pulse border-primary/30 text-primary">
 							<LoaderCircleIcon className="mr-1 h-3 w-3 animate-spin" />
-							Runda {debateState.currentRound}
+							Runda {activeRound}
 						</Badge>
 					)}
 				</div>
@@ -237,7 +248,7 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 							)}
 						>
 							{isDone && !isActive && <CheckCircle2Icon className="h-3 w-3" />}
-							{isActive && !isDone && round === debateState.currentRound && (
+							{isActive && !isDone && round === activeRound && (
 								<LoaderCircleIcon className="h-3 w-3 animate-spin" />
 							)}
 							<span>R{round} — {getRoundTypeLabel(round)}</span>
@@ -252,7 +263,7 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 					className="h-full bg-gradient-to-r from-primary to-cyan-500"
 					initial={{ width: "0%" }}
 					animate={{
-						width: `${((debateState.currentRound - 1) / debateState.totalRounds) * 100}%`,
+						width: `${((activeRound - 1) / debateState.totalRounds) * 100}%`,
 					}}
 					transition={{ duration: 0.5 }}
 				/>

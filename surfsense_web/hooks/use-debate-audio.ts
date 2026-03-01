@@ -26,6 +26,7 @@ export function useDebateAudio(enabled: boolean) {
 	const [voiceState, setVoiceState] = useState<DebateVoiceState>({
 		enabled,
 		currentSpeaker: null,
+		currentRound: 0,
 		playbackStatus: "idle",
 		volume: 0.85,
 		waveformData: null,
@@ -39,7 +40,7 @@ export function useDebateAudio(enabled: boolean) {
 	const animFrameRef = useRef<number | null>(null);
 
 	// Playback queue: chunks waiting to be played
-	const chunkQueueRef = useRef<{ speaker: string; buffer: AudioBuffer }[]>([]);
+	const chunkQueueRef = useRef<{ speaker: string; round: number; buffer: AudioBuffer }[]>([]);
 	const isPlayingRef = useRef(false);
 	const isPausedRef = useRef(false);
 
@@ -115,6 +116,7 @@ export function useDebateAudio(enabled: boolean) {
 			...prev,
 			playbackStatus: "playing",
 			currentSpeaker: next.speaker,
+			currentRound: next.round,
 		}));
 
 		// Ensure AudioContext is running before playing
@@ -174,13 +176,13 @@ export function useDebateAudio(enabled: boolean) {
 
 	// ── Queue a chunk for playback ─────────────────────────────────
 	const enqueueChunk = useCallback(
-		(speaker: string, b64: string) => {
+		(speaker: string, b64: string, round = 0) => {
 			if (!enabled) return;
 
 			totalChunksRef.current += 1;
 			if (totalChunksRef.current <= 3) {
 				console.log(
-					`[useDebateAudio] chunk #${totalChunksRef.current} from ${speaker}, b64 length=${b64.length}`,
+					`[useDebateAudio] chunk #${totalChunksRef.current} from ${speaker} r${round}, b64 length=${b64.length}`,
 				);
 			}
 
@@ -202,7 +204,7 @@ export function useDebateAudio(enabled: boolean) {
 			const audioBuffer = decodePcmChunk(b64);
 			if (!audioBuffer) return;
 
-			chunkQueueRef.current.push({ speaker, buffer: audioBuffer });
+			chunkQueueRef.current.push({ speaker, round, buffer: audioBuffer });
 
 			// Start playback if not already playing
 			if (!isPlayingRef.current && !isPausedRef.current) {

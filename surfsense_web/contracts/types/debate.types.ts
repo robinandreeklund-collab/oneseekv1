@@ -200,6 +200,8 @@ export interface DebateVoiceState {
 	enabled: boolean;
 	/** Currently playing participant (null if idle) */
 	currentSpeaker: string | null;
+	/** Round number of the chunk currently being played (0 if idle) */
+	currentRound: number;
 	/** Playback status */
 	playbackStatus: "idle" | "playing" | "paused" | "buffering" | "error";
 	/** Volume level 0-1 */
