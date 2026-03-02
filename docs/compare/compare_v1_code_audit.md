@@ -405,6 +405,12 @@ def build_compare_synthesis_prompt(
 
 32 LLM-anrop (8 domäner × 4 kriterier) körs genom en semafor (max 4 samtida). Med LiteLLMs batch API eller provider-specifik batching kunde man minska overhead.
 
+**Implementerad lösning:**
+- `_batch_evaluate_criteria()` använder `litellm.batch_completion()` direkt (bypasbar LangChain ChatLiteLLM wrapper) för att batcha alla 4 kriterier per modell i ett enda anrop.
+- Tvåstegs-concurrency: batch-semafor (`_MAX_BATCH_CONCURRENT=4`, per-modell) + individuell semafor (`_MAX_CONCURRENT=6`, fallback-path).
+- `evaluate_model_response()` provar batch först; vid fel faller den tillbaka till individuella `evaluate_criterion()`-anrop med retry.
+- Hjälpfunktioner (`_extract_litellm_params`, `_build_criterion_messages`, `_parse_criterion_raw`) delar logik mellan batch- och individuella pathways.
+
 **Uppskattad effekt:** ~30-50% latensreduktion vid hög load.
 
 ---
