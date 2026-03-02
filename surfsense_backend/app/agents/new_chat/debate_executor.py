@@ -199,6 +199,13 @@ async def _call_debate_participant(
                     ),
                     timeout=execution_timeout,
                 )
+                if result.get("status") == "error":
+                    error_msg = result.get("error", "unknown error")
+                    logger.warning(
+                        "debate: %s returned error in round %d: %s",
+                        model_display, round_num, error_msg[:200],
+                    )
+                    return f"[{model_display} fel: {error_msg[:100]}]"
                 return result.get("response", "")
             return f"[{model_display}: ingen spec hittades]"
     except TimeoutError:
@@ -498,6 +505,28 @@ def build_debate_round_executor_node(
                         _prefetch_llm_and_tts()
                     )
 
+                # ─── Non-voice mode: emit participant_text immediately ──
+                # In text-only mode, send the full response as a single
+                # participant_text event so the frontend can render it.
+                if not voice_mode and response_text and not response_text.startswith("["):
+                    try:
+                        await adispatch_custom_event(
+                            "debate_participant_text",
+                            {
+                                "model": model_display,
+                                "model_key": model_key,
+                                "round": round_num,
+                                "text": response_text,
+                                "word_count": word_count,
+                                "audio_duration": 0,
+                                "delay_per_word": 0.04,
+                                "timestamp": time.time(),
+                            },
+                            config=config,
+                        )
+                    except Exception as exc:
+                        logger.debug("debate: SSE participant_text emission failed: %s", exc)
+
                 # ─── Voice mode: synced text + audio streaming ───────
                 # Streams text word-by-word interleaved with audio chunks
                 # at the natural speech pace from TTS audio duration.
@@ -663,13 +692,21 @@ def build_debate_round_executor_node(
                                 spec=spec,
                                 query=vote_prompt,
                                 system_prompt=DEBATE_ROUND4_VOTING_PROMPT,
+                                max_tokens=1000,
                             ),
                             timeout=VOTE_TIMEOUT_SECONDS,
                         )
+                        if result.get("status") == "error":
+                            logger.warning(
+                                "debate: %s vote call error: %s",
+                                model_display, result.get("error", "")[:200],
+                            )
                         raw = result.get("response", "")
                     else:
                         raw = ""
 
+                if raw:
+                    logger.debug("debate: %s raw vote: %s", model_display, raw[:300])
                 vote_obj = _extract_json_from_text(raw)
                 if vote_obj and "voted_for" in vote_obj:
                     vote_obj["voter"] = model_display
