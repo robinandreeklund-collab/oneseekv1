@@ -3,21 +3,21 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
-import re
 from typing import Any
 
 import httpx
 from langchain_core.tools import tool
+from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Checkpointer
 from langgraph_bigtool import create_agent as create_bigtool_agent
 from langgraph_bigtool.graph import ToolNode as BigtoolToolNode
-from langgraph.prebuilt.tool_node import ToolRuntime
-from app.agents.new_chat.nodes.executor import NormalizingChatWrapper
 
+from app.agents.new_chat.nodes.executor import NormalizingChatWrapper
 from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
 from app.services.connector_service import ConnectorService
 from app.services.scb_service import SCB_BASE_URL, ScbService
+from app.utils.text import normalize_text as _normalize_text
 
 
 @dataclass(frozen=True)
@@ -853,16 +853,6 @@ SCB_TOOL_DEFINITIONS: list[ScbToolDefinition] = [
 ]
 
 
-def _normalize_text(text: str) -> str:
-    lowered = (text or "").lower()
-    cleaned = (
-        lowered.replace("å", "a")
-        .replace("ä", "a")
-        .replace("ö", "o")
-    )
-    return re.sub(r"[^a-z0-9]+", " ", cleaned).strip()
-
-
 def _score_tool(definition: ScbToolDefinition, query_norm: str, tokens: set[str]) -> int:
     score = 0
     name_norm = _normalize_text(definition.name)
@@ -1031,7 +1021,7 @@ def _build_scb_tool(
 
         formatted_docs = ""
         if document:
-            serialized = connector_service._serialize_external_document(
+            serialized = connector_service.serialize_external_document(
                 document, score=1.0
             )
             formatted_docs = format_documents_for_context([serialized])

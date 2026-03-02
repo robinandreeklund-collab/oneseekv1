@@ -213,6 +213,20 @@ class Config:
     )
     FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
     TRAFIKLAB_API_KEY = os.getenv("TRAFIKLAB_API_KEY")
+
+    # SCB (Statistics Sweden) API configuration
+    SCB_API_VERSION = os.getenv("SCB_API_VERSION", "v2")
+    SCB_BASE_URL = os.getenv(
+        "SCB_BASE_URL",
+        "https://statistikdatabasen.scb.se/api/v2/",
+    )
+    SCB_BASE_URL_V1 = os.getenv(
+        "SCB_BASE_URL_V1",
+        "https://api.scb.se/OV0104/v1/doris/sv/ssd/",
+    )
+    SCB_MAX_CELLS = int(os.getenv("SCB_MAX_CELLS", "150000"))
+    SCB_TIMEOUT = float(os.getenv("SCB_TIMEOUT", "25.0"))
+
     GEOCODING_USER_AGENT = os.getenv("GEOCODING_USER_AGENT")
     JOBAD_LINKS_BASE_URL = os.getenv("JOBAD_LINKS_BASE_URL")
     JOBAD_LINKS_API_KEY = os.getenv("JOBAD_LINKS_API_KEY")

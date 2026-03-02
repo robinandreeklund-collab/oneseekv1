@@ -475,7 +475,7 @@ def _build_riksdagen_dokument_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(
+                serialized = connector_service.serialize_external_document(
                     document, score=1.0
                 )
                 formatted_docs = format_documents_for_context([serialized])
@@ -605,7 +605,7 @@ def _build_riksdagen_votering_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(
+                serialized = connector_service.serialize_external_document(
                     document, score=1.0
                 )
                 formatted_docs = format_documents_for_context([serialized])
@@ -717,7 +717,7 @@ def _build_riksdagen_ledamot_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(
+                serialized = connector_service.serialize_external_document(
                     document, score=1.0
                 )
                 formatted_docs = format_documents_for_context([serialized])
@@ -843,7 +843,7 @@ def _build_riksdagen_anforande_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(
+                serialized = connector_service.serialize_external_document(
                     document, score=1.0
                 )
                 formatted_docs = format_documents_for_context([serialized])
@@ -933,7 +933,7 @@ def _build_riksdagen_status_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(
+                serialized = connector_service.serialize_external_document(
                     document, score=1.0
                 )
                 formatted_docs = format_documents_for_context([serialized])

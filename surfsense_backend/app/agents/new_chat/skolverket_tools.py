@@ -1433,7 +1433,7 @@ def _build_skolverket_tool(
                 thread_id=thread_id,
             )
             if document:
-                serialized = connector_service._serialize_external_document(document, score=1.0)
+                serialized = connector_service.serialize_external_document(document, score=1.0)
                 formatted_docs = format_documents_for_context([serialized])
         except Exception:
             # Do not fail the tool call if ingestion/citation persistence fails.

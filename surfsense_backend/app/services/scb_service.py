@@ -1,27 +1,48 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from math import prod
 from typing import Any
+from urllib.parse import quote as url_quote
 
 import httpx
 
-SCB_BASE_URL = "https://api.scb.se/OV0104/v1/doris/sv/ssd/"
-SCB_MAX_CELLS = 150_000
-
-_DIACRITIC_MAP = str.maketrans(
-    {
-        "å": "a",
-        "ä": "a",
-        "ö": "o",
-        "Å": "a",
-        "Ä": "a",
-        "Ö": "o",
-    }
+from app.utils.text import (
+    normalize_text as _normalize_text,
+    score_text as _score_text,
+    tokenize as _tokenize,
 )
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Defaults — overridable via Config or env vars
+# ---------------------------------------------------------------------------
+
+SCB_BASE_URL_V2 = os.getenv(
+    "SCB_BASE_URL",
+    "https://statistikdatabasen.scb.se/api/v2/",
+)
+SCB_BASE_URL_V1 = os.getenv(
+    "SCB_BASE_URL_V1",
+    "https://api.scb.se/OV0104/v1/doris/sv/ssd/",
+)
+SCB_API_VERSION = os.getenv("SCB_API_VERSION", "v2")
+
+# Default to v2
+SCB_BASE_URL = SCB_BASE_URL_V2 if SCB_API_VERSION == "v2" else SCB_BASE_URL_V1
+
+SCB_MAX_CELLS = int(os.getenv("SCB_MAX_CELLS", "150000"))
+SCB_DEFAULT_TIMEOUT = float(os.getenv("SCB_TIMEOUT", "25.0"))
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -33,34 +54,9 @@ class ScbTable:
     breadcrumb: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
-class ScbQueryResult:
-    table: ScbTable
-    payload: dict[str, Any]
-    data: dict[str, Any]
-    selection_summary: list[str]
-    warnings: list[str]
-
-
-def _normalize_text(text: str) -> str:
-    lowered = (text or "").lower().translate(_DIACRITIC_MAP)
-    return re.sub(r"[^a-z0-9]+", " ", lowered).strip()
-
-
-def _tokenize(text: str) -> list[str]:
-    normalized = _normalize_text(text)
-    return [token for token in normalized.split() if token]
-
-
-def _score_text(query_tokens: set[str], text: str) -> int:
-    normalized = _normalize_text(text)
-    if not normalized:
-        return 0
-    score = 0
-    for token in query_tokens:
-        if token and token in normalized:
-            score += 1
-    return score
+# ---------------------------------------------------------------------------
+# Helper functions (public — re-exported for tests)
+# ---------------------------------------------------------------------------
 
 
 def _parse_iso(updated: str | None) -> datetime | None:
@@ -210,11 +206,13 @@ def _match_values_by_text(
         normalized = _normalize_text(text)
         if not normalized:
             continue
-        if normalized in query_norm:
+        # Use word-boundary check to avoid false positives (BUG-3 fix)
+        norm_tokens = set(normalized.split())
+        if norm_tokens and norm_tokens.issubset(query_tokens):
             matches.append(value)
             continue
-        tokens = set(normalized.split())
-        if tokens and tokens.issubset(query_tokens):
+        # Fallback: check if normalized text appears as whole words in query
+        if f" {normalized} " in f" {query_norm} ":
             matches.append(value)
     return matches
 
@@ -231,58 +229,147 @@ def _pick_preferred_value(values: list[str], value_texts: list[str], preferred: 
     return [values[0]] if values else []
 
 
+# ---------------------------------------------------------------------------
+# ScbService — v2-first with v1 fallback
+# ---------------------------------------------------------------------------
+
+
 class ScbService:
-    def __init__(self, base_url: str = SCB_BASE_URL, timeout: float = 25.0) -> None:
+    """Client for SCB Statistikdatabasen (PxWebApi v2 / PxWeb v1).
+
+    Changes from v1-only implementation:
+    - Persistent httpx.AsyncClient with connection pooling (OPT-1)
+    - asyncio.Lock on caches to prevent race conditions (BUG-1)
+    - v2 table search via GET /tables?query= (OPT-3)
+    - v2 metadata via GET /tables/{id}/metadata
+    - v2 data via POST /tables/{id}/data with selection[] format
+    - Total timeout on collect_tables (BUG-4)
+    - URL encoding for path components (BUG-6)
+    """
+
+    def __init__(
+        self,
+        base_url: str = SCB_BASE_URL,
+        timeout: float = SCB_DEFAULT_TIMEOUT,
+        max_cells: int = SCB_MAX_CELLS,
+    ) -> None:
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout = timeout
+        self.max_cells = max_cells
+        self._is_v2 = "/api/v2" in self.base_url
+        self._client: httpx.AsyncClient | None = None
+        # Caches with lock (BUG-1 fix)
+        self._cache_lock = asyncio.Lock()
         self._node_cache: dict[str, list[dict[str, Any]]] = {}
         self._metadata_cache: dict[str, dict[str, Any]] = {}
 
+    # -- Lifecycle -----------------------------------------------------------
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Lazily create a persistent HTTP client (OPT-1)."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=self.timeout,
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            )
+        return self._client
+
+    async def close(self) -> None:
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
+    # -- Low-level HTTP ------------------------------------------------------
+
+    def _encode_path(self, path: str) -> str:
+        """URL-encode path components to handle Swedish characters (BUG-6)."""
+        parts = (path or "").split("/")
+        return "/".join(url_quote(part, safe="") for part in parts)
+
     def _build_url(self, path: str, *, trailing: bool) -> str:
         cleaned = (path or "").lstrip("/")
-        url = f"{self.base_url}{cleaned}"
+        encoded = self._encode_path(cleaned)
+        url = f"{self.base_url}{encoded}"
         if trailing and not url.endswith("/"):
             url += "/"
         return url
 
-    async def _get_json(self, url: str) -> Any:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.json()
+    async def _get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any:
+        client = self._get_client()
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> Any:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            return response.json()
+        client = self._get_client()
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    # -- v2 Table Search (OPT-3) --------------------------------------------
+
+    async def search_tables(
+        self,
+        query: str,
+        *,
+        limit: int = 80,
+        lang: str = "sv",
+        past_days: int | None = None,
+    ) -> list[ScbTable]:
+        """Search tables via v2 GET /tables endpoint.
+
+        Replaces the slow tree-traversal approach with a single API call.
+        """
+        if not self._is_v2:
+            return []
+
+        url = f"{self.base_url}tables"
+        params: dict[str, Any] = {
+            "query": query,
+            "pageSize": min(limit, 100),
+            "lang": lang,
+        }
+        if past_days is not None:
+            params["pastDays"] = past_days
+
+        try:
+            data = await self._get_json(url, params=params)
+        except httpx.HTTPError as exc:
+            logger.warning("v2 table search failed: %s", exc)
+            return []
+
+        tables: list[ScbTable] = []
+        items = data if isinstance(data, list) else data.get("tables", data.get("data", []))
+        if not isinstance(items, list):
+            return []
+
+        for item in items[:limit]:
+            table_id = str(item.get("id") or "").strip()
+            if not table_id:
+                continue
+            tables.append(
+                ScbTable(
+                    id=table_id,
+                    path=table_id,
+                    title=str(item.get("label") or item.get("text") or table_id),
+                    updated=item.get("updated"),
+                )
+            )
+        return tables
+
+    # -- v1 Tree Navigation (fallback) --------------------------------------
 
     async def list_nodes(self, path: str) -> list[dict[str, Any]]:
         url = self._build_url(path, trailing=True)
-        if url in self._node_cache:
-            return list(self._node_cache[url])
+        async with self._cache_lock:
+            if url in self._node_cache:
+                return list(self._node_cache[url])
         data = await self._get_json(url)
         if not isinstance(data, list):
             return []
-        self._node_cache[url] = data
+        async with self._cache_lock:
+            self._node_cache[url] = data
         return list(data)
-
-    async def get_table_metadata(self, table_path: str) -> dict[str, Any]:
-        url = self._build_url(table_path, trailing=False)
-        if url in self._metadata_cache:
-            return dict(self._metadata_cache[url])
-        data = await self._get_json(url)
-        if isinstance(data, dict):
-            self._metadata_cache[url] = data
-            return data
-        return {}
-
-    async def query_table(self, table_path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        url = self._build_url(table_path, trailing=False)
-        data = await self._post_json(url, payload)
-        if isinstance(data, dict):
-            return data
-        return {"data": data}
 
     async def collect_tables(
         self,
@@ -293,15 +380,23 @@ class ScbService:
         max_depth: int = 4,
         max_nodes: int = 140,
         max_children: int = 8,
+        total_timeout: float = 60.0,
     ) -> list[ScbTable]:
+        """BFS through v1 tree structure. Used as fallback when v2 search unavailable."""
         query_tokens = set(_tokenize(query))
         queue: list[tuple[str, int, tuple[str, ...]]] = [
             (base_path.rstrip("/") + "/", 0, ())
         ]
         seen: set[str] = set()
         tables: list[ScbTable] = []
+        deadline = asyncio.get_event_loop().time() + total_timeout
 
         while queue and len(tables) < max_tables and len(seen) < max_nodes:
+            # BUG-4 fix: total timeout
+            if asyncio.get_event_loop().time() > deadline:
+                logger.warning("collect_tables timed out after %.0fs", total_timeout)
+                break
+
             current_path, depth, breadcrumb = queue.pop(0)
             if current_path in seen:
                 continue
@@ -352,6 +447,99 @@ class ScbService:
 
         return tables
 
+    # -- Metadata -----------------------------------------------------------
+
+    async def get_table_metadata(self, table_path: str) -> dict[str, Any]:
+        """Fetch table metadata. Uses v2 /tables/{id}/metadata or v1 GET."""
+        if self._is_v2:
+            return await self._get_table_metadata_v2(table_path)
+        return await self._get_table_metadata_v1(table_path)
+
+    async def _get_table_metadata_v2(self, table_id: str) -> dict[str, Any]:
+        """Fetch metadata via v2 /tables/{id}/metadata."""
+        cache_key = f"v2:{table_id}"
+        async with self._cache_lock:
+            if cache_key in self._metadata_cache:
+                return dict(self._metadata_cache[cache_key])
+
+        clean_id = table_id.strip("/")
+        url = f"{self.base_url}tables/{url_quote(clean_id, safe='')}/metadata"
+        try:
+            data = await self._get_json(url, params={"lang": "sv"})
+        except httpx.HTTPError:
+            return {}
+
+        if not isinstance(data, dict):
+            return {}
+
+        # Normalize v2 metadata to match the internal format expected by
+        # _build_selections and _score_table_metadata.
+        metadata = self._normalize_v2_metadata(data)
+        async with self._cache_lock:
+            self._metadata_cache[cache_key] = metadata
+        return metadata
+
+    async def _get_table_metadata_v1(self, table_path: str) -> dict[str, Any]:
+        url = self._build_url(table_path, trailing=False)
+        async with self._cache_lock:
+            if url in self._metadata_cache:
+                return dict(self._metadata_cache[url])
+        data = await self._get_json(url)
+        if isinstance(data, dict):
+            async with self._cache_lock:
+                self._metadata_cache[url] = data
+            return data
+        return {}
+
+    @staticmethod
+    def _normalize_v2_metadata(data: dict[str, Any]) -> dict[str, Any]:
+        """Convert v2 metadata format to the internal v1-compatible format.
+
+        v2 metadata uses 'variables' with 'code', 'label', 'values' (list of
+        objects with 'code' and 'label') instead of v1's 'code', 'text',
+        'values' (list of strings), 'valueTexts' (list of strings).
+        """
+        variables = data.get("variables") or []
+        if not isinstance(variables, list):
+            return data
+
+        # Check if already in v1-compatible format
+        if variables and "valueTexts" in variables[0]:
+            return data
+
+        normalized_vars: list[dict[str, Any]] = []
+        for var in variables:
+            code = str(var.get("code") or "")
+            text = str(var.get("label") or var.get("text") or code)
+            raw_values = var.get("values") or []
+
+            values: list[str] = []
+            value_texts: list[str] = []
+
+            if raw_values and isinstance(raw_values[0], dict):
+                # v2 format: values is list of {code, label}
+                for val_obj in raw_values:
+                    values.append(str(val_obj.get("code") or ""))
+                    value_texts.append(str(val_obj.get("label") or ""))
+            elif raw_values and isinstance(raw_values[0], str):
+                # Already string format (v1 or hybrid)
+                values = [str(v) for v in raw_values]
+                value_texts = [str(v) for v in (var.get("valueTexts") or raw_values)]
+            else:
+                values = [str(v) for v in raw_values]
+                value_texts = list(values)
+
+            normalized_vars.append({
+                "code": code,
+                "text": text,
+                "values": values,
+                "valueTexts": value_texts,
+            })
+
+        return {"variables": normalized_vars}
+
+    # -- Table Discovery ----------------------------------------------------
+
     async def find_best_table_candidates(
         self,
         base_path: str,
@@ -361,9 +549,18 @@ class ScbService:
         metadata_limit: int = 10,
         candidate_limit: int = 5,
     ) -> tuple[ScbTable | None, list[ScbTable]]:
-        tables = await self.collect_tables(base_path, query, max_tables=max_tables)
+        # Try v2 search first, fall back to v1 tree traversal
+        if self._is_v2:
+            tables = await self.search_tables(query, limit=max_tables)
+        else:
+            tables = []
+
+        if not tables:
+            tables = await self.collect_tables(base_path, query, max_tables=max_tables)
+
         if not tables:
             return None, []
+
         query_tokens = set(_tokenize(query))
         query_norm = _normalize_text(query)
         requested_years = _extract_years(query)
@@ -430,15 +627,66 @@ class ScbService:
         )
         return best_table
 
+    # -- Data Retrieval -----------------------------------------------------
+
+    async def query_table(self, table_path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Execute a data query. Uses v2 or v1 format automatically."""
+        if self._is_v2:
+            return await self._query_table_v2(table_path, payload)
+        return await self._query_table_v1(table_path, payload)
+
+    async def _query_table_v2(self, table_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        clean_id = table_id.strip("/")
+        url = f"{self.base_url}tables/{url_quote(clean_id, safe='')}/data"
+
+        # Convert v1 payload format to v2 if needed
+        v2_payload = self._convert_payload_to_v2(payload)
+        data = await self._post_json(url, v2_payload)
+        if isinstance(data, dict):
+            return data
+        return {"data": data}
+
+    async def _query_table_v1(self, table_path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        url = self._build_url(table_path, trailing=False)
+        data = await self._post_json(url, payload)
+        if isinstance(data, dict):
+            return data
+        return {"data": data}
+
+    @staticmethod
+    def _convert_payload_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
+        """Convert v1 query[] format to v2 selection[] format."""
+        # If already in v2 format, return as-is
+        if "selection" in payload:
+            return payload
+
+        v1_query = payload.get("query") or []
+        selection: list[dict[str, Any]] = []
+        for item in v1_query:
+            code = item.get("code", "")
+            values = item.get("selection", {}).get("values", [])
+            selection.append({
+                "variableCode": code,
+                "valueCodes": values,
+            })
+
+        v2_payload: dict[str, Any] = {"selection": selection}
+        output_format = (payload.get("response") or {}).get("format", "json-stat2")
+        v2_payload["outputFormat"] = output_format
+        return v2_payload
+
+    # -- Query Building -----------------------------------------------------
+
     def build_query_payloads(
         self,
         metadata: dict[str, Any],
         query: str,
         *,
-        max_cells: int = SCB_MAX_CELLS,
+        max_cells: int | None = None,
         max_values_per_variable: int = 6,
         max_batches: int = 8,
     ) -> tuple[list[dict[str, Any]], list[str], list[str], list[list[str]]]:
+        effective_max_cells = max_cells if max_cells is not None else self.max_cells
         selections, summary = self._build_selections(
             metadata,
             query,
@@ -449,12 +697,12 @@ class ScbService:
 
         batches, warnings = self._split_selection_batches(
             selections,
-            max_cells=max_cells,
+            max_cells=effective_max_cells,
             max_batches=max_batches,
         )
         if len(batches) > 1:
             warnings.append(
-                f"Split into {len(batches)} requests to stay under {max_cells} cells."
+                f"Split into {len(batches)} requests to stay under {effective_max_cells} cells."
             )
 
         payloads = [self._payload_from_selections(batch) for batch in batches]
@@ -466,13 +714,14 @@ class ScbService:
         metadata: dict[str, Any],
         query: str,
         *,
-        max_cells: int = SCB_MAX_CELLS,
+        max_cells: int | None = None,
         max_values_per_variable: int = 6,
     ) -> tuple[dict[str, Any], list[str], list[str]]:
+        effective_max_cells = max_cells if max_cells is not None else self.max_cells
         payloads, summary, warnings, _ = self.build_query_payloads(
             metadata,
             query,
-            max_cells=max_cells,
+            max_cells=effective_max_cells,
             max_values_per_variable=max_values_per_variable,
             max_batches=1,
         )
@@ -580,10 +829,7 @@ class ScbService:
         for selection in selections:
             label = selection.get("label", "")
             value_texts = selection.get("value_texts") or []
-            text_map = {
-                val: text
-                for val, text in zip(selection.get("values") or [], value_texts, strict=False)
-            }
+            text_map = dict(zip(selection.get("values") or [], value_texts, strict=False))
             display = [text_map.get(value, value) for value in selection.get("values") or []]
             if display and label:
                 summaries.append(f"{label}: {', '.join(display)}")
@@ -591,6 +837,14 @@ class ScbService:
 
     def _payload_from_selections(
         self, selections: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        if self._is_v2:
+            return self._payload_from_selections_v2(selections)
+        return self._payload_from_selections_v1(selections)
+
+    @staticmethod
+    def _payload_from_selections_v1(
+        selections: list[dict[str, Any]],
     ) -> dict[str, Any]:
         return {
             "query": [
@@ -602,6 +856,22 @@ class ScbService:
                 if sel.get("values")
             ],
             "response": {"format": "json-stat2"},
+        }
+
+    @staticmethod
+    def _payload_from_selections_v2(
+        selections: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "selection": [
+                {
+                    "variableCode": sel["code"],
+                    "valueCodes": sel["values"],
+                }
+                for sel in selections
+                if sel.get("values")
+            ],
+            "outputFormat": "json-stat2",
         }
 
     def _selection_cell_count(self, selections: list[dict[str, Any]]) -> int:

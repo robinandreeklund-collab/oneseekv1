@@ -418,7 +418,7 @@ async def _ingest_compare_outputs(
         )
         if document:
             documents.append(
-                connector_service._serialize_external_document(document, score=1.0)
+                connector_service.serialize_external_document(document, score=1.0)
             )
     return documents
 
@@ -1144,7 +1144,7 @@ async def stream_compare_chat(
                 )
                 if tavily_answer_doc:
                     tavily_answer_documents.append(
-                        connector_service._serialize_external_document(
+                        connector_service.serialize_external_document(
                             tavily_answer_doc, score=1.0
                         )
                     )

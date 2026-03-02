@@ -633,7 +633,7 @@ class ConnectorService:
             print(f"[ingest] Failed to check documenttype enum: {exc!s}")
             return True
 
-    def _serialize_external_document(
+    def serialize_external_document(
         self,
         document: Document,
         *,
@@ -840,7 +840,7 @@ class ConnectorService:
                     continue
                 did_write = did_write or wrote
                 documents.append(
-                    self._serialize_external_document(
+                    self.serialize_external_document(
                         document, score=float(result.get("score", 0.0))
                     )
                 )
@@ -1056,7 +1056,7 @@ class ConnectorService:
                 continue
             did_write = did_write or wrote
             documents.append(
-                self._serialize_external_document(
+                self.serialize_external_document(
                     document, score=float(result.get("score", 0.0))
                 )
             )
@@ -1290,7 +1290,7 @@ class ConnectorService:
             if not document:
                 continue
             did_write = did_write or wrote
-            documents.append(self._serialize_external_document(document, score=1.0))
+            documents.append(self.serialize_external_document(document, score=1.0))
 
         if did_write:
             await self.session.commit()
@@ -2543,7 +2543,7 @@ class ConnectorService:
                 if not document:
                     continue
                 did_write = did_write or wrote
-                documents.append(self._serialize_external_document(document, score=1.0))
+                documents.append(self.serialize_external_document(document, score=1.0))
 
             if did_write:
                 await self.session.commit()

@@ -195,7 +195,7 @@ def _build_marketplace_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(document, score=1.0)
+                serialized = connector_service.serialize_external_document(document, score=1.0)
                 formatted_docs = format_documents_for_context([serialized])
 
             response = {"query": query, "results": formatted_docs, "summary": combined}
@@ -230,7 +230,7 @@ def _build_marketplace_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(document, score=1.0)
+                serialized = connector_service.serialize_external_document(document, score=1.0)
                 formatted_docs = format_documents_for_context([serialized])
 
             response = {"query": query, "results": formatted_docs, "summary": result}
@@ -267,7 +267,7 @@ def _build_marketplace_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(document, score=1.0)
+                serialized = connector_service.serialize_external_document(document, score=1.0)
                 formatted_docs = format_documents_for_context([serialized])
 
             response = {"search": search_desc, "results": formatted_docs, "summary": result}
@@ -303,7 +303,7 @@ def _build_marketplace_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(document, score=1.0)
+                serialized = connector_service.serialize_external_document(document, score=1.0)
                 formatted_docs = format_documents_for_context([serialized])
 
             response = {"search": search_desc, "results": formatted_docs, "summary": result}
@@ -337,7 +337,7 @@ def _build_marketplace_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(document, score=1.0)
+                serialized = connector_service.serialize_external_document(document, score=1.0)
                 formatted_docs = format_documents_for_context([serialized])
 
             response = {"search": search_desc, "results": formatted_docs, "summary": result}
@@ -371,7 +371,7 @@ def _build_marketplace_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(document, score=1.0)
+                serialized = connector_service.serialize_external_document(document, score=1.0)
                 formatted_docs = format_documents_for_context([serialized])
 
             response = {"query": query, "results": formatted_docs, "summary": result}
@@ -421,7 +421,7 @@ def _build_marketplace_tool(
 
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(document, score=1.0)
+                serialized = connector_service.serialize_external_document(document, score=1.0)
                 formatted_docs = format_documents_for_context([serialized])
 
             response = {"query": query, "results": formatted_docs, "comparison": comparison}

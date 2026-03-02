@@ -258,7 +258,7 @@ async def test_build_kolada_tool_execution():
     mock_document = MagicMock()
     mock_connector_service = MagicMock()
     mock_connector_service.ingest_tool_output = AsyncMock(return_value=mock_document)
-    mock_connector_service._serialize_external_document = MagicMock(return_value={})
+    mock_connector_service.serialize_external_document = MagicMock(return_value={})
     
     tool = _build_kolada_tool(
         definition,

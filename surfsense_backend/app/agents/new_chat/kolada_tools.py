@@ -706,7 +706,7 @@ def _build_kolada_tool(
             # Format documents for context
             formatted_docs = ""
             if document:
-                serialized = connector_service._serialize_external_document(
+                serialized = connector_service.serialize_external_document(
                     document, score=1.0
                 )
                 formatted_docs = format_documents_for_context([serialized])
