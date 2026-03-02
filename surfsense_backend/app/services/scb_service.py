@@ -316,9 +316,15 @@ class ScbService:
         response.raise_for_status()
         return self._decode_json_response(response)
 
-    async def _post_json(self, url: str, payload: dict[str, Any]) -> Any:
+    async def _post_json(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
         client = self._get_client()
-        response = await client.post(url, json=payload)
+        response = await client.post(url, json=payload, params=params)
         response.raise_for_status()
         return self._decode_json_response(response)
 
@@ -804,11 +810,14 @@ class ScbService:
         # Convert v1 payload format to v2 if needed
         v2_payload = self._convert_payload_to_v2(payload)
 
-        # Override output format if requested (#15)
-        if output_format and output_format in SCB_OUTPUT_FORMATS:
-            v2_payload["outputFormat"] = output_format
+        # Remove outputFormat from body — v2 API requires it as a query param
+        v2_payload.pop("outputFormat", None)
 
-        data = await self._post_json(url, v2_payload)
+        query_params: dict[str, str] = {"lang": "sv"}
+        if output_format and output_format in SCB_OUTPUT_FORMATS:
+            query_params["outputFormat"] = output_format
+
+        data = await self._post_json(url, v2_payload, params=query_params)
         if isinstance(data, dict):
             return data
         return {"data": data}
@@ -1038,7 +1047,6 @@ class ScbService:
                 for sel in selections
                 if sel.get("values")
             ],
-            "outputFormat": "json-stat2",
         }
 
     def _selection_cell_count(self, selections: list[dict[str, Any]]) -> int:

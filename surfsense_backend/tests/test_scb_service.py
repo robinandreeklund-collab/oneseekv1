@@ -537,7 +537,8 @@ def test_payload_from_selections_v2():
     ]
     result = ScbService._payload_from_selections_v2(selections)
     assert "selection" in result
-    assert result["outputFormat"] == "json-stat2"
+    # outputFormat is now sent as a query parameter, not in the body
+    assert "outputFormat" not in result
     assert result["selection"][0]["variableCode"] == "Tid"
     assert result["selection"][0]["valueCodes"] == ["2023"]
 
@@ -780,13 +781,14 @@ def test_output_formats_constant():
 
 
 def test_query_table_v2_output_format():
-    """v2 query_table should honour output_format parameter."""
+    """v2 query_table should pass outputFormat as query param, not body."""
     service = ScbService(base_url="https://statistikdatabasen.scb.se/api/v2/")
 
-    captured_payload = {}
+    captured = {"payload": {}, "params": {}}
 
-    async def fake_post_json(url, payload):
-        captured_payload.update(payload)
+    async def fake_post_json(url, payload, *, params=None):
+        captured["payload"].update(payload)
+        captured["params"].update(params or {})
         return {"data": []}
 
     service._post_json = fake_post_json  # type: ignore[method-assign]
@@ -795,12 +797,13 @@ def test_query_table_v2_output_format():
         "selection": [
             {"variableCode": "Tid", "valueCodes": ["2023"]},
         ],
-        "outputFormat": "json-stat2",
     }
     asyncio.get_event_loop().run_until_complete(
         service.query_table("TAB001", v2_payload, output_format="csv")
     )
-    assert captured_payload["outputFormat"] == "csv"
+    # outputFormat should be in query params, not in payload body
+    assert captured["params"]["outputFormat"] == "csv"
+    assert "outputFormat" not in captured["payload"]
 
 
 # ---------------------------------------------------------------------------
