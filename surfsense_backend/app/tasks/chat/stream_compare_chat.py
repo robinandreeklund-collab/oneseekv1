@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 import uuid
@@ -79,7 +80,10 @@ from app.utils.context_metrics import (
     serialize_context_payload,
 )
 
+logger = logging.getLogger(__name__)
+
 COMPARE_PREFIX = "/compare"
+_COMPARE_QUERY_MAX_LENGTH = 4000
 COMPARE_TIMEOUT_SECONDS = 90
 COMPARE_RAW_ANSWER_CHARS = 12000
 MAX_TAVILY_RESULTS = 3
@@ -102,13 +106,23 @@ def is_compare_request(user_query: str) -> bool:
 
 
 def extract_compare_query(user_query: str) -> str:
-    """Strip the /compare prefix and return the actual query."""
+    """Strip the /compare prefix and return the actual query.
+
+    Enforces a maximum length to prevent excessively large payloads
+    from being forwarded to external APIs.
+    """
     trimmed = user_query.strip()
     if not trimmed.lower().startswith(COMPARE_PREFIX):
         return ""
     remainder = trimmed[len(COMPARE_PREFIX) :].strip()
     if remainder.startswith(":"):
         remainder = remainder[1:].strip()
+    if len(remainder) > _COMPARE_QUERY_MAX_LENGTH:
+        logger.warning(
+            "extract_compare_query: query truncated from %d to %d chars",
+            len(remainder), _COMPARE_QUERY_MAX_LENGTH,
+        )
+        remainder = remainder[:_COMPARE_QUERY_MAX_LENGTH]
     return remainder
 
 

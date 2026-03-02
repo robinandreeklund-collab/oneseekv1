@@ -24,14 +24,13 @@ import asyncio
 import json
 import logging
 import time
-import re
 import uuid
+from types import SimpleNamespace
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
-from app.agents.new_chat.system_prompt import append_datetime_context
+from app.agents.new_chat.compare_criterion_evaluator import evaluate_model_response
 from app.agents.new_chat.tools.external_models import (
     EXTERNAL_MODEL_SPECS,
     call_external_model,
@@ -283,8 +282,11 @@ def build_compare_subagent_spawner_node(
                 runtime_hitl=hitl,
                 reason="criterion-complete",
             )
-        except Exception:
-            pass  # non-critical
+        except Exception as exc:
+            logger.debug(
+                "compare_executor[%s/%s]: criterion pod release failed (non-critical): %s",
+                domain, criterion, exc,
+            )
 
     async def _run_external_model_domain(
         domain: str,
@@ -294,6 +296,7 @@ def build_compare_subagent_spawner_node(
         on_criterion_complete: Any | None = None,
         thread_id: str = "",
         config: Any = None,
+        research_context: str | None = None,
     ) -> dict[str, Any]:
         """Execute a single external model as a subagent."""
         spec_data = plan_data.get("spec", {})
@@ -307,8 +310,6 @@ def build_compare_subagent_spawner_node(
         for attempt in range(_max_retries_external + 1):
             try:
                 # Create a minimal spec-like object
-                from types import SimpleNamespace
-
                 spec = SimpleNamespace(**spec_data)
                 result = await asyncio.wait_for(
                     _call_external(spec=spec, query=user_query),
@@ -364,8 +365,11 @@ def build_compare_subagent_spawner_node(
                 },
                 config=config,
             )
-        except Exception:
-            pass  # non-critical
+        except Exception as exc:
+            logger.debug(
+                "compare_executor[%s]: model_response_ready dispatch failed: %s",
+                domain, exc,
+            )
 
         # Run 4 parallel criterion evaluations if model returned successfully
         criterion_scores: dict[str, int] = {}
@@ -381,23 +385,22 @@ def build_compare_subagent_spawner_node(
                     {"domain": domain, "timestamp": time.time()},
                     config=config,
                 )
-            except Exception:
-                pass
-
-            try:
-                from app.agents.new_chat.compare_criterion_evaluator import (
-                    evaluate_model_response,
+            except Exception as exc:
+                logger.debug(
+                    "compare_executor[%s]: criterion_evaluation_started dispatch failed: %s",
+                    domain, exc,
                 )
 
+            try:
                 eval_result = await evaluate_model_response(
                     domain=domain,
                     model_response=response_text,
                     model_display_name=spec_data.get("display", domain),
                     user_query=user_query,
-                    research_context=None,
+                    research_context=research_context,
                     llm=llm,
                     extract_json_fn=extract_first_json_object_fn,
-                    timeout_seconds=90,
+                    timeout_seconds=30,
                     on_criterion_complete=on_criterion_complete,
                     prompt_overrides=criterion_prompt_overrides,
                     # Criterion evaluators are LLM API calls — they run
@@ -439,7 +442,7 @@ def build_compare_subagent_spawner_node(
                 "agent_name": f"compare_{domain}",
                 "status": status,
                 "confidence": confidence,
-                "summary": (response_text[:500] if response_text else error_text[:200]),
+                "summary": (response_text[:300] if response_text else error_text[:200]),
                 "findings": [],
                 "used_tools": plan_data.get("tools", []),
                 "criterion_scores": criterion_scores,
@@ -513,8 +516,11 @@ def build_compare_subagent_spawner_node(
                 },
                 config=config,
             )
-        except Exception:
-            pass  # non-critical
+        except Exception as exc:
+            logger.debug(
+                "compare_executor[research]: model_response_ready dispatch failed: %s",
+                exc,
+            )
 
         # Run 4 parallel criterion evaluations (same as external models)
         criterion_scores: dict[str, int] = {}
@@ -529,23 +535,22 @@ def build_compare_subagent_spawner_node(
                     {"domain": "research", "timestamp": time.time()},
                     config=config,
                 )
-            except Exception:
-                pass
-
-            try:
-                from app.agents.new_chat.compare_criterion_evaluator import (
-                    evaluate_model_response,
+            except Exception as exc:
+                logger.debug(
+                    "compare_executor[research]: criterion_evaluation_started dispatch failed: %s",
+                    exc,
                 )
 
+            try:
                 eval_result = await evaluate_model_response(
                     domain="research",
                     model_response=response_text,
                     model_display_name="OneSeek Research",
                     user_query=user_query,
-                    research_context=None,
+                    research_context=response_text,
                     llm=llm,
                     extract_json_fn=extract_first_json_object_fn,
-                    timeout_seconds=90,
+                    timeout_seconds=30,
                     on_criterion_complete=on_criterion_complete,
                     prompt_overrides=criterion_prompt_overrides,
                     acquire_criterion_pod_fn=None,
@@ -581,7 +586,7 @@ def build_compare_subagent_spawner_node(
                 "agent_name": "compare_research",
                 "status": status,
                 "confidence": confidence,
-                "summary": (response_text[:500] if response_text else error_text[:200]),
+                "summary": (response_text[:300] if response_text else error_text[:200]),
                 "findings": [
                     f"{src.get('title', 'Webb-källa')} ({src.get('url', '')})"
                     for src in web_sources[:5]
@@ -668,8 +673,11 @@ def build_compare_subagent_spawner_node(
                 await adispatch_custom_event(
                     "criterion_complete", event_data, config=config,
                 )
-            except Exception:
-                pass  # non-critical: fallback to batched emission
+            except Exception as exc:
+                logger.debug(
+                    "compare_executor[%s/%s]: criterion_complete dispatch failed: %s",
+                    domain, criterion, exc,
+                )
 
         # Generate subagent IDs with sandbox scope info
         domain_subagent_ids: dict[str, str] = {}
@@ -710,6 +718,12 @@ def build_compare_subagent_spawner_node(
         # model cards as they arrive (not all at once after gather).
         model_complete_events: list[dict[str, Any]] = []
 
+        # Shared research context: research domain sets this when complete,
+        # external model criterion evaluators can wait for it (BUG-03 fix).
+        _research_done = asyncio.Event()
+        _research_context_holder: dict[str, str | None] = {"text": None}
+        _research_wait_timeout = 15  # seconds to wait for research before proceeding without it
+
         # Execute all domains in parallel
         semaphore = asyncio.Semaphore(10)
 
@@ -722,12 +736,33 @@ def build_compare_subagent_spawner_node(
                         config=config,
                         on_criterion_complete=_on_criterion_complete,
                     )
+                    # Store research response for other domains' korrekthet eval
+                    raw_res = domain_result.get("raw_result", {})
+                    res_text = raw_res.get("response", "")
+                    if res_text:
+                        _research_context_holder["text"] = res_text
+                    _research_done.set()
                 else:
+                    # Wait for research context before criterion eval (short timeout)
+                    research_ctx: str | None = None
+                    try:
+                        await asyncio.wait_for(
+                            _research_done.wait(),
+                            timeout=_research_wait_timeout,
+                        )
+                        research_ctx = _research_context_holder["text"]
+                    except TimeoutError:
+                        logger.debug(
+                            "compare_executor[%s]: research context not available "
+                            "within %ds, proceeding without it",
+                            domain, _research_wait_timeout,
+                        )
                     domain_result = await _run_external_model_domain(
                         domain, plan_data, user_query, subagent_id,
                         on_criterion_complete=_on_criterion_complete,
                         thread_id=_thread_id,
                         config=config,
+                        research_context=research_ctx,
                     )
 
                 # Fire model-complete event immediately (while other models still run)
@@ -759,8 +794,11 @@ def build_compare_subagent_spawner_node(
                     await adispatch_custom_event(
                         "model_complete", mc_event, config=config,
                     )
-                except Exception:
-                    pass  # non-critical: fallback to batched emission
+                except Exception as exc:
+                    logger.debug(
+                        "compare_executor[%s]: model_complete dispatch failed: %s",
+                        domain, exc,
+                    )
 
                 return domain_result
 
@@ -838,7 +876,11 @@ def build_compare_subagent_spawner_node(
                 "timestamp": time.time(),
             })
 
-            # Build ToolMessage for frontend rendering (includes scores)
+            # Build ToolMessage for frontend rendering (includes scores).
+            # OPT-08: json.dumps is required here — @assistant-ui/react's
+            # makeAssistantToolUI expects content to be a JSON string that
+            # it parses into the `result` prop.  Passing a dict directly
+            # would change the serialization format and break frontend parsing.
             tool_messages.append(ToolMessage(
                 name=tool_name,
                 content=json.dumps(raw_with_scores, ensure_ascii=False),
@@ -866,489 +908,17 @@ def build_compare_subagent_spawner_node(
     return compare_subagent_spawner_node
 
 
-# ─── Confidence-Weighted Scoring ─────────────────────────────────────
+# ─── KQ-06: Re-exports for backward compatibility ───────────────────
+# The following were extracted into dedicated modules but are re-exported
+# here so that existing imports (e.g. supervisor_agent.py) continue to work.
 
-# Weights: korrekthet (accuracy) is most important, then relevans, then
-# djup and klarhet equally.  These can be tuned dynamically in the future.
-CRITERION_WEIGHTS: dict[str, float] = {
-    "korrekthet": 0.35,
-    "relevans": 0.25,
-    "djup": 0.20,
-    "klarhet": 0.20,
-}
-
-
-def compute_weighted_score(scores: dict[str, int | float]) -> float:
-    """Compute confidence-weighted final score from per-criterion scores.
-
-    Returns a score 0-100 (weighted average).
-    """
-    total_weight = 0.0
-    weighted_sum = 0.0
-    for criterion, weight in CRITERION_WEIGHTS.items():
-        value = scores.get(criterion, 0)
-        if isinstance(value, (int, float)):
-            weighted_sum += weight * float(value)
-            total_weight += weight
-    if total_weight == 0.0:
-        return 0.0
-    return round(weighted_sum / total_weight, 1)
-
-
-def rank_models_by_weighted_score(
-    model_scores: dict[str, dict[str, int | float]],
-) -> list[dict[str, Any]]:
-    """Rank models by weighted score. Returns sorted list of dicts.
-
-    Each entry: {"domain": "grok", "weighted_score": 82.5, "rank": 1,
-                 "scores": {...}, "raw_total": 316}
-    """
-    ranked: list[dict[str, Any]] = []
-    for domain, scores in model_scores.items():
-        if domain == "research":
-            continue  # Skip research agent from ranking
-        if not isinstance(scores, dict):
-            continue
-        weighted = compute_weighted_score(scores)
-        raw_total = sum(
-            int(v) for v in scores.values() if isinstance(v, (int, float))
-        )
-        ranked.append({
-            "domain": domain,
-            "weighted_score": weighted,
-            "raw_total": raw_total,
-            "scores": scores,
-        })
-    ranked.sort(key=lambda x: x["weighted_score"], reverse=True)
-    for i, entry in enumerate(ranked):
-        entry["rank"] = i + 1
-    return ranked
-
-
-# ─── Compare Synthesis Context ───────────────────────────────────────
-
-
-def _build_synthesis_from_convergence(
-    user_query: str,
-    convergence: dict[str, Any],
-    summaries: list[dict[str, Any]],
-) -> str:
-    """Build synthesis context from convergence data + per-domain summaries."""
-    blocks = [f"Användarfråga: {user_query}\n"]
-
-    # Convergence overview
-    overlap = convergence.get("overlap_score", 0.0)
-    conflicts = convergence.get("conflicts", [])
-    merged = convergence.get("merged_summary", "")
-    if merged:
-        blocks.append(f"CONVERGENCE SAMMANFATTNING (overlap: {overlap:.0%}):\n{merged}\n")
-    if conflicts:
-        blocks.append("KONFLIKTER:")
-        for c in conflicts:
-            blocks.append(f"  - {c}")
-        blocks.append("")
-
-    # Model scores: prefer criterion_scores from handoffs over convergence
-    model_scores = convergence.get("model_scores", {})
-    # Also collect scores from subagent summaries (criterion evaluator)
-    for s in summaries:
-        domain = s.get("domain", "unknown")
-        cs = s.get("criterion_scores", {})
-        if cs and domain not in model_scores:
-            model_scores[domain] = cs
-    if model_scores:
-        blocks.append("PER-MODELL POÄNG (från kriterie-bedömning):")
-        for domain, scores in model_scores.items():
-            if isinstance(scores, dict):
-                blocks.append(
-                    f"  {domain}: relevans={scores.get('relevans', 0)}, "
-                    f"djup={scores.get('djup', 0)}, "
-                    f"klarhet={scores.get('klarhet', 0)}, "
-                    f"korrekthet={scores.get('korrekthet', 0)}"
-                )
-        blocks.append("")
-
-        # Confidence-weighted ranking — this is the DEFINITIVE ranking
-        ranked = rank_models_by_weighted_score(model_scores)
-        if ranked:
-            blocks.append(
-                "VIKTAD SLUTRANKING (confidence-weighted convergence):\n"
-                "Vikter: korrekthet=35%, relevans=25%, djup=20%, klarhet=20%\n"
-                "DENNA RANKING ÄR DEFINITIV — din winner_rationale MÅSTE matcha denna.\n"
-            )
-            for entry in ranked:
-                blocks.append(
-                    f"  #{entry['rank']} {entry['domain']}: "
-                    f"viktat={entry['weighted_score']}/100, "
-                    f"rå_total={entry['raw_total']}/400"
-                )
-            blocks.append("")
-
-    # Agreements and disagreements
-    agreements = convergence.get("agreements", [])
-    if agreements:
-        blocks.append("KONSENSUS:")
-        for a in agreements:
-            blocks.append(f"  - {a}")
-        blocks.append("")
-
-    disagreements = convergence.get("disagreements", [])
-    if disagreements:
-        blocks.append("MENINGSSKILJAKTIGHETER:")
-        for d in disagreements:
-            blocks.append(f"  - {d}")
-        blocks.append("")
-
-    unique_insights = convergence.get("unique_insights", {})
-    if unique_insights:
-        blocks.append("UNIKA INSIKTER:")
-        for domain, insight in unique_insights.items():
-            blocks.append(f"  - {domain}: {insight}")
-        blocks.append("")
-
-    comparative = convergence.get("comparative_summary", "")
-    if comparative:
-        blocks.append(f"JÄMFÖRANDE ANALYS:\n{comparative}\n")
-
-    # Per-domain summaries
-    for s in summaries:
-        domain = s.get("domain", "unknown")
-        status = s.get("status", "partial")
-        confidence = s.get("confidence", 0.0)
-        summary = s.get("summary", "")
-        findings = s.get("findings", [])
-
-        if domain == "research":
-            label = "ONESEEK_RESEARCH (verifierad webb-data)"
-        else:
-            label = f"MODEL_ANSWER from {domain} (confidence: {confidence:.0%})"
-
-        blocks.append(f"{label}:")
-        if summary:
-            blocks.append(summary)
-        if findings:
-            blocks.append("Källor:")
-            for f in findings:
-                blocks.append(f"  - {f}")
-        blocks.append(f"[status: {status}]\n")
-
-    return "\n".join(blocks)
-
-
-def _build_synthesis_context(
-    user_query: str,
-    compare_outputs: list[dict[str, Any]],
-) -> str:
-    """Build context string from compare outputs for synthesis (legacy compat)."""
-    blocks = [f"Användarfråga: {user_query}\n"]
-
-    for output in compare_outputs:
-        tool_name = output.get("tool_name", "unknown")
-        result = output.get("result", {})
-
-        if result.get("status") == "success":
-            model_name = result.get("model_display_name", tool_name)
-            response = result.get("response", "")
-            provider = result.get("provider", "")
-            blocks.append(
-                f"MODEL_ANSWER from {model_name} ({provider}):\n{response}\n"
-            )
-        elif result.get("status") == "error":
-            model_name = result.get("model_display_name", tool_name)
-            error = result.get("error", "Unknown error")
-            blocks.append(f"MODEL_ERROR from {model_name}: {error}\n")
-
-    return "\n".join(blocks)
-
-
-# ─── Synthesis Text Sanitizer ─────────────────────────────────────────
-
-# All JSON field names that smaller LLMs tend to dump as raw JSON outside
-# of the intended ```spotlight-arena-data code fence.
-_LEAKED_JSON_FIELDS = (
-    "search_queries", "search_results", "winner_answer", "winner_rationale",
-    "reasoning", "thinking", "arena_analysis", "consensus", "disagreements",
-    "unique_contributions", "reliability_notes", "score",
+from app.agents.new_chat.compare_scoring import (  # noqa: E402, F401
+    CRITERION_WEIGHTS,
+    compute_weighted_score,
+    rank_models_by_weighted_score,
 )
-
-# Regex alternation for the field names above
-_FIELD_ALT = "|".join(re.escape(f) for f in _LEAKED_JSON_FIELDS)
-
-# Pattern: a JSON object (possibly multi-line) whose first key is one of
-# the known leaked fields.  Handles both compact `{ "key": ... }` and
-# pretty-printed multi-line variants.
-_NAKED_JSON_RE = re.compile(
-    r'\{\s*"(?:' + _FIELD_ALT + r')"[\s\S]*?\}(?:\s*\})*',
-)
-
-# Pattern: a trailing JSON blob at the end of the text, starting with
-# any of the known field names.  Catches cases where the JSON is appended
-# after the markdown body without a blank-line separator.
-_TRAILING_JSON_RE = re.compile(
-    r'\n?\s*\{\s*"(?:' + _FIELD_ALT + r')"[\s\S]*$',
+from app.agents.new_chat.compare_synthesizer import (  # noqa: E402, F401
+    build_compare_synthesizer_node,
 )
 
 
-def _sanitize_synthesis_text(text: str) -> str:
-    """Remove raw JSON blobs that leak into the visible synthesis text.
-
-    Some smaller LLMs dump structured analysis data (search_queries,
-    search_results, winner_rationale, etc.) as raw JSON in the response
-    instead of properly placing it inside ```spotlight-arena-data fences.
-
-    This function applies multiple overlapping strategies to strip leaked
-    JSON robustly — even when the JSON is multi-line or malformed.
-    """
-    if not text:
-        return text
-
-    # 1. Remove the ```spotlight-arena-data block (frontend extracts it separately)
-    cleaned = re.sub(
-        r"```spotlight-arena-data\s*\n[\s\S]*?```\s*\n?",
-        "",
-        text,
-    )
-
-    # 2. Remove any ```json ... ``` fenced blocks that contain leaked fields
-    cleaned = re.sub(
-        r"```json\s*\n[\s\S]*?```\s*\n?",
-        "",
-        cleaned,
-    )
-
-    # 3. Strip trailing JSON blob (greedy match to end of text)
-    cleaned = _TRAILING_JSON_RE.sub("", cleaned)
-
-    # 4. Strip inline / multi-line naked JSON blobs with known field names
-    cleaned = _NAKED_JSON_RE.sub("", cleaned)
-
-    # 5. Line-by-line pass: catch any remaining JSON fragments that the
-    #    regex missed (e.g. brace-only lines, partial JSON).
-    lines = cleaned.split("\n")
-    result_lines: list[str] = []
-    brace_depth = 0
-    in_json_leak = False
-    for line in lines:
-        stripped_line = line.strip()
-
-        # Detect start of a naked JSON blob: line starts with { and
-        # EITHER contains a known field name OR is just a lone brace
-        # (multi-line JSON where fields appear on subsequent lines).
-        if not in_json_leak and stripped_line.startswith("{"):
-            has_field = any(
-                f'"{f}"' in stripped_line for f in _LEAKED_JSON_FIELDS
-            )
-            is_lone_brace = stripped_line == "{"
-            if has_field or is_lone_brace:
-                # Peek: count braces to track depth
-                brace_depth = stripped_line.count("{") - stripped_line.count("}")
-                if brace_depth > 0:
-                    in_json_leak = True
-                # Even if braces balance on one line, skip it if it has a field
-                continue
-
-        if in_json_leak:
-            brace_depth += stripped_line.count("{") - stripped_line.count("}")
-            if brace_depth <= 0:
-                in_json_leak = False
-            continue
-
-        result_lines.append(line)
-
-    return "\n".join(result_lines).strip()
-
-
-# ─── Compare Synthesizer ─────────────────────────────────────────────
-
-
-def build_compare_synthesizer_node(
-    *,
-    prompt_override: str | None = None,
-):
-    """Build the compare synthesizer node.
-
-    Reads convergence_status and subagent_summaries from state (P4 pattern)
-    and falls back to compare_outputs for backward compatibility.
-    """
-
-    async def compare_synthesizer(
-        state: dict[str, Any],
-        config: Any = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        from app.agents.new_chat.llm_config import (
-            create_chat_litellm_from_config,
-            load_llm_config_from_yaml,
-        )
-
-        messages = state.get("messages", [])
-        convergence = state.get("convergence_status") or {}
-        subagent_summaries = state.get("subagent_summaries") or []
-        compare_outputs = state.get("compare_outputs", [])
-
-        # Extract user query
-        user_query = ""
-        for msg in reversed(messages):
-            if isinstance(msg, HumanMessage):
-                user_query = str(msg.content)
-                break
-
-        # Build context: prefer convergence data, fall back to legacy
-        if convergence and subagent_summaries:
-            context = _build_synthesis_from_convergence(
-                user_query, convergence, subagent_summaries
-            )
-        elif compare_outputs:
-            context = _build_synthesis_context(user_query, compare_outputs)
-        else:
-            return {
-                "final_response": "Inga modellsvar tillgängliga för syntes.",
-                "orchestration_phase": "compare_synthesis_empty",
-            }
-
-        # Load synthesis LLM
-        try:
-            llm_config = load_llm_config_from_yaml(-1)
-            llm = create_chat_litellm_from_config(llm_config)
-        except Exception as e:
-            return {
-                "final_response": f"Error: Could not load synthesis LLM: {e}",
-                "orchestration_phase": "compare_synthesis_error",
-            }
-
-        # Build prompt
-        base_prompt = prompt_override if prompt_override else DEFAULT_COMPARE_ANALYSIS_PROMPT
-        synthesis_prompt = append_datetime_context(base_prompt)
-
-        synthesis_messages = [
-            {"role": "system", "content": synthesis_prompt},
-            {"role": "user", "content": context},
-        ]
-
-        try:
-            from app.agents.new_chat.structured_schemas import (
-                CompareSynthesisResult,
-                pydantic_to_response_format,
-                structured_output_enabled,
-            )
-
-            _invoke_kwargs: dict[str, Any] = {}
-            if structured_output_enabled():
-                _invoke_kwargs["response_format"] = pydantic_to_response_format(
-                    CompareSynthesisResult, "compare_synthesis"
-                )
-
-            response = await llm.ainvoke(synthesis_messages, **_invoke_kwargs)
-            raw_content = response.content if hasattr(response, "content") else str(response)
-
-            # Parse structured JSON → extract response field
-            synthesis_text = raw_content
-            if structured_output_enabled():
-                try:
-                    _structured = CompareSynthesisResult.model_validate_json(raw_content)
-                    synthesis_text = _structured.response
-                except Exception:
-                    # Fallback: try to extract JSON manually
-                    try:
-                        _obj = json.loads(raw_content)
-                        synthesis_text = str(_obj.get("response", raw_content))
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-
-            # Extract arena analysis JSON before sanitizing (frontend also does this)
-            _arena_match = re.search(
-                r"```spotlight-arena-data\s*\n([\s\S]*?)```", synthesis_text,
-            )
-            _parsed_arena: dict[str, Any] | None = None
-            if _arena_match:
-                try:
-                    _parsed_arena = json.loads(_arena_match.group(1))
-                except Exception:
-                    pass
-
-            # Sanitize: remove raw JSON leakage from visible text
-            synthesis_text = _sanitize_synthesis_text(synthesis_text)
-            synthesis_message = AIMessage(content=synthesis_text)
-
-            # Compute confidence-weighted ranking for arena data
-            all_model_scores = convergence.get("model_scores", {})
-            all_model_reasonings: dict[str, dict[str, str]] = {}
-            # Also collect scores and reasonings from subagent summaries
-            for s in subagent_summaries:
-                domain = s.get("domain", "unknown")
-                cs = s.get("criterion_scores", {})
-                if cs and domain not in all_model_scores:
-                    all_model_scores[domain] = cs
-                cr = s.get("criterion_reasonings", {})
-                if cr and domain not in all_model_reasonings:
-                    all_model_reasonings[domain] = cr
-            weighted_ranking = rank_models_by_weighted_score(all_model_scores)
-
-            # Build arena_data: merge backend scores with LLM-generated analysis
-            arena_data: dict[str, Any] = {
-                "model_scores": all_model_scores,
-                "model_reasonings": all_model_reasonings,
-                "weighted_ranking": weighted_ranking,
-                "criterion_weights": CRITERION_WEIGHTS,
-                "agreements": convergence.get("agreements", []),
-                "disagreements": convergence.get("disagreements", []),
-                "unique_insights": convergence.get("unique_insights", {}),
-                "comparative_summary": convergence.get("comparative_summary", ""),
-                "overlap_score": convergence.get("overlap_score", 0.0),
-                "conflicts": convergence.get("conflicts", []),
-            }
-            # Merge LLM-generated arena_analysis if extracted
-            if _parsed_arena and isinstance(_parsed_arena, dict):
-                aa = _parsed_arena.get("arena_analysis", _parsed_arena)
-                if isinstance(aa, dict):
-                    for key in ("consensus", "disagreements", "unique_contributions",
-                                "winner_rationale", "reliability_notes"):
-                        if key in aa and aa[key]:
-                            arena_data[key] = aa[key]
-
-            return {
-                "messages": [synthesis_message],
-                "final_response": synthesis_text,
-                "orchestration_phase": "compare_synthesis_complete",
-                "compare_arena_data": arena_data,
-            }
-        except Exception as e:
-            error_msg = f"Error during synthesis: {e}"
-            return {
-                "messages": [AIMessage(content=error_msg)],
-                "final_response": error_msg,
-                "orchestration_phase": "compare_synthesis_error",
-            }
-
-    return compare_synthesizer
-
-
-# ─── Legacy compat: keep old function signatures for imports ─────────
-# These are no longer used in the graph but may be referenced in tests.
-
-
-async def compare_fan_out(state: dict[str, Any]) -> dict[str, Any]:
-    """Legacy: replaced by compare_domain_planner + compare_subagent_spawner."""
-    logger.warning("compare_fan_out: legacy node called, use compare_domain_planner instead")
-    return {}
-
-
-async def compare_collect(state: dict[str, Any]) -> dict[str, Any]:
-    """Legacy: replaced by convergence_node."""
-    logger.warning("compare_collect: legacy node called, use convergence_node instead")
-    return {"orchestration_phase": "compare_collect_legacy"}
-
-
-async def compare_tavily(state: dict[str, Any]) -> dict[str, Any]:
-    """Legacy: replaced by research subagent."""
-    logger.warning("compare_tavily: legacy node called, use research subagent instead")
-    return {"orchestration_phase": "compare_tavily_legacy"}
-
-
-async def compare_synthesizer(
-    state: dict[str, Any],
-    prompt_override: str | None = None,
-) -> dict[str, Any]:
-    """Legacy: replaced by build_compare_synthesizer_node."""
-    node = build_compare_synthesizer_node(prompt_override=prompt_override)
-    return await node(state)

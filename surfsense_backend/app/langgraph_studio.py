@@ -721,7 +721,6 @@ async def _build_studio_graph(config: dict[str, Any] | None = None):
     )
     compare_synthesis_prompt = build_compare_synthesis_prompt(
         compare_analysis_prompt,
-        citations_enabled=citations_enabled,
         citation_instructions=citation_instructions_block,
     )
     compare_external_prompt = resolve_prompt(

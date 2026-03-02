@@ -5,6 +5,13 @@ import { AlertCircleIcon, ChevronDownIcon } from "lucide-react";
 import { useContext, useState } from "react";
 import { z } from "zod";
 import { SpotlightArenaActiveContext } from "@/components/tool-ui/spotlight-arena";
+import {
+	MODEL_LOGOS,
+	ENERGY_WH_PER_1K_TOKENS,
+	CO2G_PER_1K_TOKENS,
+	formatLatency,
+	estimateTokensFromText,
+} from "@/lib/compare-constants";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -55,22 +62,7 @@ type ExternalModelResult = z.infer<typeof ExternalModelResultSchema>;
 // Helpers
 // ============================================================================
 
-const MODEL_LOGOS: Record<string, { src: string; alt: string }> = {
-	call_grok: { src: "/model-logos/grok.png", alt: "Grok" },
-	call_gpt: { src: "/model-logos/chatgpt.png", alt: "ChatGPT" },
-	call_claude: { src: "/model-logos/claude.png", alt: "Claude" },
-	call_gemini: { src: "/model-logos/gemini.png", alt: "Gemini" },
-	call_deepseek: { src: "/model-logos/deepseek.png", alt: "DeepSeek" },
-	call_perplexity: { src: "/model-logos/perplexity.png", alt: "Perplexity" },
-	call_qwen: { src: "/model-logos/qwen.png", alt: "Qwen" },
-	call_oneseek: { src: "/model-logos/oneseek.png", alt: "Oneseek" },
-};
-
-function formatLatency(latencyMs?: number | null): string {
-	if (typeof latencyMs !== "number" || Number.isNaN(latencyMs)) return "";
-	if (latencyMs >= 1000) return `${(latencyMs / 1000).toFixed(1)}s`;
-	return `${Math.round(latencyMs)}ms`;
-}
+// MODEL_LOGOS, formatLatency imported from @/lib/compare-constants
 
 function formatUsage(
 	usage: ExternalModelResult["usage"] | null | undefined,
@@ -97,8 +89,7 @@ function formatUsage(
 	return "";
 }
 
-const ENERGY_WH_PER_1K_TOKENS = 0.2;
-const CO2G_PER_1K_TOKENS = 0.1;
+// ENERGY_WH_PER_1K_TOKENS, CO2G_PER_1K_TOKENS imported from @/lib/compare-constants
 
 function formatEstimate(value: number, digits = 2): string {
 	if (!Number.isFinite(value)) return "";
@@ -108,10 +99,7 @@ function formatEstimate(value: number, digits = 2): string {
 	return value.toFixed(digits);
 }
 
-function estimateTokensFromText(text: string): number {
-	if (!text) return 0;
-	return Math.max(1, Math.round(text.length / 4));
-}
+// estimateTokensFromText imported from @/lib/compare-constants
 
 function resolveTokenEstimate(
 	usage: ExternalModelResult["usage"] | null | undefined,

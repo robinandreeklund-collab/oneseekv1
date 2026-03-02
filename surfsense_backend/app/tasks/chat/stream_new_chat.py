@@ -2081,7 +2081,6 @@ async def stream_new_chat(
         )
         compare_synthesis_prompt = build_compare_synthesis_prompt(
             compare_analysis_prompt,
-            citations_enabled=citations_enabled,
             citation_instructions=citation_instructions_block,
         )
         compare_external_prompt = inject_core_prompt(

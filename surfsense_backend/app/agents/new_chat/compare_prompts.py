@@ -339,11 +339,9 @@ Din data prioriteras över modellsvar vid faktakonflikter.
 def build_compare_synthesis_prompt(
     base_prompt: str,
     *,
-    citations_enabled: bool,
     citation_instructions: str | None = None,
 ) -> str:
     prompt = append_datetime_context(base_prompt.strip())
-    _ = citations_enabled
     explicit = str(citation_instructions or "").strip()
     if not explicit:
         return prompt
