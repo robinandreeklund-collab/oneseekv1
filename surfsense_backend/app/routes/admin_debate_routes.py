@@ -11,11 +11,14 @@ Fixes applied:
 - KQ-02: Import voice map from debate_voice.py (single source of truth)
 """
 
+from __future__ import annotations
+
 import base64
 import json
 import logging
 import os
 import time
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
