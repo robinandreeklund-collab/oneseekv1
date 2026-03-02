@@ -214,7 +214,15 @@ async def create_merged_podcast_audio(
             "".join(filter_complex) + f"concat=n={len(audio_files)}:v=0:a=1[outa]"
         )
         ffmpeg = ffmpeg.option("filter_complex", filter_complex_str)
-        ffmpeg = ffmpeg.output(output_path, map="[outa]")
+        # Explicitly request MP3 output with libmp3lame to avoid
+        # FFmpeg silently falling back to raw PCM when the codec
+        # isn't inferred from the file extension.
+        ffmpeg = ffmpeg.output(
+            output_path,
+            map="[outa]",
+            acodec="libmp3lame",
+            ab="192k",
+        )
 
         # Execute FFmpeg
         await ffmpeg.execute()
