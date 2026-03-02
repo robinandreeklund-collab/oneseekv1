@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oneseek — Text Mode Mockups</title>
+  <style>
+    /* ── Design tokens (matches globals.css dark mode) ── */
+    :root {
+      --bg:           oklch(0.145 0 0);
+      --bg-elevated:  oklch(0.18 0 0);
+      --border:       oklch(0.269 0 0);
+      --muted:        oklch(0.40 0 0);
+      --muted-fg:     oklch(0.62 0 0);
+      --fg:           oklch(0.985 0 0);
+      --primary:      oklch(0.985 0 0);
+      --primary-fg:   oklch(0.205 0 0);
+      --accent:       oklch(0.269 0 0);
+      --radius:       0.625rem;
+
+      /* Mode colours */
+      --compare-a:    oklch(0.488 0.243 264.376); /* blue-purple  */
+      --compare-b:    oklch(0.696 0.17 162.48);   /* cyan/teal    */
+      --debatt-for:   oklch(0.696 0.17 162.48);   /* green        */
+      --debatt-mot:   oklch(0.645 0.246 16.439);  /* red-orange   */
+      --dvoice:       oklch(0.627 0.265 303.9);   /* magenta      */
+      --normal:       oklch(0.769 0.188 70.08);   /* amber        */
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: oklch(0.08 0 0);
+      color: var(--fg);
+      font-family: "Geist Sans", system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      padding: 48px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 64px;
+    }
+
+    /* ── Section header ── */
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted-fg);
+      margin-bottom: 16px;
+    }
+
+    /* ── Shell: shared chat chrome ── */
+    .shell {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) * 2);
+      overflow: hidden;
+      max-width: 900px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* Top bar */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-elevated);
+    }
+    .topbar-left { display: flex; align-items: center; gap: 10px; }
+    .logo-dot {
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      background: var(--fg);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .logo-dot svg { width:13px; height:13px; }
+    .topbar-title { font-size: 13px; font-weight: 600; }
+    .topbar-right { display: flex; align-items: center; gap: 8px; }
+    .icon-btn {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted-fg);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    /* Message thread */
+    .thread {
+      padding: 20px 20px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .msg-user {
+      align-self: flex-end;
+      background: var(--accent);
+      border-radius: 16px 16px 4px 16px;
+      padding: 10px 14px;
+      max-width: 72%;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .msg-ai {
+      align-self: flex-start;
+      max-width: 82%;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--fg);
+    }
+    .ai-label {
+      font-size: 11px;
+      color: var(--muted-fg);
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+
+    /* Composer */
+    .composer-wrap {
+      padding: 12px 16px 16px;
+    }
+    .composer {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: visible;
+      position: relative;
+    }
+    .composer-inner {
+      padding: 12px 14px 8px;
+      min-height: 52px;
+      font-size: 13px;
+      color: var(--fg);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .placeholder { color: var(--muted-fg); }
+    .composer-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 10px 8px;
+    }
+    .composer-footer-left { display: flex; gap: 6px; align-items: center; }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted-fg);
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .send-btn {
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: var(--primary-fg);
+      border: none;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .send-btn svg { width:14px; height:14px; }
+
+    /* Mode pill inside composer */
+    .mode-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px 2px 5px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 600;
+      width: fit-content;
+    }
+    .mode-pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+    .mode-pill .close-x {
+      width: 13px; height: 13px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px;
+      cursor: pointer;
+      margin-left: 2px;
+    }
+
+
+    /* ══════════════════════════════════════════════════
+       MOCKUP 1 — Slash command palette
+    ══════════════════════════════════════════════════ */
+    .slash-palette {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 320px;
+      padding: 6px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      z-index: 10;
+    }
+    .palette-header {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted-fg);
+      padding: 4px 8px 6px;
+    }
+    .palette-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .palette-item:hover, .palette-item.active { background: var(--accent); }
+    .palette-icon {
+      width: 30px; height: 30px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .palette-text { flex: 1; }
+    .palette-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--fg);
+    }
+    .palette-desc {
+      font-size: 11px;
+      color: var(--muted-fg);
+      margin-top: 1px;
+    }
+    .palette-kbd {
+      font-size: 10px;
+      color: var(--muted-fg);
+      background: var(--accent);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: monospace;
+    }
+
+    /* ══════════════════════════════════════════════════
+       MOCKUP 2 — /compare mode
+    ══════════════════════════════════════════════════ */
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+    }
+    .compare-col {
+      background: var(--bg);
+      padding: 16px 18px;
+    }
+    .compare-col-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .model-badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 99px;
+      border: 1px solid;
+    }
+    .model-badge .led {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+    }
+    .compare-body {
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--fg);
+    }
+    .compare-body p + p { margin-top: 8px; }
+    .compare-divider {
+      width: 1px;
+      background: var(--border);
+    }
+    .compare-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--muted-fg);
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+    .streaming-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .typing-cursor {
+      display: inline-block;
+      width: 2px; height: 13px;
+      background: var(--fg);
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    /* ══════════════════════════════════════════════════
+       MOCKUP 3 — /debatt mode
+    ══════════════════════════════════════════════════ */
+    .debatt-thread {
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .debatt-msg {
+      display: flex;
+      gap: 10px;
+      max-width: 78%;
+    }
+    .debatt-msg.mot { align-self: flex-end; flex-direction: row-reverse; }
+    .debatt-avatar {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .debatt-bubble {
+      border-radius: 12px;
+      padding: 10px 13px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .debatt-bubble .debatt-role {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .for-bubble {
+      background: rgba(110, 180, 130, 0.12);
+      border: 1px solid rgba(110, 180, 130, 0.25);
+    }
+    .mot-bubble {
+      background: rgba(200, 100, 80, 0.12);
+      border: 1px solid rgba(200, 100, 80, 0.25);
+    }
+    .for-role { color: var(--debatt-for); }
+    .mot-role { color: var(--debatt-mot); }
+    .debatt-center-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 0;
+    }
+    .debatt-center-line::before, .debatt-center-line::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+    .debatt-turn-badge {
+      font-size: 10px;
+      color: var(--muted-fg);
+      font-weight: 600;
+      padding: 2px 10px;
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      white-space: nowrap;
+    }
+
+    /* ══════════════════════════════════════════════════
+       MOCKUP 4 — /dvoice mode
+    ══════════════════════════════════════════════════ */
+    .dvoice-overlay {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      padding: 32px 24px 24px;
+      text-align: center;
+    }
+    .waveform {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      height: 44px;
+    }
+    .waveform-bar {
+      width: 3px;
+      border-radius: 99px;
+      background: var(--dvoice);
+      opacity: 0.85;
+    }
+    .waveform-bar:nth-child(1)  { height: 12px; animation: wave 1.0s ease-in-out infinite; }
+    .waveform-bar:nth-child(2)  { height: 22px; animation: wave 1.0s 0.08s ease-in-out infinite; }
+    .waveform-bar:nth-child(3)  { height: 34px; animation: wave 1.0s 0.16s ease-in-out infinite; }
+    .waveform-bar:nth-child(4)  { height: 44px; animation: wave 1.0s 0.24s ease-in-out infinite; }
+    .waveform-bar:nth-child(5)  { height: 38px; animation: wave 1.0s 0.32s ease-in-out infinite; }
+    .waveform-bar:nth-child(6)  { height: 28px; animation: wave 1.0s 0.40s ease-in-out infinite; }
+    .waveform-bar:nth-child(7)  { height: 16px; animation: wave 1.0s 0.48s ease-in-out infinite; }
+    .waveform-bar:nth-child(8)  { height: 24px; animation: wave 1.0s 0.56s ease-in-out infinite; }
+    .waveform-bar:nth-child(9)  { height: 36px; animation: wave 1.0s 0.64s ease-in-out infinite; }
+    .waveform-bar:nth-child(10) { height: 44px; animation: wave 1.0s 0.72s ease-in-out infinite; }
+    .waveform-bar:nth-child(11) { height: 30px; animation: wave 1.0s 0.80s ease-in-out infinite; }
+    .waveform-bar:nth-child(12) { height: 18px; animation: wave 1.0s 0.88s ease-in-out infinite; }
+    .waveform-bar:nth-child(13) { height: 10px; animation: wave 1.0s 0.96s ease-in-out infinite; }
+    @keyframes wave {
+      0%, 100% { transform: scaleY(1); }
+      50% { transform: scaleY(0.35); }
+    }
+    .dvoice-status {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--dvoice);
+    }
+    .dvoice-transcript {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 16px;
+      width: 100%;
+      text-align: left;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--fg);
+      min-height: 56px;
+    }
+    .dvoice-transcript .partial {
+      color: var(--muted-fg);
+      font-style: italic;
+    }
+    .dvoice-controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .dvoice-stop-btn {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      border: 2px solid var(--dvoice);
+      background: rgba(160, 70, 200, 0.15);
+      color: var(--dvoice);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+    }
+    .dvoice-stop-btn svg { width: 20px; height: 20px; }
+    .dvoice-send-btn {
+      padding: 8px 20px;
+      border-radius: 99px;
+      background: var(--primary);
+      color: var(--primary-fg);
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .dvoice-hint {
+      font-size: 11px;
+      color: var(--muted-fg);
+    }
+
+    /* ══════════════════════════════════════════════════
+       MOCKUP 5 — Unified mode bar (all modes listed)
+    ══════════════════════════════════════════════════ */
+    .mode-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-elevated);
+      overflow-x: auto;
+    }
+    .mode-tab {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 11px;
+      border-radius: 99px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      white-space: nowrap;
+      transition: all 0.15s;
+      color: var(--muted-fg);
+    }
+    .mode-tab:hover { background: var(--accent); color: var(--fg); }
+    .mode-tab.active {
+      border-color: var(--border);
+      background: var(--bg);
+      color: var(--fg);
+    }
+    .mode-tab .mode-led { width: 7px; height: 7px; border-radius: 50%; }
+
+    .unified-composer {
+      padding: 0 16px 16px;
+    }
+    .composer-mode-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 0 4px;
+      font-size: 12px;
+      color: var(--muted-fg);
+    }
+    .composer-mode-indicator .sep { color: var(--border); }
+
+    /* Pill colours */
+    .pill-compare { background: rgba(72, 128, 230, 0.15); color: oklch(0.72 0.18 264); border: 1px solid rgba(72,128,230,0.3); }
+    .pill-compare .dot { background: var(--compare-a); }
+
+    .pill-debatt  { background: rgba(110, 180, 130, 0.15); color: var(--debatt-for); border: 1px solid rgba(110,180,130,0.3); }
+    .pill-debatt  .dot { background: var(--debatt-for); }
+
+    .pill-dvoice  { background: rgba(160, 70, 200, 0.15); color: var(--dvoice); border: 1px solid rgba(160,70,200,0.3); }
+    .pill-dvoice  .dot { background: var(--dvoice); }
+
+    .pill-normal  { background: rgba(180, 140, 60, 0.15); color: oklch(0.72 0.16 70); border: 1px solid rgba(180,140,60,0.3); }
+    .pill-normal  .dot { background: var(--normal); }
+
+    /* Palette colour helpers */
+    .bg-compare { background: rgba(72,128,230,0.15); }
+    .bg-debatt  { background: rgba(110,180,130,0.15); }
+    .bg-dvoice  { background: rgba(160,70,200,0.15); }
+    .bg-normal  { background: rgba(180,140,60,0.15); }
+    .text-compare { color: oklch(0.72 0.18 264); }
+    .text-debatt  { color: var(--debatt-for); }
+    .text-dvoice  { color: var(--dvoice); }
+    .text-normal  { color: oklch(0.76 0.16 70); }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       MOCKUP 1 — Slash command palette
+  ═══════════════════════════════════════════════════════════════ -->
+  <div>
+    <p class="section-label">Mockup 1 — Slash-kommandopalett (/ triggar popover)</p>
+    <div class="shell">
+      <div class="topbar">
+        <div class="topbar-left">
+          <div class="logo-dot">
+            <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5" fill="#0a0a0a"/><circle cx="8" cy="8" r="2.5" fill="#ffffff"/></svg>
+          </div>
+          <span class="topbar-title">Oneseek</span>
+        </div>
+        <div class="topbar-right">
+          <div class="icon-btn">GPT-4o</div>
+          <div class="icon-btn">⚙</div>
+        </div>
+      </div>
+
+      <div class="thread" style="min-height:80px">
+        <div class="msg-user">Hur fungerar LangGraph-arkitekturen i detta projekt?</div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer" style="position:relative">
+          <div class="composer-inner">
+            <span style="color:var(--fg)">/</span>
+          </div>
+          <div class="composer-footer">
+            <div class="composer-footer-left">
+              <div class="btn-ghost">📎</div>
+              <div class="btn-ghost">⚡ Anslutningar</div>
+            </div>
+            <button class="send-btn" disabled style="opacity:0.4">
+              <svg viewBox="0 0 16 16" fill="none"><path d="M8 3L8 13M8 3L4 7M8 3L12 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+
+          <!-- Palette -->
+          <div class="slash-palette">
+            <div class="palette-header">Textlägen</div>
+
+            <div class="palette-item active">
+              <div class="palette-icon bg-normal" style="font-size:16px">💬</div>
+              <div class="palette-text">
+                <div class="palette-name text-normal">/normal</div>
+                <div class="palette-desc">Standardläge — ett svar, full kontext</div>
+              </div>
+              <span class="palette-kbd">↵</span>
+            </div>
+
+            <div class="palette-item">
+              <div class="palette-icon bg-compare" style="font-size:16px">⚖️</div>
+              <div class="palette-text">
+                <div class="palette-name text-compare">/compare</div>
+                <div class="palette-desc">Kör två modeller parallellt, sida vid sida</div>
+              </div>
+            </div>
+
+            <div class="palette-item">
+              <div class="palette-icon bg-debatt" style="font-size:16px">🗣</div>
+              <div class="palette-text">
+                <div class="palette-name text-debatt">/debatt</div>
+                <div class="palette-desc">AI argumenterar för &amp; emot din fråga</div>
+              </div>
+            </div>
+
+            <div class="palette-item">
+              <div class="palette-icon bg-dvoice" style="font-size:16px">🎙</div>
+              <div class="palette-text">
+                <div class="palette-name text-dvoice">/dvoice</div>
+                <div class="palette-desc">Tala din fråga, transkriberas direkt</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       MOCKUP 2 — /compare mode (split view)
+  ═══════════════════════════════════════════════════════════════ -->
+  <div>
+    <p class="section-label">Mockup 2 — /compare — Sida vid sida-svar från två modeller</p>
+    <div class="shell">
+      <div class="topbar">
+        <div class="topbar-left">
+          <div class="logo-dot">
+            <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5" fill="#0a0a0a"/><circle cx="8" cy="8" r="2.5" fill="#ffffff"/></svg>
+          </div>
+          <span class="topbar-title">Oneseek</span>
+          <div class="mode-pill pill-compare" style="margin-left:4px">
+            <span class="dot"></span> compare
+            <span class="close-x">✕</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="icon-btn" style="width:auto;padding:0 8px;gap:4px;font-size:11px">
+            <span style="color:oklch(0.72 0.18 264)">●</span> GPT-4o
+          </div>
+          <span style="color:var(--muted-fg);font-size:11px">vs</span>
+          <div class="icon-btn" style="width:auto;padding:0 8px;gap:4px;font-size:11px">
+            <span style="color:oklch(0.696 0.17 162.48)">●</span> Claude 3.7
+          </div>
+          <div class="icon-btn">⚙</div>
+        </div>
+      </div>
+
+      <!-- User message above split -->
+      <div style="padding:16px 20px 0">
+        <div class="msg-user" style="margin-left:auto">Förklara skillnaden mellan RAG och fine-tuning.</div>
+      </div>
+
+      <!-- Split grid -->
+      <div class="compare-grid" style="margin-top:16px">
+        <div class="compare-col">
+          <div class="compare-col-header">
+            <div class="model-badge" style="color:oklch(0.72 0.18 264);border-color:rgba(72,128,230,0.35)">
+              <span class="led" style="background:var(--compare-a)"></span>
+              GPT-4o
+            </div>
+            <span style="font-size:11px;color:var(--muted-fg)">OpenAI</span>
+          </div>
+          <div class="compare-body">
+            <p><strong>RAG (Retrieval-Augmented Generation)</strong> utökar en modell med extern kunskap vid inferenstid. Modellen hålls oförändrad — istället hämtas relevanta dokument dynamiskt och fogas in i prompten.</p>
+            <p>Fine-tuning justerar istället modellens vikter på ny träningsdata. Kunskapen bäddas in permanent men kräver ny träning varje gång datan ändras.</p>
+          </div>
+          <div class="compare-status">
+            <span class="streaming-dot" style="background:var(--compare-a)"></span>
+            Genererar… 142 tokens
+          </div>
+        </div>
+
+        <div class="compare-col">
+          <div class="compare-col-header">
+            <div class="model-badge" style="color:oklch(0.696 0.17 162.48);border-color:rgba(110,180,130,0.35)">
+              <span class="led" style="background:var(--compare-b)"></span>
+              Claude 3.7
+            </div>
+            <span style="font-size:11px;color:var(--muted-fg)">Anthropic</span>
+          </div>
+          <div class="compare-body">
+            <p><strong>Fine-tuning</strong> tränar om delar av nätverket på domänspecifik data. Det gör modellen bättre på ett visst ämne men låser in kunskapen vid träningstillfället.</p>
+            <p><strong>RAG</strong> ger i stället realtidsåtkomst till en kunskapsbas — mer flexibelt och lättare att uppdatera, men beroende av retrieval-kvalitet.<span class="typing-cursor"></span></p>
+          </div>
+          <div class="compare-status">
+            <span class="streaming-dot" style="background:var(--compare-b)"></span>
+            Genererar… 118 tokens
+          </div>
+        </div>
+      </div>
+
+      <!-- Shared composer -->
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="composer-inner">
+            <span class="placeholder">Skicka samma fråga till båda modellerna…</span>
+          </div>
+          <div class="composer-footer">
+            <div class="composer-footer-left">
+              <div class="mode-pill pill-compare" style="font-size:10px">
+                <span class="dot"></span> compare aktiv
+              </div>
+            </div>
+            <button class="send-btn" style="opacity:0.4" disabled>
+              <svg viewBox="0 0 16 16" fill="none"><path d="M8 3L8 13M8 3L4 7M8 3L12 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       MOCKUP 3 — /debatt mode
+  ═══════════════════════════════════════════════════════════════ -->
+  <div>
+    <p class="section-label">Mockup 3 — /debatt — AI argumenterar för och emot</p>
+    <div class="shell">
+      <div class="topbar">
+        <div class="topbar-left">
+          <div class="logo-dot">
+            <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5" fill="#0a0a0a"/><circle cx="8" cy="8" r="2.5" fill="#ffffff"/></svg>
+          </div>
+          <span class="topbar-title">Oneseek</span>
+          <div class="mode-pill pill-debatt" style="margin-left:4px">
+            <span class="dot"></span> debatt
+            <span class="close-x">✕</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="icon-btn">GPT-4o</div>
+          <div class="icon-btn">⚙</div>
+        </div>
+      </div>
+
+      <div class="debatt-thread">
+        <div class="msg-user">Bör alla företag migrera till molnet?</div>
+
+        <div class="debatt-center-line">
+          <span class="debatt-turn-badge">Omgång 1 · 2 svar</span>
+        </div>
+
+        <!-- FOR -->
+        <div class="debatt-msg">
+          <div class="debatt-avatar" style="background:rgba(110,180,130,0.2);color:var(--debatt-for)">F</div>
+          <div class="debatt-bubble for-bubble">
+            <div class="debatt-role for-role">FÖR migrering</div>
+            Molnet erbjuder elastisk skalning, global räckvidd och eliminerar kostnaden för att underhålla fysisk infrastruktur. Ledande molnleverantörer investerar miljarder i säkerhet — vilket de flesta egna datacenter inte kan matcha.
+          </div>
+        </div>
+
+        <!-- MOT -->
+        <div class="debatt-msg mot">
+          <div class="debatt-avatar" style="background:rgba(200,100,80,0.2);color:var(--debatt-mot)">M</div>
+          <div class="debatt-bubble mot-bubble">
+            <div class="debatt-role mot-role">EMOT migrering</div>
+            Totalägandekosten kan överstiga on-premise för förutsägbara arbetsbelastningar. Vendor lock-in och dataresidens är reella risker — särskilt inom reglerade branscher som finans och vård.
+          </div>
+        </div>
+
+        <div class="debatt-center-line">
+          <span class="debatt-turn-badge">Omgång 2 · slutsats</span>
+        </div>
+
+        <!-- FOR round 2 -->
+        <div class="debatt-msg">
+          <div class="debatt-avatar" style="background:rgba(110,180,130,0.2);color:var(--debatt-for)">F</div>
+          <div class="debatt-bubble for-bubble">
+            <div class="debatt-role for-role">FÖR migrering</div>
+            En hybridstrategi är pragmatisk, men att <em>undvika</em> molnet helt ger konkurrenter ett försprång inom AI-integrationer och CI/CD-mognad.<span class="typing-cursor"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="composer-inner">
+            <span class="placeholder">Följdfråga eller nytt debattämne…</span>
+          </div>
+          <div class="composer-footer">
+            <div class="composer-footer-left">
+              <div class="mode-pill pill-debatt" style="font-size:10px">
+                <span class="dot"></span> debatt aktiv
+              </div>
+              <div class="btn-ghost" style="font-size:10px">🔁 Ny runda</div>
+            </div>
+            <button class="send-btn">
+              <svg viewBox="0 0 16 16" fill="none"><path d="M8 3L8 13M8 3L4 7M8 3L12 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       MOCKUP 4 — /dvoice mode
+  ═══════════════════════════════════════════════════════════════ -->
+  <div>
+    <p class="section-label">Mockup 4 — /dvoice — Röstinput med live-transkription</p>
+    <div class="shell">
+      <div class="topbar">
+        <div class="topbar-left">
+          <div class="logo-dot">
+            <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5" fill="#0a0a0a"/><circle cx="8" cy="8" r="2.5" fill="#ffffff"/></svg>
+          </div>
+          <span class="topbar-title">Oneseek</span>
+          <div class="mode-pill pill-dvoice" style="margin-left:4px">
+            <span class="dot"></span> dvoice
+            <span class="close-x">✕</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="icon-btn">GPT-4o</div>
+          <div class="icon-btn">⚙</div>
+        </div>
+      </div>
+
+      <div class="thread" style="min-height:60px">
+        <div class="msg-user">Vad är skillnaden mellan RAG och fine-tuning?</div>
+        <div class="msg-ai">
+          <div class="ai-label">Oneseek</div>
+          RAG hämtar dynamiskt dokument vid inferenstid medan fine-tuning bäddar in ny kunskap direkt i modellvikterna…
+        </div>
+      </div>
+
+      <!-- Voice overlay inside composer area -->
+      <div class="dvoice-overlay">
+        <div class="waveform">
+          <div class="waveform-bar"></div><div class="waveform-bar"></div>
+          <div class="waveform-bar"></div><div class="waveform-bar"></div>
+          <div class="waveform-bar"></div><div class="waveform-bar"></div>
+          <div class="waveform-bar"></div><div class="waveform-bar"></div>
+          <div class="waveform-bar"></div><div class="waveform-bar"></div>
+          <div class="waveform-bar"></div><div class="waveform-bar"></div>
+          <div class="waveform-bar"></div>
+        </div>
+
+        <div class="dvoice-status">● Lyssnar…</div>
+
+        <div class="dvoice-transcript">
+          Kan du förklara hur <strong>LangGraph-agenten</strong> hanterar parallell verktygsexekvering <span class="partial">i det här projektet…</span>
+        </div>
+
+        <div class="dvoice-controls">
+          <button class="dvoice-stop-btn" title="Stoppa inspelning">
+            <svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+          </button>
+          <button class="dvoice-send-btn">Skicka ↵</button>
+        </div>
+
+        <div class="dvoice-hint">Tryck Esc eller klicka ✕ för att avbryta · Enter skickar</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       MOCKUP 5 — Unified mode switcher (mode bar + active composer)
+  ═══════════════════════════════════════════════════════════════ -->
+  <div>
+    <p class="section-label">Mockup 5 — Unified mode-bar — persistent tabb-väljare i composer</p>
+    <div class="shell">
+      <div class="topbar">
+        <div class="topbar-left">
+          <div class="logo-dot">
+            <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5" fill="#0a0a0a"/><circle cx="8" cy="8" r="2.5" fill="#ffffff"/></svg>
+          </div>
+          <span class="topbar-title">Oneseek</span>
+        </div>
+        <div class="topbar-right">
+          <div class="icon-btn">Claude 3.7</div>
+          <div class="icon-btn">⚙</div>
+        </div>
+      </div>
+
+      <div class="thread" style="min-height:70px">
+        <div class="msg-user">Analysera vårt Q1-resultat och jämför med budgeten.</div>
+        <div class="msg-ai">
+          <div class="ai-label">Oneseek · compare</div>
+          <em style="color:var(--muted-fg);font-size:12px">Kör parallellt på GPT-4o &amp; Claude 3.7 Sonnet…</em>
+        </div>
+      </div>
+
+      <!-- Mode bar sits at top of composer zone -->
+      <div style="padding:0 16px">
+        <div class="mode-bar" style="border-radius:12px 12px 0 0;margin-top:16px">
+          <div class="mode-tab">
+            <span class="mode-led" style="background:var(--normal)"></span>
+            Normal
+          </div>
+          <div class="mode-tab active">
+            <span class="mode-led" style="background:var(--compare-a)"></span>
+            Compare
+          </div>
+          <div class="mode-tab">
+            <span class="mode-led" style="background:var(--debatt-for)"></span>
+            Debatt
+          </div>
+          <div class="mode-tab">
+            <span class="mode-led" style="background:var(--dvoice)"></span>
+            Dvoice
+          </div>
+
+          <!-- Right: model selectors for compare mode -->
+          <div style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted-fg)">
+            <span>Modell A:</span>
+            <div class="icon-btn" style="width:auto;padding:0 8px;font-size:11px;color:oklch(0.72 0.18 264)">GPT-4o ▾</div>
+            <span>vs</span>
+            <div class="icon-btn" style="width:auto;padding:0 8px;font-size:11px;color:oklch(0.696 0.17 162.48)">Claude 3.7 ▾</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="unified-composer">
+        <div class="composer" style="border-top:none;border-radius:0 0 16px 16px">
+          <div class="composer-inner">
+            <div class="composer-mode-indicator">
+              <span class="mode-pill pill-compare" style="font-size:10px;padding:1px 7px 1px 4px">
+                <span class="dot"></span> compare
+              </span>
+              <span class="sep">·</span>
+              <span>Båda modellerna svarar parallellt</span>
+            </div>
+            <span class="placeholder">Skriv din nästa fråga eller @omnämn dokument…</span>
+          </div>
+          <div class="composer-footer">
+            <div class="composer-footer-left">
+              <div class="btn-ghost">📎</div>
+              <div class="btn-ghost">⚡ Anslutningar</div>
+            </div>
+            <button class="send-btn">
+              <svg viewBox="0 0 16 16" fill="none"><path d="M8 3L8 13M8 3L4 7M8 3L12 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
