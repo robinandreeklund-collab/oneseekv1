@@ -1,0 +1,49 @@
+---
+title: "OneSeek — Debattläge: Låt AI-modellerna argumentera"
+description: "Nytt debattläge i OneSeek där 8 AI-modeller (Grok, Claude, ChatGPT, Gemini, DeepSeek, Perplexity, Qwen och OneSeek) debatterar valfritt ämne i 4 rundor med röstning, syntes och valfri live-röst."
+date: "2026-03-02"
+tags: ["Debatt", "AI-agenter", "Röst", "Ny funktion"]
+version: "0.1.0"
+---
+
+## Debattläge
+
+Ställ en fråga — och låt åtta AI-modeller argumentera om svaret.
+
+Med `/debatt <ämne>` startar du en strukturerad debatt där **Grok, Claude, ChatGPT, Gemini, DeepSeek, Perplexity, Qwen** och **OneSeek** turas om att presentera sina argument i fyra rundor. Varje modell ser vad de andra har sagt och bygger vidare — precis som i en riktig debatt.
+
+### Så fungerar det
+
+**4 rundor, 8 deltagare:**
+
+- **Runda 1 — Introduktion.** Varje modell presenterar sin hållning i ämnet.
+- **Runda 2 — Argument.** Modellerna utvecklar sina resonemang och bemöter varandras ståndpunkter.
+- **Runda 3 — Fördjupning.** Sista chansen att övertyga med fördjupade argument.
+- **Runda 4 — Röstning.** Alla modeller röstar (inte på sig själva) med motivering och tre nyckelargument.
+
+Efter röstningen presenteras vinnaren, och OneSeek sammanfattar hela debatten med en AI-syntes som väger alla perspektiv.
+
+### Röstdebatt med `/dvoice`
+
+Vill du *lyssna* på debatten? Med `/dvoice <ämne>` får varje modell en unik röst via text-to-speech. Texten animeras synkroniserat med uppspelningen — som att höra varje AI argumentera live.
+
+- Stöd för **OpenAI TTS** och **Cartesia Sonic** som röstmotorer
+- Unika röster per deltagare
+- Exportera hela debatten som **MP3**
+
+### Admin-inställningar
+
+Under *Admin → Debatt* kan du konfigurera:
+
+- Röst-tilldelning per modell
+- TTS-leverantör och modell
+- Uppspelningshastighet
+- Språk- och accentinstruktioner per deltagare
+
+### Tekniskt
+
+- Sekventiell kontextkedja — varje deltagare ser föregående svar
+- Parallell röstning med JSON-schema-validering
+- OneSeek söker realtidsinformation via Tavily under debatten
+- SSE-baserat streaming-protokoll (Vercel AI Data Stream)
+- 46 automatiserade tester för debattlogiken
