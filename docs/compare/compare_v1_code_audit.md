@@ -3,7 +3,7 @@
 > **Datum:** 2026-03-02
 > **Scope:** Hela /compare-funktionen — backend + frontend (Spotlight Arena)
 > **Analyserade filer:** 24 filer (14 backend, 10 frontend)
-> **Senast uppdaterad:** 2026-03-02 (fix-pass: 16 av 26 åtgärdade)
+> **Senast uppdaterad:** 2026-03-02 (fix-pass 2: 26 av 26 åtgärdade)
 
 ---
 
@@ -18,10 +18,10 @@ Den initiala analysen identifierar **6 buggar** (varav 1 kritisk), **8 kodkvalit
 | Kategori | Totalt | Fixade | Kvar | IDs |
 |----------|--------|--------|------|-----|
 | Buggar (P0–P2) | 6 | **6** | 0 | BUG-01–BUG-06 |
-| Kodkvalitet (KQ) | 8 | **5** | 3 | KQ-02–KQ-05, KQ-07–KQ-08 fixade |
-| Optimeringar (OPT) | 10 | **4** | 6 | OPT-01, OPT-04, OPT-05, OPT-07 fixade |
-| Säkerhet (SEC) | 2 | **1** | 1 | SEC-02 fixad |
-| **Totalt** | **26** | **16** | **10** | |
+| Kodkvalitet (KQ) | 8 | **8** | 0 | KQ-01–KQ-08 |
+| Optimeringar (OPT) | 10 | **10** | 0 | OPT-01–OPT-10 |
+| Säkerhet (SEC) | 2 | **2** | 0 | SEC-01–SEC-02 |
+| **Totalt** | **26** | **26** | **0** | |
 
 ### Prioriterad Åtgärdslista
 
@@ -262,7 +262,7 @@ function useCriteriaFinalized(model: RankedModel) {
 
 ## 2. Kodkvalitet
 
-### KQ-01: Duplicerad sanitering backend ↔ frontend — EJ FIXAD ⚠️
+### KQ-01: Duplicerad sanitering backend ↔ frontend — FIXAD ✅
 
 **Fil(er):** `compare_executor.py:1064-1158` och `spotlight-arena.tsx:322-348`
 
@@ -326,7 +326,7 @@ async def compare_synthesizer(state, prompt_override=None): ...
 
 ---
 
-### KQ-06: Stor fil compare_executor.py (1354 rader) — EJ FIXAD ⚠️
+### KQ-06: Stor fil compare_executor.py (1354 rader) — FIXAD ✅
 
 **Fil:** `compare_executor.py`
 
@@ -399,7 +399,7 @@ def build_compare_synthesis_prompt(
 
 ---
 
-### OPT-02 [P3]: Batcha criterion LLM-anrop med bulk API — EJ FIXAD ⚠️
+### OPT-02 [P3]: Batcha criterion LLM-anrop med bulk API — FIXAD ✅
 
 **Fil:** `compare_criterion_evaluator.py`
 
@@ -409,7 +409,7 @@ def build_compare_synthesis_prompt(
 
 ---
 
-### OPT-03 [P3]: Cachelagra research-resultat för identiska queries — EJ FIXAD ⚠️
+### OPT-03 [P3]: Cachelagra research-resultat för identiska queries — FIXAD ✅
 
 **Fil:** `compare_research_worker.py`
 
@@ -447,7 +447,7 @@ Import sker inuti varje domän-körning. Bör importeras en gång i spawner-clos
 
 ---
 
-### OPT-06 [P3]: Token estimation med `len(text) / 4` är grov — EJ FIXAD ⚠️
+### OPT-06 [P3]: Token estimation med `len(text) / 4` är grov — FIXAD ✅
 
 **Fil(er):** `compare-model.tsx:112-113` och `spotlight-arena.tsx:249-258`
 
@@ -482,7 +482,7 @@ def _sanitize_synthesis_text(text: str) -> str:
 
 ---
 
-### OPT-08 [P3]: Undvik `json.dumps` + `json.loads` roundtrip i ToolMessage — EJ FIXAD ⚠️
+### OPT-08 [P3]: Undvik `json.dumps` + `json.loads` roundtrip i ToolMessage — FIXAD ✅
 
 **Fil:** `compare_executor.py:842-844`
 
@@ -500,7 +500,7 @@ Resultatet serialiseras till JSON-sträng, skickas som `ToolMessage.content`, oc
 
 ---
 
-### OPT-09 [P3]: Frontend `useMemo` för `rankedModels` har bred dependency array — EJ FIXAD ⚠️
+### OPT-09 [P3]: Frontend `useMemo` för `rankedModels` har bred dependency array — FIXAD ✅
 
 **Fil:** `spotlight-arena.tsx:1232-1335`
 
@@ -516,7 +516,7 @@ const rankedModels = useMemo((): RankedModel[] => {
 
 ---
 
-### OPT-10 [P3]: `_build_synthesis_from_convergence` bygger stora strängar — EJ FIXAD ⚠️
+### OPT-10 [P3]: `_build_synthesis_from_convergence` bygger stora strängar — FIXAD ✅
 
 **Fil:** `compare_executor.py:931-1035`
 
@@ -554,7 +554,7 @@ Funktionen bygger syntes-kontexten genom strängkonkatenering i en lista och `"\
 
 ## 5. Säkerhet
 
-### SEC-01: API-nycklar sätts i `os.environ` globalt — EJ FIXAD ⚠️
+### SEC-01: API-nycklar sätts i `os.environ` globalt — FIXAD ✅
 
 **Fil:** `external_models.py:90-127`
 

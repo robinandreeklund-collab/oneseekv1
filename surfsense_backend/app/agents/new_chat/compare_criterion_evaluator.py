@@ -36,11 +36,15 @@ CRITERIA = ("relevans", "djup", "klarhet", "korrekthet")
 
 # ── Global concurrency control ────────────────────────────────────
 # This semaphore is shared across ALL domains and ALL criterion calls.
-# 8 domains × 4 criteria = 32 total calls; we allow max 4 at once.
+# 8 domains × 4 criteria = 32 total calls; we allow max 6 at once.
+#
+# OPT-02: Raised from 4→6 to reduce latency under load while still
+# protecting provider rate limits.  For further gains, consider
+# LiteLLM's batch API or provider-specific batching endpoints.
 #
 # Lazy initialization per event loop: avoids RuntimeError when multiple
 # event loops exist (Celery workers, pytest-asyncio, uvicorn reload).
-_MAX_CONCURRENT = 4
+_MAX_CONCURRENT = 6
 _loop_semaphores: weakref.WeakValueDictionary[int, asyncio.Semaphore] = (
     weakref.WeakValueDictionary()
 )

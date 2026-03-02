@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -88,42 +89,33 @@ def _describe_key_format(api_key: str) -> str:
 
 
 def _apply_provider_env(provider: str, api_key: str) -> None:
+    """Set provider-specific env vars as fallback for LiteLLM.
+
+    NOTE (SEC-01): The api_key is already passed directly to
+    litellm.acompletion() via the api_key parameter.  This function
+    exists only as a fallback for LiteLLM providers that read env vars
+    internally.  Uses setdefault() so pre-existing env vars are never
+    overwritten.  Consider removing once LiteLLM no longer needs env
+    var fallbacks.
+    """
     provider_key = provider.strip().upper()
     if not api_key:
         return
-    if provider_key == "XAI":
-        import os
 
-        os.environ.setdefault("XAI_API_KEY", api_key)
-    elif provider_key == "DEEPSEEK":
-        import os
+    env_key_map: dict[str, list[str]] = {
+        "XAI": ["XAI_API_KEY"],
+        "DEEPSEEK": ["DEEPSEEK_API_KEY"],
+        "GOOGLE": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "OPENROUTER": ["OPENROUTER_API_KEY"],
+        "OPENAI": ["OPENAI_API_KEY"],
+        "ANTHROPIC": ["ANTHROPIC_API_KEY"],
+        "PERPLEXITY": ["PERPLEXITY_API_KEY"],
+        "ALIBABA_QWEN": ["DASHSCOPE_API_KEY"],
+    }
 
-        os.environ.setdefault("DEEPSEEK_API_KEY", api_key)
-    elif provider_key == "GOOGLE":
-        import os
-
-        os.environ.setdefault("GEMINI_API_KEY", api_key)
-        os.environ.setdefault("GOOGLE_API_KEY", api_key)
-    elif provider_key == "OPENROUTER":
-        import os
-
-        os.environ.setdefault("OPENROUTER_API_KEY", api_key)
-    elif provider_key == "OPENAI":
-        import os
-
-        os.environ.setdefault("OPENAI_API_KEY", api_key)
-    elif provider_key == "ANTHROPIC":
-        import os
-
-        os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
-    elif provider_key == "PERPLEXITY":
-        import os
-
-        os.environ.setdefault("PERPLEXITY_API_KEY", api_key)
-    elif provider_key == "ALIBABA_QWEN":
-        import os
-
-        os.environ.setdefault("DASHSCOPE_API_KEY", api_key)
+    env_keys = env_key_map.get(provider_key, [])
+    for key in env_keys:
+        os.environ.setdefault(key, api_key)
 
 
 def _build_model_string(config: dict) -> str:

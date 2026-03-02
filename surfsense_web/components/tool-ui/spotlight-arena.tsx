@@ -35,6 +35,7 @@ import {
 	MODEL_LOGOS as SHARED_MODEL_LOGOS,
 	ENERGY_WH_PER_1K_TOKENS,
 	CO2G_PER_1K_TOKENS,
+	LEAKED_JSON_FIELDS,
 	formatLatency,
 } from "@/lib/compare-constants";
 import { cn } from "@/lib/utils";
@@ -313,13 +314,7 @@ function formatNum(n: number): string {
 	return n.toFixed(1);
 }
 
-/** All JSON field names that smaller LLMs tend to dump as raw JSON */
-const LEAKED_JSON_FIELDS = [
-	"search_queries", "search_results", "winner_answer", "winner_rationale",
-	"reasoning", "thinking", "arena_analysis", "consensus", "disagreements",
-	"unique_contributions", "reliability_notes", "score",
-] as const;
-
+// LEAKED_JSON_FIELDS imported from @/lib/compare-constants (KQ-01)
 const FIELD_ALT = LEAKED_JSON_FIELDS.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 
 /** Strip arena-data code blocks and leaked JSON from visible synthesis text */
@@ -1225,7 +1220,11 @@ export const SpotlightArenaLayout: FC = () => {
 		[textParts],
 	);
 
-	const rankedModels = useMemo((): RankedModel[] => {
+	// OPT-09: Split model parsing (stable) from score merging (changes
+	// up to 32× during SSE criterion_complete events) so that the
+	// expensive messageContent parse only re-runs when content changes.
+
+	const parsedModels = useMemo(() => {
 		if (!Array.isArray(messageContent)) return [];
 
 		const toolParts = messageContent.filter(
@@ -1234,7 +1233,7 @@ export const SpotlightArenaLayout: FC = () => {
 				COMPARE_TOOL_NAMES.has(part.toolName ?? ""),
 		);
 
-		const parsed: RankedModel[] = toolParts.map(
+		return toolParts.map(
 			(part: {
 				toolName: string;
 				args?: { query?: string };
@@ -1246,39 +1245,7 @@ export const SpotlightArenaLayout: FC = () => {
 				const isError = !isRunning && (!result || result.status === "error");
 				const responseText = String(result?.response || "");
 				const queryText = String(part.args?.query || "");
-
-				// Score priority:
-				// 1. criterion_scores from tool result (final real LLM evaluation)
-				// 2. live SSE criterion scores — partial OK, missing criteria show as 0
-				// 3. model_scores from convergence (LLM merge evaluation)
-				// 4. Heuristic fallback (only when no live data at all)
 				const domain = TOOL_TO_DOMAIN[part.toolName] || part.toolName;
-				const criterionScores = result?.criterion_scores as
-					| ModelScore
-					| undefined;
-				const liveScores = liveCriterionScores[domain];
-				const hasAnyLive = !!liveScores && Object.keys(liveScores).length > 0;
-				// Merge partial live scores with 0 for missing criteria (progressive rendering)
-				const partialLiveScores: ModelScore | undefined = hasAnyLive
-					? {
-						relevans: liveScores.relevans ?? 0,
-						djup: liveScores.djup ?? 0,
-						klarhet: liveScores.klarhet ?? 0,
-						korrekthet: liveScores.korrekthet ?? 0,
-					}
-					: undefined;
-				const convergenceScores = externalModelScores?.[domain] as
-					| ModelScore
-					| undefined;
-				// When no real scores are available yet (evaluation pending), show zeros
-				// instead of heuristic fallback – avoids fake scores that jump on update.
-				const ZERO_SCORES: ModelScore = { relevans: 0, djup: 0, klarhet: 0, korrekthet: 0 };
-				const scores =
-					criterionScores ||
-					partialLiveScores ||
-					convergenceScores ||
-					ZERO_SCORES;
-				const hasReal = !!(criterionScores || hasAnyLive || convergenceScores);
 
 				// Extract criterion reasonings (motivations for each score)
 				const reasonings: ModelReasonings =
@@ -1295,17 +1262,15 @@ export const SpotlightArenaLayout: FC = () => {
 						MODEL_DISPLAY[part.toolName] ||
 						part.toolName,
 					domain,
-					rank: 0,
-					scores,
+					// criterion_scores baked into the tool result (final)
+					criterionScores: (result?.criterion_scores as ModelScore | undefined),
 					reasonings,
 					criterionPodInfo,
-					hasRealScores: hasReal,
-					totalScore: totalScore(scores),
-					weightedScore: weightedScore(scores),
 					meta: extractMeta(result, responseText, queryText),
 					summary: String(result?.summary || ""),
 					fullResponse: responseText,
-					status: isRunning ? "running" : isError ? "error" : "complete",
+					status: (isRunning ? "running" : isError ? "error" : "complete") as
+						"running" | "complete" | "error",
 					errorMessage:
 						typeof result?.error === "string"
 							? (result.error as string)
@@ -1313,22 +1278,71 @@ export const SpotlightArenaLayout: FC = () => {
 				};
 			},
 		);
+	}, [messageContent]);
+
+	const rankedModels = useMemo((): RankedModel[] => {
+		const ZERO_SCORES: ModelScore = { relevans: 0, djup: 0, klarhet: 0, korrekthet: 0 };
+
+		const merged: RankedModel[] = parsedModels.map((m) => {
+			// Score priority:
+			// 1. criterion_scores from tool result (final real LLM evaluation)
+			// 2. live SSE criterion scores — partial OK, missing criteria show as 0
+			// 3. model_scores from convergence (LLM merge evaluation)
+			// 4. Zero fallback (avoids fake scores that jump on update)
+			const liveScores = liveCriterionScores[m.domain];
+			const hasAnyLive = !!liveScores && Object.keys(liveScores).length > 0;
+			const partialLiveScores: ModelScore | undefined = hasAnyLive
+				? {
+					relevans: liveScores.relevans ?? 0,
+					djup: liveScores.djup ?? 0,
+					klarhet: liveScores.klarhet ?? 0,
+					korrekthet: liveScores.korrekthet ?? 0,
+				}
+				: undefined;
+			const convergenceScores = externalModelScores?.[m.domain] as
+				| ModelScore
+				| undefined;
+			const scores =
+				m.criterionScores ||
+				partialLiveScores ||
+				convergenceScores ||
+				ZERO_SCORES;
+			const hasReal = !!(m.criterionScores || hasAnyLive || convergenceScores);
+
+			return {
+				toolName: m.toolName,
+				displayName: m.displayName,
+				domain: m.domain,
+				rank: 0,
+				scores,
+				reasonings: m.reasonings,
+				criterionPodInfo: m.criterionPodInfo,
+				hasRealScores: hasReal,
+				totalScore: totalScore(scores),
+				weightedScore: weightedScore(scores),
+				meta: m.meta,
+				summary: m.summary,
+				fullResponse: m.fullResponse,
+				status: m.status,
+				errorMessage: m.errorMessage,
+			};
+		});
 
 		// Sort: complete first, then by weighted score descending
 		// Weighted score uses confidence-weighted convergence:
 		// korrekthet=35%, relevans=25%, djup=20%, klarhet=20%
-		parsed.sort((a, b) => {
+		merged.sort((a, b) => {
 			if (a.status === "complete" && b.status !== "complete") return -1;
 			if (a.status !== "complete" && b.status === "complete") return 1;
 			return b.weightedScore - a.weightedScore;
 		});
 
-		parsed.forEach((m, i) => {
+		merged.forEach((m, i) => {
 			m.rank = i + 1;
 		});
 
-		return parsed;
-	}, [messageContent, externalModelScores, liveCriterionScores]);
+		return merged;
+	}, [parsedModels, externalModelScores, liveCriterionScores]);
 
 	// Track completed count for determining new arrivals
 	const completedCount = rankedModels.filter(

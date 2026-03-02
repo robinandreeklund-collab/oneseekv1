@@ -21,6 +21,15 @@ export const MODEL_LOGOS: Record<string, { src: string; alt: string }> = {
 	call_oneseek: { src: "/model-logos/oneseek.png", alt: "OneSeek" },
 };
 
+// ── Leaked JSON field names (KQ-01: shared source of truth) ────────
+// Backend (_LEAKED_JSON_FIELDS in compare_executor.py) mirrors this list.
+// Keep both in sync when adding new field names.
+export const LEAKED_JSON_FIELDS = [
+	"search_queries", "search_results", "winner_answer", "winner_rationale",
+	"reasoning", "thinking", "arena_analysis", "consensus", "disagreements",
+	"unique_contributions", "reliability_notes", "score",
+] as const;
+
 // ── Formatting helpers ──────────────────────────────────────────────
 
 export function formatLatency(ms: number | null | undefined): string {
@@ -29,6 +38,11 @@ export function formatLatency(ms: number | null | undefined): string {
 	return `${Math.round(ms)}ms`;
 }
 
+/**
+ * Rough token estimate based on ~4 chars per token (English average).
+ * Swedish text may be 3–5 chars/token; CJK ~1–2.  The result is always
+ * labelled as an estimate in the UI (prefixed with "~").
+ */
 export function estimateTokensFromText(text: string): number {
 	if (!text) return 0;
 	return Math.max(1, Math.round(text.length / 4));

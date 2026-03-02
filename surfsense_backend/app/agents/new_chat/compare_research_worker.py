@@ -38,6 +38,35 @@ _MAX_RESEARCH_QUERIES = 3
 _MAX_TAVILY_RESULTS_PER_QUERY = 3
 _RESEARCH_TIMEOUT_SECONDS = 45
 
+# ── OPT-03: TTL cache for Tavily search results ──────────────────
+# Avoids redundant API calls when the same query is retried within
+# the TTL window (e.g. user retry, duplicate sub-queries).
+_SEARCH_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_SEARCH_CACHE_TTL = 300.0  # 5 minutes
+
+
+def _get_cached_search(query: str) -> list[dict[str, Any]] | None:
+    """Return cached search results if within TTL, else None."""
+    entry = _SEARCH_CACHE.get(query)
+    if entry is None:
+        return None
+    ts, results = entry
+    if (time.monotonic() - ts) > _SEARCH_CACHE_TTL:
+        _SEARCH_CACHE.pop(query, None)
+        return None
+    return results
+
+
+def _put_cached_search(query: str, results: list[dict[str, Any]]) -> None:
+    """Store search results in the TTL cache."""
+    _SEARCH_CACHE[query] = (time.monotonic(), results)
+    # Evict stale entries periodically (keep cache bounded)
+    if len(_SEARCH_CACHE) > 100:
+        now = time.monotonic()
+        stale = [k for k, (ts, _) in _SEARCH_CACHE.items() if now - ts > _SEARCH_CACHE_TTL]
+        for k in stale:
+            _SEARCH_CACHE.pop(k, None)
+
 
 async def run_research_executor(
     *,
@@ -159,13 +188,22 @@ async def _safe_tavily_search(
     tavily_search_fn: Any,
     query: str,
 ) -> list[dict[str, Any]]:
-    """Safely call Tavily with timeout."""
+    """Safely call Tavily with timeout and TTL cache (OPT-03)."""
+    # Check TTL cache first
+    cached = _get_cached_search(query)
+    if cached is not None:
+        logger.debug("research_executor: cache hit for query: %s", query[:80])
+        return cached
+
     try:
         results = await asyncio.wait_for(
             tavily_search_fn(query, _MAX_TAVILY_RESULTS_PER_QUERY),
             timeout=_RESEARCH_TIMEOUT_SECONDS,
         )
-        return results if isinstance(results, list) else []
+        out = results if isinstance(results, list) else []
+        if out:
+            _put_cached_search(query, out)
+        return out
     except TimeoutError:
         logger.warning("research_executor: Tavily timed out for query: %s", query[:80])
         return []
