@@ -79,8 +79,9 @@ ONESEEK_ROUND_PROMPTS = {
     4: ONESEEK_DEBATE_ROUND4_PROMPT,
 }
 
-# Default max token budget per participant response (overridden by admin settings)
-DEFAULT_MAX_RESPONSE_TOKENS = 500
+# Default max token budget per participant response (overridden by admin settings).
+# 2000 gives ~300-500 words on most models including Gemini on Swedish text.
+DEFAULT_MAX_RESPONSE_TOKENS = 2000
 # Voting timeout per model
 VOTE_TIMEOUT_SECONDS = 60
 # Regular response timeout

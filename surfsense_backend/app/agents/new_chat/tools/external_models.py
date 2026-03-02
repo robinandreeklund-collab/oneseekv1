@@ -133,9 +133,25 @@ def _build_model_string(config: dict) -> str:
 
 def _resolve_api_base(config: dict) -> str:
     api_base = str(config.get("api_base") or "").strip()
+    provider = str(config.get("provider") or "").upper()
+
+    # LiteLLM's native Anthropic handler already appends /v1/messages,
+    # so passing api_base with a trailing /v1 causes /v1/v1/messages.
+    # Strip it to prevent the duplication.
+    if provider == "ANTHROPIC":
+        if api_base:
+            api_base = api_base.rstrip("/")
+            if api_base.endswith("/v1"):
+                api_base = api_base[:-3]
+            # If the user only set the default Anthropic URL, drop it
+            # entirely — LiteLLM handles it natively.
+            if api_base in ("https://api.anthropic.com", ""):
+                return ""
+            return api_base
+        return ""
+
     if api_base:
         return api_base
-    provider = str(config.get("provider") or "").upper()
     if provider == "OPENAI":
         return "https://api.openai.com/v1"
     if provider == "GOOGLE":
