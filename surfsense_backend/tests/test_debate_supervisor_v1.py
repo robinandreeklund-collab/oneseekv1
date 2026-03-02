@@ -1,30 +1,31 @@
 """Tests for debate mode helper functions and schemas.
 
 Tests cover:
-- JSON extraction from text (including markdown code blocks)
+- JSON extraction from text (including markdown code blocks, nested JSON)
 - Word counting
 - Self-vote filtering
 - Winner resolution with tiebreaker
 - Fallback synthesis building
+- Round context building (NEW)
+- Language instructions resolution (NEW)
 - Pydantic schema validation
 - /debatt command detection
+
+KQ-01: Now imports from debate_helpers.py instead of duplicating functions.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import json
-import re
 import sys
 import types
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# ── Ensure app.schemas is importable ────────────────────────────────────
+# ── Ensure app packages are importable ──────────────────────────────
 
 _APP_PACKAGE = types.ModuleType("app")
 _APP_PACKAGE.__path__ = [str(_PROJECT_ROOT / "app")]
@@ -34,148 +35,120 @@ _SCHEMAS_PACKAGE = types.ModuleType("app.schemas")
 _SCHEMAS_PACKAGE.__path__ = [str(_PROJECT_ROOT / "app/schemas")]
 sys.modules.setdefault("app.schemas", _SCHEMAS_PACKAGE)
 
+_AGENTS_PACKAGE = types.ModuleType("app.agents")
+_AGENTS_PACKAGE.__path__ = [str(_PROJECT_ROOT / "app/agents")]
+sys.modules.setdefault("app.agents", _AGENTS_PACKAGE)
 
-# ═══════════════════════════════════════════════════════════════════════
-# Pure helper functions (copied from debate_executor.py to avoid heavy
-# langchain imports that aren't available in CI test environment)
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def _extract_json_from_text(text: str) -> dict[str, Any] | None:
-    """Try to extract a JSON object from text, handling markdown code blocks."""
-    try:
-        return json.loads(text.strip())
-    except (json.JSONDecodeError, ValueError):
-        pass
-    patterns = [
-        r"```(?:json)?\s*\n?(.*?)\n?```",
-        r"\{[^{}]*\"voted_for\"[^{}]*\}",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1) if "```" in pattern else match.group(0))
-            except (json.JSONDecodeError, ValueError):
-                continue
-    return None
-
-
-def _count_words(text: str) -> int:
-    """Count words in a text string."""
-    return len(text.split())
-
-
-def _filter_self_votes(votes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove votes where a participant voted for themselves."""
-    return [v for v in votes if v.get("voter", "").lower() != v.get("voted_for", "").lower()]
-
-
-def _resolve_winner(
-    vote_counts: dict[str, int],
-    word_counts: dict[str, int],
-) -> tuple[str, bool]:
-    """Resolve the winner, using word count as tiebreaker."""
-    if not vote_counts:
-        return ("", False)
-    max_votes = max(vote_counts.values())
-    tied = [m for m, v in vote_counts.items() if v == max_votes]
-    if len(tied) == 1:
-        return (tied[0], False)
-    winner = max(tied, key=lambda m: word_counts.get(m, 0))
-    return (winner, True)
-
-
-def _build_fallback_synthesis(
-    convergence: dict[str, Any],
-    round_responses: dict[int, dict[str, str]],
-    topic: str,
-) -> str:
-    """Build a basic synthesis without LLM as fallback."""
-    winner = convergence.get("winner", "N/A")
-    vote_results = convergence.get("vote_results", {})
-    word_counts = convergence.get("word_counts", {})
-    parts = [
-        f"# Debattresultat: {topic}\n",
-        f"## Vinnare: {winner}\n",
-        "## Röstresultat\n",
-    ]
-    for model, votes in sorted(vote_results.items(), key=lambda x: -x[1]):
-        parts.append(f"- **{model}**: {votes} röster ({word_counts.get(model, 0)} ord totalt)")
-    parts.append(f"\n{convergence.get('merged_summary', '')}")
-    return "\n".join(parts)
+_NEW_CHAT_PACKAGE = types.ModuleType("app.agents.new_chat")
+_NEW_CHAT_PACKAGE.__path__ = [str(_PROJECT_ROOT / "app/agents/new_chat")]
+sys.modules.setdefault("app.agents.new_chat", _NEW_CHAT_PACKAGE)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Test: _extract_json_from_text
+# KQ-01: Import from debate_helpers (no more duplication)
+# ═══════════════════════════════════════════════════════════════════════
+
+from app.agents.new_chat.debate_helpers import (
+    build_fallback_synthesis,
+    build_round_context,
+    count_words,
+    extract_json_from_text,
+    filter_self_votes,
+    resolve_language_instructions,
+    resolve_winner,
+)
+
+# ═══════════════════════════════════════════════════════════════════════
+# Test: extract_json_from_text
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestExtractJsonFromText:
     def test_plain_json(self):
         text = '{"voted_for": "Claude", "short_motivation": "Best reasoning"}'
-        result = _extract_json_from_text(text)
+        result = extract_json_from_text(text)
         assert result is not None
         assert result["voted_for"] == "Claude"
 
     def test_json_in_code_block(self):
         text = 'Here is my vote:\n```json\n{"voted_for": "Grok", "short_motivation": "Fast"}\n```'
-        result = _extract_json_from_text(text)
+        result = extract_json_from_text(text)
         assert result is not None
         assert result["voted_for"] == "Grok"
 
     def test_json_in_bare_code_block(self):
         text = '```\n{"voted_for": "Gemini", "short_motivation": "Thorough"}\n```'
-        result = _extract_json_from_text(text)
+        result = extract_json_from_text(text)
         assert result is not None
         assert result["voted_for"] == "Gemini"
 
     def test_json_with_surrounding_text(self):
         text = 'I vote for Claude. {"voted_for": "Claude", "short_motivation": "Compelling"}'
-        result = _extract_json_from_text(text)
+        result = extract_json_from_text(text)
         assert result is not None
         assert result["voted_for"] == "Claude"
 
     def test_invalid_json_returns_none(self):
         text = "I think Claude is the best but no JSON here."
-        result = _extract_json_from_text(text)
+        result = extract_json_from_text(text)
         assert result is None
 
     def test_empty_string(self):
-        result = _extract_json_from_text("")
+        result = extract_json_from_text("")
         assert result is None
 
     def test_nested_json_fields(self):
         text = '{"voted_for": "DeepSeek", "short_motivation": "Clear", "three_bullets": ["a", "b", "c"]}'
-        result = _extract_json_from_text(text)
+        result = extract_json_from_text(text)
         assert result is not None
         assert result["three_bullets"] == ["a", "b", "c"]
 
+    # BUG-03: Test that balanced-brace extraction handles nested structures
+    def test_nested_json_with_surrounding_text(self):
+        text = 'Jag röstar: {"voted_for": "Claude", "short_motivation": "Bra", "three_bullets": ["punkt 1", "punkt 2", "punkt 3"]} slut'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert result["voted_for"] == "Claude"
+        assert len(result["three_bullets"]) == 3
+
+    def test_deeply_nested_json(self):
+        text = 'Result: {"voted_for": "Grok", "meta": {"source": "test"}, "three_bullets": ["a", "b", "c"]}'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert result["voted_for"] == "Grok"
+        assert result["meta"]["source"] == "test"
+
+    def test_json_with_escaped_quotes(self):
+        text = r'{"voted_for": "Claude", "short_motivation": "Said \"best\" approach"}'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert result["voted_for"] == "Claude"
+
 
 # ═══════════════════════════════════════════════════════════════════════
-# Test: _count_words
+# Test: count_words
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestCountWords:
     def test_simple_sentence(self):
-        assert _count_words("Hello world this is a test") == 6
+        assert count_words("Hello world this is a test") == 6
 
     def test_empty_string(self):
-        assert _count_words("") == 0
+        assert count_words("") == 0
 
     def test_single_word(self):
-        assert _count_words("OneSeek") == 1
+        assert count_words("OneSeek") == 1
 
     def test_multiline(self):
-        assert _count_words("Line one\nLine two\nLine three") == 6
+        assert count_words("Line one\nLine two\nLine three") == 6
 
     def test_extra_spaces(self):
-        assert _count_words("  spaced   out   text  ") == 3
+        assert count_words("  spaced   out   text  ") == 3
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Test: _filter_self_votes
+# Test: filter_self_votes
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -185,7 +158,7 @@ class TestFilterSelfVotes:
             {"voter": "Claude", "voted_for": "Grok"},
             {"voter": "Grok", "voted_for": "Claude"},
         ]
-        result = _filter_self_votes(votes)
+        result = filter_self_votes(votes)
         assert len(result) == 2
 
     def test_removes_self_vote(self):
@@ -193,7 +166,7 @@ class TestFilterSelfVotes:
             {"voter": "Claude", "voted_for": "Claude"},
             {"voter": "Grok", "voted_for": "Claude"},
         ]
-        result = _filter_self_votes(votes)
+        result = filter_self_votes(votes)
         assert len(result) == 1
         assert result[0]["voter"] == "Grok"
 
@@ -202,11 +175,11 @@ class TestFilterSelfVotes:
             {"voter": "claude", "voted_for": "Claude"},
             {"voter": "Grok", "voted_for": "grok"},
         ]
-        result = _filter_self_votes(votes)
+        result = filter_self_votes(votes)
         assert len(result) == 0
 
     def test_empty_votes(self):
-        result = _filter_self_votes([])
+        result = filter_self_votes([])
         assert result == []
 
     def test_all_self_votes(self):
@@ -215,12 +188,21 @@ class TestFilterSelfVotes:
             {"voter": "Grok", "voted_for": "Grok"},
             {"voter": "Gemini", "voted_for": "Gemini"},
         ]
-        result = _filter_self_votes(votes)
+        result = filter_self_votes(votes)
         assert len(result) == 0
+
+    # BUG-01: Test that empty voted_for passes filter (but is handled elsewhere)
+    def test_empty_voted_for_not_self_vote(self):
+        votes = [
+            {"voter": "Claude", "voted_for": ""},
+            {"voter": "Grok", "voted_for": "Claude"},
+        ]
+        result = filter_self_votes(votes)
+        assert len(result) == 2  # Empty voted_for is NOT a self-vote
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Test: _resolve_winner
+# Test: resolve_winner
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -228,39 +210,140 @@ class TestResolveWinner:
     def test_clear_winner(self):
         vote_counts = {"Claude": 4, "Grok": 2, "Gemini": 1}
         word_counts = {"Claude": 500, "Grok": 600, "Gemini": 400}
-        winner, tiebreaker = _resolve_winner(vote_counts, word_counts)
+        winner, tiebreaker = resolve_winner(vote_counts, word_counts)
         assert winner == "Claude"
         assert tiebreaker is False
 
     def test_two_way_tie_uses_word_count(self):
         vote_counts = {"Claude": 3, "Grok": 3, "Gemini": 1}
         word_counts = {"Claude": 500, "Grok": 700, "Gemini": 400}
-        winner, tiebreaker = _resolve_winner(vote_counts, word_counts)
+        winner, tiebreaker = resolve_winner(vote_counts, word_counts)
         assert winner == "Grok"
         assert tiebreaker is True
 
     def test_three_way_tie(self):
         vote_counts = {"Claude": 2, "Grok": 2, "Gemini": 2}
         word_counts = {"Claude": 800, "Grok": 600, "Gemini": 700}
-        winner, tiebreaker = _resolve_winner(vote_counts, word_counts)
+        winner, tiebreaker = resolve_winner(vote_counts, word_counts)
         assert winner == "Claude"
         assert tiebreaker is True
 
     def test_empty_vote_counts(self):
-        winner, tiebreaker = _resolve_winner({}, {})
+        winner, tiebreaker = resolve_winner({}, {})
         assert winner == ""
         assert tiebreaker is False
 
     def test_single_participant(self):
         vote_counts = {"OneSeek": 6}
         word_counts = {"OneSeek": 1200}
-        winner, tiebreaker = _resolve_winner(vote_counts, word_counts)
+        winner, tiebreaker = resolve_winner(vote_counts, word_counts)
         assert winner == "OneSeek"
         assert tiebreaker is False
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Test: _build_fallback_synthesis
+# Test: build_round_context (NEW — was untested)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestBuildRoundContext:
+    def test_basic_context(self):
+        result = build_round_context(
+            topic="AI",
+            all_round_responses={},
+            current_round_responses={},
+            round_num=1,
+        )
+        assert "Debattämne: AI" in result
+
+    def test_includes_previous_rounds(self):
+        result = build_round_context(
+            topic="AI",
+            all_round_responses={1: {"Claude": "Round 1 response"}},
+            current_round_responses={},
+            round_num=2,
+        )
+        assert "Runda 1" in result
+        assert "Claude" in result
+        assert "Round 1 response" in result
+
+    def test_includes_current_round(self):
+        result = build_round_context(
+            topic="AI",
+            all_round_responses={},
+            current_round_responses={"Grok": "Current response"},
+            round_num=1,
+        )
+        assert "Runda 1 (hittills)" in result
+        assert "Grok" in result
+
+    def test_truncation_default(self):
+        long_response = "x" * 2000
+        result = build_round_context(
+            topic="AI",
+            all_round_responses={1: {"Claude": long_response}},
+            current_round_responses={},
+            round_num=2,
+        )
+        # Default truncation is 1200
+        assert len(long_response[:1200]) <= len(result)
+        assert "x" * 1201 not in result
+
+    def test_custom_truncation(self):
+        long_response = "x" * 500
+        result = build_round_context(
+            topic="AI",
+            all_round_responses={1: {"Claude": long_response}},
+            current_round_responses={},
+            round_num=2,
+            truncate_chars=100,
+        )
+        assert "x" * 101 not in result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Test: resolve_language_instructions (NEW — KQ-03)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestResolveLanguageInstructions:
+    def test_string_instructions(self):
+        settings = {"language_instructions": "Speak Swedish with clear pronunciation"}
+        result = resolve_language_instructions(settings, "Claude")
+        assert result == "Speak Swedish with clear pronunciation"
+
+    def test_per_model_instructions(self):
+        settings = {
+            "language_instructions": {
+                "Claude": "Use formal Swedish",
+                "Grok": "Use casual Swedish",
+                "__default__": "Speak Swedish",
+            }
+        }
+        assert resolve_language_instructions(settings, "Claude") == "Use formal Swedish"
+        assert resolve_language_instructions(settings, "Grok") == "Use casual Swedish"
+
+    def test_default_fallback(self):
+        settings = {
+            "language_instructions": {
+                "__default__": "Speak Swedish naturally",
+            }
+        }
+        result = resolve_language_instructions(settings, "DeepSeek")
+        assert result == "Speak Swedish naturally"
+
+    def test_empty_settings(self):
+        result = resolve_language_instructions({}, "Claude")
+        assert result == ""
+
+    def test_none_instructions(self):
+        settings = {"language_instructions": None}
+        result = resolve_language_instructions(settings, "Claude")
+        assert result == ""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Test: build_fallback_synthesis
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -272,7 +355,7 @@ class TestBuildFallbackSynthesis:
             "word_counts": {"Claude": 500, "Grok": 600},
             "merged_summary": "Claude presented the strongest arguments.",
         }
-        result = _build_fallback_synthesis(
+        result = build_fallback_synthesis(
             convergence,
             round_responses={},
             topic="AI i samhället",
@@ -284,7 +367,7 @@ class TestBuildFallbackSynthesis:
         assert "Claude presented the strongest arguments." in result
 
     def test_empty_convergence(self):
-        result = _build_fallback_synthesis(
+        result = build_fallback_synthesis(
             convergence={},
             round_responses={},
             topic="Test topic",

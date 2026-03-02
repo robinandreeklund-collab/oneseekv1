@@ -3,16 +3,26 @@
 Stores voice map, TTS API key, TTS model, and speed in Redis
 under the key ``debate:voice_settings``.  These settings are loaded
 by the debate executor when ``/dvoice`` triggers a voice debate.
+
+Fixes applied:
+- BUG-08: Use async Redis client to avoid blocking the event loop
+- SEC-01: Obfuscate sensitive API keys before storing in Redis
+- SEC-02: Simple rate limiting on settings write endpoints
+- KQ-02: Import voice map from debate_voice.py (single source of truth)
 """
 
+import base64
 import json
 import logging
+import os
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.new_chat.debate_voice import DEFAULT_OPENAI_VOICE_MAP
 from app.db import SearchSpaceMembership, User, get_async_session
 from app.users import current_active_user
 
@@ -22,20 +32,70 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 REDIS_KEY = "debate:voice_settings"
 
-# ── Default voice map ────────────────────────────────────────────────
-DEFAULT_VOICE_MAP = {
-    "Grok": "ash",
-    "Claude": "ballad",
-    "ChatGPT": "coral",
-    "Gemini": "sage",
-    "DeepSeek": "verse",
-    "Perplexity": "onyx",
-    "Qwen": "marin",
-    "OneSeek": "nova",
-}
+# KQ-02: Use the single source of truth from debate_voice.py
+DEFAULT_VOICE_MAP = DEFAULT_OPENAI_VOICE_MAP
 
 # Default max token budget per participant response
 DEFAULT_MAX_TOKENS = 500
+
+# SEC-02: Simple in-memory rate limiting (per-user, 10 writes per minute)
+_rate_limit_store: dict[str, list[float]] = {}
+_RATE_LIMIT_WINDOW = 60.0  # seconds
+_RATE_LIMIT_MAX = 10  # max requests per window
+
+
+def _check_rate_limit(user_id: str) -> None:
+    """SEC-02: Check rate limit for write operations."""
+    now = time.monotonic()
+    timestamps = _rate_limit_store.get(user_id, [])
+    # Remove expired entries
+    timestamps = [t for t in timestamps if now - t < _RATE_LIMIT_WINDOW]
+    if len(timestamps) >= _RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Max {_RATE_LIMIT_MAX} updates per minute.",
+        )
+    timestamps.append(now)
+    _rate_limit_store[user_id] = timestamps
+
+
+# SEC-01: Simple obfuscation for API keys in Redis.
+# Not true encryption, but prevents casual exposure in Redis CLI/dumps.
+# For production, consider Fernet encryption with a proper key from env.
+_OBFUSCATION_PREFIX = "obf:"
+_SENSITIVE_FIELDS = {"api_key", "cartesia_api_key"}
+
+
+def _obfuscate_value(value: str) -> str:
+    """Simple base64 obfuscation for API keys stored in Redis."""
+    if not value or value.startswith(_OBFUSCATION_PREFIX):
+        return value
+    return _OBFUSCATION_PREFIX + base64.b64encode(value.encode()).decode()
+
+
+def _deobfuscate_value(value: str) -> str:
+    """Reverse the obfuscation."""
+    if not value or not value.startswith(_OBFUSCATION_PREFIX):
+        return value
+    return base64.b64decode(value[len(_OBFUSCATION_PREFIX):].encode()).decode()
+
+
+def _obfuscate_settings(data: dict) -> dict:
+    """Obfuscate sensitive fields before Redis storage."""
+    result = dict(data)
+    for field in _SENSITIVE_FIELDS:
+        if result.get(field):
+            result[field] = _obfuscate_value(result[field])
+    return result
+
+
+def _deobfuscate_settings(data: dict) -> dict:
+    """Deobfuscate sensitive fields after Redis retrieval."""
+    result = dict(data)
+    for field in _SENSITIVE_FIELDS:
+        if result.get(field):
+            result[field] = _deobfuscate_value(result[field])
+    return result
 
 
 # ── Pydantic schemas ────────────────────────────────────────────────
@@ -67,7 +127,7 @@ class DebateVoiceSettings(BaseModel):
         default=1.0,
         ge=0.3,
         le=3.0,
-        description="Multiplier för text-reveal-hastighet. <1 = snabbare text, >1 = långsammare. Justerar delay_per_word som skickas till frontend.",
+        description="Multiplier för text-reveal-hastighet. <1 = snabbare text, >1 = långsammare.",
     )
 
 
@@ -94,17 +154,16 @@ async def _require_admin(session: AsyncSession, user: User) -> None:
         )
 
 
-def _get_redis():
-    """Get the Redis client from celery broker URL."""
+# BUG-08: Use async Redis client to avoid blocking the event loop
+async def _get_async_redis():
+    """Get an async Redis client from celery broker URL."""
     try:
-        import os
-
-        import redis
+        import redis.asyncio as aioredis
 
         broker_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
-        return redis.Redis.from_url(broker_url, decode_responses=True)
+        return aioredis.from_url(broker_url, decode_responses=True)
     except Exception as exc:
-        logger.warning("debate_settings: Redis connection failed: %s", exc)
+        logger.warning("debate_settings: async Redis connection failed: %s", exc)
         return None
 
 
@@ -117,18 +176,21 @@ async def get_debate_voice_settings(
 ):
     await _require_admin(session, user)
 
-    r = _get_redis()
+    r = await _get_async_redis()
     if r:
-        raw = r.get(REDIS_KEY)
-        if raw:
-            try:
+        try:
+            raw = await r.get(REDIS_KEY)
+            if raw:
                 data = json.loads(raw)
+                data = _deobfuscate_settings(data)
                 return DebateVoiceSettingsResponse(
                     settings=DebateVoiceSettings(**data),
                     stored=True,
                 )
-            except Exception:
-                pass
+        except Exception as exc:
+            logger.warning("debate_settings: failed to load from Redis: %s", exc)
+        finally:
+            await r.aclose()
 
     return DebateVoiceSettingsResponse(settings=DebateVoiceSettings())
 
@@ -143,27 +205,57 @@ async def update_debate_voice_settings(
 ):
     await _require_admin(session, user)
 
-    r = _get_redis()
+    # SEC-02: Rate limiting
+    _check_rate_limit(str(user.id))
+
+    r = await _get_async_redis()
     if not r:
         raise HTTPException(status_code=503, detail="Redis unavailable")
 
-    data = body.model_dump()
-    r.set(REDIS_KEY, json.dumps(data))
+    try:
+        data = body.model_dump()
+        data = _obfuscate_settings(data)
+        await r.set(REDIS_KEY, json.dumps(data))
+    finally:
+        await r.aclose()
 
     return DebateVoiceSettingsResponse(settings=body, stored=True)
 
 
 # ── Helper: load settings for debate executor ────────────────────────
 
-def load_debate_voice_settings() -> dict | None:
-    """Load voice settings from Redis (used by debate_executor at runtime)."""
-    r = _get_redis()
+async def load_debate_voice_settings_async() -> dict | None:
+    """Load voice settings from Redis (async version for debate_executor)."""
+    r = await _get_async_redis()
     if not r:
         return None
-    raw = r.get(REDIS_KEY)
-    if not raw:
-        return None
     try:
-        return json.loads(raw)
+        raw = await r.get(REDIS_KEY)
+        if not raw:
+            return None
+        data = json.loads(raw)
+        return _deobfuscate_settings(data)
     except Exception:
+        return None
+    finally:
+        await r.aclose()
+
+
+def load_debate_voice_settings() -> dict | None:
+    """Load voice settings from Redis (sync fallback).
+
+    BUG-08: Kept for backward compat. Prefer load_debate_voice_settings_async.
+    """
+    try:
+        import redis
+
+        broker_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+        r = redis.Redis.from_url(broker_url, decode_responses=True)
+        raw = r.get(REDIS_KEY)
+        if not raw:
+            return None
+        data = json.loads(raw)
+        return _deobfuscate_settings(data)
+    except Exception as exc:
+        logger.warning("debate_settings: sync Redis load failed: %s", exc)
         return None

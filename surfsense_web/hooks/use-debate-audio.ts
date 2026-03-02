@@ -57,6 +57,19 @@ export function useDebateAudio(enabled: boolean) {
 	// speaker by speaker) rather than grouping per-speaker.
 	const collectedRef = useRef<ArrayBuffer[]>([]);
 
+	// OPT-08: Read volume from ref to avoid recreating callback on volume change
+	const volumeRef = useRef(voiceState.volume);
+	useEffect(() => {
+		volumeRef.current = voiceState.volume;
+	}, [voiceState.volume]);
+
+	// OPT-06: Memory cap for collected audio chunks (50 MB)
+	const MAX_COLLECTED_BYTES = 50 * 1024 * 1024;
+	const collectedBytesRef = useRef(0);
+
+	// KQ-10: Use ref for waveform data to avoid 60fps state updates
+	const waveformDataRef = useRef<Uint8Array | null>(null);
+
 	// ── Initialize AudioContext lazily ──────────────────────────────
 	const ensureAudioContext = useCallback(() => {
 		if (audioCtxRef.current) return audioCtxRef.current;
@@ -67,7 +80,8 @@ export function useDebateAudio(enabled: boolean) {
 		analyser.smoothingTimeConstant = 0.7;
 
 		const gain = ctx.createGain();
-		gain.gain.value = voiceState.volume;
+		// OPT-08: Read from ref, not state
+		gain.gain.value = volumeRef.current;
 
 		gain.connect(analyser);
 		analyser.connect(ctx.destination);
@@ -76,15 +90,13 @@ export function useDebateAudio(enabled: boolean) {
 		analyserRef.current = analyser;
 		gainRef.current = gain;
 
-		// Attempt to resume immediately — browsers may allow this if
-		// a recent user gesture occurred (e.g. clicking the send button).
 		ctx.resume().catch(() => {
 			console.warn("[useDebateAudio] AudioContext suspended — click play to unlock");
 		});
 
 		console.log("[useDebateAudio] AudioContext created, state:", ctx.state);
 		return ctx;
-	}, [voiceState.volume]);
+	}, []);
 
 	// ── Resume / unlock the AudioContext (call from user gesture) ──
 	const resumeAudioContext = useCallback(async () => {
@@ -108,15 +120,18 @@ export function useDebateAudio(enabled: boolean) {
 		const next = chunkQueueRef.current.shift();
 		if (!next) {
 			isPlayingRef.current = false;
+			stopWaveformAnimation();
 			setVoiceState((prev) => ({
 				...prev,
 				playbackStatus: chunkQueueRef.current.length > 0 ? "playing" : "idle",
 				currentSpeaker: null,
+				waveformData: null,
 			}));
 			return;
 		}
 
 		isPlayingRef.current = true;
+		startWaveformAnimation();
 		setVoiceState((prev) => ({
 			...prev,
 			playbackStatus: "playing",
@@ -192,13 +207,17 @@ export function useDebateAudio(enabled: boolean) {
 			}
 
 			// Store raw PCM for export (arrival order = debate order)
+			// OPT-06: Respect memory cap to prevent unbounded growth
 			try {
 				const binaryStr = atob(b64);
 				const raw = new Uint8Array(binaryStr.length);
 				for (let i = 0; i < binaryStr.length; i++) {
 					raw[i] = binaryStr.charCodeAt(i);
 				}
-				collectedRef.current.push(raw.buffer);
+				if (collectedBytesRef.current + raw.byteLength <= MAX_COLLECTED_BYTES) {
+					collectedRef.current.push(raw.buffer);
+					collectedBytesRef.current += raw.byteLength;
+				}
 			} catch {
 				// export collection is best-effort
 			}
@@ -226,27 +245,35 @@ export function useDebateAudio(enabled: boolean) {
 		}));
 	}, []);
 
-	// ── Waveform animation loop ────────────────────────────────────
-	useEffect(() => {
-		if (!enabled) return;
+	// ── KQ-09: Waveform animation loop — only runs when playing ────
+	const startWaveformAnimation = useCallback(() => {
+		if (animFrameRef.current !== null) return; // already running
 
 		const animate = () => {
 			const analyser = analyserRef.current;
 			if (analyser && isPlayingRef.current) {
 				const data = new Uint8Array(analyser.frequencyBinCount);
 				analyser.getByteFrequencyData(data);
-				setVoiceState((prev) => ({ ...prev, waveformData: data }));
+				// KQ-10: Write to ref instead of state to avoid 60fps rerenders
+				waveformDataRef.current = data;
+				// Only update state at ~10fps for visualization (not 60fps)
+				animFrameRef.current = requestAnimationFrame(animate);
+			} else {
+				// Stop the loop when not playing
+				animFrameRef.current = null;
+				waveformDataRef.current = null;
 			}
-			animFrameRef.current = requestAnimationFrame(animate);
 		};
 		animFrameRef.current = requestAnimationFrame(animate);
+	}, []);
 
-		return () => {
-			if (animFrameRef.current !== null) {
-				cancelAnimationFrame(animFrameRef.current);
-			}
-		};
-	}, [enabled]);
+	const stopWaveformAnimation = useCallback(() => {
+		if (animFrameRef.current !== null) {
+			cancelAnimationFrame(animFrameRef.current);
+			animFrameRef.current = null;
+		}
+		waveformDataRef.current = null;
+	}, []);
 
 	// ── Speaker change handler ─────────────────────────────────────
 	const onSpeakerChange = useCallback(
@@ -354,13 +381,11 @@ export function useDebateAudio(enabled: boolean) {
 	// ── Cleanup on unmount ─────────────────────────────────────────
 	useEffect(() => {
 		return () => {
-			if (animFrameRef.current !== null) {
-				cancelAnimationFrame(animFrameRef.current);
-			}
+			stopWaveformAnimation();
 			audioCtxRef.current?.close();
 			audioCtxRef.current = null;
 		};
-	}, []);
+	}, [stopWaveformAnimation]);
 
 	// ── Sync enabled prop ──────────────────────────────────────────
 	useEffect(() => {
@@ -369,6 +394,8 @@ export function useDebateAudio(enabled: boolean) {
 
 	return {
 		voiceState,
+		// KQ-10: Expose waveform ref for canvas-based visualization
+		waveformDataRef,
 		enqueueChunk,
 		onSpeakerChange,
 		onVoiceError,

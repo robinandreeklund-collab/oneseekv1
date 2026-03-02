@@ -29,6 +29,23 @@ logger = logging.getLogger(__name__)
 # Max 4 Tavily calls across all mini-agents per debate turn
 MAX_TAVILY_CALLS_PER_TURN = 4
 
+# OPT-01: Shared semaphore to enforce Tavily call budget across mini-agents
+_tavily_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_tavily_semaphore() -> asyncio.Semaphore:
+    """Get or create the Tavily semaphore (OPT-01)."""
+    global _tavily_semaphore
+    if _tavily_semaphore is None:
+        _tavily_semaphore = asyncio.Semaphore(MAX_TAVILY_CALLS_PER_TURN)
+    return _tavily_semaphore
+
+
+def reset_tavily_semaphore() -> None:
+    """Reset semaphore between debate turns."""
+    global _tavily_semaphore
+    _tavily_semaphore = None
+
 
 async def run_oneseek_debate_subagent(
     *,
@@ -55,9 +72,11 @@ async def run_oneseek_debate_subagent(
     start = time.monotonic()
 
     # ─── Phase 1: Mini-Planner (structured plan) ─────────────────
-    plan = _create_mini_plan(topic, round_num)
+    _create_mini_plan(topic, round_num)  # plan logged but not used further
 
     # ─── Phase 2: Parallel Mini-Agents ───────────────────────────
+    # OPT-01: Reset semaphore for each debate turn
+    reset_tavily_semaphore()
     tavily_calls_remaining = MAX_TAVILY_CALLS_PER_TURN
 
     agent_tasks = {
@@ -76,12 +95,13 @@ async def run_oneseek_debate_subagent(
             _gather_mini_agents(agent_tasks),
             timeout=remaining_time,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("oneseek_debate_subagent: mini-agents timed out after %.1fs", remaining_time)
         results = {}
 
     # ─── Phase 3: Mini-Critic (quality check) ────────────────────
-    critic_verdict = await _mini_critic(results, topic, llm)
+    # BUG-05: Removed unused llm/topic params
+    critic_verdict = await _mini_critic(results)
 
     # ─── Phase 4: Final Synthesizer ──────────────────────────────
     response = await _synthesize_debate_response(
@@ -157,6 +177,14 @@ async def _run_tavily_core(
     if not tavily_search_fn:
         return ""
 
+    # OPT-01: Acquire semaphore before Tavily call
+    sem = _get_tavily_semaphore()
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=1.0)
+    except TimeoutError:
+        logger.debug("tavily_core: semaphore exhausted, skipping search")
+        return ""
+
     try:
         results = await tavily_search_fn(topic, min(3, max_calls + 1))
         if not results:
@@ -181,6 +209,14 @@ async def _run_fresh_news(
 ) -> str:
     """Fresh News — find latest developments."""
     if not tavily_search_fn:
+        return ""
+
+    # OPT-01: Acquire semaphore before Tavily call
+    sem = _get_tavily_semaphore()
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=1.0)
+    except TimeoutError:
+        logger.debug("fresh_news: semaphore exhausted, skipping search")
         return ""
 
     try:
@@ -229,6 +265,14 @@ async def _run_swedish_context(
 ) -> str:
     """Swedish Context — find Sweden-specific data."""
     if not tavily_search_fn:
+        return ""
+
+    # OPT-01: Acquire semaphore before Tavily call
+    sem = _get_tavily_semaphore()
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=1.0)
+    except TimeoutError:
+        logger.debug("swedish_context: semaphore exhausted, skipping search")
         return ""
 
     try:
@@ -301,10 +345,13 @@ async def _run_clarity_agent(
 
 async def _mini_critic(
     results: dict[str, str],
-    topic: str,
-    llm: Any,
 ) -> dict[str, Any]:
-    """Mini-critic: evaluate quality of mini-agent results."""
+    """Mini-critic: evaluate quality of mini-agent results.
+
+    BUG-05: Removed unused ``llm`` and ``topic`` parameters.
+    This performs a quantitative check; for LLM-based quality evaluation,
+    see DEFAULT_DEBATE_MINI_CRITIC_PROMPT (future enhancement).
+    """
     filled = {k: v for k, v in results.items() if v}
     total = len(results)
     success = len(filled)

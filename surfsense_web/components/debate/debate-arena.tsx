@@ -248,7 +248,8 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 							)}
 						>
 							{isDone && !isActive && <CheckCircle2Icon className="h-3 w-3" />}
-							{isActive && !isDone && round === activeRound && (
+							{/* OPT-11: Removed redundant round === activeRound check */}
+							{isActive && !isDone && (
 								<LoaderCircleIcon className="h-3 w-3 animate-spin" />
 							)}
 							<span>R{round} — {getRoundTypeLabel(round)}</span>
@@ -257,13 +258,13 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 				})}
 			</div>
 
-			{/* Progress Bar */}
+			{/* OPT-12: Progress bar that reaches 100% when debate is complete */}
 			<div className="h-1 overflow-hidden rounded-full bg-muted">
 				<motion.div
 					className="h-full bg-gradient-to-r from-primary to-cyan-500"
 					initial={{ width: "0%" }}
 					animate={{
-						width: `${((activeRound - 1) / debateState.totalRounds) * 100}%`,
+						width: `${isComplete ? 100 : ((activeRound - 1) / debateState.totalRounds) * 100}%`,
 					}}
 					transition={{ duration: 0.5 }}
 				/>

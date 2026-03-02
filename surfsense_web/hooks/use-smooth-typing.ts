@@ -96,16 +96,24 @@ export function useSmoothTyping(
 		};
 	}, []);
 
-	// Reset when text changes completely (new round / new participant)
-	const prevTextRef = useRef(incomingText);
+	// BUG-06: Reset when text changes completely (new round / new participant).
+	// Only depend on incomingText — avoids re-checking on every displayedText update.
+	const prevIncomingRef = useRef(incomingText);
 	useEffect(() => {
-		// If the new text doesn't start with what we were showing, reset
-		if (incomingText && !incomingText.startsWith(displayedText.slice(0, 20))) {
-			setDisplayedText("");
-			queueRef.current = [];
-			prevTextRef.current = incomingText;
+		if (incomingText !== prevIncomingRef.current) {
+			// If the new incoming text doesn't start with the previous incoming text,
+			// it's a completely new response — reset the animation.
+			if (
+				incomingText &&
+				prevIncomingRef.current &&
+				!incomingText.startsWith(prevIncomingRef.current.slice(0, 50))
+			) {
+				setDisplayedText("");
+				queueRef.current = [];
+			}
+			prevIncomingRef.current = incomingText;
 		}
-	}, [incomingText, displayedText]);
+	}, [incomingText]);
 
 	return displayedText;
 }
