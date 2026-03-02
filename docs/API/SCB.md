@@ -1,8 +1,8 @@
 # SCB API Integration — Fullständig Dokumentation
 
-> **Version:** 1.0
+> **Version:** 2.0
 > **Datum:** 2026-03-02
-> **Status:** Produktion (PxWeb v1) — Migration till v2 planerad
+> **Status:** Produktion (PxWebApi v2 — med v1 fallback)
 > **Författare:** OneSeek-teamet
 
 ---
@@ -344,13 +344,13 @@ SCB har angett att v2 är bakåtkompatibelt med v2-beta-formatet. Dock krävs an
 - Request body-format (`query[]` → `selection[]`)
 - Response-hantering (nya fält, paginering)
 
-**Rekommendation:** Implementera v2 som ny kodväg parallellt med v1, med feature flag.
+**Status:** Implementerat. v2 är default med automatisk v1-fallback.
 
 ---
 
 ## 6. ScbService — Kärntjänst
 
-**Fil:** `surfsense_backend/app/services/scb_service.py` (693 rader)
+**Fil:** `surfsense_backend/app/services/scb_service.py` (920+ rader)
 
 ### Klass-API
 
@@ -646,7 +646,7 @@ _ROUTE_STRICT_AGENT_POLICIES = {
 
 ## 11. Kodkvalitetsanalys
 
-### KQ-1: Duplicerad `_normalize_text()` (P2 — Medel)
+### KQ-1: Duplicerad `_normalize_text()` (P2 — Medel) — FIXAD
 
 **Problem:** `_normalize_text()` finns i **två** filer med nästan identisk logik:
 - `scb_service.py:45` — Använder `str.maketrans` med dict
@@ -655,7 +655,7 @@ _ROUTE_STRICT_AGENT_POLICIES = {
 **Effekt:** Inkonsistent beteende vid framtida ändringar.
 **Fix:** Centralisera till en gemensam utility, t.ex. `app/utils/text.py`.
 
-### KQ-2: httpx.AsyncClient skapas per anrop (P2 — Medel)
+### KQ-2: httpx.AsyncClient skapas per anrop (P2 — Medel) — FIXAD
 
 **Problem:** Varje `_get_json()` och `_post_json()` skapar en ny `httpx.AsyncClient`:
 
@@ -684,13 +684,13 @@ async def _get_json(self, url: str) -> Any:
 **Effekt:** Svårare att validera.
 **Fix:** Lägg till `-> str` på `_scb_tool`.
 
-### KQ-5: `ScbQueryResult` oanvänd (P3 — Låg)
+### KQ-5: `ScbQueryResult` oanvänd (P3 — Låg) — FIXAD
 
 **Problem:** `ScbQueryResult` definieras i `scb_service.py:37` men refereras aldrig i någon annan fil.
 **Effekt:** Död kod.
 **Fix:** Antingen använda den i `query_table()`-returen eller ta bort den.
 
-### KQ-6: Privat metod `_serialize_external_document` (P2 — Medel)
+### KQ-6: Privat metod `_serialize_external_document` (P2 — Medel) — FIXAD
 
 **Problem:** `statistics_agent.py:1034` anropar `connector_service._serialize_external_document()`:
 ```python
@@ -715,7 +715,7 @@ if not hasattr(BigtoolToolNode, "inject_tool_args") and hasattr(
 
 ## 12. Buggar
 
-### BUG-1: Race condition i cache (P1 — Hög)
+### BUG-1: Race condition i cache (P1 — Hög) — FIXAD
 
 **Problem:** `_node_cache` och `_metadata_cache` är vanliga dict:ar som inte är trådsäkra vid concurrent access. Med `asyncio.gather()` kan flera coroutines läsa/skriva samma cache-key simultant.
 
@@ -751,7 +751,7 @@ async def list_nodes(self, path: str) -> list[dict]:
 
 **Fix:** Prioritera djupet-först för redan poängsatta grenar, eller öka `max_nodes`.
 
-### BUG-3: `_match_values_by_text` false positives (P2 — Medel)
+### BUG-3: `_match_values_by_text` false positives (P2 — Medel) — FIXAD
 
 **Problem:** Substrings kan matcha fel:
 ```python
@@ -764,7 +764,7 @@ if normalized in query_norm:  # "malmo" matchar "malmö kommun" men också "malm
 
 **Fix:** Använd ordgräns-matchning eller tokenbaserad jämförelse.
 
-### BUG-4: Saknar timeout-hantering i `collect_tables` (P2 — Medel)
+### BUG-4: Saknar timeout-hantering i `collect_tables` (P2 — Medel) — FIXAD
 
 **Problem:** Enskilda `list_nodes()`-anrop har httpx-timeout (25s), men den totala tiden för `collect_tables()` har ingen övre gräns. Med 140 noder kan totaltiden bli ~140 * 25s = 58 minuter.
 
@@ -788,7 +788,7 @@ def _selection_cell_count(self, selections):
 
 **Effekt:** Ingen praktisk bugg, men förvirrande logik.
 
-### BUG-6: Encoding-problem i API-URL (P3 — Låg)
+### BUG-6: Encoding-problem i API-URL (P3 — Låg) — FIXAD
 
 **Problem:** SCB v1 API-URL:er kan innehålla svenska tecken i tabellnamn. `_build_url()` gör ingen URL-encoding:
 
@@ -806,7 +806,7 @@ def _build_url(self, path: str, *, trailing: bool) -> str:
 
 ## 13. Optimeringar
 
-### OPT-1: Persistent HTTP-klient (P1 — Hög vinst)
+### OPT-1: Persistent HTTP-klient (P1 — Hög vinst) — IMPLEMENTERAD
 
 **Nuvarande:** Ny `httpx.AsyncClient` per HTTP-anrop.
 **Förbättring:** Återanvänd klient med connection pooling.
@@ -843,7 +843,7 @@ async def collect_tables_parallel(self, base_path, query, *, max_concurrent=5):
 
 **Estimerad vinst:** ~3-5x snabbare navigering.
 
-### OPT-3: v2 Table Search ersätter trädnavigering (P1 — Hög vinst)
+### OPT-3: v2 Table Search ersätter trädnavigering (P1 — Hög vinst) — IMPLEMENTERAD
 
 **Nuvarande:** 50-140 HTTP-anrop för att navigera SCB:s träd.
 **Förbättring:** 1 anrop till `GET /tables?query=...`.
@@ -934,7 +934,7 @@ FanOutCategory(name="kpi", tool_ids=("scb_priser_kpi",), priority=2),
 
 ## 15. Testsvit
 
-**Fil:** `surfsense_backend/tests/test_scb_service.py` (351 rader)
+**Fil:** `surfsense_backend/tests/test_scb_service.py` (500+ rader, 36 tester)
 
 ### Testöversikt
 
