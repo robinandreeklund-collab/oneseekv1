@@ -73,7 +73,10 @@ const PARTICIPANT_LOGOS: Record<string, string> = {
 	Qwen: "/model-logos/qwen.png",
 };
 
-const DEFAULT_VOICE_MAP: Record<string, string> = {
+// OPT-13: Local fallback copies — kept for offline/initial render only.
+// The canonical source is the backend endpoint GET /admin/debate/voice-defaults.
+// These are loaded from the backend on mount (see useEffect below).
+let DEFAULT_VOICE_MAP: Record<string, string> = {
 	Grok: "ash",
 	Claude: "ballad",
 	ChatGPT: "coral",
@@ -84,7 +87,7 @@ const DEFAULT_VOICE_MAP: Record<string, string> = {
 	OneSeek: "nova",
 };
 
-const DEFAULT_CARTESIA_VOICE_MAP: Record<string, string> = {
+let DEFAULT_CARTESIA_VOICE_MAP: Record<string, string> = {
 	Grok: "c961b81c-a935-4c17-bfb3-ba2239de8c2f",
 	Claude: "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
 	ChatGPT: "a167e0f3-df7e-4d52-a9c3-f949145efdab",
@@ -145,9 +148,17 @@ export function DebateSettingsPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [expandedParticipant, setExpandedParticipant] = useState<string | null>(null);
 
-	// Load settings on mount
+	// Load settings + voice defaults on mount
 	useEffect(() => {
 		(async () => {
+			// OPT-13: Fetch canonical voice maps from backend (single source of truth)
+			try {
+				const defaults = await adminDebateApiService.getVoiceDefaults();
+				DEFAULT_VOICE_MAP = defaults.openai;
+				DEFAULT_CARTESIA_VOICE_MAP = defaults.cartesia;
+			} catch {
+				// Local fallbacks are fine
+			}
 			try {
 				const resp = await adminDebateApiService.getVoiceSettings();
 				// Handle backwards compat: old string → migrate to dict

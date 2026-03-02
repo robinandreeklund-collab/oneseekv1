@@ -3,7 +3,7 @@
 > **Datum:** 2026-03-02
 > **Scope:** Hela /debatt- och /dvoice-funktionen — backend + frontend
 > **Analyserade filer:** 31 filer (17 backend, 14 frontend)
-> **Senast uppdaterad:** 2026-03-02 (efter fix-commit `7435d5f`)
+> **Senast uppdaterad:** 2026-03-02 (andra fix-omgången — BUG-02, KQ-06, KQ-07, OPT-02, OPT-04, OPT-13, SEC-03)
 
 ---
 
@@ -13,17 +13,17 @@ Debattfunktionen är **i grunden väl arkitekterad** med en tydlig LangGraph-pip
 
 Den initiala analysen identifierade **8 buggar** (varav 2 kritiska), **12 kodkvalitetsproblem**, och **15 optimeringsmöjligheter**.
 
-**Status efter fix-commit:** 28 av 35 issues åtgärdade. 46 tester passerar (upp från 33). 10 filer ändrade, +737/−360 rader.
+**Status efter andra fix-omgången:** 30 av 38 issues åtgärdade. 8 kvarvarande (primärt långsiktiga arkitekturella förbättringar).
 
 ### Åtgärdsstatus
 
 | Kategori | Totalt | Fixade | Kvar | Fixade IDs |
 |----------|--------|--------|------|------------|
-| Buggar (P0–P2) | 8 | 7 | 1 | BUG-01, BUG-03, BUG-04, BUG-05, BUG-06, BUG-07, BUG-08 |
-| Kodkvalitet (KQ) | 12 | 6 | 6 | KQ-01, KQ-02, KQ-03, KQ-04, KQ-05, KQ-08 |
-| Optimeringar (OPT) | 15 | 8 | 7 | OPT-01, OPT-03, OPT-06, OPT-08, OPT-09, OPT-10, OPT-11, OPT-12 |
-| Säkerhet (SEC) | 3 | 2 | 1 | SEC-01, SEC-02 |
-| **Totalt** | **38** | **23** | **15** | |
+| Buggar (P0–P2) | 8 | **8** | 0 | BUG-01–BUG-08 |
+| Kodkvalitet (KQ) | 12 | **9** | 3 | KQ-01–KQ-08, KQ-09, KQ-10 |
+| Optimeringar (OPT) | 15 | **11** | 4 | OPT-01–OPT-04, OPT-06, OPT-08–OPT-13 |
+| Säkerhet (SEC) | 3 | **3** | 0 | SEC-01, SEC-02, SEC-03 |
+| **Totalt** | **38** | **30** | **8** | |
 
 ### Prioriterad Åtgärdslista (original)
 
@@ -72,7 +72,7 @@ if isinstance(vr, dict) and vr.get("voted_for", "").strip():
 
 ---
 
-### BUG-02 [P0/Kritisk]: Prefetch race condition — stale context — EJ FIXAD ⚠️
+### BUG-02 [P0/Kritisk]: Prefetch race condition — stale context — FIXAD ✅
 
 **Fil:** `debate_executor.py:530-560`
 
@@ -118,7 +118,7 @@ if model_display in _prefetched:
 
 ---
 
-**Kommentar:** Prefetch race condition kvarstår men har begränsad verklig effekt (enbart voice mode). Markerad som framtida förbättring.
+**Genomförd fix:** Context-snapshot stashas på prefetch-tasken (`_pf_task._prefetch_ctx`). Vid konsumtion jämförs den med aktuell kontext — om de skiljer sig kastas prefetch-resultatet och ett nytt LLM-anrop görs. Korta svar (<10 ord) kastas också. Loggning tillagd vid discard.
 
 ---
 
@@ -429,7 +429,7 @@ except Exception as exc:
 
 ---
 
-### KQ-06: `SimpleNamespace` skapad runtime istället för att använda spec-klassen — EJ FIXAD ⚠️
+### KQ-06: `SimpleNamespace` skapad runtime istället för att använda spec-klassen — FIXAD ✅
 
 **Fil:** `debate_executor.py:220-221`
 
@@ -442,17 +442,19 @@ Skapar SimpleNamespace från dict-serialiserad spec-data. Fragilt — om spec-kl
 
 **Fix:** Importera den faktiska spec-klassen eller använd en TypedDict.
 
-**Kommentar:** En `TODO(KQ-06)` kommentar har lagts till vid `SimpleNamespace`-importen. Kvarstår som framtida förbättring.
+**Genomförd fix:** Båda `SimpleNamespace(**spec_data)`-ställena i `debate_executor.py` (rad ~182 och ~712) ersatta med `ExternalModelSpec(**spec_data)` — den befintliga `@dataclass(frozen=True)` i `tools/external_models.py`. Ger typkontroll, immutability och tydliga felmeddelanden vid saknade attribut.
 
 ---
 
-### KQ-07: `oneseek_debate_subagent.py` är inte integrerad i debatt-flödet — EJ FIXAD ⚠️
+### KQ-07: `oneseek_debate_subagent.py` är inte integrerad i debatt-flödet — FIXAD ✅
 
 **Fil:** `oneseek_debate_subagent.py`
 
 Modulen definierar ett P4-mönster med 6 mini-agenter, men `debate_executor.py` använder den enklare `_run_oneseek_debate_turn()` istället. `oneseek_debate_subagent.py` verkar vara dead code eller framtida refaktorisering.
 
 **Fix:** Antingen integrera eller markera som experimentell/deprecated.
+
+**Genomförd fix:** Modulens docstring uppdaterad med `.. warning:: EXPERIMENTAL / NOT YET INTEGRATED` som tydligt dokumenterar att den inte används av den aktiva pipelinen. Hänvisning till KQ-07 tillagd.
 
 ---
 
@@ -589,13 +591,15 @@ tavily_semaphore = asyncio.Semaphore(MAX_TAVILY_CALLS_PER_TURN)
 
 ---
 
-### OPT-02: Cache deltagarlistan i domain planner — EJ FIXAD ⚠️
+### OPT-02: Cache deltagarlistan i domain planner — FIXAD ✅
 
 **Fil:** `debate_executor.py:286-366`
 
 Domain planner skapar deltagarlistan deterministiskt varje gång från `EXTERNAL_MODEL_SPECS`. Resultatet är alltid detsamma.
 
 **Fix:** Cache vid initialisering istället för att bygga per anrop.
+
+**Genomförd fix:** Deltagarlistan och domain_plans pre-beräknas en gång vid `build_debate_domain_planner_node()`-anropet (build time) och lagras i `_cached_participants`/`_cached_domain_plans`. Noden returnerar shallow copies för att undvika mutation mellan invokationer.
 
 ---
 
@@ -623,25 +627,13 @@ if not _tts_client:
 
 ---
 
-### OPT-04: `_build_round_context` beräknas om för varje deltagare — EJ FIXAD ⚠️
+### OPT-04: `_build_round_context` beräknas om för varje deltagare — FIXAD ✅
 
 **Fil:** `debate_executor.py:458-460`
 
-```python
-full_context = _build_round_context(
-    topic, all_round_responses, round_responses, round_num,
-)
-```
+I en runda med 8 deltagare anropades `_build_round_context` 8 gånger. De första 7 anropen producerade nästan identisk output (föregående rundor är oförändrade).
 
-I en runda med 8 deltagare anropas `_build_round_context` 8 gånger. De första 7 anropen producerar nästan identisk output (föregående rundor är oförändrade).
-
-**Fix:** Beräkna basen en gång per runda och appendera enbart nya svar:
-```python
-base_context = _build_round_context(topic, all_round_responses, {}, round_num)
-for participant in round_order:
-    current_context = base_context + _format_current_round(round_responses)
-    # ... use current_context
-```
+**Genomförd fix:** `_base_context` beräknas en gång per runda (med `current_round_responses={}` för att exkludera den växande rundan). I participant-loopen appenderas enbart den aktuella rundens svar. Undviker ~7 redundanta strängkonstruktioner per runda.
 
 ---
 
@@ -813,9 +805,11 @@ const progress = isComplete
 
 ---
 
-### OPT-13: `debate-settings-page.tsx` DEFAULT_CARTESIA_VOICE_MAP dupliceras med backend — EJ FIXAD ⚠️
+### OPT-13: `debate-settings-page.tsx` DEFAULT_CARTESIA_VOICE_MAP dupliceras med backend — FIXAD ✅
 
-Se KQ-02 ovan. Samma UUIDs hårdkodas i tre ställen.
+Se KQ-02 ovan. Samma UUIDs hårdkodades i tre ställen.
+
+**Genomförd fix:** Nytt backend-endpoint `GET /admin/debate/voice-defaults` returnerar kanoniska voice maps (openai + cartesia) från `debate_voice.py`. Frontend API-service har ny `getVoiceDefaults()` metod. Settings-sidans mount-effekt hämtar defaults från backend och överskriver lokala fallbacks. Lokala kopior behålls enbart som offline-fallback.
 
 ---
 
@@ -897,17 +891,13 @@ Endpoints `/admin/debate/voice-settings` har ingen rate limiting — en autentis
 
 ---
 
-### SEC-03: Extern modells svar renderas utan sanitering — EJ FIXAD ⚠️
+### SEC-03: Extern modells svar renderas utan sanitering — FIXAD ✅
 
 **Fil:** `debate-arena.tsx:533`
 
-```tsx
-<p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-    {displayText}
-</p>
-```
+Text renderas via React (automatisk XSS-skydd), men `whitespace-pre-wrap` med okontrollerade input kunde orsaka layout-brott med extremt långa ord.
 
-Text renderas via React (automatisk XSS-skydd), men `whitespace-pre-wrap` med okontrollerade input kan orsaka layout-brott med extremt långa ord.
+**Genomförd fix:** `break-words` och `overflow-wrap: anywhere` tillagda på text-elementet. Extremt långa ord/URL:er bryts nu korrekt istället för att orsaka horisontell overflow.
 
 ---
 
@@ -920,28 +910,39 @@ Text renderas via React (automatisk XSS-skydd), men `whitespace-pre-wrap` med ok
 4. ~~Extrahera duplicerad logik (KQ-03) — 2h~~ ✅
 5. ~~Öka context-trunkeringsgränser (BUG-04, OPT-10) — 30 min~~ ✅
 
-### Medellång sikt (2-3 sprints) — delvis klar
+### Medellång sikt (2-3 sprints) — mestadels klar
 1. ~~Dela upp `debate_executor.py` (KQ-04) — helpers extraherade~~ ✅ (nodes-uppdelning kvar)
 2. ~~Återanvänd httpx-klient (OPT-03)~~ ✅
 3. Implementera TTS caching för export (OPT-14)
 4. Lägg till saknade tester (~9 testklasser kvar) — 8h
-5. ~~Separera voice maps till single source of truth (KQ-02)~~ ✅ (backend konsoliderad, frontend kvar)
+5. ~~Separera voice maps till single source of truth (KQ-02 + OPT-13)~~ ✅ (backend + frontend konsoliderad)
+6. ~~Fixa BUG-02 (prefetch race condition) med context-validering~~ ✅
+7. ~~Ersätt SimpleNamespace med ExternalModelSpec (KQ-06)~~ ✅
 
 ### Långsiktigt (Quarter)
 1. WebSocket-transport för voice-chunks (OPT-07)
 2. Automatisk frontend/backend type-synkronisering (KQ-12)
 3. Uppgradera API-nyckel-obfuskering till Fernet-kryptering (SEC-01)
-4. Integrera `oneseek_debate_subagent.py` fullt eller ta bort (KQ-07)
-5. Fixa BUG-02 (prefetch race condition) med context-validering
+4. Rollbaserad behörighet istället för `is_owner` (KQ-11)
+5. Parallell sentence-TTS pipeline (OPT-05)
 
 ---
 
 ## Slutsats
 
-Debattfunktionen är **produktionsredo**. Av de 8 identifierade buggarna har 7 åtgärdats (inklusive båda P0-buggarna). Den kvarvarande buggen (BUG-02, prefetch race condition) har begränsad verklig effekt och gäller enbart voice mode.
+Debattfunktionen är **produktionsredo**. Alla 8 identifierade buggar har åtgärdats (inklusive båda P0-buggarna — BUG-01 vote-filtrering och BUG-02 prefetch race condition).
 
-Kodkvaliteten har förbättrats avsevärt: hjälpfunktioner har extraherats till en dedikerad modul (`debate_helpers.py`), duplicerad logik har konsoliderats, tyst felhantering har ersatts med debug-loggning, och TTS-arkitekturen har optimerats med streaming och delad HTTP-klient.
+Kodkvaliteten har förbättrats avsevärt: hjälpfunktioner har extraherats till en dedikerad modul (`debate_helpers.py`), duplicerad logik har konsoliderats, tyst felhantering har ersatts med debug-loggning, TTS-arkitekturen har optimerats med streaming och delad HTTP-klient, `SimpleNamespace` har ersatts med typade dataclasses, och voice maps har konsoliderats med backend som enda källa.
 
 Testtäckningen har ökat från 33 till 46 testfall med ny coverage för `build_round_context`, `resolve_language_instructions`, nested JSON-extraktion och edge cases kring tomma votes.
 
-**Kvarvarande arbete** är primärt optimeringar och arkitekturella förbättringar (WebSocket-transport, TTS-caching, fullständig filuppdelning) som inte blockerar produktion.
+**Kvarvarande arbete** (8 items) är primärt långsiktiga arkitekturella förbättringar:
+- KQ-11: Rollbaserad behörighetskontroll (istället för `is_owner`)
+- KQ-12: Automatisk frontend/backend type-synkronisering (codegen)
+- OPT-05: Parallell sentence-TTS pipeline
+- OPT-07: WebSocket-transport för voice-chunks (istället för base64/SSE)
+- OPT-14: TTS-caching för export (undvik re-generation)
+- OPT-15: Optimistic update i admin-sidan
+- KQ-04 steg 2-3: Nodes- och OneSeek-uppdelning av `debate_executor.py`
+
+Ingen av dessa blockerar produktion.

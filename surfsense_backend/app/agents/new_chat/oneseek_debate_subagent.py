@@ -1,6 +1,14 @@
 """
 OneSeek Debate Subagent — P4 pattern for debate participation.
 
+.. warning:: **EXPERIMENTAL / NOT YET INTEGRATED**
+
+   This module is NOT used by the active debate pipeline.  The main flow in
+   ``debate_executor.py`` calls ``_run_oneseek_debate_turn()`` (a simpler
+   single-LLM path) instead of this subagent.  The module is kept for future
+   integration once the P4 mini-agent pattern is validated end-to-end.
+   See audit item **KQ-07** for background.
+
 Implements the mini-planner → parallel mini-agents → mini-critic → synthesizer
 pattern specifically for OneSeek's debate turns.
 

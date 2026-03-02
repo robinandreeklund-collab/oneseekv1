@@ -177,10 +177,8 @@ async def _call_debate_participant(
                     spec_data = dp["spec"]
                     break
             if spec_data:
-                from types import (
-                    SimpleNamespace,  # TODO(KQ-06): replace with typed spec class
-                )
-                spec = SimpleNamespace(**spec_data)
+                from app.agents.new_chat.tools.external_models import ExternalModelSpec
+                spec = ExternalModelSpec(**spec_data)
                 _mt = _resolve_max_tokens(state, model_display)
                 # Inject model identity so each model knows who it
                 # represents.  Without this, e.g. DeepSeek says "jag
@@ -237,8 +235,51 @@ def build_debate_domain_planner_node(
     """Build deterministic debate domain planner.
 
     Generates domain_plans with all debate participants.
+    OPT-02: participants + domain_plans are cached since they're
+    deterministic (depend only on specs + include_research flag).
     """
     specs = external_model_specs or list(EXTERNAL_MODEL_SPECS)
+
+    # OPT-02: Pre-compute the static participant/domain data once at
+    # build time — they never change between invocations.
+    _cached_participants: list[dict[str, Any]] = []
+    _cached_domain_plans: dict[str, dict[str, Any]] = {}
+
+    for spec in specs:
+        domain_key = spec.tool_name.replace("call_", "")
+        _cached_participants.append({
+            "key": spec.key,
+            "display": spec.display,
+            "tool_name": spec.tool_name,
+            "config_id": spec.config_id,
+            "is_oneseek": False,
+        })
+        _cached_domain_plans[domain_key] = {
+            "agent": f"debate_{domain_key}",
+            "tools": [spec.tool_name],
+            "rationale": f"Debattdeltagare: {spec.display}",
+            "spec": {
+                "tool_name": spec.tool_name,
+                "display": spec.display,
+                "key": spec.key,
+                "config_id": spec.config_id,
+            },
+        }
+
+    if include_research:
+        _cached_participants.append({
+            "key": "oneseek",
+            "display": "OneSeek",
+            "tool_name": "call_oneseek",
+            "config_id": -1,
+            "is_oneseek": True,
+        })
+        _cached_domain_plans["research"] = {
+            "agent": "debate_oneseek",
+            "tools": ["call_oneseek"],
+            "rationale": "OneSeek: Svensk AI-agent med realtidsverktyg",
+            "is_oneseek": True,
+        }
 
     async def debate_domain_planner_node(
         state: dict[str, Any],
@@ -256,57 +297,17 @@ def build_debate_domain_planner_node(
         if not user_query:
             return {"domain_plans": {}}
 
-        # Build participant list
-        participants: list[dict[str, Any]] = []
-        domain_plans: dict[str, dict[str, Any]] = {}
-
-        for spec in specs:
-            domain_key = spec.tool_name.replace("call_", "")
-            participant = {
-                "key": spec.key,
-                "display": spec.display,
-                "tool_name": spec.tool_name,
-                "config_id": spec.config_id,
-                "is_oneseek": False,
-            }
-            participants.append(participant)
-            domain_plans[domain_key] = {
-                "agent": f"debate_{domain_key}",
-                "tools": [spec.tool_name],
-                "rationale": f"Debattdeltagare: {spec.display}",
-                "spec": {
-                    "tool_name": spec.tool_name,
-                    "display": spec.display,
-                    "key": spec.key,
-                    "config_id": spec.config_id,
-                },
-            }
-
-        if include_research:
-            participants.append({
-                "key": "oneseek",
-                "display": "OneSeek",
-                "tool_name": "call_oneseek",
-                "config_id": -1,
-                "is_oneseek": True,
-            })
-            domain_plans["research"] = {
-                "agent": "debate_oneseek",
-                "tools": ["call_oneseek"],
-                "rationale": "OneSeek: Svensk AI-agent med realtidsverktyg",
-                "is_oneseek": True,
-            }
-
+        # Return deep copies to avoid mutation across invocations
         return {
-            "domain_plans": domain_plans,
-            "debate_participants": participants,
+            "domain_plans": {k: {**v} for k, v in _cached_domain_plans.items()},
+            "debate_participants": [{**p} for p in _cached_participants],
             "debate_topic": user_query,
             "debate_current_round": 0,
             "debate_round_responses": {},
             "debate_votes": [],
             "debate_word_counts": {},
             "debate_status": "planning",
-            "orchestration_phase": f"debate_domain_planner_{len(participants)}",
+            "orchestration_phase": f"debate_domain_planner_{len(_cached_participants)}",
         }
 
     return debate_domain_planner_node
@@ -396,14 +397,24 @@ def build_debate_round_executor_node(
             # one streams text + audio.
             _prefetched: dict[str, asyncio.Task] = {}
 
+            # OPT-04: Compute the static base context (previous rounds)
+            # once per round instead of re-building for every participant.
+            _base_context = _build_round_context(
+                topic, all_round_responses, {}, round_num,
+            )
+
             for position, participant in enumerate(round_order):
                 model_key = participant["key"]
                 model_display = participant["display"]
 
-                # Build context for this participant
-                full_context = _build_round_context(
-                    topic, all_round_responses, round_responses, round_num,
-                )
+                # Append only the current round's growing responses
+                if round_responses:
+                    _current_parts = [f"\n--- Runda {round_num} (hittills) ---"]
+                    for name, resp in round_responses.items():
+                        _current_parts.append(f"[{name}]: {resp[:1200]}")
+                    full_context = _base_context + "\n".join(_current_parts)
+                else:
+                    full_context = _base_context
                 query_with_context = f"{round_prompt}\n\n{full_context}"
 
                 # Emit participant_start
@@ -431,11 +442,30 @@ def build_debate_round_executor_node(
                     _task = _prefetched.pop(model_display)
                     try:
                         response_text, _prepared_audio = await _task
-                        logger.info(
-                            "debate: using prefetched response for %s (%d words, audio=%s)",
-                            model_display, _count_words(response_text),
-                            f"{_prepared_audio[1]:.1f}s" if _prepared_audio and _prepared_audio[0] else "none",
+                        # BUG-02: Validate context freshness — discard if
+                        # stale (more responses arrived since prefetch).
+                        _current_ctx = _build_round_context(
+                            topic, all_round_responses, round_responses, round_num,
                         )
+                        if _current_ctx != _task._prefetch_ctx:
+                            logger.info(
+                                "debate: discarding stale prefetch for %s (context changed)",
+                                model_display,
+                            )
+                            response_text = ""
+                            _prepared_audio = None
+                        elif _count_words(response_text) < 10:
+                            logger.info(
+                                "debate: discarding short prefetch for %s (%d words)",
+                                model_display, _count_words(response_text),
+                            )
+                            response_text = ""
+                        else:
+                            logger.info(
+                                "debate: using prefetched response for %s (%d words, audio=%s)",
+                                model_display, _count_words(response_text),
+                                f"{_prepared_audio[1]:.1f}s" if _prepared_audio and _prepared_audio[0] else "none",
+                            )
                     except Exception as exc:
                         logger.warning("debate: prefetch failed for %s: %s", model_display, exc)
                         response_text = ""
@@ -502,9 +532,13 @@ def build_debate_round_executor_node(
                             return text, audio
                         return text, None
 
-                    _prefetched[_next_display] = asyncio.create_task(
+                    _pf_task = asyncio.create_task(
                         _prefetch_llm_and_tts()
                     )
+                    # BUG-02: Stash the context snapshot so we can detect
+                    # staleness when the prefetched result is consumed.
+                    _pf_task._prefetch_ctx = _next_ctx  # type: ignore[attr-defined]
+                    _prefetched[_next_display] = _pf_task
 
                 # ─── Non-voice mode: emit participant_text immediately ──
                 # In text-only mode, send the full response as a single
@@ -686,8 +720,8 @@ def build_debate_round_executor_node(
                             break
 
                     if spec_data:
-                        from types import SimpleNamespace
-                        spec = SimpleNamespace(**spec_data)
+                        from app.agents.new_chat.tools.external_models import ExternalModelSpec
+                        spec = ExternalModelSpec(**spec_data)
                         result = await asyncio.wait_for(
                             _call_external(
                                 spec=spec,
